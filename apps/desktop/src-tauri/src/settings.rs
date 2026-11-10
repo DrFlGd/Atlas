@@ -11,7 +11,7 @@
 //! ```json
 //! { "format": "atlas-settings", "version": 1,
 //!   "mapsFolder": null,
-//!   "locations": [{ "path": "E:\\Maps\\Elden Ring", "kind": "pack" }],
+//!   "locations": [{ "path": "E:\\Maps\\My Game", "kind": "pack" }],
 //!   "downloads": { "parallel": 2, "pauseMs": 250,
 //!                  "requestsPerMinute": null, "kilobytesPerSecond": null } }
 //! ```

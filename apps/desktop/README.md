@@ -112,7 +112,7 @@ Packs are read as untrusted: only folders whose `manifest.json` is a pack manife
   "version": 1,
   "mapsFolder": null,
   "locations": [
-    { "path": "E:\\Maps\\Elden Ring", "kind": "pack" },
+    { "path": "E:\\Maps\\My Game", "kind": "pack" },
     { "path": "D:\\More maps", "kind": "folder" }
   ],
   "downloads": {
