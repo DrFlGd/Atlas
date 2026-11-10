@@ -64,6 +64,8 @@ Progress lives in the browser's IndexedDB (database `atlas`, through Dexie), beh
 
 Deletions are kept as tombstones (`deleted: true`) with their time, so merging two copies always keeps the newer change. Progress rows store the target id as it was when marked; a pack's `idMigrations` map old ids to new ones when progress is read, so a renamed location keeps its found state.
 
+In the desktop app, progress is kept the same way, in that app's own web storage. Two desktop apps built from this repository with different identifiers (see [apps/desktop/README.md](apps/desktop/README.md#two-apps-one-maps-folder)) share their maps folder but not their progress; use export and import to carry progress from one to the other.
+
 The export file is `{ "format": "atlas-progress", "version": 1, "exportedAt", "scope": "profile" | "all", "profiles", "progress", "presets" }`, with the same record shapes, and is validated with Zod on import. Replacing with an "all" export also removes local profiles and presets of the same packs that the file does not have.
 
 ### Guides
@@ -87,8 +89,9 @@ pnpm demo:build --seed 42 --locations 10000
 ```
 apps/web            React + Vite web app (static output)
 apps/desktop        Tauri 2 desktop shell around the web build
-packages/schema     Pack schema v1 in Zod, id helpers, cross-file integrity checks
+packages/schema     Pack schema (manifest versions 1 and 2) in Zod, id helpers, integrity checks
 packages/core       Pack loader, coordinate maths, marker clustering, MapView
+packages/importer-api  The contract for importers that turn a web page into a pack, and a demo importer
 packages/pipeline   Demo pack generator, tile cutter and PMTiles writer (Node)
 packs/demo          Generated demo pack (not committed)
 ```
@@ -99,14 +102,16 @@ Workspace packages export their TypeScript sources directly; the web app bundles
 
 `apps/desktop` wraps the same web build in a Tauri 2 window for Windows, macOS and Linux. It needs Rust and, per platform, a C++ toolchain or WebKitGTK; [apps/desktop/README.md](apps/desktop/README.md) lists the prerequisites. `pnpm desktop:dev` opens the window on the dev server; `pnpm desktop:build` writes installers to `apps/desktop/src-tauri/target/release/bundle/`. CI builds unsigned Linux and Windows bundles on every run and keeps them as workflow artifacts.
 
-In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also exports and imports progress through native file dialogs, opens web links in the system browser, and can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, for offline use. Not there yet: code signing, auto-update and save-file sync.
+In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also shows packs from a maps folder and from folders the person chooses, exports and imports progress through native file dialogs, opens web links in the system browser, and can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, into the pack's folder. A desktop build can include importers that add maps from web pages ("Add a map"); the plain build has none. Not there yet: code signing, auto-update and save-file sync.
+
+The `Release` workflow (`.github/workflows/release.yml`, run by hand or by pushing a `v*` tag) builds the plain viewer's Windows installer and publishes it as a GitHub Release.
 
 ## Data packs
 
 A pack is a read-only, versioned folder loaded by URL:
 
 ```
-manifest.json         gameId, title, packVersion, gamePatch, schemaVersion, attribution, idMigrations
+manifest.json         who the pack is and what is in it (see "The manifest" below)
 maps.json             maps: pixel size and optional world-coordinate transform
 layers.json           tile layers of each map
 regions.json          region polygons, optionally nested
@@ -120,13 +125,108 @@ guides.json
 links.json
 presets.json
 tiles/                tile pyramids, one PMTiles file or {z}/{x}/{y} folder per layer
+offline-tiles/        status files of downloaded map images (desktop app, see apps/desktop)
+import/               page data kept by "Add a map", never served to the map (desktop app)
+.atlas/               the desktop app's lock and unfinished-download record
 ```
+
+A pack folder is self-contained: every path in it is relative, nothing names a computer, user or app, paths use `/`, and no two names differ only in case, so a pack folder with its downloaded images can be copied to another computer (or operating system) and opened there.
 
 - Coordinates are pixels of the full-resolution map image, origin top-left. A layer's `maxZoom` is the pyramid level at which one tile pixel equals one image pixel.
 - Content ids are stable, prefixed strings: `<gameId>:<kind>:<localId>`, for example `demo:loc:0412`.
 - The schema lives in `packages/schema` and is shared by the app and the pipeline. `loadPack` in `packages/core` validates every file and checks references between files before the app uses a pack.
 - An `xyz` layer may name a remote source (`tiles.remote`: an `https` URL template and the remote zoom and tile offset of each pyramid level). The desktop app can download such tiles into its own data folder; see [apps/desktop/README.md](apps/desktop/README.md#downloading-map-images). The web app shows its usual "not installed" notice for them.
+- Pack ids (`gameId`) are lowercase letters, digits, `-` and `_`. In the desktop app only one pack with an id is shown at a time; see [apps/desktop/README.md](apps/desktop/README.md#maps-folder-and-other-locations).
 - PMTiles archives are read with HTTP range requests, so whatever serves a pack must support them (the Vite dev and preview servers and common static servers do).
+
+### The manifest
+
+`manifest.json` has two versions. Version 1 holds only the pack's identity; version 2 adds a description of the pack, written by the tools and apps that write packs. The app reads both; a version 1 pack never needs to be rewritten.
+
+```json
+{
+  "schemaVersion": 2,
+  "gameId": "test-valley",
+  "title": "Test Valley",
+  "packVersion": "1.1.0",
+  "gamePatch": "demo",
+  "attribution": [{ "name": "Demo map site (made-up test data)" }],
+  "idMigrations": {},
+  "created": "2026-11-10T21:30:00.000Z",
+  "updated": "2026-11-10T21:32:10.000Z",
+  "writtenBy": { "name": "Atlas", "version": "0.3.0" },
+  "source": {
+    "importer": { "id": "demo-maps", "title": "Demo map site" },
+    "pages": [
+      {
+        "url": "http://127.0.0.1:4432/demo-maps/test-valley/east-field",
+        "mapId": "test-valley:map:east-field",
+        "importedAt": "2026-11-10T21:30:00.000Z"
+      },
+      {
+        "url": "http://127.0.0.1:4432/demo-maps/test-valley/west-ridge",
+        "mapId": "test-valley:map:west-ridge",
+        "importedAt": "2026-11-10T21:32:10.000Z"
+      }
+    ]
+  },
+  "contents": {
+    "counts": {
+      "maps": 2,
+      "layers": 2,
+      "locations": 6,
+      "categories": 4,
+      "regions": 0,
+      "guides": 0
+    },
+    "maps": [
+      {
+        "id": "test-valley:map:east-field",
+        "name": "East Field",
+        "width": 1024,
+        "height": 768,
+        "locations": 4,
+        "layers": [
+          {
+            "id": "test-valley:layer:east-field",
+            "name": "Map",
+            "minZoom": 0,
+            "maxZoom": 2,
+            "tiles": "xyz",
+            "downloadable": true,
+            "images": {
+              "levels": [0, 1, 2],
+              "complete": true,
+              "files": 16,
+              "bytes": 5120,
+              "updatedAt": "2026-11-10T21:35:00Z"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+| Field                             | Version     | Meaning                                                                                                                                                                                                                                                                 |
+| --------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemaVersion`                   | 1, 2        | The manifest format: `1` or `2`. Anything else is refused with a plain message.                                                                                                                                                                                         |
+| `gameId`                          | 1, 2        | The pack id, also the prefix of every content id.                                                                                                                                                                                                                       |
+| `title`                           | 1, 2        | The game's name as shown in the game switcher.                                                                                                                                                                                                                          |
+| `packVersion`                     | 1, 2        | The pack's own version, `major.minor.patch`; a location's `since` names one.                                                                                                                                                                                            |
+| `gamePatch`                       | 1, 2        | The game version the content matches.                                                                                                                                                                                                                                   |
+| `attribution`                     | 1, 2        | Who made the content, with optional URL and licence.                                                                                                                                                                                                                    |
+| `idMigrations`                    | 1, 2        | Old content id to new id, so stored progress follows renamed locations.                                                                                                                                                                                                 |
+| `created`                         | 2           | When the pack was first written (ISO 8601). Kept when the pack is written again.                                                                                                                                                                                        |
+| `updated`                         | 2           | When the pack's content last changed.                                                                                                                                                                                                                                   |
+| `writtenBy`                       | 2           | The tool or app, and its version, that wrote the pack's files.                                                                                                                                                                                                          |
+| `source`                          | 2, optional | For packs made by an importer: the importer's id and title, and each page the pack was made from, with the map it became and when. Absent for packs built by hand or by a pipeline.                                                                                     |
+| `contents.counts`                 | 2           | Maps, layers, locations, categories, regions and guides in the pack.                                                                                                                                                                                                    |
+| `contents.maps[]`                 | 2           | Each map's id, name, size in pixels and number of locations, and its layers: id, name, zoom range, tile kind (`pmtiles` or `xyz`) and whether its images can be downloaded.                                                                                             |
+| `contents.maps[].layers[].images` | 2, optional | For downloadable layers, what the desktop app has downloaded into the pack folder: the complete `levels`, whether every level is there (`complete`), the number of image `files` and their `bytes`, and when this was recorded. Updated after each level of a download. |
+
+The descriptive fields (`created` and after) describe the pack; they are not used to load it. The counts are worked out from the pack's files whenever a tool or app writes them, and the image summary when the desktop app downloads images. Anything that edits the pack files by hand can leave them stale: the app then still loads the pack from its files, and a broken or missing descriptive field is ignored rather than refused. `describePack` in `packages/schema` writes a version 2 manifest from a pack's data.
 
 ## Runtime configuration
 
@@ -141,6 +241,7 @@ The app reads `config.json` next to `index.html` at startup, so one build can be
 - `packs`: an explicit list of packs, `[{ "id": "<gameId>", "url": "packs/demo/", "title": "…" }]`. When given, the pack index is not read. The desktop build uses this to point at its pack protocol.
 - `packIndex`: where to find the pack index when `packs` is not given; default `packs/index.json`.
 - `packUrl`: older shorthand for a single pack; the app reads the pack's manifest for its id and title.
+- `importers`: importer modules of a desktop build, `[{ "id", "title", "description", "version", "module" }]`, written by the desktop build from `ATLAS_BUNDLE_IMPORTERS`. Absent in the web build.
 
 URLs in `config.json` and in the index are absolute or relative to the app root (the folder with `index.html`).
 
