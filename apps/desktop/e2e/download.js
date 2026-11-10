@@ -1,0 +1,369 @@
+// @ts-check
+/**
+ * Desktop download test: the built app downloads a pack's map images from a
+ * local mock tile server through the real interface, and the map shows them
+ * under its markers.
+ *
+ *   node apps/desktop/e2e/remotePack.js          # writes packs/e2e-remote/
+ *   ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
+ *   xvfb-run -a pnpm --filter @atlas/desktop test:e2e:download [path/to/binary]
+ *
+ * Linux only: the app's data, its web storage and the "system browser" are
+ * redirected into a temporary folder (XDG_DATA_HOME, XDG_CONFIG_HOME), so the
+ * test starts from a first launch and never touches the user's own data. Links
+ * open in a stand-in browser that only writes the URL down. No request leaves
+ * this computer: the pack's tiles point at 127.0.0.1.
+ *
+ * It checks, in three launches of the app:
+ *  1. the first game in ATLAS_BUNDLE_PACKS is shown first; its map image is
+ *     missing and the notice offers the download; a refusing server stops the
+ *     job with a plain reason; Standard detail downloads and the map shows it
+ *     (markers on the dots); Full detail fetches only the missing level, pauses
+ *     (no requests while paused) and resumes; the app is closed mid-way;
+ *  2. the unfinished job is offered again and finishes; nothing is fetched
+ *     twice; every request has the app's User-Agent and no cookie; a guide link
+ *     opens in the system browser; the user switches to the demo game;
+ *  3. the demo game is shown again on launch.
+ */
+import { readFile, rm } from 'node:fs/promises';
+import { DEFAULT_PORT, MAPS, MISSING_TILE, PACK_ID, remoteTileCount } from './remotePack.js';
+import { DOT, startTileServer } from './tileServer.js';
+import { check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
+
+const port = Number(process.env.ATLAS_E2E_TILE_PORT ?? DEFAULT_PORT);
+const version = /** @type {{ version: string }} */ (
+  JSON.parse(await readFile(here('../package.json'), 'utf8'))
+).version;
+const userAgent = `Atlas/${version} (offline map viewer)`;
+
+const [island, cave] = MAPS;
+if (!island || !cave) throw new Error('remotePack.js defines two maps');
+const standardTotal = remoteTileCount(island, island.maxZoom - 1) + remoteTileCount(cave);
+const fullTotal = remoteTileCount(island) + remoteTileCount(cave);
+
+/** @param {import('./webdriver.js').Session} s @param {string} state */
+const waitForPanel = (s, state, timeout = 60_000) =>
+  s.waitFor(
+    `document.querySelector('[data-testid="download-panel"]')?.dataset.state === '${state}'`,
+    {
+      timeout,
+      what: `the download panel to be ${state}`,
+    },
+  );
+
+/** @param {import('./webdriver.js').Session} s */
+const gameId = (s) =>
+  s.run(`
+    const select = [...document.querySelectorAll('.topbar select')]
+      .find((el) => [...el.options].some((o) => o.value === 'demo'));
+    return select?.value ?? null;`);
+
+/**
+ * The colour of a tile pixel as the pack protocol serves it: the map image at
+ * image pixel (x, y) on level z.
+ * @param {import('./webdriver.js').Session} s
+ * @param {import('./remotePack.js').TestMap} map
+ * @param {number} z @param {number} x @param {number} y
+ */
+async function tilePixel(s, map, z, x, y) {
+  const scale = 2 ** (z - map.maxZoom);
+  const tx = Math.floor((x * scale) / 256);
+  const ty = Math.floor((y * scale) / 256);
+  const px = Math.floor(x * scale) % 256;
+  const py = Math.floor(y * scale) % 256;
+  return s.runAsync(
+    `const [path, px, py] = args;
+     const config = await (await fetch(new URL('config.json', document.baseURI))).json();
+     const pack = config.packs.find((p) => p.id === '${PACK_ID}');
+     const response = await fetch(new URL(path, pack.url));
+     if (!response.ok) return { status: response.status };
+     const bitmap = await createImageBitmap(await response.blob());
+     const canvas = document.createElement('canvas');
+     canvas.width = bitmap.width;
+     canvas.height = bitmap.height;
+     const context = canvas.getContext('2d');
+     context.drawImage(bitmap, 0, 0);
+     return { status: 200, rgb: [...context.getImageData(px, py, 1, 1).data.slice(0, 3)] };`,
+    [`tiles/${map.slug}/${z}/${tx}/${ty}.png`, px, py],
+  );
+}
+
+/** @param {number[] | undefined} rgb @param {number[]} want */
+const near = (rgb, want, tolerance = 40) =>
+  !!rgb && rgb.every((value, i) => Math.abs(value - (want[i] ?? 0)) <= tolerance);
+
+/**
+ * The colour of the map image the window shows under the centre of the map,
+ * read from the tile image there.
+ * @param {import('./webdriver.js').Session} s
+ */
+const renderedCentrePixel = (s) =>
+  s.runAsync(`
+    const box = document.querySelector('[data-testid="map"]').getBoundingClientRect();
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+    const tile = [...document.querySelectorAll('.atlas-tiles img.leaflet-tile-loaded')].find((img) => {
+      const r = img.getBoundingClientRect();
+      return cx >= r.left && cx < r.right && cy >= r.top && cy < r.bottom;
+    });
+    if (!tile) return { error: 'no tile under the centre' };
+    const r = tile.getBoundingClientRect();
+    const bitmap = await createImageBitmap(await (await fetch(tile.src)).blob());
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    context.drawImage(bitmap, 0, 0);
+    const x = Math.floor(((cx - r.left) / r.width) * bitmap.width);
+    const y = Math.floor(((cy - r.top) / r.height) * bitmap.height);
+    return { src: tile.src, rgb: [...context.getImageData(x, y, 1, 1).data.slice(0, 3)] };`);
+
+/** @param {import('./webdriver.js').Session} s @param {string} layer */
+const status = (s, layer) =>
+  s.runAsync(`
+    const config = await (await fetch(new URL('config.json', document.baseURI))).json();
+    const pack = config.packs.find((p) => p.id === '${PACK_ID}');
+    const response = await fetch(new URL('offline-tiles/${layer}.json', pack.url), { cache: 'no-store' });
+    return response.ok ? response.json() : null;`);
+
+const tiles = await startTileServer({ port });
+const environment = await isolatedEnvironment();
+const driver = await startDriver({ env: environment.env });
+/** @type {import('./webdriver.js').Session | null} */
+let session = null;
+const fetched = () => tiles.seen.filter((r) => r.status !== 403);
+
+try {
+  // ---- First launch -------------------------------------------------------
+  session = await driver.session();
+  let s = session;
+  await s.waitFor(`document.querySelector('[data-testid="marker-count"]')?.textContent === '5'`, {
+    what: 'the test pack to load',
+  });
+  check((await gameId(s)) === PACK_ID, 'the first pack in ATLAS_BUNDLE_PACKS is the default game');
+  await s.waitFor(`document.querySelector('[data-testid="download-map-images"]')`, {
+    what: 'the download button',
+  });
+  check(
+    (
+      await s.run(`return document.querySelector('[data-testid="tile-notice"]').textContent;`)
+    ).includes('Map image not installed'),
+    'the notice says the map image is missing',
+  );
+  await s.screenshot('download-1-before');
+
+  await s.click('[data-testid="download-map-images"]');
+  await waitForPanel(s, 'choose');
+  const numbers = await s.run(`return {
+    standard: document.querySelector('[data-testid="detail-standard"]')?.textContent,
+    full: document.querySelector('[data-testid="detail-full"]')?.textContent,
+  };`);
+  console.log('Detail options:', JSON.stringify(numbers));
+  check(
+    numbers.standard?.startsWith(`${standardTotal} images`),
+    `Standard offers ${standardTotal} images`,
+  );
+  check(numbers.full?.startsWith(`${fullTotal} images`), `Full detail offers ${fullTotal} images`);
+  await s.screenshot('download-2-choose');
+
+  // A server that refuses access stops the job with a plain reason.
+  tiles.setMode('refuse');
+  await s.click('[data-testid="start-download"]');
+  await waitForPanel(s, 'stopped');
+  const reason = await s.run(
+    `return document.querySelector('[data-testid="download-reason"]')?.textContent;`,
+  );
+  check(
+    /refused access \(HTTP 403\)/.test(reason ?? ''),
+    'a 403 stops the job with a plain reason',
+  );
+  const refused = tiles.seen.length;
+  check(
+    refused >= 1 && refused <= 2,
+    `the job stopped after the first refusal (${refused} requests)`,
+  );
+  await s.screenshot('download-3-error');
+
+  // Standard detail.
+  tiles.setMode('slow');
+  await s.click('[data-testid="download-panel"] .button-primary');
+  await waitForPanel(s, 'running');
+  await s.waitFor(
+    `/images\\/s/.test(document.querySelector('[data-testid="download-rate"]')?.textContent ?? '')`,
+    {
+      what: 'a download speed',
+    },
+  );
+  await s.screenshot('download-4-progress');
+  await waitForPanel(s, 'done', 120_000);
+  const standardFetched = fetched().map((r) => r.path);
+  check(
+    standardFetched.length === standardTotal,
+    `Standard fetched ${standardTotal} tiles once each`,
+  );
+  const surface = await status(s, 'island');
+  check(
+    surface?.nativeMinZoom === 0 &&
+      surface?.nativeMaxZoom === island.maxZoom - 1 &&
+      !surface.complete,
+    'the status file lists levels 0 to 2 of the island',
+  );
+  await s.waitFor(
+    `!document.querySelector('[data-testid="tile-notice"]') &&
+      document.querySelectorAll('.atlas-tiles img.leaflet-tile-loaded').length > 0`,
+    {
+      what: 'the map to show the downloaded tiles without a restart',
+    },
+  );
+  const centre = await renderedCentrePixel(s);
+  console.log('Map image under the centre beacon:', JSON.stringify(centre));
+  check(near(centre.rgb, DOT), 'the centre marker sits on its dot in the shown map image');
+  for (const beacon of island.beacons) {
+    const pixel = await tilePixel(s, island, 2, beacon.x, beacon.y);
+    check(near(pixel.rgb, DOT, 10), `level 2 has the dot under ${beacon.name}`);
+  }
+  const built = await tilePixel(s, island, 0, 1024, 768);
+  check(built.status === 200, 'level 0 was built from the downloaded level');
+  check(
+    (built.rgb?.[0] ?? 0) > 140 && (built.rgb?.[1] ?? 255) < 140,
+    'the built level shows the dot',
+  );
+  await s.screenshot('download-5-done');
+
+  // Full detail: only the top level is fetched. Pause, then close the app mid-way.
+  await s.click('[data-testid="download-panel"] .row-actions .button:not(.button-primary)');
+  await waitForPanel(s, 'choose');
+  await s.click('[data-detail="full"]');
+  await s.click('[data-testid="start-download"]');
+  await waitForPanel(s, 'running');
+  await s.waitFor(
+    `/\\b([1-9]\\d*) of/.test(document.querySelector('[data-testid="download-count"]')?.textContent ?? '')`,
+    {
+      what: 'the first full-detail tiles',
+    },
+  );
+  await s.click('[data-testid="pause-download"]');
+  await waitForPanel(s, 'paused');
+  await sleep(1500);
+  const whilePaused = tiles.seen.length;
+  await sleep(2500);
+  check(tiles.seen.length === whilePaused, 'no requests while paused');
+  await s.screenshot('download-6-paused');
+  await s.resize(720, 800);
+  await sleep(500);
+  await s.screenshot('download-6-paused-narrow');
+  await s.resize(1280, 800);
+  await s.click('[data-testid="resume-download"]');
+  await waitForPanel(s, 'running');
+  await s.waitFor(
+    `(() => { const t = document.querySelector('[data-testid="download-count"]')?.textContent ?? '';
+      const n = Number(t.split(' ')[0].replace(/,/g, '')); return n > ${standardTotal + 8}; })()`,
+    {
+      what: 'more full-detail tiles',
+    },
+  );
+  await s.close();
+  session = null;
+  const beforeRestart = fetched().length;
+  check(beforeRestart < fullTotal, `the app was closed mid-way (${beforeRestart} of ${fullTotal})`);
+
+  // ---- Second launch ------------------------------------------------------
+  session = await driver.session();
+  s = session;
+  await s.waitFor(`document.querySelector('[data-testid="marker-count"]')?.textContent === '5'`);
+  check((await gameId(s)) === PACK_ID, 'the game is still the test pack');
+  await s.waitFor(`document.querySelectorAll('.atlas-tiles img.leaflet-tile-loaded').length > 0`, {
+    what: 'tiles shown at once after a restart',
+  });
+  await s.click('[data-testid="map-images-button"]');
+  await s.waitFor(`document.querySelector('[data-testid="download-unfinished"]')`, {
+    what: 'the unfinished download to be offered',
+  });
+  await s.screenshot('download-7-unfinished');
+  tiles.setMode('ok');
+  await s.click('[data-testid="download-unfinished"] .button-primary');
+  await waitForPanel(s, 'done', 120_000);
+  await s.screenshot('download-8-full-done');
+
+  const all = fetched();
+  const counts = new Map();
+  for (const request of all) counts.set(request.path, (counts.get(request.path) ?? 0) + 1);
+  check(counts.size === fullTotal, `every one of the ${fullTotal} remote tiles was fetched`);
+  check(
+    standardFetched.every((path) => counts.get(path) === 1),
+    'the upgrade to full detail fetched nothing twice',
+  );
+  // A tile in flight when the app closed may be fetched again; nothing else.
+  check(
+    all.length <= fullTotal + 2,
+    `at most the tiles in flight were fetched again (${all.length})`,
+  );
+  const missingPath = `/${MISSING_TILE.map}/13/${MISSING_TILE.x + 200}/${MISSING_TILE.y + 400}.png`;
+  check(counts.get(missingPath) === 1, 'a 404 tile was asked for once');
+  check(
+    tiles.seen.every(
+      (r) => r.userAgent === userAgent && r.accept === 'image/*' && r.cookie === undefined,
+    ),
+    `every request says "${userAgent}", asks for images and sends no cookie`,
+  );
+  const full = await status(s, 'island');
+  check(full?.complete === true && full.nativeMaxZoom === island.maxZoom, 'the island is complete');
+  for (const beacon of island.beacons) {
+    const pixel = await tilePixel(s, island, 3, beacon.x, beacon.y);
+    check(near(pixel.rgb, DOT, 10), `level 3 has the dot under ${beacon.name}`);
+  }
+  for (const beacon of cave.beacons) {
+    const pixel = await tilePixel(s, cave, 2, beacon.x, beacon.y);
+    check(near(pixel.rgb, DOT, 10), `the cave has the dot under ${beacon.name}`);
+  }
+
+  // Close up on the centre beacon, then follow its guide link.
+  await s.click('[data-testid="download-panel"] .icon-button');
+  await s.type('input[role="combobox"]', 'Centre beacon');
+  await s.waitFor(
+    `document.querySelector('[data-testid="selected-name"]')?.textContent === 'Centre beacon'`,
+  );
+  await sleep(1500);
+  const close = await renderedCentrePixel(s);
+  console.log('Close up under the centre beacon:', JSON.stringify(close));
+  check(near(close.rgb, DOT), 'close up, the centre marker sits on its dot');
+  await s.screenshot('download-9-markers-on-dots');
+  const pageUrl = await s.run('return location.href;');
+  await s.click('.guide-body a');
+  let opened = '';
+  for (let start = Date.now(); Date.now() - start < 10_000 && !opened; await sleep(250)) {
+    opened = await readFile(environment.opened, 'utf8').catch(() => '');
+  }
+  check(
+    opened.trim() === 'https://example.com/atlas-e2e-guide',
+    'the guide link opened in the system browser',
+  );
+  check((await s.run('return location.href;')) === pageUrl, 'the window stayed on the app');
+
+  await s.click('.topbar option[value="demo"]');
+  await s.waitFor(
+    `document.querySelector('[data-testid="marker-count"]')?.textContent === '5,000'`,
+    {
+      what: 'the demo game',
+    },
+  );
+  await sleep(500);
+  await s.close();
+  session = null;
+
+  // ---- Third launch -------------------------------------------------------
+  session = await driver.session();
+  s = session;
+  await s.waitFor(
+    `document.querySelector('[data-testid="marker-count"]')?.textContent === '5,000'`,
+    {
+      what: 'the demo game after a restart',
+    },
+  );
+  check((await gameId(s)) === 'demo', 'the last game picked is shown after a restart');
+} finally {
+  await session?.close();
+  driver.stop();
+  await tiles.close();
+  await rm(environment.root, { recursive: true, force: true });
+}

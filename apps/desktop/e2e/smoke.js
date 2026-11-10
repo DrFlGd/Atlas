@@ -3,93 +3,69 @@
  * Desktop smoke test: starts the built app through tauri-driver (WebDriver)
  * and checks that the window shows the map with its PMTiles tiles and
  * markers, that progress is saved (IndexedDB works), that the pack protocol
- * answers byte-range requests, and saves a screenshot.
+ * answers byte-range requests, that the shell commands answer, and saves a
+ * screenshot. On Linux it also exports and imports progress through the
+ * native save and open dialogs (driven with `xdotool`) and checks that a
+ * guide link opens in the system browser, not in the app window.
  *
  *   pnpm --filter @atlas/desktop test:e2e [path/to/binary]
  *
  * Needs `tauri-driver` (`cargo install tauri-driver --locked`) and the
  * platform's WebDriver: WebKitWebDriver on Linux (package
  * `webkitgtk-webdriver`, or `webkit2gtk-driver` on older Ubuntu and
- * Debian releases). On a machine without a display, run it under
- * `xvfb-run`. Build the app first with `pnpm desktop:build`, or
+ * Debian releases) plus `xdotool`; on Windows, Microsoft Edge WebDriver
+ * matching the installed WebView2, named by `TAURI_NATIVE_DRIVER` when it
+ * is not on the PATH. On a
+ * machine without a display, run it under `xvfb-run`. Build the app first
+ * with `pnpm desktop:build`, or
  * `pnpm --filter @atlas/desktop build --debug --no-bundle` and pass
  * `src-tauri/target/debug/atlas-desktop`.
  */
-import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
 
-const here = (/** @type {string} */ path) => fileURLToPath(new URL(path, import.meta.url));
-const exe = process.platform === 'win32' ? '.exe' : '';
-const app = process.argv[2] ?? here(`../src-tauri/target/release/atlas-desktop${exe}`);
-const resultsDir = here('../test-results/');
+const linux = process.platform === 'linux';
+const version = /** @type {{ version: string }} */ (
+  JSON.parse(await readFile(here('../package.json'), 'utf8'))
+).version;
 const timeoutMs = 60_000;
-
-const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Finds a free local port, so the test never collides with other servers. */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      server.close(() => {
-        resolve(typeof address === 'object' && address ? address.port : 0);
-      });
-    });
-  });
-}
-
-const port = await freePort();
-const nativePort = await freePort();
-const driverUrl = `http://127.0.0.1:${port}`;
-const driver = spawn(
-  process.env.TAURI_DRIVER ?? 'tauri-driver',
-  ['--port', String(port), '--native-port', String(nativePort)],
-  { stdio: ['ignore', 'inherit', 'inherit'] },
-);
+const run = promisify(execFile);
 
 /**
- * @param {string} method
- * @param {string} path
- * @param {unknown} [body]
- * @returns {Promise<any>}
+ * Waits for a native dialog with this title, then types a path into it and
+ * presses Enter, as a user would.
+ * @param {string} title @param {string} path
  */
-async function wd(method, path, body) {
-  const response = await fetch(`${driverUrl}${path}`, {
-    method,
-    headers: { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const json = /** @type {{ value: unknown }} */ (await response.json());
-  if (!response.ok) throw new Error(`${method} ${path}: ${JSON.stringify(json.value)}`);
-  return json.value;
-}
-
-/** @param {boolean} condition @param {string} message */
-function check(condition, message) {
-  if (!condition) throw new Error(`Check failed: ${message}`);
-  console.log(`ok - ${message}`);
-}
-
-let sessionId = '';
-try {
-  for (let start = Date.now(); ; await sleep(250)) {
-    const ready = await fetch(`${driverUrl}/status`).then(
-      (response) => response.ok,
-      () => false,
+async function answerFileDialog(title, path) {
+  let window = '';
+  for (let start = Date.now(); !window; await sleep(250)) {
+    window = await run('xdotool', ['search', '--name', `^${title}$`]).then(
+      ({ stdout }) => stdout.trim().split('\n')[0] ?? '',
+      () => '',
     );
-    if (ready) break;
-    if (Date.now() - start > 15_000) throw new Error('tauri-driver did not start');
+    if (!window && Date.now() - start > 15_000) throw new Error(`No "${title}" dialog appeared`);
   }
+  await sleep(500);
+  await run('xdotool', ['windowfocus', '--sync', window]);
+  // Ctrl+L opens the location field in an open dialog; in a save dialog it
+  // selects the name field. Either way the typed path replaces its text.
+  await run('xdotool', ['key', '--window', window, 'ctrl+l']);
+  await run('xdotool', ['key', '--window', window, 'ctrl+a']);
+  await run('xdotool', ['type', '--window', window, '--delay', '20', path]);
+  await sleep(300);
+  await run('xdotool', ['key', '--window', window, 'Return']);
+}
 
-  ({ sessionId } = await wd('POST', '/session', {
-    capabilities: { alwaysMatch: { 'tauri:options': { application: app } } },
-  }));
-  /** @param {string} script */
-  const run = (script) => wd('POST', `/session/${sessionId}/execute/sync`, { script, args: [] });
+const environment = linux ? await isolatedEnvironment() : null;
+const driver = await startDriver({ env: environment?.env });
+/** @type {import('./webdriver.js').Session | null} */
+let session = null;
+try {
+  session = await driver.session();
+  const s = session;
 
   /**
    * @type {{ error: string | null, map: boolean, tiles: number, loaded: number,
@@ -97,7 +73,7 @@ try {
    */
   let state = { error: null, map: false, tiles: 0, loaded: 0, markers: null, storage: null };
   for (let start = Date.now(); Date.now() - start < timeoutMs; await sleep(500)) {
-    state = await run(`
+    state = await s.run(`
       const tiles = [...document.querySelectorAll('.atlas-tiles img')];
       return {
         error: document.querySelector('.status-error')?.textContent ?? null,
@@ -118,35 +94,117 @@ try {
 
   // The request the PMTiles reader makes first: the archive header.
   /** @type {{ url: string, status: number, contentRange: string | null, bytes: number }} */
-  const probe = await wd('POST', `/session/${sessionId}/execute/async`, {
-    args: [],
-    script: `
-      const done = arguments[arguments.length - 1];
-      (async () => {
-        const configUrl = new URL('config.json', document.baseURI);
-        const config = await (await fetch(configUrl, { cache: 'no-store' })).json();
-        const packUrl = new URL(config.packs?.[0]?.url ?? config.packUrl, configUrl);
-        const layers = await (await fetch(new URL('layers.json', packUrl))).json();
-        const layer = layers.find((candidate) => candidate.tiles.type === 'pmtiles');
-        if (!layer) return { url: '', status: 0, contentRange: null, bytes: 0 };
-        const url = new URL(layer.tiles.url, packUrl).href;
-        const response = await fetch(url, { headers: { range: 'bytes=0-126' } });
-        const bytes = (await response.arrayBuffer()).byteLength;
-        return { url, status: response.status, contentRange: response.headers.get('content-range'), bytes };
-      })().then(done, (error) => done({ url: String(error), status: 0, contentRange: null, bytes: 0 }));`,
-  });
+  const probe = await s.runAsync(`
+    const configUrl = new URL('config.json', document.baseURI);
+    const config = await (await fetch(configUrl, { cache: 'no-store' })).json();
+    const packUrl = new URL(config.packs?.[0]?.url ?? config.packUrl, configUrl);
+    const layers = await (await fetch(new URL('layers.json', packUrl))).json();
+    const layer = layers.find((candidate) => candidate.tiles.type === 'pmtiles');
+    if (!layer) return { url: '', status: 0, contentRange: null, bytes: 0 };
+    const url = new URL(layer.tiles.url, packUrl).href;
+    const response = await fetch(url, { headers: { range: 'bytes=0-126' } });
+    const bytes = (await response.arrayBuffer()).byteLength;
+    return { url, status: response.status, contentRange: response.headers.get('content-range'), bytes };`);
   console.log('Range request:', JSON.stringify(probe));
   if (probe.url) {
     check(probe.status === 206 && probe.bytes === 127, 'PMTiles byte ranges are answered with 206');
     check(/^bytes 0-126\/\d+$/.test(probe.contentRange ?? ''), 'Content-Range is reported');
   }
 
-  await mkdir(resultsDir, { recursive: true });
-  const png = await wd('GET', `/session/${sessionId}/screenshot`);
-  const screenshot = `${resultsDir}desktop-smoke.png`;
-  await writeFile(screenshot, Buffer.from(png, 'base64'));
-  console.log(`Screenshot saved to ${screenshot}`);
+  // The shell's commands answer the page.
+  const info = await s.runAsync(`return window.__TAURI_INTERNALS__.invoke('desktop_info');`);
+  console.log('Desktop info:', JSON.stringify(info));
+  check(info?.version === version, `the shell reports version ${version}`);
+  check(
+    !(await s.run(
+      `return !!document.querySelector('[data-testid="download-map-images"], [data-testid="map-images-button"]');`,
+    )),
+    'a pack without remote map images offers no download',
+  );
+  await s.screenshot('desktop-smoke');
+
+  // A location with a guide, to mark found and to follow its link.
+  await s.type('input[role="combobox"]', 'Rusted key 14');
+  await s.waitFor(
+    `document.querySelector('[data-testid="selected-name"]')?.textContent === 'Rusted key 14'`,
+    { what: 'Rusted key 14 to be selected' },
+  );
+  const found = () =>
+    s.run(
+      `return document.querySelector('[data-testid="found-toggle"]')?.getAttribute('aria-pressed');`,
+    );
+  await s.click('[data-testid="found-toggle"]');
+  await s.waitFor(
+    `document.querySelector('[data-testid="found-toggle"]')?.getAttribute('aria-pressed') === 'true'`,
+  );
+
+  if (environment) {
+    // Export through the save dialog, undo the change, then import it back.
+    const exported = join(environment.root, 'progress.json');
+    await s.click('.profile-button');
+    await s.waitFor(`document.querySelector('[data-testid="profile-dialog"]')?.open`);
+    await s.run(`[...document.querySelectorAll('[data-testid="profile-dialog"] button')]
+      .find((button) => button.textContent.includes('Export this profile')).click();`);
+    await answerFileDialog('Export progress', exported);
+    await s.waitFor(
+      `[...document.querySelectorAll('[data-testid="toast"]')].some((t) => t.textContent.includes('Exported 1 profile'))`,
+      { what: 'the export to be confirmed' },
+    );
+    /** @type {{ format: string, profiles: unknown[], progress: { targetId: string, deleted: boolean }[] }} */
+    const file = JSON.parse(await readFile(exported, 'utf8'));
+    check(
+      file.format === 'atlas-progress' &&
+        file.profiles.length === 1 &&
+        file.progress.some((row) => row.targetId === 'demo:loc:deep-0014' && !row.deleted),
+      'the save dialog wrote the profile with the found location',
+    );
+    await s.click('[data-testid="profile-dialog"] .dialog-head .icon-button');
+    await s.click('[data-testid="found-toggle"]');
+    await s.waitFor(
+      `document.querySelector('[data-testid="found-toggle"]')?.getAttribute('aria-pressed') === 'false'`,
+    );
+
+    await s.click('.profile-button');
+    await s.waitFor(`document.querySelector('[data-testid="profile-dialog"]')?.open`);
+    await s.run(`document.querySelector('[data-testid="import-file-desktop"]').click();`);
+    await answerFileDialog('Import progress', exported);
+    await s.waitFor(`document.querySelector('[data-testid="import-review"]')`, {
+      what: 'the opened file to be reviewed',
+    });
+    await s.click('[data-testid="import-review"] input[value="replace"]');
+    await s.waitFor(`document.querySelector('[data-testid="import-review"] [role="status"]')`);
+    await s.click('[data-testid="import-review"] .button-primary');
+    await s.waitFor(
+      `[...document.querySelectorAll('[data-testid="toast"]')].some((t) => t.textContent.includes('Imported progress.json (replace)'))`,
+      { what: 'the import to be confirmed' },
+    );
+    await s.click('[data-testid="profile-dialog"] .dialog-head .icon-button');
+    await s.waitFor(
+      `document.querySelector('[data-testid="found-toggle"]')?.getAttribute('aria-pressed') === 'true'`,
+      { what: 'the imported progress to be shown' },
+    );
+    check((await found()) === 'true', 'the open dialog imported the file back');
+
+    // A guide link opens in the system browser, and the window stays on the app.
+    const pageUrl = await s.run('return location.href;');
+    const href = await s.run(`return document.querySelector('.guide-body a')?.href;`);
+    await s.click('.guide-body a');
+    let opened = '';
+    for (let start = Date.now(); Date.now() - start < 10_000 && !opened; await sleep(250)) {
+      opened = await readFile(environment.opened, 'utf8').catch(() => '');
+    }
+    check(
+      !!href && opened.trim() === href,
+      `the guide link opened in the system browser (${href})`,
+    );
+    check((await s.run('return location.href;')) === pageUrl, 'the window stayed on the app');
+  } else {
+    console.log(
+      '# skipped: native dialogs and the system browser are only driven on Linux (xdotool)',
+    );
+  }
 } finally {
-  if (sessionId) await wd('DELETE', `/session/${sessionId}`).catch(() => undefined);
-  driver.kill();
+  await session?.close();
+  driver.stop();
+  if (environment) await rm(environment.root, { recursive: true, force: true });
 }

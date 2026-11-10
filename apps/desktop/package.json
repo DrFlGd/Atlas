@@ -7,7 +7,9 @@
     "dev": "tauri dev",
     "build": "tauri build --config src-tauri/tauri.build.conf.json",
     "test:e2e": "node e2e/smoke.js",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:e2e:download": "node e2e/download.js",
+    "e2e:pack": "node e2e/remotePack.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4"
