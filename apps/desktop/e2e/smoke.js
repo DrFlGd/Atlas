@@ -8,7 +8,8 @@
  *
  * Needs `tauri-driver` (`cargo install tauri-driver --locked`) and the
  * platform's WebDriver: WebKitWebDriver on Linux (package
- * `webkit2gtk-driver`). On a machine without a display, run it under
+ * `webkitgtk-webdriver`, or `webkit2gtk-driver` on older Ubuntu and
+ * Debian releases). On a machine without a display, run it under
  * `xvfb-run`. Build the app first with `pnpm desktop:build`, or
  * `pnpm --filter @atlas/desktop build --debug --no-bundle` and pass
  * `src-tauri/target/debug/atlas-desktop`.

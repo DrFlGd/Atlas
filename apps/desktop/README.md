@@ -32,7 +32,7 @@ pnpm desktop:build   # release build and installers
 
 Rust checks, from `apps/desktop/src-tauri`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`. They work on a fresh clone; nothing has to be built first.
 
-`pnpm --filter @atlas/desktop test:e2e` starts the built app through [tauri-driver](https://v2.tauri.app/develop/tests/webdriver/), checks that the map and its tiles load and that the pack protocol answers range requests, and saves a screenshot to `apps/desktop/test-results/`. It needs `cargo install tauri-driver --locked` and, on Linux, the `webkit2gtk-driver` package (and `xvfb-run` without a display). CI runs it on Linux.
+`pnpm --filter @atlas/desktop test:e2e` starts the built app through [tauri-driver](https://v2.tauri.app/develop/tests/webdriver/), checks that the map and its tiles load and that the pack protocol answers range requests, and saves a screenshot to `apps/desktop/test-results/`. It needs `cargo install tauri-driver --locked` and, on Linux, the package that provides `WebKitWebDriver` (`webkitgtk-webdriver` on newer Ubuntu and Debian releases, `webkit2gtk-driver` on older ones) (and `xvfb-run` without a display). CI runs it on Linux.
 
 ## How packs are served
 
