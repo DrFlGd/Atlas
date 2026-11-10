@@ -46,11 +46,13 @@ export function App() {
 function Shell() {
   const panes = useAtlas((s) => s.panes);
   const loading = useAtlas((s) => s.status.kind === 'loading');
+  const persistent = useAtlas((s) => s.persistent);
   return (
     <div
       className="shell"
       data-filters={panes.filters ? 'open' : 'closed'}
       data-details={panes.details ? 'open' : 'closed'}
+      data-storage={persistent ? 'saved' : 'memory'}
       aria-busy={loading}
     >
       <TopBar search={<SearchBox />} />

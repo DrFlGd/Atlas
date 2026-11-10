@@ -8,7 +8,7 @@ import { z } from 'zod';
  *     { "packs": [{ "id": "demo", "url": "packs/demo/", "title": "Atlas demo world" }] }
  *
  * `id` is the pack's `gameId`; `url` is the pack root, absolute or relative
- * to the index file.
+ * to the app root (the folder holding `index.html` and `config.json`).
  */
 export const packEntrySchema = z.strictObject({
   id: gameIdSchema,

@@ -1,8 +1,9 @@
 // @ts-check
 /**
  * Desktop smoke test: starts the built app through tauri-driver (WebDriver)
- * and checks that the window shows the map with its PMTiles tiles, that the
- * pack protocol answers byte-range requests, and saves a screenshot.
+ * and checks that the window shows the map with its PMTiles tiles and
+ * markers, that progress is saved (IndexedDB works), that the pack protocol
+ * answers byte-range requests, and saves a screenshot.
  *
  *   pnpm --filter @atlas/desktop test:e2e [path/to/binary]
  *
@@ -90,8 +91,11 @@ try {
   /** @param {string} script */
   const run = (script) => wd('POST', `/session/${sessionId}/execute/sync`, { script, args: [] });
 
-  /** @type {{ error: string | null, map: boolean, tiles: number, loaded: number }} */
-  let state = { error: null, map: false, tiles: 0, loaded: 0 };
+  /**
+   * @type {{ error: string | null, map: boolean, tiles: number, loaded: number,
+   *   markers: string | null, storage: string | null }}
+   */
+  let state = { error: null, map: false, tiles: 0, loaded: 0, markers: null, storage: null };
   for (let start = Date.now(); Date.now() - start < timeoutMs; await sleep(500)) {
     state = await run(`
       const tiles = [...document.querySelectorAll('.atlas-tiles img')];
@@ -100,6 +104,8 @@ try {
         map: !!document.querySelector('.leaflet-container'),
         tiles: tiles.length,
         loaded: tiles.filter((tile) => tile.complete && tile.naturalWidth > 0).length,
+        markers: document.querySelector('[data-testid="marker-count"]')?.textContent ?? null,
+        storage: document.querySelector('.shell')?.getAttribute('data-storage') ?? null,
       };`);
     if (state.error || (state.tiles > 0 && state.loaded === state.tiles)) break;
   }
@@ -107,6 +113,8 @@ try {
   check(state.error === null, 'the app shows no load error');
   check(state.map, 'the map is shown');
   check(state.tiles > 0 && state.loaded === state.tiles, 'every visible tile has loaded');
+  check(/^[1-9][\d,]*$/.test(state.markers ?? ''), 'the pack markers are shown');
+  check(state.storage === 'saved', 'progress is saved on this device');
 
   // The request the PMTiles reader makes first: the archive header.
   /** @type {{ url: string, status: number, contentRange: string | null, bytes: number }} */
@@ -117,7 +125,7 @@ try {
       (async () => {
         const configUrl = new URL('config.json', document.baseURI);
         const config = await (await fetch(configUrl, { cache: 'no-store' })).json();
-        const packUrl = new URL(config.packUrl, configUrl);
+        const packUrl = new URL(config.packs?.[0]?.url ?? config.packUrl, configUrl);
         const layers = await (await fetch(new URL('layers.json', packUrl))).json();
         const layer = layers.find((candidate) => candidate.tiles.type === 'pmtiles');
         if (!layer) return { url: '', status: 0, contentRange: null, bytes: 0 };

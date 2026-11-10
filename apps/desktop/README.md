@@ -32,13 +32,13 @@ pnpm desktop:build   # release build and installers
 
 Rust checks, from `apps/desktop/src-tauri`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`. They work on a fresh clone; nothing has to be built first.
 
-`pnpm --filter @atlas/desktop test:e2e` starts the built app through [tauri-driver](https://v2.tauri.app/develop/tests/webdriver/), checks that the map and its tiles load and that the pack protocol answers range requests, and saves a screenshot to `apps/desktop/test-results/`. It needs `cargo install tauri-driver --locked` and, on Linux, the package that provides `WebKitWebDriver` (`webkitgtk-webdriver` on newer Ubuntu and Debian releases, `webkit2gtk-driver` on older ones) (and `xvfb-run` without a display). CI runs it on Linux.
+`pnpm --filter @atlas/desktop test:e2e` starts the built app through [tauri-driver](https://v2.tauri.app/develop/tests/webdriver/), checks that the map, its tiles and markers load, that progress can be saved (IndexedDB works), and that the pack protocol answers range requests, and saves a screenshot to `apps/desktop/test-results/`. It needs `cargo install tauri-driver --locked` and, on Linux, the package that provides `WebKitWebDriver` (`webkitgtk-webdriver` on newer Ubuntu and Debian releases, `webkit2gtk-driver` on older ones) (and `xvfb-run` without a display). CI runs it on Linux.
 
 ## How packs are served
 
 PMTiles archives are read with HTTP range requests. Tauri's built-in protocol for the bundled frontend (`tauri://localhost`, or `http://tauri.localhost` on Windows) ignores the `Range` header and always answers `200` with the whole file, which the PMTiles reader rejects. So the desktop build does not embed packs in the frontend:
 
-- `scripts/prepare-frontend.js` copies the web build without `packs/` and rewrites `config.json` so `packUrl` points at the `atlas-pack` protocol: `atlas-pack://localhost/demo/` on Linux and macOS, `http://atlas-pack.localhost/demo/` on Windows (WebView2 serves custom schemes that way).
+- `scripts/prepare-frontend.js` copies the web build without `packs/` and writes an explicit `packs` list into `config.json`, one entry per pack in the build's `packs/index.json` (set by `ATLAS_BUNDLE_PACKS`), each pointing at the `atlas-pack` protocol: `atlas-pack://localhost/<id>/` on Linux and macOS, `http://atlas-pack.localhost/<id>/` on Windows (WebView2 serves custom schemes that way). The app then never requests the index.
 - `src-tauri/tauri.build.conf.json` ships the web build's `packs/` folder as app resources. It is only merged in by `tauri build`, so Rust checks do not need a web build first.
 - `src-tauri/src/packs.rs` registers each bundled pack folder under its folder name and serves `<scheme>/<pack id>/<file>` from it, with single byte ranges, `ETag`, CORS headers (the page and the protocol are different origins), and no access outside registered folders (no `..`, hidden files or symbolic links that leave the folder).
 
