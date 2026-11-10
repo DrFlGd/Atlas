@@ -1,8 +1,15 @@
 import { z } from 'zod';
 import { anyIdSchema, gameIdSchema, idOf } from './ids';
 
-/** The pack schema version this package reads and writes. */
-export const SCHEMA_VERSION = 1;
+/**
+ * The pack schema version this package writes. Version 2 adds the optional
+ * descriptive fields of the manifest (see {@link manifestSchema}); version 1
+ * packs, which have none of them, are still read.
+ */
+export const SCHEMA_VERSION = 2;
+
+/** Every pack schema version this package reads. */
+export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2];
 
 const nonEmpty = z.string().trim().min(1);
 const nonNegativeInt = z.int().nonnegative();
@@ -29,8 +36,7 @@ export const attributionSchema = z.strictObject({
  */
 export const idMigrationsSchema = z.record(anyIdSchema, anyIdSchema);
 
-export const manifestSchema = z.strictObject({
-  schemaVersion: z.literal(SCHEMA_VERSION),
+const manifestBase = {
   gameId: gameIdSchema,
   /** Display name of the pack. */
   title: nonEmpty,
@@ -39,7 +45,109 @@ export const manifestSchema = z.strictObject({
   gamePatch: nonEmpty,
   attribution: z.array(attributionSchema),
   idMigrations: idMigrationsSchema,
+};
+
+const isoTime = z.iso.datetime({ offset: true });
+
+/** The program that wrote a pack: an app or a command-line tool, and its version. */
+export const writtenBySchema = z.strictObject({
+  name: nonEmpty.max(100),
+  version: nonEmpty.max(50),
 });
+
+/** Where an imported pack's content came from. Absent for packs built by hand or by a tool. */
+export const packSourceSchema = z.strictObject({
+  importer: z.strictObject({ id: nonEmpty.max(64), title: nonEmpty.max(200) }),
+  /** One entry per imported page, in the order the maps appear. */
+  pages: z.array(
+    z.strictObject({
+      url: z.url(),
+      /** The map the page became. */
+      mapId: idOf('map').optional(),
+      importedAt: isoTime,
+    }),
+  ),
+});
+
+/** The map images of one layer that are in the pack folder, as last recorded. */
+export const layerImagesSchema = z.strictObject({
+  /** Complete pyramid levels. */
+  levels: z.array(nonNegativeInt.max(24)),
+  /** Every level from `minZoom` to `maxZoom` is complete. */
+  complete: z.boolean(),
+  /** Image files and their bytes, when last counted. */
+  files: nonNegativeInt.optional(),
+  bytes: nonNegativeInt.optional(),
+  updatedAt: isoTime,
+});
+
+/** A summary of what the pack holds, for people and tools that read the manifest alone. */
+export const packContentsSchema = z.strictObject({
+  counts: z.strictObject({
+    maps: nonNegativeInt,
+    layers: nonNegativeInt,
+    locations: nonNegativeInt,
+    categories: nonNegativeInt,
+    regions: nonNegativeInt,
+    guides: nonNegativeInt,
+  }),
+  maps: z.array(
+    z.strictObject({
+      id: idOf('map'),
+      name: nonEmpty,
+      width: z.int().positive(),
+      height: z.int().positive(),
+      locations: nonNegativeInt,
+      layers: z.array(
+        z.strictObject({
+          id: idOf('layer'),
+          name: nonEmpty,
+          minZoom: nonNegativeInt,
+          maxZoom: nonNegativeInt.max(24),
+          /** How the tiles are stored: one archive, or a `{z}/{x}/{y}` folder. */
+          tiles: z.enum(['pmtiles', 'xyz']),
+          /** The folder's images can be downloaded from a remote source. */
+          downloadable: z.boolean(),
+          images: layerImagesSchema.optional(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
+ * Descriptive fields are informational: a value that does not have the
+ * expected shape is dropped rather than making the whole pack unreadable,
+ * and the app never relies on the numbers being current.
+ */
+const descriptive = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
+
+/** A version 1 manifest: identity, versions and attribution only. */
+export const manifestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  ...manifestBase,
+});
+
+/**
+ * A version 2 manifest: the same fields plus an optional description of the
+ * pack, so a pack folder says what it is without the app (see the root
+ * README, "Data packs").
+ */
+export const manifestV2Schema = z.strictObject({
+  schemaVersion: z.literal(2),
+  ...manifestBase,
+  /** When the pack was first written, and when its content last changed. */
+  created: descriptive(isoTime),
+  updated: descriptive(isoTime),
+  writtenBy: descriptive(writtenBySchema),
+  source: descriptive(packSourceSchema),
+  contents: descriptive(packContentsSchema),
+});
+
+export const manifestSchema = z.discriminatedUnion('schemaVersion', [
+  manifestV1Schema,
+  manifestV2Schema,
+]);
 
 // ---------------------------------------------------------------------------
 // Maps and layers
@@ -273,6 +381,11 @@ export const presetSchema = z.strictObject({
 
 export type Attribution = z.infer<typeof attributionSchema>;
 export type PackManifest = z.infer<typeof manifestSchema>;
+export type PackManifestV2 = z.infer<typeof manifestV2Schema>;
+export type PackContents = z.infer<typeof packContentsSchema>;
+export type PackSource = z.infer<typeof packSourceSchema>;
+export type LayerImages = z.infer<typeof layerImagesSchema>;
+export type WrittenBy = z.infer<typeof writtenBySchema>;
 export type WorldTransform = z.infer<typeof worldTransformSchema>;
 export type MapDef = z.infer<typeof mapSchema>;
 export type TileSource = z.infer<typeof tileSourceSchema>;

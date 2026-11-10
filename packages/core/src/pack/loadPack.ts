@@ -2,7 +2,7 @@ import {
   COLLECTION_NAMES,
   MANIFEST_FILE,
   PACK_COLLECTIONS,
-  SCHEMA_VERSION,
+  SUPPORTED_SCHEMA_VERSIONS,
   checkPackIntegrity,
   manifestSchema,
   type CollectionName,
@@ -69,9 +69,9 @@ export async function loadPack(
 
   const rawManifest = await readJson(MANIFEST_FILE, true);
   const version = (rawManifest as { schemaVersion?: unknown } | null)?.schemaVersion;
-  if (version !== SCHEMA_VERSION) {
+  if (typeof version !== 'number' || !SUPPORTED_SCHEMA_VERSIONS.includes(version)) {
     throw new PackLoadError(
-      `Unsupported pack schema version ${JSON.stringify(version)}; this app reads version ${SCHEMA_VERSION}`,
+      `Unsupported pack schema version ${JSON.stringify(version)}; this app reads versions ${SUPPORTED_SCHEMA_VERSIONS.join(' and ')}`,
       MANIFEST_FILE,
     );
   }
