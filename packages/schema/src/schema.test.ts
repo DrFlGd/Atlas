@@ -55,6 +55,39 @@ describe('entity schemas', () => {
     expect(tileSourceSchema.safeParse({ type: 'wms', url: 'x' }).success).toBe(false);
   });
 
+  it('accepts a remote source on xyz tiles and checks its levels', () => {
+    const [layer] = makeFixturePack().layers;
+    const remote = {
+      urlTemplate: 'https://tiles.example.com/world/{z}/{x}/{y}.jpg',
+      levels: [
+        { z: layer!.maxZoom - 1, sourceZ: 11, offsetX: 16, offsetY: 32 },
+        { z: layer!.maxZoom, sourceZ: 12, offsetX: 32, offsetY: 64 },
+      ],
+    };
+    const xyz = (r: unknown) => ({
+      ...layer,
+      tiles: { type: 'xyz', url: 'tiles/a/{z}/{x}/{y}.jpg', remote: r },
+    });
+    expect(layerSchema.safeParse(xyz(remote)).success).toBe(true);
+    expect(layerSchema.safeParse(xyz({ ...remote, levels: [remote.levels[0]] })).success).toBe(
+      false,
+    );
+    expect(
+      layerSchema.safeParse(xyz({ ...remote, levels: [remote.levels[1], remote.levels[0]] }))
+        .success,
+    ).toBe(false);
+    expect(
+      layerSchema.safeParse(xyz({ ...remote, urlTemplate: 'http://tiles.example.com/{z}/{x}/{y}' }))
+        .success,
+    ).toBe(false);
+    expect(
+      layerSchema.safeParse({
+        ...layer,
+        tiles: { type: 'pmtiles', url: 'tiles/a.pmtiles', remote },
+      }).success,
+    ).toBe(false);
+  });
+
   it('validates layer zoom range and tile size', () => {
     const [layer] = makeFixturePack().layers;
     expect(layerSchema.safeParse({ ...layer, minZoom: 3 }).success).toBe(false);

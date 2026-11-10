@@ -68,6 +68,43 @@ export const mapSchema = z.strictObject({
   worldTransform: worldTransformSchema.optional(),
 });
 
+const hasTileTemplate = (url: string) =>
+  url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
+
+/**
+ * A remote tile server that an `xyz` layer's tiles can be copied from for
+ * offline use. The desktop app offers this as "Download map images"; the
+ * tiles are saved unchanged at the layer's own `url`.
+ */
+export const remoteTileSourceSchema = z.strictObject({
+  /** `https` URL template of the remote tiles, with `{z}`, `{x}` and `{y}`. */
+  urlTemplate: z
+    .string()
+    .trim()
+    .startsWith('https://')
+    .refine(hasTileTemplate, 'must contain {z}, {x} and {y}'),
+  /**
+   * The pyramid levels that are remote tiles under other numbers: the layer's
+   * tile (z, x, y) is the remote tile (sourceZ, x + offsetX, y + offsetY).
+   * Listed lowest first, consecutive, ending at the layer's `maxZoom`. Levels
+   * of the layer below the first one listed are made by shrinking it.
+   */
+  levels: z
+    .array(
+      z.strictObject({
+        z: nonNegativeInt.max(24),
+        sourceZ: nonNegativeInt.max(30),
+        offsetX: nonNegativeInt,
+        offsetY: nonNegativeInt,
+      }),
+    )
+    .min(1)
+    .refine(
+      (levels) => levels.every((level, i) => i === 0 || level.z === levels[i - 1]!.z + 1),
+      'levels must be consecutive, lowest first',
+    ),
+});
+
 /** Where a layer's tile pyramid lives, relative to the pack root. */
 export const tileSourceSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -78,10 +115,9 @@ export const tileSourceSchema = z.discriminatedUnion('type', [
   z.strictObject({
     /** A folder of tiles addressed by a `{z}/{x}/{y}` URL template. */
     type: z.literal('xyz'),
-    url: nonEmpty.refine(
-      (url) => url.includes('{z}') && url.includes('{x}') && url.includes('{y}'),
-      'must contain {z}, {x} and {y}',
-    ),
+    url: nonEmpty.refine(hasTileTemplate, 'must contain {z}, {x} and {y}'),
+    /** Where the tiles can be downloaded from when they are not in the pack yet. */
+    remote: remoteTileSourceSchema.optional(),
   }),
 ]);
 
@@ -108,7 +144,18 @@ export const layerSchema = z
   .refine((layer) => layer.minZoom <= layer.maxZoom, {
     message: 'minZoom must not exceed maxZoom',
     path: ['minZoom'],
-  });
+  })
+  .refine(
+    (layer) => {
+      if (layer.tiles.type !== 'xyz' || !layer.tiles.remote) return true;
+      const { levels } = layer.tiles.remote;
+      return levels[0]!.z >= layer.minZoom && levels[levels.length - 1]!.z === layer.maxZoom;
+    },
+    {
+      message: 'remote levels must start at or above minZoom and end at maxZoom',
+      path: ['tiles', 'remote', 'levels'],
+    },
+  );
 
 export const regionSchema = z.strictObject({
   id: idOf('region'),
@@ -219,6 +266,7 @@ export type PackManifest = z.infer<typeof manifestSchema>;
 export type WorldTransform = z.infer<typeof worldTransformSchema>;
 export type MapDef = z.infer<typeof mapSchema>;
 export type TileSource = z.infer<typeof tileSourceSchema>;
+export type RemoteTileSource = z.infer<typeof remoteTileSourceSchema>;
 export type Layer = z.infer<typeof layerSchema>;
 export type Region = z.infer<typeof regionSchema>;
 export type CategoryGroup = z.infer<typeof categoryGroupSchema>;
