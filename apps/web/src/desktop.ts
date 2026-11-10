@@ -61,8 +61,119 @@ export interface DownloadPlan {
   busyWith: string | null;
 }
 
+export interface DesktopInfo {
+  /** The app's name: "Atlas", or the name a build gave it. */
+  name: string;
+  version: string;
+  platform: string;
+}
+
+/** Where a listed pack comes from. */
+export type PackOrigin = 'bundled' | 'maps-folder' | 'location';
+
+export interface ListedPack {
+  id: string;
+  title: string;
+  url: string;
+  origin: PackOrigin;
+  /** The pack folder; null for packs that come with the app. */
+  path: string | null;
+  packVersion: string;
+  /** A pack with this id comes with the app. */
+  bundled: boolean;
+  /** The importer that made the pack, if it was added from a web page. */
+  imported: { importerId: string; importerTitle: string } | null;
+}
+
+/** A pack that is not shown because another with the same id is. */
+export interface HiddenPack {
+  id: string;
+  title: string;
+  path: string;
+  reason: string;
+}
+
+export type LocationState = 'ok' | 'missing' | 'not-a-pack' | 'no-packs';
+
+/** A pack folder or folder of packs the person added. */
+export interface LocationInfo {
+  path: string;
+  kind: 'pack' | 'folder';
+  state: LocationState;
+  packs: string[];
+  message: string | null;
+}
+
+/** Every pack the app can show, and where they come from. */
+export interface Listing {
+  mapsFolder: { path: string; isDefault: boolean; exists: boolean };
+  packs: ListedPack[];
+  hidden: HiddenPack[];
+  locations: LocationInfo[];
+  /** Packs whose files are being moved, for example from an older version. */
+  busy: string[];
+}
+
+/** A maps folder the person picked, before it is used. */
+export interface FolderChoice {
+  path: string;
+  /** Packs in the current maps folder. */
+  packs: number;
+  /** They can be moved quickly and safely (same drive). */
+  canMove: boolean;
+}
+
+/** Page data kept with an imported pack. */
+export interface StoredSource {
+  key: string;
+  url: string;
+  importedAt: string;
+  mapId: string | null;
+  /** The page data as JSON text. */
+  data: string;
+}
+
+export interface SaveImportRequest {
+  packId: string;
+  importer: { id: string; title: string };
+  sourceKey: string;
+  pageUrl: string;
+  importedAt: string;
+  mapId: string;
+  /** The page data as JSON text. */
+  pageData: string;
+  /** Pack files by name, as JSON text. */
+  files: Record<string, string>;
+}
+
+/** What the shell found when it looked at the import window. */
+export type PollResult =
+  | { state: 'waiting'; loading: boolean; note: string | null }
+  | { state: 'ready'; data: string }
+  | { state: 'closed' }
+  | { state: 'failed'; message: string };
+
+export interface DownloadSettings {
+  /** Requests in flight at once. */
+  parallel: number;
+  /** Pause after each request, per parallel download, in milliseconds. */
+  pauseMs: number;
+  requestsPerMinute: number | null;
+  /** In kilobytes (1000 bytes) per second. */
+  kilobytesPerSecond: number | null;
+}
+
+export interface DownloadSettingsInfo {
+  settings: DownloadSettings;
+  /** Lowest and highest allowed value of each setting. */
+  bounds: Record<keyof DownloadSettings, [number, number]>;
+}
+
+export type RevealTarget =
+  { kind: 'maps-folder' } | { kind: 'pack'; id: string } | { kind: 'location'; path: string };
+
 export interface DesktopBridge {
-  info(): Promise<{ version: string; platform: string }>;
+  info(): Promise<DesktopInfo>;
   /** Opens an http or https link in the system browser. */
   openExternal(url: string): Promise<void>;
   /** Asks where to save, then saves. Null when the dialog was closed. */
@@ -76,6 +187,29 @@ export interface DesktopBridge {
     resume(packId: string): Promise<DownloadSnapshot>;
     cancel(packId: string): Promise<void>;
     snapshot(packId: string): Promise<DownloadSnapshot | null>;
+    settings(): Promise<DownloadSettingsInfo>;
+    setSettings(settings: DownloadSettings): Promise<DownloadSettingsInfo>;
+  };
+  library: {
+    list(): Promise<Listing>;
+    /** Asks for a pack folder and remembers it; its pack id, or null when the dialog was closed. */
+    openPack(): Promise<string | null>;
+    /** Asks for a folder of packs and remembers it; how many packs it has, or null. */
+    addFolder(): Promise<number | null>;
+    removeLocation(path: string): Promise<void>;
+    /** Asks for a new maps folder; it is used only after {@link applyMapsFolder}. */
+    chooseMapsFolder(): Promise<FolderChoice | null>;
+    /** Uses the chosen maps folder; returns the ids of the packs moved there. */
+    applyMapsFolder(movePacks: boolean): Promise<string[]>;
+    reveal(target: RevealTarget): Promise<void>;
+    deletePack(id: string): Promise<void>;
+    importSources(packId: string, importerId: string): Promise<StoredSource[]>;
+    saveImport(request: SaveImportRequest): Promise<Listing>;
+  };
+  importWindow: {
+    open(url: string, reader: string): Promise<void>;
+    poll(): Promise<PollResult>;
+    close(): Promise<void>;
   };
 }
 
@@ -100,6 +234,25 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       resume: (packId) => call('tiles_resume', { packId }),
       cancel: (packId) => call('tiles_cancel', { packId }),
       snapshot: (packId) => call('tiles_snapshot', { packId }),
+      settings: () => call('download_settings_get'),
+      setSettings: (settings) => call('download_settings_set', { settings }),
+    },
+    library: {
+      list: () => call('library_list'),
+      openPack: () => call('library_open_pack'),
+      addFolder: () => call('library_add_folder'),
+      removeLocation: (path) => call('library_remove_location', { path }),
+      chooseMapsFolder: () => call('library_choose_maps_folder'),
+      applyMapsFolder: (movePacks) => call('library_apply_maps_folder', { movePacks }),
+      reveal: (target) => call('library_reveal', { target }),
+      deletePack: (id) => call('library_delete_pack', { id }),
+      importSources: (packId, importerId) => call('library_import_sources', { packId, importerId }),
+      saveImport: (request) => call('library_save_import', { request }),
+    },
+    importWindow: {
+      open: (url, reader) => call('import_open', { url, reader }),
+      poll: () => call('import_poll'),
+      close: () => call('import_close'),
     },
   };
 }

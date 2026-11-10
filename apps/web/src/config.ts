@@ -20,7 +20,32 @@ const runtimeConfigSchema = z.object({
   theme: z.enum(['dark', 'light']).default('dark'),
   /** Group nearby markers at low zoom. */
   clustering: z.boolean().default(true),
+  /**
+   * Importers added to a desktop build (`ATLAS_BUNDLE_IMPORTERS`); each
+   * `module` is relative to `config.json`. None in a browser.
+   */
+  importers: z
+    .array(
+      z.object({
+        id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+        title: z.string().min(1).max(100),
+        description: z.string().max(500).default(''),
+        version: z.string().max(50).default(''),
+        module: z.string().min(1),
+      }),
+    )
+    .default([]),
 });
+
+/** An importer listed in `config.json`; its module is loaded when first needed. */
+export interface ImporterEntry {
+  id: string;
+  title: string;
+  description: string;
+  version: string;
+  /** Absolute URL of the importer's module. */
+  moduleUrl: string;
+}
 
 export interface RuntimeConfig {
   /** Absolute URL of `config.json`; relative URLs in it resolve against this. */
@@ -30,6 +55,7 @@ export interface RuntimeConfig {
   packUrl: string | null;
   theme: 'dark' | 'light';
   clustering: boolean;
+  importers: ImporterEntry[];
 }
 
 /** Loads and validates `config.json`, resolving its URLs. */
@@ -50,6 +76,10 @@ export async function loadRuntimeConfig(
     packUrl: config.packUrl ? withSlash(new URL(config.packUrl, url)) : null,
     theme: config.theme,
     clustering: config.clustering,
+    importers: config.importers.map(({ module, ...importer }) => ({
+      ...importer,
+      moduleUrl: new URL(module, url).href,
+    })),
   };
 }
 

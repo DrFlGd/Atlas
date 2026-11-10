@@ -1535,3 +1535,144 @@ label.tree-row:hover,
     transition: none !important;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Maps and Add a map dialogs, download settings (desktop app) */
+
+.dialog-subhead {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.dialog-subhead-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 0;
+  font-family: var(--atlas-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.path-inline {
+  font-family: var(--atlas-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pack-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.pack-row {
+  align-items: flex-start;
+  padding: 8px 10px;
+}
+
+.pack-info {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pack-info .row-actions {
+  margin-top: 2px;
+}
+
+.pack-title {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+}
+
+.badge-warn {
+  margin-left: 6px;
+  color: var(--atlas-danger);
+  background: var(--atlas-danger-soft);
+}
+
+.location-message {
+  color: var(--atlas-muted);
+}
+
+.hidden-packs {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.field-label {
+  display: block;
+  margin-top: 10px;
+  font-weight: 600;
+}
+
+.importer-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.add-map-url {
+  overflow-wrap: anywhere;
+}
+
+.add-map-figures {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 10px 0;
+}
+
+.add-map-figures dt {
+  color: var(--atlas-muted);
+}
+
+.add-map-figures dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-settings {
+  margin-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+  padding-top: 8px;
+}
+
+.download-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.cap-input {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.cap-input .text-input {
+  flex: 0 0 90px;
+}

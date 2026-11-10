@@ -55,6 +55,8 @@ const UI_PATHS = {
   plus: 'M10 4v12M4 10h12',
   download: 'M10 3v10M6 9l4 4l4-4M4 16h12',
   upload: 'M10 14V4M6 8l4-4l4 4M4 16h12',
+  folder: 'M2.5 5h5l1.5 2h8.5v9h-15z',
+  mapPlus: 'M2.5 5l5-2l5 2l5-2v7M2.5 5v12l5-2l4 1.6M7.5 3v12M12.5 5v6M15.5 12.5v5M13 15h5',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

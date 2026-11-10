@@ -1,7 +1,10 @@
 import { percent, type Tally } from '@atlas/core';
 import { useId } from 'react';
+import { desktop } from '../desktop';
 import { setProfileDialogOpen, setTheme, showMap, switchGame, togglePane } from '../state/actions';
 import { numberFormat, useSummary } from '../state/derived';
+import { setAddMapOpen } from '../state/importing';
+import { setMapsDialogOpen } from '../state/library';
 import { useAtlas } from '../state/store';
 import { UiIcon } from './icons';
 
@@ -11,6 +14,7 @@ export function TopBar({ search }: { search: React.ReactNode }) {
   const theme = useAtlas((s) => s.theme);
   const summary = useSummary();
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
+  const appName = useAtlas((s) => s.app?.name ?? 'Atlas');
 
   return (
     <header className="topbar">
@@ -28,11 +32,12 @@ export function TopBar({ search }: { search: React.ReactNode }) {
         <UiIcon name="filters" />
       </button>
       <span className="brand" aria-hidden="true">
-        Atlas
+        {appName}
       </span>
       <div className="topbar-switchers">
         <GameSwitcher />
         <MapSwitcher />
+        <LibraryButtons />
       </div>
       <div className="topbar-search">{search}</div>
       {summary ? <OverallProgress tally={summary.pack} /> : null}
@@ -104,6 +109,44 @@ function GameSwitcher() {
         ))}
       </select>
     </div>
+  );
+}
+
+/** "Add a map" (in builds with importers) and "Maps", in the desktop app only. */
+function LibraryButtons() {
+  const importers = useAtlas((s) => s.config?.importers.length ?? 0);
+  if (!desktop) return null;
+  return (
+    <>
+      {importers > 0 ? (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Add a map"
+          title="Add a map from a web page"
+          aria-haspopup="dialog"
+          data-testid="add-map-button"
+          onClick={() => {
+            setAddMapOpen(true);
+          }}
+        >
+          <UiIcon name="mapPlus" />
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Maps"
+        title="Maps: where they are kept, and packs from other folders"
+        aria-haspopup="dialog"
+        data-testid="maps-button"
+        onClick={() => {
+          setMapsDialogOpen(true);
+        }}
+      >
+        <UiIcon name="folder" />
+      </button>
+    </>
   );
 }
 

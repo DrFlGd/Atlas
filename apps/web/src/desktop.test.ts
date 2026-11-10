@@ -31,11 +31,33 @@ describe('desktop bridge', () => {
     await bridge.tiles.pause('demo');
     await bridge.saveTextFile('a.json', '{}');
     await bridge.openExternal('https://example.com/');
+    await bridge.tiles.setSettings({
+      parallel: 2,
+      pauseMs: 250,
+      requestsPerMinute: null,
+      kilobytesPerSecond: 500,
+    });
+    await bridge.library.reveal({ kind: 'pack', id: 'demo' });
+    await bridge.library.applyMapsFolder(true);
+    await bridge.library.importSources('demo', 'demo-maps');
+    await bridge.importWindow.open('https://example.com/map', '() => 1');
+    await bridge.importWindow.poll();
     expect(calls).toEqual([
       ['tiles_start', { packId: 'demo', detail: 'standard' }],
       ['tiles_pause', { packId: 'demo' }],
       ['save_text_file', { suggestedName: 'a.json', contents: '{}' }],
       ['open_external', { url: 'https://example.com/' }],
+      [
+        'download_settings_set',
+        {
+          settings: { parallel: 2, pauseMs: 250, requestsPerMinute: null, kilobytesPerSecond: 500 },
+        },
+      ],
+      ['library_reveal', { target: { kind: 'pack', id: 'demo' } }],
+      ['library_apply_maps_folder', { movePacks: true }],
+      ['library_import_sources', { packId: 'demo', importerId: 'demo-maps' }],
+      ['import_open', { url: 'https://example.com/map', reader: '() => 1' }],
+      ['import_poll', undefined],
     ]);
   });
 

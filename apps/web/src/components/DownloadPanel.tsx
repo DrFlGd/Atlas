@@ -11,6 +11,7 @@ import {
 } from '../state/downloads';
 import { useAtlas } from '../state/store';
 import { downloadPercent, formatBytes, roughDuration } from './downloadFormat';
+import { DownloadSettingsSection } from './DownloadSettings';
 import { UiIcon } from './icons';
 
 const DETAILS: Record<Detail, { label: string; description: string }> = {
@@ -281,6 +282,7 @@ function ChooseView({
           Not now
         </button>
       </div>
+      <DownloadSettingsSection running={false} />
     </div>
   );
 }
@@ -438,6 +440,7 @@ function JobView({
           ) : null}
         </div>
       )}
+      {active(job) ? <DownloadSettingsSection running /> : null}
     </div>
   );
 }
