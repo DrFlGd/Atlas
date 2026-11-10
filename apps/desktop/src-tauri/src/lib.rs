@@ -1,24 +1,44 @@
-//! The Atlas desktop shell: one window that shows the web app, plus the
-//! `atlas-pack` protocol that serves data packs to it.
+//! The Atlas desktop shell: one window that shows the web app, the
+//! `atlas-pack` protocol that serves data packs to it, and the commands the
+//! web app uses for files, links and map image downloads.
 
+mod commands;
 mod packs;
+pub mod tiles;
 
-use std::fs;
+use std::{fs, sync::Arc};
 
-use tauri::{App, Manager, Url, WebviewWindowBuilder};
+use tauri::{webview::NewWindowResponse, App, AppHandle, Manager, Url, WebviewWindowBuilder};
 
 pub use packs::{PackRegistry, SCHEME as PACK_SCHEME};
+use tiles::DownloadManager;
 
 /// Folder under the app's resource directory that holds bundled packs, one
 /// sub-folder per pack. Each is served as `<scheme URL>/<folder name>/`.
 const BUNDLED_PACKS_DIR: &str = "packs";
 
 pub fn run() {
+    // Map image downloads use rustls with the ring provider.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let registry = PackRegistry::default();
     let protocol_registry = registry.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(registry)
+        .invoke_handler(tauri::generate_handler![
+            commands::desktop_info,
+            commands::open_external,
+            commands::save_text_file,
+            commands::open_text_file,
+            commands::tiles_plan,
+            commands::tiles_start,
+            commands::tiles_pause,
+            commands::tiles_resume,
+            commands::tiles_cancel,
+            commands::tiles_snapshot,
+        ])
         .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |_ctx, request, responder| {
             let registry = protocol_registry.clone();
             // File reads block, so keep them off the webview's thread.
@@ -28,6 +48,11 @@ pub fn run() {
         })
         .setup(|app| {
             register_bundled_packs(app);
+            let app_data = app.path().app_data_dir()?;
+            let registry = app.state::<PackRegistry>().inner().clone();
+            // Downloaded map images live here, served before the pack's own files.
+            registry.set_overlay_root(DownloadManager::overlay_root(&app_data));
+            app.manage(Arc::new(DownloadManager::new(app_data, registry)));
             create_main_window(app)?;
             Ok(())
         })
@@ -64,7 +89,8 @@ fn register_bundled_packs(app: &App) {
 }
 
 /// Creates the window declared in `tauri.conf.json` (which has `create:
-/// false`), adding a navigation guard that keeps the webview on the app.
+/// false`), adding a navigation guard that keeps the webview on the app and
+/// sends web links to the system browser.
 fn create_main_window(app: &App) -> tauri::Result<()> {
     let config = app
         .config()
@@ -79,15 +105,39 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
     } else {
         None
     };
+    let navigation_app = app.handle().clone();
+    let new_window_app = app.handle().clone();
     WebviewWindowBuilder::from_config(app.handle(), &config)?
-        .on_navigation(move |url| is_app_url(url, dev_url.as_ref()))
+        .on_navigation(move |url| {
+            if is_app_url(url, dev_url.as_ref()) {
+                return true;
+            }
+            open_link_outside(&navigation_app, url);
+            false
+        })
+        // Links with `target="_blank"`. The web app sends the links it shows
+        // to `open_external` itself; this catches any other new window.
+        .on_new_window(move |url, _features| {
+            open_link_outside(&new_window_app, &url);
+            NewWindowResponse::Deny
+        })
         .build()?;
     Ok(())
 }
 
+/// Opens a web link the page tried to follow in the system browser. Other
+/// schemes are ignored.
+fn open_link_outside(app: &AppHandle, url: &Url) {
+    if let Some(url) = commands::external_url(url.as_str()) {
+        if let Err(error) = commands::open_in_browser(app, &url) {
+            eprintln!("atlas: {error}");
+        }
+    }
+}
+
 /// Whether the webview may navigate to `url`: only the app's own pages.
-/// Links to other sites are blocked rather than opened in the window; opening
-/// them in the system browser needs the opener plugin, which is not used yet.
+/// Anything else stays out of the window; web links open in the system
+/// browser instead.
 fn is_app_url(url: &Url, dev_url: Option<&Url>) -> bool {
     match url.scheme() {
         // The bundled frontend on Linux and macOS.

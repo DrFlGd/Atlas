@@ -13,7 +13,8 @@ export function imageBounds(spec: MapLayerSpec): L.LatLngBounds {
 
 /**
  * Creates the raster layer for a tile pyramid. Native levels run from
- * `spec.minZoom` to `spec.maxZoom`; beyond that Leaflet scales the last level.
+ * `spec.minZoom` to `spec.maxZoom`, or over `spec.nativeZoom` when only part
+ * of the pyramid is there; beyond them Leaflet scales the nearest level.
  *
  * `bounds` is required for both sources: under CRS.Simple the grid is
  * unbounded, and without it Leaflet would request tiles with negative or
@@ -24,8 +25,8 @@ export function createTileLayer(spec: MapLayerSpec, maxMapZoom: number): L.GridL
     tileSize: spec.tileSize,
     minZoom: spec.minZoom,
     maxZoom: maxMapZoom,
-    minNativeZoom: spec.minZoom,
-    maxNativeZoom: spec.maxZoom,
+    minNativeZoom: spec.nativeZoom?.min ?? spec.minZoom,
+    maxNativeZoom: spec.nativeZoom?.max ?? spec.maxZoom,
     bounds: imageBounds(spec),
     noWrap: true,
     className: 'atlas-tiles',

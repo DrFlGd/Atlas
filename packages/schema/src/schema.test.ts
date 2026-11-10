@@ -55,6 +55,54 @@ describe('entity schemas', () => {
     expect(tileSourceSchema.safeParse({ type: 'wms', url: 'x' }).success).toBe(false);
   });
 
+  it('accepts a remote source on xyz tiles and checks its levels', () => {
+    const [layer] = makeFixturePack().layers;
+    const remote = {
+      urlTemplate: 'https://tiles.example.com/world/{z}/{x}/{y}.jpg',
+      levels: [
+        { z: layer!.maxZoom - 1, sourceZ: 11, offsetX: 16, offsetY: 32 },
+        { z: layer!.maxZoom, sourceZ: 12, offsetX: 32, offsetY: 64 },
+      ],
+    };
+    const xyz = (r: unknown) => ({
+      ...layer,
+      tiles: { type: 'xyz', url: 'tiles/a/{z}/{x}/{y}.jpg', remote: r },
+    });
+    expect(layerSchema.safeParse(xyz(remote)).success).toBe(true);
+    expect(layerSchema.safeParse(xyz({ ...remote, levels: [remote.levels[0]] })).success).toBe(
+      false,
+    );
+    expect(
+      layerSchema.safeParse(xyz({ ...remote, levels: [remote.levels[1], remote.levels[0]] }))
+        .success,
+    ).toBe(false);
+    expect(
+      layerSchema.safeParse(xyz({ ...remote, urlTemplate: 'http://tiles.example.com/{z}/{x}/{y}' }))
+        .success,
+    ).toBe(false);
+    expect(
+      layerSchema.safeParse({
+        ...layer,
+        tiles: { type: 'pmtiles', url: 'tiles/a.pmtiles', remote },
+      }).success,
+    ).toBe(false);
+    // Plain http only to this computer, for tests and local mirrors.
+    for (const urlTemplate of [
+      'http://127.0.0.1:4431/{z}/{x}/{y}.png',
+      'http://localhost/{z}/{x}/{y}.png',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(true);
+    }
+    for (const urlTemplate of [
+      'http://127.0.0.1.example.com/{z}/{x}/{y}.png',
+      'http://localhost.example.com/{z}/{x}/{y}.png',
+      'http://localhost:80@tiles.example.com/{z}/{x}/{y}.png',
+      'ftp://localhost/{z}/{x}/{y}.png',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(false);
+    }
+  });
+
   it('validates layer zoom range and tile size', () => {
     const [layer] = makeFixturePack().layers;
     expect(layerSchema.safeParse({ ...layer, minZoom: 3 }).success).toBe(false);

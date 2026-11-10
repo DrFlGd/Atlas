@@ -1,6 +1,6 @@
 [package]
 name = "atlas-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Atlas desktop shell"
 edition = "2021"
 rust-version = "1.90"
@@ -17,7 +17,21 @@ tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 tauri = { version = "2.12.5", features = [] }
+tauri-plugin-dialog = "2.8.4"
+tauri-plugin-opener = "2.7.3"
 percent-encoding = "2.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Map image downloads. rustls with the ring provider and the system's
+# certificate store; no cookies, no compression negotiation.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1.45", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+httpdate = "1.0.3"
+
+[dev-dependencies]
+tokio = { version = "1.45", features = ["io-util", "net"] }
 
 [profile.release]
 codegen-units = 1

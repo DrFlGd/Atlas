@@ -1,9 +1,12 @@
-import { layerViewSpec } from '@atlas/core';
+import { isDownloadable, layerViewSpec, nativeZoomOf, readTileStatus } from '@atlas/core';
 import { createMapView, type MapView } from '@atlas/core/mapview';
 import { useEffect, useRef, useState } from 'react';
 import { select, showMap } from '../state/actions';
 import { numberFormat, useLayerMarkers, useSummary } from '../state/derived';
+import { setDownloadPanelOpen } from '../state/downloads';
 import { useAtlas } from '../state/store';
+import { DownloadPanel, MapImagesButton } from './DownloadPanel';
+import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
 
 /** Hosts the map view and keeps it in sync with the store. */
@@ -54,36 +57,59 @@ export function MapPane() {
     map?.refreshStyle();
   }, [map, theme]);
 
-  // The layer. Switching between layers of one map keeps the view.
+  // The layer. Switching between layers of one map keeps the view. For a
+  // layer whose map images the desktop app downloads, the status file says
+  // which levels are there; it is read again when a download adds levels.
   const shownLayer = useRef<{ view: MapView; layerId: string; mapId: string } | null>(null);
+  const [shownLayerId, setShownLayerId] = useState<string | null>(null);
+  const tileRevision = useAtlas((s) => s.tileRevision);
+  const offlineTiles = useAtlas((s) => s.downloads.packFolder !== null);
   useEffect(() => {
     if (!map || !pack || !layerId) return;
     const layer = pack.layers.get(layerId);
     if (!layer) return;
-    const previous = shownLayer.current?.view === map ? shownLayer.current : null;
-    const previousView = map.getView();
-    map.setLayer(layerViewSpec(pack, layer));
-    if (previous?.mapId === layer.mapId && previous.layerId !== layer.id && previousView) {
-      map.flyTo({ ...previousView.center, zoom: previousView.zoom }, { animate: false });
+    let current = true;
+    const show = (nativeZoom: { min: number; max: number } | null) => {
+      if (!current) return;
+      const previous = shownLayer.current?.view === map ? shownLayer.current : null;
+      const previousView = map.getView();
+      map.setLayer({ ...layerViewSpec(pack, layer), ...(nativeZoom ? { nativeZoom } : {}) });
+      if (previous?.mapId === layer.mapId && previous.layerId !== layer.id && previousView) {
+        map.flyTo({ ...previousView.center, zoom: previousView.zoom }, { animate: false });
+      }
+      shownLayer.current = { view: map, layerId: layer.id, mapId: layer.mapId };
+      setShownLayerId(layer.id);
+    };
+    if (offlineTiles && isDownloadable(layer)) {
+      void readTileStatus(pack, layer).then((status) => {
+        show(nativeZoomOf(layer, status));
+      });
+    } else {
+      show(null);
     }
-    shownLayer.current = { view: map, layerId: layer.id, mapId: layer.mapId };
-  }, [map, pack, layerId]);
+    return () => {
+      current = false;
+    };
+  }, [map, pack, layerId, offlineTiles, tileRevision]);
+  const layerShown = map !== null && shownLayerId === layerId;
+
+  // Markers, selection and fly requests wait until the layer is shown, since
+  // showing a new layer clears its markers and fits the view.
+  useEffect(() => {
+    if (layerShown) map.setMarkers(markers);
+  }, [map, markers, layerShown]);
 
   useEffect(() => {
-    map?.setMarkers(markers);
-  }, [map, markers, layerId]);
-
-  useEffect(() => {
-    map?.setSelected(selectedId);
-  }, [map, selectedId, markers]);
+    if (layerShown) map.setSelected(selectedId);
+  }, [map, selectedId, markers, layerShown]);
 
   // Fly requests run after the layer is set, so a jump to another layer lands on the right map.
   const handledFly = useRef(0);
   useEffect(() => {
-    if (!map || !fly || fly.seq === handledFly.current) return;
+    if (!layerShown || !fly || fly.seq === handledFly.current) return;
     handledFly.current = fly.seq;
     map.flyTo(fly, { animate: fly.animate });
-  }, [map, fly, layerId]);
+  }, [map, fly, layerShown]);
 
   return (
     <div className="map-area">
@@ -91,6 +117,8 @@ export function MapPane() {
       <LayerSwitcher />
       <MarkerTooltip />
       <TileNotice />
+      <MapImagesButton />
+      <DownloadPanel />
       <MapStatus markerCount={markers.length} />
     </div>
   );
@@ -145,12 +173,34 @@ function MarkerTooltip() {
   );
 }
 
+/** Says when the map image is missing, and offers to download it where the app can. */
 function TileNotice() {
   const tileStatus = useAtlas((s) => s.tileStatus);
-  if (tileStatus?.status !== 'missing') return null;
+  const canDownload = useAtlas((s) => s.downloads.packFolder !== null);
+  const job = useAtlas((s) => s.downloads.job);
+  const panelOpen = useAtlas((s) => s.downloads.panelOpen);
+  if (tileStatus?.status !== 'missing' || panelOpen) return null;
+  const downloading = job?.state === 'running' || job?.state === 'paused';
   return (
     <div className="tile-notice" role="status" data-testid="tile-notice">
-      Map image not installed. Markers are shown on a plain background.
+      <span>
+        {downloading
+          ? `Downloading map images (${downloadPercent(job)}%). The map appears as soon as the first level is ready.`
+          : 'Map image not installed. Markers are shown on a plain background.'}
+      </span>
+      {canDownload ? (
+        <button
+          type="button"
+          className="button button-primary button-small"
+          data-testid="download-map-images"
+          onClick={() => {
+            setDownloadPanelOpen(true);
+          }}
+        >
+          <UiIcon name="download" size={16} />
+          {downloading ? 'Show progress' : 'Download map images'}
+        </button>
+      ) : null}
     </div>
   );
 }

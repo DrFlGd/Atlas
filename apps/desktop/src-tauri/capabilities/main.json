@@ -1,7 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window. The web app makes no IPC calls yet, so it is granted no commands.",
+  "description": "The main window: the app's own commands for desktop features (file dialogs for progress export and import, web links in the system browser, map image downloads). No plugin commands are granted; the dialog and opener plugins are only used from Rust.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    "allow-desktop-info",
+    "allow-open-external",
+    "allow-save-text-file",
+    "allow-open-text-file",
+    "allow-tiles-plan",
+    "allow-tiles-start",
+    "allow-tiles-pause",
+    "allow-tiles-resume",
+    "allow-tiles-cancel",
+    "allow-tiles-snapshot"
+  ]
 }

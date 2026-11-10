@@ -19,6 +19,13 @@ export interface MapLayerSpec {
   maxZoom: number;
   /** Absolute tile source URL; for `xyz` a `{z}/{x}/{y}` template. */
   tiles: { type: 'pmtiles' | 'xyz'; url: string };
+  /**
+   * The levels the tiles actually have, when only part of the pyramid is
+   * there (map images being downloaded, or downloaded at less than full
+   * detail). Beyond it the map scales the nearest level. A known range also
+   * means the tiles exist, so they are not probed.
+   */
+  nativeZoom?: { min: number; max: number };
   /** HTML attribution shown in the map corner. */
   attribution?: string;
 }
@@ -78,7 +85,11 @@ export type Unsubscribe = () => void;
  * point markers. Coordinates are always image pixels.
  */
 export interface MapView {
-  /** Shows a layer and fits the view to it. Clears the markers if the layer changes. */
+  /**
+   * Shows a layer and fits the view to it. Clears the markers if the layer
+   * changes. Calling it again for the same layer with another `nativeZoom`
+   * only swaps the tiles.
+   */
   setLayer(layer: MapLayerSpec): void;
   /**
    * Replaces all markers. When only styling changed (same ids and positions

@@ -14,6 +14,11 @@
 //!
 //! Only registered folders are reachable, read-only, with no directory
 //! listings and no hidden files.
+//!
+//! Each pack can also have an overlay folder, `<overlay root>/<pack id>/`,
+//! which holds the map images downloaded for it (bundled packs are read-only
+//! app resources). A request is answered from the overlay when the file is
+//! there, and from the pack folder otherwise, with the same checks for both.
 
 use std::{
     collections::HashMap,
@@ -26,6 +31,8 @@ use std::{
 
 use percent_encoding::percent_decode_str;
 use tauri::http::{header, Method, Request, Response, StatusCode};
+
+use crate::tiles::pyramid::is_safe_segment;
 
 /// The URI scheme name registered with the webview.
 pub const SCHEME: &str = "atlas-pack";
@@ -48,6 +55,7 @@ fn is_valid_pack_id(id: &str) -> bool {
 #[derive(Clone, Default)]
 pub struct PackRegistry {
     roots: Arc<RwLock<HashMap<String, PathBuf>>>,
+    overlay_root: Arc<RwLock<Option<PathBuf>>>,
 }
 
 #[derive(Debug)]
@@ -99,12 +107,32 @@ impl PackRegistry {
         Ok(())
     }
 
-    fn root(&self, id: &str) -> Option<PathBuf> {
+    /// The folder registered for a pack id.
+    pub fn root(&self, id: &str) -> Option<PathBuf> {
         self.roots
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .get(id)
             .cloned()
+    }
+
+    /// Sets the folder that holds one overlay folder per pack id. It need
+    /// not exist yet.
+    pub fn set_overlay_root(&self, root: PathBuf) {
+        *self
+            .overlay_root
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(root);
+    }
+
+    /// The overlay folder of a registered pack, if it exists.
+    fn overlay(&self, id: &str) -> Option<PathBuf> {
+        self.overlay_root
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|root| root.join(id).canonicalize().ok())
+            .filter(|path| path.is_dir())
     }
 
     /// Answers one protocol request. Blocking: call it off the main thread.
@@ -137,41 +165,54 @@ impl PackRegistry {
         }
     }
 
-    /// Maps a URL path to a file inside a registered pack folder.
+    /// Maps a URL path to a file inside a registered pack's overlay folder
+    /// or, failing that, its pack folder.
     fn resolve(&self, url_path: &str) -> Result<PathBuf, StatusCode> {
         let mut segments = url_path.strip_prefix('/').unwrap_or(url_path).split('/');
         let id = segments.next().unwrap_or_default();
         let root = self.root(id).ok_or(StatusCode::NOT_FOUND)?;
 
-        let mut path = root.clone();
-        let mut any = false;
+        let mut relative = PathBuf::new();
         for segment in segments {
             let segment = percent_decode_str(segment)
                 .decode_utf8()
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
             // Rejects traversal, hidden files, empty segments and anything a
             // platform could read as a separator, drive or device prefix.
-            if segment.is_empty() || segment.starts_with('.') || segment.contains(['\\', ':', '\0'])
-            {
+            if !is_safe_segment(&segment) {
                 return Err(StatusCode::FORBIDDEN);
             }
-            path.push(segment.as_ref());
-            any = true;
+            relative.push(segment.as_ref());
         }
-        if !any {
+        if relative.as_os_str().is_empty() {
             return Err(StatusCode::NOT_FOUND);
         }
 
-        // Symbolic links must not lead outside the pack folder.
-        let canonical = path.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
-        if !canonical.starts_with(&root) {
-            return Err(StatusCode::FORBIDDEN);
+        if let Some(overlay) = self.overlay(id) {
+            match file_inside(&overlay, &relative) {
+                Err(StatusCode::NOT_FOUND) => {}
+                found => return found,
+            }
         }
-        if !canonical.is_file() {
-            return Err(StatusCode::NOT_FOUND);
-        }
-        Ok(canonical)
+        file_inside(&root, &relative)
     }
+}
+
+/// `root/relative` if it is a file inside `root` (a canonical path), after
+/// following symbolic links.
+fn file_inside(root: &Path, relative: &Path) -> Result<PathBuf, StatusCode> {
+    let canonical = root
+        .join(relative)
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    // Symbolic links must not lead outside the folder.
+    if !canonical.starts_with(root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if !canonical.is_file() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(canonical)
 }
 
 /// The byte range a request asks for, as inclusive offsets.
@@ -559,6 +600,81 @@ mod tests {
             "atlas-pack://localhost/test/link.json",
             None,
         );
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn serves_the_overlay_first() {
+        let pack = TempPack::new("overlay-pack");
+        let data = TempPack::new("overlay-data");
+        let overlay = data.0.join("packs").join("test");
+        fs::create_dir_all(overlay.join("tiles/a/0/0")).unwrap();
+        fs::write(overlay.join("tiles/a/0/0/0.jpg"), b"downloaded").unwrap();
+        fs::write(overlay.join("manifest.json"), br#"{"title":"Overlay"}"#).unwrap();
+        fs::write(overlay.join(".hidden"), b"secret").unwrap();
+        let registry = registry(&pack);
+        registry.set_overlay_root(data.0.join("packs"));
+
+        for uri in [
+            "atlas-pack://localhost/test/tiles/a/0/0/0.jpg",
+            "http://atlas-pack.localhost/test/tiles/a/0/0/0.jpg",
+        ] {
+            let response = get(&registry, uri, Some("bytes=2-5"));
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(response.body(), b"wnlo");
+            assert_eq!(header_value(&response, header::CONTENT_TYPE), "image/jpeg");
+            assert_eq!(
+                header_value(&response, header::CONTENT_RANGE),
+                "bytes 2-5/10"
+            );
+        }
+        // The overlay wins over the pack folder; other files come from the pack.
+        let status = |uri: &str| get(&registry, uri, None);
+        assert_eq!(
+            status("atlas-pack://localhost/test/manifest.json").body(),
+            br#"{"title":"Overlay"}"#
+        );
+        assert_eq!(
+            status("atlas-pack://localhost/test/tiles/base.pmtiles").status(),
+            StatusCode::OK
+        );
+        // The same path rules apply to the overlay.
+        assert_eq!(
+            status("atlas-pack://localhost/test/.hidden").status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status("atlas-pack://localhost/test/tiles/%2e%2e/%2e%2e/x").status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status("atlas-pack://localhost/test/tiles/a/9/9/9.jpg").status(),
+            StatusCode::NOT_FOUND
+        );
+        // An overlay without a registered pack is not served.
+        fs::create_dir_all(data.0.join("packs/other")).unwrap();
+        fs::write(data.0.join("packs/other/manifest.json"), b"{}").unwrap();
+        assert_eq!(
+            status("atlas-pack://localhost/other/manifest.json").status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_overlay_symlinks_that_leave_it() {
+        let pack = TempPack::new("overlay-link-pack");
+        let data = TempPack::new("overlay-link-data");
+        let outside = TempPack::new("overlay-link-outside");
+        fs::create_dir_all(data.0.join("packs/test")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.0.join("manifest.json"),
+            data.0.join("packs/test/manifest.json"),
+        )
+        .unwrap();
+        let registry = registry(&pack);
+        registry.set_overlay_root(data.0.join("packs"));
+        let response = get(&registry, "atlas-pack://localhost/test/manifest.json", None);
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
