@@ -16,7 +16,9 @@
     "format": "prettier --write .",
     "typecheck": "pnpm -r --if-present typecheck",
     "demo:ensure": "pnpm --filter @atlas/pipeline demo:ensure",
-    "demo:build": "pnpm --filter @atlas/pipeline demo:build"
+    "demo:build": "pnpm --filter @atlas/pipeline demo:build",
+    "desktop:dev": "pnpm --filter @atlas/desktop dev",
+    "desktop:build": "pnpm --filter @atlas/desktop build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

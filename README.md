@@ -33,6 +33,8 @@ The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 
 | `pnpm lint`                          | ESLint and Prettier checks. `pnpm format` rewrites files with Prettier.           |
 | `pnpm typecheck`                     | Strict `tsc` in every package.                                                    |
 | `pnpm demo:build`                    | Rebuilds the demo pack from scratch.                                              |
+| `pnpm desktop:dev`                   | Runs the desktop app on a Vite dev server at port 1420 (see below).               |
+| `pnpm desktop:build`                 | Builds the desktop app and its installers (see below).                            |
 
 Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwright install chromium`. To use a browser that is already installed instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path.
 
@@ -52,13 +54,20 @@ pnpm demo:build --seed 42 --locations 10000
 
 ```
 apps/web            React + Vite web app (static output)
+apps/desktop        Tauri 2 desktop shell around the web build
 packages/schema     Pack schema v1 in Zod, id helpers, cross-file integrity checks
 packages/core       Pack loader, coordinate maths, marker clustering, MapView
 packages/pipeline   Demo pack generator, tile cutter and PMTiles writer (Node)
 packs/demo          Generated demo pack (not committed)
 ```
 
-Workspace packages export their TypeScript sources directly; the web app bundles them and the pipeline runs them with `tsx`, so there is no separate library build step. A Tauri shell is planned as `apps/desktop`.
+Workspace packages export their TypeScript sources directly; the web app bundles them and the pipeline runs them with `tsx`, so there is no separate library build step.
+
+## Desktop app
+
+`apps/desktop` wraps the same web build in a Tauri 2 window for Windows, macOS and Linux. It needs Rust and, per platform, a C++ toolchain or WebKitGTK; [apps/desktop/README.md](apps/desktop/README.md) lists the prerequisites. `pnpm desktop:dev` opens the window on the dev server; `pnpm desktop:build` writes installers to `apps/desktop/src-tauri/target/release/bundle/`. CI builds unsigned Linux and Windows bundles on every run and keeps them as workflow artifacts.
+
+In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. Not there yet: code signing, auto-update, native file dialogs and save-file sync.
 
 ## Data packs
 

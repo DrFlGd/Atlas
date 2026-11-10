@@ -14,6 +14,8 @@ export default tseslint.config(
       '**/test-results/**',
       '**/playwright-report/**',
       'packs/**',
+      // Rust build output of the desktop shell
+      '**/target/**',
     ],
   },
   js.configs.recommended,

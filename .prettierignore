@@ -3,3 +3,4 @@ dist
 packs
 test-results
 playwright-report
+apps/desktop/src-tauri/gen
