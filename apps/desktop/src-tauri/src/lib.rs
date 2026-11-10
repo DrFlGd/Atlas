@@ -1,17 +1,32 @@
 //! The Atlas desktop shell: one window that shows the web app, the
-//! `atlas-pack` protocol that serves data packs to it, and the commands the
-//! web app uses for files, links and map image downloads.
+//! `atlas-pack` protocol that serves data packs to it, the maps library on
+//! disk, an optional window for importing a map from a web page, and the
+//! commands the web app uses for files, links, maps and map image downloads.
 
 mod commands;
+mod imports;
+pub mod library;
+pub mod manifest;
 mod packs;
+pub mod settings;
 pub mod tiles;
 
-use std::{fs, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc};
 
-use tauri::{webview::NewWindowResponse, App, AppHandle, Manager, Url, WebviewWindowBuilder};
+use tauri::{
+    http::{Response, StatusCode},
+    webview::NewWindowResponse,
+    App, AppHandle, Manager, Url, WebviewWindowBuilder,
+};
 
+use library::{BundledPack, Library, LEGACY_IDENTIFIER};
 pub use packs::{PackRegistry, SCHEME as PACK_SCHEME};
+use settings::{shared_dir, SettingsFile};
 use tiles::DownloadManager;
+
+/// The label of the app's own window, the only one the pack protocol and the
+/// app's commands answer.
+pub const MAIN_WINDOW: &str = "main";
 
 /// Folder under the app's resource directory that holds bundled packs, one
 /// sub-folder per pack. Each is served as `<scheme URL>/<folder name>/`.
@@ -27,6 +42,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(registry)
+        .manage(imports::Imports::default())
         .invoke_handler(tauri::generate_handler![
             commands::desktop_info,
             commands::open_external,
@@ -38,8 +54,34 @@ pub fn run() {
             commands::tiles_resume,
             commands::tiles_cancel,
             commands::tiles_snapshot,
+            commands::download_settings_get,
+            commands::download_settings_set,
+            commands::library_list,
+            commands::library_open_pack,
+            commands::library_add_folder,
+            commands::library_remove_location,
+            commands::library_choose_maps_folder,
+            commands::library_apply_maps_folder,
+            commands::library_reveal,
+            commands::library_delete_pack,
+            commands::library_import_sources,
+            commands::library_save_import,
+            commands::import_open,
+            commands::import_poll,
+            commands::import_close,
         ])
-        .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |_ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |ctx, request, responder| {
+            // Only the app's own window reads packs; a web page in the import
+            // window gets nothing.
+            if ctx.webview_label() != MAIN_WINDOW {
+                responder.respond(
+                    Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .body(Vec::new())
+                        .expect("valid response"),
+                );
+                return;
+            }
             let registry = protocol_registry.clone();
             // File reads block, so keep them off the webview's thread.
             tauri::async_runtime::spawn_blocking(move || {
@@ -47,12 +89,38 @@ pub fn run() {
             });
         })
         .setup(|app| {
-            register_bundled_packs(app);
-            let app_data = app.path().app_data_dir()?;
+            let paths = app.path();
+            let app_data = paths.app_data_dir()?;
             let registry = app.state::<PackRegistry>().inner().clone();
-            // Downloaded map images live here, served before the pack's own files.
+            // Map images downloaded for bundled packs live here, served before
+            // the pack's own files.
             registry.set_overlay_root(DownloadManager::overlay_root(&app_data));
-            app.manage(Arc::new(DownloadManager::new(app_data, registry)));
+            let mut legacy = vec![paths.data_dir()?.join(LEGACY_IDENTIFIER)];
+            if !legacy.contains(&app_data) {
+                legacy.push(app_data.clone());
+            }
+            let library = Arc::new(Library::new(
+                SettingsFile::new(shared_dir(&paths.local_data_dir()?)),
+                registry.clone(),
+                bundled_packs(app),
+                legacy,
+            ));
+            library.start();
+            let manager = DownloadManager::new(app_data, registry);
+            manager.set_download_settings(&library.settings().read().downloads);
+            app.manage(Arc::new(manager));
+            app.manage(Arc::clone(&library));
+            // Map images that version 0.2.0 downloaded move into the pack
+            // folders in the background; the map shows them as they arrive.
+            std::thread::spawn(move || {
+                let moved = library.migrate_legacy();
+                if !moved.is_empty() {
+                    eprintln!(
+                        "atlas: moved the map images of {} into the maps folder",
+                        moved.join(", ")
+                    );
+                }
+            });
             create_main_window(app)?;
             Ok(())
         })
@@ -60,32 +128,36 @@ pub fn run() {
         .expect("error while running the Atlas desktop shell");
 }
 
-/// Registers every pack folder shipped in the app's resources.
-fn register_bundled_packs(app: &App) {
-    let registry = app.state::<PackRegistry>();
+/// The packs shipped in the app's resources, one folder each.
+fn bundled_packs(app: &App) -> Vec<BundledPack> {
     let Ok(dir) = app
         .path()
         .resource_dir()
         .map(|dir| dir.join(BUNDLED_PACKS_DIR))
     else {
-        return;
+        return Vec::new();
     };
     // In `tauri dev` no packs are bundled; the web dev server serves them.
     let Ok(entries) = fs::read_dir(&dir) else {
-        return;
+        return Vec::new();
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(id) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if let Err(error) = registry.register(id, &path) {
-            eprintln!("atlas: skipping bundled pack {}: {error}", path.display());
-        }
-    }
+    let mut packs: Vec<BundledPack> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter_map(|path: PathBuf| {
+            let id = path.file_name()?.to_str()?.to_owned();
+            let downloadable =
+                tiles::pyramid::read_pack_plan(&path).is_ok_and(|plan| !plan.layers.is_empty());
+            Some(BundledPack {
+                id,
+                path,
+                downloadable,
+            })
+        })
+        .collect();
+    packs.sort_by(|a, b| a.id.cmp(&b.id));
+    packs
 }
 
 /// Creates the window declared in `tauri.conf.json` (which has `create:
@@ -97,7 +169,7 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
         .app
         .windows
         .iter()
-        .find(|window| window.label == "main")
+        .find(|window| window.label == MAIN_WINDOW)
         .cloned()
         .expect("tauri.conf.json declares the main window");
     let dev_url = if tauri::is_dev() {

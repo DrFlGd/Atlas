@@ -10,8 +10,15 @@
 //! tiles already on disk are skipped, so an interrupted job continues where
 //! it stopped.
 //!
+//! The person can make it slower or a little faster within fixed bounds
+//! (see `settings.rs`, "download settings"): 1 to 4 requests in flight, a
+//! pause of 100 ms to 5 s, and optional caps on requests per minute and on
+//! bytes per second. The pace is shared with the job and read before every
+//! request, so a change applies to a running download; fewer parallel
+//! downloads apply at once, more from the next level.
+//!
 //! Requests carry an honest User-Agent naming the app and its version, no
-//! cookies and no browser-like headers. None of this can be changed from the
+//! cookies and no browser-like headers. Nothing else can be changed from the
 //! web app: it only starts, pauses, resumes and cancels jobs.
 
 use std::{
@@ -169,11 +176,65 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .and_then(|value| parse_retry_after(value, SystemTime::now()))
 }
 
+/// How fast a job may go: chosen by the person within bounds, and read
+/// before every request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pace {
+    /// Requests in flight at once.
+    pub concurrency: usize,
+    /// Pause per worker after each request.
+    pub delay: Duration,
+    /// At most this many requests per minute, over all workers.
+    pub requests_per_minute: Option<u32>,
+    /// At most this many bytes per second, over all workers.
+    pub bytes_per_second: Option<u64>,
+}
+
+impl Pace {
+    /// The pace of the given download settings.
+    pub fn from_settings(settings: &crate::settings::DownloadSettings) -> Self {
+        let settings = settings.clamped();
+        Self {
+            concurrency: settings.parallel as usize,
+            delay: Duration::from_millis(u64::from(settings.pause_ms)),
+            requests_per_minute: settings.requests_per_minute,
+            bytes_per_second: settings.kilobytes_per_second.map(|kb| u64::from(kb) * 1000),
+        }
+    }
+
+    /// Rough seconds to fetch `tiles` tiles of `bytes` bytes in all, at
+    /// this pace, with an assumed server answer time per request.
+    pub fn estimate_seconds(&self, tiles: u64, bytes: u64, latency: Duration) -> f64 {
+        let tiles_f = tiles as f64;
+        let mut seconds =
+            tiles_f * (self.delay + latency).as_secs_f64() / self.concurrency.max(1) as f64;
+        if let Some(rpm) = self.requests_per_minute {
+            seconds = seconds.max(tiles_f * 60.0 / f64::from(rpm.max(1)));
+        }
+        if let Some(bps) = self.bytes_per_second {
+            seconds = seconds.max(bytes as f64 / bps.max(1) as f64);
+        }
+        seconds
+    }
+}
+
+/// A pace that every clone shares, so the app can change a running job's pace.
+pub type SharedPace = Arc<Mutex<Pace>>;
+
+/// When the next request may start under the rate caps.
+#[derive(Default)]
+struct Slots {
+    next_request: Option<Instant>,
+    next_byte: Option<Instant>,
+}
+
 /// Downloads tiles into a store. One downloader can run several batches
 /// one after another; pausing, cancelling and the 429 pause apply to all.
 pub struct Downloader {
     client: Client,
     settings: Settings,
+    pace: SharedPace,
+    slots: Mutex<Slots>,
     store: TileStore,
     control: watch::Receiver<Control>,
     /// Every worker waits until this time before its next request (429).
@@ -189,9 +250,17 @@ impl Downloader {
         store: TileStore,
         control: watch::Receiver<Control>,
     ) -> Self {
+        let pace = Arc::new(Mutex::new(Pace {
+            concurrency: settings.concurrency,
+            delay: settings.delay,
+            requests_per_minute: None,
+            bytes_per_second: None,
+        }));
         Self {
             client,
             settings,
+            pace,
+            slots: Mutex::new(Slots::default()),
             store,
             control,
             paused_until: Mutex::new(None),
@@ -200,8 +269,54 @@ impl Downloader {
         }
     }
 
+    /// Uses a pace the app can change while the job runs.
+    #[must_use]
+    pub fn with_pace(mut self, pace: SharedPace) -> Self {
+        self.pace = pace;
+        self
+    }
+
+    fn pace(&self) -> Pace {
+        *self.pace.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn store(&self) -> &TileStore {
         &self.store
+    }
+
+    /// Waits until the rate caps allow another request, and books it.
+    async fn wait_for_slot(&self) -> Result<(), Stop> {
+        let pace = self.pace();
+        let start = {
+            let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+            let now = Instant::now();
+            let start = [Some(now), slots.next_request, slots.next_byte]
+                .into_iter()
+                .flatten()
+                .max()
+                .unwrap_or(now);
+            slots.next_request = pace
+                .requests_per_minute
+                .map(|rpm| start + Duration::from_secs_f64(60.0 / f64::from(rpm.max(1))));
+            start
+        };
+        if start > Instant::now() {
+            self.unless_cancelled(tokio::time::sleep_until(start))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Books the time `bytes` take under the speed cap.
+    fn spend_bytes(&self, bytes: u64) {
+        let Some(bps) = self.pace().bytes_per_second else {
+            return;
+        };
+        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        let from = slots
+            .next_byte
+            .map_or_else(Instant::now, |next| next.max(Instant::now()));
+        slots.next_byte = Some(from + Duration::from_secs_f64(bytes as f64 / bps.max(1) as f64));
     }
 
     fn stopped(&self) -> Option<Stop> {
@@ -302,13 +417,13 @@ impl Downloader {
         }
         let next = Arc::new(AtomicUsize::new(0));
         let mut workers = JoinSet::new();
-        for _ in 0..self.settings.concurrency.max(1) {
+        for worker in 0..self.pace().concurrency.max(1) {
             let this = Arc::clone(self);
             let tasks = Arc::clone(&tasks);
             let next = Arc::clone(&next);
             let on_outcome = Arc::clone(&on_outcome);
             workers.spawn(async move {
-                if let Err(stop) = this.work(&tasks, &next, &on_outcome).await {
+                if let Err(stop) = this.work(worker, &tasks, &next, &on_outcome).await {
                     this.set_stop(stop);
                 }
             });
@@ -326,6 +441,7 @@ impl Downloader {
 
     async fn work(
         &self,
+        worker: usize,
         tasks: &[Task],
         next: &AtomicUsize,
         on_outcome: &OnOutcome,
@@ -335,6 +451,11 @@ impl Downloader {
                 return Err(stop);
             }
             self.wait_while_paused().await?;
+            // Fewer parallel downloads take effect at once; the rest of the
+            // batch goes to the remaining workers.
+            if worker > 0 && worker >= self.pace().concurrency {
+                return Ok(());
+            }
             let Some(task) = tasks.get(next.fetch_add(1, Ordering::SeqCst)) else {
                 return Ok(());
             };
@@ -353,7 +474,10 @@ impl Downloader {
             if failures >= self.settings.max_consecutive_failures {
                 return Err(Stop::TooManyFailures(failures));
             }
-            self.sleep(self.settings.delay).await?;
+            if let Outcome::Saved(bytes) = &outcome {
+                self.spend_bytes(*bytes);
+            }
+            self.sleep(self.pace().delay).await?;
         }
     }
 
@@ -367,6 +491,7 @@ impl Downloader {
                 return Err(Stop::Cancelled);
             }
             self.wait_for_server().await?;
+            self.wait_for_slot().await?;
             let request = self
                 .client
                 .get(&task.url)
@@ -742,6 +867,113 @@ pub mod tests {
         assert_eq!(
             USER_AGENT,
             format!("Atlas/{} (offline map viewer)", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn estimates_time_under_each_cap() {
+        let pace = Pace::from_settings(&crate::settings::DownloadSettings::default());
+        assert_eq!(pace.concurrency, 2);
+        assert_eq!(pace.delay, Duration::from_millis(250));
+        let latency = Duration::from_millis(250);
+        // 100 tiles, 2 at a time, 0.5 s each.
+        assert!((pace.estimate_seconds(100, 0, latency) - 25.0).abs() < 1e-9);
+        let capped = Pace {
+            requests_per_minute: Some(60),
+            ..pace
+        };
+        assert!((capped.estimate_seconds(100, 0, latency) - 100.0).abs() < 1e-9);
+        let slow = Pace {
+            bytes_per_second: Some(1000),
+            ..pace
+        };
+        assert!((slow.estimate_seconds(100, 200_000, latency) - 200.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn keeps_to_a_requests_per_minute_cap() {
+        ensure_crypto();
+        let dir = TempDir::new("rpm");
+        let image = png();
+        let server = MockServer::start(Arc::new(move |_, _| Reply::image(image.clone()))).await;
+        let mut settings = fast();
+        settings.concurrency = 4;
+        let run = downloader(&dir, settings);
+        // 600 a minute: one request every 100 ms, whatever the workers do.
+        *run.downloader.pace.lock().unwrap() = Pace {
+            concurrency: 4,
+            delay: Duration::from_millis(5),
+            requests_per_minute: Some(600),
+            bytes_per_second: None,
+        };
+        run.run(tasks(&server, 6)).await.unwrap();
+        let seen = server.seen();
+        assert_eq!(seen.len(), 6);
+        let mut times: Vec<Instant> = seen.iter().map(|s| s.at).collect();
+        times.sort();
+        for pair in times.windows(2) {
+            assert!(
+                pair[1] - pair[0] >= Duration::from_millis(90),
+                "{:?}",
+                pair[1] - pair[0]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_to_a_speed_cap_and_takes_changes_while_running() {
+        ensure_crypto();
+        let dir = TempDir::new("bps");
+        let body = png();
+        let size = body.len() as u64;
+        let server = MockServer::start(Arc::new(move |_, _| Reply::image(body.clone()))).await;
+        let run = downloader(&dir, fast());
+        let pace = Arc::new(Mutex::new(Pace {
+            concurrency: 1,
+            delay: Duration::from_millis(5),
+            requests_per_minute: None,
+            // Each image takes 150 ms of the budget.
+            bytes_per_second: Some(size * 1000 / 150),
+        }));
+        let downloader = Arc::new(
+            Downloader::new(
+                http_client().unwrap(),
+                fast(),
+                TileStore::new(dir.0.join("paced"), None),
+                run.control.subscribe(),
+            )
+            .with_pace(Arc::clone(&pace)),
+        );
+        let started = Instant::now();
+        downloader
+            .run(tasks(&server, 4), Arc::new(|_, _| {}))
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() >= Duration::from_millis(440),
+            "{:?}",
+            started.elapsed()
+        );
+
+        // Lifting the cap applies to the same downloader.
+        pace.lock().unwrap().bytes_per_second = None;
+        let more: Arc<Vec<Task>> = Arc::new(
+            (10..14)
+                .map(|i| Task {
+                    layer: 0,
+                    url: server.url(&format!("/t/{i}.png")),
+                    path: PathBuf::from(format!("t/{i}.png")),
+                })
+                .collect(),
+        );
+        // Wait out what the cap booked before.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let started = Instant::now();
+        downloader.run(more, Arc::new(|_, _| {})).await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(300),
+            "{:?}",
+            started.elapsed()
         );
     }
 
