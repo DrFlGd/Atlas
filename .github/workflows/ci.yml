@@ -115,9 +115,9 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @atlas/desktop test:e2e
 
-      # Starts the built app and checks the window through WebView2's own
-      # DevTools endpoint: map, tiles, markers, saved progress, byte ranges on
-      # http://atlas-pack.localhost/ and the shell's commands.
+      # Starts the built app and checks from outside that its window opens,
+      # the embedded browser starts its page and it keeps running. Saves a
+      # picture of the desktop with the screenshots below.
       - name: Start-up test of the app window (Windows)
         if: runner.os == 'Windows'
         run: pnpm --filter @atlas/desktop test:e2e:windows
