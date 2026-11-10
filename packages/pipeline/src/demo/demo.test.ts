@@ -1,0 +1,105 @@
+import { pointInPolygon, polygonArea } from '@atlas/core';
+import { checkPackIntegrity } from '@atlas/schema';
+import { describe, expect, it } from 'vitest';
+import { rectangle, voronoiCells } from '../geometry/voronoi';
+import { createRandom, deriveSeed } from '../random';
+import { generateDemoContent, layoutRegions } from './content';
+import { createTerrain, elevationAt, renderTerrain } from './terrain';
+
+const SIZE = 2048;
+const SEED = 7;
+const terrain = createTerrain(SEED, SIZE);
+
+function generate(seed = SEED) {
+  const layout = layoutRegions(seed, terrain);
+  return generateDemoContent(terrain, layout, {
+    seed,
+    size: SIZE,
+    tileSize: 256,
+    locationCount: 400,
+    tiles: { type: 'pmtiles', url: 'tiles/surface.pmtiles' },
+  });
+}
+
+describe('random', () => {
+  it('repeats for the same seed and differs between labels', () => {
+    const a = createRandom(1);
+    const b = createRandom(1);
+    expect([a(), a(), a()]).toEqual([b(), b(), b()]);
+    expect(deriveSeed(1, 'x')).not.toBe(deriveSeed(1, 'y'));
+  });
+});
+
+describe('voronoiCells', () => {
+  it('partitions the boundary into one convex cell per site', () => {
+    const boundary = rectangle(0, 0, 100, 100);
+    const sites = [
+      [20, 20],
+      [80, 30],
+      [50, 80],
+    ] as const;
+    const cells = voronoiCells(sites, boundary);
+    const area = cells.reduce((sum, cell) => sum + polygonArea(cell), 0);
+    expect(area).toBeCloseTo(10000, 6);
+    cells.forEach((cell, i) => {
+      const [x, y] = sites[i]!;
+      expect(pointInPolygon({ x, y }, cell)).toBe(true);
+    });
+  });
+});
+
+describe('demo content', () => {
+  const pack = generate();
+
+  it('is valid and consistent', () => {
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    expect(pack.locations).toHaveLength(400);
+    expect(pack.layers[0]!.maxZoom).toBe(3);
+  });
+
+  it('is deterministic for a seed', () => {
+    expect(generate()).toEqual(pack);
+    expect(generate(SEED + 1).locations).not.toEqual(pack.locations);
+  });
+
+  it('uses stable, zero-padded location ids', () => {
+    expect(pack.locations[0]!.id).toBe('demo:loc:0001');
+    expect(pack.locations.at(-1)!.id).toBe('demo:loc:0400');
+  });
+
+  it('places locations inside the map, mostly on land, and in the region that contains them', () => {
+    const regions = new Map(pack.regions.map((r) => [r.id, r]));
+    let onLand = 0;
+    for (const loc of pack.locations) {
+      expect(loc.x).toBeGreaterThanOrEqual(0);
+      expect(loc.x).toBeLessThanOrEqual(SIZE);
+      if (elevationAt(terrain, loc.x, loc.y) > 0) onLand++;
+      const region = loc.regionId ? regions.get(loc.regionId) : undefined;
+      if (region) expect(pointInPolygon(loc, region.polygon)).toBe(true);
+    }
+    expect(onLand / pack.locations.length).toBeGreaterThan(0.9);
+  });
+
+  it('splits each top-level region into child regions that cover it', () => {
+    const parents = pack.regions.filter((r) => r.parentId === null);
+    expect(parents).toHaveLength(2);
+    for (const parent of parents) {
+      const children = pack.regions.filter((r) => r.parentId === parent.id);
+      expect(children.length).toBeGreaterThan(1);
+      const childArea = children.reduce((sum, r) => sum + polygonArea(r.polygon), 0);
+      // Child vertices are rounded to whole pixels, so allow a small tolerance.
+      expect(childArea / polygonArea(parent.polygon)).toBeCloseTo(1, 2);
+    }
+  });
+});
+
+describe('renderTerrain', () => {
+  it('renders an RGB image with both water and land', () => {
+    const image = renderTerrain(terrain, 128);
+    expect(image.length).toBe(128 * 128 * 3);
+    const corner = [image[0]!, image[1]!, image[2]!];
+    const centre = (64 * 128 + 64) * 3;
+    expect(corner[2]).toBeGreaterThan(corner[0]!); // blue-ish water at the edge
+    expect([image[centre], image[centre + 1], image[centre + 2]]).not.toEqual(corner);
+  });
+});

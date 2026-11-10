@@ -1,0 +1,100 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  font-family: var(--atlas-font);
+  font-size: 14px;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+}
+
+.map-pane {
+  position: absolute;
+  inset: 0;
+}
+
+.overlay {
+  position: absolute;
+  z-index: 1000;
+  top: 12px;
+  right: 12px;
+  min-width: 220px;
+  max-width: min(320px, calc(100% - 24px));
+  padding: 12px 14px;
+  background: var(--atlas-surface-translucent);
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  box-shadow: var(--atlas-shadow);
+  backdrop-filter: blur(6px);
+}
+
+.overlay-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--atlas-accent);
+}
+
+.overlay-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.overlay-stats dt {
+  color: var(--atlas-muted);
+}
+
+.overlay-stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: baseline;
+}
+
+.muted {
+  color: var(--atlas-muted);
+}
+
+.status {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--atlas-muted);
+}
+
+.status-error h1 {
+  color: var(--atlas-danger);
+  font-size: 18px;
+}
+
+.status-error pre {
+  max-width: 80ch;
+  white-space: pre-wrap;
+  color: var(--atlas-text);
+}

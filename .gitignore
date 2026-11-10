@@ -11,3 +11,8 @@ target/
 sources/
 packs/*
 !packs/demo/
+
+# Test and build by-products
+test-results/
+playwright-report/
+*.tsbuildinfo

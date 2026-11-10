@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Packages allowed to run install scripts. esbuild (used by tsx) verifies its
+# platform binary on install.
+onlyBuiltDependencies:
+  - esbuild

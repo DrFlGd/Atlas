@@ -1,0 +1,22 @@
+/* Map view styles layered on top of Leaflet's stylesheet. Colours come from
+   the app's theme variables, with fallbacks so the view works on its own. */
+
+.atlas-map.leaflet-container {
+  background: var(--atlas-map-backdrop, #0b0d12);
+  font: inherit;
+}
+
+.atlas-map.leaflet-container.atlas-marker-hover {
+  cursor: pointer;
+}
+
+.atlas-map .leaflet-control-zoom a,
+.atlas-map .leaflet-control-attribution {
+  background: var(--atlas-surface, #161a22);
+  color: var(--atlas-text, #e6e9ef);
+  border-color: var(--atlas-border, #2a303c);
+}
+
+.atlas-map .leaflet-control-attribution a {
+  color: var(--atlas-accent, #e6b450);
+}

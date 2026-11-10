@@ -1,0 +1,80 @@
+/**
+ * The public surface of the map view. These types carry no dependency on the
+ * rendering library, so the rest of the app can describe what to show without
+ * knowing how it is drawn.
+ */
+
+import type { PixelBounds, PixelPoint } from '../geometry/coords';
+
+/** A raster layer to display: the map image's size and where its tiles live. */
+export interface MapLayerSpec {
+  id: string;
+  /** Full-resolution image size in pixels. */
+  width: number;
+  height: number;
+  tileSize: number;
+  /** Lowest pyramid level present. */
+  minZoom: number;
+  /** Pyramid level at which the image is shown 1:1. */
+  maxZoom: number;
+  /** Absolute tile source URL; for `xyz` a `{z}/{x}/{y}` template. */
+  tiles: { type: 'pmtiles' | 'xyz'; url: string };
+  /** HTML attribution shown in the map corner. */
+  attribution?: string;
+}
+
+/** One point to draw on the map. */
+export interface MapMarker {
+  id: string;
+  /** Image pixel, origin top-left. */
+  x: number;
+  y: number;
+  /** CSS colour of the marker fill. */
+  color: string;
+}
+
+export interface MapViewState {
+  zoom: number;
+  center: PixelPoint;
+  /** Visible part of the image, in image pixels. */
+  bounds: PixelBounds;
+}
+
+export interface MapViewOptions {
+  /** Group nearby markers into clusters at low zoom. Defaults to true. */
+  clustering?: boolean;
+  /** Levels the user may zoom past the pyramid's 1:1 level. Defaults to 2. */
+  overZoom?: number;
+}
+
+export interface FlyToTarget {
+  x: number;
+  y: number;
+  /** Target zoom; keeps the current zoom when omitted. */
+  zoom?: number;
+}
+
+export type Unsubscribe = () => void;
+
+/**
+ * An interactive, pannable and zoomable map of one raster layer with a set of
+ * point markers. Coordinates are always image pixels.
+ */
+export interface MapView {
+  /** Shows a layer and fits the view to it. Clears the markers if the layer changes. */
+  setLayer(layer: MapLayerSpec): void;
+  /** Replaces all markers. */
+  setMarkers(markers: readonly MapMarker[]): void;
+  /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
+  setSelected(markerId: string | null): void;
+  /** Moves the view, animated unless `animate` is false. */
+  flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
+  /** Called with the marker id when the user clicks a marker, or null when they click empty map. */
+  onSelect(listener: (markerId: string | null) => void): Unsubscribe;
+  /** Called whenever the visible area changes, including during pans and zooms. */
+  onViewChange(listener: (state: MapViewState) => void): Unsubscribe;
+  /** The current view, or null before a layer is set. */
+  getView(): MapViewState | null;
+  /** Removes the map from its container and releases its resources. */
+  destroy(): void;
+}
