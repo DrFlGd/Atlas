@@ -99,7 +99,7 @@ Workspace packages export their TypeScript sources directly; the web app bundles
 
 `apps/desktop` wraps the same web build in a Tauri 2 window for Windows, macOS and Linux. It needs Rust and, per platform, a C++ toolchain or WebKitGTK; [apps/desktop/README.md](apps/desktop/README.md) lists the prerequisites. `pnpm desktop:dev` opens the window on the dev server; `pnpm desktop:build` writes installers to `apps/desktop/src-tauri/target/release/bundle/`. CI builds unsigned Linux and Windows bundles on every run and keeps them as workflow artifacts.
 
-In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. Not there yet: code signing, auto-update, native file dialogs and save-file sync.
+In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also exports and imports progress through native file dialogs, opens web links in the system browser, and can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, for offline use. Not there yet: code signing, auto-update and save-file sync.
 
 ## Data packs
 
@@ -125,6 +125,7 @@ tiles/                tile pyramids, one PMTiles file or {z}/{x}/{y} folder per 
 - Coordinates are pixels of the full-resolution map image, origin top-left. A layer's `maxZoom` is the pyramid level at which one tile pixel equals one image pixel.
 - Content ids are stable, prefixed strings: `<gameId>:<kind>:<localId>`, for example `demo:loc:0412`.
 - The schema lives in `packages/schema` and is shared by the app and the pipeline. `loadPack` in `packages/core` validates every file and checks references between files before the app uses a pack.
+- An `xyz` layer may name a remote source (`tiles.remote`: an `https` URL template and the remote zoom and tile offset of each pyramid level). The desktop app can download such tiles into its own data folder; see [apps/desktop/README.md](apps/desktop/README.md#downloading-map-images). The web app shows its usual "not installed" notice for them.
 - PMTiles archives are read with HTTP range requests, so whatever serves a pack must support them (the Vite dev and preview servers and common static servers do).
 
 ## Runtime configuration
@@ -151,7 +152,7 @@ Without a `packs` list, the app reads `packs/index.json`:
 { "packs": [{ "id": "demo", "url": "packs/demo/", "title": "Atlas demo world" }] }
 ```
 
-The dev server builds this index from every folder in `packs/` that has a `manifest.json`. `pnpm build` copies the packs named in `ATLAS_BUNDLE_PACKS` (comma-separated folder names, default `demo`) into `dist/packs/` and writes the index for them. With more than one pack, a game switcher appears in the top bar.
+The dev server builds this index from every folder in `packs/` that has a `manifest.json`. `pnpm build` copies the packs named in `ATLAS_BUNDLE_PACKS` (comma-separated folder names, default `demo`) into `dist/packs/` and writes the index for them, in that order. With more than one pack, a game switcher appears in the top bar. The first pack in the index is shown on first launch; after that the app opens the game picked last.
 
 Before showing a tile layer, the app requests the first bytes of its PMTiles archive (or the top tile of a folder pyramid). If that fails, the map shows a plain background and a short notice instead of tiles, and the markers still work.
 

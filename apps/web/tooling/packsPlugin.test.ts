@@ -40,4 +40,15 @@ describe('buildPackIndex', () => {
     expect(index).toEqual({ packs: [{ id: 'demo', url: 'packs/demo/', title: 'Demo' }] });
     expect(warnings).toHaveLength(2);
   });
+
+  it('keeps the order of ATLAS_BUNDLE_PACKS, so its first pack is the default game', async () => {
+    const dir = await root;
+    await mkdir(join(dir, 'zeta'), { recursive: true });
+    await writeFile(
+      join(dir, 'zeta', 'manifest.json'),
+      JSON.stringify({ gameId: 'zeta', title: 'Zeta' }),
+    );
+    const index = await buildPackIndex(dir, bundledPackNames('zeta,demo'));
+    expect(index.packs.map((p) => p.id)).toEqual(['zeta', 'demo']);
+  });
 });
