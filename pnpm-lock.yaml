@@ -56,6 +56,9 @@ importers:
       '@atlas/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@atlas/importer-api':
+        specifier: workspace:*
+        version: link:../../packages/importer-api
       '@atlas/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -121,6 +124,15 @@ importers:
       fake-indexeddb:
         specifier: ^6.2.8
         version: 6.2.8
+
+  packages/importer-api:
+    dependencies:
+      '@atlas/schema':
+        specifier: workspace:*
+        version: link:../schema
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/pipeline:
     dependencies:

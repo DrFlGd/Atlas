@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window: the app's own commands for desktop features (file dialogs for progress export and import, web links in the system browser, map image downloads). No plugin commands are granted; the dialog and opener plugins are only used from Rust.",
+  "description": "The main window only: the app's own commands for desktop features (file dialogs for progress export and import, web links in the system browser, map image downloads and their settings, the maps library and its folder dialogs, importing from a web page). No plugin commands are granted; the dialog and opener plugins are only used from Rust. No other window, and no remote page, is granted anything.",
   "windows": ["main"],
   "permissions": [
     "allow-desktop-info",
@@ -13,6 +13,21 @@
     "allow-tiles-pause",
     "allow-tiles-resume",
     "allow-tiles-cancel",
-    "allow-tiles-snapshot"
+    "allow-tiles-snapshot",
+    "allow-download-settings-get",
+    "allow-download-settings-set",
+    "allow-library-list",
+    "allow-library-open-pack",
+    "allow-library-add-folder",
+    "allow-library-remove-location",
+    "allow-library-choose-maps-folder",
+    "allow-library-apply-maps-folder",
+    "allow-library-reveal",
+    "allow-library-delete-pack",
+    "allow-library-import-sources",
+    "allow-library-save-import",
+    "allow-import-open",
+    "allow-import-poll",
+    "allow-import-close"
   ]
 }

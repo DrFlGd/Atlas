@@ -243,6 +243,32 @@ function installFakeShell() {
       case 'tiles_cancel':
         if (shell.job) shell.job.state = 'cancelled';
         return Promise.resolve(null);
+      case 'desktop_info':
+        return Promise.resolve({ name: 'Atlas', version: '0.0.0', platform: 'test' });
+      // The pack comes from the index, as a bundled pack would; no other folders.
+      case 'library_list':
+        return Promise.resolve({
+          mapsFolder: { path: '/maps', isDefault: true, exists: true },
+          packs: [],
+          hidden: [],
+          locations: [],
+          busy: [],
+        });
+      case 'download_settings_get':
+        return Promise.resolve({
+          settings: {
+            parallel: 2,
+            pauseMs: 250,
+            requestsPerMinute: null,
+            kilobytesPerSecond: null,
+          },
+          bounds: {
+            parallel: [1, 4],
+            pauseMs: [100, 5000],
+            requestsPerMinute: [10, 600],
+            kilobytesPerSecond: [50, 50000],
+          },
+        });
       default:
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(`Unknown command ${command}`);

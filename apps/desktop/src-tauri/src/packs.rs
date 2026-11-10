@@ -15,10 +15,19 @@
 //! Only registered folders are reachable, read-only, with no directory
 //! listings and no hidden files.
 //!
-//! Each pack can also have an overlay folder, `<overlay root>/<pack id>/`,
-//! which holds the map images downloaded for it (bundled packs are read-only
-//! app resources). A request is answered from the overlay when the file is
-//! there, and from the pack folder otherwise, with the same checks for both.
+//! Packs are registered in one of two ways:
+//!
+//! - **Bundled** packs are read-only app resources. Each can have an overlay
+//!   folder, `<overlay root>/<pack id>/`, for files the app adds (map images
+//!   downloaded for it). A request is answered from the overlay when the file
+//!   is there, and from the pack folder otherwise, with the same checks for
+//!   both.
+//! - **Folder** packs live in a folder the person keeps (the maps folder, or
+//!   one they opened). They are served as they are, with no overlay; map
+//!   images downloaded for them are written into the pack folder itself.
+//!
+//! The `import/` folder of a pack (page data kept for rebuilding an imported
+//! pack) is never served.
 
 use std::{
     collections::HashMap,
@@ -38,13 +47,31 @@ use crate::tiles::pyramid::is_safe_segment;
 pub const SCHEME: &str = "atlas-pack";
 
 /// Pack ids name a registered folder in URLs, so they are kept URL-safe.
-fn is_valid_pack_id(id: &str) -> bool {
+pub fn is_valid_pack_id(id: &str) -> bool {
     let mut chars = id.chars();
     chars
         .next()
         .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
         && id.len() <= 64
+}
+
+/// A pack's folder that is never served: page data kept with an imported pack.
+pub const IMPORT_DIR: &str = "import";
+
+/// How a registered pack folder is used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackKind {
+    /// A read-only app resource, with an overlay for added files.
+    Bundled,
+    /// A folder the person keeps; downloads go into it.
+    Folder,
+}
+
+#[derive(Clone, Debug)]
+struct Entry {
+    root: PathBuf,
+    kind: PackKind,
 }
 
 /// The pack folders the protocol may serve, keyed by pack id.
@@ -54,7 +81,7 @@ fn is_valid_pack_id(id: &str) -> bool {
 /// handlers on worker threads.
 #[derive(Clone, Default)]
 pub struct PackRegistry {
-    roots: Arc<RwLock<HashMap<String, PathBuf>>>,
+    roots: Arc<RwLock<HashMap<String, Entry>>>,
     overlay_root: Arc<RwLock<Option<PathBuf>>>,
 }
 
@@ -81,9 +108,19 @@ impl std::fmt::Display for RegisterError {
 impl std::error::Error for RegisterError {}
 
 impl PackRegistry {
-    /// Makes the folder `root` available as `<scheme URL>/<id>/`, replacing
-    /// any folder registered under the same id.
+    /// Makes the read-only folder `root` available as `<scheme URL>/<id>/`,
+    /// with an overlay, replacing any folder registered under the same id.
     pub fn register(&self, id: &str, root: &Path) -> Result<(), RegisterError> {
+        self.insert(id, root, PackKind::Bundled)
+    }
+
+    /// Makes a pack folder the person keeps available as `<scheme URL>/<id>/`,
+    /// replacing any folder registered under the same id.
+    pub fn register_folder(&self, id: &str, root: &Path) -> Result<(), RegisterError> {
+        self.insert(id, root, PackKind::Folder)
+    }
+
+    fn insert(&self, id: &str, root: &Path, kind: PackKind) -> Result<(), RegisterError> {
         if !is_valid_pack_id(id) {
             return Err(RegisterError::InvalidId(id.to_owned()));
         }
@@ -103,12 +140,49 @@ impl PackRegistry {
         self.roots
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id.to_owned(), canonical);
+            .insert(
+                id.to_owned(),
+                Entry {
+                    root: canonical,
+                    kind,
+                },
+            );
         Ok(())
+    }
+
+    /// Stops serving a pack.
+    pub fn unregister(&self, id: &str) {
+        self.roots
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
     }
 
     /// The folder registered for a pack id.
     pub fn root(&self, id: &str) -> Option<PathBuf> {
+        self.entry(id).map(|entry| entry.root)
+    }
+
+    /// How a pack id is registered.
+    pub fn kind(&self, id: &str) -> Option<PackKind> {
+        self.entry(id).map(|entry| entry.kind)
+    }
+
+    /// Every registered pack id of a kind, sorted.
+    pub fn ids(&self, kind: PackKind) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .roots
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, entry)| entry.kind == kind)
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn entry(&self, id: &str) -> Option<Entry> {
         self.roots
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -125,8 +199,11 @@ impl PackRegistry {
             .unwrap_or_else(PoisonError::into_inner) = Some(root);
     }
 
-    /// The overlay folder of a registered pack, if it exists.
+    /// The overlay folder of a registered bundled pack, if it exists.
     fn overlay(&self, id: &str) -> Option<PathBuf> {
+        if self.kind(id) != Some(PackKind::Bundled) {
+            return None;
+        }
         self.overlay_root
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -173,13 +250,15 @@ impl PackRegistry {
         let root = self.root(id).ok_or(StatusCode::NOT_FOUND)?;
 
         let mut relative = PathBuf::new();
-        for segment in segments {
+        for (index, segment) in segments.enumerate() {
             let segment = percent_decode_str(segment)
                 .decode_utf8()
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
             // Rejects traversal, hidden files, empty segments and anything a
             // platform could read as a separator, drive or device prefix.
-            if !is_safe_segment(&segment) {
+            if !is_safe_segment(&segment)
+                || (index == 0 && segment.eq_ignore_ascii_case(IMPORT_DIR))
+            {
                 return Err(StatusCode::FORBIDDEN);
             }
             relative.push(segment.as_ref());

@@ -12,7 +12,13 @@ import type {
 import type { MapViewState, MarkerHover, TileStatus } from '@atlas/core/mapview';
 import { create } from 'zustand';
 import type { RuntimeConfig } from '../config';
-import type { DownloadPlan, DownloadSnapshot } from '../desktop';
+import type {
+  DesktopInfo,
+  DownloadPlan,
+  DownloadSettingsInfo,
+  DownloadSnapshot,
+  Listing,
+} from '../desktop';
 
 export type Theme = 'dark' | 'light';
 export type PaneName = 'filters' | 'details';
@@ -59,11 +65,15 @@ export interface DownloadState {
   pending: boolean;
   /** The last command's error, in plain language. */
   error: string | null;
+  /** How downloads are paced, shared by every Atlas app on this computer. */
+  settings: DownloadSettingsInfo | null;
 }
 
 export interface AtlasState {
   config: RuntimeConfig | null;
   catalog: PackEntry[];
+  /** The packs this build comes with (from `config.json` or the pack index). */
+  bundledCatalog: PackEntry[];
   /** Boot and pack loading status. */
   status:
     | { kind: 'booting' }
@@ -104,6 +114,13 @@ export interface AtlasState {
   downloads: DownloadState;
   /** Increases when downloaded map images change, so the map looks again. */
   tileRevision: number;
+
+  /** The desktop app's name and version; null in a browser. */
+  app: DesktopInfo | null;
+  /** Where the desktop app finds packs; null in a browser. */
+  library: Listing | null;
+  mapsDialogOpen: boolean;
+  addMapOpen: boolean;
 }
 
 export const NO_DOWNLOADS: DownloadState = {
@@ -113,11 +130,13 @@ export const NO_DOWNLOADS: DownloadState = {
   panelOpen: false,
   pending: false,
   error: null,
+  settings: null,
 };
 
 export const useAtlas = create<AtlasState>()(() => ({
   config: null,
   catalog: [],
+  bundledCatalog: [],
   status: { kind: 'booting' },
   game: null,
 
@@ -147,4 +166,9 @@ export const useAtlas = create<AtlasState>()(() => ({
   persistent: true,
   downloads: NO_DOWNLOADS,
   tileRevision: 0,
+
+  app: null,
+  library: null,
+  mapsDialogOpen: false,
+  addMapOpen: false,
 }));

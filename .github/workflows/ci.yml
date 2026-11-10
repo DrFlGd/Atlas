@@ -137,12 +137,15 @@ jobs:
       # Downloads map images from a mock tile server on 127.0.0.1 through the
       # app's interface. Rebuilds the binary with the test pack as the default
       # game, after the bundles above have been uploaded.
-      - name: Download test (Linux)
+      - name: Download, maps library and import tests (Linux)
         if: runner.os == 'Linux'
         run: |
           pnpm --filter @atlas/desktop e2e:pack
-          ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
+          ATLAS_BUNDLE_PACKS=e2e-remote,demo \
+            ATLAS_BUNDLE_IMPORTERS=packages/importer-api/demo/demo-importer.js \
+            pnpm desktop:build --no-bundle
           xvfb-run -a pnpm --filter @atlas/desktop test:e2e:download
+          xvfb-run -a pnpm --filter @atlas/desktop test:e2e:import
 
       - name: Upload Windows installer
         if: runner.os == 'Windows'

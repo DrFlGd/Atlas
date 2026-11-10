@@ -7,16 +7,21 @@
 
 use std::{fs, path::PathBuf, sync::Arc};
 
-use serde::Serialize;
-use tauri::{AppHandle, Runtime, State, Url, WebviewWindow};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager as _, Runtime, State, Url, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
-use crate::tiles::{
-    manager::{PlanInfo, Snapshot},
-    pyramid::Detail,
-    DownloadManager,
+use crate::{
+    imports::{Imports, PollResult},
+    library::{FolderChoice, Library, Listing, SaveImport, SavedSource},
+    settings::DownloadSettings,
+    tiles::{
+        manager::{PlanInfo, Snapshot},
+        pyramid::Detail,
+        DownloadManager,
+    },
 };
 
 /// Progress files larger than this are not an Atlas export.
@@ -25,6 +30,8 @@ const MAX_OPEN_BYTES: u64 = 64 << 20;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopInfo {
+    /// The app's name, which a build may set (see apps/desktop/README.md).
+    name: String,
     version: String,
     platform: &'static str,
 }
@@ -32,6 +39,7 @@ pub struct DesktopInfo {
 #[tauri::command]
 pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
     DesktopInfo {
+        name: app.package_info().name.clone(),
         version: app.package_info().version.to_string(),
         platform: std::env::consts::OS,
     }
@@ -209,6 +217,266 @@ pub async fn tiles_snapshot(
     pack_id: String,
 ) -> Result<Option<Snapshot>, String> {
     Ok(manager.snapshot(&pack_id))
+}
+
+// ---------------------------------------------------------------------------
+// Download settings
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadSettingsInfo {
+    settings: DownloadSettings,
+    /// Lowest and highest allowed value of each setting.
+    bounds: DownloadBounds,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadBounds {
+    parallel: (u32, u32),
+    pause_ms: (u32, u32),
+    requests_per_minute: (u32, u32),
+    kilobytes_per_second: (u32, u32),
+}
+
+type LibraryState<'a> = State<'a, Arc<Library>>;
+
+fn settings_info(settings: DownloadSettings) -> DownloadSettingsInfo {
+    DownloadSettingsInfo {
+        settings,
+        bounds: DownloadBounds {
+            parallel: DownloadSettings::PARALLEL,
+            pause_ms: DownloadSettings::PAUSE_MS,
+            requests_per_minute: DownloadSettings::REQUESTS_PER_MINUTE,
+            kilobytes_per_second: DownloadSettings::KILOBYTES_PER_SECOND,
+        },
+    }
+}
+
+#[tauri::command]
+pub fn download_settings_get(library: LibraryState<'_>) -> DownloadSettingsInfo {
+    settings_info(library.settings().read().downloads)
+}
+
+/// Saves the download settings for every Atlas app and applies them at once.
+#[tauri::command]
+pub fn download_settings_set(
+    library: LibraryState<'_>,
+    manager: Manager<'_>,
+    settings: DownloadSettings,
+) -> Result<DownloadSettingsInfo, String> {
+    let settings = settings.validate()?;
+    library
+        .settings()
+        .update(|shared| shared.downloads = settings)?;
+    manager.set_download_settings(&settings);
+    Ok(settings_info(settings))
+}
+
+// ---------------------------------------------------------------------------
+// The maps library
+
+async fn blocking<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(task)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+async fn pick_folder<R: Runtime>(
+    window: &WebviewWindow<R>,
+    title: &str,
+) -> Result<Option<PathBuf>, String> {
+    let mut dialog = window.dialog().file().set_parent(window).set_title(title);
+    // Start in the home folder rather than a list of recent files.
+    if let Ok(home) = window.path().home_dir() {
+        dialog = dialog.set_directory(home);
+    }
+    chosen_path(|done| dialog.pick_folder(done)).await
+}
+
+/// Lists every pack the app can show, after looking at every folder again.
+#[tauri::command]
+pub async fn library_list(library: LibraryState<'_>) -> Result<Listing, String> {
+    let library = Arc::clone(&library);
+    blocking(move || Ok(library.scan())).await
+}
+
+/// Asks for a pack folder and remembers it. The pack id, or `None` when the
+/// dialog was closed.
+#[tauri::command]
+pub async fn library_open_pack<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+) -> Result<Option<String>, String> {
+    let Some(path) = pick_folder(&window, "Open a map pack").await? else {
+        return Ok(None);
+    };
+    let library = Arc::clone(&library);
+    blocking(move || library.add_pack_location(&path).map(Some)).await
+}
+
+/// Asks for a folder of map packs and remembers it. The number of packs in
+/// it, or `None` when the dialog was closed.
+#[tauri::command]
+pub async fn library_add_folder<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+) -> Result<Option<usize>, String> {
+    let Some(path) = pick_folder(&window, "Add a folder of map packs").await? else {
+        return Ok(None);
+    };
+    let library = Arc::clone(&library);
+    blocking(move || library.add_folder_location(&path).map(Some)).await
+}
+
+/// Forgets a remembered location. Its files are left alone.
+#[tauri::command]
+pub fn library_remove_location(library: LibraryState<'_>, path: String) -> Result<(), String> {
+    library.remove_location(&path)
+}
+
+/// Asks for a new maps folder. It is used only after
+/// `library_apply_maps_folder`.
+#[tauri::command]
+pub async fn library_choose_maps_folder<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+) -> Result<Option<FolderChoice>, String> {
+    let Some(path) = pick_folder(&window, "Choose where maps are saved").await? else {
+        return Ok(None);
+    };
+    let library = Arc::clone(&library);
+    blocking(move || library.propose_maps_folder(&path).map(Some)).await
+}
+
+/// Uses the chosen maps folder from now on, moving the maps there or not.
+#[tauri::command]
+pub async fn library_apply_maps_folder(
+    library: LibraryState<'_>,
+    manager: Manager<'_>,
+    move_packs: bool,
+) -> Result<Vec<String>, String> {
+    let busy = manager.active_packs();
+    let library = Arc::clone(&library);
+    blocking(move || library.apply_maps_folder(move_packs, &busy)).await
+}
+
+/// What to show in the system's file manager.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum RevealTarget {
+    MapsFolder,
+    Pack { id: String },
+    Location { path: String },
+}
+
+/// Opens the maps folder, a pack's folder or a remembered location in the
+/// system's file manager. Only those: the web app cannot name another path.
+#[tauri::command]
+pub fn library_reveal<R: Runtime>(
+    app: AppHandle<R>,
+    library: LibraryState<'_>,
+    target: RevealTarget,
+) -> Result<(), String> {
+    let path = match target {
+        RevealTarget::MapsFolder => {
+            let folder = library.maps_folder();
+            fs::create_dir_all(&folder)
+                .map_err(|error| format!("Cannot create the maps folder: {error}"))?;
+            folder
+        }
+        RevealTarget::Pack { id } => library
+            .pack_folder(&id)
+            .ok_or_else(|| "That pack has no folder.".to_owned())?,
+        RevealTarget::Location { path } => library
+            .known_location(&path)
+            .ok_or_else(|| "That location is not remembered.".to_owned())?,
+    };
+    if !path.is_dir() {
+        return Err("That folder cannot be found.".to_owned());
+    }
+    app.opener()
+        .open_path(path.display().to_string(), None::<&str>)
+        .map_err(|error| format!("Could not open the folder: {error}"))
+}
+
+/// Deletes a pack, with its map images, from the maps folder.
+#[tauri::command]
+pub async fn library_delete_pack(
+    library: LibraryState<'_>,
+    manager: Manager<'_>,
+    id: String,
+) -> Result<(), String> {
+    if manager.is_active(&id) {
+        return Err("Its map images are downloading. Cancel the download first.".to_owned());
+    }
+    let library = Arc::clone(&library);
+    blocking(move || library.delete_pack(&id)).await
+}
+
+/// Page data an importer stored with a pack.
+#[tauri::command]
+pub async fn library_import_sources(
+    library: LibraryState<'_>,
+    pack_id: String,
+    importer_id: String,
+) -> Result<Vec<SavedSource>, String> {
+    let library = Arc::clone(&library);
+    blocking(move || library.saved_sources(&pack_id, &importer_id)).await
+}
+
+/// Writes an imported pack and lists the packs again.
+#[tauri::command]
+pub async fn library_save_import(
+    library: LibraryState<'_>,
+    manager: Manager<'_>,
+    request: SaveImport,
+) -> Result<Listing, String> {
+    if manager.is_active(&request.pack_id) {
+        return Err(
+            "Map images of this game are downloading. Pause or cancel that first.".to_owned(),
+        );
+    }
+    let library = Arc::clone(&library);
+    blocking(move || {
+        library.save_import(&request)?;
+        Ok(library.scan())
+    })
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Importing from a web page
+
+/// Opens a web page in the import window, for an importer's page reader.
+#[tauri::command]
+pub async fn import_open<R: Runtime>(
+    app: AppHandle<R>,
+    imports: State<'_, Imports>,
+    url: String,
+    reader: String,
+) -> Result<(), String> {
+    imports.open(&app, &url, reader)
+}
+
+/// Asks the open page for its data once.
+#[tauri::command]
+pub async fn import_poll<R: Runtime>(
+    app: AppHandle<R>,
+    imports: State<'_, Imports>,
+) -> Result<PollResult, String> {
+    Ok(imports.poll(&app).await)
+}
+
+#[tauri::command]
+pub async fn import_close<R: Runtime>(
+    app: AppHandle<R>,
+    imports: State<'_, Imports>,
+) -> Result<(), String> {
+    imports.close(&app);
+    Ok(())
 }
 
 #[cfg(test)]

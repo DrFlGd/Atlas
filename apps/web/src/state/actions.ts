@@ -24,8 +24,10 @@ import {
   type VisibilityOverrides,
 } from '@atlas/core';
 import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
+import { desktop } from '../desktop';
 import type { HashView } from '../viewHash';
 import { loadDownloads } from './downloads';
+import { catalogFrom } from './library';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
 import { useAtlas, type AtlasState, type PaneName, type Theme } from './store';
 
@@ -77,11 +79,35 @@ export async function boot(initialView: HashView | null): Promise<void> {
         details: !narrow && (savedPanes?.details ?? true),
       },
     });
-    const catalog = await loadCatalog(config);
+    let catalog = await loadCatalog(config);
+    set({ bundledCatalog: catalog });
+    if (desktop) {
+      // The packs that come with the app, then those in the maps folder and
+      // the folders the person added. Without a listing, the first ones only.
+      const [app, listing] = await Promise.all([
+        desktop.info().catch(() => null),
+        desktop.library.list().catch((error: unknown) => {
+          console.error(error);
+          return null;
+        }),
+      ]);
+      catalog = catalogFrom(catalog, listing);
+      set({ app, library: listing });
+    }
     set({ catalog });
     const savedPack = await store.getSetting(SETTINGS.activePack);
     const entry = catalog.find((p) => p.id === savedPack) ?? catalog[0]!;
-    await loadGame(entry, initialView);
+    const loaded = await loadGame(entry, initialView);
+    // A pack in a folder can be broken or gone; show another rather than stopping.
+    const other = catalog.find((p) => p.id !== entry.id);
+    if (!loaded && other) {
+      const reason = get().status;
+      await loadGame(other);
+      notify(
+        `Could not open ${entry.title}${reason.kind === 'error' ? `: ${reason.message}` : '.'} Showing ${other.title} instead.`,
+        'error',
+      );
+    }
     if (!persistent) {
       notify(
         'This browser does not allow saving data, so progress lasts only until the page closes.',
@@ -93,12 +119,17 @@ export async function boot(initialView: HashView | null): Promise<void> {
   }
 }
 
-/** Loads a pack and the user state that belongs to its game. */
+/**
+ * Loads a pack and the user state that belongs to its game. Returns whether
+ * it was loaded. If it cannot be and another game is shown, that game stays
+ * and the reason is shown as a notice.
+ */
 export async function loadGame(
   entry: PackEntry,
   initialView: HashView | null = null,
-): Promise<void> {
+): Promise<boolean> {
   const token = ++loadToken;
+  const previous = get().game;
   set({ status: { kind: 'loading' } });
   try {
     const store = progressStore();
@@ -128,7 +159,7 @@ export async function loadGame(
       pack.layersOf(pack.data.maps[0]?.id ?? '')[0];
     if (!layer) throw new Error('The pack has no map layers.');
 
-    if (token !== loadToken) return;
+    if (token !== loadToken) return false;
     const rowMap = new Map(rows.map((r) => [r.targetId, r]));
     set({
       status: { kind: 'ready' },
@@ -150,8 +181,16 @@ export async function loadGame(
     });
     saveSetting(SETTINGS.activePack, entry.id);
     void loadDownloads(get().game!);
+    return true;
   } catch (error) {
-    if (token === loadToken) set({ status: { kind: 'error', message: errorText(error) } });
+    if (token !== loadToken) return false;
+    if (previous) {
+      set({ status: { kind: 'ready' } });
+      notify(`Could not open ${entry.title}: ${errorText(error)}`, 'error');
+    } else {
+      set({ status: { kind: 'error', message: errorText(error) } });
+    }
+    return false;
   }
 }
 

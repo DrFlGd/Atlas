@@ -28,6 +28,7 @@ describe('loadRuntimeConfig', () => {
       packUrl: null,
       theme: 'dark',
       clustering: true,
+      importers: [],
     });
   });
 
@@ -54,6 +55,34 @@ describe('loadRuntimeConfig', () => {
     expect(config).toMatchObject({ theme: 'light', clustering: false });
   });
 
+  it('resolves importer modules against config.json', async () => {
+    const config = await loadRuntimeConfig(
+      BASE,
+      serve({
+        [`${BASE}config.json`]: {
+          importers: [{ id: 'demo-maps', title: 'Demo', module: 'importers/demo-maps.js' }],
+        },
+      }),
+    );
+    expect(config.importers).toEqual([
+      {
+        id: 'demo-maps',
+        title: 'Demo',
+        description: '',
+        version: '',
+        moduleUrl: `${BASE}importers/demo-maps.js`,
+      },
+    ]);
+    await expect(
+      loadRuntimeConfig(
+        BASE,
+        serve({
+          [`${BASE}config.json`]: { importers: [{ id: '../x', title: 'X', module: 'x.js' }] },
+        }),
+      ),
+    ).rejects.toThrow(/Invalid config\.json/);
+  });
+
   it('rejects invalid settings and reports a missing file', async () => {
     await expect(
       loadRuntimeConfig(BASE, serve({ [`${BASE}config.json`]: { theme: 'blue' } })),
@@ -70,6 +99,7 @@ describe('loadCatalog', () => {
     packUrl: null,
     theme: 'dark',
     clustering: true,
+    importers: [],
     ...overrides,
   });
 
@@ -127,6 +157,7 @@ describe('applyQueryOverrides', () => {
     packUrl: null,
     theme: 'dark',
     clustering: true,
+    importers: [],
   };
 
   it('turns clustering off from the query string', () => {

@@ -41,7 +41,7 @@ describe('entity schemas', () => {
   it('rejects unknown manifest fields and unsupported schema versions', () => {
     const { manifest } = makeFixturePack();
     expect(manifestSchema.safeParse({ ...manifest, extra: true }).success).toBe(false);
-    expect(manifestSchema.safeParse({ ...manifest, schemaVersion: 2 }).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...manifest, schemaVersion: 3 }).success).toBe(false);
     expect(manifestSchema.safeParse({ ...manifest, packVersion: 'v1' }).success).toBe(false);
   });
 

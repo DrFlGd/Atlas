@@ -1,5 +1,11 @@
 import { isDownloadable } from '@atlas/core';
-import { desktop, packFolderOf, type Detail, type DownloadSnapshot } from '../desktop';
+import {
+  desktop,
+  packFolderOf,
+  type Detail,
+  type DownloadSettings,
+  type DownloadSnapshot,
+} from '../desktop';
 import { NO_DOWNLOADS, useAtlas, type DownloadState, type LoadedGame } from './store';
 
 /**
@@ -87,7 +93,37 @@ export async function loadDownloads(game: LoadedGame): Promise<void> {
 
 export function setDownloadPanelOpen(panelOpen: boolean): void {
   update({ panelOpen, error: null });
-  if (panelOpen) void refreshPlan();
+  if (panelOpen) {
+    void refreshPlan();
+    void loadDownloadSettings();
+  }
+}
+
+async function loadDownloadSettings(): Promise<void> {
+  if (!desktop) return;
+  try {
+    update({ settings: await desktop.tiles.settings() });
+  } catch (error) {
+    update({ error: errorText(error) });
+  }
+}
+
+/**
+ * Saves how downloads are paced, for every Atlas app on this computer. A
+ * running download follows at once, except that more parallel downloads
+ * start from its next level. The estimates are worked out again.
+ */
+export async function saveDownloadSettings(settings: DownloadSettings): Promise<boolean> {
+  if (!desktop) return false;
+  update({ pending: true, error: null });
+  try {
+    update({ settings: await desktop.tiles.setSettings(settings), pending: false });
+    await refreshPlan();
+    return true;
+  } catch (error) {
+    update({ pending: false, error: errorText(error) });
+    return false;
+  }
 }
 
 async function command(

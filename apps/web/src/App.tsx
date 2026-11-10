@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { AddMapDialog } from './components/AddMapDialog';
 import { DetailsPane } from './components/DetailsPane';
 import { FilterPane } from './components/FilterPane';
 import { UiIcon } from './components/icons';
 import { MapPane } from './components/MapPane';
+import { MapsDialog } from './components/MapsDialog';
 import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
@@ -67,6 +69,8 @@ function Shell() {
       </SidePane>
       <Toast />
       <ProfileDialog />
+      <MapsDialog />
+      <AddMapDialog />
     </div>
   );
 }

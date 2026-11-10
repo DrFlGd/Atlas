@@ -7,13 +7,22 @@
 //! finished level is recorded in the layer's status file, which the map
 //! reads to show the new levels without a restart.
 //!
-//! Files under the app data folder:
+//! Where files go depends on how the pack is registered (see `packs.rs`):
 //!
-//! - `packs/<pack id>/…`: the overlay, tiles at the layer's own URL paths and
-//!   `offline-tiles/<layer local id>.json` status files (see `status.rs`);
-//! - `downloads/<pack id>.json`: the job of a pack that has not finished,
-//!   `{ "packId", "detail", "stopReason" }`, so it can be offered again
-//!   after the app restarts. Removed when the job finishes or is cancelled.
+//! - a pack folder the person keeps (the maps folder or an opened location)
+//!   receives the tiles itself, at the layer's own URL paths, with the
+//!   `offline-tiles/<layer local id>.json` status files (see `status.rs`),
+//!   and the image summaries in its `manifest.json` are kept current. The
+//!   job holds the pack folder's lock (`.atlas/lock`) while it runs, so
+//!   another window or app cannot write the same pack at once, and an
+//!   unfinished job is recorded in `.atlas/download-job.json`;
+//! - a bundled pack is read only: its tiles and status files go to the
+//!   overlay `<app data>/packs/<pack id>/`, and an unfinished job to
+//!   `<app data>/downloads/<pack id>.json`.
+//!
+//! The job record is `{ "packId", "detail", "stopReason" }`, so the job can
+//! be offered again after the app restarts. It is removed when the job
+//! finishes or is cancelled.
 
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -27,13 +36,21 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::watch, time::Instant};
 
 use super::{
-    download::{http_client, Control, Downloader, OnOutcome, Outcome, Settings, Stop, Task},
+    download::{
+        http_client, Control, Downloader, OnOutcome, Outcome, Pace, Settings, SharedPace, Stop,
+        Task,
+    },
     downscale::build_lower_levels,
     pyramid::{read_pack_plan, Detail, LayerPlan, PackPlan},
     status::{add_levels, read_levels},
     store::TileStore,
 };
-use crate::packs::PackRegistry;
+use crate::{
+    library::{PackLock, JOB_FILE, META_DIR},
+    manifest::{update_images, ImagesUpdate},
+    packs::{PackKind, PackRegistry},
+    settings::DownloadSettings,
+};
 
 /// Assumed server answer time, for estimates before a job has started.
 const ASSUMED_LATENCY: Duration = Duration::from_millis(200);
@@ -149,11 +166,9 @@ impl Progress {
     }
 }
 
-/// Rough cost of fetching `tiles` with the default settings.
-fn estimate_seconds(tiles: u64) -> f64 {
-    let settings = Settings::default();
-    let per_tile = (settings.delay + ASSUMED_LATENCY).as_secs_f64();
-    tiles as f64 * per_tile / settings.concurrency as f64
+/// Rough cost of fetching `tiles` tiles of `bytes` bytes in all at a pace.
+fn estimate_seconds(pace: &Pace, tiles: u64, bytes: u64) -> f64 {
+    pace.estimate_seconds(tiles, bytes, ASSUMED_LATENCY)
 }
 
 /// One choice in the detail picker.
@@ -206,6 +221,8 @@ struct Job {
     control: watch::Sender<Control>,
     progress: Arc<Mutex<Progress>>,
     finished: bool,
+    /// Held while the job runs, for a pack folder.
+    lock: Option<PackLock>,
 }
 
 /// Runs and tracks download jobs. Lives in Tauri's managed state.
@@ -213,6 +230,8 @@ pub struct DownloadManager {
     app_data: PathBuf,
     registry: PackRegistry,
     settings: Settings,
+    /// The person's download settings; running jobs read them too.
+    pace: SharedPace,
     jobs: Mutex<HashMap<String, Job>>,
 }
 
@@ -231,12 +250,51 @@ impl DownloadManager {
         registry: PackRegistry,
         settings: Settings,
     ) -> Self {
+        let pace = Arc::new(Mutex::new(Pace {
+            concurrency: settings.concurrency,
+            delay: settings.delay,
+            requests_per_minute: None,
+            bytes_per_second: None,
+        }));
         Self {
             app_data,
             registry,
             settings,
+            pace,
             jobs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Applies the person's download settings, to running jobs too.
+    pub fn set_download_settings(&self, settings: &DownloadSettings) {
+        *lock(&self.pace) = Pace::from_settings(settings);
+    }
+
+    fn current_pace(&self) -> Pace {
+        *lock(&self.pace)
+    }
+
+    /// Whether a pack's job is running or paused.
+    pub fn is_active(&self, pack_id: &str) -> bool {
+        lock(&self.jobs)
+            .get(pack_id)
+            .is_some_and(|job| !job.finished)
+    }
+
+    /// The packs with a running or paused job.
+    pub fn active_packs(&self) -> Vec<String> {
+        lock(&self.jobs)
+            .values()
+            .filter(|job| !job.finished)
+            .map(|job| job.pack_id.clone())
+            .collect()
+    }
+
+    /// A pack folder the person keeps, written in place; none for bundled packs.
+    fn pack_folder(&self, pack_id: &str) -> Option<PathBuf> {
+        (self.registry.kind(pack_id) == Some(PackKind::Folder))
+            .then(|| self.registry.root(pack_id))
+            .flatten()
     }
 
     /// The overlay folder of every pack: `<app data>/packs`.
@@ -249,6 +307,9 @@ impl DownloadManager {
             .registry
             .root(pack_id)
             .ok_or_else(|| format!("There is no installed pack called {pack_id:?}."))?;
+        if self.registry.kind(pack_id) == Some(PackKind::Folder) {
+            return Ok(TileStore::new(root.clone(), Some(root)));
+        }
         Ok(TileStore::new(
             Self::overlay_root(&self.app_data).join(pack_id),
             Some(root),
@@ -266,9 +327,13 @@ impl DownloadManager {
     }
 
     fn record_path(&self, pack_id: &str) -> PathBuf {
-        self.app_data
-            .join("downloads")
-            .join(format!("{pack_id}.json"))
+        match self.pack_folder(pack_id) {
+            Some(folder) => folder.join(META_DIR).join(JOB_FILE),
+            None => self
+                .app_data
+                .join("downloads")
+                .join(format!("{pack_id}.json")),
+        }
     }
 
     fn write_record(&self, record: &JobRecord) {
@@ -311,6 +376,7 @@ impl DownloadManager {
     /// Blocking: it looks at every tile on disk.
     pub fn plan_info(&self, pack_id: &str) -> Result<PlanInfo, String> {
         let (plan, store) = self.plan(pack_id)?;
+        let pace = self.current_pace();
         let details = plan.details();
         let mut options = Vec::new();
         for &detail in &details {
@@ -346,7 +412,7 @@ impl DownloadManager {
                 detail,
                 tiles,
                 remaining,
-                estimated_seconds: estimate_seconds(remaining),
+                estimated_seconds: estimate_seconds(&pace, remaining, bytes),
                 estimated_bytes: bytes,
                 installed,
             });
@@ -386,6 +452,7 @@ impl DownloadManager {
         }
         let client =
             http_client().map_err(|error| format!("Could not start downloading: {error}"))?;
+        let folder = self.pack_folder(pack_id);
         let mut jobs = lock(&self.jobs);
         if let Some(job) = jobs.values().find(|job| !job.finished) {
             return Err(if job.pack_id == pack_id {
@@ -419,6 +486,18 @@ impl DownloadManager {
             maps[map].total += layer.remote_tile_count(layer.top_for(detail));
         }
         let total = maps.iter().map(|map| map.total).sum();
+        let pack_lock = match &folder {
+            Some(folder) => Some(PackLock::acquire(folder)?),
+            None => None,
+        };
+        let pace = self.current_pace();
+        let typical_bytes: u64 = plan
+            .layers
+            .iter()
+            .map(|layer| {
+                layer.remote_tile_count(layer.top_for(detail)) * layer.format().typical_bytes()
+            })
+            .sum();
         let status_revision = jobs
             .get(pack_id)
             .map_or(0, |job| lock(&job.progress).snapshot.status_revision);
@@ -437,7 +516,7 @@ impl DownloadManager {
                 bytes: 0,
                 tiles_per_second: 0.0,
                 bytes_per_second: 0.0,
-                seconds_left: Some(estimate_seconds(total)),
+                seconds_left: Some(estimate_seconds(&pace, total, typical_bytes)),
                 status_revision,
             },
             layer_maps,
@@ -445,12 +524,10 @@ impl DownloadManager {
             started: Instant::now(),
         }));
         let (control, receiver) = watch::channel(Control::Run);
-        let downloader = Arc::new(Downloader::new(
-            client,
-            self.settings.clone(),
-            store,
-            receiver,
-        ));
+        let downloader = Arc::new(
+            Downloader::new(client, self.settings.clone(), store, receiver)
+                .with_pace(Arc::clone(&self.pace)),
+        );
         jobs.insert(
             pack_id.to_owned(),
             Job {
@@ -458,6 +535,7 @@ impl DownloadManager {
                 control,
                 progress: Arc::clone(&progress),
                 finished: false,
+                lock: pack_lock,
             },
         );
         drop(jobs);
@@ -470,7 +548,17 @@ impl DownloadManager {
         let this = Arc::clone(self);
         let pack = pack_id.to_owned();
         tokio::spawn(async move {
-            let result = run_job(&plan, detail, &downloader, &progress).await;
+            let result = run_job(&plan, detail, &downloader, &progress, folder.as_deref()).await;
+            if let Some(folder) = &folder {
+                let plan = plan.clone();
+                let folder = folder.clone();
+                let store = downloader.store().clone();
+                // Counting every image file takes a moment for a large pack.
+                let _ = tokio::task::spawn_blocking(move || {
+                    record_images(&folder, &plan, &store, true)
+                })
+                .await;
+            }
             this.finish(&pack, detail, result);
         });
         Ok(self.snapshot(pack_id).expect("just added"))
@@ -513,6 +601,7 @@ impl DownloadManager {
         drop(jobs);
         if let Some(job) = lock(&self.jobs).get_mut(pack_id) {
             job.finished = true;
+            job.lock = None;
         }
     }
 
@@ -563,6 +652,7 @@ async fn run_job(
     detail: Detail,
     downloader: &Arc<Downloader>,
     progress: &Arc<Mutex<Progress>>,
+    folder: Option<&Path>,
 ) -> Result<(), Stop> {
     let store = downloader.store().clone();
     let tops: Vec<u8> = plan
@@ -622,8 +712,62 @@ async fn run_job(
                 .map_err(|error| Stop::Disk(error.to_string()))?;
             lock(progress).snapshot.status_revision += 1;
         }
+        if let Some(folder) = folder {
+            record_images(folder, plan, &store, false);
+        }
     }
     Ok(())
+}
+
+/// Records the complete levels of each layer in the pack's manifest, and
+/// with `count` the number and size of its image files.
+fn record_images(folder: &Path, plan: &PackPlan, store: &TileStore, count: bool) {
+    let updates: Vec<ImagesUpdate<'_>> = plan
+        .layers
+        .iter()
+        .map(|layer| {
+            let levels = read_levels(&store.overlay, layer);
+            ImagesUpdate {
+                layer_id: &layer.layer_id,
+                complete: (layer.min_zoom..=layer.max_zoom).all(|z| levels.contains(&z)),
+                levels: levels.into_iter().collect(),
+                counts: count.then(|| count_images(folder, layer)),
+            }
+        })
+        .collect();
+    if let Err(error) = update_images(folder, &updates) {
+        eprintln!("atlas: {error}");
+    }
+}
+
+/// The image files of a layer in a pack folder, and their bytes.
+fn count_images(folder: &Path, layer: &LayerPlan) -> (u64, u64) {
+    fn walk(dir: &Path, totals: &mut (u64, u64)) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                walk(&entry.path(), totals);
+            } else if kind.is_file() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.ends_with(".404") && !name.ends_with(".part") {
+                    totals.0 += 1;
+                    totals.1 += entry.metadata().map_or(0, |m| m.len());
+                }
+            }
+        }
+    }
+    let prefix = layer.url.split("{z}").next().unwrap_or_default();
+    let mut totals = (0, 0);
+    if let Some(relative) = crate::tiles::pyramid::relative_path(prefix.trim_end_matches('/')) {
+        walk(&folder.join(relative), &mut totals);
+    }
+    totals
 }
 
 async fn build_levels_below(
@@ -799,6 +943,81 @@ mod tests {
         assert!(manager.plan_info("test").unwrap().options[1].installed);
         // Nothing was written into the pack folder.
         assert!(!pack.join("tiles").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn downloads_into_a_pack_folder_in_place() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-folder");
+        let server = MockServer::start(tile_server()).await;
+        let pack = dir.0.join("maps/Test pack ü");
+        write_pack(&pack, &server);
+        fs::write(
+            pack.join("manifest.json"),
+            r#"{"schemaVersion":2,"gameId":"test","title":"T","packVersion":"1.0.0","gamePatch":"1","attribution":[],"idMigrations":{},
+               "contents":{"counts":{"maps":1,"layers":1,"locations":0,"categories":0,"regions":0,"guides":0},
+               "maps":[{"id":"t:map:a","name":"Island","width":1000,"height":600,"locations":0,
+               "layers":[{"id":"t:layer:a","name":"Surface","minZoom":0,"maxZoom":2,"tiles":"xyz","downloadable":true}]}]}}"#,
+        )
+        .unwrap();
+        let registry = PackRegistry::default();
+        registry.register_folder("test", &pack).unwrap();
+        let manager = Arc::new(DownloadManager::with_settings(
+            dir.0.join("data"),
+            registry,
+            Settings {
+                delay: Duration::from_millis(1),
+                ..Settings::default()
+            },
+        ));
+        manager.start("test", Detail::Standard).unwrap();
+        // The pack folder is locked while the job runs.
+        assert!(crate::library::PackLock::acquire(&pack).is_err());
+        let done = wait_for(&manager, "test").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        assert!(crate::library::PackLock::acquire(&pack).is_ok());
+        assert_eq!(
+            fs::read(pack.join("tiles/a/1/1/0.png")).unwrap(),
+            coloured_tile(4, 2, 2)
+        );
+        assert!(pack.join("offline-tiles/a.json").exists());
+        assert!(
+            !dir.0.join("data/packs").exists(),
+            "no overlay for a pack folder"
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(pack.join("manifest.json")).unwrap()).unwrap();
+        let images = &manifest["contents"]["maps"][0]["layers"][0]["images"];
+        assert_eq!(images["levels"], serde_json::json!([0, 1]));
+        assert_eq!(images["complete"], false);
+        assert_eq!(images["files"], 5, "4 downloaded and 1 built");
+        assert!(images["bytes"].as_u64().unwrap() > 0);
+
+        // An unfinished job is recorded in the pack folder, so it travels with it.
+        let server_403 = MockServer::start(Arc::new(|_, _| Reply::status(403))).await;
+        write_pack(&pack, &server_403);
+        manager.start("test", Detail::Full).unwrap();
+        assert_eq!(wait_for(&manager, "test").await.state, JobState::Stopped);
+        assert!(pack.join(".atlas/download-job.json").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn estimates_follow_the_download_settings() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-pace");
+        let server = MockServer::start(tile_server()).await;
+        let pack = dir.0.join("pack");
+        write_pack(&pack, &server);
+        let manager = manager(&dir, &pack);
+        let fast = manager.plan_info("test").unwrap().options[1].estimated_seconds;
+        manager.set_download_settings(&DownloadSettings {
+            parallel: 1,
+            pause_ms: 5000,
+            requests_per_minute: None,
+            kilobytes_per_second: None,
+        });
+        let slow = manager.plan_info("test").unwrap().options[1].estimated_seconds;
+        assert!(slow > fast * 5.0, "{fast} -> {slow}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

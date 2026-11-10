@@ -31,8 +31,13 @@ if (process.platform !== 'win32') {
 const waitSeconds = Number(process.env.ATLAS_E2E_TIMEOUT ?? 90);
 const settleSeconds = 10;
 const config = JSON.parse(await readFile(here('../src-tauri/tauri.conf.json'), 'utf8'));
+// A build with a name of its own (ATLAS_APP_NAME) leaves its settings here.
+const identity = await readFile(here('../src-tauri/tauri.identity.conf.json'), 'utf8').then(
+  (text) => JSON.parse(text),
+  () => null,
+);
 /** @type {string} */
-const title = config.app.windows[0].title;
+const title = (identity ?? config).app.windows[0].title;
 
 const profile = await mkdtemp(join(tmpdir(), 'atlas-e2e-webview-'));
 await mkdir(resultsDir, { recursive: true });
