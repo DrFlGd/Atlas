@@ -1,0 +1,49 @@
+/*
+ * Theme tokens. Components use only these variables, so a theme is a block
+ * that redefines them. Dark is the default; set data-theme="light" on <html>
+ * for the light theme.
+ */
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --atlas-bg: #0b0d12;
+  --atlas-surface: #161a22;
+  --atlas-surface-translucent: rgba(22, 26, 34, 0.86);
+  --atlas-border: #2a303c;
+  --atlas-text: #e6e9ef;
+  --atlas-muted: #8b93a3;
+  --atlas-accent: #e6b450;
+  --atlas-danger: #ff6b6b;
+  --atlas-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  --atlas-radius: 10px;
+  --atlas-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Map view */
+  --atlas-map-backdrop: #0b1a28;
+  --atlas-marker-outline: rgba(8, 10, 14, 0.9);
+  --atlas-cluster-fill: rgba(22, 26, 34, 0.9);
+  --atlas-cluster-ring: #e6b450;
+  --atlas-cluster-text: #f2f4f8;
+  --atlas-selection: #ffffff;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --atlas-bg: #f4f5f7;
+  --atlas-surface: #ffffff;
+  --atlas-surface-translucent: rgba(255, 255, 255, 0.9);
+  --atlas-border: #d5d9e0;
+  --atlas-text: #1b1f27;
+  --atlas-muted: #5d6675;
+  --atlas-accent: #b07a12;
+  --atlas-danger: #c62828;
+  --atlas-shadow: 0 6px 24px rgba(20, 24, 32, 0.18);
+
+  --atlas-map-backdrop: #0b1a28;
+  --atlas-marker-outline: rgba(255, 255, 255, 0.95);
+  --atlas-cluster-fill: rgba(255, 255, 255, 0.92);
+  --atlas-cluster-ring: #b07a12;
+  --atlas-cluster-text: #1b1f27;
+  --atlas-selection: #1b1f27;
+}
