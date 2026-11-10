@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+target/
+.DS_Store
+*.log
+.env
+.env.*
+
+# Game-derived or imported content never belongs in this repository
+sources/
+packs/*
+!packs/demo/
