@@ -29,8 +29,25 @@ export interface MapMarker {
   /** Image pixel, origin top-left. */
   x: number;
   y: number;
-  /** CSS colour of the marker fill. */
+  /** `#rrggbb` colour of the marker badge. */
   color: string;
+  /** Glyph name from the icon set drawn on the badge; unknown names draw a pin. */
+  icon?: string;
+  /** Drawn faded, for locations already found. */
+  muted?: boolean;
+}
+
+/** The marker under the pointer, and where it sits in container pixels. */
+export interface MarkerHover {
+  id: string;
+  x: number;
+  y: number;
+}
+
+/** Whether the current layer's tiles could be read; `missing` shows a plain background. */
+export interface TileStatus {
+  layerId: string;
+  status: 'loading' | 'ready' | 'missing';
 }
 
 export interface MapViewState {
@@ -63,14 +80,23 @@ export type Unsubscribe = () => void;
 export interface MapView {
   /** Shows a layer and fits the view to it. Clears the markers if the layer changes. */
   setLayer(layer: MapLayerSpec): void;
-  /** Replaces all markers. */
+  /**
+   * Replaces all markers. When only styling changed (same ids and positions
+   * in the same order) the clusters are reused, so this is cheap.
+   */
   setMarkers(markers: readonly MapMarker[]): void;
   /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
   setSelected(markerId: string | null): void;
+  /** Re-reads theme colours from CSS custom properties and redraws. */
+  refreshStyle(): void;
   /** Moves the view, animated unless `animate` is false. */
   flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
   /** Called with the marker id when the user clicks a marker, or null when they click empty map. */
   onSelect(listener: (markerId: string | null) => void): Unsubscribe;
+  /** Called when the pointer moves onto a marker, or off it (null). */
+  onHover(listener: (hover: MarkerHover | null) => void): Unsubscribe;
+  /** Called when the tile status of the current layer changes. */
+  onTileStatus(listener: (status: TileStatus) => void): Unsubscribe;
   /** Called whenever the visible area changes, including during pans and zooms. */
   onViewChange(listener: (state: MapViewState) => void): Unsubscribe;
   /** The current view, or null before a layer is set. */

@@ -5,10 +5,13 @@ import { defineConfig, devices } from '@playwright/test';
  * so run `pnpm build` first.
  *
  * Set PLAYWRIGHT_CHROMIUM_EXECUTABLE to use an already installed Chromium
- * instead of the one `playwright install` downloads.
+ * instead of the one `playwright install` downloads, and ATLAS_E2E_PORT to
+ * serve the build on another port (default 4380). The port must be free:
+ * the tests never reuse a server that is already running there, so they
+ * cannot end up testing some other app.
  */
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
-const port = 4173;
+const port = Number(process.env.ATLAS_E2E_PORT ?? 4380);
 
 const chromium = {
   ...devices['Desktop Chrome'],
@@ -35,7 +38,7 @@ export default defineConfig({
   webServer: {
     command: `pnpm exec vite preview --port ${port} --strictPort`,
     url: `http://localhost:${port}/config.json`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 30_000,
   },
 });

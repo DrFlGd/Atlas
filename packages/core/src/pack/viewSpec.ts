@@ -1,5 +1,6 @@
 import type { Layer } from '@atlas/schema';
 import type { MapLayerSpec, MapMarker } from '../mapview/types';
+import { passesFilter, type MarkerFilter } from '../filters/visibility';
 import type { LoadedPack } from './loadedPack';
 
 /** Describes a pack layer for the map view, with its tile URL made absolute. */
@@ -19,25 +20,36 @@ export function layerViewSpec(pack: LoadedPack, layer: Layer): MapLayerSpec {
   };
 }
 
+export interface LayerMarkerOptions {
+  /** Category and found filter; every location is included when absent. */
+  filter?: MarkerFilter;
+  /** A location to include even when the filter hides it, such as the selection. */
+  alwaysInclude?: string | null;
+}
+
 /**
- * Map markers for the locations on a layer, coloured by category. When
- * `visibleCategoryIds` is given, only those categories are included.
+ * Map markers for the locations on a layer, with their category's colour and
+ * glyph. Found locations are muted.
  */
 export function layerMarkers(
   pack: LoadedPack,
   layerId: string,
-  visibleCategoryIds?: ReadonlySet<string>,
+  options: LayerMarkerOptions = {},
 ): MapMarker[] {
+  const { filter, alwaysInclude = null } = options;
   const markers: MapMarker[] = [];
   for (const location of pack.locationsOn(layerId)) {
-    if (visibleCategoryIds && !visibleCategoryIds.has(location.categoryId)) continue;
+    if (filter && location.id !== alwaysInclude && !passesFilter(location, filter)) continue;
     const category = pack.categories.get(location.categoryId);
-    markers.push({
+    const marker: MapMarker = {
       id: location.id,
       x: location.x,
       y: location.y,
       color: category?.color ?? '#cccccc',
-    });
+      icon: category?.icon ?? 'pin',
+    };
+    if (filter?.isFound(location.id)) marker.muted = true;
+    markers.push(marker);
   }
   return markers;
 }

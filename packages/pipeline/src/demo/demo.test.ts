@@ -1,10 +1,11 @@
 import { pointInPolygon, polygonArea } from '@atlas/core';
-import { checkPackIntegrity } from '@atlas/schema';
+import { checkPackIntegrity, isIconName } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
 import { rectangle, voronoiCells } from '../geometry/voronoi';
 import { createRandom, deriveSeed } from '../random';
 import { generateDemoContent, layoutRegions } from './content';
 import { createTerrain, elevationAt, renderTerrain } from './terrain';
+import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
 
 const SIZE = 2048;
 const SEED = 7;
@@ -57,6 +58,10 @@ describe('demo content', () => {
     expect(pack.layers[0]!.maxZoom).toBe(3);
   });
 
+  it('uses icon names from the app icon set', () => {
+    for (const category of pack.categories) expect(isIconName(category.icon)).toBe(true);
+  });
+
   it('is deterministic for a seed', () => {
     expect(generate()).toEqual(pack);
     expect(generate(SEED + 1).locations).not.toEqual(pack.locations);
@@ -90,6 +95,48 @@ describe('demo content', () => {
       // Child vertices are rounded to whole pixels, so allow a small tolerance.
       expect(childArea / polygonArea(parent.polygon)).toBeCloseTo(1, 2);
     }
+  });
+});
+
+describe('underground map', () => {
+  const caves = createTerrain(SEED + 1, 512);
+  const pack = addUnderground(generate(), {
+    seed: SEED,
+    size: 512,
+    tileSize: 256,
+    locationsPerLayer: 30,
+    layers: [
+      {
+        local: 'deep-upper',
+        name: 'Upper',
+        terrain: caves,
+        tiles: { type: 'pmtiles', url: 'tiles/u.pmtiles' },
+      },
+      {
+        local: 'deep-lower',
+        name: 'Lower',
+        terrain: caves,
+        tiles: { type: 'pmtiles', url: 'tiles/l.pmtiles' },
+      },
+    ],
+  });
+
+  it('adds a second map with two layers and valid content', () => {
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    expect(pack.maps.map((m) => m.id)).toEqual(['demo:map:world', DEEP_MAP_ID]);
+    expect(pack.layers.filter((l) => l.mapId === DEEP_MAP_ID)).toHaveLength(2);
+    const deep = pack.locations.filter((l) => l.mapId === DEEP_MAP_ID);
+    expect(deep).toHaveLength(60);
+    expect(deep[0]!.id).toBe('demo:loc:deep-0001');
+    // The surface locations keep their ids.
+    expect(pack.locations.filter((l) => l.mapId !== DEEP_MAP_ID)).toEqual(generate().locations);
+  });
+
+  it('tints a relief image as cave rock', () => {
+    const image = Buffer.from([40, 80, 200, 200, 180, 120]);
+    const tinted = tintAsCave(image, [200, 100, 50]);
+    expect(tinted[0]!).toBeLessThan(tinted[3]!); // water darker than land
+    expect(tinted[3]!).toBeGreaterThan(tinted[4]!); // hue follows the tint
   });
 });
 

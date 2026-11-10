@@ -34,7 +34,7 @@ export interface LoadedPack {
    * Follows the manifest's id migrations to the id that is current in this
    * pack. Ids that were never migrated are returned unchanged.
    */
-  currentId(id: string): string;
+  readonly currentId: (id: string) => string;
 }
 
 const byId = <T extends { id: string }>(items: readonly T[]) =>

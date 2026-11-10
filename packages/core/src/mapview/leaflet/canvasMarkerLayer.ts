@@ -1,14 +1,35 @@
 import L from 'leaflet';
 import { MarkerIndex, type IndexHit } from '../../cluster/markerIndex';
-import type { MapMarker } from '../types';
+import { GLYPH_GRID, glyphColorOn, glyphFor } from '../../icons/glyphs';
+import type { MapMarker, MarkerHover } from '../types';
 
 /** Extra canvas area drawn around the viewport, as a fraction of its size, so short pans show no gaps. */
 const PADDING = 0.25;
-const MARKER_RADIUS = 6;
-const HIT_SLOP = 4;
+/** Radius of a marker badge in CSS pixels. */
+const MARKER_RADIUS = 9;
+/** Edge length of the glyph drawn on a badge. */
+const GLYPH_SIZE = 12;
+const HIT_SLOP = 3;
+/** Opacity of found (muted) markers. */
+const MUTED_ALPHA = 0.7;
+/** How far a found marker's colour moves towards the theme's muted grey. */
+const MUTED_MIX = 0.65;
+
+/** Mixes two `#rrggbb` colours; returns `a` unchanged if either is not in that form. */
+function mixHex(a: string, b: string, t: number): string {
+  const pa = /^#([0-9a-f]{6})$/i.exec(a);
+  const pb = /^#([0-9a-f]{6})$/i.exec(b);
+  if (!pa || !pb) return a;
+  const x = Number.parseInt(pa[1]!, 16);
+  const y = Number.parseInt(pb[1]!, 16);
+  const channel = (shift: number) =>
+    Math.round(((x >> shift) & 0xff) * (1 - t) + ((y >> shift) & 0xff) * t);
+  return `#${((channel(16) << 16) | (channel(8) << 8) | channel(0)).toString(16).padStart(6, '0')}`;
+}
 
 interface Palette {
   outline: string;
+  muted: string;
   clusterFill: string;
   clusterRing: string;
   clusterText: string;
@@ -17,6 +38,7 @@ interface Palette {
 
 const FALLBACK_PALETTE: Palette = {
   outline: 'rgba(8, 10, 14, 0.9)',
+  muted: '#7d8494',
   clusterFill: 'rgba(32, 40, 56, 0.92)',
   clusterRing: '#e6b450',
   clusterText: '#f2f4f8',
@@ -29,6 +51,7 @@ function readPalette(element: HTMLElement): Palette {
   const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
   return {
     outline: read('--atlas-marker-outline', FALLBACK_PALETTE.outline),
+    muted: read('--atlas-marker-muted', FALLBACK_PALETTE.muted),
     clusterFill: read('--atlas-cluster-fill', FALLBACK_PALETTE.clusterFill),
     clusterRing: read('--atlas-cluster-ring', FALLBACK_PALETTE.clusterRing),
     clusterText: read('--atlas-cluster-text', FALLBACK_PALETTE.clusterText),
@@ -40,12 +63,31 @@ function clusterRadius(count: number): number {
   return Math.min(24, 11 + Math.log2(count) * 1.8);
 }
 
+/** A marker with the key of the sprite it is drawn with. */
+interface StyledMarker extends MapMarker {
+  sprite: string;
+}
+
 interface DrawnItem {
   /** Canvas CSS pixel position. */
   x: number;
   y: number;
   r: number;
-  hit: IndexHit<MapMarker>;
+  hit: IndexHit<StyledMarker>;
+}
+
+const spriteKey = (marker: MapMarker) =>
+  `${marker.color}|${marker.icon ?? ''}|${marker.muted ? 1 : 0}`;
+
+/** Whether two marker lists hold the same ids at the same positions, in the same order. */
+function sameGeometry(a: readonly MapMarker[], b: readonly MapMarker[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i]!;
+    const q = b[i]!;
+    if (p.id !== q.id || p.x !== q.x || p.y !== q.y) return false;
+  }
+  return true;
 }
 
 export interface CanvasMarkerLayerOptions {
@@ -56,6 +98,8 @@ export interface CanvasMarkerLayerOptions {
   clustering: boolean;
   /** Called when the user clicks a marker, a cluster or empty map. */
   onPick: (hit: IndexHit<MapMarker> | null) => void;
+  /** Called when the pointer moves onto a marker or off it. */
+  onHover: (hover: MarkerHover | null) => void;
 }
 
 /**
@@ -66,13 +110,15 @@ export interface CanvasMarkerLayerOptions {
  * frame, when a pan uses up half the margin, when the zoom changes and when
  * the map comes to rest. During animated zooms it is scaled with a CSS
  * transform, the same way Leaflet's own vector renderers are. Markers are
- * stamped from one pre-rendered sprite per colour.
+ * stamped from one pre-rendered sprite per colour, glyph and found state.
  */
 export class CanvasMarkerLayer extends L.Layer {
   private readonly settings: CanvasMarkerLayerOptions;
   private canvas: HTMLCanvasElement | null = null;
   private context: CanvasRenderingContext2D | null = null;
-  private index: MarkerIndex<MapMarker> | null = null;
+  private index: MarkerIndex<StyledMarker> | null = null;
+  private markers: readonly MapMarker[] = [];
+  private hoveredId: string | null = null;
   private selectedId: string | null = null;
   private drawn: DrawnItem[] = [];
   private topLeft = L.point(0, 0);
@@ -93,16 +139,33 @@ export class CanvasMarkerLayer extends L.Layer {
   }
 
   setMarkers(markers: readonly MapMarker[]): void {
-    this.index = new MarkerIndex(markers, {
-      tileSize: this.settings.tileSize,
-      maxZoom: this.settings.maxZoom,
-      clustering: this.settings.clustering,
-    });
+    const styled = markers.map((marker): StyledMarker => ({
+      ...marker,
+      sprite: spriteKey(marker),
+    }));
+    this.index =
+      this.index && sameGeometry(this.markers, markers)
+        ? this.index.withPoints(styled)
+        : new MarkerIndex(styled, {
+            tileSize: this.settings.tileSize,
+            maxZoom: this.settings.maxZoom,
+            clustering: this.settings.clustering,
+          });
+    this.markers = markers;
     this.redraw();
   }
 
   setSelected(markerId: string | null): void {
     this.selectedId = markerId;
+    this.redraw();
+  }
+
+  /** Re-reads the palette from the map container's CSS custom properties. */
+  refreshPalette(): void {
+    const map = this._map as L.Map | undefined;
+    if (!map) return;
+    this.palette = readPalette(map.getContainer());
+    this.sprites.clear();
     this.redraw();
   }
 
@@ -141,11 +204,18 @@ export class CanvasMarkerLayer extends L.Layer {
       zoomanim: this.onZoomAnim as L.LeafletEventHandlerFn,
       click: this.onClick as L.LeafletEventHandlerFn,
       mousemove: this.onMouseMove as L.LeafletEventHandlerFn,
+      mouseout: this.clearHover,
+      movestart: this.clearHover,
+      zoomstart: this.clearHover,
     };
   }
 
   /** Finds the topmost drawn marker or cluster under a container point. */
   hitTest(containerPoint: L.Point): IndexHit<MapMarker> | null {
+    return this.hitItem(containerPoint)?.hit ?? null;
+  }
+
+  private hitItem(containerPoint: L.Point): DrawnItem | null {
     const map = this._map as L.Map | undefined;
     if (!map) return null;
     const p = map.containerPointToLayerPoint(containerPoint).subtract(this.topLeft);
@@ -159,7 +229,7 @@ export class CanvasMarkerLayer extends L.Layer {
         bestDistance = distance;
       }
     }
-    return best?.hit ?? null;
+    return best;
   }
 
   private readonly onMove = () => {
@@ -218,14 +288,29 @@ export class CanvasMarkerLayer extends L.Layer {
   private readonly onMouseMove = (event: L.LeafletMouseEvent) => {
     const map = this._map as L.Map | undefined;
     if (!map) return;
-    map
-      .getContainer()
-      .classList.toggle('atlas-marker-hover', this.hitTest(event.containerPoint) !== null);
+    const item = this.hitItem(event.containerPoint);
+    map.getContainer().classList.toggle('atlas-marker-hover', item !== null);
+    const hit = item?.hit;
+    const id = hit?.kind === 'point' ? hit.point.id : null;
+    if (id === this.hoveredId) return;
+    this.hoveredId = id;
+    if (!item || id === null) {
+      this.settings.onHover(null);
+      return;
+    }
+    const at = map.layerPointToContainerPoint(this.topLeft.add([item.x, item.y]));
+    this.settings.onHover({ id, x: at.x, y: at.y });
   };
 
-  /** A pre-rendered marker of one colour at the given device pixel ratio. */
-  private sprite(color: string, ratio: number): HTMLCanvasElement {
-    const key = `${color}@${ratio}`;
+  private readonly clearHover = () => {
+    if (this.hoveredId === null) return;
+    this.hoveredId = null;
+    this.settings.onHover(null);
+  };
+
+  /** A pre-rendered marker badge for one style at the given device pixel ratio. */
+  private sprite(marker: StyledMarker, ratio: number): HTMLCanvasElement {
+    const key = `${marker.sprite}@${ratio}`;
     let sprite = this.sprites.get(key);
     if (sprite) return sprite;
     const lineWidth = 1.5;
@@ -235,14 +320,29 @@ export class CanvasMarkerLayer extends L.Layer {
     sprite.height = Math.ceil(size * ratio);
     const ctx = sprite.getContext('2d');
     if (ctx) {
+      const fill = marker.muted
+        ? mixHex(marker.color, this.palette.muted, MUTED_MIX)
+        : marker.color;
+      const center = size / 2;
       ctx.scale(ratio, ratio);
+      if (marker.muted) ctx.globalAlpha = MUTED_ALPHA;
       ctx.beginPath();
-      ctx.arc(size / 2, size / 2, MARKER_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = color;
+      ctx.arc(center, center, MARKER_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
       ctx.fill();
       ctx.lineWidth = lineWidth;
       ctx.strokeStyle = this.palette.outline;
       ctx.stroke();
+
+      const glyph = glyphFor(marker.icon ?? '');
+      ctx.translate(center - GLYPH_SIZE / 2, center - GLYPH_SIZE / 2);
+      ctx.scale(GLYPH_SIZE / GLYPH_GRID, GLYPH_SIZE / GLYPH_GRID);
+      ctx.fillStyle = glyphColorOn(fill);
+      ctx.fill(new Path2D(glyph.shape));
+      if (glyph.holes) {
+        ctx.fillStyle = fill;
+        ctx.fill(new Path2D(glyph.holes), 'evenodd');
+      }
     }
     this.sprites.set(key, sprite);
     return sprite;
@@ -308,7 +408,8 @@ export class CanvasMarkerLayer extends L.Layer {
       zoom,
     );
 
-    const pointsByColor = new Map<string, number[]>();
+    const pointsBySprite = new Map<StyledMarker, number[]>();
+    const spriteOwners = new Map<string, StyledMarker>();
     const clusters: DrawnItem[] = [];
     let selected: DrawnItem | null = null;
     let markerCount = 0;
@@ -323,13 +424,23 @@ export class CanvasMarkerLayer extends L.Layer {
       const item = { x, y, r: MARKER_RADIUS, hit };
       this.drawn.push(item);
       if (hit.point.id === this.selectedId) selected = item;
-      const list = pointsByColor.get(hit.point.color);
+      // Group by sprite key; the first marker of each style stands for its style.
+      let owner = spriteOwners.get(hit.point.sprite);
+      if (!owner) {
+        owner = hit.point;
+        spriteOwners.set(owner.sprite, owner);
+      }
+      const list = pointsBySprite.get(owner);
       if (list) list.push(x, y);
-      else pointsByColor.set(hit.point.color, [x, y]);
+      else pointsBySprite.set(owner, [x, y]);
     }
 
-    for (const [color, coords] of pointsByColor) {
-      const sprite = this.sprite(color, ratio);
+    // Muted (found) markers first, so markers still to find sit on top.
+    const groups = [...pointsBySprite].sort(
+      ([a], [b]) => Number(b.muted ?? false) - Number(a.muted ?? false),
+    );
+    for (const [owner, coords] of groups) {
+      const sprite = this.sprite(owner, ratio);
       const size = sprite.width / ratio;
       const half = size / 2;
       for (let i = 0; i < coords.length; i += 2) {

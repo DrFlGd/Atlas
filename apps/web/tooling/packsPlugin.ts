@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { cp, stat } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import type { Plugin } from 'vite';
@@ -7,8 +7,78 @@ import type { Plugin } from 'vite';
 export interface PacksPluginOptions {
   /** Folder that holds one sub-folder per pack. */
   packsDir: string;
-  /** Packs to copy into the build output, under `packs/<name>/`. */
+  /** Pack folders to copy into the build output, under `packs/<name>/`. */
   bundle: readonly string[];
+}
+
+/** An entry of `packs/index.json`; `url` is relative to the app root. */
+export interface PackIndexEntry {
+  id: string;
+  url: string;
+  title: string;
+}
+
+const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Pack folders to bundle, from a comma-separated list such as the
+ * `ATLAS_BUNDLE_PACKS` environment variable. Unset means `demo`; an empty
+ * string means none.
+ */
+export function bundledPackNames(value: string | undefined): string[] {
+  const names = (value ?? 'demo')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  for (const name of names) {
+    if (!FOLDER_NAME.test(name)) throw new Error(`Invalid pack folder name "${name}"`);
+  }
+  return [...new Set(names)];
+}
+
+/**
+ * Builds the pack index for the given folders under `root`, reading each
+ * pack's manifest for its game id and title. Folders without a manifest are
+ * skipped; a second folder with the same game id is skipped with a warning.
+ */
+export async function buildPackIndex(
+  root: string,
+  folders: readonly string[],
+  warn: (message: string) => void = console.warn,
+): Promise<{ packs: PackIndexEntry[] }> {
+  const packs: PackIndexEntry[] = [];
+  for (const folder of folders) {
+    let manifest: { gameId?: unknown; title?: unknown };
+    try {
+      manifest = JSON.parse(
+        await readFile(join(root, folder, 'manifest.json'), 'utf8'),
+      ) as typeof manifest;
+    } catch {
+      continue;
+    }
+    if (typeof manifest.gameId !== 'string' || typeof manifest.title !== 'string') {
+      warn(`Pack folder "${folder}" has a manifest without gameId or title; skipped.`);
+      continue;
+    }
+    if (packs.some((p) => p.id === manifest.gameId)) {
+      warn(`Pack folder "${folder}" repeats game id "${manifest.gameId}"; skipped.`);
+      continue;
+    }
+    packs.push({ id: manifest.gameId, url: `packs/${folder}/`, title: manifest.title });
+  }
+  return { packs };
+}
+
+/** Every sub-folder of `root` that holds a `manifest.json`, sorted by name. */
+async function packFolders(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const folders: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !FOLDER_NAME.test(entry.name)) continue;
+    const manifest = await stat(join(root, entry.name, 'manifest.json')).catch(() => null);
+    if (manifest?.isFile()) folders.push(entry.name);
+  }
+  return folders.sort();
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -25,8 +95,9 @@ const SKIPPED = /(^|[/\\])(\.build-stamp\.json|\.gitignore|README\.md)$/;
 /**
  * Serves data packs at `<base>packs/<name>/` during development and copies
  * the bundled packs into the build output, so the app loads packs by URL the
- * same way in both. The dev server honours single HTTP byte ranges, which the
- * PMTiles reader relies on.
+ * same way in both. `packs/index.json` lists every pack folder during
+ * development and the bundled packs in a build. The dev server honours
+ * single HTTP byte ranges, which the PMTiles reader relies on.
  */
 export function packsPlugin(options: PacksPluginOptions): Plugin {
   const root = resolve(options.packsDir);
@@ -39,6 +110,18 @@ export function packsPlugin(options: PacksPluginOptions): Plugin {
     },
     configureServer(server) {
       server.middlewares.use('/packs', (req, res, next) => {
+        const pathname = new URL(req.url ?? '/', 'http://local').pathname;
+        if (pathname === '/index.json') {
+          packFolders(root)
+            .then((folders) => buildPackIndex(root, folders))
+            .then((index) => {
+              res.setHeader('Content-Type', CONTENT_TYPES['.json']!);
+              res.setHeader('Cache-Control', 'no-cache');
+              res.end(`${JSON.stringify(index, null, 2)}\n`);
+            })
+            .catch(next);
+          return;
+        }
         serveFile(root, req, res).catch(next);
       });
     },
@@ -53,6 +136,9 @@ export function packsPlugin(options: PacksPluginOptions): Plugin {
           filter: (path) => !SKIPPED.test(path),
         });
       }
+      const index = await buildPackIndex(root, options.bundle);
+      await mkdir(join(outDir, 'packs'), { recursive: true });
+      await writeFile(join(outDir, 'packs', 'index.json'), `${JSON.stringify(index, null, 2)}\n`);
     },
   };
 }

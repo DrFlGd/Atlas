@@ -1,49 +1,133 @@
 import { describe, expect, it } from 'vitest';
-import { applyQueryOverrides, loadRuntimeConfig } from './config';
+import { applyQueryOverrides, loadCatalog, loadRuntimeConfig, type RuntimeConfig } from './config';
 
-const serve = (body: unknown, status = 200) =>
-  (() => Promise.resolve(new Response(JSON.stringify(body), { status }))) as typeof fetch;
+/** Serves JSON bodies by absolute URL; anything else is a 404. */
+const serve = (files: Record<string, unknown>) =>
+  ((input: string | URL) => {
+    const href = String(input);
+    const body = files[href];
+    return Promise.resolve(
+      body === undefined
+        ? new Response('not found', { status: 404 })
+        : new Response(JSON.stringify(body), { status: 200 }),
+    );
+  }) as typeof fetch;
+
+const BASE = 'https://example.test/tools/atlas/';
 
 describe('loadRuntimeConfig', () => {
-  it('resolves the pack URL against the config file, so the app works under any sub-path', async () => {
+  it('defaults to the pack index next to the app, so the app works under any sub-path', async () => {
     const config = await loadRuntimeConfig(
-      'https://example.test/tools/atlas/index.html',
-      serve({ packUrl: 'packs/demo/' }),
+      `${BASE}index.html`,
+      serve({ [`${BASE}config.json`]: {} }),
     );
     expect(config).toEqual({
-      packUrl: 'https://example.test/tools/atlas/packs/demo/',
+      baseUrl: `${BASE}config.json`,
+      packs: null,
+      packIndexUrl: `${BASE}packs/index.json`,
+      packUrl: null,
       theme: 'dark',
       clustering: true,
     });
   });
 
-  it('keeps absolute pack URLs', async () => {
+  it('resolves an explicit pack list and the single-pack shorthand', async () => {
     const config = await loadRuntimeConfig(
-      'https://example.test/',
-      serve({ packUrl: 'https://cdn.example.test/p/', theme: 'light', clustering: false }),
+      BASE,
+      serve({
+        [`${BASE}config.json`]: {
+          packs: [
+            { id: 'demo', url: 'packs/demo', title: 'Demo' },
+            { id: 'far', url: 'https://cdn.example.test/far/', title: 'Far' },
+          ],
+          packUrl: 'p/one',
+          theme: 'light',
+          clustering: false,
+        },
+      }),
     );
-    expect(config).toMatchObject({
-      packUrl: 'https://cdn.example.test/p/',
-      theme: 'light',
-      clustering: false,
-    });
+    expect(config.packs?.map((p) => p.url)).toEqual([
+      `${BASE}packs/demo/`,
+      'https://cdn.example.test/far/',
+    ]);
+    expect(config.packUrl).toBe(`${BASE}p/one/`);
+    expect(config).toMatchObject({ theme: 'light', clustering: false });
   });
 
-  it('rejects invalid settings', async () => {
+  it('rejects invalid settings and reports a missing file', async () => {
     await expect(
-      loadRuntimeConfig('https://example.test/', serve({ theme: 'blue' })),
+      loadRuntimeConfig(BASE, serve({ [`${BASE}config.json`]: { theme: 'blue' } })),
     ).rejects.toThrow(/Invalid config\.json/);
+    await expect(loadRuntimeConfig(BASE, serve({}))).rejects.toThrow(/HTTP 404/);
+  });
+});
+
+describe('loadCatalog', () => {
+  const config = (overrides: Partial<RuntimeConfig> = {}): RuntimeConfig => ({
+    baseUrl: `${BASE}config.json`,
+    packs: null,
+    packIndexUrl: `${BASE}packs/index.json`,
+    packUrl: null,
+    theme: 'dark',
+    clustering: true,
+    ...overrides,
   });
 
-  it('reports a missing file', async () => {
-    await expect(loadRuntimeConfig('https://example.test/', serve({}, 404))).rejects.toThrow(
-      /HTTP 404/,
+  it('reads the pack index and resolves entries against the app root', async () => {
+    const entries = await loadCatalog(
+      config(),
+      serve({
+        [`${BASE}packs/index.json`]: {
+          packs: [
+            { id: 'demo', url: 'packs/demo/', title: 'Atlas demo world' },
+            { id: 'other', url: 'packs/other/', title: 'Other' },
+          ],
+        },
+      }),
     );
+    expect(entries).toEqual([
+      { id: 'demo', url: `${BASE}packs/demo/`, title: 'Atlas demo world' },
+      { id: 'other', url: `${BASE}packs/other/`, title: 'Other' },
+    ]);
+  });
+
+  it('prefers the explicit list, then the single pack URL', async () => {
+    const listed = [{ id: 'x', url: `${BASE}x/`, title: 'X' }];
+    expect(await loadCatalog(config({ packs: listed }), serve({}))).toBe(listed);
+
+    const manifest = {
+      schemaVersion: 1,
+      gameId: 'single',
+      title: 'Single pack',
+      packVersion: '1.0.0',
+      gamePatch: '1',
+      attribution: [],
+      idMigrations: {},
+    };
+    const entries = await loadCatalog(
+      config({ packUrl: `${BASE}one/` }),
+      serve({ [`${BASE}one/manifest.json`]: manifest }),
+    );
+    expect(entries).toEqual([{ id: 'single', url: `${BASE}one/`, title: 'Single pack' }]);
+  });
+
+  it('explains an empty or missing index', async () => {
+    await expect(loadCatalog(config(), serve({}))).rejects.toThrow(/No pack index/);
+    await expect(
+      loadCatalog(config(), serve({ [`${BASE}packs/index.json`]: { packs: [] } })),
+    ).rejects.toThrow(/No packs are installed/);
   });
 });
 
 describe('applyQueryOverrides', () => {
-  const base = { packUrl: 'x', theme: 'dark' as const, clustering: true };
+  const base: RuntimeConfig = {
+    baseUrl: BASE,
+    packs: null,
+    packIndexUrl: '',
+    packUrl: null,
+    theme: 'dark',
+    clustering: true,
+  };
 
   it('turns clustering off from the query string', () => {
     expect(applyQueryOverrides(base, '?clustering=off').clustering).toBe(false);

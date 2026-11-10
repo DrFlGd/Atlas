@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FALLBACK_ICON,
+  ICON_NAMES,
   checkPackIntegrity,
   idOf,
   layerSchema,
@@ -8,6 +10,7 @@ import {
   manifestSchema,
   packDataSchema,
   parseId,
+  resolveIconName,
   tileSourceSchema,
 } from './index';
 import { makeFixturePack } from './testing/fixture';
@@ -119,5 +122,21 @@ describe('checkPackIntegrity', () => {
     const pack = makeFixturePack();
     pack.manifest.idMigrations = { 'demo:loc:0001': 'demo:loc:0404' };
     expect(checkPackIntegrity(pack)).toHaveLength(2);
+  });
+});
+
+describe('icon names', () => {
+  it('lists thirty unique names and falls back to pin', () => {
+    expect(ICON_NAMES).toHaveLength(30);
+    expect(new Set(ICON_NAMES).size).toBe(30);
+    expect(FALLBACK_ICON).toBe('pin');
+    expect(resolveIconName('skull')).toBe('skull');
+    expect(resolveIconName('campfire')).toBe('pin');
+  });
+
+  it('is used by the fixture pack', () => {
+    for (const category of makeFixturePack().categories) {
+      expect(resolveIconName(category.icon)).toBe(category.icon);
+    }
   });
 });

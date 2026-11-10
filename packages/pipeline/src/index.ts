@@ -7,3 +7,4 @@ export * from './pack/writePack';
 export * from './demo/terrain';
 export * from './demo/content';
 export * from './demo/buildDemoPack';
+export * from './demo/underground';

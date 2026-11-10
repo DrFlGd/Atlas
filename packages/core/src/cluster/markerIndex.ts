@@ -115,6 +115,18 @@ export class MarkerIndex<T extends IndexedPoint> {
     });
   }
 
+  /**
+   * An index over `points` that reuses this index's clusters. `points` must
+   * hold the same positions in the same order, differing only in other
+   * fields (such as styling), so restyling markers does not re-cluster.
+   */
+  withPoints(points: readonly T[]): MarkerIndex<T> {
+    if (points.length !== this.points.length)
+      throw new Error('withPoints needs the same number of points');
+    const copy = Object.create(MarkerIndex.prototype) as MarkerIndex<T>;
+    return Object.assign(copy, { points, worldSize: this.worldSize, cluster: this.cluster });
+  }
+
   /** The zoom at which a cluster splits into more than one item. */
   expansionZoom(clusterId: number): number {
     if (!this.cluster) throw new Error('clustering is disabled');

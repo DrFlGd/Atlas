@@ -1,49 +1,71 @@
 /*
  * Theme tokens. Components use only these variables, so a theme is a block
- * that redefines them. Dark is the default; set data-theme="light" on <html>
- * for the light theme.
+ * that redefines them. Dark is the default; data-theme="light" on <html>
+ * selects the light theme.
  */
 
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --atlas-bg: #0b0d12;
-  --atlas-surface: #161a22;
-  --atlas-surface-translucent: rgba(22, 26, 34, 0.86);
-  --atlas-border: #2a303c;
-  --atlas-text: #e6e9ef;
-  --atlas-muted: #8b93a3;
-  --atlas-accent: #e6b450;
-  --atlas-danger: #ff6b6b;
-  --atlas-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  --atlas-bg: #0e1115;
+  --atlas-surface: #161a20;
+  --atlas-surface-raised: #1d222a;
+  --atlas-surface-hover: #242a33;
+  --atlas-surface-translucent: rgba(22, 26, 32, 0.92);
+  --atlas-border: #2b323c;
+  --atlas-border-strong: #3a434f;
+  --atlas-text: #e8ebef;
+  --atlas-muted: #9ba4b0;
+  --atlas-accent: #63cdb9;
+  --atlas-accent-strong: #8fe0d0;
+  --atlas-accent-text: #07201c;
+  --atlas-accent-soft: rgba(99, 205, 185, 0.16);
+  --atlas-complete: #9ad87a;
+  --atlas-danger: #ff7b72;
+  --atlas-danger-soft: rgba(255, 123, 114, 0.14);
+  --atlas-focus: #ffd479;
+  --atlas-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
   --atlas-radius: 10px;
+  --atlas-radius-small: 6px;
   --atlas-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --atlas-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   /* Map view */
-  --atlas-map-backdrop: #0b1a28;
-  --atlas-marker-outline: rgba(8, 10, 14, 0.9);
-  --atlas-cluster-fill: rgba(22, 26, 34, 0.9);
-  --atlas-cluster-ring: #e6b450;
-  --atlas-cluster-text: #f2f4f8;
+  --atlas-map-backdrop: #1b2129;
+  --atlas-marker-outline: rgba(9, 11, 15, 0.92);
+  --atlas-marker-muted: #8a919c;
+  --atlas-cluster-fill: rgba(22, 26, 32, 0.92);
+  --atlas-cluster-ring: #63cdb9;
+  --atlas-cluster-text: #f2f4f7;
   --atlas-selection: #ffffff;
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --atlas-bg: #f4f5f7;
+  --atlas-bg: #eef0f3;
   --atlas-surface: #ffffff;
-  --atlas-surface-translucent: rgba(255, 255, 255, 0.9);
-  --atlas-border: #d5d9e0;
-  --atlas-text: #1b1f27;
-  --atlas-muted: #5d6675;
-  --atlas-accent: #b07a12;
-  --atlas-danger: #c62828;
-  --atlas-shadow: 0 6px 24px rgba(20, 24, 32, 0.18);
+  --atlas-surface-raised: #f6f7f9;
+  --atlas-surface-hover: #eceff3;
+  --atlas-surface-translucent: rgba(255, 255, 255, 0.94);
+  --atlas-border: #d6dbe2;
+  --atlas-border-strong: #b9c1cc;
+  --atlas-text: #171c23;
+  --atlas-muted: #586270;
+  --atlas-accent: #0b7a69;
+  --atlas-accent-strong: #075e51;
+  --atlas-accent-text: #ffffff;
+  --atlas-accent-soft: rgba(11, 122, 105, 0.12);
+  --atlas-complete: #3d7d1f;
+  --atlas-danger: #c0362c;
+  --atlas-danger-soft: rgba(192, 54, 44, 0.1);
+  --atlas-focus: #b25e00;
+  --atlas-shadow: 0 8px 28px rgba(20, 24, 32, 0.18);
 
-  --atlas-map-backdrop: #0b1a28;
+  --atlas-map-backdrop: #d9dee5;
   --atlas-marker-outline: rgba(255, 255, 255, 0.95);
-  --atlas-cluster-fill: rgba(255, 255, 255, 0.92);
-  --atlas-cluster-ring: #b07a12;
-  --atlas-cluster-text: #1b1f27;
-  --atlas-selection: #1b1f27;
+  --atlas-marker-muted: #8b929c;
+  --atlas-cluster-fill: rgba(255, 255, 255, 0.94);
+  --atlas-cluster-ring: #0b7a69;
+  --atlas-cluster-text: #171c23;
+  --atlas-selection: #171c23;
 }
