@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build --config src-tauri/tauri.build.conf.json",
+    "test:e2e": "node e2e/smoke.js",
     "tauri": "tauri"
   },
   "devDependencies": {
