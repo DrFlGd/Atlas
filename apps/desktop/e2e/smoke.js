@@ -6,7 +6,8 @@
  * answers byte-range requests, that the shell commands answer, and saves a
  * screenshot. On Linux it also exports and imports progress through the
  * native save and open dialogs (driven with `xdotool`) and checks that a
- * guide link opens in the system browser, not in the app window.
+ * guide link opens in the system browser, not in the app window, and opens
+ * a pack folder through the native folder picker.
  *
  *   pnpm --filter @atlas/desktop test:e2e [path/to/binary]
  *
@@ -25,6 +26,7 @@ import { execFile } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { writeRemotePack } from './remotePack.js';
 import { check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
 
 const linux = process.platform === 'linux';
@@ -57,6 +59,24 @@ async function answerFileDialog(title, path) {
   await run('xdotool', ['type', '--window', window, '--delay', '20', path]);
   await sleep(300);
   await run('xdotool', ['key', '--window', window, 'Return']);
+}
+
+/**
+ * Chooses a folder in a native folder dialog, as a user would by typing its
+ * path: Enter accepts the completed path and opens the folder in the
+ * dialog, and the Open button (Alt+O) chooses it.
+ * @param {string} title @param {string} path
+ */
+async function answerFolderDialog(title, path) {
+  await answerFileDialog(title, path);
+  for (const key of ['Return', 'alt+o']) {
+    await sleep(1000);
+    const window = await run('xdotool', ['search', '--name', `^${title}$`]).then(
+      ({ stdout }) => stdout.trim().split('\n')[0] ?? '',
+      () => '',
+    );
+    if (window) await run('xdotool', ['key', '--window', window, key]);
+  }
 }
 
 const environment = linux ? await isolatedEnvironment() : null;
@@ -198,6 +218,26 @@ try {
       `the guide link opened in the system browser (${href})`,
     );
     check((await s.run('return location.href;')) === pageUrl, 'the window stayed on the app');
+
+    // A pack folder from anywhere, through the native folder picker. The
+    // plain app has no importers, so it offers no "Add a map".
+    check(
+      !(await s.run(`return !!document.querySelector('[data-testid="add-map-button"]');`)),
+      'the plain app offers no "Add a map"',
+    );
+    const folder = join(environment.root, 'Elsewhere', 'Remote pack');
+    await writeRemotePack(folder);
+    await s.click('[data-testid="maps-button"]');
+    await s.waitFor(`document.querySelector('[data-testid="open-pack"]')`);
+    const picked = answerFolderDialog('Open a map pack', folder);
+    await s.click('[data-testid="open-pack"]');
+    await picked;
+    await s.waitFor(
+      `[...document.querySelectorAll('.topbar select')].some((el) => el.value === 'e2e-remote')`,
+      { what: 'the opened pack to be shown' },
+    );
+    check(true, 'a pack folder opened through the folder picker is shown');
+    await s.screenshot('desktop-smoke-opened-pack');
   } else {
     console.log(
       '# skipped: native dialogs and the system browser are only driven on Linux (xdotool)',
