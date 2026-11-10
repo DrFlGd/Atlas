@@ -17,8 +17,8 @@
  * page that is already open in a Chromium browser instead of starting the
  * app; the checks that need the desktop shell are then left out.
  */
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appPath, check, freePort, here, resultsDir, sleep } from './webdriver.js';
@@ -136,14 +136,71 @@ async function findPage(endpoint, stopped) {
   throw new Error(`The app's page did not appear within ${timeoutMs} ms (targets: ${seen})`);
 }
 
+/**
+ * Prints what is known about a failed start on Windows: the installed
+ * WebView2 runtime, the app's and the webview's processes, open windows, the
+ * profile folder, and a picture of the desktop.
+ * @param {string} endpoint @param {string | null} profile
+ */
+async function diagnose(endpoint, profile) {
+  const version = await fetch(`${endpoint}/json/version`).then(
+    (response) => response.text(),
+    (error) => `unreachable: ${String(error?.cause ?? error)}`,
+  );
+  console.log(`DevTools endpoint ${endpoint}: ${version}`);
+  if (profile) {
+    const entries = await readdir(profile).catch((error) => [`unreadable: ${String(error)}`]);
+    console.log(`Profile folder ${profile}: ${JSON.stringify(entries)}`);
+  }
+  if (process.platform !== 'win32') return;
+  await mkdir(resultsDir, { recursive: true });
+  const script = `
+    $ErrorActionPreference = 'Continue'
+    '--- WebView2 runtime'
+    $id = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    foreach ($root in 'HKLM:\\SOFTWARE\\WOW6432Node', 'HKLM:\\SOFTWARE', 'HKCU:\\SOFTWARE') {
+      $key = "$root\\Microsoft\\EdgeUpdate\\Clients\\$id"
+      if (Test-Path $key) { "$key pv=$((Get-ItemProperty $key).pv)" } else { "$key is missing" }
+    }
+    '--- app and webview processes'
+    Get-Process | Where-Object { $_.ProcessName -match 'atlas|msedgewebview2|WerFault' } |
+      Format-Table Id, ProcessName, MainWindowTitle, Responding -AutoSize | Out-String -Width 200
+    '--- windows with a title'
+    Get-Process | Where-Object { $_.MainWindowTitle } |
+      Format-Table Id, ProcessName, MainWindowTitle -AutoSize | Out-String -Width 200
+    '--- session'
+    "session=$((Get-Process -Id $PID).SessionId) interactive=$([Environment]::UserInteractive)"
+    '--- desktop picture'
+    try {
+      Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+      $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+      $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
+      $bitmap.Save($env:ATLAS_E2E_DESKTOP_PICTURE)
+      "saved $env:ATLAS_E2E_DESKTOP_PICTURE ($($screen.Width)x$($screen.Height))"
+    } catch { "no picture: $_" }
+  `;
+  const result = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ATLAS_E2E_DESKTOP_PICTURE: join(resultsDir, 'desktop-windows-failed.png'),
+    },
+  });
+  console.log(result.stdout || result.stderr || String(result.error));
+}
+
 /** @type {import('node:child_process').ChildProcess | null} */
 let app = null;
+/** @type {string | null} */
+let profile = null;
 /** @type {string | null} */
 let exited = null;
 let endpoint = attachUrl;
 if (!endpoint) {
   const port = await freePort();
-  const profile = await mkdtemp(join(tmpdir(), 'atlas-e2e-webview-'));
+  profile = await mkdtemp(join(tmpdir(), 'atlas-e2e-webview-'));
   endpoint = `http://127.0.0.1:${port}`;
   app = spawn(appPath, [], {
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -243,6 +300,9 @@ try {
 } catch (error) {
   failed = true;
   console.error(error);
+  await diagnose(endpoint, profile).catch((problem) => {
+    console.error(`Diagnosis failed: ${String(problem)}`);
+  });
 } finally {
   page?.close();
   app?.removeAllListeners('exit');
