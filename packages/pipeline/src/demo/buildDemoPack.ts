@@ -4,8 +4,10 @@ import type { TileSource } from '@atlas/schema';
 import { cutPyramid } from '../tiles/cutPyramid';
 import { writePmtiles } from '../tiles/pmtiles';
 import { assertValidPack, writePackJson, writeTileFolder } from '../pack/writePack';
+import { deriveSeed } from '../random';
 import { generateDemoContent, layoutRegions, regionBorderStrength } from './content';
 import { createTerrain, renderTerrain } from './terrain';
+import { addUnderground, tintAsCave } from './underground';
 
 export type TileFormat = 'pmtiles' | 'xyz';
 
@@ -14,7 +16,10 @@ export interface DemoPackOptions {
   /** Edge length of the square map image in pixels. */
   size: number;
   tileSize: number;
+  /** Locations on the surface map. */
   locationCount: number;
+  /** Locations on each of the two underground layers. */
+  undergroundLocations: number;
   tileFormat: TileFormat;
 }
 
@@ -23,6 +28,7 @@ export const DEFAULT_DEMO_OPTIONS: DemoPackOptions = {
   size: 8192,
   tileSize: 256,
   locationCount: 5000,
+  undergroundLocations: 240,
   tileFormat: 'pmtiles',
 };
 
@@ -40,6 +46,11 @@ export interface DemoPackSummary {
 }
 
 const LAYER_TILE_PATH = 'tiles/surface';
+const UNDERGROUND_SIZE = 2048;
+const UNDERGROUND_LAYERS = [
+  { local: 'deep-upper', name: 'Upper galleries', tint: [196, 170, 140] },
+  { local: 'deep-lower', name: 'Lower galleries', tint: [132, 168, 196] },
+] as const;
 
 /**
  * Generates the demo pack into `outDir`: procedural map image, tile pyramid,
@@ -65,21 +76,34 @@ export async function buildDemoPack(
     };
   })();
 
-  const tiles: TileSource =
+  const tileSource = (path: string): TileSource =>
     options.tileFormat === 'pmtiles'
-      ? { type: 'pmtiles', url: `${LAYER_TILE_PATH}.pmtiles` }
-      : { type: 'xyz', url: `${LAYER_TILE_PATH}/{z}/{x}/{y}.webp` };
+      ? { type: 'pmtiles', url: `${path}.pmtiles` }
+      : { type: 'xyz', url: `${path}/{z}/{x}/{y}.webp` };
+  const tiles = tileSource(LAYER_TILE_PATH);
 
   log?.(`Generating terrain and content (seed ${options.seed}, ${options.size} px)`);
   const terrain = createTerrain(options.seed, options.size);
   const layout = layoutRegions(options.seed, terrain);
+  const underground = UNDERGROUND_LAYERS.map((layer) => ({
+    ...layer,
+    terrain: createTerrain(deriveSeed(options.seed, layer.local), UNDERGROUND_SIZE),
+    tiles: tileSource(`tiles/${layer.local}`),
+  }));
+  const surface = generateDemoContent(terrain, layout, {
+    seed: options.seed,
+    size: options.size,
+    tileSize: options.tileSize,
+    locationCount: options.locationCount,
+    tiles,
+  });
   const data = assertValidPack(
-    generateDemoContent(terrain, layout, {
+    addUnderground(surface, {
       seed: options.seed,
-      size: options.size,
+      size: UNDERGROUND_SIZE,
       tileSize: options.tileSize,
-      locationCount: options.locationCount,
-      tiles,
+      locationsPerLayer: options.undergroundLocations,
+      layers: underground,
     }),
   );
   const contentMs = lap();
@@ -93,26 +117,43 @@ export async function buildDemoPack(
     { data: image, width: options.size, height: options.size, channels: 3 },
     { tileSize: options.tileSize },
   );
+  const deepPyramids = [];
+  for (const layer of underground) {
+    const relief = tintAsCave(renderTerrain(layer.terrain, UNDERGROUND_SIZE), layer.tint);
+    deepPyramids.push({
+      path: `tiles/${layer.local}`,
+      pyramid: await cutPyramid(
+        { data: relief, width: UNDERGROUND_SIZE, height: UNDERGROUND_SIZE, channels: 3 },
+        { tileSize: options.tileSize },
+      ),
+    });
+  }
   const tilesMs = lap();
 
   const staging = `${outDir.replace(/[/\\]+$/, '')}.staging`;
   await rm(staging, { recursive: true, force: true });
   await mkdir(join(staging, 'tiles'), { recursive: true });
   await writePackJson(staging, data);
-  if (options.tileFormat === 'pmtiles') {
-    const archive = writePmtiles(pyramid.tiles, {
-      tileType: 'webp',
-      minZoom: pyramid.minZoom,
-      maxZoom: pyramid.maxZoom,
-      metadata: {
-        name: data.manifest.title,
-        attribution: data.manifest.attribution.map((a) => a.name).join(', '),
-        atlas: { width: options.size, height: options.size, tileSize: options.tileSize },
-      },
-    });
-    await writeFile(join(staging, `${LAYER_TILE_PATH}.pmtiles`), archive);
-  } else {
-    await writeTileFolder(join(staging, LAYER_TILE_PATH), pyramid.tiles);
+  const layerPyramids = [
+    { path: LAYER_TILE_PATH, pyramid, size: options.size },
+    ...deepPyramids.map((deep) => ({ ...deep, size: UNDERGROUND_SIZE })),
+  ];
+  for (const layer of layerPyramids) {
+    if (options.tileFormat === 'pmtiles') {
+      const archive = writePmtiles(layer.pyramid.tiles, {
+        tileType: 'webp',
+        minZoom: layer.pyramid.minZoom,
+        maxZoom: layer.pyramid.maxZoom,
+        metadata: {
+          name: data.manifest.title,
+          attribution: data.manifest.attribution.map((a) => a.name).join(', '),
+          atlas: { width: layer.size, height: layer.size, tileSize: options.tileSize },
+        },
+      });
+      await writeFile(join(staging, `${layer.path}.pmtiles`), archive);
+    } else {
+      await writeTileFolder(join(staging, layer.path), layer.pyramid.tiles);
+    }
   }
   await writeFile(
     join(staging, STAMP_FILE),
@@ -132,8 +173,11 @@ export async function buildDemoPack(
   return {
     locations: data.locations.length,
     regions: data.regions.length,
-    tiles: pyramid.tiles.length,
-    tileBytes: pyramid.tiles.reduce((sum, tile) => sum + tile.data.length, 0),
+    tiles: layerPyramids.reduce((sum, layer) => sum + layer.pyramid.tiles.length, 0),
+    tileBytes: layerPyramids.reduce(
+      (sum, layer) => sum + layer.pyramid.tiles.reduce((s, tile) => s + tile.data.length, 0),
+      0,
+    ),
     maxZoom: pyramid.maxZoom,
     millis: { content: contentMs, render: renderMs, tiles: tilesMs, write: writeMs },
   };
