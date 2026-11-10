@@ -320,12 +320,11 @@ try {
 
   // The copied pack shows the map images it brought along.
   await s.click('[data-pack="e2e-copied"] .row-actions .link-button');
+  // Wait for the game itself: a notice from the step before may still be showing.
   await s.waitFor(
-    `[...document.querySelectorAll('.topbar select')].some((el) => el.value === 'e2e-copied') ||
-      document.querySelector('[data-testid="toast"]')?.textContent`,
+    `[...document.querySelectorAll('.topbar select')].some((el) => el.value === 'e2e-copied')`,
     { what: 'the copied pack' },
   );
-  console.log('Notice:', await text(s, 'toast'));
   await s.waitFor(
     `document.querySelector('[data-testid="marker-count"]')?.textContent === '5' &&
       !document.querySelector('[data-testid="tile-notice"]') &&
