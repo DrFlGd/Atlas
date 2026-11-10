@@ -4,7 +4,7 @@ A local-first map, checklist and guide companion for video games. One TypeScript
 
 This repository holds the engine only. It contains no game assets and no data taken from other map sites. Game content is loaded from data packs that live outside this repository.
 
-Status: early development. The web app currently shows a pannable, zoomable tiled map of a fictional demo world with 5,000 markers.
+Status: early development. The web app covers the core loop: filter the map, find a place, mark it found and watch the counters. It works offline from a static build and keeps progress in the browser.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ pnpm install
 pnpm dev        # http://localhost:5173
 ```
 
-The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 20 seconds. Later runs reuse it until the generator changes.
+The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 25 seconds. Later runs reuse it until the generator changes.
 
 ## Scripts
 
@@ -28,7 +28,7 @@ The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 
 | `pnpm build`                         | Generates the demo pack if needed, then builds the static app to `apps/web/dist`. |
 | `pnpm preview`                       | Serves the built app at http://localhost:4173.                                    |
 | `pnpm test`                          | Runs the unit tests (Vitest) in every package.                                    |
-| `pnpm test:e2e`                      | Runs the Playwright smoke tests against the built app (run `pnpm build` first).   |
+| `pnpm test:e2e`                      | Runs the Playwright tests against the built app (run `pnpm build` first).         |
 | `pnpm --filter @atlas/web test:perf` | Measures frame rate and marker redraw time while panning (needs a build).         |
 | `pnpm lint`                          | ESLint and Prettier checks. `pnpm format` rewrites files with Prettier.           |
 | `pnpm typecheck`                     | Strict `tsc` in every package.                                                    |
@@ -36,11 +36,43 @@ The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 
 | `pnpm desktop:dev`                   | Runs the desktop app on a Vite dev server at port 1420 (see below).               |
 | `pnpm desktop:build`                 | Builds the desktop app and its installers (see below).                            |
 
-Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwright install chromium`. To use a browser that is already installed instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path.
+Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwright install chromium`. To use a browser that is already installed instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path. The tests start their own preview server on port 4380; set `ATLAS_E2E_PORT` to use another port. They never reuse a server that is already running.
+
+## Using the app
+
+- **Layout.** Filters on the left, the map in the middle, details on the right. Both side panes close; below 900 px wide they become bottom sheets, one at a time. Dark theme by default; the sun/moon button switches to light.
+- **Filters.** Categories are grouped; each row and group has a checkbox and a found/total count. Pack presets and your own saved presets switch the visible categories in one click. "Hide found" removes found markers from the map.
+- **Found tracking.** Select a marker (click it, or pick a search result) and press the found switch in the details pane, or `F`. Found markers fade but stay on the map. Only categories the pack marks as trackable can be marked. `Z` (or Ctrl/Cmd+Z) undoes the last change.
+- **Counters.** Found/total per category, group, region, map and pack, always derived from the stored progress. The top bar shows the pack total; the map switcher shows each map's total.
+- **Search.** `/` focuses the search box. It matches location names, entities and guide titles across every map, and choosing a result switches map and layer if needed, flies there and selects it.
+- **Maps and layers.** The map switcher sits in the top bar; maps with more than one layer get a layer switcher on the map. Filters and counters follow the active map.
+- **Details.** Name, category, region, coordinates, the found switch and the guide entry. Hovering a marker shows its name only.
+- **Profiles.** Each pack has its own profiles (for example one per playthrough): create, rename, duplicate, delete and switch them from the profile button.
+- **Export and import.** The profile dialog exports the current profile or all profiles of every pack as one JSON file, and imports such a file by merging (newer change wins) or replacing.
+- **Keyboard.** `/` search, `F` mark found, `Z` undo, `N` select the nearest marker not yet found, `Esc` clear the selection. Shortcuts are ignored while typing in a field or while a dialog is open.
+
+### Where progress is kept
+
+Progress lives in the browser's IndexedDB (database `atlas`, through Dexie), behind the `ProgressStore` interface in `packages/core/src/progress` (`@atlas/core/dexie` holds the Dexie implementation). If IndexedDB is unavailable, for example in some private windows, the app keeps progress in memory and says so. Stored records:
+
+| Record      | Fields                                                                                                    |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| Profile     | `id`, `gameId`, `name`, `createdAt`, `updatedAt`, `deleted`                                               |
+| Progress    | `profileId`, `targetId`, `state` (`found`), `updatedAt`, `deleted`, `source` (`manual`, `save`, `memory`) |
+| User preset | `id`, `gameId`, `name`, `categoryIds`, `updatedAt`, `deleted`                                             |
+| Setting     | `key`, `value` (device-local: theme, panes, active pack, last map and view per pack)                      |
+
+Deletions are kept as tombstones (`deleted: true`) with their time, so merging two copies always keeps the newer change. Progress rows store the target id as it was when marked; a pack's `idMigrations` map old ids to new ones when progress is read, so a renamed location keeps its found state.
+
+The export file is `{ "format": "atlas-progress", "version": 1, "exportedAt", "scope": "profile" | "all", "profiles", "progress", "presets" }`, with the same record shapes, and is validated with Zod on import. Replacing with an "all" export also removes local profiles and presets of the same packs that the file does not have.
+
+### Guides
+
+Guide entries are Markdown, rendered with markdown-it with raw HTML disabled, so any HTML in a pack shows as text. Images are not rendered, and links open in a new tab with `rel="noopener noreferrer"`.
 
 ## The demo pack
 
-`packs/demo` is a fictional island generated entirely by code in `packages/pipeline`: an 8192 × 8192 px relief map drawn from seeded noise, cut into a 256 px WebP tile pyramid (zoom 0–5, 1,365 tiles), with ten regions, nine categories and 5,000 locations. The same seed always produces the same pack.
+`packs/demo` is a fictional island generated entirely by code in `packages/pipeline`: an 8192 × 8192 px relief map drawn from seeded noise, cut into a 256 px WebP tile pyramid (zoom 0–5, 1,365 tiles), with ten regions, twelve categories in three groups and 5,000 locations. A second, smaller map, an underground cave system of 2048 × 2048 px with two layers and 240 locations on each, exercises the map and layer switchers. The pack also has entities, guides with Markdown and three presets. The same seed always produces the same pack.
 
 The generated files are not committed; only the folder's README and `.gitignore` are. This keeps the repository small, and the build is quick enough to run on first use. `pnpm dev` and `pnpm build` call `pnpm demo:ensure`, which rebuilds only when the generator source or options changed (recorded in `packs/demo/.build-stamp.json`).
 
@@ -100,10 +132,30 @@ tiles/                tile pyramids, one PMTiles file or {z}/{x}/{y} folder per 
 The app reads `config.json` next to `index.html` at startup, so one build can be configured per deployment without rebuilding:
 
 ```json
-{ "packUrl": "packs/demo/", "theme": "dark", "clustering": true }
+{ "theme": "dark", "clustering": true }
 ```
 
-`packUrl` may be absolute or relative to `config.json`. All asset paths are relative, so the built app runs from any sub-path. For testing, `?clustering=off` draws every marker individually, and the URL fragment `#@x,y,zoom` records the current view.
+- `theme`: `dark` or `light`, used until the user picks one.
+- `clustering`: group nearby markers at low zoom.
+- `packs`: an explicit list of packs, `[{ "id": "<gameId>", "url": "packs/demo/", "title": "…" }]`. When given, the pack index is not read. The desktop build uses this to point at its pack protocol.
+- `packIndex`: where to find the pack index when `packs` is not given; default `packs/index.json`.
+- `packUrl`: older shorthand for a single pack; the app reads the pack's manifest for its id and title.
+
+URLs in `config.json` and in the index are absolute or relative to the app root (the folder with `index.html`).
+
+### Pack discovery
+
+Without a `packs` list, the app reads `packs/index.json`:
+
+```json
+{ "packs": [{ "id": "demo", "url": "packs/demo/", "title": "Atlas demo world" }] }
+```
+
+The dev server builds this index from every folder in `packs/` that has a `manifest.json`. `pnpm build` copies the packs named in `ATLAS_BUNDLE_PACKS` (comma-separated folder names, default `demo`) into `dist/packs/` and writes the index for them. With more than one pack, a game switcher appears in the top bar.
+
+Before showing a tile layer, the app requests the first bytes of its PMTiles archive (or the top tile of a folder pyramid). If that fails, the map shows a plain background and a short notice instead of tiles, and the markers still work.
+
+All asset paths are relative, so the built app runs from any sub-path. For testing, `?clustering=off` draws every marker individually, and the URL fragment `#@x,y,zoom` records the current view.
 
 ## Map view
 
