@@ -1,5 +1,6 @@
 import L from 'leaflet';
 import { pixelToSimpleLatLng, simpleLatLngToPixel } from '../../geometry/coords';
+import { probeTiles } from '../../pack/tileProbe';
 import type {
   FlyToTarget,
   MapLayerSpec,
@@ -7,12 +8,26 @@ import type {
   MapView,
   MapViewOptions,
   MapViewState,
+  MarkerHover,
+  TileStatus,
   Unsubscribe,
 } from '../types';
 import { CanvasMarkerLayer } from './canvasMarkerLayer';
 import { createTileLayer, imageBounds } from './tileLayer';
 
 const MARKER_PANE = 'atlasMarkers';
+
+/** Probe results per tile source URL, so switching back to a layer does not probe again. */
+const probes = new Map<string, Promise<boolean>>();
+
+function tilesAvailable(spec: MapLayerSpec): Promise<boolean> {
+  let probe = probes.get(spec.tiles.url);
+  if (!probe) {
+    probe = probeTiles(spec.tiles, spec.minZoom);
+    probes.set(spec.tiles.url, probe);
+  }
+  return probe;
+}
 
 /** A {@link MapView} drawn with Leaflet under `CRS.Simple`. */
 export function createLeafletMapView(
@@ -42,6 +57,28 @@ export function createLeafletMapView(
   let selectedId: string | null = null;
   const selectListeners = new Set<(id: string | null) => void>();
   const viewListeners = new Set<(state: MapViewState) => void>();
+  const hoverListeners = new Set<(hover: MarkerHover | null) => void>();
+  const tileListeners = new Set<(status: TileStatus) => void>();
+  let tileStatus: TileStatus | null = null;
+  const setTileStatus = (status: TileStatus) => {
+    tileStatus = status;
+    container.classList.toggle('atlas-no-tiles', status.status === 'missing');
+    tileListeners.forEach((listener) => {
+      listener(status);
+    });
+  };
+
+  // Side panels opening and closing resize the container without a window
+  // resize event, so watch the container itself.
+  let resizeFrame = 0;
+  const resizeObserver = new ResizeObserver(() => {
+    if (resizeFrame) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      map.invalidateSize({ pan: false });
+    });
+  });
+  resizeObserver.observe(container);
 
   const toLatLng = (x: number, y: number) =>
     L.latLng(pixelToSimpleLatLng({ x, y }, layer?.maxZoom ?? 0));
@@ -105,7 +142,13 @@ export function createLeafletMapView(
       map.setMaxBounds(bounds.pad(0.25));
       map.fitBounds(bounds, { animate: false });
 
-      tileLayer = createTileLayer(spec, maxMapZoom).addTo(map);
+      tileLayer = null;
+      setTileStatus({ layerId: spec.id, status: 'loading' });
+      void tilesAvailable(spec).then((available) => {
+        if (layer !== spec) return;
+        if (available) tileLayer = createTileLayer(spec, maxMapZoom).addTo(map);
+        setTileStatus({ layerId: spec.id, status: available ? 'ready' : 'missing' });
+      });
       markerLayer = new CanvasMarkerLayer({
         pane: MARKER_PANE,
         maxZoom: spec.maxZoom,
@@ -120,6 +163,11 @@ export function createLeafletMapView(
             const zoom = Math.min(markerLayer.expansionZoom(hit.clusterId), map.getMaxZoom());
             map.flyTo(toLatLng(hit.x, hit.y), Math.max(zoom, map.getZoom() + 1));
           }
+        },
+        onHover: (hover) => {
+          hoverListeners.forEach((listener) => {
+            listener(hover);
+          });
         },
       }).addTo(map);
       emitView();
@@ -152,6 +200,17 @@ export function createLeafletMapView(
       return () => selectListeners.delete(listener);
     },
 
+    onHover(listener): Unsubscribe {
+      hoverListeners.add(listener);
+      return () => hoverListeners.delete(listener);
+    },
+
+    onTileStatus(listener): Unsubscribe {
+      tileListeners.add(listener);
+      if (tileStatus) listener(tileStatus);
+      return () => tileListeners.delete(listener);
+    },
+
     onViewChange(listener): Unsubscribe {
       viewListeners.add(listener);
       return () => viewListeners.delete(listener);
@@ -161,8 +220,15 @@ export function createLeafletMapView(
 
     destroy() {
       cancelAnimationFrame(viewFrame);
+      cancelAnimationFrame(resizeFrame);
+      resizeObserver.disconnect();
       selectListeners.clear();
       viewListeners.clear();
+      hoverListeners.clear();
+      tileListeners.clear();
+      container.classList.remove('atlas-no-tiles');
+      // Stops a tile probe that is still running from adding a layer to the removed map.
+      layer = null;
       map.remove();
     },
   };

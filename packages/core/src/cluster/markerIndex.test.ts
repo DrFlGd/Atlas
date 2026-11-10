@@ -72,4 +72,16 @@ describe('MarkerIndex', () => {
     expect(flat.query(world, 0)).toHaveLength(points.length);
     expect(flat.query({ minX: 0, minY: 0, maxX: 256, maxY: 256 }, 0)).toHaveLength(1);
   });
+
+  it('reuses its clusters for restyled points', () => {
+    const restyled = points.map((p) => ({ ...p, muted: true }));
+    const copy = index.withPoints(restyled);
+    const hits = copy.query(world, 5);
+    expect(hits.length).toBe(index.query(world, 5).length);
+    const firstPoint = hits.find((hit) => hit.kind === 'point');
+    expect(firstPoint?.kind === 'point' && (firstPoint.point as { muted?: boolean }).muted).toBe(
+      true,
+    );
+    expect(() => index.withPoints(restyled.slice(1))).toThrow();
+  });
 });
