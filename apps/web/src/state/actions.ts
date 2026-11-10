@@ -25,6 +25,7 @@ import {
 } from '@atlas/core';
 import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
 import type { HashView } from '../viewHash';
+import { loadDownloads } from './downloads';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
 import { useAtlas, type AtlasState, type PaneName, type Theme } from './store';
 
@@ -148,6 +149,7 @@ export async function loadGame(
       undo: [],
     });
     saveSetting(SETTINGS.activePack, entry.id);
+    void loadDownloads(get().game!);
   } catch (error) {
     if (token === loadToken) set({ status: { kind: 'error', message: errorText(error) } });
   }

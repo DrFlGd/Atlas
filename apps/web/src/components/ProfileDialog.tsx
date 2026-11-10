@@ -8,6 +8,7 @@ import {
   type Profile,
 } from '@atlas/core';
 import { useEffect, useId, useRef, useState } from 'react';
+import { desktop } from '../desktop';
 import {
   applyImport,
   createProfile,
@@ -23,6 +24,17 @@ import {
 import { numberFormat } from '../state/derived';
 import { useAtlas } from '../state/store';
 import { UiIcon } from './icons';
+
+/**
+ * Saves text as a file: through the system's save dialog in the desktop
+ * app, else through a temporary download link. Resolves to false when the
+ * user closed the dialog.
+ */
+async function saveFile(name: string, text: string): Promise<boolean> {
+  if (desktop) return (await desktop.saveTextFile(name, text)) !== null;
+  download(name, text);
+  return true;
+}
 
 /** Saves text as a file through a temporary download link. */
 function download(name: string, text: string): void {
@@ -309,10 +321,17 @@ function ExportImport() {
   }, [pending, mode]);
   const plan = planned?.source === pending && planned.mode === mode ? planned.plan : null;
 
+  const readImport = (fileName: string, text: string) => {
+    const parsed = parseExport(text);
+    if (parsed.ok) setPending({ file: parsed.file, fileName });
+    else setError(parsed.error);
+  };
+
   const runExport = (selection: ExportSelection) => {
     void exportProgress(selection)
-      .then((file) => {
-        download(exportFileName(file), `${JSON.stringify(file, null, 2)}\n`);
+      .then(async (file) => {
+        const saved = await saveFile(exportFileName(file), `${JSON.stringify(file, null, 2)}\n`);
+        if (!saved) return;
         notify(`Exported ${file.profiles.length} profile${file.profiles.length === 1 ? '' : 's'}.`);
       })
       .catch((reason: unknown) => {
@@ -345,29 +364,51 @@ function ExportImport() {
         >
           <UiIcon name="download" size={16} /> Export all profiles
         </button>
-        <label className="button file-button" htmlFor={fileInputId}>
-          <UiIcon name="upload" size={16} /> Import from file…
-        </label>
-        <input
-          id={fileInputId}
-          className="visually-hidden"
-          type="file"
-          accept="application/json,.json"
-          data-testid="import-file"
-          onChange={(event) => {
-            const input = event.target;
-            const chosen = input.files?.[0];
-            input.value = '';
-            if (!chosen) return;
-            setError(null);
-            setPending(null);
-            void chosen.text().then((text) => {
-              const parsed = parseExport(text);
-              if (parsed.ok) setPending({ file: parsed.file, fileName: chosen.name });
-              else setError(parsed.error);
-            });
-          }}
-        />
+        {desktop ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="import-file-desktop"
+            onClick={() => {
+              setError(null);
+              setPending(null);
+              void desktop!.openTextFile().then(
+                (opened) => {
+                  if (opened) readImport(opened.name, opened.contents);
+                },
+                (reason: unknown) => {
+                  setError(reason instanceof Error ? reason.message : String(reason));
+                },
+              );
+            }}
+          >
+            <UiIcon name="upload" size={16} /> Import from file…
+          </button>
+        ) : (
+          <>
+            <label className="button file-button" htmlFor={fileInputId}>
+              <UiIcon name="upload" size={16} /> Import from file…
+            </label>
+            <input
+              id={fileInputId}
+              className="visually-hidden"
+              type="file"
+              accept="application/json,.json"
+              data-testid="import-file"
+              onChange={(event) => {
+                const input = event.target;
+                const chosen = input.files?.[0];
+                input.value = '';
+                if (!chosen) return;
+                setError(null);
+                setPending(null);
+                void chosen.text().then((text) => {
+                  readImport(chosen.name, text);
+                });
+              }}
+            />
+          </>
+        )}
       </div>
       {error ? (
         <p className="error-text" role="alert">

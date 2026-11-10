@@ -12,6 +12,7 @@ import type {
 import type { MapViewState, MarkerHover, TileStatus } from '@atlas/core/mapview';
 import { create } from 'zustand';
 import type { RuntimeConfig } from '../config';
+import type { DownloadPlan, DownloadSnapshot } from '../desktop';
 
 export type Theme = 'dark' | 'light';
 export type PaneName = 'filters' | 'details';
@@ -45,6 +46,19 @@ export interface Notice {
   text: string;
   tone: 'info' | 'error';
   seq: number;
+}
+
+/** Map image downloads of the current pack, in the desktop app. */
+export interface DownloadState {
+  /** The folder the desktop shell serves the pack from; null when it cannot download it. */
+  packFolder: string | null;
+  plan: DownloadPlan | null;
+  job: DownloadSnapshot | null;
+  panelOpen: boolean;
+  /** A command is on its way to the shell. */
+  pending: boolean;
+  /** The last command's error, in plain language. */
+  error: string | null;
 }
 
 export interface AtlasState {
@@ -87,7 +101,19 @@ export interface AtlasState {
   notice: Notice | null;
   /** Whether progress can be saved on this device. */
   persistent: boolean;
+  downloads: DownloadState;
+  /** Increases when downloaded map images change, so the map looks again. */
+  tileRevision: number;
 }
+
+export const NO_DOWNLOADS: DownloadState = {
+  packFolder: null,
+  plan: null,
+  job: null,
+  panelOpen: false,
+  pending: false,
+  error: null,
+};
 
 export const useAtlas = create<AtlasState>()(() => ({
   config: null,
@@ -119,4 +145,6 @@ export const useAtlas = create<AtlasState>()(() => ({
   searchFocus: 0,
   notice: null,
   persistent: true,
+  downloads: NO_DOWNLOADS,
+  tileRevision: 0,
 }));

@@ -1001,6 +1001,12 @@ label.tree-row:hover,
   left: 50%;
   bottom: 28px;
   transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  width: max-content;
   max-width: calc(100% - 32px);
   padding: 6px 12px;
   border-radius: var(--atlas-radius-small);
@@ -1009,6 +1015,224 @@ label.tree-row:hover,
   color: var(--atlas-muted);
   font-size: 12.5px;
   text-align: center;
+}
+
+.button-small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+/* Map image downloads (desktop app) */
+
+.map-images-button {
+  position: absolute;
+  z-index: 1000;
+  left: 10px;
+  bottom: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 999px;
+  background: var(--atlas-surface-translucent);
+  box-shadow: var(--atlas-shadow);
+  color: var(--atlas-text);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.map-images-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.download-panel {
+  position: absolute;
+  z-index: 1200;
+  left: 10px;
+  bottom: 28px;
+  width: min(400px, calc(100% - 20px));
+  max-height: calc(100% - 66px);
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  box-shadow: var(--atlas-shadow);
+}
+
+.download-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.download-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.download-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.download-intro,
+.download-note {
+  margin: 0;
+  color: var(--atlas-muted);
+  line-height: 1.45;
+}
+
+.download-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-danger-soft);
+  color: var(--atlas-danger);
+  line-height: 1.45;
+}
+
+.download-body .download-error {
+  margin: 0;
+}
+
+.download-unfinished {
+  padding: 8px 10px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.download-unfinished p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.detail-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.detail-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  cursor: pointer;
+}
+
+.detail-option:has(input:checked) {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.detail-option input {
+  margin: 3px 0 0;
+  accent-color: var(--atlas-accent);
+}
+
+.detail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.detail-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.detail-description {
+  color: var(--atlas-muted);
+}
+
+.detail-numbers {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badge-done {
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-complete);
+}
+
+.download-overall {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.download-figures {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-percent {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.download-rate {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-maps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.download-maps li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-maps .meter {
+  grid-column: 1 / -1;
+}
+
+.download-map-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-confirm p {
+  margin: 0 0 8px;
 }
 
 .toast-region {
@@ -1283,6 +1507,18 @@ label.tree-row:hover,
     margin-left: -18px;
     border-radius: 2px;
     background: var(--atlas-border-strong);
+  }
+
+  .download-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: calc(100% - 56px);
+  }
+
+  .map-images-button {
+    bottom: 24px;
   }
 
   .layer-switcher {

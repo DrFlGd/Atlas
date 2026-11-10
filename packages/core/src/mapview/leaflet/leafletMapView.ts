@@ -21,6 +21,8 @@ const MARKER_PANE = 'atlasMarkers';
 const probes = new Map<string, Promise<boolean>>();
 
 function tilesAvailable(spec: MapLayerSpec): Promise<boolean> {
+  // A known native range comes from a status file written with the tiles.
+  if (spec.nativeZoom) return Promise.resolve(true);
   let probe = probes.get(spec.tiles.url);
   if (!probe) {
     probe = probeTiles(spec.tiles, spec.minZoom);
@@ -123,12 +125,37 @@ export function createLeafletMapView(
   return {
     setLayer(spec) {
       if (destroyed) return;
-      if (
+      const sameLayer =
         layer?.id === spec.id &&
         layer.tiles.url === spec.tiles.url &&
         layer.width === spec.width &&
-        layer.height === spec.height
-      ) {
+        layer.height === spec.height &&
+        layer.minZoom === spec.minZoom &&
+        layer.maxZoom === spec.maxZoom &&
+        layer.tileSize === spec.tileSize;
+      const maxMapZoom = spec.maxZoom + overZoom;
+      const showTiles = () => {
+        tileLayer?.remove();
+        tileLayer = null;
+        if (tileStatus?.layerId !== spec.id || tileStatus.status !== 'ready') {
+          setTileStatus({ layerId: spec.id, status: 'loading' });
+        }
+        void tilesAvailable(spec).then((available) => {
+          if (layer !== spec) return;
+          tileLayer?.remove();
+          tileLayer = available ? createTileLayer(spec, maxMapZoom).addTo(map) : null;
+          setTileStatus({ layerId: spec.id, status: available ? 'ready' : 'missing' });
+        });
+      };
+      if (sameLayer) {
+        // Only the levels on disk changed: swap the tiles, keep the view and markers.
+        if (
+          layer?.nativeZoom?.min !== spec.nativeZoom?.min ||
+          layer?.nativeZoom?.max !== spec.nativeZoom?.max
+        ) {
+          layer = spec;
+          showTiles();
+        }
         return;
       }
       tileLayer?.remove();
@@ -138,19 +165,13 @@ export function createLeafletMapView(
       selectedId = null;
 
       const bounds = imageBounds(spec);
-      const maxMapZoom = spec.maxZoom + overZoom;
       map.setMinZoom(spec.minZoom);
       map.setMaxZoom(maxMapZoom);
       map.setMaxBounds(bounds.pad(0.25));
       map.fitBounds(bounds, { animate: false });
 
       tileLayer = null;
-      setTileStatus({ layerId: spec.id, status: 'loading' });
-      void tilesAvailable(spec).then((available) => {
-        if (layer !== spec) return;
-        if (available) tileLayer = createTileLayer(spec, maxMapZoom).addTo(map);
-        setTileStatus({ layerId: spec.id, status: available ? 'ready' : 'missing' });
-      });
+      showTiles();
       markerLayer = new CanvasMarkerLayer({
         pane: MARKER_PANE,
         maxZoom: spec.maxZoom,
