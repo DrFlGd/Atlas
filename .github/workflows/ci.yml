@@ -54,7 +54,7 @@ jobs:
   desktop:
     name: Desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +83,7 @@ jobs:
             webdriver=webkit2gtk-driver
           fi
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev "$webdriver" xvfb
+            libayatana-appindicator3-dev librsvg2-dev "$webdriver" xvfb xdotool
           command -v WebKitWebDriver
 
       - uses: dtolnay/rust-toolchain@stable
@@ -106,11 +106,26 @@ jobs:
       # Also builds the web app and the demo pack. No signing keys are set.
       - run: pnpm desktop:build
 
+      - run: cargo install tauri-driver --locked
+
+      # Window, map, markers, pack protocol byte ranges, the save and open
+      # dialogs (driven with xdotool) and links opening in the system browser.
       - name: Smoke test the app window (Linux)
         if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter @atlas/desktop test:e2e
+
+      # Window, map, markers and byte ranges on http://atlas-pack.localhost/,
+      # through the Edge WebDriver that the runner image ships. That driver
+      # follows the installed Edge, which may run ahead of or behind the
+      # WebView2 runtime, so a mismatch fails this step without failing the job.
+      - name: Smoke test the app window (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
         run: |
-          cargo install tauri-driver --locked
-          xvfb-run -a pnpm --filter @atlas/desktop test:e2e
+          if [ -n "${EDGEWEBDRIVER:-}" ]; then
+            export TAURI_NATIVE_DRIVER="$EDGEWEBDRIVER\\msedgedriver.exe"
+          fi
+          pnpm --filter @atlas/desktop test:e2e
 
       - name: Upload Linux bundles
         if: runner.os == 'Linux'
@@ -124,6 +139,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Downloads map images from a mock tile server on 127.0.0.1 through the
+      # app's interface. Rebuilds the binary with the test pack as the default
+      # game, after the bundles above have been uploaded.
+      - name: Download test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pnpm --filter @atlas/desktop e2e:pack
+          ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
+          xvfb-run -a pnpm --filter @atlas/desktop test:e2e:download
+
       - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
@@ -133,11 +158,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload smoke test screenshot
-        if: always() && runner.os == 'Linux'
+      - name: Upload desktop test screenshots
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: desktop-smoke-screenshot
+          name: desktop-screenshots-${{ runner.os }}
           path: apps/desktop/test-results/
           if-no-files-found: ignore
           retention-days: 7
