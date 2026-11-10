@@ -1,0 +1,24 @@
+{
+  "name": "@atlas/pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "demo:build": "tsx src/cli/build-demo-pack.ts --force",
+    "demo:ensure": "tsx src/cli/build-demo-pack.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@atlas/core": "workspace:*",
+    "@atlas/schema": "workspace:*",
+    "pmtiles": "^4.5.0",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}
