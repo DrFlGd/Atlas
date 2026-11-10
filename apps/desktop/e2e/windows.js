@@ -148,6 +148,14 @@ async function diagnose(endpoint, profile) {
     (error) => `unreachable: ${String(error?.cause ?? error)}`,
   );
   console.log(`DevTools endpoint ${endpoint}: ${version}`);
+  const port = new URL(endpoint).port;
+  for (const host of ['localhost', '[::1]']) {
+    const answer = await fetch(`http://${host}:${port}/json/version`).then(
+      (response) => `answers ${response.status}`,
+      (error) => `unreachable: ${String(error?.cause ?? error)}`,
+    );
+    console.log(`DevTools on ${host}:${port}: ${answer}`);
+  }
   if (profile) {
     const entries = await readdir(profile).catch((error) => [`unreadable: ${String(error)}`]);
     console.log(`Profile folder ${profile}: ${JSON.stringify(entries)}`);
@@ -168,6 +176,14 @@ async function diagnose(endpoint, profile) {
     '--- windows with a title'
     Get-Process | Where-Object { $_.MainWindowTitle } |
       Format-Table Id, ProcessName, MainWindowTitle -AutoSize | Out-String -Width 200
+    '--- webview command lines'
+    Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
+      ForEach-Object { "$($_.ProcessId): $($_.CommandLine)" }
+    '--- listening ports of the app and webview'
+    $ids = (Get-Process | Where-Object { $_.ProcessName -match 'atlas|msedgewebview2' }).Id
+    Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+      Where-Object { $ids -contains $_.OwningProcess } |
+      Format-Table LocalAddress, LocalPort, OwningProcess -AutoSize | Out-String -Width 200
     '--- session'
     "session=$((Get-Process -Id $PID).SessionId) interactive=$([Environment]::UserInteractive)"
     '--- desktop picture'
@@ -179,10 +195,19 @@ async function diagnose(endpoint, profile) {
       $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
       $bitmap.Save($env:ATLAS_E2E_DESKTOP_PICTURE)
       "saved $env:ATLAS_E2E_DESKTOP_PICTURE ($($screen.Width)x$($screen.Height))"
+      $jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+      $quality = New-Object System.Drawing.Imaging.EncoderParameters 1
+      $quality.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality, [long]45)
+      $stream = New-Object System.IO.MemoryStream
+      $bitmap.Save($stream, $jpeg, $quality)
+      '--- desktop picture as base64 jpeg'
+      [Convert]::ToBase64String($stream.ToArray(), 'InsertLineBreaks')
+      '--- end of picture'
     } catch { "no picture: $_" }
   `;
   const result = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
     env: {
       ...process.env,
       ATLAS_E2E_DESKTOP_PICTURE: join(resultsDir, 'desktop-windows-failed.png'),
