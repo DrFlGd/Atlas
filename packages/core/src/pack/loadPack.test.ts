@@ -151,13 +151,28 @@ describe('view helpers', () => {
     expect(spec.attribution).toBe('Atlas test suite');
   });
 
-  it('builds coloured markers, optionally filtered by category', async () => {
+  it('builds markers with colour and glyph, filtered and muted by progress', async () => {
     const { fetchFn } = servePack(packFiles(makeFixturePack()));
     const pack = await loadPack(BASE, { fetch: fetchFn });
     expect(layerMarkers(pack, 'demo:layer:surface')).toEqual([
-      { id: 'demo:loc:0001', x: 120, y: 80, color: '#4caf50' },
-      { id: 'demo:loc:0002', x: 900, y: 500, color: '#4caf50' },
+      { id: 'demo:loc:0001', x: 120, y: 80, color: '#4caf50', icon: 'leaf' },
+      { id: 'demo:loc:0002', x: 900, y: 500, color: '#4caf50', icon: 'leaf' },
     ]);
-    expect(layerMarkers(pack, 'demo:layer:surface', new Set())).toEqual([]);
+    const filter = {
+      visibleCategories: new Set(['demo:cat:herb']),
+      hideFound: false,
+      isFound: (id: string) => id === 'demo:loc:0002',
+    };
+    expect(layerMarkers(pack, 'demo:layer:surface', { filter }).map((m) => m.muted)).toEqual([
+      undefined,
+      true,
+    ]);
+    const hideFound = { ...filter, hideFound: true };
+    expect(layerMarkers(pack, 'demo:layer:surface', { filter: hideFound })).toHaveLength(1);
+    const nothing = { ...filter, visibleCategories: new Set<string>() };
+    expect(layerMarkers(pack, 'demo:layer:surface', { filter: nothing })).toEqual([]);
+    expect(
+      layerMarkers(pack, 'demo:layer:surface', { filter: nothing, alwaysInclude: 'demo:loc:0001' }),
+    ).toHaveLength(1);
   });
 });
