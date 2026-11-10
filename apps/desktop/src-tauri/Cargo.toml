@@ -1,0 +1,27 @@
+[package]
+name = "atlas-desktop"
+version = "0.1.0"
+description = "Atlas desktop shell"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[lib]
+# The `_lib` suffix keeps the library name distinct from the binary, which
+# avoids a Cargo name clash on Windows.
+name = "atlas_desktop_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }
+percent-encoding = "2.3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
