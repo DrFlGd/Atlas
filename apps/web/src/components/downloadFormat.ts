@@ -28,3 +28,9 @@ export function formatDuration(seconds: number): string {
   const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? '' : 's'} ${hours % 24} h`;
 }
+
+/** A duration estimate in words: "about 10 min", or "less than a minute". */
+export function roughDuration(seconds: number): string {
+  const text = formatDuration(seconds);
+  return text === 'less than a minute' || text === 'unknown' ? text : `about ${text}`;
+}

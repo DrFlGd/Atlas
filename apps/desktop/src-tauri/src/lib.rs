@@ -115,7 +115,8 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
             open_link_outside(&navigation_app, url);
             false
         })
-        // Links with `target="_blank"`, such as those in guides.
+        // Links with `target="_blank"`. The web app sends the links it shows
+        // to `open_external` itself; this catches any other new window.
         .on_new_window(move |url, _features| {
             open_link_outside(&new_window_app, &url);
             NewWindowResponse::Deny

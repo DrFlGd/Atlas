@@ -10,7 +10,7 @@ import {
   startDownload,
 } from '../state/downloads';
 import { useAtlas } from '../state/store';
-import { downloadPercent, formatBytes, formatDuration } from './downloadFormat';
+import { downloadPercent, formatBytes, roughDuration } from './downloadFormat';
 import { UiIcon } from './icons';
 
 const DETAILS: Record<Detail, { label: string; description: string }> = {
@@ -246,7 +246,7 @@ function ChooseView({
                     ? `${numberFormat.format(o.remaining)} of ${numberFormat.format(o.tiles)} images left`
                     : `${numberFormat.format(o.tiles)} images`}
                 {o.remaining > 0
-                  ? ` · about ${formatBytes(o.estimatedBytes)} · about ${formatDuration(o.estimatedSeconds)}`
+                  ? ` · about ${formatBytes(o.estimatedBytes)} · ${roughDuration(o.estimatedSeconds)}`
                   : ''}
               </span>
             </span>
@@ -319,7 +319,7 @@ function JobView({
             {job.tilesPerSecond > 0
               ? `${job.tilesPerSecond.toFixed(1)} images/s · ${formatBytes(job.bytesPerSecond)}/s`
               : 'Starting…'}
-            {job.secondsLeft !== null ? ` · about ${formatDuration(job.secondsLeft)} left` : ''}
+            {job.secondsLeft !== null ? ` · ${roughDuration(job.secondsLeft)} left` : ''}
           </p>
         ) : null}
         {job.state === 'paused' ? (

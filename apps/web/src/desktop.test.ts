@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDuration, downloadPercent } from './components/downloadFormat';
-import { createBridge, desktop, packFolderOf } from './desktop';
+import {
+  downloadPercent,
+  formatBytes,
+  formatDuration,
+  roughDuration,
+} from './components/downloadFormat';
+import { createBridge, desktop, externalLink, packFolderOf } from './desktop';
 
 describe('desktop bridge', () => {
   it('is absent in a browser', () => {
@@ -34,7 +39,23 @@ describe('desktop bridge', () => {
     ]);
   });
 
+  it('sends only links to other web sites outside', () => {
+    expect(externalLink('https://example.com/guide', 'tauri://localhost/')).toBe(
+      'https://example.com/guide',
+    );
+    expect(externalLink('http://example.com/', 'http://tauri.localhost/')).toBe(
+      'http://example.com/',
+    );
+    expect(externalLink('http://tauri.localhost/#@1,2,3', 'http://tauri.localhost/')).toBeNull();
+    expect(externalLink('#@1,2,3', 'tauri://localhost/')).toBeNull();
+    expect(externalLink('mailto:someone@example.com', 'tauri://localhost/')).toBeNull();
+    expect(externalLink('javascript:alert(1)', 'tauri://localhost/')).toBeNull();
+    expect(externalLink('atlas-pack://localhost/demo/x', 'tauri://localhost/')).toBeNull();
+  });
+
   it('turns command errors into Error objects', async () => {
+    // Tauri rejects with the command's error value, here a string.
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
     const bridge = createBridge(() => Promise.reject('This pack is not downloading.'));
     await expect(bridge.tiles.resume('demo')).rejects.toThrow('This pack is not downloading.');
   });
@@ -50,6 +71,8 @@ describe('download figures', () => {
     expect(formatDuration(600)).toBe('10 min');
     expect(formatDuration(3 * 3600 + 120)).toBe('3 h 2 min');
     expect(formatDuration(50 * 3600)).toBe('2 days 2 h');
+    expect(roughDuration(20)).toBe('less than a minute');
+    expect(roughDuration(600)).toBe('about 10 min');
     expect(downloadPercent({ done: 1, total: 3 })).toBe(33);
     expect(downloadPercent({ done: 0, total: 0 })).toBe(100);
   });

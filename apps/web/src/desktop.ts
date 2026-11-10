@@ -128,3 +128,45 @@ export function packFolderOf(url: string): string | null {
     );
   return match?.[1] ?? null;
 }
+
+/**
+ * The URL to open in the system browser for a link, or null for links that
+ * stay in the app: anything but `http` and `https`, and the app's own pages
+ * (the bundled frontend is `http://tauri.localhost` on Windows).
+ */
+export function externalLink(href: string, base: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, base);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.origin === new URL(base).origin) return null;
+  return url.href;
+}
+
+/**
+ * Sends clicks on links to other sites to the system browser instead of the
+ * app's window, which has no browser around it. Only `http` and `https`
+ * links are sent; the shell checks that again.
+ */
+export function openLinksOutside(bridge: DesktopBridge, root: Document = document): () => void {
+  const onClick = (event: MouseEvent) => {
+    if (event.defaultPrevented || event.button > 1) return;
+    const target = event.target as Element | null;
+    const link = target?.closest('a[href]') as HTMLAnchorElement | null;
+    const url = link ? externalLink(link.href, root.baseURI) : null;
+    if (!url) return;
+    event.preventDefault();
+    bridge.openExternal(url).catch((error: unknown) => {
+      console.error(error);
+    });
+  };
+  root.addEventListener('click', onClick);
+  root.addEventListener('auxclick', onClick);
+  return () => {
+    root.removeEventListener('click', onClick);
+    root.removeEventListener('auxclick', onClick);
+  };
+}

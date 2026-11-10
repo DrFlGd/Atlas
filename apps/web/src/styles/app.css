@@ -1512,7 +1512,7 @@ label.tree-row:hover,
   .download-panel {
     left: 8px;
     right: 8px;
-    bottom: 8px;
+    bottom: 22px;
     width: auto;
     max-height: calc(100% - 56px);
   }
