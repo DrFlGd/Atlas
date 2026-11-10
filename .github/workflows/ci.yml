@@ -106,7 +106,8 @@ jobs:
       # Also builds the web app and the demo pack. No signing keys are set.
       - run: pnpm desktop:build
 
-      - run: cargo install tauri-driver --locked
+      - if: runner.os == 'Linux'
+        run: cargo install tauri-driver --locked
 
       # Window, map, markers, pack protocol byte ranges, the save and open
       # dialogs (driven with xdotool) and links opening in the system browser.
@@ -114,18 +115,12 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @atlas/desktop test:e2e
 
-      # Window, map, markers and byte ranges on http://atlas-pack.localhost/,
-      # through the Edge WebDriver that the runner image ships. That driver
-      # follows the installed Edge, which may run ahead of or behind the
-      # WebView2 runtime, so a mismatch fails this step without failing the job.
-      - name: Smoke test the app window (Windows)
+      # Starts the built app and checks the window through WebView2's own
+      # DevTools endpoint: map, tiles, markers, saved progress, byte ranges on
+      # http://atlas-pack.localhost/ and the shell's commands.
+      - name: Start-up test of the app window (Windows)
         if: runner.os == 'Windows'
-        continue-on-error: true
-        run: |
-          if [ -n "${EDGEWEBDRIVER:-}" ]; then
-            export TAURI_NATIVE_DRIVER="$EDGEWEBDRIVER\\msedgedriver.exe"
-          fi
-          pnpm --filter @atlas/desktop test:e2e
+        run: pnpm --filter @atlas/desktop test:e2e:windows
 
       - name: Upload Linux bundles
         if: runner.os == 'Linux'

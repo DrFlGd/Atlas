@@ -47,7 +47,7 @@ Two WebDriver tests drive the built app through [tauri-driver](https://v2.tauri.
 
   `node apps/desktop/e2e/tileServer.js` runs the mock server on its own, to try the pack by hand.
 
-CI runs both on Linux. On Windows it runs the smoke test without the dialog and link checks, with the Edge WebDriver that the runner image ships; that step may fail when the runner's Edge and WebView2 versions differ, so it does not fail the job (see "Not there yet").
+CI runs both on Linux. On Windows, CI runs `pnpm --filter @atlas/desktop test:e2e:windows` instead (`e2e/windows.js`). An Edge WebDriver has to match the installed WebView2 runtime exactly, which a CI image does not promise, so this test starts the built app with WebView2's DevTools endpoint on a local port and a temporary profile, and checks the map, tiles, markers, saved progress, byte ranges on `http://atlas-pack.localhost/` and the shell's commands through it.
 
 The first name in `ATLAS_BUNDLE_PACKS` is the game shown on first launch; after that the app opens the game picked last. Any pack folder in `packs/<id>/` can be bundled this way.
 
@@ -108,4 +108,4 @@ The bundle identifier is `dev.atlas.desktop` (Tauri warns about identifiers endi
 - Opening a pack folder from disk (the dialogs exist now; choosing and remembering a folder does not).
 - Save-file reading and sync.
 - Remembering window size and position, global shortcuts and a companion window.
-- A verified Windows run of the smoke test: the CI step exists but has not been seen to pass, and it is allowed to fail, because the runner's Edge WebDriver follows Edge, not WebView2. The dialog and link checks and the download test run on Linux only; on Windows the download code is covered by the Rust unit tests, not by a window test. macOS builds in CI: the macOS bundle targets are configured but have not been built yet.
+- Window tests of the dialogs, links and map image downloads on Windows: those run on Linux only. On Windows the start-up test covers the window, map and pack protocol, and the download code is covered by the Rust unit tests. macOS builds in CI: the macOS bundle targets are configured but have not been built yet.

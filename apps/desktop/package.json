@@ -9,6 +9,7 @@
     "test:e2e": "node e2e/smoke.js",
     "tauri": "tauri",
     "test:e2e:download": "node e2e/download.js",
+    "test:e2e:windows": "node e2e/windows.js",
     "e2e:pack": "node e2e/remotePack.js"
   },
   "devDependencies": {
