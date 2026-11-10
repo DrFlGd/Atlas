@@ -9,12 +9,19 @@
  *   the web build's `packs/index.json`, with URLs on that protocol. The app
  *   then never asks for the index, which is not part of the embedded
  *   frontend. The protocol's URL differs per platform, so this runs on the
- *   platform being built for, as `tauri build` does.
+ *   platform being built for, as `tauri build` does;
+ * - adds the importers named in `ATLAS_BUNDLE_IMPORTERS` (comma-separated
+ *   paths of importer modules, absolute or relative to the repository root;
+ *   see `packages/importer-api`): each is checked, copied to
+ *   `importers/<id>.js` and listed under `importers` in `config.json`.
+ *   Without it the app has no importers and offers no "Add a map".
  */
-import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { copyFile, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const webDist = fileURLToPath(new URL('../../web/dist/', import.meta.url));
+const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const outDir = fileURLToPath(new URL('../dist/', import.meta.url));
 
 // Tauri sets TAURI_ENV_PLATFORM for build hooks; fall back to the host.
@@ -80,8 +87,76 @@ config.packs = await Promise.all(
 // The explicit list replaces the older single-pack setting.
 delete config.packUrl;
 if (config.packs.length === 0) throw new Error('No packs to bundle.');
+
+/** @typedef {{ id: string, title: string, description: string, version: string, module: string }} ImporterEntry */
+
+/**
+ * Checks an importer module the way the app will use it, without a
+ * TypeScript toolchain: it must load in Node (so it touches no page or
+ * browser API when imported) and export the contract's fields.
+ * @param {string} path
+ * @returns {Promise<ImporterEntry>}
+ */
+async function importerEntry(path) {
+  const source = await readFile(path, 'utf8').catch(() => {
+    throw new Error(`ATLAS_BUNDLE_IMPORTERS names ${path}, which cannot be read.`);
+  });
+  if (/\bfrom\s*['"]node:|\brequire\(\s*['"]/.test(source)) {
+    throw new Error(
+      `${path} uses Node modules; an importer must be one self-contained browser module.`,
+    );
+  }
+  const module = /** @type {{ default?: Record<string, unknown> }} */ (
+    await import(pathToFileURL(path).href)
+  );
+  const importer = module.default;
+  const problems = [];
+  if (!importer || typeof importer !== 'object') problems.push('no default export');
+  else {
+    if (importer.apiVersion !== 1) problems.push('apiVersion is not 1');
+    if (typeof importer.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(importer.id))
+      problems.push('id is not a lowercase slug');
+    for (const key of ['title', 'description', 'version', 'pageReader']) {
+      if (typeof importer[key] !== 'string' || importer[key] === '')
+        problems.push(`${key} is missing`);
+    }
+    for (const key of ['matches', 'convert']) {
+      if (typeof importer[key] !== 'function') problems.push(`${key} is not a function`);
+    }
+  }
+  if (problems.length > 0 || !importer) {
+    throw new Error(`${path} is not an Atlas importer: ${problems.join(', ')}.`);
+  }
+  return {
+    id: /** @type {string} */ (importer.id),
+    title: /** @type {string} */ (importer.title),
+    description: /** @type {string} */ (importer.description),
+    version: /** @type {string} */ (importer.version),
+    module: `importers/${String(importer.id)}.js`,
+  };
+}
+
+const importerPaths = (process.env.ATLAS_BUNDLE_IMPORTERS ?? '')
+  .split(',')
+  .map((path) => path.trim())
+  .filter(Boolean)
+  .map((path) => (isAbsolute(path) ? path : resolve(repoRoot, path)));
+/** @type {ImporterEntry[]} */
+const importers = [];
+for (const path of importerPaths) {
+  const entry = await importerEntry(path);
+  if (importers.some((other) => other.id === entry.id)) {
+    throw new Error(`Two importers have the id ${entry.id}.`);
+  }
+  await mkdir(`${outDir}importers`, { recursive: true });
+  await copyFile(path, `${outDir}${entry.module}`);
+  importers.push(entry);
+}
+config.importers = importers;
+
 await writeFile(`${outDir}config.json`, `${JSON.stringify(config, null, 2)}\n`);
 
 console.log(
-  `Prepared ${outDir} for ${platform}; packs: ${config.packs.map((pack) => pack.url).join(', ')}`,
+  `Prepared ${outDir} for ${platform}; packs: ${config.packs.map((pack) => pack.url).join(', ')}; ` +
+    `importers: ${importers.map((importer) => importer.id).join(', ') || 'none'}`,
 );
