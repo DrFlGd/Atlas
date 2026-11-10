@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Atlas app mark: a folded map with a north needle. Source for `tauri icon`. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#16324f"/>
+  <path d="M232 300 L412 236 L612 300 L792 236 L792 724 L612 788 L412 724 L232 788 Z" fill="#e8eef4"/>
+  <path d="M412 236 L412 724 L612 788 L612 300 Z" fill="#c9d6e2"/>
+  <path d="M512 330 L572 512 L512 694 L452 512 Z" fill="#16324f"/>
+  <path d="M512 330 L572 512 L452 512 Z" fill="#e4572e"/>
+  <circle cx="512" cy="512" r="22" fill="#e8eef4"/>
+</svg>
