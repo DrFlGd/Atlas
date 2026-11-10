@@ -86,6 +86,21 @@ describe('entity schemas', () => {
         tiles: { type: 'pmtiles', url: 'tiles/a.pmtiles', remote },
       }).success,
     ).toBe(false);
+    // Plain http only to this computer, for tests and local mirrors.
+    for (const urlTemplate of [
+      'http://127.0.0.1:4431/{z}/{x}/{y}.png',
+      'http://localhost/{z}/{x}/{y}.png',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(true);
+    }
+    for (const urlTemplate of [
+      'http://127.0.0.1.example.com/{z}/{x}/{y}.png',
+      'http://localhost.example.com/{z}/{x}/{y}.png',
+      'http://localhost:80@tiles.example.com/{z}/{x}/{y}.png',
+      'ftp://localhost/{z}/{x}/{y}.png',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(false);
+    }
   });
 
   it('validates layer zoom range and tile size', () => {

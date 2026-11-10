@@ -71,17 +71,27 @@ export const mapSchema = z.strictObject({
 const hasTileTemplate = (url: string) =>
   url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
 
+const LOOPBACK_HTTP = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//;
+
+/** `https`, or plain `http` to this computer only. The desktop shell checks the same. */
+export const isAllowedRemoteUrl = (url: string) =>
+  url.startsWith('https://') || LOOPBACK_HTTP.test(url);
+
 /**
  * A remote tile server that an `xyz` layer's tiles can be copied from for
  * offline use. The desktop app offers this as "Download map images"; the
  * tiles are saved unchanged at the layer's own `url`.
  */
 export const remoteTileSourceSchema = z.strictObject({
-  /** `https` URL template of the remote tiles, with `{z}`, `{x}` and `{y}`. */
+  /**
+   * `https` URL template of the remote tiles, with `{z}`, `{x}` and `{y}`.
+   * Plain `http` is accepted only for this computer (`127.0.0.1` or
+   * `localhost`), for tests and local mirrors.
+   */
   urlTemplate: z
     .string()
     .trim()
-    .startsWith('https://')
+    .refine(isAllowedRemoteUrl, 'must be an https URL')
     .refine(hasTileTemplate, 'must contain {z}, {x} and {y}'),
   /**
    * The pyramid levels that are remote tiles under other numbers: the layer's
