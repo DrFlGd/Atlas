@@ -87,6 +87,8 @@ export interface MapView {
   setMarkers(markers: readonly MapMarker[]): void;
   /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
   setSelected(markerId: string | null): void;
+  /** Re-reads theme colours from CSS custom properties and redraws. */
+  refreshStyle(): void;
   /** Moves the view, animated unless `animate` is false. */
   flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
   /** Called with the marker id when the user clicks a marker, or null when they click empty map. */

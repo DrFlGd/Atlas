@@ -60,6 +60,7 @@ export function createLeafletMapView(
   const hoverListeners = new Set<(hover: MarkerHover | null) => void>();
   const tileListeners = new Set<(status: TileStatus) => void>();
   let tileStatus: TileStatus | null = null;
+  let destroyed = false;
   const setTileStatus = (status: TileStatus) => {
     tileStatus = status;
     container.classList.toggle('atlas-no-tiles', status.status === 'missing');
@@ -121,6 +122,7 @@ export function createLeafletMapView(
 
   return {
     setLayer(spec) {
+      if (destroyed) return;
       if (
         layer?.id === spec.id &&
         layer.tiles.url === spec.tiles.url &&
@@ -174,6 +176,7 @@ export function createLeafletMapView(
     },
 
     setMarkers(next) {
+      if (destroyed) return;
       markers = next;
       markerLayer?.setMarkers(markers);
       if (selectedId !== null && !markers.some((m) => m.id === selectedId)) {
@@ -183,12 +186,17 @@ export function createLeafletMapView(
     },
 
     setSelected(id) {
+      if (destroyed) return;
       selectedId = id;
       markerLayer?.setSelected(id);
     },
 
+    refreshStyle() {
+      markerLayer?.refreshPalette();
+    },
+
     flyTo(target: FlyToTarget, flyOptions = {}) {
-      if (!layer) return;
+      if (destroyed || !layer) return;
       const center = toLatLng(target.x, target.y);
       const zoom = target.zoom ?? map.getZoom();
       if (flyOptions.animate === false) map.setView(center, zoom, { animate: false });
@@ -219,6 +227,8 @@ export function createLeafletMapView(
     getView,
 
     destroy() {
+      if (destroyed) return;
+      destroyed = true;
       cancelAnimationFrame(viewFrame);
       cancelAnimationFrame(resizeFrame);
       resizeObserver.disconnect();

@@ -11,7 +11,21 @@ const MARKER_RADIUS = 9;
 const GLYPH_SIZE = 12;
 const HIT_SLOP = 3;
 /** Opacity of found (muted) markers. */
-const MUTED_ALPHA = 0.42;
+const MUTED_ALPHA = 0.7;
+/** How far a found marker's colour moves towards the theme's muted grey. */
+const MUTED_MIX = 0.65;
+
+/** Mixes two `#rrggbb` colours; returns `a` unchanged if either is not in that form. */
+function mixHex(a: string, b: string, t: number): string {
+  const pa = /^#([0-9a-f]{6})$/i.exec(a);
+  const pb = /^#([0-9a-f]{6})$/i.exec(b);
+  if (!pa || !pb) return a;
+  const x = Number.parseInt(pa[1]!, 16);
+  const y = Number.parseInt(pb[1]!, 16);
+  const channel = (shift: number) =>
+    Math.round(((x >> shift) & 0xff) * (1 - t) + ((y >> shift) & 0xff) * t);
+  return `#${((channel(16) << 16) | (channel(8) << 8) | channel(0)).toString(16).padStart(6, '0')}`;
+}
 
 interface Palette {
   outline: string;
@@ -143,6 +157,15 @@ export class CanvasMarkerLayer extends L.Layer {
 
   setSelected(markerId: string | null): void {
     this.selectedId = markerId;
+    this.redraw();
+  }
+
+  /** Re-reads the palette from the map container's CSS custom properties. */
+  refreshPalette(): void {
+    const map = this._map as L.Map | undefined;
+    if (!map) return;
+    this.palette = readPalette(map.getContainer());
+    this.sprites.clear();
     this.redraw();
   }
 
@@ -297,7 +320,9 @@ export class CanvasMarkerLayer extends L.Layer {
     sprite.height = Math.ceil(size * ratio);
     const ctx = sprite.getContext('2d');
     if (ctx) {
-      const fill = marker.muted ? this.palette.muted : marker.color;
+      const fill = marker.muted
+        ? mixHex(marker.color, this.palette.muted, MUTED_MIX)
+        : marker.color;
       const center = size / 2;
       ctx.scale(ratio, ratio);
       if (marker.muted) ctx.globalAlpha = MUTED_ALPHA;
