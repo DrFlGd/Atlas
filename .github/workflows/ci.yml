@@ -196,7 +196,8 @@ jobs:
           retention-days: 7
 
   # The Map Maker's game file reader (tools/gamefiles, GPL-3.0): its tests,
-  # on made-up game folders only.
+  # on made-up game folders only. Windows only, like the Map Maker itself; add
+  # `ubuntu-latest` to the matrix to test on Linux too.
   gamefiles:
     name: Game file reader tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -204,7 +205,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
     defaults:
       run:
         shell: bash
@@ -224,6 +225,10 @@ jobs:
   # Builds Atlas Map Maker with its helper and tries it on a made-up Dark
   # Souls Remastered folder: on Windows the unsigned installer (uploaded) and
   # a start-up test, on Linux a full check through the app's window.
+  #
+  # Windows only for now (the Map Maker ships for Windows only). To switch the
+  # Linux build and its window test on again, add `ubuntu-latest` to the
+  # matrix; the Linux steps below are kept and run only there.
   mapmaker:
     name: Map Maker (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -231,7 +236,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
     defaults:
       run:
         shell: bash
