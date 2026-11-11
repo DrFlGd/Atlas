@@ -253,7 +253,7 @@ pub struct ViewStatus {
     pub counts: Counts,
     /// The page started background workers, whose loading cannot be seen.
     pub uses_workers: bool,
-    /// Increases when a status file changes, so the map looks again.
+    /// Increases when map images were saved, so the map looks again.
     pub revision: u64,
     /// A plain note, such as why saving stopped.
     pub message: Option<String>,
@@ -446,8 +446,10 @@ impl Saving {
         }
     }
 
-    /// Brings status files and the manifest up to date. Returns whether a
-    /// status file changed.
+    /// Brings status files and the manifest up to date. Returns whether the
+    /// map should look again: images were saved since the last time, whether
+    /// or not that completed a level (the map asks again for single images
+    /// that were missing).
     fn flush(&mut self) -> bool {
         self.last_flush = Instant::now();
         if self.pending.is_empty() {
@@ -459,7 +461,8 @@ impl Saving {
             matcher,
             ..
         } = self;
-        pending.flush(root, matcher.plan())
+        pending.flush(root, matcher.plan());
+        true
     }
 }
 
@@ -1224,7 +1227,11 @@ mod tests {
         saving.take(&later, Vec::new());
         assert_eq!(saving.counts().saved, 2);
         assert_eq!(saving.counts().from_elements, 0);
-        assert!(!saving.flush(), "no level is complete yet");
+        assert!(
+            saving.flush(),
+            "images were saved, so the map looks again although no level is complete"
+        );
+        assert!(!saving.flush(), "nothing was saved since");
         let status: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(root.join("offline-tiles/world.json")).unwrap_or_default(),
         )

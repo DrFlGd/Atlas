@@ -100,6 +100,13 @@ export interface MapView {
   setSelected(markerId: string | null): void;
   /** Re-reads theme colours from CSS custom properties and redraws. */
   refreshStyle(): void;
+  /**
+   * Looks again for tiles of the current layer that were not there before:
+   * shows the tiles if the layer had none, and asks again for the ones that
+   * failed to load. Tiles already shown, the view and the markers stay.
+   * Other layers that had no tiles are looked at again when next shown.
+   */
+  refreshTiles(): void;
   /** Moves the view, animated unless `animate` is false. */
   flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
   /** Called with the marker id when the user clicks a marker, or null when they click empty map. */
