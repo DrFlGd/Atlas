@@ -20,3 +20,26 @@
 .atlas-map .leaflet-control-attribution a {
   color: var(--atlas-accent, #e6b450);
 }
+
+/* The player's position from a game save. */
+.atlas-map .atlas-player {
+  background: none;
+  border: none;
+  pointer-events: none;
+}
+
+.atlas-map .atlas-player svg {
+  display: block;
+  overflow: visible;
+  fill: var(--atlas-player, #4fc3f7);
+  stroke: var(--atlas-player-outline, #0b0d12);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 60%));
+}
+
+.atlas-map .atlas-player .atlas-player-halo {
+  fill: var(--atlas-player-halo, rgb(79 195 247 / 22%));
+  stroke: var(--atlas-player, #4fc3f7);
+  stroke-width: 1;
+}
