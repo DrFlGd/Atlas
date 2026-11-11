@@ -1600,7 +1600,11 @@ mod tests {
     /// A tile whose colour encodes its remote address, so tests can tell
     /// which tile went where.
     fn coloured_tile(z: u8, x: u8, y: u8) -> Vec<u8> {
-        let image = RgbImage::from_pixel(256, 256, Rgb([z * 20, x * 40, y * 40]));
+        let image = RgbImage::from_pixel(
+            256,
+            256,
+            Rgb([z.wrapping_mul(20), x.wrapping_mul(40), y.wrapping_mul(40)]),
+        );
         let mut out = std::io::Cursor::new(Vec::new());
         image.write_to(&mut out, image::ImageFormat::Png).unwrap();
         out.into_inner()
