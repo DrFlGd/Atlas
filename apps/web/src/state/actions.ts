@@ -25,6 +25,7 @@ import {
   type Profile,
   type ProgressChange,
   type ProgressRecord,
+  type ProgressSource,
   type VisibilityOverrides,
 } from '@atlas/core';
 import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
@@ -49,7 +50,7 @@ export function notify(text: string, tone: 'info' | 'error' = 'info'): void {
   set({ notice: { text, tone, seq: ++noticeSeq } });
 }
 
-function saveSetting(key: string, value: unknown): void {
+export function saveSetting(key: string, value: unknown): void {
   progressStore()
     .putSetting(key, value)
     .catch(() => {
@@ -268,6 +269,18 @@ export function goToLocation(locationId: string): void {
   select(locationId);
 }
 
+/** Shows a map (keeping the layer shown, if it is on that map) and moves to a point on it. */
+export function goToPoint(mapId: string, x: number, y: number): void {
+  const { game } = get();
+  if (!game) return;
+  const changesMap = get().mapId !== mapId;
+  if (changesMap) showMap(mapId);
+  const layer = game.pack.layers.get(get().layerId ?? '');
+  if (layer?.mapId !== mapId) return;
+  const zoom = Math.max(get().view?.zoom ?? 0, layer.maxZoom - 2);
+  set({ fly: { x, y, zoom, animate: !changesMap, seq: ++flySeq } });
+}
+
 /**
  * Moves the map to a region: to its centre, or else the middle of its
  * outline, fitting the outline when it has one (see `regionTarget`). Switches
@@ -339,6 +352,7 @@ async function writeProgress(rows: ProgressRecord[]): Promise<void> {
 export function applyProgress(
   changes: readonly ProgressChange[],
   undo: Pick<UndoEntry, 'undone' | 'selectId'> | null,
+  source: ProgressSource = 'manual',
 ): boolean {
   const state = get();
   const { game, profileId } = state;
@@ -348,7 +362,7 @@ export function applyProgress(
   if (touched.length === 0) return false;
   const rows = new Map(state.rows);
   const written = touched.map((c) => {
-    const row = progressRow(profileId, c.targetId, c.found, now);
+    const row = progressRow(profileId, c.targetId, c.found, now, source);
     rows.set(c.targetId, row);
     return row;
   });
@@ -356,6 +370,7 @@ export function applyProgress(
     profileId,
     changes: touched.map((c) => ({ targetId: c.targetId, wasFound: !c.found })),
     ...undo,
+    ...(source === 'manual' ? {} : { source }),
   };
   set({
     rows,
@@ -409,6 +424,7 @@ export function undo(): void {
   applyProgress(
     last.changes.map((c) => ({ targetId: c.targetId, found: c.wasFound })),
     null,
+    last.source,
   );
   notify(last.undone);
   if (last.selectId) set({ selectedId: last.selectId });

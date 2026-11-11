@@ -206,12 +206,12 @@ mod tests {
     #[test]
     fn names_copies_after_the_picked_file() {
         assert_eq!(
-            copy_name(Some("elden-ring-standard.atlaspack")),
-            "elden-ring-standard.atlaspack"
+            copy_name(Some("isles-standard.atlaspack")),
+            "isles-standard.atlaspack"
         );
         assert_eq!(
-            copy_name(Some("Elden Ring (1).ATLASPACK")),
-            "Elden Ring (1).atlaspack"
+            copy_name(Some("Demo Isles (1).ATLASPACK")),
+            "Demo Isles (1).atlaspack"
         );
         // A file the picker names without the extension still gets it.
         assert_eq!(copy_name(Some("download")), "download.atlaspack");

@@ -7,6 +7,7 @@ import { checklistScreenTitle, toggleLeftTab } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
 import { setAddMapOpen } from '../state/importing';
 import { setMapsDialogOpen } from '../state/library';
+import { saveReaderOf, setSaveDialogOpen } from '../state/saves';
 import { useAtlas } from '../state/store';
 import { UiIcon } from './icons';
 
@@ -71,6 +72,7 @@ export function TopBar({ search }: { search: React.ReactNode }) {
       </div>
       <div className="topbar-search">{search}</div>
       {summary ? <OverallProgress tally={summary.pack} /> : null}
+      <SaveButton />
       <button
         type="button"
         className="profile-button"
@@ -111,6 +113,33 @@ export function TopBar({ search }: { search: React.ReactNode }) {
         <UiIcon name="details" />
       </button>
     </header>
+  );
+}
+
+/** "Game save", for packs of a game whose saves Atlas can read. */
+function SaveButton() {
+  // Reading a save needs a folder or file chosen on this device, which the
+  // Android app cannot offer yet.
+  const folders = useAtlas(foldersOffered);
+  const readable = useAtlas((s) => folders && saveReaderOf(s.game) !== null);
+  const linked = useAtlas((s) => s.save.link !== null);
+  const busy = useAtlas((s) => s.save.busy);
+  if (!readable) return null;
+  return (
+    <button
+      type="button"
+      className={linked ? 'icon-button save-button save-button-linked' : 'icon-button save-button'}
+      aria-label="Game save"
+      title={linked ? 'Game save: linked' : 'Game save: read your progress from a save'}
+      aria-haspopup="dialog"
+      aria-busy={busy}
+      data-testid="save-button"
+      onClick={() => {
+        setSaveDialogOpen(true);
+      }}
+    >
+      <UiIcon name="save" />
+    </button>
   );
 }
 

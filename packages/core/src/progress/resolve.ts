@@ -28,19 +28,30 @@ export function resolveProgress(
   rows: readonly ProgressRecord[],
   currentId: (id: string) => string = (id) => id,
 ): Map<string, TargetProgress> {
+  const resolved = new Map<string, TargetProgress>();
+  for (const [target, row] of latestRows(rows, currentId)) {
+    if (!row.deleted) {
+      resolved.set(target, { state: row.state, updatedAt: row.updatedAt, source: row.source });
+    }
+  }
+  return resolved;
+}
+
+/**
+ * The row that decides each target's state, tombstones included, by
+ * current target id (see {@link resolveProgress}).
+ */
+export function latestRows(
+  rows: readonly ProgressRecord[],
+  currentId: (id: string) => string = (id) => id,
+): Map<string, ProgressRecord> {
   const winners = new Map<string, ProgressRecord>();
   for (const row of rows) {
     const target = currentId(row.targetId);
     const best = winners.get(target);
     if (!best || isNewer(row, best, target)) winners.set(target, row);
   }
-  const resolved = new Map<string, TargetProgress>();
-  for (const [target, row] of winners) {
-    if (!row.deleted) {
-      resolved.set(target, { state: row.state, updatedAt: row.updatedAt, source: row.source });
-    }
-  }
-  return resolved;
+  return winners;
 }
 
 /** Newer timestamp wins; on a tie, the row stored under the current id, then a tombstone. */

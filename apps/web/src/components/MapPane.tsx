@@ -5,6 +5,7 @@ import { downloadsOffered } from '../features';
 import { select, showMap } from '../state/actions';
 import { numberFormat, useLayerMarkers, useSummary } from '../state/derived';
 import { setDownloadPanelOpen } from '../state/downloads';
+import { cancelPlacing, placePlayerAt, showPlayer, shownPlayer } from '../state/saves';
 import { useAtlas } from '../state/store';
 import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
@@ -40,6 +41,9 @@ export function MapPane() {
       }),
       view.onTileStatus((tileStatus) => {
         useAtlas.setState({ tileStatus });
+      }),
+      view.onMapClick((point) => {
+        placePlayerAt(useAtlas.getState().mapId, point);
       }),
     ];
     setMap(view);
@@ -112,6 +116,18 @@ export function MapPane() {
     if (layerShown) map.setSelected(selectedId);
   }, [map, selectedId, markers, layerShown]);
 
+  // Where the player last saved, on its map.
+  const player = useAtlas((s) => shownPlayer(s.save));
+  const shownMapId = layerId ? pack?.layers.get(layerId)?.mapId : undefined;
+  useEffect(() => {
+    if (!layerShown) return;
+    map.setPlayer(
+      player && player.mapId === shownMapId
+        ? { x: player.x, y: player.y, heading: player.heading, label: 'Where you last saved' }
+        : null,
+    );
+  }, [map, player, shownMapId, layerShown]);
+
   // Fly requests run after the layer is set, so a jump to another layer lands on the right map.
   const handledFly = useRef(0);
   useEffect(() => {
@@ -126,6 +142,7 @@ export function MapPane() {
       <LayerSwitcher />
       <MarkerTooltip />
       <TileNotice />
+      <PlayerControls />
       <DownloadControls />
       <MapStatus markerCount={markers.length} />
     </div>
@@ -178,6 +195,47 @@ function MarkerTooltip() {
     <div className="marker-tooltip" role="tooltip" style={{ left: hover.x, top: hover.y }}>
       {location.name}
     </div>
+  );
+}
+
+/** "Show me" (where the last save was made), and the note while the person places themselves. */
+function PlayerControls() {
+  const player = useAtlas((s) => shownPlayer(s.save));
+  const placing = useAtlas((s) => s.save.placing);
+  const placingName = useAtlas((s) =>
+    s.save.placing ? s.game?.pack.data.maps.find((m) => m.id === s.save.placing?.mapId)?.name : '',
+  );
+  return (
+    <>
+      {placing ? (
+        <div className="placing-notice" role="status" data-testid="placing-notice">
+          <span>Click the spot on {placingName ?? 'the map'} where you stood when you saved.</span>
+          <button
+            type="button"
+            className="button button-small"
+            onClick={() => {
+              cancelPlacing();
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
+      {player && !placing ? (
+        <button
+          type="button"
+          className="button button-small show-me-button"
+          title="Show where you last saved"
+          data-testid="show-me"
+          onClick={() => {
+            showPlayer();
+          }}
+        >
+          <UiIcon name="target" size={16} />
+          Show me
+        </button>
+      ) : null}
+    </>
   );
 }
 

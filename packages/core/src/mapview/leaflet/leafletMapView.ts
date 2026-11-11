@@ -9,6 +9,7 @@ import type {
   MapViewOptions,
   MapViewState,
   MarkerHover,
+  PlayerMarker,
   TileStatus,
   Unsubscribe,
 } from '../types';
@@ -16,6 +17,22 @@ import { CanvasMarkerLayer } from './canvasMarkerLayer';
 import { createTileLayer, imageBounds } from './tileLayer';
 
 const MARKER_PANE = 'atlasMarkers';
+const PLAYER_PANE = 'atlasPlayer';
+
+/** The player's marker: an arrow pointing up (turned by its heading), or a dot. */
+function playerIcon(player: PlayerMarker): L.DivIcon {
+  const shape =
+    player.heading === null
+      ? '<circle cx="16" cy="16" r="7" />'
+      : '<path d="M16 3 L25 27 L16 21 L7 27 Z" />';
+  const turn = player.heading === null ? '' : ` style="transform: rotate(${player.heading}deg)"`;
+  return L.divIcon({
+    className: 'atlas-player',
+    html: `<svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"${turn}><circle class="atlas-player-halo" cx="16" cy="16" r="15" />${shape}</svg>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
 
 /** Probe results per tile source URL, so switching back to a layer does not probe again. */
 const probes = new Map<string, Promise<boolean>>();
@@ -51,6 +68,7 @@ export function createLeafletMapView(
   map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
   const pane = map.createPane(MARKER_PANE);
   pane.style.zIndex = '450';
+  map.createPane(PLAYER_PANE).style.zIndex = '460';
 
   let layer: MapLayerSpec | null = null;
   let tileLayer: L.GridLayer | null = null;
@@ -58,6 +76,9 @@ export function createLeafletMapView(
   let markers: readonly MapMarker[] = [];
   let selectedId: string | null = null;
   const selectListeners = new Set<(id: string | null) => void>();
+  const clickListeners = new Set<(point: { x: number; y: number }) => void>();
+  let player: PlayerMarker | null = null;
+  let playerMarker: L.Marker | null = null;
   const viewListeners = new Set<(state: MapViewState) => void>();
   const hoverListeners = new Set<(hover: MarkerHover | null) => void>();
   const tileListeners = new Set<(status: TileStatus) => void>();
@@ -129,6 +150,30 @@ export function createLeafletMapView(
     });
   };
   map.on('move zoom resize', emitView);
+  map.on('click', (event: L.LeafletMouseEvent) => {
+    if (!layer) return;
+    const point = toPixel(event.latlng);
+    clickListeners.forEach((listener) => {
+      listener(point);
+    });
+  });
+
+  const showPlayer = () => {
+    playerMarker?.remove();
+    playerMarker = null;
+    if (!player || !layer) return;
+    playerMarker = L.marker(toLatLng(player.x, player.y), {
+      icon: playerIcon(player),
+      pane: PLAYER_PANE,
+      interactive: false,
+      keyboard: false,
+      title: player.label,
+      alt: player.label,
+    }).addTo(map);
+    const element = playerMarker.getElement();
+    element?.setAttribute('role', 'img');
+    element?.setAttribute('aria-label', player.label);
+  };
 
   const select = (id: string | null) => {
     selectedId = id;
@@ -179,6 +224,10 @@ export function createLeafletMapView(
       layer = spec;
       markers = [];
       selectedId = null;
+      // The player belongs to one map; the app shows it again on its map.
+      player = null;
+      playerMarker?.remove();
+      playerMarker = null;
 
       const bounds = imageBounds(spec);
       map.setMinZoom(spec.minZoom);
@@ -220,6 +269,20 @@ export function createLeafletMapView(
         selectedId = null;
         markerLayer?.setSelected(null);
       }
+    },
+
+    setPlayer(next) {
+      if (destroyed) return;
+      const same =
+        next !== null &&
+        player !== null &&
+        next.x === player.x &&
+        next.y === player.y &&
+        next.heading === player.heading &&
+        next.label === player.label;
+      if (same || (next === null && player === null)) return;
+      player = next;
+      showPlayer();
     },
 
     setSelected(id) {
@@ -269,6 +332,11 @@ export function createLeafletMapView(
       return () => selectListeners.delete(listener);
     },
 
+    onMapClick(listener): Unsubscribe {
+      clickListeners.add(listener);
+      return () => clickListeners.delete(listener);
+    },
+
     onHover(listener): Unsubscribe {
       hoverListeners.add(listener);
       return () => hoverListeners.delete(listener);
@@ -294,6 +362,7 @@ export function createLeafletMapView(
       cancelAnimationFrame(resizeFrame);
       resizeObserver.disconnect();
       selectListeners.clear();
+      clickListeners.clear();
       viewListeners.clear();
       hoverListeners.clear();
       tileListeners.clear();

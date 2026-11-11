@@ -1,0 +1,22 @@
+{
+  "name": "@atlas/saves",
+  "version": "0.3.7",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./games": "./src/games.ts",
+    "./match": "./src/match/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./table": "./src/gamefiles/table.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.scripts.json",
+    "dump": "tsx scripts/dump.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}
