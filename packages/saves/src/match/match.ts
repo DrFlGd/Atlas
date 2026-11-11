@@ -109,6 +109,18 @@ export interface PlayerOnMap {
   onMap: boolean;
 }
 
+/**
+ * Why a save marks nothing:
+ * - `no-map`: the save's map could not be read;
+ * - `nothing-done`: the save has not discovered or cleared any place yet
+ *   (a new game);
+ * - `no-tag-table`: the save names its discovered or cleared places by the
+ *   game's tags alone, without positions, and no place of the pack names
+ *   them; telling which places they are needs a table of where each tag is
+ *   (in the game's own files), which Atlas does not have.
+ */
+export type NothingReason = 'no-map' | 'nothing-done' | 'no-tag-table';
+
 export interface SaveMatch {
   /** The world the player is in, with its map. */
   current: WorldMatch | null;
@@ -123,6 +135,13 @@ export interface SaveMatch {
   calibrated: Record<string, MapCalibration>;
   /** The current world has a map that cannot be lined up yet: ask the person to mark points. */
   needsCalibration: boolean;
+  /**
+   * Pins the save shows discovered or cleared that it names by tag alone,
+   * with no position, and that no place of the pack names by its `flagId`.
+   */
+  unplaced: number;
+  /** Why nothing is found, when nothing is; null when something is, or when `unmatched` says why. */
+  nothingBecause: NothingReason | null;
 }
 
 /** The pin kind of each category whose name holds one of a kind's keywords. */
@@ -235,14 +254,19 @@ export function matchSave(input: MatchInput): SaveMatch {
     if (!location.flagId || !trackable.has(location.categoryId)) continue;
     const fact = summary.facts[location.flagId];
     const pin = pinsById.get(location.flagId);
-    const rule = pin?.kind ? rules.get(pin.kind) : undefined;
+    // A pin named by tag alone has no kind: its place's category says what done means.
+    const kind = pin?.kind ?? kindOfCategory.get(location.categoryId);
+    const rule = kind ? rules.get(kind) : undefined;
+    const done = pin
+      ? pin.cleared === true || (rule ? pinIsDone(pin, rule) : pin.discovered === true)
+      : false;
     if (fact !== undefined && fact > 0) {
       found.set(location.id, {
         locationId: location.id,
         kind: 'flag',
         reason: `The save has the fact “${location.flagId}” set.`,
       });
-    } else if (pin && (pin.cleared === true || (rule && pinIsDone(pin, rule)))) {
+    } else if (pin && done) {
       found.set(location.id, {
         locationId: location.id,
         kind: 'flag',
@@ -323,6 +347,25 @@ export function matchSave(input: MatchInput): SaveMatch {
   }
   for (const pin of pinsToPlace) if (!placed.has(pin)) miss(pin.kind!, 'no-place-nearby');
 
+  // Done pins named by tag alone, which nothing here can place.
+  let done = 0;
+  let unplaced = 0;
+  for (const pin of summary.pins) {
+    if (pin.cleared !== true && pin.discovered !== true) continue;
+    done++;
+    if (!pin.position && !pin.kind && !named.has(pin.id)) unplaced++;
+  }
+  const nothingBecause: NothingReason | null =
+    found.size > 0
+      ? null
+      : !summary.map
+        ? 'no-map'
+        : done === 0
+          ? 'nothing-done'
+          : unplaced > 0
+            ? 'no-tag-table'
+            : null;
+
   // Counts by category.
   const counts = new Map<string, CategoryCount>();
   const categoryOf = new Map(pack.locations.map((l) => [l.id, l.categoryId]));
@@ -342,6 +385,8 @@ export function matchSave(input: MatchInput): SaveMatch {
     unmatched: [...unmatched.values()],
     calibrated,
     needsCalibration: Boolean(currentWorld?.mapId && !currentWorld.transform),
+    unplaced,
+    nothingBecause,
   };
 }
 

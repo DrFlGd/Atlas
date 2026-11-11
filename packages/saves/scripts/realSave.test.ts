@@ -32,6 +32,13 @@ describe.skipIf(!file)('a real Witcher 3 save', () => {
           facts: Object.keys(summary.facts).length,
           pins: summary.pins.length,
           kinds,
+          map: summary.map && {
+            known: summary.map.known,
+            discovered: summary.map.discovered,
+            disabled: summary.map.disabled,
+            visited: summary.map.visited,
+            lists: summary.map.lists,
+          },
           notes: summary.notes,
         },
         null,
@@ -41,5 +48,7 @@ describe.skipIf(!file)('a real Witcher 3 save', () => {
     expect(summary.world).not.toBeNull();
     expect(summary.player).not.toBeNull();
     expect(Object.keys(summary.facts).length).toBeGreaterThan(0);
+    expect(summary.map).not.toBeNull();
+    expect(summary.map?.visited).toContain(summary.world?.id);
   });
 });

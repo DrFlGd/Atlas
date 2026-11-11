@@ -4,9 +4,12 @@ import type { GameWorld, PinKindRule, SaveGame, SaveTuning } from '../reader';
  * Everything about The Witcher 3 that the matcher can be tuned with, in
  * one place: its worlds, its map pin kinds and the matching radius.
  *
- * GUESSWORK until checked against real saves and packs: which pin types
- * the save holds, the `...Disabled` suffix as "cleared", which type is a
- * "person in distress", and the radius.
+ * The pin types are the game's own (`RoadSign`, `MonsterNest`, ...), but
+ * a save does not hold them: it names its pins by tag alone (see
+ * `summary.ts`). They apply to pins with a type, such as those a table of
+ * the game's map pins would give. GUESSWORK until checked against such a
+ * table and real packs: the `...Disabled` suffix as "cleared", which type
+ * is a "person in distress", and the radius.
  */
 
 /**

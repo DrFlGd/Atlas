@@ -3,7 +3,7 @@ import { SaveReadError, type ReadOptions, type SaveReader } from '../reader';
 import type { SaveSummary } from '../summary';
 import { DEFAULT_MAX_UNPACKED, isContainer, unpackContainer, UnpackedTooLarge } from './container';
 import { readHeader, readPayload, type PayloadHeader } from './payload';
-import { readFactsOf, readPins, readPlayer, readWorld, readWorlds } from './summary';
+import { readFactsOf, readMap, readPlayer, readWorld, readWorlds } from './summary';
 import { buildTree, type SaveTree } from './tree';
 import { WITCHER3_GAME, WITCHER3_TITLE } from './tuning';
 
@@ -83,6 +83,8 @@ export function readWitcher3(bytes: Uint8Array, options: ReadOptions = {}): Save
   if (!world) notes.push('The save does not say which world the player was in.');
   const player = readPlayer(tree, world);
   if (!player) notes.push('The save does not say where the player stood.');
+  const facts = readFactsOf(tree, notes);
+  const { map, pins } = readMap(tree, notes);
   return {
     game: 'witcher3',
     gameTitle: WITCHER3_TITLE,
@@ -91,10 +93,11 @@ export function readWitcher3(bytes: Uint8Array, options: ReadOptions = {}): Save
       label: versionLabel(header),
     },
     world,
-    worlds: readWorlds(tree, world),
+    worlds: readWorlds(tree, world, map?.visited),
     player,
-    facts: readFactsOf(tree, notes),
-    pins: readPins(tree, notes),
+    facts,
+    pins,
+    map,
     unpackedBytes: tree.payload.data.length - tree.payload.start,
     notes,
   };

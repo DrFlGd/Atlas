@@ -94,6 +94,7 @@ function summary(parts: Partial<SaveSummary> = {}): SaveSummary {
         { cleared: true },
       ),
     ],
+    map: { known: 0, discovered: 3, disabled: 6, visited: ['novigrad'], lists: {} },
     unpackedBytes: 1000,
     notes: [],
     ...parts,
@@ -269,5 +270,109 @@ describe('headingOnMap', () => {
     // A map turned a quarter: world north points right on it.
     const turned: Affine = { a: 0, b: 1, c: 1, d: 0, e: 0, f: 0 };
     expect(headingOnMap(turned, 0)).toBeCloseTo(90, 9);
+  });
+
+  it('marks places a pack names by tag from the save’s lists, by what their category counts as done', () => {
+    const tag = (id: string, state: Partial<SavePin>): SavePin => ({
+      id,
+      world: null,
+      type: null,
+      kind: null,
+      position: null,
+      ...state,
+    });
+    const named = (id: string, categoryId: string) => ({
+      id,
+      mapId: 'map-1',
+      x: 100,
+      y: 100,
+      categoryId,
+      flagId: `tag_${id}`,
+    });
+    const match = matchSave({
+      ...base,
+      pack: {
+        ...pack,
+        locations: [
+          named('sign', 'cat-sign'),
+          named('nest-seen', 'cat-nest'),
+          named('nest-done', 'cat-nest'),
+          named('quest-seen', 'cat-quest'),
+          named('quest-heard', 'cat-quest'),
+        ],
+      },
+      summary: summary({
+        facts: {},
+        pins: [
+          tag('tag_sign', { discovered: true }),
+          tag('tag_nest-seen', { discovered: true }),
+          tag('tag_nest-done', { discovered: true, cleared: true }),
+          tag('tag_quest-seen', { discovered: true }),
+          tag('tag_quest-heard', { known: true }),
+          tag('tag_elsewhere', { discovered: true }),
+        ],
+      }),
+    });
+    expect(match.found.map((f) => f.locationId).sort()).toEqual([
+      'nest-done',
+      'quest-seen',
+      'sign',
+    ]);
+    expect(match.found.find((f) => f.locationId === 'sign')?.reason).toBe(
+      'The save shows the map pin “tag_sign” as discovered.',
+    );
+    expect(match.unplaced).toBe(1);
+    expect(match.nothingBecause).toBeNull();
+    expect(match.unmatched).toEqual([]);
+  });
+
+  it('says why a save marks nothing', () => {
+    const newGame = summary({
+      facts: { q001_done: 0 },
+      pins: [],
+      map: { known: 0, discovered: 0, disabled: 0, visited: ['kaer_morhen'], lists: {} },
+    });
+    const nothing = matchSave({ ...base, summary: newGame });
+    expect(nothing.found).toEqual([]);
+    expect(nothing.nothingBecause).toBe('nothing-done');
+    expect(nothing.unplaced).toBe(0);
+
+    const tagged = matchSave({
+      ...base,
+      summary: {
+        ...newGame,
+        pins: ['a', 'b', 'c'].map((id) => ({
+          id,
+          world: null,
+          type: null,
+          kind: null,
+          position: null,
+          discovered: id !== 'c',
+          known: true,
+        })),
+      },
+    });
+    expect(tagged.found).toEqual([]);
+    expect(tagged.nothingBecause).toBe('no-tag-table');
+    expect(tagged.unplaced).toBe(2);
+    expect(tagged.unmatched).toEqual([]);
+
+    const unread = matchSave({ ...base, summary: { ...newGame, map: null } });
+    expect(unread.nothingBecause).toBe('no-map');
+
+    // Something found, or positioned pins that `unmatched` explains: no reason.
+    expect(matchSave({ ...base, summary: summary() }).nothingBecause).toBeNull();
+    const far = matchSave({
+      ...base,
+      summary: {
+        ...newGame,
+        pins: [pin('p', 'RoadSign', 'signpost', { x: 3000, y: 3000 }, { discovered: true })],
+      },
+    });
+    expect(far.found).toEqual([]);
+    expect(far.nothingBecause).toBeNull();
+    expect(far.unmatched).toEqual([
+      { kind: 'signpost', label: 'Signposts', reason: 'no-place-nearby', count: 1 },
+    ]);
   });
 });

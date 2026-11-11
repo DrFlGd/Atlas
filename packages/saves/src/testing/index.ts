@@ -410,17 +410,21 @@ export function writeSave(options: TestSaveOptions): Uint8Array {
 // ---------------------------------------------------------------------------
 // A typical save
 
-export interface TestPin {
-  /** The pin's name (an entity tag). */
-  name: string;
-  type: string;
-  x: number;
-  y: number;
-  z?: number;
-  discovered?: boolean;
-  /** World path; pins without one take the world of their group. */
-  world?: string;
+/** Map pins by the game's tag, in each of the map's lists. */
+export interface TestMapPins {
+  known?: string[];
+  discovered?: string[];
+  disabled?: string[];
 }
+
+/**
+ * How the entries of the map's lists are written. The only real save seen
+ * so far had every list empty, so the entries' layout is not known:
+ * `entries` (the default, and the most likely) writes the list's `Size`
+ * and then one `VL <singular> : CName` per entry; `blocks` writes one block
+ * per entry; `array` writes the whole list as one array value.
+ */
+export type TestListLayout = 'entries' | 'blocks' | 'array';
 
 export interface TypicalSaveOptions {
   version?: [number, number, number];
@@ -428,16 +432,20 @@ export interface TypicalSaveOptions {
   world?: string;
   player?: { x: number; y: number; z?: number; yaw?: number };
   facts?: Record<string, TestFact>;
-  /** Pins by world path, written as the reader's guess of the map manager's layout. */
-  pins?: Record<string, TestPin[]>;
-  /** Names of pins listed as discovered or disabled, by world path. */
-  discovered?: Record<string, string[]>;
+  /** Map pins by tag, as the save lists them (it has no positions for them). */
+  mapPins?: TestMapPins;
+  /** World paths the map marks visited. Default: the save's world. */
+  visited?: string[];
+  listLayout?: TestListLayout;
+  /** Leave the map out. */
+  noMap?: boolean;
   extraBlocks?: TestNode[];
   literalsOnly?: boolean;
   chunkSize?: number;
 }
 
 export const WORLD_PATHS = {
+  kaerMorhen: 'levels\\kaer_morhen\\kaer_morhen.w2w',
   novigrad: 'levels\\novigrad\\novigrad.w2w',
   skellige: 'levels\\skellige\\skellige.w2w',
   whiteOrchard: 'levels\\prolog_village\\prolog_village.w2w',
@@ -445,10 +453,9 @@ export const WORLD_PATHS = {
 } as const;
 
 /**
- * A save with the blocks Atlas reads, laid out as the reader expects.
- * The map pin layout is the reader's GUESS (the real one is not known yet):
- * per world, a world path followed by a block per pin with its name, type,
- * position and a discovered flag.
+ * A save with the blocks Atlas reads, laid out as in the real save checked
+ * (patch 4.04). The entries of the map's lists are laid out as
+ * {@link TestListLayout} says, since the real layout is not known yet.
  */
 export function typicalSave(options: TypicalSaveOptions = {}): Uint8Array {
   return writeSave({ ...typicalSaveOptions(options), literalsOnly: options.literalsOnly ?? false });
@@ -457,7 +464,18 @@ export function typicalSave(options: TypicalSaveOptions = {}): Uint8Array {
 export function typicalSaveOptions(options: TypicalSaveOptions = {}): TestSaveOptions {
   const world = options.world ?? WORLD_PATHS.novigrad;
   const blocks: TestNode[] = [
-    bs('CCommonMapManager', mapManager(options.pins ?? {}, options.discovered ?? {})),
+    ...(options.noMap
+      ? []
+      : [
+          bs(
+            'CCommonMapManager',
+            mapManager(
+              options.mapPins ?? {},
+              options.visited ?? [world],
+              options.listLayout ?? 'entries',
+            ),
+          ),
+        ]),
     bs('worldInfo', [vl('world', value.string(world))]),
     bs('AdditionalSaveInfo', [
       vl('LoadingScreenName', value.cname(`map_location_${worldFolder(world)}`)),
@@ -487,29 +505,61 @@ function worldFolder(path: string): string {
   return parts[parts.length - 2] ?? 'unknown';
 }
 
-function mapManager(
-  pins: Record<string, TestPin[]>,
-  discovered: Record<string, string[]>,
-): TestNode[] {
-  const worlds = new Set([...Object.keys(pins), ...Object.keys(discovered)]);
-  const nodes: TestNode[] = [];
-  for (const world of worlds) {
-    const group: TestNode[] = [vl('CachedWorldDataPath', value.string(world))];
-    for (const pin of pins[world] ?? []) {
-      const fields: TestNode[] = [
-        vl('entityName', value.cname(pin.name)),
-        vl('type', value.cname(pin.type)),
-        vl('position', value.vector({ x: pin.x, y: pin.y, z: pin.z ?? 0 })),
-      ];
-      if (pin.discovered !== undefined) fields.push(vl('isDiscovered', value.bool(pin.discovered)));
-      if (pin.world) fields.push(vl('worldPath', value.string(pin.world)));
-      group.push(bs('mapPin', fields));
-    }
-    const names = discovered[world];
-    if (names) {
-      group.push(vl('discoveredPins', value.array(names.map(value.cname), 'CName')));
-    }
-    nodes.push(bs('CachedWorldData', group));
+/** Every world path the map of a new game lists, in the order it lists them. */
+const MAP_WORLDS = [
+  'levels\\prolog_village_winter\\prolog_village.w2w',
+  WORLD_PATHS.skellige,
+  WORLD_PATHS.novigrad,
+  'levels\\wyzima_castle\\wyzima_castle.w2w',
+  WORLD_PATHS.whiteOrchard,
+  'dummy.w2w',
+  'levels\\island_of_mist\\island_of_mist.w2w',
+  'levels\\the_spiral\\spiral.w2w',
+  WORLD_PATHS.kaerMorhen,
+];
+
+/** A list block: its `Size`, then its entries in the given layout. */
+function list(name: string, entry: string, tags: readonly string[], layout: TestListLayout) {
+  if (layout === 'array') return vl(name, value.array(tags.map(value.cname), 'CName'));
+  const entries = tags.map((tag) =>
+    layout === 'blocks' ? bs(entry, [vl('tag', value.cname(tag))]) : vl(entry, value.cname(tag)),
+  );
+  return bs(name, [vl('Size', value.u32(tags.length)), ...entries]);
+}
+
+const empty = (name: string, length = 'Size') => bs(name, [vl(length, value.u32(0))]);
+
+/** The map manager as the game writes it, with the lists of pins given. */
+function mapManager(pins: TestMapPins, visited: readonly string[], layout: TestListLayout) {
+  const worlds = [...MAP_WORLDS, ...visited.filter((path) => !MAP_WORLDS.includes(path))];
+  const cached: TestNode[] = [vl('Size', value.u32(worlds.length))];
+  for (const path of worlds) {
+    cached.push(
+      vl('CachedWorldDataPath', value.string(path)),
+      vl('CachedWorldVisited', value.bool(visited.includes(path))),
+      // Nested as the real save nests them.
+      bs('CachedQuestMapPinsMap', [
+        vl('Size', value.u32(0)),
+        bs('CachedShopkeeperDataMap', [vl('Size', value.u32(0)), empty('CachedBoatDataArray')]),
+      ]),
+    );
   }
-  return nodes;
+  return [
+    empty('QuestMapPinStates'),
+    list('KnownMapPinTags', 'KnownMapPinTag', pins.known ?? [], layout),
+    list('DiscoveredMapPinTags', 'DiscoveredMapPinTag', pins.discovered ?? [], layout),
+    list('DisabledMapPinTags', 'DisabledMapPinTag', pins.disabled ?? [], layout),
+    empty('DiscoveredAgentEntityTags'),
+    empty('DiscoveredPaths'),
+    empty('CustomEntityMapPins'),
+    empty('CustomAgentMapPins'),
+    empty('UserMapPin', 'UserMapPinsCount'),
+    bs('CachedWorldDataMap', cached),
+    empty('MapPinFilterHiddenList'),
+    bs('MapBorderData', [
+      vl('Bool', value.bool(false)),
+      vl('Vector3', value.vector({ x: 0, y: 0, z: 0, w: 0 })),
+      vl('Vector3', value.euler({ yaw: 0 })),
+    ]),
+  ];
 }

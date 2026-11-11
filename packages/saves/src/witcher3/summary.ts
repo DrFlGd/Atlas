@@ -1,6 +1,6 @@
-import type { SavePin, SavePlayer, SaveWorld } from '../summary';
+import type { SaveMapState, SavePin, SavePlayer, SaveWorld } from '../summary';
 import { readFacts } from './facts';
-import { pinKindOf, worldIdOf, worldName } from './tuning';
+import { worldIdOf, worldName } from './tuning';
 import {
   childNamed,
   childrenNamed,
@@ -15,19 +15,27 @@ import { isRecord, memberNumber, readValue, vectorOf, type SaveValue } from './v
 
 /**
  * The parts of a Witcher 3 save that Atlas uses, read from the variable
- * tree. Where each lives (save version 67; the same in 64):
+ * tree. Where each lives (save version 64 of patch 4.04 checked on a real
+ * save; 67 of 5.0x by others' notes):
  *
  * - current world: `worldInfo` > `world` (String), the world's file path;
  * - player: `universe` > `Player` > `position` (Vector, world metres,
  *   z up) and `rotation` (EulerAngles; the yaw is the facing in degrees);
- * - worlds with data: `universe` > `world` > `name`, and the map
- *   manager's `CachedWorldDataPath` values;
+ * - worlds with data: `universe` > `world` > `name`;
  * - facts: the `SS` stream in `facts`;
- * - map pins: somewhere in `CCommonMapManager`. Its layout is NOT KNOWN
- *   yet, so pins are found by shape: any block (or decoded structure) with
- *   a vector member is a pin, named and typed by its other members, in the
- *   world named by the nearest world path before it. Lists of names under
- *   a name with "discovered", "known" or "disabled" set those states.
+ * - the map: `CCommonMapManager`, a block of lists. Each list is a block
+ *   that starts with `VL Size : Uint32` and then holds its entries:
+ *   `KnownMapPinTags`, `DiscoveredMapPinTags`, `DisabledMapPinTags` (map
+ *   pins by tag alone, with no position), `QuestMapPinStates`,
+ *   `DiscoveredAgentEntityTags`, `DiscoveredPaths`, `CustomEntityMapPins`,
+ *   `CustomAgentMapPins`, `UserMapPin` (`UserMapPinsCount`),
+ *   `CachedWorldDataMap` (per world: `CachedWorldDataPath`,
+ *   `CachedWorldVisited`, then `CachedQuestMapPinsMap`,
+ *   `CachedShopkeeperDataMap`, `CachedBoatDataArray`),
+ *   `MapPinFilterHiddenList` and `MapBorderData`. Every list was empty in
+ *   the save checked, so the entries' own layout is NOT KNOWN yet: an entry
+ *   of a tag list is read as one `VL` with a name (most likely
+ *   `VL KnownMapPinTag : CName`), a block holding one, or one array value.
  */
 
 /** The value of a `VL`/`OP` node, or undefined when it has none that can be read. */
@@ -59,7 +67,11 @@ export function readWorld(tree: SaveTree): SaveWorld | null {
   return null;
 }
 
-export function readWorlds(tree: SaveTree, current: SaveWorld | null): SaveWorld[] {
+export function readWorlds(
+  tree: SaveTree,
+  current: SaveWorld | null,
+  visited: readonly string[] = [],
+): SaveWorld[] {
   const found = new Map<string, SaveWorld>();
   const add = (value: SaveValue | undefined) => {
     if (!isWorldPath(value)) return;
@@ -70,8 +82,12 @@ export function readWorlds(tree: SaveTree, current: SaveWorld | null): SaveWorld
   for (const world of childrenNamed(topBlock(tree, 'universe'), 'world')) {
     add(nodeValue(tree, childNamed(world, 'name')));
   }
+  // Worlds the map marks visited, by their path in the map.
+  const visitedIds = new Set(visited);
   walk(topBlock(tree, 'CCommonMapManager')?.children ?? [], (node) => {
-    if (node.kind === 'VL' && node.type === 'String') add(nodeValue(tree, node));
+    if (node.kind !== 'VL' || node.name !== 'CachedWorldDataPath') return;
+    const path = nodeValue(tree, node);
+    if (isWorldPath(path) && visitedIds.has(worldIdOf(path) ?? '')) add(path);
   });
   return [...found.values()];
 }
@@ -111,147 +127,159 @@ export function readFactsOf(tree: SaveTree, notes: string[]): Record<string, num
 }
 
 // ---------------------------------------------------------------------------
-// Map pins
+// The map
 
-/** Names that say the opposite of a state: `undiscovered`, `unknownPins`, `notKnown`. */
-const NEGATIVE = /undiscover|unknown|^not/;
+/** The lists of map pins by tag, and the state each sets. */
+const TAG_LISTS = [
+  { list: 'KnownMapPinTags', state: 'known', label: 'known map pins' },
+  { list: 'DiscoveredMapPinTags', state: 'discovered', label: 'discovered map pins' },
+  { list: 'DisabledMapPinTags', state: 'cleared', label: 'disabled map pins' },
+] as const;
 
-const ID_FIELDS = ['entityname', 'name', 'id', 'tag', 'pintag', 'entity', 'tagname', 'mappintag'];
+/** Names of a list's length, before its entries. */
+const isLengthName = (name: string | null) => name === 'Size' || (name ?? '').endsWith('Count');
 
-interface Candidate {
-  fields: Map<string, SaveValue>;
-  /** Where in the save, for a made-up id. */
-  at: number;
-  world: string | null;
+/** World paths that are not a world: the map lists a `dummy.w2w`. */
+const isRealWorld = (id: string | null): id is string => id !== null && id !== 'dummy';
+
+interface TagList {
+  /** The length the list declares; null when it declares none. */
+  declared: number | null;
+  tags: string[];
+  /** Entries Atlas could not read a tag from. */
+  unread: number;
 }
 
-export function readPins(tree: SaveTree, notes: string[]): SavePin[] {
+/** The text of a value that names something: a CName or a string. */
+const nameIn = (value: SaveValue | undefined): string | null =>
+  typeof value === 'string' && value !== '' ? value : null;
+
+/**
+ * Reads a list of tags, tolerant of the layouts its entries might have:
+ * a block whose `Size` is followed by one variable per entry (or one block
+ * per entry), or a single variable holding an array.
+ */
+function readTagList(tree: SaveTree, node: SaveNode): TagList {
+  const value = (child: SaveNode) => nodeValue(tree, child);
+  if (node.kind === 'VL' || node.kind === 'OP') {
+    const items = value(node);
+    if (!Array.isArray(items)) return { declared: null, tags: [], unread: 1 };
+    const tags = items.map(nameIn).filter((tag) => tag !== null);
+    return { declared: items.length, tags, unread: items.length - tags.length };
+  }
+  const result: TagList = { declared: null, tags: [], unread: 0 };
+  for (const child of node.children) {
+    if ((child.kind === 'VL' || child.kind === 'OP') && isLengthName(child.name)) {
+      const size = value(child);
+      if (result.declared === null && typeof size === 'number') {
+        result.declared = size;
+        continue;
+      }
+    }
+    if (child.kind === 'VL' || child.kind === 'OP') {
+      const entry = value(child);
+      if (Array.isArray(entry)) {
+        for (const item of entry) {
+          const tag = nameIn(item);
+          if (tag) result.tags.push(tag);
+          else result.unread++;
+        }
+        continue;
+      }
+      const tag = nameIn(entry);
+      if (tag) result.tags.push(tag);
+      else result.unread++;
+    } else if (child.kind === 'BS') {
+      // One block per entry: its first name is the tag.
+      const named = child.children.find(
+        (part) => (part.kind === 'VL' || part.kind === 'OP') && nameIn(value(part)) !== null,
+      );
+      const tag = named ? nameIn(value(named)) : null;
+      if (tag) result.tags.push(tag);
+      else result.unread++;
+    } else {
+      result.unread++;
+    }
+  }
+  return result;
+}
+
+/** Every list's declared length in the map manager, added up by name. */
+function listLengths(tree: SaveTree, manager: SaveNode): Record<string, number> {
+  const lengths: Record<string, number> = {};
+  walk(manager.children, (node) => {
+    if (node.kind !== 'BS' || node.name === null) return;
+    const first = node.children[0];
+    if (!first || (first.kind !== 'VL' && first.kind !== 'OP') || !isLengthName(first.name)) return;
+    const size = nodeValue(tree, first);
+    if (typeof size === 'number') lengths[node.name] = (lengths[node.name] ?? 0) + size;
+  });
+  return lengths;
+}
+
+/** World ids the map marks visited: each `CachedWorldVisited` after its world's path. */
+function visitedWorlds(tree: SaveTree, manager: SaveNode): string[] {
+  const visited = new Set<string>();
+  let world: string | null = null;
+  walk(manager.children, (node) => {
+    if (node.kind !== 'VL' && node.kind !== 'OP') return;
+    if (node.name === 'CachedWorldDataPath') {
+      const path = nodeValue(tree, node);
+      world = isWorldPath(path) ? worldIdOf(path) : null;
+    } else if (node.name === 'CachedWorldVisited' && nodeValue(tree, node) === true) {
+      if (isRealWorld(world)) visited.add(world);
+    }
+  });
+  return [...visited];
+}
+
+/** The save's map: its pins by tag, with their state, and what it holds in counts. */
+export function readMap(
+  tree: SaveTree,
+  notes: string[],
+): { map: SaveMapState | null; pins: SavePin[] } {
   const manager = topBlock(tree, 'CCommonMapManager');
   if (!manager) {
-    notes.push('The save has no map manager, so map pins cannot be read from it.');
-    return [];
+    notes.push('The save has no map manager, so its map cannot be read.');
+    return { map: null, pins: [] };
   }
-  const candidates: Candidate[] = [];
-  const states = {
-    discovered: new Set<string>(),
-    known: new Set<string>(),
-    cleared: new Set<string>(),
-  };
-  const values = new Map<SaveNode, SaveValue | undefined>();
-  const valueOf = (node: SaveNode) => {
-    if (!values.has(node)) values.set(node, nodeValue(tree, node));
-    return values.get(node);
-  };
-  /** The world named by the nearest world path before this branch. */
-  const worldContext = (ancestors: readonly SaveNode[], node: SaveNode): string | null => {
-    let child = node;
-    for (let level = ancestors.length - 1; level >= 0; level--) {
-      const parent = ancestors[level]!;
-      for (let i = parent.children.indexOf(child) - 1; i >= 0; i--) {
-        const sibling = parent.children[i]!;
-        if (sibling.kind !== 'VL' && sibling.kind !== 'OP') continue;
-        const value = valueOf(sibling);
-        if (isWorldPath(value)) return worldIdOf(value);
-      }
-      child = parent;
-    }
-    return null;
-  };
-
-  walk(manager.children, (node, ancestors) => {
-    if (node.kind === 'BS') {
-      const fields = new Map<string, SaveValue>();
-      for (const child of node.children) {
-        if ((child.kind === 'VL' || child.kind === 'OP') && child.name !== null) {
-          const value = valueOf(child);
-          if (value !== undefined) fields.set(child.name.toLowerCase(), value);
-        }
-      }
-      if ([...fields.values()].some((value) => vectorOf(value) !== null)) {
-        const world = [...fields.values()].find(isWorldPath);
-        candidates.push({
-          fields,
-          at: node.offset,
-          world: world ? worldIdOf(world) : worldContext(ancestors, node),
-        });
-      }
-      return;
-    }
-    if (node.kind !== 'VL' && node.kind !== 'OP') return;
-    const value = valueOf(node);
-    if (!Array.isArray(value)) return;
-    const name = (node.name ?? '').toLowerCase();
-    // Lists of pin names that are in a state.
-    const state = NEGATIVE.test(name)
-      ? null
-      : name.includes('discover')
-        ? states.discovered
-        : name.includes('known')
-          ? states.known
-          : /disabled|cleared|completed/.test(name)
-            ? states.cleared
-            : null;
-    if (state) {
-      for (const item of value) if (typeof item === 'string' && item) state.add(item);
-    }
-    // Arrays of structures with a vector member.
-    value.forEach((item, index) => {
-      if (!isRecord(item) || !Object.values(item).some((v) => vectorOf(v) !== null)) return;
-      const fields = new Map(Object.entries(item).map(([k, v]) => [k.toLowerCase(), v] as const));
-      candidates.push({
-        fields,
-        at: node.offset * 1000 + index,
-        world: worldContext(ancestors, node),
-      });
-    });
-  });
-
   const pins = new Map<string, SavePin>();
-  for (const candidate of candidates) {
-    const pin = pinFrom(candidate);
-    if (!pins.has(pin.id)) pins.set(pin.id, pin);
-  }
-  for (const [flag, names] of Object.entries(states) as [keyof typeof states, Set<string>][]) {
-    for (const name of names) {
-      let pin = pins.get(name);
+  const counts = { known: 0, discovered: 0, cleared: 0 };
+  let lists = 0;
+  for (const { list, state, label } of TAG_LISTS) {
+    const node = childNamed(manager, list);
+    if (!node) continue;
+    lists++;
+    const read = readTagList(tree, node);
+    const unique = new Set(read.tags);
+    counts[state] = Math.max(unique.size, read.declared ?? 0);
+    if (read.unread > 0 || (read.declared !== null && read.declared > read.tags.length)) {
+      const total = Math.max(read.declared ?? 0, read.tags.length + read.unread);
+      notes.push(
+        `Read ${read.tags.length} of ${total} ${label}; the rest has a layout Atlas does not know.`,
+      );
+    }
+    for (const tag of unique) {
+      let pin = pins.get(tag);
       if (!pin) {
-        pin = { id: name, world: null, type: null, kind: null, position: null };
-        pins.set(name, pin);
+        pin = { id: tag, world: null, type: null, kind: null, position: null };
+        pins.set(tag, pin);
       }
-      pin[flag] = true;
+      pin[state] = true;
     }
   }
-  return [...pins.values()];
-}
-
-function pinFrom({ fields, at, world }: Candidate): SavePin {
-  const text = (value: SaveValue | undefined) =>
-    typeof value === 'string' && value ? value : null;
-  const vectors = [...fields.entries()].filter(([, value]) => vectorOf(value) !== null);
-  const position = vectorOf((vectors.find(([name]) => name.includes('pos')) ?? vectors[0])?.[1]);
-  const type =
-    text(
-      [...fields.entries()].find(([name, value]) => name.includes('type') && text(value))?.[1],
-    ) ?? null;
-  const id =
-    ID_FIELDS.map((name) => text(fields.get(name))).find((value) => value !== null) ?? `pin@${at}`;
-  const tags = [...fields.entries()].find(
-    ([name, value]) => name.includes('tags') && Array.isArray(value),
-  )?.[1] as SaveValue[] | undefined;
-  const flag = (pattern: RegExp) => {
-    for (const [name, value] of fields) {
-      if (pattern.test(name) && !NEGATIVE.test(name) && typeof value === 'boolean') return value;
-    }
-    return undefined;
+  if (lists === 0) {
+    notes.push('The save’s map has a layout Atlas does not know, so its map pins cannot be read.');
+    return { map: null, pins: [] };
+  }
+  return {
+    map: {
+      known: counts.known,
+      discovered: counts.discovered,
+      disabled: counts.cleared,
+      visited: visitedWorlds(tree, manager),
+      lists: listLengths(tree, manager),
+    },
+    pins: [...pins.values()],
   };
-  const { kind, cleared: clearedType } = type ? pinKindOf(type) : { kind: null, cleared: false };
-  const pin: SavePin = { id, world, type, kind, position };
-  const discovered = flag(/discover/);
-  const known = flag(/known/);
-  const cleared = flag(/disabled|cleared|completed/);
-  if (discovered !== undefined) pin.discovered = discovered;
-  if (known !== undefined) pin.known = known;
-  if (cleared !== undefined || clearedType) pin.cleared = clearedType || cleared === true;
-  if (tags) pin.tags = tags.filter((tag): tag is string => typeof tag === 'string');
-  return pin;
 }

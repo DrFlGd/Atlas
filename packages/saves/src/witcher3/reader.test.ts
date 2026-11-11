@@ -41,15 +41,12 @@ describe('reading a Witcher 3 save', () => {
       counter: [{ value: 2 }, { value: 3 }],
       timer_only: [{ value: 5, expiry: 30 }],
     },
-    pins: {
-      [WORLD_PATHS.novigrad]: [
-        { name: 'sign_crossroads', type: 'RoadSign', x: 10, y: 20, discovered: true },
-        { name: 'nest_01', type: 'MonsterNestDisabled', x: 30, y: 40 },
-        { name: 'nest_02', type: 'MonsterNest', x: 50, y: 60, discovered: true },
-      ],
-      [WORLD_PATHS.skellige]: [{ name: 'sign_harbour', type: 'RoadSign', x: 1, y: 2 }],
+    mapPins: {
+      known: ['nest_02', 'treasure_01'],
+      discovered: ['sign_crossroads', 'nest_01', 'nest_02'],
+      disabled: ['nest_01'],
     },
-    discovered: { [WORLD_PATHS.skellige]: ['sign_harbour'] },
+    visited: [WORLD_PATHS.novigrad, WORLD_PATHS.skellige],
   });
 
   it('reads the version, world, player and facts', () => {
@@ -72,20 +69,91 @@ describe('reading a Witcher 3 save', () => {
     expect(summary.unpackedBytes).toBeGreaterThan(100);
   });
 
-  it('finds map pins with their world, kind and state', () => {
-    const pins = new Map(readWitcher3(bytes).pins.map((pin) => [pin.id, pin]));
+  it('reads the map pins by tag, with their state, and the worlds visited', () => {
+    const summary = readWitcher3(bytes);
+    const pins = new Map(summary.pins.map((pin) => [pin.id, pin]));
     expect(pins.get('sign_crossroads')).toEqual({
       id: 'sign_crossroads',
-      world: 'novigrad',
-      type: 'RoadSign',
-      kind: 'signpost',
-      position: { x: 10, y: 20, z: 0 },
+      world: null,
+      type: null,
+      kind: null,
+      position: null,
       discovered: true,
     });
-    expect(pins.get('nest_01')).toMatchObject({ kind: 'monster-nest', cleared: true });
-    expect(pins.get('nest_02')).toMatchObject({ kind: 'monster-nest', discovered: true });
+    expect(pins.get('nest_01')).toMatchObject({ discovered: true, cleared: true });
+    expect(pins.get('nest_02')).toMatchObject({ known: true, discovered: true });
     expect(pins.get('nest_02')?.cleared).toBeUndefined();
-    expect(pins.get('sign_harbour')).toMatchObject({ world: 'skellige', discovered: true });
+    expect(pins.get('treasure_01')).toMatchObject({ known: true, position: null });
+    expect(summary.pins).toHaveLength(4);
+    expect(summary.map).toMatchObject({ known: 2, discovered: 3, disabled: 1 });
+    expect(summary.map?.visited.sort()).toEqual(['novigrad', 'skellige']);
+    expect(summary.map?.lists).toMatchObject({
+      KnownMapPinTags: 2,
+      DiscoveredMapPinTags: 3,
+      DisabledMapPinTags: 1,
+      QuestMapPinStates: 0,
+      UserMapPin: 0,
+      CachedWorldDataMap: 9,
+      CachedQuestMapPinsMap: 0,
+      CachedShopkeeperDataMap: 0,
+    });
+  });
+
+  it('reads a new game: nothing on the map yet, one world visited', () => {
+    const summary = readWitcher3(
+      typicalSave({
+        version: [64, 27, 163],
+        world: WORLD_PATHS.kaerMorhen,
+        player: { x: 10, y: 20, z: 100, yaw: 30 },
+      }),
+    );
+    expect(summary.world?.name).toBe('Kaer Morhen');
+    expect(summary.pins).toEqual([]);
+    expect(summary.map).toMatchObject({ known: 0, discovered: 0, disabled: 0 });
+    expect(summary.map?.visited).toEqual(['kaer_morhen']);
+    // Worlds the map only lists (and its `dummy.w2w`) are not worlds with data.
+    expect(summary.worlds.map((w) => w.id)).toEqual(['kaer_morhen']);
+    expect(summary.notes).toEqual([]);
+  });
+
+  it('reads the entries of the map lists in each layout they might have', () => {
+    const pins = { known: ['a'], discovered: ['b', 'c'], disabled: ['c'] };
+    for (const listLayout of ['entries', 'blocks', 'array'] as const) {
+      const summary = readWitcher3(
+        typicalSave({ mapPins: pins, listLayout, player: { x: 0, y: 0 } }),
+      );
+      expect(summary.map, listLayout).toMatchObject({ known: 1, discovered: 2, disabled: 1 });
+      expect(summary.pins.map((pin) => pin.id).sort(), listLayout).toEqual(['a', 'b', 'c']);
+      expect(summary.notes, listLayout).toEqual([]);
+    }
+  });
+
+  it('says so when list entries cannot be read, and when the map is missing', () => {
+    const odd = save([
+      bs('CCommonMapManager', [
+        bs('DiscoveredMapPinTags', [
+          vl('Size', value.u32(3)),
+          vl('DiscoveredMapPinTag', value.cname('sign_a')),
+          vl('DiscoveredMapPinTag', value.u32(7)),
+        ]),
+      ]),
+    ]);
+    const summary = readWitcher3(odd);
+    expect(summary.pins.map((pin) => pin.id)).toEqual(['sign_a']);
+    expect(summary.map?.discovered).toBe(3);
+    expect(summary.notes).toContain(
+      'Read 1 of 3 discovered map pins; the rest has a layout Atlas does not know.',
+    );
+
+    const none = readWitcher3(typicalSave({ noMap: true }));
+    expect(none.map).toBeNull();
+    expect(none.notes).toContain('The save has no map manager, so its map cannot be read.');
+
+    const unknown = readWitcher3(save([bs('CCommonMapManager', [bs('Other', [])])]));
+    expect(unknown.map).toBeNull();
+    expect(unknown.notes).toContain(
+      'The save’s map has a layout Atlas does not know, so its map pins cannot be read.',
+    );
   });
 
   it('reads saves of patch 4.0x', () => {

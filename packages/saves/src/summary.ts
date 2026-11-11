@@ -33,7 +33,11 @@ export interface SavePlayer {
   yaw: number | null;
 }
 
-/** A map pin the save knows of, with whatever state it has. */
+/**
+ * A map pin the save knows of, with whatever state it has. A Witcher 3 save
+ * names its pins by the game's own tag alone: no world, type or position.
+ * Those live in the game's files, not in the save.
+ */
 export interface SavePin {
   /** The pin's name in the game (an entity name or tag), or a made-up id when it has none. */
   id: string;
@@ -43,6 +47,7 @@ export interface SavePin {
   type: string | null;
   /** The pin kind the reader recognised in the type (see the reader's tuning), or null. */
   kind: string | null;
+  /** Where the pin is in its world; null when the save does not say. */
   position: WorldPoint | null;
   /** Shown on the map (not a question mark any more). Undefined: the save does not say. */
   discovered?: boolean;
@@ -51,6 +56,27 @@ export interface SavePin {
   /** Cleared or used: a destroyed nest, a looted treasure, a disabled pin type. */
   cleared?: boolean;
   tags?: string[];
+}
+
+/**
+ * What the save's own world map holds, in counts, before any matching.
+ * Each count is how many map pins the save lists in that state, by tag.
+ */
+export interface SaveMapState {
+  /** Pins the player knows of without having been there, for example from a notice board. */
+  known: number;
+  /** Pins the player has discovered: shown on the map, not a question mark any more. */
+  discovered: number;
+  /** Pins switched off: a cleared nest or a looted treasure, by what is known so far. */
+  disabled: number;
+  /** World ids the map marks as visited. */
+  visited: string[];
+  /**
+   * The length every list of the map declares, by the list's name in the
+   * save, added up over worlds. For diagnostics: it says which lists hold
+   * anything, without naming what.
+   */
+  lists: Record<string, number>;
 }
 
 /** The save's format version, as read from its header. */
@@ -79,6 +105,8 @@ export interface SaveSummary {
    */
   facts: Record<string, number>;
   pins: SavePin[];
+  /** The save's own map: what it lists, in counts. Null when it could not be read. */
+  map: SaveMapState | null;
   /** Size of the save data once unpacked, in bytes. */
   unpackedBytes: number;
   /** Things the reader could not read completely, in plain words. Never fatal. */
