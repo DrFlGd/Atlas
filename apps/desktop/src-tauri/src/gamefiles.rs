@@ -47,11 +47,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Response, Manager as _, Runtime, State, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     activity::{self, Area},
-    commands::{blocking, chosen_path},
+    commands::{blocking, chosen_path, file_dialog},
 };
 
 /// The game whose files the shell reads, by the web app's save reader id.
@@ -1016,11 +1015,7 @@ pub async fn game_folder_choose<R: Runtime>(
         let game = game.clone();
         blocking(move || Ok(files.dialog_start(&game))).await?
     };
-    let mut dialog = window
-        .dialog()
-        .file()
-        .set_parent(&window)
-        .set_title("Choose the folder The Witcher 3 is installed in");
+    let mut dialog = file_dialog(&window, "Choose the folder The Witcher 3 is installed in");
     if let Some(start) = start {
         dialog = dialog.set_directory(start);
     }

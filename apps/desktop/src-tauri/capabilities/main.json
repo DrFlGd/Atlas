@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window only: the app's own commands for desktop features in every build (file dialogs for progress export and import, web links in the system browser, the maps library and its folder dialogs, deleting maps and their downloaded images, importing from a web page, reading the activity log and recording how an import ended, and game saves: finding the saves folder, choosing a saves folder or file, listing and reading saves (read-only, only where the person chose), following new saves and recording how a save was used; and the game's own files: choosing the game's folder, listing the map files in its bundles and reading them, read-only, and recording counts of what was read). The commands for downloading map images and for viewing a map page and saving its images are granted in downloads/main-downloads.json, which only a build with downloads reads. No plugin commands are granted; the dialog and opener plugins are only used from Rust. No other window, and no remote page, is granted anything.",
+  "description": "The main window only: the app's own commands for desktop features in every build (file dialogs for progress export and import, web links in the system browser, the maps library and its folder dialogs, deleting maps and their downloaded images, importing from a web page, reading the activity log and recording how an import ended, exporting and importing map pack files, and game saves: finding the saves folder, choosing a saves folder or file, listing and reading saves (read-only, only where the person chose), following new saves and recording how a save was used; and the game's own files: choosing the game's folder, listing the map files in its bundles and reading them, read-only, and recording counts of what was read). The commands for downloading map images and for viewing a map page and saving its images are granted in downloads/main-downloads.json, which only a build with downloads reads. No plugin commands are granted; the dialog and opener plugins are only used from Rust. No other window, and no remote page, is granted anything.",
   "windows": ["main"],
   "permissions": [
     "allow-desktop-info",
@@ -40,6 +40,14 @@
     "allow-game-folder-forget",
     "allow-game-files-scan",
     "allow-game-files-read",
-    "allow-game-files-report"
+    "allow-game-files-report",
+    "allow-packfile-options",
+    "allow-packfile-export",
+    "allow-packfile-pick",
+    "allow-packfile-inspect",
+    "allow-packfile-import",
+    "allow-packfile-progress",
+    "allow-packfile-cancel",
+    "allow-library-pack-details"
   ]
 }

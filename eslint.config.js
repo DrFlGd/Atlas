@@ -29,6 +29,8 @@ export default tseslint.config(
           './packages/*/tsconfig.scripts.json',
           './apps/web/tsconfig.json',
           './apps/web/tsconfig.node.json',
+          './apps/mapmaker/tsconfig.json',
+          './apps/mapmaker/tsconfig.node.json',
         ],
         tsconfigRootDir: import.meta.dirname,
       },
@@ -67,7 +69,7 @@ export default tseslint.config(
     rules: { 'no-restricted-imports': 'off' },
   },
   {
-    files: ['apps/web/src/**/*.tsx'],
+    files: ['apps/web/src/**/*.tsx', 'apps/mapmaker/src/**/*.tsx'],
     extends: [reactHooks.configs.flat['recommended-latest'], reactRefresh.configs.vite],
     languageOptions: { globals: globals.browser },
   },

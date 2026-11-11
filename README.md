@@ -35,6 +35,7 @@ The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 
 | `pnpm demo:build`                    | Rebuilds the demo pack from scratch.                                              |
 | `pnpm desktop:dev`                   | Runs the desktop app on a Vite dev server at port 1420 (see below).               |
 | `pnpm desktop:build`                 | Builds the desktop app and its installers (see below).                            |
+| `pnpm android:build`                 | Builds the Android app as an unsigned APK (see below).                            |
 
 Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwright install chromium`. To use a browser that is already installed instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path. The tests start their own preview server on port 4380; set `ATLAS_E2E_PORT` to use another port. They never reuse a server that is already running.
 
@@ -53,6 +54,7 @@ Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwr
 - **Profiles.** Each pack has its own profiles (for example one per playthrough): create, rename, duplicate, delete and switch them from the profile button.
 - **Game save.** For a pack of a game whose saves Atlas reads (The Witcher 3 for now, saves of patches 4.0x and 5.0x), the save button in the top bar links a save to the profile: in the desktop app the game's saves folder (found under Documents, also when Documents is moved, for example by OneDrive), another folder or one save file; in a browser, a file opened with "Open a save file…". Atlas reads a copy of the save, never changes it, and shows its version, the world you saved in, what its own map lists (places discovered, cleared and known of), how many places it shows done per category, what did not match and why. A Witcher 3 save names the places on its map by the game's own tags, without positions, so a place is marked when the pack names that tag (a location's `flagId`), when a fact the pack names is set, or, once the game's map places are read (below), when a pin the save shows done lies on a place of its kind; when a save marks nothing, the dialog says why (nothing discovered yet, or no table yet of where each tag is) rather than reporting a failure. It marks those places found, but never where you set or cleared a mark by hand; each read is one change that `Z` takes back, and "Remove marks made from saves" takes them all back. Where you stood is an arrow on the map (a dot when the save has no facing), with "Show me"; when no map of the pack shows the save's world, the dialog says so, and you can choose which map shows which world. A map is lined up with the game world by the pack's `worldTransform`, else by placing yourself on the map from two saves made at least 50 m apart. In the desktop app, "Map places from the game" reads where the game's own map pins are from your copy of the game (read-only, from the game folder you choose): the save's tags then become places with a position, and a map is lined up automatically from every signpost of its world when the fit passes a clear bar; that table stays on the device, is never exported or put in a pack, and is read again after a game patch ([apps/desktop/README.md](apps/desktop/README.md#the-games-own-map-places)). In the desktop app, "Follow new saves" reads each new save a few seconds after the game has finished writing it. A save of a game version Atlas does not know is refused with a message, and marking by hand works as before. The parser and matcher are in `packages/saves`; what a save holds beyond the player's position, the facts and the map pins (quests, Gwent cards, gear) is not used yet.
 - **Export and import.** The profile dialog exports the current profile or all profiles of every pack as one JSON file, and imports such a file by merging (newer change wins) or replacing.
+- **Map pack files.** In the desktop app, **Export…** on a game in the Maps dialog saves the game with its map images, at a chosen level of detail, as one `.atlaspack` file, and **Import map pack file…** adds such a file on another computer; Atlas for Android reads the same format. A map pack file never holds personal data such as found marks; the Export dialog can save the progress export beside it. See [apps/desktop/README.md](apps/desktop/README.md#map-pack-files).
 - **Keyboard.** `/` search, `F` mark found, `Z` undo, `N` select the nearest marker not yet found, `C` show or hide the checklists and guides, `Esc` clear the selection. Shortcuts are ignored while typing in a field or while a dialog is open.
 
 ### Where progress is kept
@@ -110,23 +112,31 @@ pnpm demo:build --seed 42 --locations 10000
 ```
 apps/web            React + Vite web app (static output)
 apps/desktop        Tauri 2 desktop shell around the web build
+apps/mapmaker       Atlas Map Maker: a separate Tauri 2 app that checks a player's own game files (installer GPL-3.0)
 packages/schema     Pack schema (manifest versions 1 and 2) in Zod, id helpers, integrity checks
 packages/core       Pack loader, coordinate maths, marker clustering, MapView
 packages/importer-api  The contract for importers that turn a web page into a pack, and a demo importer
 packages/saves      Game save readers (The Witcher 3), the game's map pin files (CR2W), and matching a save against a pack; pure TypeScript
 packages/pipeline   Demo pack generator, tile cutter and PMTiles writer (Node)
 packs/demo          Generated demo pack (not committed)
+tools/gamefiles     The Map Maker's game file reader, in Python with Soulstruct (GPL-3.0)
 ```
 
 Workspace packages export their TypeScript sources directly; the web app bundles them and the pipeline runs them with `tsx`, so there is no separate library build step.
 
 ## Desktop app
 
-`apps/desktop` wraps the same web build in a Tauri 2 window for Windows, macOS and Linux. It needs Rust and, per platform, a C++ toolchain or WebKitGTK; [apps/desktop/README.md](apps/desktop/README.md) lists the prerequisites. `pnpm desktop:dev` opens the window on the dev server; `pnpm desktop:build` writes installers to `apps/desktop/src-tauri/target/release/bundle/`. CI builds unsigned Linux and Windows bundles on every run and keeps them as workflow artifacts.
+`apps/desktop` wraps the same web build in a Tauri 2 window for Windows, macOS and Linux. It needs Rust and, per platform, a C++ toolchain or WebKitGTK; [apps/desktop/README.md](apps/desktop/README.md) lists the prerequisites. `pnpm desktop:dev` opens the window on the dev server; `pnpm desktop:build` writes installers to `apps/desktop/src-tauri/target/release/bundle/`. CI builds an unsigned Windows installer on every run and keeps it as a workflow artifact; the Linux build and its tests are switched off for now (see `.github/workflows/ci.yml`).
 
-In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also shows packs from a maps folder and from folders the person chooses, exports and imports progress through native file dialogs, opens web links in the system browser, and shows the map images that are in a pack's folder. The public Atlas app is a viewer: it never fetches map images from other servers. Only a build made with `ATLAS_ENABLE_DOWNLOADS=1` can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, into the pack's folder, one pack at a time across every Atlas app on the computer ([apps/desktop/README.md](apps/desktop/README.md#building-another-app-from-the-shell)). Every Atlas desktop app writes what it does to a shared activity log, which the app shows and can copy to send with a question ([apps/desktop/README.md](apps/desktop/README.md#activity-log)). A desktop build can include importers that add maps from web pages ("Add a map"); the plain build has none. The desktop app finds the game's saves folder, lists and reads saves (read-only) and follows new ones, and reads the map files of the game folder the person chooses (read-only); the reading itself is the web app's ([apps/desktop/README.md](apps/desktop/README.md#game-saves)). Not there yet: code signing and auto-update.
+In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also shows packs from a maps folder and from folders the person chooses, exports and imports progress through native file dialogs, exports a game with its map images to one map pack file (`.atlaspack`) and imports such files ([apps/desktop/README.md](apps/desktop/README.md#map-pack-files)), opens web links in the system browser, and shows the map images that are in a pack's folder. The public Atlas app is a viewer: it never fetches map images from other servers. Only a build made with `ATLAS_ENABLE_DOWNLOADS=1` can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, into the pack's folder, one pack at a time across every Atlas app on the computer ([apps/desktop/README.md](apps/desktop/README.md#building-another-app-from-the-shell)). Every Atlas desktop app writes what it does to a shared activity log, which the app shows and can copy to send with a question ([apps/desktop/README.md](apps/desktop/README.md#activity-log)). A desktop build can include importers that add maps from web pages ("Add a map"); the plain build has none. The desktop app finds the game's saves folder, lists and reads saves (read-only) and follows new ones, and reads the map files of the game folder the person chooses (read-only); the reading itself is the web app's ([apps/desktop/README.md](apps/desktop/README.md#game-saves)). Not there yet: code signing and auto-update.
 
 The `Release` workflow (`.github/workflows/release.yml`, run by hand or by pushing a `v*` tag) builds the plain viewer's Windows installer and publishes it as a GitHub Release.
+
+The same shell builds an Android app (Android 10 and later), a viewer with the demo pack: `pnpm android:build --target aarch64` writes an unsigned APK, CI builds and checks one on every run, and the `Android release` workflow (run by hand) attaches a signed one to a draft release `android-v<version>`. See [apps/desktop/README.md](apps/desktop/README.md#android).
+
+## Map Maker
+
+`apps/mapmaker` is Atlas Map Maker, a separate Windows app for making Atlas maps from a player's own game files: Dark Souls Remastered first, then Bloodborne. Its first version only checks the game folder and reports what map data can be read (areas, treasure, item lots, collision, navmesh and map pieces), with a top-down preview of each area and a report to save. It runs `tools/gamefiles`, a Python program built with PyInstaller, as a sidecar. They only read the chosen game folder: they never write into it, copy game files from it or make network requests, and no game files or data from them are in this repository. See [apps/mapmaker/README.md](apps/mapmaker/README.md) and [tools/gamefiles/README.md](tools/gamefiles/README.md). The `Release Map Maker` workflow publishes its installer under `mapmaker-v*` tags, separately from the viewer's releases.
 
 ## Data packs
 
@@ -149,7 +159,7 @@ presets.json
 tiles/                tile pyramids, one PMTiles file or {z}/{x}/{y} folder per layer
 offline-tiles/        status files of downloaded map images (desktop app, see apps/desktop)
 import/               page data kept by "Add a map", never served to the map (desktop app)
-.atlas/               the desktop app's lock and unfinished-download record
+.atlas/               the desktop app's lock, unfinished-download record and map pack file record
 ```
 
 A pack folder is self-contained: every path in it is relative, nothing names a computer, user or app, paths use `/`, and no two names differ only in case, so a pack folder with its downloaded images can be copied to another computer (or operating system) and opened there.
@@ -292,3 +302,5 @@ All map rendering sits behind the `MapView` interface in `packages/core/src/mapv
 ## Licence
 
 Atlas is released under the [MIT licence](LICENSE). The licence covers this repository: the app, its packages and the made-up demo pack. Data packs made by other people or tools are not part of this repository and keep their own terms.
+
+Two exceptions are under the [GNU General Public License version 3](tools/gamefiles/LICENSE) (or later): `tools/gamefiles`, because it uses the GPL-3.0 libraries Soulstruct and soulstruct-havok, and the Atlas Map Maker installer, which carries the program built from it. The Map Maker app's own code in `apps/mapmaker` is MIT. Nothing from `tools/gamefiles` goes into the Atlas viewer, the desktop app or the importers.

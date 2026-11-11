@@ -15,8 +15,10 @@ on:
         description: Version to release, for example 0.3.0 (the release tag is v<version>)
         required: true
         type: string
+  # Not the Android app's tags (android-v*, android-release.yml); "v*" does
+  # not match them anyway.
   push:
-    tags: ['v*']
+    tags: ['v*', '!android-v*']
 
 permissions:
   contents: write

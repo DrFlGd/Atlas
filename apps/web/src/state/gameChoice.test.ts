@@ -4,6 +4,7 @@ import {
   choiceGame,
   chosenPages,
   filterGames,
+  keptCatalogue,
   newChoice,
   newPick,
   overCap,
@@ -181,5 +182,58 @@ describe('a list of games', () => {
     expect(plan.leftOut.map((game) => game.id)).toEqual(['game-12', 'game-13']);
     pick = toggleGame(pick, 'game-13');
     expect(pick.ticked).not.toContain('game-13');
+  });
+
+  it('opens no page for a kept list, so one more ticked game fits', () => {
+    const lots: CatalogueGame[] = Array.from({ length: 14 }, (_, i) => ({
+      id: `game-${i}`,
+      name: `Game ${i}`,
+      address: `${SITE}/game-${i}`,
+    }));
+    const tickAll = (pick: ReturnType<typeof newPick>) =>
+      lots.reduce((ticked, game) => toggleGame(ticked, game.id), pick);
+    const fresh = tickAll(newPick(importer, `${SITE}/`, lots, new Set()));
+    expect(fresh.keptFrom).toBeNull();
+    expect(planPick(fresh).games).toHaveLength(Math.floor((MAX_RUN_ADDRESSES - 1) / 2));
+    const kept = tickAll(
+      newPick(importer, `${SITE}/`, lots, new Set(), { keptFrom: '2026-01-02T03:04:05.000Z' }),
+    );
+    expect(kept.keptFrom).toBe('2026-01-02T03:04:05.000Z');
+    expect(planPick(kept).games).toHaveLength(Math.floor(MAX_RUN_ADDRESSES / 2));
+  });
+
+  it('keeps the ticks of games that are still listed when the list is read again', () => {
+    const pick = newPick(importer, `${SITE}/`, games, new Set(), {
+      ticked: ['test-hills', 'test-gone', 'test-valley'],
+    });
+    expect(pick.ticked).toEqual(['test-hills', 'test-valley']);
+  });
+
+  it('uses a kept list only when it is whole, timed and from the list as it is now', () => {
+    const site = {
+      ...importer,
+      games: { matches: (url: string) => /^https:\/\/maps\.example\.com\/[a-z-]+$/u.test(url) },
+      catalogue: { address: `${SITE}/` },
+    } as unknown as Parameters<typeof keptCatalogue>[1];
+    const kept = { url: `${SITE}/`, readAt: '2026-01-02T03:04:05.000Z', games };
+    expect(keptCatalogue(kept, site)).toEqual(kept);
+    // What the app stored comes back as it was checked when it was read.
+    expect(keptCatalogue(JSON.parse(JSON.stringify(kept)), site)?.games).toEqual(games);
+    for (const bad of [
+      undefined,
+      null,
+      'a list',
+      { ...kept, url: `${SITE}/games` },
+      { ...kept, readAt: 'some day' },
+      { ...kept, readAt: 5 },
+      { ...kept, games: [] },
+      { ...kept, games: 'many' },
+      { ...kept, games: [{ id: 'other', name: 'Other', address: 'https://other.example.org/x' }] },
+      { ...kept, games: [games[0], games[0]] },
+    ]) {
+      expect(keptCatalogue(bad, site)).toBeNull();
+    }
+    // An importer without a list of games has none kept.
+    expect(keptCatalogue(kept, importer)).toBeNull();
   });
 });

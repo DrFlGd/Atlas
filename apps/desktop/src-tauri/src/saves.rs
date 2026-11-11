@@ -30,11 +30,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Response, Manager as _, Runtime, State, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     activity::{self, Area},
-    commands::{blocking, chosen_path},
+    commands::{blocking, chosen_path, file_dialog},
 };
 
 /// No save of a supported game is this large (late-game saves are a few MB).
@@ -568,11 +567,7 @@ pub async fn saves_choose_folder<R: Runtime>(
     saves: SavesState<'_>,
     game: String,
 ) -> Result<Option<SaveFolder>, String> {
-    let mut dialog = window
-        .dialog()
-        .file()
-        .set_parent(&window)
-        .set_title("Choose the folder with your game saves");
+    let mut dialog = file_dialog(&window, "Choose the folder with your game saves");
     if let Some(start) = saves.dialog_start(&game) {
         dialog = dialog.set_directory(start);
     }
@@ -603,12 +598,7 @@ pub async fn saves_choose_file<R: Runtime>(
     saves: SavesState<'_>,
     game: String,
 ) -> Result<Option<SaveEntry>, String> {
-    let mut dialog = window
-        .dialog()
-        .file()
-        .set_parent(&window)
-        .set_title("Choose a game save")
-        .add_filter("Game saves", &["sav"]);
+    let mut dialog = file_dialog(&window, "Choose a game save").add_filter("Game saves", &["sav"]);
     if let Some(start) = saves.dialog_start(&game) {
         dialog = dialog.set_directory(start);
     }

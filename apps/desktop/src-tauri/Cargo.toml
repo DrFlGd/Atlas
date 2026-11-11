@@ -1,6 +1,6 @@
 [package]
 name = "atlas-desktop"
-version = "0.3.5"
+version = "0.3.6"
 description = "Atlas desktop shell"
 edition = "2021"
 license = "MIT"
@@ -9,9 +9,10 @@ publish = false
 
 [lib]
 # The `_lib` suffix keeps the library name distinct from the binary, which
-# avoids a Cargo name clash on Windows.
+# avoids a Cargo name clash on Windows. The desktop binary links the rlib;
+# the Android app loads the cdylib (`libatlas_desktop_lib.so`).
 name = "atlas_desktop_lib"
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 # "Download map images" and "View map page and save images as I browse":
@@ -37,6 +38,9 @@ tokio = { version = "1.45", features = ["fs", "macros", "rt-multi-thread", "sync
 flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
 snap = "1.1.1"
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-decode", "safe-encode", "checked-decode"] }
+# Map pack files (`.atlaspack`, see src/packfile.rs): ZIP with deflate only,
+# through the flate2 already in the build. No encryption, no other methods.
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Map image downloads (the `downloads` feature only). rustls with the ring
 # provider and the system's certificate store; no cookies, no compression
 # negotiation.
@@ -44,6 +48,13 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"], optional = true }
 httpdate = { version = "1.0.3", optional = true }
+
+# Free disk space before a map pack file is unpacked (src/packfile/space.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tokio = { version = "1.45", features = ["io-util", "net"] }

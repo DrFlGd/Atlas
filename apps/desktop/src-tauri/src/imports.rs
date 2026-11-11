@@ -22,6 +22,9 @@
 //! The shell never clicks, types or retries anything in the page. If the
 //! page shows a check or a sign-in, the person can deal with it in the
 //! window, or close it.
+//!
+//! There is no import window on Android, where a second window would
+//! replace the app's screen and a private session is not available.
 
 use std::{
     sync::{Arc, Mutex, PoisonError},
@@ -29,10 +32,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+#[cfg(desktop)]
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
-    AppHandle, Manager, Runtime, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WebviewUrl, WebviewWindowBuilder,
 };
+use tauri::{AppHandle, Manager, Runtime, Url, WebviewWindow};
 use tokio::sync::oneshot;
 
 use crate::library::MAX_PAGE_DATA_BYTES;
@@ -40,6 +45,7 @@ use crate::library::MAX_PAGE_DATA_BYTES;
 /// The label of the import window. No capability names it.
 pub const IMPORT_WINDOW: &str = "import";
 /// Reader source longer than this is refused.
+#[cfg_attr(mobile, allow(dead_code))]
 const MAX_READER_CHARS: usize = 64 * 1024;
 /// The page data is read in slices of this many UTF-16 units.
 const SLICE_CHARS: usize = 1 << 20;
@@ -48,6 +54,7 @@ const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Whether the person may open `url` in the import window: `https`, or
 /// `http` to this computer for tests; no user names or passwords.
+#[cfg_attr(mobile, allow(dead_code))]
 pub fn allowed_page_url(text: &str) -> Option<Url> {
     let url = Url::parse(text.trim()).ok()?;
     if !url.username().is_empty() || url.password().is_some() {
@@ -61,6 +68,7 @@ pub fn allowed_page_url(text: &str) -> Option<Url> {
 }
 
 /// The site of a page: its host without a leading `www.`.
+#[cfg_attr(mobile, allow(dead_code))]
 fn site_of(url: &Url) -> Option<String> {
     let host = url.host_str()?.to_ascii_lowercase();
     Some(host.strip_prefix("www.").map(str::to_owned).unwrap_or(host))
@@ -70,6 +78,7 @@ fn site_of(url: &Url) -> Option<String> {
 /// `start`: the same site (the host or its sub-domains, with or without
 /// `www.`), over the same kind of connection. Blank frames are allowed;
 /// anything else is not.
+#[cfg_attr(mobile, allow(dead_code))]
 pub fn same_site(start: &Url, next: &Url) -> bool {
     if next.scheme() == "about" {
         return matches!(next.path(), "blank" | "srcdoc");
@@ -192,7 +201,19 @@ fn decode_string(result: &str) -> Option<String> {
 }
 
 impl Imports {
+    /// The import window is not available on Android.
+    #[cfg(mobile)]
+    pub fn open<R: Runtime>(
+        &self,
+        _app: &AppHandle<R>,
+        _url: &str,
+        _reader: String,
+    ) -> Result<(), String> {
+        Err("Maps cannot be added from web pages on this device.".to_owned())
+    }
+
     /// Opens the import window on `url`, replacing an earlier import.
+    #[cfg(desktop)]
     pub fn open<R: Runtime>(
         &self,
         app: &AppHandle<R>,
@@ -334,6 +355,7 @@ impl Imports {
 
 /// A random number for the page data's name, from the standard library's
 /// randomly seeded hasher.
+#[cfg_attr(mobile, allow(dead_code))]
 fn rand_u64() -> u64 {
     use std::hash::{BuildHasher, RandomState};
     RandomState::new().hash_one(std::time::SystemTime::now())

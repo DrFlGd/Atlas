@@ -25,6 +25,13 @@ const SaveDialog = lazy(() =>
   import('./components/SaveDialog').then((module) => ({ default: module.SaveDialog })),
 );
 
+// Only the desktop app writes and reads map pack files: their dialog is
+// loaded the first time it opens, so the bundle every browser loads stays
+// as it was.
+const PackFileDialog = lazy(() =>
+  import('./components/PackFileDialog').then((module) => ({ default: module.PackFileDialog })),
+);
+
 /** Loads the configuration and the first pack, then shows the three-pane layout. */
 export function App() {
   const status = useAtlas((s) => s.status);
@@ -65,6 +72,7 @@ function Shell() {
   const hasChecklists = !game.checklists.isEmpty;
   const showChecklists = hasChecklists && leftTab === 'checklists';
   const loading = useAtlas((s) => s.status.kind === 'loading');
+  const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
   const persistent = useAtlas((s) => s.persistent);
   const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
   const pageViews = useAtlas(downloadsOffered);
@@ -125,6 +133,11 @@ function Shell() {
       <MapsDialog />
       <AddMapDialog />
       <ActivityLogDialog />
+      {packFileOpen ? (
+        <Suspense fallback={null}>
+          <PackFileDialog />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

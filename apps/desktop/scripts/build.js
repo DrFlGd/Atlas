@@ -21,9 +21,21 @@
  * the built app know what to expect without being told again.
  *
  * Other arguments are passed on to `tauri build`.
+ *
+ * `node scripts/build.js android` (`pnpm --filter @atlas/desktop
+ * android:build`) builds the Android app instead: a viewer with the packs
+ * named in `ATLAS_BUNDLE_PACKS` (the demo by default) inside its web build,
+ * as folder tiles (`ATLAS_DEMO_TILES=xyz`), since the Android WebView cannot
+ * read PMTiles archives from the app. It refuses downloads, importers and a
+ * custom name or identifier; the Android name and identifier are in
+ * `src-tauri/tauri.android.conf.json`. It creates the Android project
+ * (`src-tauri/gen/android`, ignored by git) with `tauri android init` when
+ * there is none, then runs `tauri android build --apk` with the other
+ * arguments, for example `--target aarch64`. The APK is unsigned; a release
+ * signs it.
  */
 import { spawn } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const here = (/** @type {string} */ path) => fileURLToPath(new URL(path, import.meta.url));
@@ -91,7 +103,76 @@ export function tauriArgs({ identity, downloads, extra }) {
   return args;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/**
+ * The `tauri` commands of an Android build: `android init` when the Android
+ * project does not exist yet, then `android build`. Exported for tests.
+ * @param {{ initialised: boolean, extra: string[] }} options
+ */
+export function androidCommands({ initialised, extra }) {
+  /** @type {string[][]} */
+  const commands = [];
+  if (!initialised) commands.push(['android', 'init', '--ci', '--skip-targets-install']);
+  commands.push(['android', 'build', '--apk', '--ci', ...extra.filter((arg) => arg !== '--')]);
+  return commands;
+}
+
+/**
+ * The environment of an Android build, or an error for settings it cannot
+ * have. Exported for tests.
+ * @param {NodeJS.ProcessEnv} env
+ */
+export function androidEnv(env) {
+  if (downloadsEnabled(env.ATLAS_ENABLE_DOWNLOADS)) {
+    throw new Error('The Android app is a viewer: ATLAS_ENABLE_DOWNLOADS must be 0 or unset.');
+  }
+  if (env.ATLAS_BUNDLE_IMPORTERS?.trim()) {
+    throw new Error('The Android app has no importers: unset ATLAS_BUNDLE_IMPORTERS.');
+  }
+  if (env.ATLAS_APP_NAME?.trim() || env.ATLAS_APP_IDENTIFIER?.trim()) {
+    throw new Error(
+      'The Android app takes its name and identifier from src-tauri/tauri.android.conf.json: unset ATLAS_APP_NAME and ATLAS_APP_IDENTIFIER.',
+    );
+  }
+  return { ...env, ATLAS_ENABLE_DOWNLOADS: '0', ATLAS_DEMO_TILES: 'xyz' };
+}
+
+/**
+ * Runs `tauri` with these arguments; resolves to its exit code.
+ * @param {string[]} args @param {NodeJS.ProcessEnv} env
+ * @returns {Promise<number>}
+ */
+function tauri(args, env) {
+  return new Promise((resolve) => {
+    const child = spawn('tauri', args, {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+      env,
+    });
+    child.on('exit', (code) => {
+      resolve(code ?? 1);
+    });
+  });
+}
+
+async function buildAndroid() {
+  const env = androidEnv(process.env);
+  const initialised = await access(here('../src-tauri/gen/android')).then(
+    () => true,
+    () => false,
+  );
+  console.log('Building the Android app: a viewer, with folder tiles (ATLAS_DEMO_TILES=xyz)');
+  for (const args of androidCommands({ initialised, extra: process.argv.slice(3) })) {
+    const code = await tauri(args, env);
+    if (code !== 0) {
+      process.exitCode = code;
+      return;
+    }
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === 'android') {
+  await buildAndroid();
+} else if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const base = JSON.parse(await readFile(here('../src-tauri/tauri.conf.json'), 'utf8'));
   const identity = identityConfig(
     {

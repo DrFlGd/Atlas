@@ -39,6 +39,14 @@ const COMMANDS: &[&str] = &[
     "game_files_scan",
     "game_files_read",
     "game_files_report",
+    "packfile_options",
+    "packfile_export",
+    "packfile_pick",
+    "packfile_inspect",
+    "packfile_import",
+    "packfile_progress",
+    "packfile_cancel",
+    "library_pack_details",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

@@ -104,6 +104,9 @@ test('adds the maps and checklist of a game from its game page, and updates it l
   await setMock(page, { extra: { 'test-valley': { 'north-lake': 'North Lake' } } });
   await page.getByRole('button', { name: 'Done' }).click();
   await page.getByTestId('maps-button').click();
+  // The dialog's foot and the app's name say which app and version this is.
+  await expect(page.getByTestId('app-version')).toHaveText('Atlas 0.0.0');
+  await expect(page.locator('.brand')).toHaveAttribute('title', 'Atlas 0.0.0');
   const row = page.locator('[data-testid="pack-row"][data-pack="test-valley"]');
   await expect(page.getByTestId('update-all')).toBeVisible();
   await row.getByTestId('update-pack').click();
@@ -152,6 +155,8 @@ test('lists the games of the site to tick, then their maps', async ({ page }) =>
   const games = page.getByTestId('add-map-catalogue-game');
   await expect(games).toHaveCount(3);
   await expect(page.getByTestId('add-map-catalogue')).toContainText('3 games on Demo map site.');
+  // The list was just read, so nothing says it is a kept copy.
+  await expect(page.getByTestId('add-map-catalogue-kept')).toHaveCount(0);
   // Nothing is ticked to start with.
   await expect(page.getByTestId('add-map-catalogue-confirm')).toHaveText('Tick the games to add');
   await expect(page.getByTestId('add-map-catalogue-confirm')).toBeDisabled();
@@ -197,12 +202,30 @@ test('lists the games of the site to tick, then their maps', async ({ page }) =>
   ]);
   expect(reports[0]).toMatchObject({ outcome: 'catalogue-listed', games: 3, alreadyAdded: 0 });
 
-  // The list marks the games that are in the maps folder now.
+  // Opening it again shows the kept list at once, without opening the site,
+  // and marks the games that are in the maps folder now.
   await page.getByRole('button', { name: 'Add more maps' }).click();
   await page.getByTestId('add-map-browse-games').click();
   await expect(dialog(page)).toHaveAttribute('data-phase', 'catalogue', { timeout: 30_000 });
+  await expect(page.getByTestId('add-map-catalogue-kept')).toContainText(
+    'This is the list as this app read it on',
+  );
+  await expect(page.getByTestId('add-map-catalogue-game')).toHaveCount(3);
+  await page.screenshot({ path: `${SHOTS}/4-catalogue-kept.png` });
   await expect(page.locator('[data-game="test-valley"]')).toContainText('In your maps folder');
   await expect(page.locator('[data-game="demo"]')).not.toContainText('In your maps folder');
+  const opens = async () =>
+    (await mock(page)).events.filter((e) => e.what === 'open' && e.purpose === 'catalogue').length;
+  expect(await opens()).toBe(1);
+
+  // "Update the list" reads it from the site again and keeps the ticks.
+  await page.locator('[data-game="demo"] input').check();
+  await page.getByTestId('add-map-catalogue-update').click();
+  await expect(page.getByTestId('add-map-catalogue-kept')).toHaveCount(0, { timeout: 30_000 });
+  await expect(dialog(page)).toHaveAttribute('data-phase', 'catalogue', { timeout: 30_000 });
+  await expect(page.getByTestId('add-map-catalogue-game')).toHaveCount(3);
+  await expect(page.locator('[data-game="demo"] input')).toBeChecked();
+  expect(await opens()).toBe(2);
   expect(realErrors(errors)).toEqual([]);
 });
 

@@ -22,6 +22,7 @@ import type {
   DownloadSettingsInfo,
   DownloadSnapshot,
   Listing,
+  PackFileInfo,
 } from '../desktop';
 
 export type Theme = 'dark' | 'light';
@@ -88,6 +89,10 @@ export interface DownloadState {
   settings: DownloadSettingsInfo | null;
 }
 
+/** The map pack file dialog: exporting a game, or importing a file already read. */
+export type PackFileDialogState =
+  { kind: 'export'; packId: string; title: string } | { kind: 'import'; file: PackFileInfo };
+
 export interface AtlasState {
   config: RuntimeConfig | null;
   catalog: PackEntry[];
@@ -152,6 +157,8 @@ export interface AtlasState {
   saveDialogOpen: boolean;
   /** The game save linked to the active profile, and what it says. */
   save: SaveState;
+  /** The map pack file dialog; null when closed. */
+  packFileDialog: PackFileDialogState | null;
 }
 
 export const NO_GAME_TABLE: GameTableState = {
@@ -231,4 +238,5 @@ export const useAtlas = create<AtlasState>()(() => ({
   logViewer: null,
   saveDialogOpen: false,
   save: NO_SAVE,
+  packFileDialog: null,
 }));

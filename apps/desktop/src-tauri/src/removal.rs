@@ -112,7 +112,7 @@ pub struct PackDeleted {
 const IN_USE: &str = "Some of this map's files are in use by another program, so it was not deleted. Close programs that may be using them, such as a file window showing its folder, and try again.";
 
 /// A free hidden name for a pack folder that is being deleted.
-fn doomed_path(ops: &FileOps, maps: &Path, id: &str) -> PathBuf {
+pub(crate) fn doomed_path(ops: &FileOps, maps: &Path, id: &str) -> PathBuf {
     let first = maps.join(format!("{DELETING_PREFIX}{id}"));
     // A folder left from an earlier delete: try to finish it first.
     if is_real_dir(&first) {
@@ -215,8 +215,9 @@ fn remove_link_or_file(ops: &FileOps, path: &Path) -> io::Result<()> {
 }
 
 /// Finishes deletes that an earlier run could not finish, in the maps folder
-/// `maps`: hidden `.deleting-*` folders, and pack folders marked as being
-/// deleted that have no manifest any more. Returns what is still there.
+/// `maps`: hidden `.deleting-*` folders, pack folders marked as being
+/// deleted that have no manifest any more, and `.importing-*` folders of a
+/// map pack file import that did not finish. Returns what is still there.
 pub fn finish_pending_deletes(ops: &FileOps, maps: &Path) -> Vec<PathBuf> {
     let mut left = Vec::new();
     let Ok(entries) = fs::read_dir(maps) else {
@@ -238,6 +239,18 @@ pub fn finish_pending_deletes(ops: &FileOps, maps: &Path) -> Vec<PathBuf> {
             } else {
                 continue;
             }
+        } else if name.starts_with(crate::packfile::import::IMPORTING_PREFIX)
+            && !link
+            && metadata.is_dir()
+        {
+            // A map pack file that was being unpacked when its app ended;
+            // not while another app is still unpacking into it.
+            let Ok(lock) = PackLock::acquire(&path) else {
+                left.push(path);
+                continue;
+            };
+            drop(lock);
+            ops.retrying(|| (ops.remove_tree)(&path))
         } else if !link
             && metadata.is_dir()
             && is_real_dir(&path.join(META_DIR))

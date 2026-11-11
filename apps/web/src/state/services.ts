@@ -52,4 +52,6 @@ export const SETTINGS = {
    * it stays on this device: settings are never exported.
    */
   gamePins: (readerId: string) => `gamePins:${readerId}`,
+  /** A site's list of games as it was last read, kept so it need not be read each time. */
+  catalogue: (importerId: string) => `catalogue:${importerId}`,
 } as const;

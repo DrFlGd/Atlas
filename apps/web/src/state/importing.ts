@@ -49,19 +49,23 @@ import {
 import {
   chosenPages,
   choiceGame,
+  keptCatalogue,
   newChoice,
   newPick,
   overCap,
+  pickOpened,
   planPick,
   toggleGame,
   togglePage,
   type Choice,
   type ChoiceGame,
   type GamePick,
+  type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
 import { RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
+import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
 
 /**
@@ -1065,8 +1069,30 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
   setPhase({ kind: 'choose', choice: newChoice('add', [game], openedIn(read.run)) });
 }
 
-/** A site's list of games: reads it, then lists the games to tick. */
-async function startCatalogue(url: string, importer: AtlasImporter): Promise<void> {
+/** The ids of the games in the maps folder, to mark them in a list of games. */
+const addedGames = () => new Set(useAtlas.getState().library?.packs.map((pack) => pack.id) ?? []);
+
+/** The list of games this app kept from the last time it read the importer's, if it can be used. */
+async function readKeptCatalogue(importer: AtlasImporter): Promise<KeptCatalogue | null> {
+  try {
+    return keptCatalogue(
+      await progressStore().getSetting(SETTINGS.catalogue(importer.id)),
+      importer,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A site's list of games: reads it from the site, keeps it for next time,
+ * then lists the games to tick (`ticked` stay ticked where still listed).
+ */
+async function startCatalogue(
+  url: string,
+  importer: AtlasImporter,
+  ticked: readonly string[] = [],
+): Promise<void> {
   const read = await readListings([{ url, importer, reading: 'catalogue' }], 'catalogue');
   if (!read) return;
   const result = read.results[0];
@@ -1074,8 +1100,18 @@ async function startCatalogue(url: string, importer: AtlasImporter): Promise<voi
     setPhase({ kind: 'failed', message: listingFailure(read.run, result) });
     return;
   }
-  const added = new Set(useAtlas.getState().library?.packs.map((pack) => pack.id) ?? []);
-  setPhase({ kind: 'catalogue', pick: newPick(importer, url, result.games, added) });
+  if (url === importer.catalogue?.address && result.games.length > 0) {
+    const kept: KeptCatalogue = { url, readAt: new Date().toISOString(), games: result.games };
+    try {
+      await progressStore().putSetting(SETTINGS.catalogue(importer.id), kept);
+    } catch {
+      // Not kept: the list is read again next time.
+    }
+  }
+  setPhase({
+    kind: 'catalogue',
+    pick: newPick(importer, url, result.games, addedGames(), { ticked }),
+  });
 }
 
 /** The importers of this build that offer a list of games, with its label. */
@@ -1097,10 +1133,32 @@ export async function catalogueImporters(): Promise<
   );
 }
 
-/** "Browse games…": reads the importer's list of games. */
+/**
+ * "Browse games…": shows the importer's list of games as it was last read,
+ * or reads it from the site when it has not been read on this device yet.
+ * "Update the list" ({@link updateCatalogue}) reads it again.
+ */
 export async function browseGames(importerId: string): Promise<void> {
   const importer = (await loadImporters()).find((i) => i.id === importerId);
-  if (importer?.catalogue) await startCatalogue(importer.catalogue.address, importer);
+  if (!importer?.catalogue) return;
+  const kept = await readKeptCatalogue(importer);
+  if (!kept) {
+    await startCatalogue(importer.catalogue.address, importer);
+    return;
+  }
+  setPhase({
+    kind: 'catalogue',
+    pick: newPick(importer, kept.url, kept.games, addedGames(), { keptFrom: kept.readAt }),
+  });
+}
+
+/** "Update the list": reads the shown list of games from the site again. */
+export async function updateCatalogue(): Promise<void> {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'catalogue') return;
+  const { pick } = phase;
+  const importer = (await loadImporters()).find((i) => i.id === pick.importerId);
+  if (importer) await startCatalogue(pick.url, importer, pick.ticked);
 }
 
 export function setCatalogueQuery(query: string): void {
@@ -1180,7 +1238,7 @@ export async function readPickedGames(): Promise<void> {
     choice: newChoice(
       'add',
       games,
-      1 + (read.run ? openedIn(read.run) : 0),
+      pickOpened(pick) + (read.run ? openedIn(read.run) : 0),
       plan.leftOut.map((game) => game.name),
     ),
   });
