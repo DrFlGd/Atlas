@@ -29,9 +29,16 @@ export interface DemoContentOptions {
   tiles: TileSource;
 }
 
-/** Region layout: two top-level halves, each split into Voronoi cells. */
+/** A demo region: every one has an outline. */
+export type DemoRegion = Region & { polygon: [number, number][] };
+
+/**
+ * Region layout: two top-level halves, each split into Voronoi cells. The
+ * cells have a centre, their Voronoi site; the halves have none, so the app
+ * goes to the middle of their outline.
+ */
 export interface DemoRegionLayout {
-  regions: Region[];
+  regions: DemoRegion[];
   /** Sites of the child regions, grouped by parent half (west, east). */
   sites: [number, number][][];
   /** x of the border between the two halves. */
@@ -258,7 +265,7 @@ export function layoutRegions(seed: number, terrain: Terrain): DemoRegionLayout 
   const { size } = terrain;
   const divide = Math.round(size / 2);
   const halves = [rectangle(0, 0, divide, size), rectangle(divide, 0, size, size)];
-  const regions: Region[] = [];
+  const regions: DemoRegion[] = [];
   const sites: [number, number][][] = [];
 
   halves.forEach((half, h) => {
@@ -302,6 +309,7 @@ export function layoutRegions(seed: number, terrain: Terrain): DemoRegionLayout 
         parentId,
         name,
         polygon: cell.map(([x, y]) => [Math.round(x), Math.round(y)] as [number, number]),
+        center: [...halfSites[i]!],
       });
     });
   });
@@ -309,8 +317,8 @@ export function layoutRegions(seed: number, terrain: Terrain): DemoRegionLayout 
 }
 
 /** The innermost region containing a point, or null. */
-function regionOf(regions: readonly Region[], x: number, y: number): Region | null {
-  let found: Region | null = null;
+function regionOf(regions: readonly DemoRegion[], x: number, y: number): DemoRegion | null {
+  let found: DemoRegion | null = null;
   for (const region of regions) {
     if (pointInPolygon({ x, y }, region.polygon)) {
       if (!found || region.parentId === found.id) found = region;

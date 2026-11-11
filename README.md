@@ -114,7 +114,7 @@ A pack is a read-only, versioned folder loaded by URL:
 manifest.json         who the pack is and what is in it (see "The manifest" below)
 maps.json             maps: pixel size and optional world-coordinate transform
 layers.json           tile layers of each map
-regions.json          region polygons, optionally nested
+regions.json          regions: name, optional outline and centre, optionally nested
 categoryGroups.json
 categories.json
 locations.json
@@ -135,6 +135,7 @@ A pack folder is self-contained: every path in it is relative, nothing names a c
 - Coordinates are pixels of the full-resolution map image, origin top-left. A layer's `maxZoom` is the pyramid level at which one tile pixel equals one image pixel.
 - Content ids are stable, prefixed strings: `<gameId>:<kind>:<localId>`, for example `demo:loc:0412`.
 - The schema lives in `packages/schema` and is shared by the app and the pipeline. `loadPack` in `packages/core` validates every file and checks references between files before the app uses a pack.
+- A region (`regions.json`) has an id, its map, an optional parent region and a name, and two optional geometry fields: `polygon`, its outline (at least three points, implicitly closed), and `center`, the `[x, y]` point the map goes to when the region is picked. A region may have both, either or neither; one with neither still counts the progress of the locations that name it, but the app cannot show where it is. Outline points and the centre must lie inside the map. Both fields are optional, so adding them did not change the manifest's `schemaVersion`; Atlas 0.3.3 and earlier refuse a pack with a region that has a `center` or no `polygon`.
 - An `xyz` layer may name a remote source (`tiles.remote`: an `https` URL template and the remote zoom and tile offset of each pyramid level). A desktop app built with downloads can download such tiles into the pack's folder, and every desktop app shows the ones that are there; see [apps/desktop/README.md](apps/desktop/README.md#downloading-map-images). The web app shows its usual "not installed" notice for them.
 - Pack ids (`gameId`) are lowercase letters, digits, `-` and `_`. In the desktop app only one pack with an id is shown at a time; see [apps/desktop/README.md](apps/desktop/README.md#maps-folder-and-other-locations).
 - PMTiles archives are read with HTTP range requests, so whatever serves a pack must support them (the Vite dev and preview servers and common static servers do).
