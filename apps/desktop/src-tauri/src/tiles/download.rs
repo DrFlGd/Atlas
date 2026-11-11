@@ -973,11 +973,29 @@ impl Downloader {
             body: body_excerpt(&content_type, &body),
             at: activity::timestamp(SystemTime::now()),
         };
-        self.log.error(Area::Download, detail.log_line());
-        self.stop_detail
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_or_insert(detail);
+        let line = detail.log_line();
+        let first = {
+            let mut slot = self
+                .stop_detail
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let first = slot.is_none();
+            slot.get_or_insert(detail);
+            first
+        };
+        // Requests already on their way when the download stopped can be
+        // answered the same way; they are logged, but the first one is kept.
+        self.log.error(
+            Area::Download,
+            if first {
+                line
+            } else {
+                format!(
+                    "{} | a request already on its way when the download stopped",
+                    line.replacen("Stopped: ", "Also: ", 1)
+                )
+            },
+        );
     }
 
     /// Reads a successful answer and saves it if it is an image. The inner

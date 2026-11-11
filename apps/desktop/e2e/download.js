@@ -218,6 +218,8 @@ try {
       'download',
     'the log opens on downloads',
   );
+  await sleep(300);
+  await s.screenshot('download-3-log');
   // Errors only, then copy what is shown. The clipboard is stood in for, so
   // the test reads what would be copied and leaves the real one alone.
   await s.run(`
@@ -233,7 +235,6 @@ try {
     `[...document.querySelectorAll('[data-testid="log-row"]')].every((row) => row.dataset.level === 'error')`,
     { what: 'only errors in the log' },
   );
-  await s.screenshot('download-3-log');
   await s.click('[data-testid="log-copy"]');
   await s.waitFor(`window.atlasCopied.length === 1`, { what: 'the log to be copied' });
   const copied = /** @type {string} */ (await s.run('return window.atlasCopied[0];'));
