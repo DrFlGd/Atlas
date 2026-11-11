@@ -123,15 +123,15 @@ export function setPageViewShell(bridge: PageViewBridge | null): void {
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let lastRevision = -1;
 
-/** Takes in a status: tells the map about new levels and keeps polling while the page is open. */
+/** Takes in a status: tells the map about newly saved images and keeps polling while the page is open. */
 export function receiveStatus(status: ViewStatus): void {
   set({ status: shouldShow(status) ? status : null });
   if (status.revision !== lastRevision) {
     const first = lastRevision === -1;
     lastRevision = status.revision;
-    if (!first && status.packId && status.packId === useAtlas.getState().game?.entry.id) {
-      useAtlas.setState({ tileRevision: useAtlas.getState().tileRevision + 1 });
-    }
+    // Whichever game the images are of: the map also forgets which layers
+    // had none, so that game shows them when it is opened next.
+    if (!first) useAtlas.setState({ tileRevision: useAtlas.getState().tileRevision + 1 });
   }
   clearTimeout(pollTimer);
   if (status.open) pollTimer = setTimeout(poll, POLL_MS);

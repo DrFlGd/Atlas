@@ -205,7 +205,7 @@ describe('map page state', () => {
     expect(usePageView.getState().status).toBeNull();
   });
 
-  it('tells the map to look again when saved images complete a level of the shown game', () => {
+  it('tells the map to look again when images were saved, of the shown game or another', () => {
     useAtlas.setState({
       game: { entry: { id: 'my-game', url: 'x', title: 'My Game' } } as never,
     });
@@ -216,7 +216,7 @@ describe('map page state', () => {
     receiveStatus(status({ open: false, saving: false, revision: 11 }));
     expect(useAtlas.getState().tileRevision).toBe(before + 1);
     receiveStatus(status({ open: false, saving: false, packId: 'other', revision: 12 }));
-    expect(useAtlas.getState().tileRevision).toBe(before + 1);
+    expect(useAtlas.getState().tileRevision).toBe(before + 2);
     useAtlas.setState({ game: null });
   });
 

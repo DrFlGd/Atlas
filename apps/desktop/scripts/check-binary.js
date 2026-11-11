@@ -26,8 +26,8 @@ export const DOWNLOAD_MARKERS = [
   'tiles_start',
   'download_settings_set',
   'view_open',
-  // The downloader's User-Agent.
-  '(offline map viewer)',
+  // A line the downloader writes to the activity log.
+  'not asked for, because the area above them',
   // The script that keeps the map images a page loads.
   'var PREFIXES = ',
 ];

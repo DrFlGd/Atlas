@@ -43,6 +43,15 @@ export function StopDetails({ detail }: { detail: StopDetail }) {
         <dd>
           HTTP {detail.status} from {detail.host}, {displayTime(detail.at)}
         </dd>
+        {detail.deniedInARow ? (
+          <>
+            <dt>In a row</dt>
+            <dd data-testid="stop-detail-denied">
+              &ldquo;Access denied&rdquo; for {numberFormat.format(detail.deniedInARow)} images in a
+              row, with no image in between
+            </dd>
+          </>
+        ) : null}
       </dl>
       <label htmlFor={urlId} className="field-label small">
         Address of the image

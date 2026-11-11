@@ -16,11 +16,15 @@
  *
  * It checks, in three launches of the app:
  *  1. the first game in ATLAS_BUNDLE_PACKS is shown first; its map image is
- *     missing and the notice offers the download; a refusing server stops the
+ *     missing and the notice offers the download; the first request is for
+ *     the middle of the map; a refusing server stops the
  *     job with a plain reason, the panel shows the refused image's address
  *     and the activity log has the refusal in full and copies it as it is in
  *     the log file; Standard detail downloads and the map shows it
- *     (markers on the dots); Full detail fetches only the missing level, pauses
+ *     (markers on the dots), counting the corner image that the server
+ *     answers like an object store without it as not on the server; Full
+ *     detail fetches only the missing level, never asks for the images under
+ *     that corner, pauses
  *     (no requests while paused) and resumes; the app is closed mid-way;
  *  2. the unfinished job is offered again and finishes; nothing is fetched
  *     twice; every request has the app's User-Agent and no cookie; a guide link
@@ -29,7 +33,14 @@
  */
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DEFAULT_PORT, MAPS, MISSING_TILE, PACK_ID, remoteTileCount } from './remotePack.js';
+import {
+  DEFAULT_PORT,
+  MAPS,
+  MISSING_TILE,
+  PACK_ID,
+  remoteTileCount,
+  STORE_MISSING_TILE,
+} from './remotePack.js';
 import { DOT, startTileServer } from './tileServer.js';
 import { check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
 
@@ -37,12 +48,29 @@ const port = Number(process.env.ATLAS_E2E_TILE_PORT ?? DEFAULT_PORT);
 const version = /** @type {{ version: string }} */ (
   JSON.parse(await readFile(here('../package.json'), 'utf8'))
 ).version;
-const userAgent = `Atlas/${version} (offline map viewer)`;
+const userAgent = `Atlas/${version}`;
 
 const [island, cave] = MAPS;
 if (!island || !cave) throw new Error('remotePack.js defines two maps');
 const standardTotal = remoteTileCount(island, island.maxZoom - 1) + remoteTileCount(cave);
 const fullTotal = remoteTileCount(island) + remoteTileCount(cave);
+const [islandLow, islandTop] = island.levels;
+if (!islandLow || !islandTop) throw new Error('the island has two remote levels');
+/** The remote address of island tile (x, y) of a remote level. */
+const islandPath = (
+  /** @type {import('./remotePack.js').RemoteLevel} */ level,
+  /** @type {number} */ x,
+  /** @type {number} */ y,
+) => `/island/${level.sourceZ}/${x + level.offsetX}/${y + level.offsetY}.png`;
+// The middle of level 2 (4 x 3 tiles) is asked for first.
+const centrePath = islandPath(islandLow, 1, 1);
+// The corner the server does not have, and the four tiles under it.
+const storePath = islandPath(islandLow, STORE_MISSING_TILE.x, STORE_MISSING_TILE.y);
+const underStore = [0, 1].flatMap((dx) =>
+  [0, 1].map((dy) =>
+    islandPath(islandTop, 2 * STORE_MISSING_TILE.x + dx, 2 * STORE_MISSING_TILE.y + dy),
+  ),
+);
 
 /** @param {import('./webdriver.js').Session} s @param {string} state */
 const waitForPanel = (s, state, timeout = 60_000) =>
@@ -130,6 +158,7 @@ const status = (s, layer) =>
     return response.ok ? response.json() : null;`);
 
 const tiles = await startTileServer({ port });
+tiles.setStoreMissing(true);
 const environment = await isolatedEnvironment();
 const driver = await startDriver({ env: environment.env });
 /** @type {import('./webdriver.js').Session | null} */
@@ -184,6 +213,10 @@ try {
   check(
     refused >= 1 && refused <= 2,
     `the job stopped after the first refusal (${refused} requests)`,
+  );
+  check(
+    tiles.seen.some((r) => r.path === centrePath),
+    `the first request is for the middle of the map (${tiles.seen.map((r) => r.path).join(', ')})`,
   );
 
   // The panel says which image was refused, and the activity log has it in full.
@@ -284,8 +317,20 @@ try {
   await waitForPanel(s, 'done', 120_000);
   const standardFetched = fetched().map((r) => r.path);
   check(
-    standardFetched.length === standardTotal,
-    `Standard fetched ${standardTotal} tiles once each`,
+    standardFetched.length === standardTotal - 1 &&
+      new Set(standardFetched).size === standardTotal - 1,
+    `Standard fetched the ${standardTotal - 1} tiles the server has once each`,
+  );
+  check(
+    tiles.seen.filter((r) => r.path === storePath).length === 1,
+    'the corner the store does not have was asked for once',
+  );
+  const summary = await s.run(
+    `return document.querySelector('[data-testid="download-summary"]')?.textContent ?? '';`,
+  );
+  check(
+    summary.includes('1 not on the server'),
+    `the summary counts it as not on the server (${summary})`,
   );
   const surface = await status(s, 'island');
   check(
@@ -374,14 +419,25 @@ try {
   const all = fetched();
   const counts = new Map();
   for (const request of all) counts.set(request.path, (counts.get(request.path) ?? 0) + 1);
-  check(counts.size === fullTotal, `every one of the ${fullTotal} remote tiles was fetched`);
+  check(
+    counts.size === fullTotal - 1 - underStore.length,
+    `every remote tile was fetched but the missing corner and the ${underStore.length} under it`,
+  );
+  check(
+    underStore.every((path) => !tiles.seen.some((r) => r.path === path)),
+    'the tiles under the missing corner were never asked for',
+  );
+  check(
+    tiles.seen.filter((r) => r.path === storePath).length === 1,
+    'the missing corner was not asked for again',
+  );
   check(
     standardFetched.every((path) => counts.get(path) === 1),
     'the upgrade to full detail fetched nothing twice',
   );
   // A tile in flight when the app closed may be fetched again; nothing else.
   check(
-    all.length <= fullTotal + 2,
+    all.length <= fullTotal - 1 - underStore.length + 2,
     `at most the tiles in flight were fetched again (${all.length})`,
   );
   const missingPath = `/${MISSING_TILE.map}/13/${MISSING_TILE.x + 200}/${MISSING_TILE.y + 400}.png`;
@@ -391,6 +447,17 @@ try {
       (r) => r.userAgent === userAgent && r.accept === 'image/*' && r.cookie === undefined,
     ),
     `every request says "${userAgent}", asks for images and sends no cookie`,
+  );
+  const logText = await readFile(logFile, 'utf8');
+  check(
+    logText.includes(
+      `Counting http://127.0.0.1:${port}${storePath} as not on the server: the store answered "access denied"`,
+    ),
+    'the log says why the missing corner counts as not on the server',
+  );
+  check(
+    /[1-9]\d* not asked for, because the area above them is not on the server/.test(logText),
+    'the log counts the tiles that were not asked for',
   );
   const full = await status(s, 'island');
   check(full?.complete === true && full.nativeMaxZoom === island.maxZoom, 'the island is complete');

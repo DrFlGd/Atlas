@@ -143,6 +143,7 @@ function installFakeShell(downloads: boolean) {
     total: number;
     saved: number;
     missing: number;
+    notAsked: number;
     failed: number;
     bytes: number;
     tilesPerSecond: number;
@@ -162,8 +163,23 @@ function installFakeShell(downloads: boolean) {
     /** Hold the job where it is. */
     hold: false,
     calls: [] as string[],
+    /** The map page window: its saved images make `revision` go up. */
+    view: { open: false, revision: 0 },
   };
   (window as unknown as { __mockShell: typeof shell }).__mockShell = shell;
+  // Set by a test before this script: the pack is also listed as one added from a web page.
+  const listed = (window as unknown as { __listRemote?: boolean }).__listRemote === true;
+  const viewStatus = () => ({
+    open: shell.view.open,
+    packId: shell.view.open ? 'remote' : null,
+    url: shell.view.open ? 'https://maps.example.com/remote/island' : null,
+    saving: shell.view.open,
+    savedSession: shell.view.open,
+    counts: { saved: 0, alreadyHad: 0, notSaved: 0, fromElements: 0, otherProblems: 0, bytes: 0 },
+    usesWorkers: false,
+    revision: shell.view.revision,
+    message: null,
+  });
   const snapshot = () => (shell.job ? structuredClone(shell.job) : null);
   const plan = () => ({
     packId: 'remote',
@@ -234,6 +250,7 @@ function installFakeShell(downloads: boolean) {
           total: island + cave,
           saved: 0,
           missing: 0,
+          notAsked: 0,
           failed: 0,
           bytes: 0,
           tilesPerSecond: 0,
@@ -259,7 +276,20 @@ function installFakeShell(downloads: boolean) {
       case 'library_list':
         return Promise.resolve({
           mapsFolder: { path: '/maps', isDefault: true, exists: true },
-          packs: [],
+          packs: listed
+            ? [
+                {
+                  id: 'remote',
+                  title: 'Remote test pack',
+                  url: 'http://atlas-pack.localhost/remote/',
+                  origin: 'maps-folder',
+                  path: '/maps/remote',
+                  packVersion: '1.0.0',
+                  bundled: false,
+                  imported: { importerId: 'demo', importerTitle: 'Demo map site' },
+                },
+              ]
+            : [],
           hidden: [],
           locations: [],
           busy: [],
@@ -279,6 +309,28 @@ function installFakeShell(downloads: boolean) {
             kilobytesPerSecond: [50, 50000],
           },
         });
+      case 'view_pages':
+        return Promise.resolve({
+          pages: [
+            {
+              url: 'https://maps.example.com/remote/island',
+              mapId: 'remote:map:island',
+              mapName: 'Island',
+              importedAt: null,
+            },
+          ],
+          canSave: true,
+          saveNote: null,
+        });
+      case 'view_open':
+        shell.view.open = true;
+        return Promise.resolve(viewStatus());
+      case 'view_status':
+        return Promise.resolve(viewStatus());
+      case 'view_stop_saving':
+      case 'view_close':
+        shell.view.open = false;
+        return Promise.resolve(viewStatus());
       default:
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(`Unknown command ${command}`);
@@ -287,7 +339,16 @@ function installFakeShell(downloads: boolean) {
   (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = { invoke };
 }
 
-async function servePack(page: Page, levelsReady: () => number | null) {
+/**
+ * Serves the test pack. `levelsReady` is the top complete level of a
+ * download (with its status file), or null; `savedTile` says which single
+ * tiles are there without any complete level, as after saving while browsing.
+ */
+async function servePack(
+  page: Page,
+  levelsReady: () => number | null,
+  savedTile: (name: string) => boolean = () => false,
+) {
   const files = remotePack();
   const png = tilePng();
   const cors = { 'access-control-allow-origin': '*' };
@@ -315,7 +376,7 @@ async function servePack(page: Page, levelsReady: () => number | null) {
         },
       });
     }
-    if (name.startsWith('tiles/') && top !== null) {
+    if (name.startsWith('tiles/') && (top !== null || savedTile(name))) {
       return route.fulfill({ headers: { ...cors, 'content-type': 'image/png' }, body: png });
     }
     const body = files[name];
@@ -447,6 +508,82 @@ test('downloads map images from the notice, with pause, errors and progress', as
   await panel.getByRole('button', { name: 'Cancel download' }).click();
   await expect.poll(() => shell(page)).toBe('cancelled');
   await expect(panel).toHaveAttribute('data-state', 'choose');
+
+  expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+});
+
+test('shows map images saved while browsing a map page without a restart', async ({ page }) => {
+  const errors = collectErrors(page);
+  // Which tiles are on disk: none, then every second one, then all.
+  let saved: 'none' | 'some' | 'all' = 'none';
+  const every2nd = (name: string) => {
+    const [, x, y] = /\/(\d+)\/(\d+)\.png$/.exec(name) ?? [];
+    return (Number(x) + Number(y)) % 2 === 0;
+  };
+  await page.addInitScript(() => {
+    (window as unknown as { __listRemote: boolean }).__listRemote = true;
+  });
+  await page.addInitScript(installFakeShell);
+  await servePack(
+    page,
+    () => null,
+    (name) => saved === 'all' || (saved === 'some' && every2nd(name)),
+  );
+  await page.goto('./');
+  const notice = page.getByTestId('tile-notice');
+  await expect(notice).toContainText('Map image not installed');
+
+  // Open the map page with saving on, from the Maps dialog.
+  await page.getByTestId('maps-button').click();
+  const row = page.locator('[data-testid="pack-row"][data-pack="remote"]');
+  await row.getByText('Map page…').click();
+  await row.getByTestId('map-page-save').click();
+  await expect(page.getByTestId('maps-dialog')).toBeHidden();
+
+  const savedMore = () =>
+    page.evaluate(() => {
+      (
+        window as unknown as { __mockShell: { view: { revision: number } } }
+      ).__mockShell.view.revision += 1;
+    });
+  const tiles = () =>
+    page.locator('.atlas-tiles img').evaluateAll((images) => {
+      const all = images as HTMLImageElement[];
+      return {
+        shown: all.filter(
+          (img) =>
+            img.complete && img.naturalWidth > 0 && getComputedStyle(img).visibility === 'visible',
+        ).length,
+        broken: all.filter((img) => img.complete && img.naturalWidth === 0).length,
+        loading: all.filter((img) => !img.complete).length,
+      };
+    });
+
+  // The first images arrive: the map shows them although it had none when it started.
+  saved = 'some';
+  await savedMore();
+  await expect(notice).toHaveCount(0);
+  await expect.poll(async () => (await tiles()).shown).toBeGreaterThan(0);
+
+  // Zoomed in, every second image is still missing.
+  await page.locator('.leaflet-control-zoom-in').click();
+  await page.locator('.leaflet-control-zoom-in').click();
+  await page.locator('.leaflet-control-zoom-in').click();
+  await page.locator('.leaflet-control-zoom-in').click();
+  await expect.poll(async () => (await tiles()).loading).toBe(0);
+  const before = await tiles();
+  expect(before.broken).toBeGreaterThan(0);
+
+  // The rest arrive: the missing ones are asked for again and fill in.
+  saved = 'all';
+  await savedMore();
+  await expect
+    .poll(async () => {
+      const now = await tiles();
+      return now.broken + now.loading;
+    })
+    .toBe(0);
+  expect((await tiles()).shown).toBeGreaterThan(before.shown);
 
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
 });

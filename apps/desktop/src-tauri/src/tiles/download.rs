@@ -21,6 +21,23 @@
 //! cookies and no browser-like headers. Nothing else can be changed from the
 //! web app: it only starts, pauses, resumes and cancels jobs.
 //!
+//! Object stores that do not let anyone list their contents answer a
+//! request for an object that does not exist with 403 and a small XML
+//! error document, code `AccessDenied`, instead of 404. Packs whose grid is
+//! padded beyond the picture ask for such tiles at their edges. Such an
+//! answer counts as "not on the server", like a 404, but only once the same
+//! host has sent images of the same layer ([`is_store_no_such_object`] says
+//! which answers qualify): before that, it is a refusal like any other 403
+//! and stops the job at once. Those markers are kept in memory until the
+//! next image arrives (or the job ends), and when
+//! [`Settings::max_denied_in_a_row`] such answers come in a row without an
+//! image in between, the job stops as a refusal and the markers are
+//! dropped, so nothing is wrongly recorded as missing when the server has
+//! in fact started to refuse.
+//!
+//! Tiles whose parent (the tile one remote zoom up that covers them) is not
+//! on the server are not asked for: they are marked missing straight away.
+//!
 //! Every answer that is not a success goes to the activity log (see
 //! `activity.rs`) with the image's address, the attempt and what happens
 //! next. A refusal or a web page that stops the job is recorded in full
@@ -30,7 +47,7 @@
 //! job still stops at the first refusal, without retrying.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     path::PathBuf,
     sync::{
@@ -51,7 +68,7 @@ use super::{downscale::looks_like_image, store::TileStore};
 use crate::activity::{self, ActivityLog, Area};
 
 /// The User-Agent of every tile request.
-pub const USER_AGENT: &str = concat!("Atlas/", env!("CARGO_PKG_VERSION"), " (offline map viewer)");
+pub const USER_AGENT: &str = concat!("Atlas/", env!("CARGO_PKG_VERSION"));
 
 /// Response headers recorded with a refusal or a web page, when present.
 pub const RECORDED_HEADERS: &[&str] = &[
@@ -70,6 +87,23 @@ pub const BODY_EXCERPT_CHARS: usize = 300;
 /// At most this much of a refusal's body is read, to find its start.
 const BODY_READ_LIMIT: usize = 16 * 1024;
 
+/// "Access denied" answers in a row, with no image in between, after which
+/// the job stops as a refusal.
+///
+/// Above the lowest remote level, a tile is only asked for when its parent
+/// is not known to be missing, and the tiles of one parent are asked for
+/// together. Where a parent exists, at least one of its tiles does, so an
+/// honest store answers at most 3 + 3 denials between two images in the
+/// order of the requests (the last tiles of one group and the first of the
+/// next), and no more than 6 per parallel download in the order the answers
+/// arrive: 24 at the most of 4. The lowest remote level has nothing above
+/// it; its run is the padding left after the middle of the map, and that
+/// level is the smallest of a layer, a few tiles across (6 x 6 in the
+/// example that led to this, so at most 35 after the first image). 64 is
+/// above both, and a server that has started refusing gets at most 64
+/// requests more before the job stops.
+pub const DENIED_IN_A_ROW: u32 = 64;
+
 /// How the downloader paces itself. The app always uses the defaults; tests
 /// shorten the waits.
 #[derive(Clone, Debug)]
@@ -87,6 +121,9 @@ pub struct Settings {
     pub max_retry_after: Duration,
     /// Stop after this many tiles in a row have failed.
     pub max_consecutive_failures: u32,
+    /// Stop as a refusal after this many "access denied" answers of an
+    /// object store in a row, with no image in between.
+    pub max_denied_in_a_row: u32,
     pub timeout: Duration,
     /// Larger answers are not a map tile.
     pub max_tile_bytes: usize,
@@ -102,6 +139,7 @@ impl Default for Settings {
             max_backoff: Duration::from_secs(60),
             max_retry_after: Duration::from_secs(15 * 60),
             max_consecutive_failures: 10,
+            max_denied_in_a_row: DENIED_IN_A_ROW,
             timeout: Duration::from_secs(30),
             max_tile_bytes: 16 << 20,
         }
@@ -135,6 +173,9 @@ pub enum Stop {
     /// The server sent a web page instead of an image.
     WebPage,
     TooManyFailures(u32),
+    /// An object store answered "access denied" for this many images in a
+    /// row after it had sent images.
+    DeniedInARow(u32),
     Disk(String),
 }
 
@@ -155,6 +196,12 @@ impl Stop {
                 "{count} map images in a row could not be downloaded, so the download stopped. \
                  Check the internet connection and try again later."
             ),
+            Stop::DeniedInARow(count) => format!(
+                "The map image server answered \"access denied\" for {count} map images in a row \
+                 after it had sent images, so the download stopped: it may have started refusing \
+                 downloads. Atlas does not try to get around that. Those images are not counted \
+                 as missing, so a later download asks for them again."
+            ),
             Stop::Disk(error) => format!("Atlas could not save the map images: {error}"),
         }
     }
@@ -169,6 +216,13 @@ pub enum Outcome {
     Saved(u64),
     /// The server has no such tile (404 or 410); recorded on disk.
     Missing,
+    /// The server is an object store that answered "access denied" the way
+    /// it does for objects that do not exist, after it had sent images of
+    /// this layer: counted and recorded like `Missing`.
+    MissingDenied,
+    /// Not asked for: the tile above it is not on the server, so it cannot
+    /// be either. Recorded like `Missing`.
+    NotAsked,
     /// Gave up on this tile; the reason.
     Failed(String),
 }
@@ -227,6 +281,9 @@ pub struct Task {
     pub label: Option<Arc<str>>,
     /// Where the tile sits in its level, for the log.
     pub place: Option<Place>,
+    /// The tile one remote zoom up that covers this one, relative to the
+    /// overlay folder: when it is not on the server, this one is not asked for.
+    pub parent: Option<PathBuf>,
 }
 
 impl Task {
@@ -237,6 +294,7 @@ impl Task {
             path,
             label: None,
             place: None,
+            parent: None,
         }
     }
 }
@@ -265,12 +323,21 @@ pub struct StopDetail {
     pub body: Option<String>,
     /// When it happened (ISO 8601 UTC).
     pub at: String,
+    /// Set when the job stopped after this many "access denied" answers in
+    /// a row, this one the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denied_in_a_row: Option<u32>,
 }
 
 impl StopDetail {
     /// One log line with everything in it.
     pub fn log_line(&self) -> String {
-        let what = if self.kind == "refused" {
+        let what = if let Some(count) = self.denied_in_a_row {
+            format!(
+                "the server answered \"access denied\" (HTTP {}) for {count} images in a row after it had sent images, so it may have started refusing; the last was",
+                self.status
+            )
+        } else if self.kind == "refused" {
             format!("the server refused access (HTTP {})", self.status)
         } else {
             format!(
@@ -373,6 +440,79 @@ pub fn body_excerpt(content_type: &str, body: &[u8]) -> Option<String> {
 
 /// Called with each tile's outcome.
 pub type OnOutcome = Arc<dyn Fn(&Task, &Outcome) + Send + Sync>;
+
+/// Whether a 403 answer is an object store's "no such object": an XML
+/// error document whose code is `AccessDenied`, which stores that do not
+/// let anyone list their contents send for objects that do not exist.
+///
+/// Narrow on purpose: the type must be XML (`application/xml` or
+/// `text/xml`); the body, after an optional `<?xml …?>` declaration, must be
+/// exactly one `<Error>` element holding only simple elements of plain text
+/// (`<Name>text</Name>`, letters only in the name) separated by white space,
+/// with exactly one `<Code>`, and that `<Code>AccessDenied</Code>`. Anything
+/// else (another code, HTML, plain text, nested or other markup, a control
+/// character) is not.
+pub fn is_store_no_such_object(content_type: &str, body: &[u8]) -> bool {
+    let media = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if media != "application/xml" && media != "text/xml" {
+        return false;
+    }
+    let Ok(text) = std::str::from_utf8(body) else {
+        return false;
+    };
+    let mut rest = text.trim_start_matches('\u{feff}').trim();
+    if let Some(declaration) = rest.strip_prefix("<?xml") {
+        let Some(end) = declaration.find("?>") else {
+            return false;
+        };
+        if declaration[..end].contains(['<', '>']) {
+            return false;
+        }
+        rest = declaration[end + 2..].trim();
+    }
+    let Some(mut rest) = rest
+        .strip_prefix("<Error>")
+        .and_then(|inner| inner.strip_suffix("</Error>"))
+    else {
+        return false;
+    };
+    let mut codes = Vec::new();
+    loop {
+        rest = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+        if rest.is_empty() {
+            break;
+        }
+        let Some(open) = rest.strip_prefix('<') else {
+            return false;
+        };
+        let Some(name_end) = open.find('>') else {
+            return false;
+        };
+        let name = &open[..name_end];
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphabetic()) {
+            return false;
+        }
+        let after = &open[name_end + 1..];
+        let close = format!("</{name}>");
+        let Some(value_end) = after.find(&close) else {
+            return false;
+        };
+        let value = &after[..value_end];
+        if value.contains(['<', '>']) || value.chars().any(char::is_control) {
+            return false;
+        }
+        if name == "Code" {
+            codes.push(value);
+        }
+        rest = &after[value_end + close.len()..];
+    }
+    codes == ["AccessDenied"]
+}
 
 /// Seconds or an HTTP date, as `Retry-After` allows.
 pub fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
@@ -495,6 +635,16 @@ enum Attempt {
     Retry(String, Option<Duration>),
 }
 
+/// Why "access denied" from a host counts as "not on the server" for a
+/// layer: the host has sent images of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Proof {
+    /// In this download.
+    ThisDownload,
+    /// Images of the layer from an earlier download are on disk.
+    OnDisk,
+}
+
 /// Downloads tiles into a store. One downloader can run several batches
 /// one after another; pausing, cancelling and the 429 pause apply to all.
 pub struct Downloader {
@@ -515,6 +665,16 @@ pub struct Downloader {
     saved: AtomicU64,
     saved_by_host: Mutex<HashMap<String, u64>>,
     in_flight: AtomicUsize,
+    /// Layers (by index) and hosts whose "access denied" counts as missing.
+    proven: Mutex<HashMap<(usize, String), Proof>>,
+    /// Store denials since the last image.
+    denied_in_a_row: AtomicU32,
+    /// Tiles recorded as missing since the last image, on a store's denial
+    /// or below such a tile: written to disk with the next image, or when
+    /// the job ends, and dropped if the server turns out to be refusing.
+    pending: Mutex<HashSet<PathBuf>>,
+    /// Layers whose first store denial has been logged.
+    denial_logged: Mutex<HashSet<usize>>,
 }
 
 impl Downloader {
@@ -545,7 +705,74 @@ impl Downloader {
             saved: AtomicU64::new(0),
             saved_by_host: Mutex::new(HashMap::new()),
             in_flight: AtomicUsize::new(0),
+            proven: Mutex::new(HashMap::new()),
+            denied_in_a_row: AtomicU32::new(0),
+            pending: Mutex::new(HashSet::new()),
+            denial_logged: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Records that `host` sent images of layer `layer` in an earlier
+    /// download (they are on disk), so its store denials count as missing.
+    pub fn prove_from_disk(&self, layer: usize, host: String) {
+        self.proven
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry((layer, host))
+            .or_insert(Proof::OnDisk);
+    }
+
+    fn proof(&self, layer: usize, host: &str) -> Option<Proof> {
+        self.proven
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&(layer, host.to_owned()))
+            .copied()
+    }
+
+    /// Whether a tile is known to be missing: on disk or since the last image.
+    fn is_known_missing(&self, relative: &std::path::Path) -> bool {
+        self.store.is_missing(relative)
+            || self
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(relative)
+    }
+
+    /// Writes the missing markers kept since the last image. The app calls
+    /// it when a job has finished.
+    pub fn commit_pending(&self) -> Result<(), Stop> {
+        let pending =
+            std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner));
+        for path in pending {
+            self.store.mark_missing(&path).map_err(|error| {
+                self.log.error(
+                    Area::Download,
+                    format!(
+                        "Could not record {} as missing: {error}",
+                        self.store.overlay.join(&path).display()
+                    ),
+                );
+                Stop::Disk(error.to_string())
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Marks a tile whose parent is missing as missing too, without asking.
+    fn mark_not_asked(&self, task: &Task, parent: &std::path::Path) -> Result<(), Stop> {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        if pending.contains(parent) {
+            // Only as sure as its parent: kept or dropped with it.
+            pending.insert(task.path.clone());
+            return Ok(());
+        }
+        drop(pending);
+        self.store.mark_missing(&task.path).map_err(|error| {
+            self.disk_error(task, &error);
+            Stop::Disk(error.to_string())
+        })
     }
 
     /// Uses a pace the app can change while the job runs.
@@ -764,15 +991,33 @@ impl Downloader {
                 on_outcome(task, &Outcome::Skipped);
                 continue;
             }
+            if let Some(parent) = task
+                .parent
+                .as_deref()
+                .filter(|parent| self.is_known_missing(parent))
+            {
+                self.mark_not_asked(task, parent)?;
+                on_outcome(task, &Outcome::NotAsked);
+                continue;
+            }
             let outcome = self.fetch(task).await?;
             if matches!(outcome, Outcome::Saved(_)) {
+                let host = host_of(&task.url);
                 self.saved.fetch_add(1, Ordering::SeqCst);
                 *self
                     .saved_by_host
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .entry(host_of(&task.url))
+                    .entry(host.clone())
                     .or_default() += 1;
+                self.proven
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert((task.layer, host), Proof::ThisDownload);
+                // An image: the server still serves, so the denials before
+                // it were images that do not exist.
+                self.denied_in_a_row.store(0, Ordering::SeqCst);
+                self.commit_pending()?;
             }
             on_outcome(task, &outcome);
             let failures = if matches!(outcome, Outcome::Failed(_)) {
@@ -858,10 +1103,13 @@ impl Downloader {
                 })?;
                 Attempt::Done(Outcome::Missing)
             }
+            403 if self.proof(task.layer, &host_of(&task.url)).is_some() => {
+                return self.after_proof_denial(task, attempt, response).await;
+            }
             code @ (401 | 403) => {
                 // Stop the other workers at once; then record what came back.
                 self.set_stop(Stop::Refused(code));
-                self.record_stop("refused", task, attempt, response, None)
+                self.record_stop("refused", task, attempt, response, None, None)
                     .await;
                 return Err(Stop::Refused(code));
             }
@@ -921,6 +1169,87 @@ impl Downloader {
         );
     }
 
+    /// The start of an answer's body, at most `BODY_READ_LIMIT` bytes.
+    async fn read_start(&self, response: &mut reqwest::Response) -> Vec<u8> {
+        let mut body = Vec::new();
+        while body.len() < BODY_READ_LIMIT {
+            match self.unless_cancelled(response.chunk()).await {
+                Ok(Ok(Some(chunk))) => body.extend_from_slice(&chunk),
+                _ => break,
+            }
+        }
+        body.truncate(BODY_READ_LIMIT);
+        body
+    }
+
+    /// A 403 from a host that has sent images of this layer: an object
+    /// store's "no such object" counts as missing; anything else, or too
+    /// many in a row, stops the job as a refusal.
+    async fn after_proof_denial(
+        &self,
+        task: &Task,
+        attempt: u32,
+        mut response: reqwest::Response,
+    ) -> Result<Attempt, Stop> {
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let body = self.read_start(&mut response).await;
+        if let Some(stop) = self.stopped() {
+            return Err(stop);
+        }
+        if !is_store_no_such_object(&content_type, &body) {
+            self.set_stop(Stop::Refused(403));
+            self.record_stop("refused", task, attempt, response, Some(body), None)
+                .await;
+            return Err(Stop::Refused(403));
+        }
+        let denied = self.denied_in_a_row.fetch_add(1, Ordering::SeqCst) + 1;
+        if denied >= self.settings.max_denied_in_a_row {
+            let stop = Stop::DeniedInARow(denied);
+            self.set_stop(stop.clone());
+            let dropped =
+                std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner))
+                    .len();
+            self.record_stop("refused", task, attempt, response, Some(body), Some(denied))
+                .await;
+            self.log.warn(
+                Area::Download,
+                format!(
+                    "{dropped} images answered \"access denied\" (or below one) since the last image are not recorded as missing, so the next download asks for them again"
+                ),
+            );
+            return Err(stop);
+        }
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(task.path.clone());
+        let first = self
+            .denial_logged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(task.layer);
+        if first {
+            let host = host_of(&task.url);
+            let how = match self.proof(task.layer, &host) {
+                Some(Proof::OnDisk) => "images of this layer from it are on disk",
+                _ => "it has sent images of this layer in this download",
+            };
+            self.log.info(
+                Area::Download,
+                format!(
+                    "Counting {} as not on the server: the store answered \"access denied\" (HTTP 403 with an AccessDenied error document), as it does for images that do not exist, and {how}. Answers like this are counted in each level's summary; {} in a row with no image in between stop the download",
+                    task.url, self.settings.max_denied_in_a_row
+                ),
+            );
+        }
+        Ok(Attempt::Done(Outcome::MissingDenied))
+    }
+
     /// Records the answer that stops the job, in the log and for the panel.
     async fn record_stop(
         &self,
@@ -929,6 +1258,7 @@ impl Downloader {
         attempt: u32,
         mut response: reqwest::Response,
         body: Option<Vec<u8>>,
+        denied_in_a_row: Option<u32>,
     ) {
         let status = response.status().as_u16();
         let headers = recorded_headers(response.headers());
@@ -940,17 +1270,7 @@ impl Downloader {
             .to_ascii_lowercase();
         let body = match body {
             Some(body) => body,
-            None => {
-                let mut body = Vec::new();
-                while body.len() < BODY_READ_LIMIT {
-                    match self.unless_cancelled(response.chunk()).await {
-                        Ok(Ok(Some(chunk))) => body.extend_from_slice(&chunk),
-                        _ => break,
-                    }
-                }
-                body.truncate(BODY_READ_LIMIT);
-                body
-            }
+            None => self.read_start(&mut response).await,
         };
         let host = host_of(&task.url);
         let detail = StopDetail {
@@ -972,6 +1292,7 @@ impl Downloader {
             headers,
             body: body_excerpt(&content_type, &body),
             at: activity::timestamp(SystemTime::now()),
+            denied_in_a_row,
         };
         let line = detail.log_line();
         let first = {
@@ -1056,7 +1377,7 @@ impl Downloader {
             .is_some_and(|byte| *byte == b'<');
         if content_type.contains("html") || starts_like_markup {
             self.set_stop(Stop::WebPage);
-            self.record_stop("web-page", task, attempt, response, Some(body))
+            self.record_stop("web-page", task, attempt, response, Some(body), None)
                 .await;
             return Err(Stop::WebPage);
         }
@@ -1333,13 +1654,8 @@ pub mod tests {
         assert_eq!(settings.concurrency, 2);
         assert_eq!(settings.delay, Duration::from_millis(250));
         assert_eq!(settings.max_consecutive_failures, 10);
-        assert!(USER_AGENT.starts_with("Atlas/"));
-        assert!(USER_AGENT.ends_with(" (offline map viewer)"));
         assert!(!USER_AGENT.contains("Mozilla"));
-        assert_eq!(
-            USER_AGENT,
-            format!("Atlas/{} (offline map viewer)", env!("CARGO_PKG_VERSION"))
-        );
+        assert_eq!(USER_AGENT, format!("Atlas/{}", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
@@ -1729,6 +2045,8 @@ pub mod tests {
         ensure_crypto();
         let dir = TempDir::new("403-detail");
         let image = png();
+        // Not a store's plain "no such object" (a control character sits
+        // between its elements), so a refusal even after eight images.
         let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error>\r\n\t<Code>AccessDenied</Code>\u{7}<Message>Access Denied</Message></Error>";
         let server = MockServer::start(Arc::new(move |path, _| {
             let n: usize = path[3..path.len() - 4].parse().unwrap();
@@ -2044,5 +2362,394 @@ pub mod tests {
         assert_eq!(before, after, "no requests while paused");
         assert!(before < 12);
         assert_eq!(server.seen().len(), 12);
+    }
+
+    /// What an object store that lets nobody list it answers for an object
+    /// that does not exist (made up, in the usual shape).
+    pub fn no_such_object() -> Reply {
+        Reply {
+            body: b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>0000TEST</RequestId><HostId>dGVzdC1ob3N0</HostId></Error>".to_vec(),
+            ..Reply::status(403)
+        }
+        .header("Content-Type", "application/xml")
+        .header("Via", "1.1 test-cache")
+    }
+
+    /// Tasks named `/t/<name>.png`, each with the parent named after it.
+    fn named_tasks(server: &MockServer, names: &[(&str, Option<&str>)]) -> Arc<Vec<Task>> {
+        Arc::new(
+            names
+                .iter()
+                .map(|(name, parent)| Task {
+                    parent: parent.map(|parent| PathBuf::from(format!("t/{parent}.png"))),
+                    ..Task::new(
+                        0,
+                        server.url(&format!("/t/{name}.png")),
+                        PathBuf::from(format!("t/{name}.png")),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// Answers `/t/a*` with an image, `/t/d*` like a store without the
+    /// object, `/t/n*` with 404, and anything else with an image.
+    fn store_server() -> Handler {
+        let image = png();
+        Arc::new(move |path, _| {
+            if path.starts_with("/t/d") {
+                no_such_object()
+            } else if path.starts_with("/t/n") {
+                Reply::status(404)
+            } else {
+                Reply::image(image.clone())
+            }
+        })
+    }
+
+    fn logged_downloader(dir: &TempDir, settings: Settings) -> Run {
+        let mut run = downloader(dir, settings);
+        let downloader = Arc::into_inner(run.downloader).unwrap();
+        run.downloader =
+            Arc::new(downloader.with_log(ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.2")));
+        run
+    }
+
+    fn marked(dir: &TempDir, name: &str) -> bool {
+        dir.0.join(format!("overlay/t/{name}.png.404")).is_file()
+    }
+
+    #[test]
+    fn recognises_only_a_stores_no_such_object() {
+        let document: &[u8] = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>ABC123</RequestId><HostId>x/Y+z=</HostId></Error>";
+        assert!(is_store_no_such_object("application/xml", document));
+        assert!(is_store_no_such_object("text/xml; charset=utf-8", document));
+        assert!(is_store_no_such_object(
+            "application/xml",
+            b"<Error><Code>AccessDenied</Code></Error>"
+        ));
+        assert!(is_store_no_such_object(
+            "application/xml",
+            "\u{feff}  <Error>\r\n\t<Code>AccessDenied</Code>\n</Error>\n".as_bytes()
+        ));
+        let not: Vec<(&str, &[u8])> = vec![
+            ("text/plain", document),
+            ("text/html", document),
+            ("", document),
+            (
+                "application/xml",
+                &b"<Error><Code>NoSuchKey</Code></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>AllAccessDisabled</Code></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>AccessDenied</Code><Code>AccessDenied</Code></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Message>Access Denied</Message></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>AccessDenied</Code><Details><Reason>x</Reason></Details></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>AccessDenied</Code><!-- x --></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>AccessDenied</Code>\x07</Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>Access\x07Denied</Code></Error>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error><Code>AccessDenied</Code></Error><p></p>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<html><body><Error><Code>AccessDenied</Code></Error></body></html>"[..],
+            ),
+            (
+                "application/xml",
+                &b"<Error lang=\"en\"><Code>AccessDenied</Code></Error>"[..],
+            ),
+            ("application/xml", &b"Forbidden"[..]),
+            ("application/xml", &b""[..]),
+            (
+                "application/xml",
+                &b"\xff\xfe<Error><Code>AccessDenied</Code></Error>"[..],
+            ),
+        ];
+        for (content_type, body) in not {
+            assert!(
+                !is_store_no_such_object(content_type, body),
+                "{content_type}: {}",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_store_denial_before_any_image_stops_the_job() {
+        ensure_crypto();
+        let dir = TempDir::new("store-first");
+        let server = MockServer::start(Arc::new(|_, _| no_such_object())).await;
+        let run = downloader(&dir, fast());
+        let stop = run.run(tasks(&server, 20)).await.unwrap_err();
+        // Exactly as any refusal: the first answer stops the job.
+        assert_eq!(stop, Stop::Refused(403));
+        assert!(server.seen().len() <= 2);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(server.seen().len() <= 2);
+        let detail = run.downloader.stop_detail().unwrap();
+        assert_eq!((detail.kind.as_str(), detail.saved_before), ("refused", 0));
+        assert_eq!(detail.denied_in_a_row, None);
+        assert!(detail.body.unwrap().contains("<Code>AccessDenied</Code>"));
+        assert!(detail
+            .headers
+            .contains(&("via".to_owned(), "1.1 test-cache".to_owned())));
+        assert!(
+            !dir.0.join("overlay").exists(),
+            "nothing recorded as missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_denial_after_an_image_counts_as_missing() {
+        ensure_crypto();
+        let dir = TempDir::new("store-after");
+        let server = MockServer::start(store_server()).await;
+        let run = logged_downloader(
+            &dir,
+            Settings {
+                concurrency: 1,
+                ..fast()
+            },
+        );
+        let names = [
+            ("a0", None),
+            ("d1", None),
+            ("c1", Some("d1")),
+            ("a2", None),
+            ("n3", None),
+            ("d4", None),
+            ("c4", Some("d4")),
+        ];
+        run.run(named_tasks(&server, &names)).await.unwrap();
+        assert_eq!(
+            run.outcomes(),
+            vec![
+                Outcome::Saved(png().len() as u64),
+                Outcome::MissingDenied,
+                Outcome::NotAsked,
+                Outcome::Saved(png().len() as u64),
+                Outcome::Missing,
+                Outcome::MissingDenied,
+                Outcome::NotAsked,
+            ]
+        );
+        // Below a missing tile, nothing is asked for.
+        let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        assert_eq!(
+            asked,
+            [
+                "/t/a0.png",
+                "/t/d1.png",
+                "/t/a2.png",
+                "/t/n3.png",
+                "/t/d4.png"
+            ]
+        );
+        // The image after d1 proved the server still serves: d1 and the tile
+        // below it are recorded. d4 and its child wait for the job's end.
+        assert!(marked(&dir, "d1") && marked(&dir, "c1") && marked(&dir, "n3"));
+        assert!(!marked(&dir, "d4") && !marked(&dir, "c4"));
+        run.downloader.commit_pending().unwrap();
+        assert!(marked(&dir, "d4") && marked(&dir, "c4"));
+        assert!(!dir.0.join("overlay/t/d1.png").exists());
+
+        let log = logged(&dir);
+        assert!(log.contains(&format!(
+            "Counting {} as not on the server: the store answered \"access denied\"",
+            server.url("/t/d1.png")
+        )));
+        assert!(log.contains("it has sent images of this layer in this download"));
+
+        // A resumed job asks for nothing again.
+        let again = downloader(&dir, fast());
+        again.run(named_tasks(&server, &names)).await.unwrap();
+        assert_eq!(again.outcomes(), vec![Outcome::Skipped; names.len()]);
+        assert_eq!(server.seen().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn images_on_disk_prove_the_host() {
+        ensure_crypto();
+        let dir = TempDir::new("store-disk");
+        let server = MockServer::start(store_server()).await;
+        let run = logged_downloader(
+            &dir,
+            Settings {
+                concurrency: 1,
+                ..fast()
+            },
+        );
+        run.downloader.prove_from_disk(0, server.addr.to_string());
+        run.run(named_tasks(&server, &[("d0", None), ("c0", Some("d0"))]))
+            .await
+            .unwrap();
+        assert_eq!(
+            run.outcomes(),
+            vec![Outcome::MissingDenied, Outcome::NotAsked]
+        );
+        assert!(logged(&dir).contains("images of this layer from it are on disk"));
+        // Proof for one layer is not proof for another.
+        let other = downloader(&dir, fast());
+        other.downloader.prove_from_disk(1, server.addr.to_string());
+        assert_eq!(
+            other.run(named_tasks(&server, &[("d9", None)])).await,
+            Err(Stop::Refused(403))
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_after_too_many_denials_in_a_row_and_records_none_of_them() {
+        ensure_crypto();
+        let dir = TempDir::new("store-valve");
+        let server = MockServer::start(store_server()).await;
+        let run = logged_downloader(
+            &dir,
+            Settings {
+                concurrency: 1,
+                max_denied_in_a_row: 4,
+                ..fast()
+            },
+        );
+        let names = [
+            ("a0", None),
+            ("d1", None),
+            ("c1", Some("d1")),
+            ("d2", None),
+            ("d3", None),
+            ("d4", None),
+            ("d5", None),
+            ("d6", None),
+        ];
+        let stop = run.run(named_tasks(&server, &names)).await.unwrap_err();
+        assert_eq!(stop, Stop::DeniedInARow(4));
+        assert!(stop.message().contains("may have started refusing"));
+        assert!(stop.message().contains("not counted as missing"));
+        let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        assert_eq!(
+            asked,
+            [
+                "/t/a0.png",
+                "/t/d1.png",
+                "/t/d2.png",
+                "/t/d3.png",
+                "/t/d4.png"
+            ]
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(server.seen().len(), 5, "nothing after the stop");
+        // None of the run is recorded as missing.
+        for name in ["d1", "c1", "d2", "d3", "d4"] {
+            assert!(!marked(&dir, name), "{name} was recorded");
+        }
+        let detail = run.downloader.stop_detail().unwrap();
+        assert_eq!(detail.kind, "refused");
+        assert_eq!(detail.denied_in_a_row, Some(4));
+        assert_eq!(detail.url, server.url("/t/d4.png"));
+        assert_eq!(detail.saved_before, 1);
+        let log = logged(&dir);
+        assert!(log.contains(&format!(
+            "Stopped: the server answered \"access denied\" (HTTP 403) for 4 images in a row after it had sent images, so it may have started refusing; the last was for {}",
+            server.url("/t/d4.png")
+        )));
+        assert!(log.contains("4 images answered \"access denied\" (or below one) since the last image are not recorded as missing"));
+
+        // Next time they are all asked for again, the one below d1 too.
+        let image = png();
+        let serving = MockServer::start(Arc::new(move |_, _| Reply::image(image.clone()))).await;
+        let again = downloader(&dir, fast());
+        again.run(named_tasks(&serving, &names)).await.unwrap();
+        assert_eq!(serving.count("/t/c1.png"), 1);
+        assert_eq!(serving.seen().len(), names.len() - 1);
+    }
+
+    #[tokio::test]
+    async fn other_refusals_after_images_still_stop() {
+        ensure_crypto();
+        let plain = || {
+            Reply {
+                body: b"Forbidden".to_vec(),
+                ..Reply::status(403)
+            }
+            .header("Content-Type", "text/plain")
+        };
+        let page = || {
+            Reply {
+                body: b"<!doctype html><title>Denied</title>".to_vec(),
+                ..Reply::status(403)
+            }
+            .header("Content-Type", "text/html")
+        };
+        let other_code = || {
+            Reply {
+                body: b"<Error><Code>AllAccessDisabled</Code></Error>".to_vec(),
+                ..Reply::status(403)
+            }
+            .header("Content-Type", "application/xml")
+        };
+        let unauthorised = || Reply {
+            status: 401,
+            ..no_such_object()
+        };
+        /// A name, the refusing answer and the stop it leads to.
+        type Case = (&'static str, fn() -> Reply, Stop);
+        let cases: Vec<Case> = vec![
+            ("plain", plain, Stop::Refused(403)),
+            ("page", page, Stop::Refused(403)),
+            ("code", other_code, Stop::Refused(403)),
+            ("401", unauthorised, Stop::Refused(401)),
+        ];
+        for (name, reply, expected) in cases {
+            ensure_crypto();
+            let dir = TempDir::new(&format!("store-other-{name}"));
+            let image = png();
+            let server = MockServer::start(Arc::new(move |path, _| {
+                if path == "/t/r1.png" {
+                    reply()
+                } else {
+                    Reply::image(image.clone())
+                }
+            }))
+            .await;
+            let run = downloader(
+                &dir,
+                Settings {
+                    concurrency: 1,
+                    ..fast()
+                },
+            );
+            let names = [("a0", None), ("r1", None), ("a2", None)];
+            let stop = run.run(named_tasks(&server, &names)).await.unwrap_err();
+            assert_eq!(stop, expected, "{name}");
+            assert_eq!(server.seen().len(), 2, "{name}: nothing after the refusal");
+            let detail = run.downloader.stop_detail().unwrap();
+            assert_eq!(
+                (detail.saved_before, detail.denied_in_a_row),
+                (1, None),
+                "{name}"
+            );
+            assert!(!marked(&dir, "r1"), "{name}");
+        }
     }
 }

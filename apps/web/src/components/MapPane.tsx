@@ -64,17 +64,25 @@ export function MapPane() {
   const shownLayer = useRef<{ view: MapView; layerId: string; mapId: string } | null>(null);
   const [shownLayerId, setShownLayerId] = useState<string | null>(null);
   const tileRevision = useAtlas((s) => s.tileRevision);
+  const shownRevision = useRef(tileRevision);
   const offlineTiles = useAtlas((s) => s.downloads.packFolder !== null);
   useEffect(() => {
     if (!map || !pack || !layerId) return;
     const layer = pack.layers.get(layerId);
     if (!layer) return;
     let current = true;
+    // Map images were added on disk since the layer was last looked at.
+    const imagesAdded = shownRevision.current !== tileRevision;
+    shownRevision.current = tileRevision;
     const show = (nativeZoom: { min: number; max: number } | null) => {
       if (!current) return;
       const previous = shownLayer.current?.view === map ? shownLayer.current : null;
       const previousView = map.getView();
       map.setLayer({ ...layerViewSpec(pack, layer), ...(nativeZoom ? { nativeZoom } : {}) });
+      // The same layer with the same levels changes nothing above; single
+      // images may still be new (saved while browsing a map page), so look
+      // for the ones that were missing.
+      if (imagesAdded && previous?.layerId === layer.id) map.refreshTiles();
       if (previous?.mapId === layer.mapId && previous.layerId !== layer.id && previousView) {
         map.flyTo({ ...previousView.center, zoom: previousView.zoom }, { animate: false });
       }
