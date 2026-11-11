@@ -18,6 +18,7 @@ mod packs;
 #[cfg(feature = "downloads")]
 mod pageview;
 mod removal;
+pub mod saves;
 pub mod settings;
 pub mod tiles;
 
@@ -71,6 +72,16 @@ macro_rules! viewer_commands {
             commands::import_close,
             commands::import_report,
             commands::activity_log_read,
+            saves::saves_default_folder,
+            saves::saves_choose_folder,
+            saves::saves_choose_file,
+            saves::saves_list,
+            saves::saves_read,
+            saves::saves_screenshot,
+            saves::saves_watch,
+            saves::saves_watch_status,
+            saves::saves_unwatch,
+            saves::saves_report,
             $($more)*
         ]
     };
@@ -174,6 +185,7 @@ pub fn run() {
             #[cfg(not(feature = "downloads"))]
             let downloads = Downloads::new(registry, app_data);
             app.manage(downloads);
+            app.manage(Arc::new(saves::for_app(app)));
             app.manage(Arc::clone(&library));
             // Map images that version 0.2.0 downloaded move into the pack
             // folders in the background; the map shows them as they arrive.

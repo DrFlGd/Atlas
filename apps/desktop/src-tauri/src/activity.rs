@@ -10,7 +10,7 @@
 //! ```
 //!
 //! the time in UTC (ISO 8601, milliseconds), the app's name and version in
-//! brackets, an area (`app`, `download`, `import`, `library`, `migration`), a
+//! brackets, an area (`app`, `download`, `import`, `library`, `migration`, `saves`), a
 //! level (`info`, `warn`, `error`) and the message. Messages are one line:
 //! line breaks and tabs become spaces and other control characters are
 //! dropped.
@@ -25,8 +25,10 @@
 //! to stderr as before.
 //!
 //! The log holds no file contents, no progress and nothing from web storage
-//! or from the pages an import reads. Local paths and the addresses of map
-//! images are in it, since they are what is needed to tell what happened.
+//! or from the pages an import reads, and nothing from inside a game save
+//! (only its file name, version, world and how many places matched). Local
+//! paths and the addresses of map images are in it, since they are what is
+//! needed to tell what happened; for saves, only file and folder names.
 
 use std::{
     fmt,
@@ -61,6 +63,7 @@ pub enum Area {
     Import,
     Library,
     Migration,
+    Saves,
 }
 
 impl fmt::Display for Area {
@@ -71,6 +74,7 @@ impl fmt::Display for Area {
             Area::Import => "import",
             Area::Library => "library",
             Area::Migration => "migration",
+            Area::Saves => "saves",
         })
     }
 }

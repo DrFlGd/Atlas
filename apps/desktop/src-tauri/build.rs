@@ -23,6 +23,16 @@ const COMMANDS: &[&str] = &[
     "import_close",
     "import_report",
     "activity_log_read",
+    "saves_default_folder",
+    "saves_choose_folder",
+    "saves_choose_file",
+    "saves_list",
+    "saves_read",
+    "saves_screenshot",
+    "saves_watch",
+    "saves_watch_status",
+    "saves_unwatch",
+    "saves_report",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

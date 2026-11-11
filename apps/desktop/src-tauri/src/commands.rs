@@ -76,7 +76,7 @@ pub fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &Url) -> Result<(), 
         .map_err(|error| format!("Could not open the link: {error}"))
 }
 
-async fn chosen_path(
+pub(crate) async fn chosen_path(
     pick: impl FnOnce(Box<dyn FnOnce(Option<FilePath>) + Send>),
 ) -> Result<Option<PathBuf>, String> {
     let (send, receive) = oneshot::channel();
@@ -304,7 +304,7 @@ pub fn download_settings_set(
 /// downloads.
 type DownloadsState<'a> = State<'a, Downloads>;
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     task: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tokio::task::spawn_blocking(task)
