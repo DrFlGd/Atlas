@@ -706,17 +706,20 @@ pub async fn import_open<R: Runtime>(
 /// fragment, which may hold personal tokens.
 fn page_address(url: &str) -> String {
     match Url::parse(url.trim()) {
-        Ok(url) => {
-            format!(
-                "{}://{}{}",
-                url.scheme(),
-                url.host_str().unwrap_or_default(),
-                url.port()
-                    .map_or_else(String::new, |port| format!(":{port}"))
-            ) + url.path()
-        }
+        Ok(url) => site_address(&url) + url.path(),
         Err(_) => "an address that is not a URL".to_owned(),
     }
+}
+
+/// The site of a page for the log: `scheme://host[:port]`.
+fn site_address(url: &Url) -> String {
+    format!(
+        "{}://{}{}",
+        url.scheme(),
+        url.host_str().unwrap_or_default(),
+        url.port()
+            .map_or_else(String::new, |port| format!(":{port}"))
+    )
 }
 
 /// A short, clean piece of text from the web app, for the log.
@@ -791,7 +794,8 @@ pub async fn import_close<R: Runtime>(
     Ok(())
 }
 
-/// How an import ended, as the web app reports it for the activity log.
+/// How an import ended, or how a run of several went, as the web app
+/// reports it for the activity log.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
@@ -803,6 +807,10 @@ pub struct ImportReport {
     message: Option<String>,
     /// Locations of the map, maps and locations of the game, categories.
     counts: Option<ImportCounts>,
+    /// The pages of a run, when it starts. Only their hosts are logged.
+    pages: Option<Vec<String>>,
+    /// A run's figures.
+    run: Option<RunCounts>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -814,6 +822,12 @@ pub enum ImportOutcome {
     Failed,
     Cancelled,
     TimedOut,
+    /// Several addresses: the pages are opened one at a time.
+    RunStarted,
+    /// A run ended before its last page.
+    RunStopped,
+    /// A run ended; its summary.
+    RunFinished,
 }
 
 #[derive(Debug, Deserialize)]
@@ -823,6 +837,81 @@ pub struct ImportCounts {
     maps: u64,
     locations: u64,
     categories: u64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RunCounts {
+    added: u64,
+    refreshed: u64,
+    not_added: u64,
+    not_started: u64,
+    /// Addresses left out because no importer recognises them.
+    left_out: u64,
+}
+
+/// The sites of a run's pages, each once, as `scheme://host[:port]`: no
+/// paths and no queries.
+fn run_hosts(pages: &[String]) -> String {
+    const SHOWN: usize = 10;
+    let mut hosts: Vec<String> = Vec::new();
+    for page in pages {
+        let Ok(url) = Url::parse(page.trim()) else {
+            continue;
+        };
+        let host = site_address(&url);
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    let more = hosts.len().saturating_sub(SHOWN);
+    hosts.truncate(SHOWN);
+    let mut text = short(&hosts.join(", "));
+    if more > 0 {
+        text.push_str(&format!(" and {more} more"));
+    }
+    text
+}
+
+/// The line a report about a run of several pages becomes.
+fn run_report_line(report: &ImportReport) -> (bool, String) {
+    let counts = report.run.as_ref();
+    let left_out = counts.map_or(0, |counts| counts.left_out);
+    let left_out = if left_out > 0 {
+        format!(" | left out, as no importer recognises them: {left_out}")
+    } else {
+        String::new()
+    };
+    let figures = || {
+        counts.map_or_else(String::new, |c| {
+            format!(
+                "{} added, {} refreshed, {} not added, {} not started",
+                c.added, c.refreshed, c.not_added, c.not_started
+            )
+        })
+    };
+    match report.outcome {
+        ImportOutcome::RunStarted => {
+            let pages = report.pages.as_deref().unwrap_or_default();
+            (
+                false,
+                format!(
+                    "Adding {} maps, one page at a time, from {}{left_out}",
+                    pages.len(),
+                    run_hosts(pages)
+                ),
+            )
+        }
+        ImportOutcome::RunStopped => (
+            true,
+            format!(
+                "Stopped adding maps early: {} | {}",
+                report.message.as_deref().map_or_else(String::new, short),
+                figures()
+            ),
+        ),
+        _ => (false, format!("Adding maps ended: {}{left_out}", figures())),
+    }
 }
 
 /// The line an import report becomes.
@@ -838,6 +927,9 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
         ImportOutcome::Failed => "failed",
         ImportOutcome::Cancelled => "was cancelled",
         ImportOutcome::TimedOut => "timed out",
+        ImportOutcome::RunStarted | ImportOutcome::RunStopped | ImportOutcome::RunFinished => {
+            return run_report_line(report);
+        }
     };
     let mut line = format!("Import with importer {importer} {what}");
     if let Some(pack) = &report.pack_id {
@@ -935,6 +1027,52 @@ mod tests {
         assert!(warn);
         assert!(line.ends_with("timed out | The page did not provide the map data"));
         assert!(serde_json::from_str::<ImportReport>(r#"{"outcome":"pwned"}"#).is_err());
+    }
+
+    #[test]
+    fn logs_runs_with_hosts_only() {
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":null,"outcome":"run-started","run":{"leftOut":1},"pages":[
+                "https://maps.example.com/world/one?token=secret",
+                "https://maps.example.com/world/two#x",
+                "http://127.0.0.1:4432/demo-maps/a/b",
+                "not a url"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report),
+            (
+                false,
+                "Adding 4 maps, one page at a time, from https://maps.example.com, http://127.0.0.1:4432 | left out, as no importer recognises them: 1".to_owned()
+            )
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":null,"outcome":"run-stopped","message":"Two pages in a row\ndid not provide their map data.",
+                "run":{"added":1,"refreshed":0,"notAdded":2,"notStarted":3}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report),
+            (
+                true,
+                "Stopped adding maps early: Two pages in a row did not provide their map data. | 1 added, 0 refreshed, 2 not added, 3 not started".to_owned()
+            )
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":null,"outcome":"run-finished","run":{"added":4,"refreshed":1,"notAdded":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report),
+            (
+                false,
+                "Adding maps ended: 4 added, 1 refreshed, 1 not added, 0 not started".to_owned()
+            )
+        );
+        let many: Vec<String> = (0..12)
+            .map(|i| format!("https://site{i}.example.com/x"))
+            .collect();
+        assert!(run_hosts(&many).ends_with("https://site9.example.com and 2 more"));
     }
 
     #[test]

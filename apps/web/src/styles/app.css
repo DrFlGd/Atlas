@@ -1670,6 +1670,36 @@ label.tree-row:hover,
   overflow-wrap: anywhere;
 }
 
+.add-map-inputs {
+  align-items: flex-start;
+}
+
+.add-map-addresses {
+  height: auto;
+  padding: 6px 10px;
+  font: inherit;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.add-map-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding-left: 22px;
+}
+
+.add-map-run-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-map-row-problem {
+  color: var(--atlas-danger);
+}
+
 .add-map-figures {
   display: grid;
   grid-template-columns: max-content 1fr;

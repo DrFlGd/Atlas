@@ -32,7 +32,12 @@
  * after the site changed (refreshed in place); a game that comes with the
  * app; data in the wrong shape; cancelling; waiting too long; and
  * downloading the imported game's map images into its pack folder.
- * Launch 2: everything is still there; the imported pack is deleted.
+ * Launch 2: everything is still there; the imported pack is deleted. Then
+ * several addresses at once: two pages of one game, one of another, a game
+ * that comes with the app, a page whose data never appears, a repeat and an
+ * address no importer knows. The pages open one at a time, in the order
+ * given, with the pause between them, and the run goes on past the pages
+ * that were not added.
  */
 import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -203,6 +208,17 @@ async function importFrom(s, url) {
 
 /** @param {Session} s */
 const closeAddMap = (s) => s.click('[data-testid="add-map-dialog"] .dialog-head .icon-button');
+
+/** The activity log's lines of the area `import`, with their times in ms. */
+async function importLog() {
+  const text = await readFile(join(shared, 'logs', 'atlas.log'), 'utf8');
+  return text.split('\n').flatMap((line) => {
+    const match = /^(\S+) \[[^\]]+\] import (\w+): (.*)$/.exec(line);
+    return match
+      ? [{ at: Date.parse(match[1] ?? ''), level: match[2], message: match[3] ?? '' }]
+      : [];
+  });
+}
 
 const tiles = await startTileServer({ port });
 const site = await startDemoSite();
@@ -529,6 +545,127 @@ try {
   check(await exists(copied), 'packs in other folders are left alone');
   await s.waitFor(`document.querySelector('.topbar select')?.value !== 'test-valley'`);
   await s.screenshot('import-10-deleted');
+  await s.click('[data-testid="maps-dialog"] .dialog-head .icon-button');
+
+  // ---- Several addresses at once ---------------------------------------------
+  const runPages = [
+    page('test-coast', 'north-bay'),
+    page('demo', 'plain'),
+    page('test-coast', 'never'),
+    page('test-coast', 'south-cape'),
+    page('test-hills', 'high-pass'),
+  ];
+  const seenBefore = site.seen.length;
+  const logBefore = (await importLog()).length;
+  // Typed with commas and spaces: Enter would start the import.
+  await importFrom(
+    s,
+    [
+      runPages[0],
+      `${runPages[1]} https://example.com/maps/somewhere`,
+      runPages[2],
+      runPages[0],
+      runPages[3],
+      runPages[4],
+    ].join(', '),
+  );
+  await s.waitFor(`document.querySelector('[data-testid="add-map-check"]')`, {
+    what: 'the addresses that cannot be added',
+  });
+  const checkStates = await s.run(
+    `return [...document.querySelectorAll('[data-testid="add-map-check-address"]')].map((row) => row.dataset.state);`,
+  );
+  check(
+    JSON.stringify(checkStates) ===
+      JSON.stringify(['ready', 'ready', 'left-out', 'ready', 'ready', 'ready']),
+    `the address no importer knows is shown before anything opens, the repeat is gone (${checkStates})`,
+  );
+  check(site.seen.length === seenBefore, 'no page was opened before the run started');
+  await s.screenshot('import-11-check');
+  await s.click('[data-testid="add-map-confirm"]');
+  await s.waitFor(`document.querySelector('[data-testid="add-map-run-page"][data-state="open"]')`, {
+    what: 'the first page of the run to open',
+  });
+  await s.screenshot('import-12-run');
+  await s.waitFor(
+    `document.querySelector('[data-testid="add-map-dialog"]')?.dataset.run === 'finished'`,
+    { timeout: 180_000, what: 'the run to end' },
+  );
+  await s.screenshot('import-13-run-done');
+  const runStates = await s.run(
+    `return [...document.querySelectorAll('[data-testid="add-map-run-page"]')].map((row) => row.dataset.state + ': ' + row.textContent);`,
+  );
+  console.log(runStates.join('\n'));
+  check(
+    JSON.stringify(runStates.map((/** @type {string} */ r) => r.split(':')[0])) ===
+      JSON.stringify(['added', 'failed', 'failed', 'added', 'added']) &&
+      runStates[1].includes('comes with this app') &&
+      runStates[2].includes('within 30 seconds') &&
+      runStates[3].includes('Added “South Cape” to Test Coast') &&
+      runStates[4].includes('Added “High Pass” to Test Hills'),
+    'each page has its state, and the run went on past the pages that were not added',
+  );
+  check(
+    (await text(s, 'add-map-summary')) === '3 maps added, 2 not added.',
+    'the run ends with a summary',
+  );
+  check(
+    (await s.run(
+      `return document.querySelectorAll('[data-testid="add-map-download"]').length;`,
+    )) === 1,
+    'the map images are offered once, for the game shown',
+  );
+  check((await gameId(s)) === 'test-hills', 'the game of the last map added is shown');
+  const coastMaps = /** @type {any[]} */ (await readJson(join(maps, 'test-coast', 'maps.json')));
+  check(
+    coastMaps.map((m) => m.name).join(', ') === 'North Bay, South Cape' &&
+      (await exists(join(maps, 'test-hills', 'manifest.json'))) &&
+      !(await exists(join(maps, 'demo'))),
+    'two maps of one game went into one pack, the other game into its own',
+  );
+  const runRequests = site.seen
+    .slice(seenBefore)
+    .filter((r) => r.path.startsWith('/demo-maps/'))
+    .map((r) => `${site.url}${r.path.slice(1)}`);
+  check(
+    JSON.stringify(runRequests) === JSON.stringify(runPages),
+    `each page was asked for once, in the order given (${runRequests.join(' ')})`,
+  );
+  // The log: the run's start, each page opened only after the one before
+  // ended and the pause, and the summary.
+  const log = (await importLog()).slice(logBefore);
+  const start = log.findIndex((l) => l.message.startsWith('Adding 5 maps, one page at a time'));
+  check(
+    start >= 0 &&
+      log[start]?.message ===
+        `Adding 5 maps, one page at a time, from ${site.url.slice(0, -1)} | left out, as no importer recognises them: 1`,
+    'the activity log has the start of the run, with the site only',
+  );
+  let ended = /** @type {number | null} */ (null);
+  let opened = 0;
+  let pausesOk = true;
+  let oneAtATime = true;
+  for (const line of log) {
+    if (line.message.startsWith('Opened ')) {
+      if (ended === null && opened > 0) oneAtATime = false;
+      if (ended !== null && line.at - ended < 3000) pausesOk = false;
+      opened++;
+      ended = null;
+    } else if (/^Read the page's map data|timed out/.test(line.message)) {
+      ended = line.at;
+    }
+  }
+  check(opened === 5 && oneAtATime, 'one page at a time, five in all');
+  check(pausesOk, 'at least three seconds between one page ending and the next opening');
+  check(
+    log.some(
+      (l) =>
+        l.message ===
+        'Adding maps ended: 3 added, 0 refreshed, 2 not added, 0 not started | left out, as no importer recognises them: 1',
+    ),
+    'the activity log has the summary',
+  );
+  await closeAddMap(s);
   passed = true;
 } finally {
   await session?.close();
