@@ -1696,6 +1696,54 @@ label.tree-row:hover,
   gap: 2px;
 }
 
+.add-map-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.add-map-pick-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  align-items: baseline;
+}
+
+[data-testid='add-map-catalogue-list'] {
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.add-map-choice-game {
+  margin: 12px 0 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.add-map-choice-group {
+  flex-basis: 100%;
+  margin-top: 6px;
+  color: var(--atlas-muted);
+  font-weight: 600;
+}
+
+.add-map-browse {
+  margin-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+  padding-top: 8px;
+}
+
+.dialog-subhead-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
 .add-map-row-problem {
   color: var(--atlas-danger);
 }

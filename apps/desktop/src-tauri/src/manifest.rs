@@ -12,7 +12,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::packs::is_valid_pack_id;
@@ -29,7 +29,22 @@ pub struct ManifestHead {
     pub pack_version: String,
     /// The importer that made the pack, if the manifest names one.
     pub importer: Option<(String, String)>,
+    /// The web pages the pack was made from (`source.pages`), as far as
+    /// they are usable: web addresses, at most [`MAX_SOURCE_PAGES`].
+    pub pages: Vec<SourcePage>,
 }
+
+/// A page an imported pack was made from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcePage {
+    pub url: String,
+    pub map_id: Option<String>,
+}
+
+/// Recorded pages a listing carries at most, and the longest address kept.
+pub const MAX_SOURCE_PAGES: usize = 1000;
+const MAX_SOURCE_URL_CHARS: usize = 2048;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +60,29 @@ struct RawHead {
 #[derive(Deserialize)]
 struct RawSource {
     importer: Option<RawImporter>,
+    /// Read loosely: an entry that is not a usable page is left out.
+    #[serde(default)]
+    pages: Vec<Value>,
+}
+
+/// The usable pages of a manifest's `source.pages`.
+fn source_pages(pages: &[Value]) -> Vec<SourcePage> {
+    pages
+        .iter()
+        .filter_map(|page| {
+            let url = page.get("url")?.as_str()?;
+            let web = url.starts_with("https://") || url.starts_with("http://");
+            (web && url.len() <= MAX_SOURCE_URL_CHARS).then(|| SourcePage {
+                url: url.to_owned(),
+                map_id: page
+                    .get("mapId")
+                    .and_then(Value::as_str)
+                    .filter(|id| id.len() <= 200)
+                    .map(str::to_owned),
+            })
+        })
+        .take(MAX_SOURCE_PAGES)
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -80,6 +118,11 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
     if title.is_empty() || title.chars().count() > 200 {
         return Err("its title is empty or too long".to_owned());
     }
+    let pages = raw
+        .source
+        .as_ref()
+        .map(|source| source_pages(&source.pages))
+        .unwrap_or_default();
     Ok(ManifestHead {
         id: raw.game_id,
         title: title.to_owned(),
@@ -88,6 +131,7 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
             .source
             .and_then(|source| source.importer)
             .map(|importer| (importer.id, importer.title)),
+        pages,
     })
 }
 
@@ -318,6 +362,30 @@ mod tests {
         assert_eq!(head.id, "test-valley");
         assert_eq!(head.title, "Test Valley");
         assert_eq!(head.importer, Some(("demo-maps".into(), "Demo".into())));
+        assert!(head.pages.is_empty());
+        // Recorded pages: web addresses only; an odd entry does not spoil the rest.
+        fs::write(
+            dir.0.join(MANIFEST_FILE),
+            r#"{"schemaVersion":2,"gameId":"t","title":"T","packVersion":"1.0.0",
+               "source":{"importer":{"id":"demo-maps","title":"Demo"},"pages":[
+                 {"url":"https://maps.example.com/t/a","mapId":"t:map:a"},
+                 {"url":"file:///etc/passwd"},{"nope":1},7,
+                 {"url":"http://127.0.0.1:4432/demo-maps/t/b"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_head(&dir.0).unwrap().pages,
+            [
+                SourcePage {
+                    url: "https://maps.example.com/t/a".into(),
+                    map_id: Some("t:map:a".into())
+                },
+                SourcePage {
+                    url: "http://127.0.0.1:4432/demo-maps/t/b".into(),
+                    map_id: None
+                }
+            ]
+        );
         for bad in [
             r#"{"schemaVersion":3,"gameId":"a","title":"A","packVersion":"1.0.0"}"#,
             r#"{"schemaVersion":1,"gameId":"../a","title":"A","packVersion":"1.0.0"}"#,

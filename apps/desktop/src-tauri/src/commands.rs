@@ -7,7 +7,7 @@
 //! feature only, downloading map images. The web app reaches them through a
 //! small bridge that it only uses when it runs inside this shell.
 
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager as _, Runtime, State, Url, WebviewWindow};
@@ -674,8 +674,17 @@ pub async fn import_open<R: Runtime>(
     reader: String,
     importer_id: Option<String>,
     wait_seconds: Option<u32>,
+    purpose: Option<String>,
 ) -> Result<(), String> {
     *lock_poll() = None;
+    // Only for the log: what is read from the page. Nothing about the window changes.
+    let listing = matches!(purpose.as_deref(), Some("game" | "catalogue"));
+    *lock_listing() = listing;
+    let reading = match purpose.as_deref() {
+        Some("game") => " to read the list of the game's pages",
+        Some("catalogue") => " to read the list of games",
+        _ => "",
+    };
     let importer = importer_id
         .as_deref()
         .map(short)
@@ -688,7 +697,9 @@ pub async fn import_open<R: Runtime>(
         Ok(()) => {
             activity::info(
                 Area::Import,
-                format!("Opened {page} in the import window for importer {importer}{wait}"),
+                format!(
+                    "Opened {page} in the import window{reading} for importer {importer}{wait}"
+                ),
             );
             Ok(())
         }
@@ -740,6 +751,15 @@ fn lock_poll() -> std::sync::MutexGuard<'static, Option<&'static str>> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Whether the open page is read for a list (a game's pages, or games)
+/// rather than map data, for the wording of the log.
+fn lock_listing() -> std::sync::MutexGuard<'static, bool> {
+    static LISTING: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+    LISTING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Asks the open page for its data once.
 #[tauri::command]
 pub async fn import_poll<R: Runtime>(
@@ -747,6 +767,7 @@ pub async fn import_poll<R: Runtime>(
     imports: State<'_, Imports>,
 ) -> Result<PollResult, String> {
     let result = imports.poll(&app).await;
+    let what = if *lock_listing() { "list" } else { "map data" };
     // What the page holds is never logged; only what the app saw happen.
     let (state, line) = match &result {
         PollResult::Waiting { loading: true, .. } => ("loading", None),
@@ -754,21 +775,21 @@ pub async fn import_poll<R: Runtime>(
             "waiting",
             Some((
                 false,
-                "The page has loaded; waiting for its map data".to_owned(),
+                format!("The page has loaded; waiting for its {what}"),
             )),
         ),
         PollResult::Ready { data } => (
             "ready",
             Some((
                 false,
-                format!("Read the page's map data ({} characters)", data.len()),
+                format!("Read the page's {what} ({} characters)", data.len()),
             )),
         ),
         PollResult::Closed => (
             "closed",
             Some((
                 true,
-                "The page window was closed before the map data appeared".to_owned(),
+                format!("The page window was closed before the {what} appeared"),
             )),
         ),
         PollResult::Failed { message } => ("failed", Some((true, short(message)))),
@@ -811,6 +832,15 @@ pub struct ImportReport {
     pages: Option<Vec<String>>,
     /// A run's figures.
     run: Option<RunCounts>,
+    /// A run that updates games the person has, rather than adding maps.
+    #[serde(default)]
+    update: bool,
+    /// What a game page listed: its pages by kind.
+    kinds: Option<BTreeMap<String, u64>>,
+    /// Of a game page's map pages, or a list's games: how many are already added.
+    already_added: Option<u64>,
+    /// Games: in a list of games, or to update.
+    games: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -828,6 +858,14 @@ pub enum ImportOutcome {
     RunStopped,
     /// A run ended; its summary.
     RunFinished,
+    /// A game page was read: its pages by kind.
+    GameListed,
+    /// The list of games was read.
+    CatalogueListed,
+    /// A game page or the list of games gave no usable list.
+    ListingFailed,
+    /// Reading game pages to update games started.
+    UpdateStarted,
 }
 
 #[derive(Debug, Deserialize)]
@@ -873,6 +911,78 @@ fn run_hosts(pages: &[String]) -> String {
     text
 }
 
+/// The site of the one page a report is about, as `scheme://host[:port]`.
+fn report_host(report: &ImportReport) -> String {
+    let pages = report.pages.as_deref().unwrap_or_default();
+    if pages.is_empty() {
+        "an unknown site".to_owned()
+    } else {
+        run_hosts(&pages[..1])
+    }
+}
+
+/// The line a report about reading a list (a game's pages, or games) becomes.
+fn listing_report_line(report: &ImportReport) -> (bool, String) {
+    let host = report_host(report);
+    let added = report.already_added.unwrap_or(0);
+    match report.outcome {
+        ImportOutcome::GameListed => {
+            let mut kinds: Vec<(String, u64)> = report
+                .kinds
+                .iter()
+                .flatten()
+                .take(20)
+                .map(|(kind, count)| (short(kind), *count))
+                .collect();
+            let maps = kinds
+                .iter()
+                .position(|(kind, _)| kind == "map")
+                .map_or(0, |at| kinds.remove(at).1);
+            let others = kinds
+                .iter()
+                .map(|(kind, count)| format!(", {count} of kind {kind}"))
+                .collect::<String>();
+            (
+                false,
+                format!(
+                    "Read the list of a game's pages from {host}: {maps} map pages ({added} already added, {} new){others}",
+                    maps.saturating_sub(added)
+                ),
+            )
+        }
+        ImportOutcome::CatalogueListed => (
+            false,
+            format!(
+                "Read the list of games from {host}: {} games ({added} already in the maps folder)",
+                report.games.unwrap_or(0)
+            ),
+        ),
+        ImportOutcome::UpdateStarted => {
+            let pages = report.pages.as_deref().unwrap_or_default();
+            (
+                false,
+                format!(
+                    "Updating {} games from their site: reading {} game pages, one at a time, from {}",
+                    report.games.unwrap_or(0),
+                    pages.len(),
+                    if pages.is_empty() {
+                        "no site (only the pages they were made from)".to_owned()
+                    } else {
+                        run_hosts(pages)
+                    }
+                ),
+            )
+        }
+        _ => (
+            true,
+            format!(
+                "Could not read a list of pages from {host}: {}",
+                report.message.as_deref().map_or_else(String::new, short)
+            ),
+        ),
+    }
+}
+
 /// The line a report about a run of several pages becomes.
 fn run_report_line(report: &ImportReport) -> (bool, String) {
     let counts = report.run.as_ref();
@@ -896,7 +1006,8 @@ fn run_report_line(report: &ImportReport) -> (bool, String) {
             (
                 false,
                 format!(
-                    "Adding {} maps, one page at a time, from {}{left_out}",
+                    "{} {} maps, one page at a time, from {}{left_out}",
+                    if report.update { "Updating" } else { "Adding" },
                     pages.len(),
                     run_hosts(pages)
                 ),
@@ -905,12 +1016,20 @@ fn run_report_line(report: &ImportReport) -> (bool, String) {
         ImportOutcome::RunStopped => (
             true,
             format!(
-                "Stopped adding maps early: {} | {}",
+                "Stopped {} maps early: {} | {}",
+                if report.update { "updating" } else { "adding" },
                 report.message.as_deref().map_or_else(String::new, short),
                 figures()
             ),
         ),
-        _ => (false, format!("Adding maps ended: {}{left_out}", figures())),
+        _ => (
+            false,
+            format!(
+                "{} maps ended: {}{left_out}",
+                if report.update { "Updating" } else { "Adding" },
+                figures()
+            ),
+        ),
     }
 }
 
@@ -930,6 +1049,10 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
         ImportOutcome::RunStarted | ImportOutcome::RunStopped | ImportOutcome::RunFinished => {
             return run_report_line(report);
         }
+        ImportOutcome::GameListed
+        | ImportOutcome::CatalogueListed
+        | ImportOutcome::ListingFailed
+        | ImportOutcome::UpdateStarted => return listing_report_line(report),
     };
     let mut line = format!("Import with importer {importer} {what}");
     if let Some(pack) = &report.pack_id {
@@ -1027,6 +1150,57 @@ mod tests {
         assert!(warn);
         assert!(line.ends_with("timed out | The page did not provide the map data"));
         assert!(serde_json::from_str::<ImportReport>(r#"{"outcome":"pwned"}"#).is_err());
+    }
+
+    #[test]
+    fn logs_game_pages_and_updates_with_hosts_and_kinds_only() {
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"game-listed","pages":["https://maps.example.com/game?token=secret"],
+                "kinds":{"map":3,"guides":17,"checklist\nx":1},"alreadyAdded":2}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report),
+            (
+                false,
+                "Read the list of a game's pages from https://maps.example.com: 3 map pages (2 already added, 1 new), 1 of kind checklist x, 17 of kind guides".to_owned()
+            )
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"catalogue-listed","pages":["https://maps.example.com/"],"games":274,"alreadyAdded":3}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report).1,
+            "Read the list of games from https://maps.example.com: 274 games (3 already in the maps folder)"
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":null,"outcome":"update-started","games":2,"pages":["https://maps.example.com/a","https://maps.example.com/b/c"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report).1,
+            "Updating 2 games from their site: reading 2 game pages, one at a time, from https://maps.example.com"
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":null,"outcome":"run-started","update":true,"pages":["https://maps.example.com/a"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report).1,
+            "Updating 1 maps, one page at a time, from https://maps.example.com"
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"listing-failed","pages":["https://maps.example.com/a"],"message":"No list."}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_report_line(&report),
+            (
+                true,
+                "Could not read a list of pages from https://maps.example.com: No list.".to_owned()
+            )
+        );
     }
 
     #[test]

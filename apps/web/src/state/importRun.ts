@@ -105,7 +105,18 @@ export type RunPageState =
   | { kind: 'open'; startedAt: number; now: number; waitSeconds: number; loading: boolean }
   /** The page data is being turned into a map. */
   | { kind: 'converting' }
-  | { kind: 'added'; game: string; map: string; packId: string; mapId: string; refreshed: boolean }
+  | {
+      kind: 'added';
+      game: string;
+      map: string;
+      packId: string;
+      mapId?: string;
+      refreshed: boolean;
+      /** The page became a checklist: its items, and rows left out. */
+      checklist?: { items: number; leftOut: number };
+    }
+  /** A page that lists pages (a game page) or games was read. */
+  | { kind: 'listed'; game: string; count: number; other: number }
   | { kind: 'failed'; message: string; cause: FailureCause }
   /** The run stopped before this page. */
   | { kind: 'not-started' };
@@ -139,7 +150,18 @@ export interface RunState {
 
 /** How one page ended, as `importing.ts` reports it. */
 export type PageOutcome =
-  | { kind: 'added'; game: string; map: string; packId: string; mapId: string; refreshed: boolean }
+  | {
+      kind: 'added';
+      game: string;
+      map: string;
+      packId: string;
+      mapId?: string;
+      refreshed: boolean;
+      /** The page became a checklist: its items, and rows left out. */
+      checklist?: { items: number; leftOut: number };
+    }
+  /** A list was read: `count` pages (or games) the app can add, `other` it cannot yet. */
+  | { kind: 'listed'; game: string; count: number; other: number }
   /** The data could not be used or saved; the run goes on. */
   | { kind: 'failed'; message: string }
   /** No data within the wait, or the window did not open; the run goes on, unless twice in a row. */
@@ -187,6 +209,8 @@ const pageState = (outcome: PageOutcome): RunPageState => {
       const { kind: _, ...added } = outcome;
       return { kind: 'added', ...added };
     }
+    case 'listed':
+      return { ...outcome };
     case 'failed':
       return { kind: 'failed', message: outcome.message, cause: 'other' };
     case 'no-data':
@@ -240,7 +264,10 @@ export function runCounts(run: RunState): RunCounts {
   return counts;
 }
 
-/** "4 maps added, 1 refreshed, 1 not added": the run in one line, without the full stop. */
+/**
+ * "4 maps added, 1 refreshed, 1 not added": the run in one line, without the
+ * full stop ("pages" when checklists were added too).
+ */
 export function runSummary(run: RunState): string {
   const counts = runCounts(run);
   const parts: [number, string][] = [
@@ -250,9 +277,13 @@ export function runSummary(run: RunState): string {
     [counts.notStarted, 'not started'],
   ];
   const shown = parts.filter(([count]) => count > 0);
+  // A run that added checklists as well as maps counts pages.
+  const noun = run.pages.some(({ state }) => state.kind === 'added' && state.checklist)
+    ? ['page', 'pages']
+    : ['map', 'maps'];
   return shown
     .map(([count, what], i) =>
-      i === 0 ? `${count} ${count === 1 ? 'map' : 'maps'} ${what}` : `${count} ${what}`,
+      i === 0 ? `${count} ${count === 1 ? noun[0] : noun[1]} ${what}` : `${count} ${what}`,
     )
     .join(', ');
 }
@@ -299,6 +330,8 @@ export class ImportRun {
     leftOut: number,
     private readonly driver: RunDriver,
     private readonly pauseMs = RUN_PAUSE_MS,
+    /** A pause before the first page too, when a page closed just before the run. */
+    private readonly firstPauseMs = 0,
   ) {
     this.state = newRun(urls, leftOut);
   }
@@ -323,12 +356,13 @@ export class ImportRun {
 
   async run(): Promise<RunState> {
     for (let index = 0; index < this.state.pages.length; index++) {
-      if (index > 0) {
+      const pause = index > 0 ? this.pauseMs : this.firstPauseMs;
+      if (index > 0 || pause > 0) {
         this.set({ ...this.state, pausing: true });
         if (!this.cancelled && !this.state.stopRequested) {
           await new Promise<void>((resolve) => {
             this.wake = resolve;
-            void this.driver.sleep(this.pauseMs).then(() => {
+            void this.driver.sleep(pause).then(() => {
               resolve();
             });
           });

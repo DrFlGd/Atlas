@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { numberFormat } from '../state/derived';
 import { downloadsOffered } from '../features';
 import { setDownloadPanelOpen } from '../state/downloads';
 import {
   STILL_WAITING_SECONDS,
+  browseGames,
   cancelImport,
+  catalogueImporters,
   confirmChecked,
   resetImport,
   setAddMapOpen,
@@ -24,12 +26,14 @@ import {
 } from '../state/importRun';
 import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
+import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { UiIcon } from './icons';
 
 /**
  * "Add a map", in desktop builds that include importers: paste the address
  * of a map page, or several, wait while each page loads in its own window,
- * and see what was added.
+ * and see what was added. A game's address, or a site's list of games,
+ * first lists what there is to choose from (see `GameChoice.tsx`).
  */
 export function AddMapDialog() {
   const open = useAtlas((s) => s.addMapOpen);
@@ -45,7 +49,8 @@ export function AddMapDialog() {
   }, [open]);
 
   const busy = phase.kind === 'waiting' || phase.kind === 'converting';
-  const running = phase.kind === 'run' && phase.run.status === 'running';
+  const running =
+    (phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running';
   const close = () => {
     // Closing while waiting stops the import, and a run; while converting it finishes.
     if (phase.kind === 'waiting' || running) void cancelImport();
@@ -59,7 +64,7 @@ export function AddMapDialog() {
       aria-labelledby={titleId}
       data-testid="add-map-dialog"
       data-phase={phase.kind}
-      data-run={phase.kind === 'run' ? phase.run.status : undefined}
+      data-run={phase.kind === 'run' || phase.kind === 'listing' ? phase.run.status : undefined}
       onCancel={(event) => {
         if (phase.kind === 'converting') event.preventDefault();
       }}
@@ -85,7 +90,15 @@ export function AddMapDialog() {
           {phase.kind === 'check' ? <Check phase={phase} /> : null}
           {busy ? <Progress phase={phase} /> : null}
           {phase.kind === 'done' ? <Result phase={phase} /> : null}
-          {phase.kind === 'run' ? <Run run={phase.run} shownPackId={phase.shownPackId} /> : null}
+          {phase.kind === 'run' ? (
+            <Run run={phase.run} shownPackId={phase.shownPackId} update={phase.update} />
+          ) : null}
+          {phase.kind === 'listing' ? (
+            <Listing run={phase.run} purpose={phase.purpose} PageState={PageState} />
+          ) : null}
+          {phase.kind === 'catalogue' ? <CataloguePick pick={phase.pick} /> : null}
+          {phase.kind === 'update-games' ? <UpdateGames phase={phase} /> : null}
+          {phase.kind === 'choose' ? <ChoosePages choice={phase.choice} /> : null}
         </div>
       ) : null}
     </dialog>
@@ -115,6 +128,10 @@ function AddressForm({ failure }: { failure: string | null }) {
         page shows it, and then closes the window. To add several maps, paste one address per line
         (up to {MAX_RUN_ADDRESSES}): this app opens the pages one at a time, in that order, with a
         short pause between them. When typing, Shift+Enter starts a new line and Enter adds.
+      </p>
+      <p className="muted small">
+        You can also paste the address of a game’s own page, where the site lists its maps: this app
+        reads that page and lists the maps for you to choose from.
       </p>
       <label htmlFor={inputId} className="field-label">
         Map page addresses
@@ -158,6 +175,7 @@ function AddressForm({ failure }: { failure: string | null }) {
           {failure}
         </p>
       ) : null}
+      <BrowseGames />
       {importers.length > 0 ? (
         <div className="muted small">
           <p>This app can add maps from:</p>
@@ -172,6 +190,47 @@ function AddressForm({ failure }: { failure: string | null }) {
         </div>
       ) : null}
     </form>
+  );
+}
+
+/** "Browse games…": one button for each importer that offers a list of games. */
+function BrowseGames() {
+  const [entries, setEntries] = useState<Awaited<ReturnType<typeof catalogueImporters>>>([]);
+  useEffect(() => {
+    let live = true;
+    catalogueImporters().then(
+      (found) => {
+        if (live) setEntries(found);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (entries.length === 0) return null;
+  return (
+    <div className="add-map-browse" data-testid="add-map-browse">
+      <p className="muted small">
+        Or choose games from a site’s list of games. This app opens the list in a window of its own,
+        and you tick the games to add.
+      </p>
+      <div className="row-actions wrap">
+        {entries.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            className="button"
+            data-testid="add-map-browse-games"
+            data-importer={entry.id}
+            title={entry.address}
+            onClick={() => void browseGames(entry.id)}
+          >
+            {entry.label}…
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -307,25 +366,11 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
               : `Added ${summary.map} to ${summary.game}.`}
         </strong>
       </p>
-      <dl className="add-map-figures">
-        <dt>Game</dt>
-        <dd data-testid="add-map-game">{summary.game}</dd>
-        <dt>Map</dt>
-        <dd>{summary.map}</dd>
-        <dt>Locations on this map</dt>
-        <dd data-testid="add-map-locations">{numberFormat.format(summary.mapLocations)}</dd>
-        <dt>Maps in this game</dt>
-        <dd>{numberFormat.format(summary.maps)}</dd>
-        <dt>Locations in this game</dt>
-        <dd>{numberFormat.format(summary.locations)}</dd>
-        <dt>Categories</dt>
-        <dd>{numberFormat.format(summary.categories)}</dd>
-      </dl>
-      <p className="muted small">
-        {__ATLAS_DOWNLOADS__ && downloadable
-          ? 'Its map images are not downloaded yet, so the markers show on a blank map until you download them.'
-          : 'Its map images are not installed, so the markers show on a plain background.'}
-      </p>
+      {summary.checklist && !phase.rebuilt ? (
+        <ChecklistResult checklist={summary.checklist} />
+      ) : (
+        <MapFigures phase={phase} downloadable={downloadable} />
+      )}
       <div className="row-actions wrap">
         {__ATLAS_DOWNLOADS__ && downloadable ? (
           <button
@@ -361,6 +406,54 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
         </button>
       </div>
     </section>
+  );
+}
+
+/** The figures of a map that was added. */
+function MapFigures({
+  phase,
+  downloadable,
+}: {
+  phase: Extract<ImportPhase, { kind: 'done' }>;
+  downloadable: boolean;
+}) {
+  const { summary } = phase;
+  return (
+    <>
+      <dl className="add-map-figures">
+        <dt>Game</dt>
+        <dd data-testid="add-map-game">{summary.game}</dd>
+        <dt>Map</dt>
+        <dd>{summary.map}</dd>
+        <dt>Locations on this map</dt>
+        <dd data-testid="add-map-locations">{numberFormat.format(summary.mapLocations)}</dd>
+        <dt>Maps in this game</dt>
+        <dd>{numberFormat.format(summary.maps)}</dd>
+        <dt>Locations in this game</dt>
+        <dd>{numberFormat.format(summary.locations)}</dd>
+        <dt>Categories</dt>
+        <dd>{numberFormat.format(summary.categories)}</dd>
+      </dl>
+      <p className="muted small">
+        {__ATLAS_DOWNLOADS__ && downloadable
+          ? 'Its map images are not downloaded yet, so the markers show on a blank map until you download them.'
+          : 'Its map images are not installed, so the markers show on a plain background.'}
+      </p>
+    </>
+  );
+}
+
+/** What a checklist page became. */
+function ChecklistResult({ checklist }: { checklist: { items: number; leftOut: number } }) {
+  return (
+    <p data-testid="add-map-checklist">
+      {checklist.items === 1
+        ? 'It has 1 item'
+        : `It has ${numberFormat.format(checklist.items)} items`}
+      {checklist.leftOut > 0
+        ? `. ${checklist.leftOut === 1 ? '1 row was' : `${numberFormat.format(checklist.leftOut)} rows were`} left out, because their places are on maps that are not in this app yet; they are added when you add those maps.`
+        : ', each one a place on the maps of this game.'}
+    </p>
   );
 }
 
@@ -406,7 +499,24 @@ function PageState({ state }: { state: RunPageState }) {
           {state.refreshed ? 'Refreshed' : 'Added'} “{state.map}”{' '}
           <span className="muted">
             {state.refreshed ? 'in' : 'to'} {state.game}
+            {state.checklist
+              ? `, a checklist of ${state.checklist.items} ${state.checklist.items === 1 ? 'item' : 'items'}${
+                  state.checklist.leftOut > 0
+                    ? ` (${state.checklist.leftOut} left out until their maps are added)`
+                    : ''
+                }`
+              : ''}
           </span>
+        </span>
+      );
+    case 'listed':
+      return (
+        <span className="small" data-testid="add-map-listed">
+          {state.game
+            ? `Read the list of “${state.game}”: ${state.count} ${state.count === 1 ? 'page' : 'pages'} this app can add${
+                state.other > 0 ? `, ${state.other} it cannot add yet` : ''
+              }.`
+            : `Read the list: ${numberFormat.format(state.count)} ${state.count === 1 ? 'game' : 'games'}.`}
         </span>
       );
     case 'failed':
@@ -417,7 +527,15 @@ function PageState({ state }: { state: RunPageState }) {
 }
 
 /** Several pages, one after another: each with its state, then a summary. */
-function Run({ run, shownPackId }: { run: RunState; shownPackId: string | null }) {
+function Run({
+  run,
+  shownPackId,
+  update,
+}: {
+  run: RunState;
+  shownPackId: string | null;
+  update: boolean;
+}) {
   const running = run.status === 'running';
   // The games maps were added to, by pack id.
   const games = new Map(
@@ -447,7 +565,9 @@ function Run({ run, shownPackId }: { run: RunState; shownPackId: string | null }
       {running ? (
         <p role="status">
           <strong>
-            Adding {run.pages.length} maps, one page at a time: {done} of {run.pages.length} done.
+            {update ? 'Updating' : 'Adding'} {run.pages.length}{' '}
+            {run.pages.length === 1 ? 'page' : 'pages'}, one page at a time: {done} of{' '}
+            {run.pages.length} done.
           </strong>{' '}
           {run.pausing ? <span className="muted">Opening the next page in a moment.</span> : null}
         </p>
