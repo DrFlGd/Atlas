@@ -370,6 +370,9 @@ function JobView({
           {job.missing
             ? `, ${numberFormat.format(job.missing)} not on the server (empty areas)`
             : ''}
+          {job.notAsked
+            ? `, ${numberFormat.format(job.notAsked)} not asked for, because the area around them is not on the server`
+            : ''}
           {job.bytes ? `, ${formatBytes(job.bytes)}` : ''}.{job.reason ? ` ${job.reason}` : ''}
         </p>
       ) : null}

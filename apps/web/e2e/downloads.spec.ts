@@ -134,6 +134,7 @@ function installFakeShell() {
     total: number;
     saved: number;
     missing: number;
+    notAsked: number;
     failed: number;
     bytes: number;
     tilesPerSecond: number;
@@ -225,6 +226,7 @@ function installFakeShell() {
           total: island + cave,
           saved: 0,
           missing: 0,
+          notAsked: 0,
           failed: 0,
           bytes: 0,
           tilesPerSecond: 0,

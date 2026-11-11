@@ -54,6 +54,8 @@ export interface StopDetail {
   /** The start of a text body. */
   body: string | null;
   at: string;
+  /** Set when the job stopped after this many "access denied" answers in a row. */
+  deniedInARow?: number;
 }
 
 export interface MapProgress {
@@ -81,7 +83,10 @@ export interface DownloadSnapshot {
   done: number;
   total: number;
   saved: number;
+  /** Not on the server (404, or an object store's "access denied" for images that do not exist). */
   missing: number;
+  /** Not asked for, because the area above them is not on the server. */
+  notAsked: number;
   failed: number;
   bytes: number;
   tilesPerSecond: number;

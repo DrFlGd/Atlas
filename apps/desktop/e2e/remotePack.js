@@ -65,6 +65,14 @@ export const MAPS = [
 /** The island tile the mock server answers with 404, as an empty area would. */
 export const MISSING_TILE = { map: 'island', z: 3, x: 7, y: 5 };
 
+/**
+ * The island tile (top-right corner of level 2) that the mock server, when
+ * asked to, answers like an object store that lets nobody list it answers
+ * for an image that does not exist: 403 with an `AccessDenied` XML error.
+ * The four level 3 tiles under it are then never asked for.
+ */
+export const STORE_MISSING_TILE = { map: 'island', z: 2, x: 3, y: 0 };
+
 /** Columns and rows of a level, as `pyramidLevel` in `@atlas/core` works them out. */
 export function levelGrid(/** @type {TestMap} */ map, /** @type {number} */ z) {
   const scale = 2 ** (z - map.maxZoom);

@@ -6,13 +6,21 @@
  * checked against the downloaded image. It never talks to any other server.
  *
  * Modes: `ok`, `slow` (each answer waits 400 ms), `refuse` (HTTP 403).
+ * With `setStoreMissing(true)`, it answers `STORE_MISSING_TILE` the way an
+ * object store answers for an image it does not have (403, `AccessDenied`).
  *
  *   node apps/desktop/e2e/tileServer.js [port]   # serve until stopped
  */
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
-import { DEFAULT_PORT, MAPS, MISSING_TILE } from './remotePack.js';
+import { DEFAULT_PORT, MAPS, MISSING_TILE, STORE_MISSING_TILE } from './remotePack.js';
+
+/** A made-up object store's answer for an object that does not exist. */
+export const NO_SUCH_OBJECT =
+  '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AccessDenied</Code>' +
+  '<Message>Access Denied</Message><RequestId>0000TEST</RequestId>' +
+  '<HostId>dGVzdC1ob3N0</HostId></Error>';
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -114,6 +122,7 @@ export function drawTile(map, z, x, y) {
 export async function startTileServer({ port = DEFAULT_PORT } = {}) {
   /** @type {'ok' | 'slow' | 'refuse'} */
   let mode = 'ok';
+  let storeMissing = false;
   /** @type {SeenRequest[]} */
   const seen = [];
   const server = createServer((request, response) => {
@@ -154,6 +163,19 @@ export async function startTileServer({ port = DEFAULT_PORT } = {}) {
         response.writeHead(404).end();
         return;
       }
+      if (
+        storeMissing &&
+        map.slug === STORE_MISSING_TILE.map &&
+        level.z === STORE_MISSING_TILE.z &&
+        x === STORE_MISSING_TILE.x &&
+        y === STORE_MISSING_TILE.y
+      ) {
+        record(403);
+        response
+          .writeHead(403, { 'content-type': 'application/xml', via: '1.1 test-cache' })
+          .end(NO_SUCH_OBJECT);
+        return;
+      }
       record(200);
       response.writeHead(200, { 'content-type': 'image/png' }).end(drawTile(map, level.z, x, y));
     };
@@ -171,6 +193,10 @@ export async function startTileServer({ port = DEFAULT_PORT } = {}) {
     seen,
     setMode(/** @type {'ok' | 'slow' | 'refuse'} */ next) {
       mode = next;
+    },
+    /** Answers `STORE_MISSING_TILE` like an object store without it. */
+    setStoreMissing(/** @type {boolean} */ on) {
+      storeMissing = on;
     },
     close() {
       server.closeAllConnections();
