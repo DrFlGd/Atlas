@@ -670,7 +670,7 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
     }
     if let Some(counts) = &report.counts {
         line.push_str(&format!(
-            " | {} locations on the map; the game has {} maps, {} locations, {} categories",
+            " | locations on this map: {} | in the game: maps {}, locations {}, categories {}",
             counts.map_locations, counts.maps, counts.locations, counts.categories
         ));
     }
@@ -747,7 +747,7 @@ mod tests {
         assert!(!warn);
         assert_eq!(
             line,
-            "Import with importer demo-maps added: pack test-valley, map test-valley:map:east | 4 locations on the map; the game has 1 maps, 4 locations, 3 categories"
+            "Import with importer demo-maps added: pack test-valley, map test-valley:map:east | locations on this map: 4 | in the game: maps 1, locations 4, categories 3"
         );
         let report: ImportReport = serde_json::from_str(
             r#"{"outcome":"timed-out","message":"The page did not provide\nthe map data"}"#,
