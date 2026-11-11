@@ -24,17 +24,35 @@ export function downloadsOffered(state: Pick<AtlasState, 'app'>): boolean {
 }
 
 /**
- * Whether the app offers the Maps dialog, with its folder choices and
- * "Open folder" buttons: not where the shell says it has no folders (the
- * Android app). A browser has no Maps dialog either way.
+ * Whether the Maps dialog has its folder choices and "Open folder"
+ * buttons: not where the shell says it has no folders (the Android app,
+ * which keeps its maps in its own storage).
  */
 export function foldersOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.folders !== false;
 }
 
 /**
+ * Whether the app offers the Maps dialog: in the desktop app, and in the
+ * Android app without its folder choices (see {@link foldersOffered}). A
+ * browser has no Maps dialog either way.
+ */
+export function mapsOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.maps !== false;
+}
+
+/**
+ * Whether map pack files are picked with the system's picker and copied
+ * into the app before they are imported: the Android app.
+ */
+export function copiesPickedFiles(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.copyPickedFiles === true;
+}
+
+/**
  * Whether progress can be exported to and imported from files: in a
- * browser, and in a shell that has the dialogs for it (not the Android app).
+ * browser, and in a shell that has the dialogs for it (the desktop and
+ * Android apps).
  */
 export function progressFilesOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.progressFiles !== false;
@@ -43,4 +61,13 @@ export function progressFilesOffered(state: Pick<AtlasState, 'app'>): boolean {
 /** Whether "Add a map" can open web pages: not in the Android app. */
 export function importsOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.imports !== false;
+}
+
+/**
+ * Whether to show keyboard shortcuts (key badges, "( / )" in the search
+ * field, keys in tooltips, the list of keys): not in the Android app,
+ * where there is usually no keyboard. The keys still work there.
+ */
+export function keyboardHintsOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.platform !== 'android';
 }

@@ -9,6 +9,7 @@ import {
   androidEnv,
   downloadsEnabled,
   identityConfig,
+  mainActivitySource,
   tauriArgs,
 } from './build.js';
 import { checkBinary, DOWNLOAD_MARKERS } from './check-binary.js';
@@ -109,6 +110,21 @@ test('an Android build creates its project once, then builds an APK', () => {
   assert.deepEqual(androidCommands({ initialised: true, extra: [] }), [
     ['android', 'build', '--apk', '--ci'],
   ]);
+});
+
+test("the Android project gets the app's activity with the generated package", async () => {
+  const { readFile } = await import('node:fs/promises');
+  const ours = await readFile(new URL('../android/MainActivity.kt', import.meta.url), 'utf8');
+  const generated =
+    'package dev.atlas.android\n\nimport android.os.Bundle\n\nclass MainActivity : TauriActivity() {}\n';
+  const written = mainActivitySource(generated, ours);
+  assert.match(written, /^package dev\.atlas\.android$/m);
+  assert.match(written, /addJavascriptInterface\(Bars\(\), "AtlasAndroid"\)/);
+  assert.match(written, /enableEdgeToEdge\(\)/);
+  const other = mainActivitySource('package org.example.`in`.app\n', ours);
+  assert.match(other, /^package org\.example\.`in`\.app$/m);
+  assert.equal(other.match(/^package /gm)?.length, 1);
+  assert.throws(() => mainActivitySource('class MainActivity', ours), /no package line/);
 });
 
 test('an Android build is a viewer with folder tiles and no importers', () => {

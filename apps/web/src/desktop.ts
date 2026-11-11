@@ -276,12 +276,25 @@ export interface DesktopInfo {
    */
   folders?: boolean;
   /**
+   * The Maps dialog is offered: the games shown, opening, deleting and
+   * importing them. True in the Android app too, where without `folders`
+   * it has no folder choices. Absent counts as true.
+   */
+  maps?: boolean;
+  /**
    * Progress can be exported to and imported from files through the
-   * system's dialogs. False in the Android app. Absent counts as true.
+   * system's dialogs (in the Android app, its save and open screens).
+   * Absent counts as true.
    */
   progressFiles?: boolean;
   /** Web pages can be opened for importers. False in the Android app. Absent counts as true. */
   imports?: boolean;
+  /**
+   * Map pack files are picked with the system's picker and copied into
+   * the app before they are imported, since the picker gives no path: the
+   * Android app. Absent counts as false.
+   */
+  copyPickedFiles?: boolean;
 }
 
 /** Where a listed pack comes from. */
@@ -589,9 +602,22 @@ export interface PackFileImported {
   listing: Listing;
 }
 
-/** How far the map pack file being saved or imported is. */
+/** A map pack file picked with Android's picker, before it is copied into the app. */
+export interface PickedPackFile {
+  /** Its name where it is. */
+  fileName: string;
+  /** Its size, when the system says. */
+  size: number | null;
+  packId: string;
+  title: string;
+  /** The room importing it takes: the copy and the game unpacked. */
+  roomNeeded: number;
+}
+
+/** How far the map pack file being saved, imported or copied into the app is. */
 export interface PackFileProgress {
-  kind: 'export' | 'import';
+  /** `copy`: a picked file copied into the app, counted in bytes only. */
+  kind: 'export' | 'import' | 'copy';
   packId: string;
   title: string;
   entriesDone: number;
@@ -693,6 +719,15 @@ export interface DesktopBridge {
     pick(): Promise<PackFileInfo | null>;
     /** Reads the description of the file at a path the app has (for example from Android's picker). */
     inspect(path: string): Promise<PackFileInfo>;
+    /**
+     * Android: asks for a file with the system's picker, reads its
+     * description and checks there is room. Null when the picker was closed.
+     */
+    pickCopy(): Promise<PickedPackFile | null>;
+    /** Android: copies the picked file into the app; the copy's path, for {@link inspect}. */
+    copyPicked(): Promise<string>;
+    /** Android: deletes a copy made by {@link copyPicked}. */
+    discardCopy(path: string): Promise<void>;
     /** Imports the file at `path`, replacing the game with the same id only with `replace`. */
     import(path: string, replace: boolean): Promise<PackFileImported>;
     progress(): Promise<PackFileProgress | null>;
@@ -801,6 +836,9 @@ export function createBridge(invoke: Invoke): DesktopBridge {
         call('packfile_export', { id, detail, progress: progress ?? null }),
       pick: () => call('packfile_pick'),
       inspect: (path) => call('packfile_inspect', { path }),
+      pickCopy: () => call('packfile_pick_copy'),
+      copyPicked: () => call('packfile_copy_picked'),
+      discardCopy: (path) => call('packfile_discard_copy', { path }),
       import: (path, replace) => call('packfile_import', { path, replace }),
       progress: () => call('packfile_progress'),
       cancel: () => call('packfile_cancel'),

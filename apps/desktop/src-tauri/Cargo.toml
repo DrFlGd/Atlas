@@ -49,6 +49,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"], optional = true }
 httpdate = { version = "1.0.3", optional = true }
 
+# Android: map pack files and progress files picked or saved with the
+# system's dialogs are `content://` addresses, opened through this plugin
+# (already in the build for the dialog plugin). Used from Rust only.
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-fs = "2.7.1"
+
 # Free disk space before a map pack file is unpacked (src/packfile/space.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

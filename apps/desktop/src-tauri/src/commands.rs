@@ -19,7 +19,6 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-#[cfg(desktop)]
 use tauri::Manager as _;
 use tauri::{AppHandle, Runtime, State, Url, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
@@ -61,18 +60,27 @@ pub struct DesktopInfo {
     /// can be changed, pack folders added and the Maps dialog used. False
     /// on Android, which keeps its maps in the app's own storage.
     folders: bool,
+    /// The Maps dialog is offered: the packs shown, opening, deleting and
+    /// importing them. True in every build; without `folders` (Android) it
+    /// has no folder choices and no file manager buttons.
+    maps: bool,
     /// Progress can be exported to and imported from files through the
-    /// system's save and open dialogs. False on Android, whose dialogs give
-    /// `content://` addresses that this shell does not read or write yet.
+    /// system's save and open dialogs. On Android those give `content://`
+    /// addresses, which are read and written through the fs plugin.
     progress_files: bool,
     /// Web pages can be opened in the import window, for importers. False on
     /// Android.
     imports: bool,
+    /// Map pack files are picked with the system's picker and copied into
+    /// the app before they are imported (`packfile_pick_copy`,
+    /// `packfile_copy_picked`), since the picker gives no path. True on
+    /// Android; a desktop uses `packfile_pick`.
+    copy_picked_files: bool,
 }
 
-/// Whether this platform has what `DesktopInfo::folders`,
-/// `DesktopInfo::progress_files` and `DesktopInfo::imports` need: a
-/// desktop's dialogs, file manager and windows.
+/// Whether this platform has what `DesktopInfo::folders` and
+/// `DesktopInfo::imports` need: a desktop's dialogs, file manager and
+/// windows.
 const DESKTOP_ONLY: bool = cfg!(desktop);
 
 /// The answer of a desktop-only command on Android, whose web app does not
@@ -95,8 +103,10 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         platform: std::env::consts::OS,
         downloads: Downloads::in_build(),
         folders: DESKTOP_ONLY,
-        progress_files: DESKTOP_ONLY,
+        maps: true,
+        progress_files: true,
         imports: DESKTOP_ONLY,
+        copy_picked_files: !DESKTOP_ONLY,
     }
 }
 
@@ -130,19 +140,95 @@ pub(crate) fn file_dialog<R: Runtime>(
     dialog.set_title(title)
 }
 
-pub(crate) async fn chosen_path(
+/// What the person chose in a file dialog: a path on a desktop, a
+/// `content://` address on Android. `None` when the dialog was closed.
+async fn chosen_file(
     pick: impl FnOnce(Box<dyn FnOnce(Option<FilePath>) + Send>),
-) -> Result<Option<PathBuf>, String> {
+) -> Option<FilePath> {
     let (send, receive) = oneshot::channel();
     pick(Box::new(move |path| {
         let _ = send.send(path);
     }));
-    match receive.await.ok().flatten() {
+    receive.await.ok().flatten()
+}
+
+pub(crate) async fn chosen_path(
+    pick: impl FnOnce(Box<dyn FnOnce(Option<FilePath>) + Send>),
+) -> Result<Option<PathBuf>, String> {
+    match chosen_file(pick).await {
         None => Ok(None),
         Some(path) => path
             .into_path()
             .map(Some)
             .map_err(|error| format!("That location cannot be used: {error}")),
+    }
+}
+
+/// A file the system's dialog gave as an address rather than a path: a
+/// `content://` address on Android. `None` for a path (or a `file:` URL),
+/// which is used as on a desktop.
+fn content_address(file: &FilePath) -> Option<&Url> {
+    match file {
+        FilePath::Url(url) if url.scheme() != "file" => Some(url),
+        _ => None,
+    }
+}
+
+/// Files behind `content://` addresses, opened through the fs plugin, which
+/// asks Android for a file descriptor. Only the Android app has them.
+#[cfg(target_os = "android")]
+mod content {
+    use std::fs::File;
+
+    use tauri::{AppHandle, Manager as _, Runtime, Url};
+    use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+
+    pub fn open<R: Runtime>(app: &AppHandle<R>, url: &Url) -> std::io::Result<File> {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        app.fs().open(FilePath::Url(url.clone()), options)
+    }
+
+    /// Opens for writing from the start, dropping what was there ("wt").
+    /// A file the save screen has just made is empty, so where a provider
+    /// does not take "wt", plain "w" does the same.
+    pub fn create<R: Runtime>(app: &AppHandle<R>, url: &Url) -> std::io::Result<File> {
+        let mut options = OpenOptions::new();
+        options.read(false).write(true).truncate(true).create(true);
+        app.fs()
+            .open(FilePath::Url(url.clone()), options.clone())
+            .or_else(|_| {
+                options.truncate(false);
+                app.fs().open(FilePath::Url(url.clone()), options)
+            })
+    }
+
+    /// The name the file has where it is, as the system shows it.
+    pub fn name<R: Runtime>(app: &AppHandle<R>, url: &Url) -> Option<String> {
+        app.path().file_name(url.as_str())
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+mod content {
+    use std::fs::File;
+
+    use tauri::{AppHandle, Runtime, Url};
+
+    fn unusable(url: &Url) -> std::io::Error {
+        std::io::Error::other(format!("That location cannot be used: {url}"))
+    }
+
+    pub fn open<R: Runtime>(_app: &AppHandle<R>, url: &Url) -> std::io::Result<File> {
+        Err(unusable(url))
+    }
+
+    pub fn create<R: Runtime>(_app: &AppHandle<R>, url: &Url) -> std::io::Result<File> {
+        Err(unusable(url))
+    }
+
+    pub fn name<R: Runtime>(_app: &AppHandle<R>, _url: &Url) -> Option<String> {
+        None
     }
 }
 
@@ -169,23 +255,48 @@ pub struct SavedFile {
 
 /// Asks where to save a progress export and writes it there. `None` when
 /// the person closes the dialog.
+///
+/// On Android the save screen gives a `content://` address, written through
+/// the fs plugin.
 #[tauri::command]
 pub async fn save_text_file<R: Runtime>(
+    app: AppHandle<R>,
     window: WebviewWindow<R>,
     suggested_name: String,
     contents: String,
 ) -> Result<Option<SavedFile>, String> {
-    desktop_only()?;
+    let suggested = safe_file_name(&suggested_name);
     let dialog = file_dialog(&window, "Export progress")
-        .set_file_name(safe_file_name(&suggested_name))
+        .set_file_name(suggested.clone())
         .add_filter("Atlas progress", &["json"]);
-    let Some(path) = chosen_path(|done| dialog.save_file(done)).await? else {
+    let Some(file) = chosen_file(|done| dialog.save_file(done)).await else {
         return Ok(None);
     };
+    if let Some(url) = content_address(&file) {
+        let url = url.clone();
+        return blocking(move || {
+            let written = content::create(&app, &url)
+                .and_then(|file| write_stream(file, contents.as_bytes()));
+            let name = content::name(&app, &url).unwrap_or(suggested);
+            written.map_err(|error| format!("Could not save {name}: {error}"))?;
+            Ok(Some(SavedFile { name }))
+        })
+        .await;
+    }
+    let path = file
+        .into_path()
+        .map_err(|error| format!("That location cannot be used: {error}"))?;
     write_text(&path, &contents)?;
     Ok(Some(SavedFile {
         name: file_name(&path),
     }))
+}
+
+/// Writes all of `bytes` to a file opened for writing and makes sure they
+/// reached it.
+fn write_stream(mut file: impl std::io::Write, bytes: &[u8]) -> std::io::Result<()> {
+    file.write_all(bytes)?;
+    file.flush()
 }
 
 fn file_name(path: &std::path::Path) -> String {
@@ -220,18 +331,54 @@ fn read_text(path: &std::path::Path) -> Result<OpenedFile, String> {
     Ok(OpenedFile { name, contents })
 }
 
+/// The text of a progress file read in order (a `content://` file on
+/// Android), with the same limits as [`read_text`].
+fn read_text_stream(name: String, file: impl std::io::Read) -> Result<OpenedFile, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    file.take(MAX_OPEN_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not open {name}: {error}"))?;
+    if bytes.len() as u64 > MAX_OPEN_BYTES {
+        return Err(format!("{name} is too large to be an Atlas progress file."));
+    }
+    let contents = String::from_utf8(bytes)
+        .map_err(|_| format!("{name} is not a text file, so it is not an Atlas progress file."))?;
+    Ok(OpenedFile { name, contents })
+}
+
 /// Asks for a progress file to import and returns its text. `None` when the
 /// person closes the dialog.
+///
+/// On Android the picker gives a `content://` address, read through the fs
+/// plugin. It offers every file there, since a progress file in a cloud
+/// drive or a chat app may not be marked as JSON; the web app checks what
+/// is read.
 #[tauri::command]
 pub async fn open_text_file<R: Runtime>(
+    app: AppHandle<R>,
     window: WebviewWindow<R>,
 ) -> Result<Option<OpenedFile>, String> {
-    desktop_only()?;
-    let dialog = file_dialog(&window, "Import progress").add_filter("Atlas progress", &["json"]);
-    match chosen_path(|done| dialog.pick_file(done)).await? {
-        None => Ok(None),
-        Some(path) => read_text(&path).map(Some),
+    let dialog = file_dialog(&window, "Import progress");
+    #[cfg(desktop)]
+    let dialog = dialog.add_filter("Atlas progress", &["json"]);
+    let Some(file) = chosen_file(|done| dialog.pick_file(done)).await else {
+        return Ok(None);
+    };
+    if let Some(url) = content_address(&file) {
+        let url = url.clone();
+        return blocking(move || {
+            let name = content::name(&app, &url).unwrap_or_else(|| "The file".to_owned());
+            let opened = content::open(&app, &url)
+                .map_err(|error| format!("Could not open {name}: {error}"))?;
+            read_text_stream(name, opened).map(Some)
+        })
+        .await;
     }
+    let path = file
+        .into_path()
+        .map_err(|error| format!("That location cannot be used: {error}"))?;
+    read_text(&path).map(Some)
 }
 
 #[cfg(feature = "downloads")]
@@ -763,7 +910,8 @@ struct PackFileJob {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackFileProgress {
-    /// `export` or `import`.
+    /// `export`, `import`, or `copy` (a picked file copied into the app,
+    /// counted in bytes only).
     kind: &'static str,
     pack_id: String,
     title: String,
@@ -1093,6 +1241,227 @@ pub async fn packfile_inspect(
         PathBuf::from(path),
     )
     .await
+}
+
+// ---------------------------------------------------------------------------
+// Map pack files picked with Android's picker (see `picked.rs`)
+
+/// The map pack file picked with `packfile_pick_copy`, waiting for
+/// `packfile_copy_picked`.
+#[derive(Default)]
+pub struct PickedPackFiles(std::sync::Mutex<Option<Picked>>);
+
+struct Picked {
+    file: FilePath,
+    copy_name: String,
+    size: Option<u64>,
+    header: packfile::Header,
+}
+
+fn lock_picked(picked: &PickedPackFiles) -> std::sync::MutexGuard<'_, Option<Picked>> {
+    picked
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What the person picked, before it is copied.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedPackFile {
+    /// The file's name where it is.
+    file_name: String,
+    /// Its size, when the system says.
+    size: Option<u64>,
+    pack_id: String,
+    title: String,
+    /// The room importing it takes: the copy and the game unpacked.
+    room_needed: u64,
+}
+
+/// Where copies of picked files are kept: `pack-files` in the app's cache,
+/// which Android never backs up and may empty when the app is not running.
+pub fn picked_copies_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|dir| dir.join(crate::picked::COPIES_DIR))
+        .map_err(|error| format!("The app has no cache folder: {error}"))
+}
+
+/// The picked file, read from its start.
+fn open_picked<R: Runtime>(app: &AppHandle<R>, file: &FilePath) -> std::io::Result<fs::File> {
+    match content_address(file) {
+        Some(url) => content::open(app, url),
+        None => fs::File::open(file.clone().into_path().map_err(std::io::Error::other)?),
+    }
+}
+
+fn picked_name<R: Runtime>(app: &AppHandle<R>, file: &FilePath) -> Option<String> {
+    match file {
+        FilePath::Path(path) => Some(file_name(path)),
+        FilePath::Url(url) => {
+            content::name(app, url).or_else(|| url.path_segments()?.next_back().map(str::to_owned))
+        }
+    }
+}
+
+/// Asks for a map pack file with the system's picker (Android), reads what
+/// it holds from its start, and checks there is room to copy and import
+/// it. `None` when the person closes the picker. `packfile_copy_picked`
+/// then copies it into the app.
+#[tauri::command]
+pub async fn packfile_pick_copy<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    picked: State<'_, PickedPackFiles>,
+) -> Result<Option<PickedPackFile>, String> {
+    if DESKTOP_ONLY {
+        return Err("On a computer, use Import map pack file… in the Maps dialog.".to_owned());
+    }
+    // No filter: Android knows no type for `.atlaspack`, and would grey it out.
+    let dialog = file_dialog(&window, "Import map pack file");
+    let Some(file) = chosen_file(|done| dialog.pick_file(done)).await else {
+        return Ok(None);
+    };
+    let copies = picked_copies_dir(&app)?;
+    let checked = {
+        let file = file.clone();
+        blocking(move || {
+            let name = picked_name(&app, &file);
+            let opened = open_picked(&app, &file)
+                .map_err(|error| format!("Could not open the file you chose: {error}"))?;
+            // A real file says its size; a stream from a cloud drive may not.
+            let size = opened
+                .metadata()
+                .ok()
+                .filter(std::fs::Metadata::is_file)
+                .map(|metadata| metadata.len())
+                .filter(|&size| size > 0);
+            let header = packfile::import::read_header_from(opened)?;
+            fs::create_dir_all(&copies)
+                .map_err(|error| format!("Could not make room for a copy of the file: {error}"))?;
+            crate::picked::check_room(size, &header, packfile::space::available(&copies))?;
+            Ok((name, size, header))
+        })
+        .await
+    };
+    let (name, size, header) = checked.inspect_err(|error| {
+        activity::warn(
+            Area::Library,
+            format!("Could not use the picked map pack file: {error}"),
+        );
+    })?;
+    let info = PickedPackFile {
+        file_name: name.clone().unwrap_or_else(|| "The file".to_owned()),
+        size,
+        pack_id: header.pack_id.clone(),
+        title: header.title.clone(),
+        room_needed: crate::picked::room_needed(size, &header),
+    };
+    *lock_picked(&picked) = Some(Picked {
+        file,
+        copy_name: crate::picked::copy_name(name.as_deref()),
+        size,
+        header,
+    });
+    Ok(Some(info))
+}
+
+/// Copies the file picked with `packfile_pick_copy` into the app's cache
+/// and returns the copy's path, for `packfile_inspect` and
+/// `packfile_import`. `packfile_progress` reports how far it is (kind
+/// `copy`) and `packfile_cancel` stops it; a failure or cancel leaves no
+/// copy. `packfile_discard_copy` deletes the copy when the import is over.
+#[tauri::command]
+pub async fn packfile_copy_picked<R: Runtime>(
+    app: AppHandle<R>,
+    jobs: PackFileJobsState<'_>,
+    picked: State<'_, PickedPackFiles>,
+) -> Result<String, String> {
+    let Some(chosen) = lock_picked(&picked).take() else {
+        return Err("Choose the map pack file again.".to_owned());
+    };
+    let copies = picked_copies_dir(&app)?;
+    let turn = jobs.begin("copy", &chosen.header.pack_id, &chosen.header.title)?;
+    blocking(move || {
+        let Picked {
+            file,
+            copy_name,
+            size,
+            header,
+        } = chosen;
+        let total = size.unwrap_or(header.bytes);
+        let progress = |bytes_done: u64| Progress {
+            entries_done: 0,
+            entries_total: 0,
+            bytes_done,
+            bytes_total: total.max(bytes_done),
+        };
+        turn.update(progress(0));
+        let result = fs::create_dir_all(&copies)
+            .map_err(|error| {
+                Stop::Failed(format!(
+                    "Could not make room for a copy of the file: {error}"
+                ))
+            })
+            .and_then(|()| {
+                crate::picked::check_room(size, &header, packfile::space::available(&copies))
+                    .map_err(Stop::Failed)
+            })
+            .and_then(|()| {
+                open_picked(&app, &file).map_err(|error| {
+                    Stop::Failed(format!("Could not open the file you chose: {error}"))
+                })
+            })
+            .and_then(|mut opened| {
+                crate::picked::copy_in(
+                    &mut opened,
+                    &copies,
+                    &copy_name,
+                    &mut |done| turn.update(progress(done)),
+                    &|| turn.cancelled(),
+                )
+            });
+        match result {
+            Ok(copy) => {
+                activity::info(
+                    Area::Library,
+                    format!(
+                        "Copied the picked map pack file {} ({}) into the app to import it",
+                        short(&copy_name),
+                        packfile::space::describe(fs::metadata(&copy).map_or(0, |m| m.len()))
+                    ),
+                );
+                Ok(copy.display().to_string())
+            }
+            Err(Stop::Cancelled) => {
+                activity::info(
+                    Area::Library,
+                    format!("Cancelled copying {}; nothing was kept", short(&copy_name)),
+                );
+                Err("Cancelled. Nothing was imported.".to_owned())
+            }
+            Err(Stop::Failed(error)) => {
+                activity::warn(
+                    Area::Library,
+                    format!("Could not copy {}: {error}", short(&copy_name)),
+                );
+                Err(error)
+            }
+        }
+    })
+    .await
+}
+
+/// Deletes a copy made by `packfile_copy_picked`. Any other path is left
+/// alone.
+#[tauri::command]
+pub async fn packfile_discard_copy<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+) -> Result<(), String> {
+    let copies = picked_copies_dir(&app)?;
+    blocking(move || crate::picked::discard(&copies, std::path::Path::new(&path)).map(|_| ())).await
 }
 
 /// A finished import.
@@ -1873,6 +2242,36 @@ mod tests {
             .contains("not a text file"));
         assert!(read_text(&dir.0.join("missing.json")).is_err());
         assert!(write_text(&dir.0.join("no/such/dir/x.json"), "x").is_err());
+    }
+
+    /// Android's save and open screens give `content://` addresses, which
+    /// are read and written as streams; paths and `file:` URLs are used as
+    /// on a desktop.
+    #[test]
+    fn reads_and_writes_progress_files_as_streams() {
+        let content = FilePath::Url(
+            Url::parse("content://com.android.providers.downloads.documents/document/42").unwrap(),
+        );
+        assert!(content_address(&content).is_some());
+        let local = FilePath::Url(Url::parse("file:///home/test/progress.json").unwrap());
+        assert!(content_address(&local).is_none());
+        assert!(content_address(&FilePath::Path(PathBuf::from("/home/test/p.json"))).is_none());
+
+        let mut written = Vec::new();
+        write_stream(&mut written, b"{\"format\":\"atlas-progress\"}").unwrap();
+        let opened = read_text_stream("progress.json".into(), written.as_slice()).unwrap();
+        assert_eq!(opened.name, "progress.json");
+        assert_eq!(opened.contents, "{\"format\":\"atlas-progress\"}");
+
+        let binary: &[u8] = &[0xff, 0xfe, 0x00];
+        assert!(read_text_stream("photo.jpg".into(), binary)
+            .unwrap_err()
+            .contains("photo.jpg is not a text file"));
+        // Read no further than the limit, whatever the stream holds.
+        let huge = std::io::Read::take(std::io::repeat(b' '), MAX_OPEN_BYTES + 10);
+        assert!(read_text_stream("big.json".into(), huge)
+            .unwrap_err()
+            .contains("too large"));
     }
 
     /// Images another Atlas app or an earlier version downloaded, which every

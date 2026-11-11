@@ -47,6 +47,9 @@ const COMMANDS: &[&str] = &[
     "packfile_progress",
     "packfile_cancel",
     "library_pack_details",
+    "packfile_pick_copy",
+    "packfile_copy_picked",
+    "packfile_discard_copy",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

@@ -512,3 +512,18 @@ test('narrow windows use bottom sheets', async ({ page, request }) => {
   await expect(page.getByTestId('details-pane')).toBeHidden();
   expect(errors).toEqual([]);
 });
+
+test('a computer shows keyboard hints and zoom buttons, with no room kept for system bars', async ({
+  page,
+}) => {
+  await openMap(page);
+  await expect(page.getByRole('combobox', { name: 'Search locations' })).toHaveAttribute(
+    'placeholder',
+    'Search  ( / )',
+  );
+  await expect(page.getByTestId('details-empty')).toContainText('Keyboard');
+  await expect(page.locator('.leaflet-control-zoom')).toBeVisible();
+  const shell = (await page.locator('.shell').boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(shell).toEqual({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+});

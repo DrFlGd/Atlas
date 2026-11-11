@@ -23,6 +23,7 @@ import type {
   DownloadSnapshot,
   Listing,
   PackFileInfo,
+  PickedPackFile,
 } from '../desktop';
 
 export type Theme = 'dark' | 'light';
@@ -91,7 +92,10 @@ export interface DownloadState {
 
 /** The map pack file dialog: exporting a game, or importing a file already read. */
 export type PackFileDialogState =
-  { kind: 'export'; packId: string; title: string } | { kind: 'import'; file: PackFileInfo };
+  | { kind: 'export'; packId: string; title: string }
+  | { kind: 'import'; file: PackFileInfo }
+  /** Android: a picked file being copied into the app before the import. */
+  | { kind: 'copy'; picked: PickedPackFile };
 
 export interface AtlasState {
   config: RuntimeConfig | null;

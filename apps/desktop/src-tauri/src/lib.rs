@@ -14,7 +14,10 @@
 //! images from version 0.2.0 to move; the commands for those answer with an
 //! error there, and `desktop_info` tells the web app not to offer them. The
 //! packs that come with the Android app are part of its web build, not
-//! resources (see `bundled_packs`).
+//! resources (see `bundled_packs`). Its maps folder is one Android never
+//! backs up, and map pack files and progress files come from the system's
+//! picker as `content://` addresses, read and written through the fs plugin
+//! (see `android_storage`, `picked.rs` and the progress file commands).
 
 pub mod activity;
 mod commands;
@@ -27,6 +30,7 @@ pub mod packfile;
 mod packs;
 #[cfg(feature = "downloads")]
 mod pageview;
+pub mod picked;
 mod removal;
 pub mod saves;
 pub mod settings;
@@ -106,6 +110,9 @@ macro_rules! viewer_commands {
             commands::packfile_progress,
             commands::packfile_cancel,
             commands::library_pack_details,
+            commands::packfile_pick_copy,
+            commands::packfile_copy_picked,
+            commands::packfile_discard_copy,
             $($more)*
         ]
     };
@@ -149,7 +156,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(registry)
         .manage(imports::Imports::default())
-        .manage(commands::PackFileJobs::default());
+        .manage(commands::PackFileJobs::default())
+        .manage(commands::PickedPackFiles::default());
+    // On Android, files the system's dialogs give as `content://` addresses
+    // are opened through the fs plugin, from Rust only: no capability grants
+    // the web app any of its commands.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_fs::init());
     #[cfg(feature = "downloads")]
     let builder = builder.manage(pageview::PageViews::default());
     builder
@@ -187,6 +200,9 @@ pub fn run() {
             // Map images downloaded for bundled packs live here, served before
             // the pack's own files.
             registry.set_overlay_root(tiles::images::overlay_root(&app_data));
+            if cfg!(mobile) {
+                android_storage(app, &shared);
+            }
             let legacy = legacy_dirs(app, &app_data)?;
             let bundled = bundled_packs(app);
             log_start(app, &shared, &bundled);
@@ -239,6 +255,44 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running the Atlas desktop shell");
+}
+
+/// Android start-up: moves map packs from the maps folder of version 0.3.5
+/// and earlier, which Auto Backup included, to the one it never backs up
+/// (see `settings::default_maps_folder`), and removes copies of picked map
+/// pack files left by an import that did not finish (see `picked.rs`).
+fn android_storage(app: &App, shared: &std::path::Path) {
+    if SettingsFile::new(shared.to_path_buf())
+        .read()
+        .maps_folder
+        .is_none()
+    {
+        let old = settings::old_android_maps_folder(shared);
+        let new = settings::default_maps_folder(shared);
+        match settings::move_old_maps(&old, &new) {
+            Ok(moved) if moved.is_empty() => {}
+            Ok(moved) => activity::info(
+                Area::Library,
+                format!(
+                    "Moved {} from {} to {}, which Android does not back up",
+                    moved.join(", "),
+                    old.display(),
+                    new.display()
+                ),
+            ),
+            Err(error) => activity::warn(
+                Area::Library,
+                format!(
+                    "Could not move the maps in {} to {}: {error}",
+                    old.display(),
+                    new.display()
+                ),
+            ),
+        }
+    }
+    if let Ok(copies) = commands::picked_copies_dir(app.handle()) {
+        picked::clear(&copies);
+    }
 }
 
 /// The app data folders of earlier versions, whose downloaded map images
