@@ -114,7 +114,7 @@ function AddressForm({ failure }: { failure: string | null }) {
         sign in or to confirm you are a person, do that there. This app reads the map data once the
         page shows it, and then closes the window. To add several maps, paste one address per line
         (up to {MAX_RUN_ADDRESSES}): this app opens the pages one at a time, in that order, with a
-        short pause between them.
+        short pause between them. When typing, Shift+Enter starts a new line and Enter adds.
       </p>
       <label htmlFor={inputId} className="field-label">
         Map page addresses
