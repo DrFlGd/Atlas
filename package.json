@@ -19,7 +19,8 @@
     "demo:ensure": "pnpm --filter @atlas/pipeline demo:ensure",
     "demo:build": "pnpm --filter @atlas/pipeline demo:build",
     "desktop:dev": "pnpm --filter @atlas/desktop dev",
-    "desktop:build": "pnpm --filter @atlas/desktop build"
+    "desktop:build": "pnpm --filter @atlas/desktop build",
+    "android:build": "pnpm --filter @atlas/desktop android:build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

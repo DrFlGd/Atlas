@@ -7,6 +7,14 @@
 //! `tiles`, and "View map page and save images as I browse" in `pageview`)
 //! is only in a build with the `downloads` feature; without it that code
 //! and its commands are not compiled in.
+//!
+//! The same shell builds the Android app (`tauri android build`, see
+//! `tauri.android.conf.json`), a viewer only. On Android there are no folder
+//! dialogs, no file manager to show folders in, no import window and no map
+//! images from version 0.2.0 to move; the commands for those answer with an
+//! error there, and `desktop_info` tells the web app not to offer them. The
+//! packs that come with the Android app are part of its web build, not
+//! resources (see `bundled_packs`).
 
 pub mod activity;
 mod commands;
@@ -101,6 +109,7 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
     viewer_commands![]
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Map image downloads use rustls with the ring provider.
     #[cfg(feature = "downloads")]
@@ -150,10 +159,7 @@ pub fn run() {
             // Map images downloaded for bundled packs live here, served before
             // the pack's own files.
             registry.set_overlay_root(tiles::images::overlay_root(&app_data));
-            let mut legacy = vec![paths.data_dir()?.join(LEGACY_IDENTIFIER)];
-            if !legacy.contains(&app_data) {
-                legacy.push(app_data.clone());
-            }
+            let legacy = legacy_dirs(app, &app_data)?;
             let bundled = bundled_packs(app);
             log_start(app, &shared, &bundled);
             let library = Arc::new(Library::new(
@@ -178,7 +184,8 @@ pub fn run() {
             // Map images that version 0.2.0 downloaded move into the pack
             // folders in the background; the map shows them as they arrive.
             // Packs whose files were still in use when they were deleted are
-            // removed first; they are hidden already.
+            // removed first; they are hidden already. The Android app has no
+            // old folders, so nothing moves there.
             std::thread::spawn(move || {
                 for left in library.finish_deletes() {
                     eprintln!(
@@ -202,6 +209,20 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running the Atlas desktop shell");
+}
+
+/// The app data folders of earlier versions, whose downloaded map images
+/// move into pack folders: version 0.2.0's (`dev.atlas.desktop`) and this
+/// app's own. None on Android, which never had them.
+fn legacy_dirs(app: &App, app_data: &std::path::Path) -> tauri::Result<Vec<PathBuf>> {
+    if cfg!(mobile) {
+        return Ok(Vec::new());
+    }
+    let mut legacy = vec![app.path().data_dir()?.join(LEGACY_IDENTIFIER)];
+    if !legacy.iter().any(|dir| dir == app_data) {
+        legacy.push(app_data.to_path_buf());
+    }
+    Ok(legacy)
 }
 
 /// The first lines of a run in the activity log: which app, where its maps
@@ -266,7 +287,15 @@ fn bundled_importers(app: &App) -> String {
 }
 
 /// The packs shipped in the app's resources, one folder each.
+///
+/// None on Android: its resources are inside the app package rather than in
+/// a folder, so they cannot be listed or served from disk. The packs that
+/// come with the Android app are part of its web build instead and are
+/// served with the rest of the page (see `scripts/prepare-frontend.js`).
 fn bundled_packs(app: &App) -> Vec<BundledPack> {
+    if cfg!(mobile) {
+        return Vec::new();
+    }
     let Ok(dir) = app
         .path()
         .resource_dir()
@@ -351,7 +380,8 @@ fn is_app_url(url: &Url, dev_url: Option<&Url>) -> bool {
     match url.scheme() {
         // The bundled frontend on Linux and macOS.
         "tauri" => url.host_str() == Some("localhost"),
-        // The bundled frontend on Windows, or the dev server during `tauri dev`.
+        // The bundled frontend on Windows and Android, or the dev server
+        // during `tauri dev`.
         "http" | "https" => {
             url.host_str() == Some("tauri.localhost")
                 || dev_url.is_some_and(|dev| dev.origin() == url.origin())

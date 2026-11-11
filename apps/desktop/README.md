@@ -83,6 +83,27 @@ CI runs the smoke test on the default build, and the other four on a build with 
 
 The first name in `ATLAS_BUNDLE_PACKS` is the game shown on first launch; after that the app opens the game picked last. Any pack folder in `packs/<id>/` can be bundled this way.
 
+## Android
+
+The same shell builds an Android app, a viewer for Android 10 (API 29) and later, with the identifier `dev.atlas.android` and the name "Atlas" (`src-tauri/tauri.android.conf.json`, which Tauri merges over `tauri.conf.json` for Android builds). The desktop app's identifier and behaviour do not change.
+
+It needs, besides Node.js, pnpm and Rust: Java 17, the Android SDK and NDK with `ANDROID_HOME` and `NDK_HOME` set (see [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/#android)), and the Rust target `aarch64-linux-android`. Then, from the repository root:
+
+```sh
+pnpm android:build --target aarch64
+```
+
+`scripts/build.js android` creates the Android project with `tauri android init` when `src-tauri/gen/android` (ignored by git) does not exist, then runs `tauri android build --apk` with the other arguments. The APK, unsigned, lands in `src-tauri/gen/android/app/build/outputs/apk/`. A release signs it with `zipalign` and `apksigner`; the version code follows the app version (major × 1,000,000 + minor × 1,000 + patch), so a newer build installs over an older one signed with the same key. The build refuses `ATLAS_ENABLE_DOWNLOADS=1`, `ATLAS_BUNDLE_IMPORTERS` and `ATLAS_APP_NAME`/`ATLAS_APP_IDENTIFIER`.
+
+How it differs from the desktop app:
+
+- **Packs that come with the app** are part of its web build (`packs/<folder>/` in `dist`), served with the page from `http://tauri.localhost`, not resources served by the `atlas-pack` protocol: an Android app's resources are inside its package, not a folder. They must use folder tiles, since the Android WebView answers byte ranges from the app itself and so cannot read PMTiles archives; the build sets `ATLAS_DEMO_TILES=xyz` for the demo, and `scripts/prepare-frontend.js` refuses a pack with a `.pmtiles` file for Android.
+- **The `atlas-pack` protocol** is served at `http://atlas-pack.localhost/<id>/`, as on Windows, for packs in the maps folder.
+- **The maps folder and the shared settings file** are in the app's own storage (`Atlas/Maps` and `Atlas/settings.json` under the app's data folder). The page keeps the `http` scheme (`http://tauri.localhost`), so progress in IndexedDB stays where it is from one version to the next.
+- **Not on Android:** folder dialogs (choosing the maps folder, adding pack folders), showing folders in a file manager, progress export and import (Android's dialogs give `content://` addresses that the shell cannot read or write yet), the import window and "Add a map", moving the map images of version 0.2.0, and map image downloads. The commands for them answer "This is not available on this device." and `desktop_info` says `folders`, `progressFiles` and `imports` are false, so the web app shows no Maps button, no export or import of progress files (it says so in the Profiles dialog) and no "Add a map".
+
+`node scripts/check-apk.js <app.apk> [--packs demo] [--forbid <text>]...` checks a built APK and the frontend it was built from (`dist`): the native library holds no download code (as `check-binary.js` does), the app comes with exactly the packs named, `config.json` lists no importers, and no file contains a forbidden text. CI's Android job runs it, and checks the package name, the app name, the minimum Android version and the 64-bit ARM library with `aapt2`. Running the app on a phone or an emulator is not part of CI.
+
 ## How packs are served
 
 PMTiles archives are read with HTTP range requests. Tauri's built-in protocol for the bundled frontend (`tauri://localhost`, or `http://tauri.localhost` on Windows) ignores the `Range` header and always answers `200` with the whole file, which the PMTiles reader rejects. So the desktop build does not embed packs in the frontend:

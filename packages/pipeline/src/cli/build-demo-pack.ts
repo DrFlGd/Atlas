@@ -5,6 +5,9 @@
  *   tsx src/cli/build-demo-pack.ts --force    always rebuild
  *
  * Options: --tiles pmtiles|xyz, --seed <n>, --size <px>, --locations <n>, --out <dir>.
+ * `--tiles` defaults to the `ATLAS_DEMO_TILES` environment variable, else
+ * pmtiles; the Android build sets it to xyz, so that `pnpm build` makes the
+ * folder tiles that app can read.
  *
  * "Out of date" means the options or the source of the generator (this
  * package and the schema package) changed since the last build, as recorded
@@ -25,10 +28,14 @@ import {
 const packageRoot = resolve(import.meta.dirname, '../..');
 const repoRoot = resolve(packageRoot, '../..');
 
+// An empty ATLAS_DEMO_TILES counts as unset.
+const envTiles = process.env.ATLAS_DEMO_TILES?.trim() ?? '';
+const defaultTiles = envTiles === '' ? DEFAULT_DEMO_OPTIONS.tileFormat : envTiles;
+
 const { values } = parseArgs({
   options: {
     force: { type: 'boolean', default: false },
-    tiles: { type: 'string', default: DEFAULT_DEMO_OPTIONS.tileFormat },
+    tiles: { type: 'string', default: defaultTiles },
     seed: { type: 'string', default: String(DEFAULT_DEMO_OPTIONS.seed) },
     size: { type: 'string', default: String(DEFAULT_DEMO_OPTIONS.size) },
     locations: { type: 'string', default: String(DEFAULT_DEMO_OPTIONS.locationCount) },
@@ -44,7 +51,7 @@ function positiveInt(name: string, value: string): number {
 }
 
 if (values.tiles !== 'pmtiles' && values.tiles !== 'xyz') {
-  throw new Error('--tiles must be "pmtiles" or "xyz"');
+  throw new Error('--tiles (or ATLAS_DEMO_TILES) must be "pmtiles" or "xyz"');
 }
 
 const options: DemoPackOptions = {

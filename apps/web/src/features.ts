@@ -22,3 +22,25 @@ declare global {
 export function downloadsOffered(state: Pick<AtlasState, 'app'>): boolean {
   return __ATLAS_DOWNLOADS__ && state.app?.downloads === true;
 }
+
+/**
+ * Whether the app offers the Maps dialog, with its folder choices and
+ * "Open folder" buttons: not where the shell says it has no folders (the
+ * Android app). A browser has no Maps dialog either way.
+ */
+export function foldersOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.folders !== false;
+}
+
+/**
+ * Whether progress can be exported to and imported from files: in a
+ * browser, and in a shell that has the dialogs for it (not the Android app).
+ */
+export function progressFilesOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.progressFiles !== false;
+}
+
+/** Whether "Add a map" can open web pages: not in the Android app. */
+export function importsOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.imports !== false;
+}

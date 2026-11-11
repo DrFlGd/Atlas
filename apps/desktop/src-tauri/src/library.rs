@@ -82,9 +82,10 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The URL a registered pack is served at.
+/// The URL a registered pack is served at. WebView2 on Windows and the
+/// Android WebView serve custom schemes as `http://<scheme>.localhost`.
 pub fn pack_url(id: &str) -> String {
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "android")) {
         format!("http://atlas-pack.localhost/{id}/")
     } else {
         format!("atlas-pack://localhost/{id}/")

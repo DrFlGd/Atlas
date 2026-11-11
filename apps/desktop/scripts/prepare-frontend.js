@@ -15,8 +15,16 @@
  *   see `packages/importer-api`): each is checked, copied to
  *   `importers/<id>.js` and listed under `importers` in `config.json`.
  *   Without it the app has no importers and offers no "Add a map".
+ *
+ * For Android (`TAURI_ENV_PLATFORM=android`) the packs stay in the web
+ * build instead, and `config.json` points at them there (`packs/<folder>/`):
+ * the Android app has no resource folder to serve them from. Its WebView
+ * cannot read PMTiles archives from the app (it answers byte ranges itself),
+ * so a pack with a `.pmtiles` file is refused; build the demo with folder
+ * tiles (`ATLAS_DEMO_TILES=xyz`, which `scripts/build.js android` sets).
+ * Importers are refused too: the Android app has no import window.
  */
-import { copyFile, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -27,9 +35,10 @@ const outDir = fileURLToPath(new URL('../dist/', import.meta.url));
 // Tauri sets TAURI_ENV_PLATFORM for build hooks; fall back to the host.
 const platform =
   process.env.TAURI_ENV_PLATFORM ?? (process.platform === 'win32' ? 'windows' : process.platform);
-// Windows (WebView2) serves custom schemes as http://<scheme>.localhost.
+const android = platform === 'android';
+// Windows (WebView2) and Android serve custom schemes as http://<scheme>.localhost.
 const packBase =
-  platform === 'windows' ? 'http://atlas-pack.localhost/' : 'atlas-pack://localhost/';
+  platform === 'windows' || android ? 'http://atlas-pack.localhost/' : 'atlas-pack://localhost/';
 
 await stat(`${webDist}index.html`).catch(() => {
   throw new Error(`No web build at ${webDist}; run \`pnpm build\` first.`);
@@ -41,7 +50,8 @@ await cp(webDist, outDir, {
   recursive: true,
   filter: (source) => {
     const path = source.slice(webDist.length).replaceAll('\\', '/');
-    return path !== 'packs' && !path.startsWith('packs/') && !path.endsWith('.map');
+    if (path.endsWith('.map')) return false;
+    return android || (path !== 'packs' && !path.startsWith('packs/'));
   },
 });
 
@@ -66,9 +76,22 @@ const entries =
   ).packs;
 
 /**
+ * The PMTiles archives in a folder and its sub-folders.
+ * @param {string} dir
+ * @returns {Promise<string[]>}
+ */
+async function pmtilesIn(dir) {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.pmtiles'))
+    .map((entry) => entry.name);
+}
+
+/**
  * Maps a pack URL to the pack protocol. A `packs/<folder>/` URL names a
  * bundled pack, which the shell serves under its folder name; absolute URLs
- * are kept as they are.
+ * are kept as they are. On Android the pack stays in the web build, at
+ * `packs/<folder>/`.
  * @param {string} url
  */
 async function protocolUrl(url) {
@@ -78,7 +101,15 @@ async function protocolUrl(url) {
   await stat(`${webDist}packs/${folder}/manifest.json`).catch(() => {
     throw new Error(`The pack list points at ${url}, but the web build has no pack there.`);
   });
-  return `${packBase}${folder}/`;
+  if (!android) return `${packBase}${folder}/`;
+  const archives = await pmtilesIn(`${webDist}packs/${folder}`);
+  if (archives.length > 0) {
+    throw new Error(
+      `The pack ${folder} has PMTiles archives (${archives.join(', ')}), which the Android app cannot read. ` +
+        'Build it with folder tiles: ATLAS_DEMO_TILES=xyz for the demo (scripts/build.js android sets it).',
+    );
+  }
+  return `packs/${folder}/`;
 }
 
 config.packs = await Promise.all(
@@ -141,6 +172,9 @@ const importerPaths = (process.env.ATLAS_BUNDLE_IMPORTERS ?? '')
   .map((path) => path.trim())
   .filter(Boolean)
   .map((path) => (isAbsolute(path) ? path : resolve(repoRoot, path)));
+if (android && importerPaths.length > 0) {
+  throw new Error('The Android app has no import window, so it takes no ATLAS_BUNDLE_IMPORTERS.');
+}
 /** @type {ImporterEntry[]} */
 const importers = [];
 for (const path of importerPaths) {

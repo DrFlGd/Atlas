@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "node scripts/build.js",
-    "test": "node --test scripts/build.test.js",
+    "android:build": "node scripts/build.js android",
+    "android:check": "node scripts/check-apk.js",
+    "test": "node --test scripts/build.test.js scripts/check-apk.test.js",
     "test:e2e": "node e2e/smoke.js",
     "tauri": "tauri",
     "test:e2e:download": "node e2e/download.js",
