@@ -406,7 +406,8 @@ pub fn read_toc(bundle: &Path, wanted: impl Fn(&str) -> bool) -> Result<Toc, Str
     let mut result = Toc::default();
     let mut plausible = [0usize; 2];
     let mut chosen: Vec<(String, &[u8])> = Vec::new();
-    for raw in toc.chunks_exact(ENTRY_BYTES) {
+    for raw in toc.as_chunks::<ENTRY_BYTES>().0 {
+        let raw: &[u8] = raw;
         result.entries += 1;
         for (count, layout) in plausible.iter_mut().zip(TocLayout::ALL) {
             if layout
