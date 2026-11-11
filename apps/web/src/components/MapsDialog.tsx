@@ -73,9 +73,21 @@ export function MapsDialog() {
           <PackList />
           <Locations />
           <ActivityLogSection />
+          <AppVersion />
         </div>
       ) : null}
     </dialog>
+  );
+}
+
+/** Which app and version this is, at the foot of the dialog. */
+function AppVersion() {
+  const app = useAtlas((s) => s.app);
+  if (!app?.version) return null;
+  return (
+    <p className="muted small app-version" data-testid="app-version">
+      {app.name} {app.version}
+    </p>
   );
 }
 

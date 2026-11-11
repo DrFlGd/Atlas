@@ -60,6 +60,10 @@ jobs:
 
   # Builds the Tauri desktop app without code signing and uploads the bundles.
   # Runs in parallel with the web checks, which do not wait for it.
+  #
+  # Windows only for now: the Linux build and its tests are switched off. To
+  # switch them on again, add `ubuntu-latest` to the matrix; the Linux steps
+  # below are kept as they were and run only there.
   desktop:
     name: Desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -67,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
     defaults:
       run:
         shell: bash

@@ -1720,6 +1720,11 @@ label.tree-row:hover,
   margin-top: 14px;
 }
 
+.app-version {
+  margin: 16px 0 0;
+  text-align: right;
+}
+
 .profile-list {
   margin: 8px 0 0;
   padding: 0;
