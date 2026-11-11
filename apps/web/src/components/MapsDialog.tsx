@@ -15,6 +15,7 @@ import {
 } from '../state/library';
 import { useAtlas } from '../state/store';
 import { UiIcon } from './icons';
+import { MapPageActions } from './MapPageActions';
 
 /**
  * "Maps", in the desktop app: where maps are kept, the packs it shows and
@@ -360,6 +361,7 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
             ) : null}
           </div>
         )}
+        {pack.imported ? <MapPageActions pack={pack} /> : null}
       </div>
     </li>
   );
