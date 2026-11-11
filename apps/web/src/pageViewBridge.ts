@@ -45,7 +45,7 @@ export interface ViewStatus {
   counts: CaptureCounts;
   /** The page loads things in background workers, which cannot be seen. */
   usesWorkers: boolean;
-  /** Increases when the saved images complete a level, so the map looks again. */
+  /** Increases when map images were saved, so the map looks again. */
   revision: number;
   message: string | null;
 }

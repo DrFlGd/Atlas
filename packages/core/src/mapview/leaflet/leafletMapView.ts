@@ -63,6 +63,22 @@ export function createLeafletMapView(
   const tileListeners = new Set<(status: TileStatus) => void>();
   let tileStatus: TileStatus | null = null;
   let destroyed = false;
+  // Tile images that failed to load, with the address they asked for, so
+  // that `refreshTiles` can ask again once the tile may be there.
+  const failedTiles = new Map<HTMLImageElement, string>();
+  const watchTiles = (tiles: L.GridLayer): L.GridLayer => {
+    failedTiles.clear();
+    tiles.on('tileerror', (event: L.TileErrorEvent) => {
+      const tile: HTMLElement = event.tile;
+      if (tile instanceof HTMLImageElement && tile.src) failedTiles.set(tile, tile.src);
+    });
+    const forget = (event: L.TileEvent) => {
+      failedTiles.delete(event.tile);
+    };
+    tiles.on('tileload', forget);
+    tiles.on('tileunload', forget);
+    return tiles;
+  };
   const setTileStatus = (status: TileStatus) => {
     tileStatus = status;
     container.classList.toggle('atlas-no-tiles', status.status === 'missing');
@@ -143,7 +159,7 @@ export function createLeafletMapView(
         void tilesAvailable(spec).then((available) => {
           if (layer !== spec) return;
           tileLayer?.remove();
-          tileLayer = available ? createTileLayer(spec, maxMapZoom).addTo(map) : null;
+          tileLayer = available ? watchTiles(createTileLayer(spec, maxMapZoom)).addTo(map) : null;
           setTileStatus({ layerId: spec.id, status: available ? 'ready' : 'missing' });
         });
       };
@@ -216,6 +232,30 @@ export function createLeafletMapView(
       markerLayer?.refreshPalette();
     },
 
+    refreshTiles() {
+      if (destroyed) return;
+      // Layers that had no tiles are looked at again when next shown.
+      probes.clear();
+      if (!layer) return;
+      const spec = layer;
+      if (!tileLayer) {
+        // The layer had no tiles when it was shown: look again.
+        void tilesAvailable(spec).then((available) => {
+          if (destroyed || layer !== spec || tileLayer || !available) return;
+          tileLayer = watchTiles(createTileLayer(spec, spec.maxZoom + overZoom)).addTo(map);
+          setTileStatus({ layerId: spec.id, status: 'ready' });
+        });
+        return;
+      }
+      // Ask again for the tiles that were not there; the others stay as they are.
+      for (const [tile, url] of [...failedTiles]) {
+        failedTiles.delete(tile);
+        if (!tile.isConnected) continue;
+        tile.removeAttribute('src');
+        tile.src = url;
+      }
+    },
+
     flyTo(target: FlyToTarget, flyOptions = {}) {
       if (destroyed || !layer) return;
       const center = toLatLng(target.x, target.y);
@@ -257,6 +297,7 @@ export function createLeafletMapView(
       viewListeners.clear();
       hoverListeners.clear();
       tileListeners.clear();
+      failedTiles.clear();
       container.classList.remove('atlas-no-tiles');
       // Stops a tile probe that is still running from adding a layer to the removed map.
       layer = null;
