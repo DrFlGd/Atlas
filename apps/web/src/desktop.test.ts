@@ -40,6 +40,9 @@ describe('desktop bridge', () => {
     await bridge.library.reveal({ kind: 'pack', id: 'demo' });
     await bridge.library.applyMapsFolder(true);
     await bridge.library.importSources('demo', 'demo-maps');
+    await bridge.library.imagesInfo('my-game');
+    await bridge.library.deleteImages('my-game');
+    await bridge.library.deletePack('my-game');
     await bridge.importWindow.open('https://example.com/map', '() => 1');
     await bridge.importWindow.poll();
     await bridge.importWindow.open('https://example.com/map', '() => 1', {
@@ -63,6 +66,9 @@ describe('desktop bridge', () => {
       ['library_reveal', { target: { kind: 'pack', id: 'demo' } }],
       ['library_apply_maps_folder', { movePacks: true }],
       ['library_import_sources', { packId: 'demo', importerId: 'demo-maps' }],
+      ['library_images_info', { id: 'my-game' }],
+      ['library_delete_images', { id: 'my-game' }],
+      ['library_delete_pack', { id: 'my-game' }],
       ['import_open', { url: 'https://example.com/map', reader: '() => 1' }],
       ['import_poll', undefined],
       [

@@ -9,6 +9,7 @@ mod imports;
 pub mod library;
 pub mod manifest;
 mod packs;
+mod removal;
 pub mod settings;
 pub mod tiles;
 
@@ -66,6 +67,8 @@ pub fn run() {
             commands::library_apply_maps_folder,
             commands::library_reveal,
             commands::library_delete_pack,
+            commands::library_images_info,
+            commands::library_delete_images,
             commands::library_import_sources,
             commands::library_save_import,
             commands::import_open,
@@ -126,7 +129,15 @@ pub fn run() {
             app.manage(Arc::clone(&library));
             // Map images that version 0.2.0 downloaded move into the pack
             // folders in the background; the map shows them as they arrive.
+            // Packs whose files were still in use when they were deleted are
+            // removed first; they are hidden already.
             std::thread::spawn(move || {
+                for left in library.finish_deletes() {
+                    eprintln!(
+                        "atlas: {} is still in use; it is removed at the next start",
+                        left.display()
+                    );
+                }
                 let moved = library.migrate_legacy();
                 if !moved.is_empty() {
                     activity::info(

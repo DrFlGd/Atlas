@@ -6,7 +6,6 @@ import {
   addPacksFolder,
   applyMapsFolder,
   chooseMapsFolder,
-  deletePack,
   openPackFolder,
   refreshLibrary,
   removeLocation,
@@ -15,13 +14,16 @@ import {
 } from '../state/library';
 import { useAtlas } from '../state/store';
 import { ActivityLogSection } from './ActivityLogSection';
+import { DeleteImagesConfirm } from './DeleteImagesConfirm';
+import { DeletePackConfirm } from './DeletePackConfirm';
 import { UiIcon } from './icons';
 
 /**
  * "Maps", in the desktop app: where maps are kept, the packs it shows and
  * where each comes from, and the pack folders and folders of packs the
  * person added. Nothing here deletes files except "Delete" on a pack in the
- * maps folder, after a confirmation.
+ * maps folder and "Delete downloaded images" on a pack with a folder, each
+ * after a confirmation.
  */
 export function MapsDialog() {
   const open = useAtlas((s) => s.mapsDialogOpen);
@@ -255,13 +257,14 @@ function PackTitle({ title, active }: { title: string; active: boolean }) {
 }
 
 function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; busy: boolean }) {
-  const [confirming, setConfirming] = useState(false);
-  const [withProgress, setWithProgress] = useState(false);
+  const [confirming, setConfirming] = useState<'pack' | 'images' | null>(null);
   const canRebuild = useAtlas((s) =>
     s.config?.importers.some((i) => i.id === pack.imported?.importerId),
   );
-  const checkboxId = useId();
   const deletable = pack.origin === 'maps-folder' && !pack.bundled;
+  const close = () => {
+    setConfirming(null);
+  };
   return (
     <li className="profile-row pack-row" data-testid="pack-row" data-pack={pack.id}>
       <div className="pack-info">
@@ -273,46 +276,10 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
           {busy ? ' · moving files from an older version…' : ''}
         </span>
         {pack.path ? <span className="path small">{pack.path}</span> : null}
-        {confirming ? (
-          <div className="download-confirm" role="group" aria-label={`Delete ${pack.title}?`}>
-            <p>
-              Delete {pack.title} from the maps folder, with its downloaded map images? This cannot
-              be undone.
-            </p>
-            <label htmlFor={checkboxId} className="checkbox-row">
-              <input
-                id={checkboxId}
-                type="checkbox"
-                checked={withProgress}
-                onChange={(event) => {
-                  setWithProgress(event.target.checked);
-                }}
-              />{' '}
-              Also delete my progress for this game in this app
-            </label>
-            <div className="row-actions">
-              <button
-                type="button"
-                className="button button-danger"
-                data-testid="confirm-delete-pack"
-                onClick={() => {
-                  setConfirming(false);
-                  void deletePack(pack.id, withProgress);
-                }}
-              >
-                Delete
-              </button>
-              <button
-                type="button"
-                className="button"
-                onClick={() => {
-                  setConfirming(false);
-                }}
-              >
-                Keep it
-              </button>
-            </div>
-          </div>
+        {confirming === 'pack' ? (
+          <DeletePackConfirm id={pack.id} title={pack.title} onClose={close} />
+        ) : confirming === 'images' ? (
+          <DeleteImagesConfirm id={pack.id} title={pack.title} onClose={close} />
         ) : (
           <div className="row-actions">
             {!active ? (
@@ -348,13 +315,26 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
                 Rebuild
               </button>
             ) : null}
-            {deletable ? (
+            {pack.path && !busy ? (
+              <button
+                type="button"
+                className="link-button"
+                data-testid="delete-images"
+                title="Delete the map images downloaded for this game and keep the game"
+                onClick={() => {
+                  setConfirming('images');
+                }}
+              >
+                Delete downloaded images…
+              </button>
+            ) : null}
+            {deletable && !busy ? (
               <button
                 type="button"
                 className="link-button"
                 data-testid="delete-pack"
                 onClick={() => {
-                  setConfirming(true);
+                  setConfirming('pack');
                 }}
               >
                 Delete…

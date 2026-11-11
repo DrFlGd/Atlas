@@ -1,7 +1,6 @@
-import { deletedProfile, type PackEntry } from '@atlas/core';
+import type { PackEntry } from '@atlas/core';
 import { desktop, type FolderChoice, type Listing, type RevealTarget } from '../desktop';
 import { loadGame, notify } from './actions';
-import { clock, progressStore } from './services';
 import { useAtlas } from './store';
 
 /**
@@ -137,28 +136,4 @@ export async function applyMapsFolder(movePacks: boolean): Promise<boolean> {
 
 export function reveal(target: RevealTarget): void {
   void run(() => desktop!.library.reveal(target));
-}
-
-/**
- * Deletes a pack, with its map images, from the maps folder. Progress kept
- * in this app is deleted too only when asked.
- */
-export async function deletePack(id: string, deleteProgress: boolean): Promise<void> {
-  await run(async () => {
-    const title = get().catalog.find((p) => p.id === id)?.title ?? id;
-    await desktop!.library.deletePack(id);
-    if (deleteProgress) {
-      const store = progressStore();
-      for (const profile of await store.listProfiles(id)) {
-        const rows = await store.listProgress(profile.id);
-        await store.write(deletedProfile(profile, rows, clock()));
-      }
-    }
-    await refreshLibrary();
-    notify(
-      deleteProgress
-        ? `Deleted ${title} and its progress.`
-        : `Deleted ${title}. Its progress is kept in case you add it again.`,
-    );
-  });
 }

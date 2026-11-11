@@ -83,12 +83,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Test
-        run: |
-          pnpm lint
-          pnpm typecheck
-          pnpm test
-
+      # Lint, type checks and tests run on every pull request (ci.yml), so the
+      # commit being released has passed them. They are not repeated here: on
+      # Windows the checkout has CRLF line endings, which the format check
+      # reports as style issues.
       # The plain viewer: the demo world only, no importers, the app's own
       # name and identifier. No signing keys are set: the installer is unsigned.
       - name: Build the desktop app

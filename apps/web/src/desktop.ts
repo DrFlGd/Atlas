@@ -231,6 +231,32 @@ export interface DownloadSettingsInfo {
   bounds: Record<keyof DownloadSettings, [number, number]>;
 }
 
+/** Map images downloaded for a pack, to say what a delete would remove. */
+export interface ImagesInfo {
+  /** Image files and their size in bytes. */
+  files: number;
+  bytes: number;
+  /** A download of the pack is running or paused; deleting stops it. */
+  downloading: boolean;
+}
+
+/** The outcome of deleting a pack. */
+export interface PackDeleted {
+  /**
+   * Every file is gone. Otherwise some were in use by another program; the
+   * pack is not listed any more, and the rest is removed at the next start.
+   */
+  complete: boolean;
+}
+
+/** The outcome of deleting a pack's downloaded map images. */
+export interface ImagesDeleted {
+  files: number;
+  bytes: number;
+  /** Images that were in use by another program and are still there. */
+  left: number;
+}
+
 export type RevealTarget =
   | { kind: 'maps-folder' }
   | { kind: 'pack'; id: string }
@@ -267,7 +293,12 @@ export interface DesktopBridge {
     /** Uses the chosen maps folder; returns the ids of the packs moved there. */
     applyMapsFolder(movePacks: boolean): Promise<string[]>;
     reveal(target: RevealTarget): Promise<void>;
-    deletePack(id: string): Promise<void>;
+    /** Deletes a pack from the maps folder, stopping its download first. */
+    deletePack(id: string): Promise<PackDeleted>;
+    /** How many map images were downloaded for a pack. */
+    imagesInfo(id: string): Promise<ImagesInfo>;
+    /** Deletes a pack's downloaded map images only, stopping its download first. */
+    deleteImages(id: string): Promise<ImagesDeleted>;
     importSources(packId: string, importerId: string): Promise<StoredSource[]>;
     saveImport(request: SaveImportRequest): Promise<Listing>;
   };
@@ -320,6 +351,8 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       applyMapsFolder: (movePacks) => call('library_apply_maps_folder', { movePacks }),
       reveal: (target) => call('library_reveal', { target }),
       deletePack: (id) => call('library_delete_pack', { id }),
+      imagesInfo: (id) => call('library_images_info', { id }),
+      deleteImages: (id) => call('library_delete_images', { id }),
       importSources: (packId, importerId) => call('library_import_sources', { packId, importerId }),
       saveImport: (request) => call('library_save_import', { request }),
     },
