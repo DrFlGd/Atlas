@@ -5,6 +5,7 @@ import {
   previewFile,
   sourceDetails,
   sourceText,
+  sourceTone,
   suggestedFileName,
   summaryLine,
   type AreaReport,
@@ -29,7 +30,7 @@ function source(overrides: Partial<SourceResult>): SourceResult {
 
 const report: Report = {
   tool: 'atlas-gamefiles',
-  toolVersion: '0.1.0',
+  toolVersion: '0.1.1',
   reportVersion: 1,
   createdAt: '2026-11-11T12:00:00Z',
   folder: 'C:\\Games\\Made Up',
@@ -76,6 +77,45 @@ describe('report wording', () => {
     expect(sourceText(source({ status: 'not-decoded', read: 7 }))).toBe(
       'Opens, not decoded yet (7 files)',
     );
+    expect(
+      sourceText(source({ status: 'timed-out', timeLimitSeconds: 90, seconds: 90.2, read: 0 })),
+    ).toBe('Took too long: stopped after 90 seconds');
+    expect(sourceTone('timed-out')).toBe('warn');
+  });
+
+  it('says when only a sample was read', () => {
+    expect(sourceText(source({ sampled: true, entries: 150, read: 12, triangles: 34567 }))).toBe(
+      'Read a sample (12 of 150 files, 34,567 triangles)',
+    );
+    expect(sourceText(source({ sampled: true, entries: 40, read: 12 }))).toBe(
+      'Read a sample (12 of 40 files)',
+    );
+    expect(
+      sourceText(source({ status: 'partial', sampled: true, entries: 150, read: 10, failed: 2 })),
+    ).toBe('Partly read (10 of 12 sampled files)');
+  });
+
+  it('shows how long the files took', () => {
+    expect(
+      sourceDetails(
+        source({
+          status: 'timed-out',
+          note: 'Stopped after 90 s while reading h1000B0A10.hkx.dcx (collision file 3 of 12).',
+          fileSeconds: { files: 2, min: 0.25, median: 3.4, max: 42.4 },
+          slowestFile: 'h0200B0A10.hkx.dcx',
+          openSeconds: 12.6,
+        }),
+      ),
+    ).toEqual([
+      'Stopped after 90 s while reading h1000B0A10.hkx.dcx (collision file 3 of 12).',
+      'Reading time: 0.25 to 42 seconds per file (middle 3.4), slowest h0200B0A10.hkx.dcx',
+      'Opening the files took 13 seconds',
+    ]);
+    expect(
+      sourceDetails(
+        source({ fileSeconds: { files: 1, min: 0.5, median: 0.5, max: 0.5 }, openSeconds: 0.2 }),
+      ),
+    ).toEqual(['Reading time: 0.50 seconds for 1 file']);
   });
 
   it('lists notes and errors', () => {

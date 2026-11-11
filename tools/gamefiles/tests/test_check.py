@@ -14,6 +14,7 @@ from atlas_gamefiles.events import Events
 from atlas_gamefiles.games import PROFILES
 from atlas_gamefiles.geometry import Cancelled
 from atlas_gamefiles.safety import UnsafeOutputError
+from atlas_gamefiles.worker import InlineRunner
 from conftest import snapshot
 
 
@@ -120,7 +121,8 @@ def test_bloodborne_report(bloodborne_folder: Path, tmp_path: Path, monkeypatch:
     monkeypatch.setattr(map_collision.MapCollisionModel, "from_bytes", classmethod(refuse))
 
     before = snapshot(bloodborne_folder)
-    report, _ = run(bloodborne_folder, tmp_path / "out")
+    # The mock does not reach a child process, so the geometry is read in this one.
+    report, _ = run(bloodborne_folder, tmp_path / "out", runner=InlineRunner())
     assert snapshot(bloodborne_folder) == before
 
     assert report["game"]["id"] == "bloodborne"

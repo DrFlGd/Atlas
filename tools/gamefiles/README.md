@@ -17,10 +17,14 @@
    - collision (`hAA_BB_CC_DD.hkxbhd` + `.hkxbdt`): Dark Souls Remastered's Havok 2015 meshes are read with soulstruct-havok's `MapCollisionModel`; Bloodborne's Havok 2014 compressed meshes are only parsed (their triangles need a decoder of our own, a later phase);
    - navmesh: Dark Souls Remastered `.nvm` files in `mAA_BB_CC_DD.nvmbnd.dcx`; Bloodborne `.nvmhktbnd.dcx` (parsed only);
    - map piece models (`.flver`, `.mapbnd`): a sample of 12 per area (`--map-piece-sample`, 0 for all).
+
+   Phase 0 is a check, not the full map, so collision is read from an evenly spaced sample of 12 files per area (`--collision-sample`, 0 for all), and every source stops starting new files after 45 seconds (`--source-budget`); either way it is marked `sampled`. The report records each source's time to open its binder (`openSeconds`), the reading time per file (`fileSeconds`: min, median, max) and the slowest file, so real parse speeds show up in a player's report.
+   **Nothing can hang the check.** The geometry is read in a child process (`worker.py`, multiprocessing with `spawn`, which also works in the single-file executable): one at a time, reused from source to source. The child applies the same promises as the helper (no network, Soulstruct imported with `prepare_soulstruct`) before it reads anything, and ends itself if the helper goes away. It reports before it opens a binder and before each file; when it is silent for 5 seconds (`--heartbeat`), the helper writes a progress line that it is still on that file ("still reading h1000B0A10.hkx.dcx (collision file 3 of 12), 20 s"). A source still running after 90 seconds (`--source-time-limit`, 0 for none) is stopped: the child is killed, the source is recorded as `timed-out` with the file it was on (`stoppedOn`) and the files done before it (`filesDone`), a warning is added, and the check goes on in a new child. Cancel kills the child at once. Only the result comes back from the child, with at most 200,000 triangles per source for the preview.
+
 4. **Draws one top-down preview PNG per area**: geometry shaded by height where it was read, dots for treasure, bonfire or lamp candidates, characters, objects and player starts. Right is +x and up is +z.
 5. **Writes** `report.json`, `previews/<area>.png` and `atlas-check-report.zip` (both, plus a short README) into the output folder.
 
-Standard output carries one JSON object per line: `start`, `game`, `areas`, `progress` (with `fraction` and `message`), `area`, `warning`, then `done` (exit code 0), `cancelled` (3) or `error` (1, or 2 for a bad output folder). Everything else goes to standard error. With `--stdin-cancel`, writing `cancel` to standard input, or closing it, stops the check between two files.
+Standard output carries one JSON object per line: `start`, `game`, `areas`, `progress` (with `fraction` and `message`), `area`, `warning`, then `done` (exit code 0), `cancelled` (3) or `error` (1, or 2 for a bad output folder). Everything else goes to standard error. With `--stdin-cancel`, writing `cancel` to standard input, or closing it, stops the check at once (the file reader process is killed).
 
 ## Promises, enforced in code
 

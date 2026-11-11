@@ -2,7 +2,7 @@
  * The report the helper (tools/gamefiles) writes, and the plain-language words the window uses for it.
  */
 
-export type SourceStatus = 'ok' | 'partial' | 'failed' | 'missing' | 'not-decoded';
+export type SourceStatus = 'ok' | 'partial' | 'failed' | 'missing' | 'not-decoded' | 'timed-out';
 export type GeometrySourceName = 'collision' | 'navmesh' | 'mapPieces';
 
 export interface SourceResult {
@@ -16,10 +16,20 @@ export interface SourceResult {
   vertices: number;
   seconds: number;
   unplaced?: number;
+  /** Only some of the files were read: an evenly spaced sample, or as many as the time budget allowed. */
   sampled?: boolean;
   havokClasses?: string[];
   errors?: string[];
   note?: string;
+  /** Seconds to open the binder. */
+  openSeconds?: number;
+  /** Seconds per file read. */
+  fileSeconds?: { files: number; min: number; median: number; max: number };
+  slowestFile?: string;
+  /** A source stopped at the time limit (status `timed-out`): the file it was on and the files done before it. */
+  stoppedOn?: string;
+  filesDone?: number;
+  timeLimitSeconds?: number;
 }
 
 export interface Bounds {
@@ -75,6 +85,8 @@ export interface GeometryCounts {
   failed: number;
   missing: number;
   'not-decoded': number;
+  /** Missing from reports made before version 0.1.1. */
+  'timed-out'?: number;
   triangles: number;
 }
 
@@ -126,21 +138,38 @@ export function plural(value: number, one: string, many = `${one}s`): string {
   return `${count(value)} ${value === 1 ? one : many}`;
 }
 
+/** "0.25", "3.4", "42": seconds with as many decimals as matter. */
+export function secondsText(seconds: number): string {
+  if (seconds < 1) return seconds.toFixed(2);
+  if (seconds < 10) return seconds.toFixed(1);
+  return count(Math.round(seconds));
+}
+
 /** One cell of the areas table: whether a geometry source worked, in words. */
 export function sourceText(result: SourceResult): string {
   switch (result.status) {
     case 'ok':
+      if (result.sampled) {
+        const files = `${count(result.read)} of ${plural(result.entries, 'file')}`;
+        return result.triangles > 0
+          ? `Read a sample (${files}, ${plural(result.triangles, 'triangle')})`
+          : `Read a sample (${files})`;
+      }
       return result.triangles > 0
         ? `Read (${plural(result.triangles, 'triangle')})`
         : `Read (${plural(result.read, 'file')})`;
     case 'partial':
-      return `Partly read (${count(result.read)} of ${plural(result.entries, 'file')})`;
+      return result.sampled
+        ? `Partly read (${count(result.read)} of ${plural(result.read + result.failed, 'sampled file')})`
+        : `Partly read (${count(result.read)} of ${plural(result.entries, 'file')})`;
     case 'failed':
       return `Could not read (${plural(result.entries, 'file')})`;
     case 'missing':
       return 'No files';
     case 'not-decoded':
       return `Opens, not decoded yet (${plural(result.read, 'file')})`;
+    case 'timed-out':
+      return `Took too long: stopped after ${secondsText(result.timeLimitSeconds ?? result.seconds)} seconds`;
   }
 }
 
@@ -152,6 +181,7 @@ export function sourceTone(status: SourceStatus): Tone {
       return 'good';
     case 'partial':
     case 'not-decoded':
+    case 'timed-out':
       return 'warn';
     case 'failed':
       return 'bad';
@@ -167,6 +197,18 @@ export function sourceDetails(result: SourceResult): string[] {
   if (result.unplaced)
     lines.push(`${plural(result.unplaced, 'file')} placed by no part of the map layout`);
   if (result.havokClasses?.length) lines.push(`Havok contents: ${result.havokClasses.join(', ')}`);
+  const times = result.fileSeconds;
+  if (times) {
+    const range =
+      times.files === 1
+        ? `${secondsText(times.max)} seconds for 1 file`
+        : `${secondsText(times.min)} to ${secondsText(times.max)} seconds per file (middle ${secondsText(times.median)})`;
+    lines.push(
+      `Reading time: ${range}${result.slowestFile ? `, slowest ${result.slowestFile}` : ''}`,
+    );
+  }
+  if (result.openSeconds !== undefined && result.openSeconds >= 1)
+    lines.push(`Opening the files took ${secondsText(result.openSeconds)} seconds`);
   for (const error of result.errors ?? []) lines.push(`Error: ${error}`);
   return lines;
 }

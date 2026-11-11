@@ -1,7 +1,12 @@
 """Command line of the helper. The Map Maker app runs it; players never need to.
 
-    atlas-gamefiles check <game folder> --out <output folder> [--stdin-cancel] [--map-piece-sample N] [--areas ...]
+    atlas-gamefiles check <game folder> --out <output folder> [--stdin-cancel] [--areas ...]
+                    [--collision-sample N] [--navmesh-sample N] [--map-piece-sample N]
+                    [--source-budget S] [--source-time-limit S] [--heartbeat S]
     atlas-gamefiles --version
+
+The sample sizes and time limits have defaults for Phase 0; the options are there for testing (the app does not
+set them).
 
 Standard output carries JSON lines only (see events.py): `start`, `game`, `areas`, `progress`, `area`, `warning`,
 then `done` (exit code 0), `cancelled` (exit code 3) or `error` (exit code 1). Standard error carries anything else.
@@ -16,7 +21,8 @@ import traceback
 from pathlib import Path
 
 from . import TOOL_NAME, __version__
-from .check import CancelToken, Checker
+from . import worker
+from .check import COLLISION_SAMPLE, MAP_PIECE_SAMPLE, NAVMESH_SAMPLE, SOURCE_BUDGET, CancelToken, Checker
 from .events import claim_stdout
 from .geometry import Cancelled
 from .safety import UnsafeOutputError, block_network
@@ -36,10 +42,45 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="stop cleanly when standard input reads 'cancel' or is closed (used by the Map Maker app)",
     )
-    check.add_argument(
-        "--map-piece-sample", type=int, default=12, help="map piece models to read per area (0 reads all)"
-    )
     check.add_argument("--areas", default="", help="only these areas, comma-separated (m10_01_00_00 or m10_01)")
+    limits = check.add_argument_group("sampling and time limits (for testing; the defaults suit a first check)")
+    limits.add_argument(
+        "--collision-sample",
+        type=int,
+        default=COLLISION_SAMPLE,
+        help=f"collision files to read per area, evenly spaced (0 reads all; default {COLLISION_SAMPLE})",
+    )
+    limits.add_argument(
+        "--navmesh-sample",
+        type=int,
+        default=NAVMESH_SAMPLE,
+        help=f"navmesh files to read per area (0 reads all; default {NAVMESH_SAMPLE})",
+    )
+    limits.add_argument(
+        "--map-piece-sample",
+        type=int,
+        default=MAP_PIECE_SAMPLE,
+        help=f"map piece models to read per area (0 reads all; default {MAP_PIECE_SAMPLE})",
+    )
+    limits.add_argument(
+        "--source-budget",
+        type=float,
+        default=SOURCE_BUDGET,
+        help=f"seconds after which a source starts no new file (0: no budget; default {SOURCE_BUDGET:g})",
+    )
+    limits.add_argument(
+        "--source-time-limit",
+        type=float,
+        default=worker.TIME_LIMIT,
+        help="seconds after which a source still being read is stopped and recorded as timed out "
+        f"(0: no limit; default {worker.TIME_LIMIT:g})",
+    )
+    limits.add_argument(
+        "--heartbeat",
+        type=float,
+        default=worker.HEARTBEAT,
+        help=f"seconds of silence before a 'still reading' progress line (default {worker.HEARTBEAT:g})",
+    )
     return root
 
 
@@ -70,7 +111,16 @@ def main(argv: list[str] | None = None) -> int:
     areas = [a.strip() for a in args.areas.split(",") if a.strip()]
     try:
         checker = Checker(
-            args.folder, args.out, events, token=token, map_piece_sample=args.map_piece_sample, only_areas=areas
+            args.folder,
+            args.out,
+            events,
+            token=token,
+            only_areas=areas,
+            collision_sample=args.collision_sample,
+            navmesh_sample=args.navmesh_sample,
+            map_piece_sample=args.map_piece_sample,
+            source_budget=args.source_budget,
+            runner=worker.ProcessRunner(time_limit=args.source_time_limit, heartbeat=args.heartbeat),
         )
         checker.run()
     except Cancelled:
