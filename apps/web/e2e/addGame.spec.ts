@@ -104,6 +104,9 @@ test('adds the maps and checklist of a game from its game page, and updates it l
   await setMock(page, { extra: { 'test-valley': { 'north-lake': 'North Lake' } } });
   await page.getByRole('button', { name: 'Done' }).click();
   await page.getByTestId('maps-button').click();
+  // The dialog's foot and the app's name say which app and version this is.
+  await expect(page.getByTestId('app-version')).toHaveText('Atlas 0.0.0');
+  await expect(page.locator('.brand')).toHaveAttribute('title', 'Atlas 0.0.0');
   const row = page.locator('[data-testid="pack-row"][data-pack="test-valley"]');
   await expect(page.getByTestId('update-all')).toBeVisible();
   await row.getByTestId('update-pack').click();

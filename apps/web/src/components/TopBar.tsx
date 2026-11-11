@@ -22,6 +22,7 @@ export function TopBar({ search }: { search: React.ReactNode }) {
   const summary = useSummary();
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   const appName = useAtlas((s) => s.app?.name ?? 'Atlas');
+  const appVersion = useAtlas((s) => s.app?.version ?? '');
 
   return (
     <header className="topbar">
@@ -55,7 +56,11 @@ export function TopBar({ search }: { search: React.ReactNode }) {
           <UiIcon name="checklist" />
         </button>
       ) : null}
-      <span className="brand" aria-hidden="true">
+      <span
+        className="brand"
+        aria-hidden="true"
+        title={appVersion ? `${appName} ${appVersion}` : undefined}
+      >
         {appName}
       </span>
       <div className="topbar-switchers">
