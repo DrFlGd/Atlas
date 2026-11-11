@@ -32,6 +32,12 @@
     "allow-import-poll",
     "allow-import-close",
     "allow-import-report",
-    "allow-activity-log-read"
+    "allow-activity-log-read",
+    "allow-view-pages",
+    "allow-view-open",
+    "allow-view-status",
+    "allow-view-stop-saving",
+    "allow-view-close",
+    "allow-view-open-in-browser"
   ]
 }

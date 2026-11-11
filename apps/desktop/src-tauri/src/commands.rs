@@ -467,9 +467,30 @@ async fn delete_pack(
     stop_download(&manager, &id).await?;
     let deleted = {
         let id = id.clone();
-        blocking(move || library.delete_pack(&id)).await?
+        blocking(move || library.delete_pack(&id)).await
+    };
+    let deleted = match deleted {
+        Ok(deleted) => deleted,
+        Err(error) => {
+            activity::warn(
+                Area::Library,
+                format!("Could not delete the map {}: {error}", short(&id)),
+            );
+            return Err(error);
+        }
     };
     manager.forget(&id);
+    activity::info(
+        Area::Library,
+        if deleted.complete {
+            format!("Deleted the map {} from the maps folder", short(&id))
+        } else {
+            format!(
+                "Deleted the map {} from the maps folder; some files were in use and are removed at the next start",
+                short(&id)
+            )
+        },
+    );
     Ok(deleted)
 }
 
@@ -534,9 +555,32 @@ async fn delete_images(
     stop_download(&manager, &id).await?;
     let deleted = {
         let id = id.clone();
-        blocking(move || library.delete_images(&id, &location)).await?
+        blocking(move || library.delete_images(&id, &location)).await
+    };
+    let deleted = match deleted {
+        Ok(deleted) => deleted,
+        Err(error) => {
+            activity::warn(
+                Area::Library,
+                format!(
+                    "Could not delete the downloaded map images of {}: {error}",
+                    short(&id)
+                ),
+            );
+            return Err(error);
+        }
     };
     manager.forget(&id);
+    activity::info(
+        Area::Library,
+        format!(
+            "Deleted the downloaded map images of {}: {} images, {} bytes; {} left because they were in use",
+            short(&id),
+            deleted.files,
+            deleted.bytes,
+            deleted.left
+        ),
+    );
     Ok(deleted)
 }
 

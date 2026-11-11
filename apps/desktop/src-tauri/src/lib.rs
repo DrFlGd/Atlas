@@ -9,6 +9,7 @@ mod imports;
 pub mod library;
 pub mod manifest;
 mod packs;
+mod pageview;
 mod removal;
 pub mod settings;
 pub mod tiles;
@@ -46,6 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(registry)
         .manage(imports::Imports::default())
+        .manage(pageview::PageViews::default())
         .invoke_handler(tauri::generate_handler![
             commands::desktop_info,
             commands::open_external,
@@ -76,10 +78,16 @@ pub fn run() {
             commands::import_close,
             commands::import_report,
             commands::activity_log_read,
+            pageview::view_pages,
+            pageview::view_open,
+            pageview::view_status,
+            pageview::view_stop_saving,
+            pageview::view_close,
+            pageview::view_open_in_browser,
         ])
         .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |ctx, request, responder| {
             // Only the app's own window reads packs; a web page in the import
-            // window gets nothing.
+            // or map page window gets nothing.
             if ctx.webview_label() != MAIN_WINDOW {
                 responder.respond(
                     Response::builder()

@@ -4,6 +4,7 @@ import { AddMapDialog } from './components/AddMapDialog';
 import { DetailsPane } from './components/DetailsPane';
 import { FilterPane } from './components/FilterPane';
 import { UiIcon } from './components/icons';
+import { MapPageStatus } from './components/MapPageStatus';
 import { MapPane } from './components/MapPane';
 import { MapsDialog } from './components/MapsDialog';
 import { ProfileDialog } from './components/ProfileDialog';
@@ -64,6 +65,7 @@ function Shell() {
       </SidePane>
       <main className="map-main" aria-label="Map area">
         <MapPane />
+        <MapPageStatus />
       </main>
       <SidePane name="details" title="Details">
         <DetailsPane />
