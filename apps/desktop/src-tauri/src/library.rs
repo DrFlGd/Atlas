@@ -1031,6 +1031,9 @@ impl Library {
             return Err("A pack with this id that was not imported from a web page is already there, so it is not replaced.".to_owned());
         }
         let _lock = PackLock::acquire(&dir)?;
+        // Where the pack kept its map images until now; see the end.
+        #[cfg(feature = "downloads")]
+        let tiles_before = crate::tiles::downscale::tile_addresses(&dir);
         if let Some(pack) = bundled {
             // A refresh of a pack that comes with the app lives in the maps
             // folder. One served from the app's resources is copied there
@@ -1085,6 +1088,29 @@ impl Library {
             }
         }
         write(&dir.join(MANIFEST_FILE), manifest)?;
+
+        // An import that moves a layer's images (another address template)
+        // leaves the levels Atlas made by shrinking them in the old
+        // arrangement, and no download would build them again.
+        #[cfg(feature = "downloads")]
+        match crate::tiles::downscale::rebuild_moved_layers(&dir, &tiles_before) {
+            Ok(layers) if layers.is_empty() => {}
+            Ok(layers) => activity::info(
+                Area::Import,
+                format!(
+                    "The import changed where {} keeps its map images, so the zoomed-out levels were built again from the downloaded images: {}",
+                    request.pack_id,
+                    layers.join(", ")
+                ),
+            ),
+            Err(error) => activity::warn(
+                Area::Import,
+                format!(
+                    "Could not build the zoomed-out map images of {} again: {error}",
+                    request.pack_id
+                ),
+            ),
+        }
         Ok(dir)
     }
 
@@ -1892,6 +1918,111 @@ mod tests {
         s.library.delete_pack("valley").unwrap();
         assert!(!dir.exists());
         assert!(s.registry.root("valley").is_none());
+    }
+
+    #[cfg(feature = "downloads")]
+    #[test]
+    fn builds_the_shrunk_levels_again_when_an_import_moves_the_images() {
+        use image::{Rgb, RgbImage};
+        const RED: [u8; 3] = [200, 0, 0];
+        const BLUE: [u8; 3] = [0, 0, 200];
+        const GREY: [u8; 3] = [90, 90, 90];
+        let tile = |colour: [u8; 3]| {
+            let mut out = io::Cursor::new(Vec::new());
+            RgbImage::from_pixel(64, 64, Rgb(colour))
+                .write_to(&mut out, image::ImageFormat::Png)
+                .unwrap();
+            out.into_inner()
+        };
+        // One 128 x 128 map: level 1 is 2 x 2 downloaded tiles, level 0 is
+        // one tile that Atlas makes by shrinking them.
+        let with_tiles_at = |url: &str| {
+            let mut request = import("valley", "east");
+            request.files.insert(
+                "maps.json".into(),
+                r#"[{"id":"valley:map:a","name":"Valley","width":128,"height":128}]"#.into(),
+            );
+            request.files.insert(
+                "layers.json".into(),
+                format!(
+                    r#"[{{"id":"valley:layer:a","mapId":"valley:map:a","name":"Surface","minZoom":0,"maxZoom":1,"tileSize":64,
+                      "tiles":{{"type":"xyz","url":"{url}","remote":{{
+                        "urlTemplate":"https://tiles.invalid/{{z}}/{{x}}/{{y}}.png",
+                        "levels":[{{"z":1,"sourceZ":1,"offsetX":0,"offsetY":0}}]}}}}}}]"#
+                ),
+            );
+            request
+        };
+        let s = setup("library-moved-images", Vec::new());
+        let dir = s
+            .library
+            .save_import(&with_tiles_at("tiles/a/{z}/{x}/{y}.png"))
+            .unwrap();
+        s.library.scan();
+        // The downloaded images, and the level made from them while the pack
+        // said column before row: `1/1/0.png` (blue) was the top right tile.
+        let tiles = dir.join("tiles/a");
+        for (path, colour) in [
+            ("1/0/0.png", GREY),
+            ("1/1/0.png", BLUE),
+            ("1/0/1.png", RED),
+            ("1/1/1.png", GREY),
+        ] {
+            fs::create_dir_all(tiles.join(path).parent().unwrap()).unwrap();
+            fs::write(tiles.join(path), tile(colour)).unwrap();
+        }
+        fs::create_dir_all(tiles.join("0/0")).unwrap();
+        fs::write(tiles.join("0/0/0.png"), b"the old arrangement").unwrap();
+
+        // Without a record of the shrunk level, nothing is built.
+        s.library
+            .save_import(&with_tiles_at("tiles/a/{z}/{y}/{x}.png"))
+            .unwrap();
+        assert_eq!(
+            fs::read(tiles.join("0/0/0.png")).unwrap(),
+            b"the old arrangement"
+        );
+        s.library
+            .save_import(&with_tiles_at("tiles/a/{z}/{x}/{y}.png"))
+            .unwrap();
+        fs::create_dir_all(dir.join("offline-tiles")).unwrap();
+        fs::write(
+            dir.join("offline-tiles/a.json"),
+            r#"{"format":"atlas-tile-status","version":1,"layerId":"valley:layer:a","levels":[0,1],
+                "nativeMinZoom":0,"nativeMaxZoom":1,"complete":true,"updatedAt":0}"#,
+        )
+        .unwrap();
+
+        // The same addresses again: nothing is built.
+        s.library
+            .save_import(&with_tiles_at("tiles/a/{z}/{x}/{y}.png"))
+            .unwrap();
+        assert_eq!(
+            fs::read(tiles.join("0/0/0.png")).unwrap(),
+            b"the old arrangement"
+        );
+
+        // Row before column: `1/0/1.png` (red) is now the top right tile and
+        // `1/1/0.png` (blue) the bottom left one, and level 0 follows.
+        s.library
+            .save_import(&with_tiles_at("tiles/a/{z}/{y}/{x}.png"))
+            .unwrap();
+        let built = image::open(tiles.join("0/0/0.png")).unwrap().to_rgb8();
+        assert_eq!(built.dimensions(), (64, 64));
+        let close = |x: u32, y: u32, colour: [u8; 3]| {
+            let pixel = built.get_pixel(x, y).0;
+            assert!(
+                pixel.iter().zip(colour).all(|(a, b)| a.abs_diff(b) <= 6),
+                "({x}, {y}) is {pixel:?}, not {colour:?}"
+            );
+        };
+        close(16, 16, GREY);
+        close(48, 16, RED);
+        close(16, 48, BLUE);
+        close(48, 48, GREY);
+        // The images themselves and their record are untouched.
+        assert_eq!(fs::read(tiles.join("1/0/1.png")).unwrap(), tile(RED));
+        assert!(dir.join("offline-tiles/a.json").exists());
     }
 
     #[test]
