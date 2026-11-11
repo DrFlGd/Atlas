@@ -28,6 +28,12 @@
     "allow-library-save-import",
     "allow-import-open",
     "allow-import-poll",
-    "allow-import-close"
+    "allow-import-close",
+    "allow-view-pages",
+    "allow-view-open",
+    "allow-view-status",
+    "allow-view-stop-saving",
+    "allow-view-close",
+    "allow-view-open-in-browser"
   ]
 }
