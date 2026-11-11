@@ -132,7 +132,11 @@ pub struct Snapshot {
     pub done: u64,
     pub total: u64,
     pub saved: u64,
+    /// Not on the server: answered 404 or 410, or an object store's "access
+    /// denied" for images that do not exist.
     pub missing: u64,
+    /// Not asked for, because the tile above them is not on the server.
+    pub not_asked: u64,
     pub failed: u64,
     pub bytes: u64,
     pub tiles_per_second: f64,
@@ -154,6 +158,8 @@ struct Progress {
     /// The last progress line in the log.
     logged_at: Instant,
     logged_done: u64,
+    /// Of `missing`, those an object store answered "access denied" for.
+    denied: u64,
 }
 
 impl Progress {
@@ -171,6 +177,16 @@ impl Progress {
             Outcome::Missing => {
                 s.missing += 1;
                 0
+            }
+            Outcome::MissingDenied => {
+                s.missing += 1;
+                self.denied += 1;
+                0
+            }
+            Outcome::NotAsked => {
+                // No request was made: nothing for the speed.
+                s.not_asked += 1;
+                return;
             }
             Outcome::Failed(_) => {
                 s.failed += 1;
@@ -215,15 +231,17 @@ impl Progress {
     /// The counts in words, for the log.
     fn counts(&self) -> String {
         let s = &self.snapshot;
-        let present = s.done - s.saved - s.missing - s.failed;
+        let present = s.done - s.saved - s.missing - s.not_asked - s.failed;
         format!(
-            "{} of {} images dealt with: {} saved ({}), {} already there, {} not on the server, {} failed",
+            "{} of {} images dealt with: {} saved ({}), {} already there, {} not on the server ({} of them answered \"access denied\" by the store, as it does for images that do not exist), {} not asked for because the area above them is not on the server, {} failed",
             s.done,
             s.total,
             s.saved,
             bytes_text(s.bytes),
             present,
             s.missing,
+            self.denied,
+            s.not_asked,
             s.failed
         )
     }
@@ -774,6 +792,7 @@ impl DownloadManager {
                 total,
                 saved: 0,
                 missing: 0,
+                not_asked: 0,
                 failed: 0,
                 bytes: 0,
                 tiles_per_second: 0.0,
@@ -787,6 +806,7 @@ impl DownloadManager {
             created: now,
             logged_at: now,
             logged_done: 0,
+            denied: 0,
         }));
         // Every job starts paused; the schedule lets it run when it is its turn.
         let (control, receiver) = watch::channel(Control::Pause);
@@ -822,9 +842,19 @@ impl DownloadManager {
         tokio::spawn(async move {
             let counting = {
                 let (plan, store) = (plan.clone(), downloader.store().clone());
-                tokio::task::spawn_blocking(move || count_present(&plan, detail, &store))
+                tokio::task::spawn_blocking(move || {
+                    (
+                        count_present(&plan, detail, &store),
+                        layers_with_images(&plan, &store),
+                    )
+                })
             };
-            let present = counting.await.unwrap_or(0);
+            let (present, with_images) = counting.await.unwrap_or_default();
+            for (index, layer) in plan.layers.iter().enumerate() {
+                if with_images.get(index).copied().unwrap_or(false) {
+                    downloader.prove_from_disk(index, layer_host(layer));
+                }
+            }
             this.log_start(&pack, &plan, detail, total, present);
             let result = run_job(
                 &plan,
@@ -888,11 +918,7 @@ impl DownloadManager {
             })
             .collect::<Vec<_>>()
             .join("; ");
-        let mut hosts: Vec<String> = plan
-            .layers
-            .iter()
-            .map(|layer| host_of(&layer.url_template.replace(['{', '}'], "")))
-            .collect();
+        let mut hosts: Vec<String> = plan.layers.iter().map(layer_host).collect();
         hosts.sort();
         hosts.dedup();
         let snapshot = self.snapshot(pack_id);
@@ -1082,8 +1108,12 @@ impl DownloadManager {
             Err(stop) => {
                 snapshot.state = JobState::Stopped;
                 snapshot.reason = Some(stop.message());
-                let stop_detail =
-                    stop_detail.filter(|_| matches!(stop, Stop::Refused(_) | Stop::WebPage));
+                let stop_detail = stop_detail.filter(|_| {
+                    matches!(
+                        stop,
+                        Stop::Refused(_) | Stop::WebPage | Stop::DeniedInARow(_)
+                    )
+                });
                 snapshot.stop_detail = stop_detail.clone();
                 self.write_record(&JobRecord {
                     pack_id: pack_id.to_owned(),
@@ -1253,15 +1283,38 @@ fn count_present(plan: &PackPlan, detail: Detail, store: &TileStore) -> u64 {
         .sum()
 }
 
+/// The host (and port) a layer's images come from.
+fn layer_host(layer: &LayerPlan) -> String {
+    host_of(&layer.url_template.replace(['{', '}'], ""))
+}
+
+/// For each layer, whether any of its remote tiles is an image on disk (not
+/// a marker): proof that its host has sent images of it before.
+fn layers_with_images(plan: &PackPlan, store: &TileStore) -> Vec<bool> {
+    plan.layers
+        .iter()
+        .map(|layer| {
+            layer.levels.iter().any(|level| {
+                layer
+                    .tiles_of(level.z)
+                    .any(|tile| store.has_overlay_image(&layer.tile_path(tile.z, tile.x, tile.y)))
+            })
+        })
+        .collect()
+}
+
 /// What happened to the tiles of one level, for the log.
 #[derive(Clone, Default)]
 struct Tally {
     saved: u64,
     present: u64,
     missing: u64,
+    denied: u64,
+    not_asked: u64,
     failed: u64,
     bytes: u64,
     missing_examples: Vec<String>,
+    denied_examples: Vec<String>,
 }
 
 /// Downloads a pack's levels in order and builds the levels below.
@@ -1302,19 +1355,25 @@ async fn run_job(
             };
             levels.push((index, *level));
             let grid = layer.grid(level.z);
-            tasks.extend(layer.tiles_of(level.z).map(|tile| Task {
-                layer: index,
-                url: layer.remote_url(level, tile.x, tile.y),
-                path: layer.tile_path(tile.z, tile.x, tile.y),
-                label: Some(Arc::clone(&labels[index])),
-                place: Some(Place {
-                    z: level.z,
-                    source_z: level.source_z,
-                    x: tile.x,
-                    y: tile.y,
-                    columns: grid.columns,
-                    rows: grid.rows,
-                }),
+            // The middle of the map first, a parent's tiles together.
+            tasks.extend(layer.tiles_centre_out(level).into_iter().map(|tile| {
+                Task {
+                    layer: index,
+                    url: layer.remote_url(level, tile.x, tile.y),
+                    path: layer.tile_path(tile.z, tile.x, tile.y),
+                    label: Some(Arc::clone(&labels[index])),
+                    place: Some(Place {
+                        z: level.z,
+                        source_z: level.source_z,
+                        x: tile.x,
+                        y: tile.y,
+                        columns: grid.columns,
+                        rows: grid.rows,
+                    }),
+                    parent: layer
+                        .parent_of(level, tile.x, tile.y)
+                        .map(|parent| layer.tile_path(parent.z, parent.x, parent.y)),
+                }
             }));
         }
         let tallies: Arc<Mutex<HashMap<usize, Tally>>> = Arc::default();
@@ -1338,6 +1397,13 @@ async fn run_job(
                                 tally.missing_examples.push(task.url.clone());
                             }
                         }
+                        Outcome::MissingDenied => {
+                            tally.denied += 1;
+                            if tally.denied_examples.len() < MISSING_EXAMPLES {
+                                tally.denied_examples.push(task.url.clone());
+                            }
+                        }
+                        Outcome::NotAsked => tally.not_asked += 1,
                         Outcome::Failed(_) => tally.failed += 1,
                     }
                 }
@@ -1358,7 +1424,7 @@ async fn run_job(
             let layer = &plan.layers[*index];
             let images = layer.grid(level.z).tiles();
             let mut line = format!(
-                "Level {} (remote zoom {}) of {} {}: {images} images, {} saved ({}), {} already there, {} not on the server (404/410), {} failed",
+                "Level {} (remote zoom {}) of {} {}: {images} images, {} saved ({}), {} already there, {} not on the server (404/410), {} not on the server (the store answered \"access denied\", as it does for images that do not exist), {} not asked for, because the area above them is not on the server, {} failed",
                 level.z,
                 level.source_z,
                 labels[*index],
@@ -1367,12 +1433,20 @@ async fn run_job(
                 bytes_text(tally.bytes),
                 tally.present,
                 tally.missing,
+                tally.denied,
+                tally.not_asked,
                 tally.failed
             );
             if !tally.missing_examples.is_empty() {
                 line.push_str(&format!(
                     " | not on the server, for example: {}",
                     tally.missing_examples.join(", ")
+                ));
+            }
+            if !tally.denied_examples.is_empty() {
+                line.push_str(&format!(
+                    " | answered \"access denied\", for example: {}",
+                    tally.denied_examples.join(", ")
                 ));
             }
             if tally.failed > 0 || result.is_err() {
@@ -1422,7 +1496,9 @@ async fn run_job(
             record_images(folder, plan, &store, false, log);
         }
     }
-    Ok(())
+    // The job ended well: the store's denials since the last image were
+    // images that do not exist.
+    downloader.commit_pending()
 }
 
 /// Records the complete levels of each layer in the pack's manifest, and
@@ -1516,7 +1592,7 @@ mod tests {
     use super::*;
     use crate::activity::ActivityLog;
     use crate::tiles::{
-        download::tests::{ensure_crypto, Handler, MockServer, Reply},
+        download::tests::{ensure_crypto, no_such_object, Handler, MockServer, Reply},
         store::tests::TempDir,
     };
     use image::{Rgb, RgbImage};
@@ -1859,11 +1935,12 @@ mod tests {
         ensure_crypto();
         let dir = TempDir::new("manager-refusal");
         let base = tile_server();
-        // Level 1 (remote zoom 4) downloads; level 2 (remote zoom 5) is refused.
+        // Level 1 (remote zoom 4) downloads; level 2 (remote zoom 5) is
+        // refused, with a store's error that does not mean "no such image".
         let server = MockServer::start(Arc::new(move |path, count| {
             if path.starts_with("/remote/5/") {
                 Reply {
-                    body: b"<Error><Code>AccessDenied</Code></Error>".to_vec(),
+                    body: b"<Error><Code>AllAccessDisabled</Code></Error>".to_vec(),
                     ..Reply::status(403)
                 }
                 .header("Content-Type", "application/xml")
@@ -1908,7 +1985,7 @@ mod tests {
         );
         assert_eq!(
             detail.body.as_deref(),
-            Some("<Error><Code>AccessDenied</Code></Error>")
+            Some("<Error><Code>AllAccessDisabled</Code></Error>")
         );
 
         // The record keeps it, so a restarted app shows it again.
@@ -2136,5 +2213,183 @@ mod tests {
         let dir = TempDir::new("manager-unknown");
         let manager = DownloadManager::new(dir.0.clone(), PackRegistry::default());
         assert!(manager.plan_info("nope").is_err());
+    }
+
+    /// A pack with one 1536 x 1536 map: level 1 has 3 x 3 tiles (remote
+    /// zoom 4, offset 1 and 2), level 2 has 6 x 6 (remote zoom 5, offset 2
+    /// and 4), so level 2 tile (x, y) lies under level 1 tile (x / 2, y / 2).
+    fn write_square_pack(dir: &Path, server: &MockServer) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("maps.json"),
+            r#"[{"id":"t:map:a","name":"Island","width":1536,"height":1536}]"#,
+        )
+        .unwrap();
+        let template = server.url("/remote/{z}/{x}/{y}.png");
+        fs::write(
+            dir.join("layers.json"),
+            format!(
+                r#"[{{"id":"t:layer:a","mapId":"t:map:a","name":"Surface","minZoom":0,"maxZoom":2,"tileSize":256,
+                  "tiles":{{"type":"xyz","url":"tiles/a/{{z}}/{{x}}/{{y}}.png","remote":{{
+                    "urlTemplate":"{template}",
+                    "levels":[{{"z":1,"sourceZ":4,"offsetX":1,"offsetY":2}},
+                              {{"z":2,"sourceZ":5,"offsetX":2,"offsetY":4}}]}}}}}}]"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn logged_manager(dir: &TempDir, pack: &Path) -> Arc<DownloadManager> {
+        let registry = PackRegistry::default();
+        registry.register("test", pack).unwrap();
+        Arc::new(
+            DownloadManager::with_settings(
+                dir.0.join("data"),
+                registry,
+                Settings {
+                    delay: Duration::from_millis(1),
+                    ..Settings::default()
+                },
+            )
+            .with_log(ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.2")),
+        )
+    }
+
+    fn missing_marker(dir: &TempDir, z: u8, x: u8, y: u8) -> bool {
+        dir.0
+            .join(format!("data/packs/test/tiles/a/{z}/{x}/{y}.png.404"))
+            .is_file()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn asks_for_the_middle_first_and_never_below_missing_tiles() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-centre");
+        let base = tile_server();
+        // Level 1: the top-left corner (0, 0) answers 404; the bottom-right
+        // corner (2, 2) answers like a store without the image.
+        let server = MockServer::start(Arc::new(move |path, count| match path {
+            "/remote/4/1/2.png" => Reply::status(404),
+            "/remote/4/3/4.png" => no_such_object(),
+            _ => base(path, count),
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        write_square_pack(&pack, &server);
+        let manager = logged_manager(&dir, &pack);
+        manager.start("test", Detail::Full).unwrap();
+        let done = wait_for(&manager, "test").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+
+        let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        // The middle of level 1 first (two requests go out together, so
+        // either may arrive first), all of level 1 before level 2, and the
+        // middle of level 2 first.
+        assert!(
+            asked[..2].contains(&"/remote/4/2/3.png".to_owned()),
+            "{asked:?}"
+        );
+        assert!(asked[..9].iter().all(|path| path.starts_with("/remote/4/")));
+        assert!(
+            asked[9..11].contains(&"/remote/5/4/6.png".to_owned()),
+            "{asked:?}"
+        );
+        // Level 2 tiles under the two missing ones are never asked for.
+        for x in 0..2 {
+            for y in 0..2 {
+                for (lx, ly) in [(x, y), (x + 4, y + 4)] {
+                    let path = format!("/remote/5/{}/{}.png", lx + 2, ly + 4);
+                    assert!(!asked.contains(&path), "{path} was asked for");
+                    assert!(missing_marker(&dir, 2, lx, ly), "{lx},{ly} is not marked");
+                }
+            }
+        }
+        assert_eq!(asked.len(), 9 + 36 - 8);
+        let mut distinct = asked.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), asked.len(), "nothing asked for twice");
+        assert!(missing_marker(&dir, 1, 0, 0) && missing_marker(&dir, 1, 2, 2));
+        assert_eq!(
+            (done.saved, done.missing, done.not_asked, done.failed),
+            (35, 2, 8, 0)
+        );
+        assert_eq!((done.done, done.total), (45, 45));
+
+        let log = logged(&dir);
+        assert!(
+            log.contains("Level 1 (remote zoom 4) of Surface (Island) complete: 9 images, 7 saved"),
+            "{log}"
+        );
+        assert!(log.contains("1 not on the server (404/410), 1 not on the server (the store answered \"access denied\", as it does for images that do not exist), 0 not asked for"));
+        assert!(
+            log.contains("28 saved")
+                && log
+                    .contains("8 not asked for, because the area above them is not on the server")
+        );
+        assert!(log.contains(&format!(
+            "answered \"access denied\", for example: {}",
+            server.url("/remote/4/3/4.png")
+        )));
+        assert!(log.contains("2 not on the server (1 of them answered \"access denied\" by the store, as it does for images that do not exist), 8 not asked for because the area above them is not on the server, 0 failed"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_store_denial_first_still_stops_the_job() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-store-first");
+        let server = MockServer::start(Arc::new(|_, _| no_such_object())).await;
+        let pack = dir.0.join("pack");
+        write_square_pack(&pack, &server);
+        let manager = logged_manager(&dir, &pack);
+        manager.start("test", Detail::Full).unwrap();
+        let stopped = wait_for(&manager, "test").await;
+        assert_eq!(stopped.state, JobState::Stopped);
+        assert_eq!(stopped.reason, Some(Stop::Refused(403).message()));
+        let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        assert!(asked.len() <= 2, "{asked:?}");
+        assert!(asked.contains(&"/remote/4/2/3.png".to_owned()), "{asked:?}");
+        let detail = stopped.stop_detail.unwrap();
+        assert!(asked.iter().any(|path| detail.url == server.url(path)));
+        assert_eq!((detail.saved_before, detail.denied_in_a_row), (0, None));
+        assert_eq!(stopped.missing, 0);
+        assert!(!missing_marker(&dir, 1, 1, 1));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn images_on_disk_prove_the_host_after_a_restart() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-store-resume");
+        let base = tile_server();
+        // The first tile of level 2 to be asked for is not on the store.
+        let server = MockServer::start(Arc::new(move |path, count| {
+            if path == "/remote/5/4/6.png" {
+                no_such_object()
+            } else {
+                base(path, count)
+            }
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        write_square_pack(&pack, &server);
+        let first = logged_manager(&dir, &pack);
+        first.start("test", Detail::Standard).unwrap();
+        assert_eq!(wait_for(&first, "test").await.state, JobState::Done);
+        assert_eq!(server.seen().len(), 9);
+
+        // After a restart, only level 2 is fetched: no image comes before
+        // the denial, but the images on disk prove the host.
+        let restarted = logged_manager(&dir, &pack);
+        restarted.start("test", Detail::Full).unwrap();
+        let done = wait_for(&restarted, "test").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        assert!(
+            asked[9..11].contains(&"/remote/5/4/6.png".to_owned()),
+            "{asked:?}"
+        );
+        assert_eq!((done.saved, done.missing), (35, 1));
+        assert!(missing_marker(&dir, 2, 2, 2));
+        assert!(logged(&dir).contains("images of this layer from it are on disk"));
     }
 }

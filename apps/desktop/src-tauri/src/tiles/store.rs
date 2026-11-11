@@ -77,6 +77,16 @@ impl TileStore {
         })
     }
 
+    /// Whether the tile is recorded as not on the server.
+    pub fn is_missing(&self, relative: &Path) -> bool {
+        with_suffix(&self.overlay.join(relative), MISSING_SUFFIX).is_file()
+    }
+
+    /// Whether the tile is an image in the overlay (a download, not a marker).
+    pub fn has_overlay_image(&self, relative: &Path) -> bool {
+        self.overlay.join(relative).is_file()
+    }
+
     /// Records that the server has no tile here, so it is not asked again.
     pub fn mark_missing(&self, relative: &Path) -> io::Result<()> {
         let file = self.overlay.join(relative);

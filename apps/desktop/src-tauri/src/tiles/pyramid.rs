@@ -239,6 +239,70 @@ impl LayerPlan {
         (0..grid.rows).flat_map(move |y| (0..grid.columns).map(move |x| TileRef { z, x, y }))
     }
 
+    /// The tiles of remote level `level` in the order they are asked for:
+    /// the middle of the map first. Tiles that share a remote parent (the
+    /// 2 x 2 tiles one remote zoom up covers) are kept together, and these
+    /// groups go outwards from the middle of the level by their distance
+    /// from it, measured in proportion to the level's width and height;
+    /// within a group, the tile nearest the middle comes first. Ties go top
+    /// to bottom, then left to right, so the order is the same on every run
+    /// and a resumed job goes on where it stopped.
+    ///
+    /// The middle comes first because it is the part of a map most likely
+    /// to exist on the server; the edges of a padded grid often do not.
+    /// Keeping a parent's tiles together means that, where the parent
+    /// exists, at least one tile of each group exists too.
+    pub fn tiles_centre_out(&self, level: &RemoteLevel) -> Vec<TileRef> {
+        let grid = self.grid(level.z);
+        let (columns, rows) = (i128::from(grid.columns), i128::from(grid.rows));
+        let (offset_x, offset_y) = (i128::from(level.offset_x), i128::from(level.offset_y));
+        // Twice the local position of the middle of the 2 x 2 group a
+        // remote coordinate belongs to; doubled to stay in whole numbers.
+        let middle = |remote: u64, offset: i128| {
+            let group = i128::from(remote / 2);
+            4 * group - 2 * offset + 2
+        };
+        // (dx / columns)^2 + (dy / rows)^2, scaled to whole numbers.
+        let distance = |dx: i128, dy: i128| {
+            (dx * dx * rows * rows + dy * dy * columns * columns).unsigned_abs()
+        };
+        let mut tiles: Vec<((u128, u64, u64, u128), TileRef)> = self
+            .tiles_of(level.z)
+            .map(|tile| {
+                let (remote_x, remote_y) = (tile.x + level.offset_x, tile.y + level.offset_y);
+                let group = distance(
+                    middle(remote_x, offset_x) - columns,
+                    middle(remote_y, offset_y) - rows,
+                );
+                let own = distance(
+                    2 * i128::from(tile.x) + 1 - columns,
+                    2 * i128::from(tile.y) + 1 - rows,
+                );
+                ((group, remote_y / 2, remote_x / 2, own), tile)
+            })
+            .collect();
+        tiles.sort_by(|(a, ta), (b, tb)| (a, ta.y, ta.x).cmp(&(b, tb.y, tb.x)));
+        tiles.into_iter().map(|(_, tile)| tile).collect()
+    }
+
+    /// The tile one remote zoom up that covers tile (`x`, `y`) of `level`:
+    /// its parent, when the layer lists that level (remote zoom one lower,
+    /// local level one lower) and the parent lies in that level's grid.
+    pub fn parent_of(&self, level: &RemoteLevel, x: u64, y: u64) -> Option<TileRef> {
+        let parent = self
+            .levels
+            .iter()
+            .find(|p| p.z + 1 == level.z && p.source_z + 1 == level.source_z)?;
+        let px = ((x + level.offset_x) / 2).checked_sub(parent.offset_x)?;
+        let py = ((y + level.offset_y) / 2).checked_sub(parent.offset_y)?;
+        let grid = self.grid(parent.z);
+        (px < grid.columns && py < grid.rows).then_some(TileRef {
+            z: parent.z,
+            x: px,
+            y: py,
+        })
+    }
+
     /// The remote URL of a tile of a remote level.
     pub fn remote_url(&self, level: &RemoteLevel, x: u64, y: u64) -> String {
         fill_template(
@@ -547,6 +611,92 @@ mod tests {
             PathBuf::from("tiles/world/2/3/2.jpg")
         );
         assert_eq!(layer.format(), TileFormat::Jpeg);
+    }
+
+    /// The test layer at 1536 x 1536: level 2 has 6 x 6 tiles, level 1 3 x 3.
+    fn square_layer() -> LayerPlan {
+        LayerPlan {
+            width: 1536,
+            height: 1536,
+            ..layer()
+        }
+    }
+
+    #[test]
+    fn asks_for_the_middle_first_with_siblings_together() {
+        let layer = square_layer();
+        let order = layer.tiles_centre_out(&layer.levels[1]);
+        let at = |tile: &TileRef| (tile.x, tile.y);
+        // Every tile once.
+        let mut seen: Vec<(u64, u64)> = order.iter().map(at).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 36);
+        // The middle group first, the corners last.
+        assert_eq!(
+            order[..4].iter().map(at).collect::<Vec<_>>(),
+            vec![(2, 2), (3, 2), (2, 3), (3, 3)]
+        );
+        // Then the group above it, its tiles nearest the middle first.
+        assert_eq!(
+            order[4..8].iter().map(at).collect::<Vec<_>>(),
+            vec![(2, 1), (3, 1), (2, 0), (3, 0)]
+        );
+        assert_eq!(
+            order[32..].iter().map(at).collect::<Vec<_>>(),
+            vec![(4, 4), (5, 4), (4, 5), (5, 5)]
+        );
+        // The same order on every run.
+        assert_eq!(order, layer.tiles_centre_out(&layer.levels[1]));
+
+        // With an odd offset, tiles still go in groups of one remote parent.
+        let mut odd = square_layer();
+        odd.levels[1].offset_x = 201;
+        odd.levels[1].offset_y = 401;
+        let order = odd.tiles_centre_out(&odd.levels[1]);
+        let group = |tile: &TileRef| ((tile.x + 201) / 2, (tile.y + 401) / 2);
+        let mut groups: Vec<(u64, u64)> = order.iter().map(group).collect();
+        groups.dedup();
+        let mut distinct = groups.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(groups.len(), distinct.len(), "a group was split: {order:?}");
+        // Four groups tie for the middle; the first of them comes first,
+        // and in it the tile nearest the middle of the level.
+        assert_eq!(
+            order[..4].iter().map(at).collect::<Vec<_>>(),
+            vec![(2, 2), (2, 1), (1, 2), (1, 1)]
+        );
+    }
+
+    #[test]
+    fn finds_the_parent_one_remote_zoom_up() {
+        let layer = square_layer();
+        let (lower, upper) = (&layer.levels[0], &layer.levels[1]);
+        // Level 2 tile (3, 5) is remote (203, 405) at zoom 12; its parent is
+        // remote (101, 202) at zoom 11, which is (1, 2) of level 1.
+        assert_eq!(
+            layer.parent_of(upper, 3, 5),
+            Some(TileRef { z: 1, x: 1, y: 2 })
+        );
+        assert_eq!(
+            layer.parent_of(upper, 0, 0),
+            Some(TileRef { z: 1, x: 0, y: 0 })
+        );
+        // The lowest remote level has none.
+        assert_eq!(layer.parent_of(lower, 1, 1), None);
+        // Nor a tile whose parent lies outside the level below.
+        let mut shifted = square_layer();
+        shifted.levels[0].offset_x = 101;
+        assert_eq!(shifted.parent_of(&shifted.levels[1], 0, 0), None);
+        assert_eq!(
+            shifted.parent_of(&shifted.levels[1], 2, 0),
+            Some(TileRef { z: 1, x: 0, y: 0 })
+        );
+        // Nor when the level below is not one remote zoom lower.
+        let mut gap = square_layer();
+        gap.levels[0].source_z = 10;
+        assert_eq!(gap.parent_of(&gap.levels[1], 3, 5), None);
     }
 
     #[test]
