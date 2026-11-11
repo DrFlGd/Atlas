@@ -165,7 +165,7 @@ jobs:
           fi
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas $VERSION for Android phones: the Atlas map viewer with the made-up demo world. It has no game maps, cannot download map images and cannot add maps. A prototype.
+          Atlas $VERSION for Android phones: the Atlas map viewer. It comes with the made-up demo world only. Add your own games by importing map pack files (.atlaspack) exported from Atlas on a computer. A prototype.
 
           It needs Android 10 or later on a 64-bit phone.
 
@@ -183,9 +183,12 @@ jobs:
 
           ## What works in this version
 
-          The demo world's map with its markers, filters, search, checklists, profiles, and marking places found. Found marks are saved on the phone.
+          - The map with its markers, filters, search, checklists, profiles, and marking places found. Found marks are saved on the phone.
+          - **Maps**, then **Import map pack file…**: pick an .atlaspack file from the phone or a cloud drive. Maps lists the games on the phone, with their detail and size, and deletes them.
+          - Exporting and importing progress files from the profile button.
+          - The app stays clear of the status bar and the navigation buttons.
 
-          Not in this version: the Maps button and map folders, exporting and importing progress files, adding maps and downloading map images.
+          Not in this version: adding maps from web pages, downloading map images, reading game saves, and separate layouts for phones and tablets.
 
           ---
 
