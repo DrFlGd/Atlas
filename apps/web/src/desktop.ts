@@ -328,6 +328,185 @@ export type RevealTarget =
   | { kind: 'location'; path: string }
   | { kind: 'log-folder' };
 
+/** The app that wrote a map pack file. */
+export interface AppFacts {
+  name: string;
+  version: string;
+  platform: string;
+}
+
+/** A pack, as its manifest describes it. Dates are ISO 8601 in UTC. */
+export interface PackFacts {
+  id: string;
+  title: string;
+  packVersion: string;
+  gamePatch?: string;
+  schemaVersion: number;
+  attribution: { name?: string; url?: string; license?: string }[];
+  created?: string;
+  updated?: string;
+  writtenBy?: { name?: string; version?: string };
+}
+
+/** Where a pack's data came from: web pages read by an importer, the app, or not recorded. */
+export interface SourceFacts {
+  kind: 'web-pages' | 'app' | 'unknown';
+  importer?: { id: string; title: string };
+  pages?: { url: string; mapId?: string; importedAt?: string }[];
+  newestPageAt?: string;
+  oldestPageAt?: string;
+}
+
+export interface ContentCounts {
+  maps: number;
+  layers: number;
+  locations: number;
+  categories: number;
+  regions: number;
+  checklists: number;
+  guides: number;
+}
+
+/** The map images of one layer in a map pack file. */
+export interface LayerFacts {
+  id: string;
+  name: string;
+  mapName: string;
+  minZoom: number;
+  maxZoom: number;
+  levels: number[];
+  files: number;
+  bytes: number;
+  complete: boolean;
+  /** Every level of the layer is there. */
+  full: boolean;
+  /** Its images can be downloaded, so the detail limits it. */
+  downloadable: boolean;
+  downloadedAt?: string;
+}
+
+/** `atlaspack.json`, the description at the start of a map pack file. */
+export interface PackFileHeader {
+  format: 'atlas-pack-file';
+  version: number;
+  packId: string;
+  title: string;
+  packVersion: string;
+  detail: Detail;
+  exportedAt: string;
+  exportedBy: AppFacts;
+  pack: PackFacts;
+  source: SourceFacts;
+  contents: ContentCounts;
+  images: { detail: Detail; files: number; bytes: number; layers: LayerFacts[] };
+  /** Entries after the header, and their size unpacked. */
+  files: number;
+  bytes: number;
+}
+
+/** What is known about an installed pack, as a map pack file would say. */
+export interface PackDetails {
+  pack: PackFacts;
+  source: SourceFacts;
+  contents: ContentCounts;
+  layers: {
+    id: string;
+    name: string;
+    mapName: string;
+    minZoom: number;
+    maxZoom: number;
+    downloadable: boolean;
+    levels: number[];
+    downloadedAt: string | null;
+  }[];
+  /** The highest detail whose map images are all downloaded. */
+  detail: Detail | null;
+  /** When map images were last downloaded. */
+  imagesAt: string | null;
+  /** Its map images are one archive file, which cannot be exported. */
+  archive: boolean;
+  /** The map pack file it was imported from. */
+  packFile: { importedAt: string; fileName: string; header: PackFileHeader } | null;
+}
+
+/** One level of detail in the Export dialog. */
+export interface PackFileDetailOption {
+  detail: Detail;
+  available: boolean;
+  /** Why not, in plain words. */
+  reason: string | null;
+  images: number;
+  imageBytes: number;
+  /** The whole file, unpacked. */
+  bytes: number;
+}
+
+/** What the Export dialog offers for a pack. */
+export interface PackFileOptions {
+  packId: string;
+  title: string;
+  exportable: boolean;
+  /** Why it cannot be exported, in plain words. */
+  reason: string | null;
+  details: PackFileDetailOption[];
+  /** Layers whose images all come with the pack: exported whole at every detail. */
+  wholeLayers: string[];
+  defaultNames: Record<Detail, string>;
+  /** A download of the pack is not over. */
+  downloading: boolean;
+}
+
+export interface PackFileExported {
+  path: string;
+  fileName: string;
+  /** The file's size on disk. */
+  size: number;
+  header: PackFileHeader;
+  /** The progress export saved beside it, when asked for. */
+  progressFile: string | null;
+  /** Why the progress export could not be saved; the map pack file is fine. */
+  progressError: string | null;
+}
+
+/** A map pack file picked for import, before anything is written. */
+export interface PackFileInfo {
+  path: string;
+  fileName: string;
+  size: number;
+  header: PackFileHeader;
+  /** The game with the same id shown now. */
+  installed: {
+    title: string;
+    origin: PackOrigin;
+    folder: string | null;
+    details: PackDetails | null;
+  } | null;
+  /** Importing replaces the game in the maps folder (in its own folder). */
+  replaces: boolean;
+  /** Why it cannot be imported here. */
+  blocked: string | null;
+}
+
+export interface PackFileImported {
+  packId: string;
+  title: string;
+  replaced: boolean;
+  header: PackFileHeader;
+  listing: Listing;
+}
+
+/** How far the map pack file being saved or imported is. */
+export interface PackFileProgress {
+  kind: 'export' | 'import';
+  packId: string;
+  title: string;
+  entriesDone: number;
+  entriesTotal: number;
+  bytesDone: number;
+  bytesTotal: number;
+  cancelling: boolean;
+}
+
 export interface DesktopBridge {
   info(): Promise<DesktopInfo>;
   /** Opens an http or https link in the system browser. */
@@ -383,6 +562,26 @@ export interface DesktopBridge {
   };
   activityLog: {
     read(): Promise<RecentLog>;
+  };
+  /** Map pack files (`.atlaspack`): one game in one file, for another device. */
+  packFiles: {
+    /** What can be exported of a pack, and how large each detail is. */
+    options(packId: string): Promise<PackFileOptions>;
+    /**
+     * Asks where to save, then writes the file; with `progress` (a progress
+     * export's text) saves that beside it. Null when the dialog was closed.
+     */
+    export(packId: string, detail: Detail, progress?: string): Promise<PackFileExported | null>;
+    /** Asks for a file to import and reads its description. Null when the dialog was closed. */
+    pick(): Promise<PackFileInfo | null>;
+    /** Reads the description of the file at a path the app has (for example from Android's picker). */
+    inspect(path: string): Promise<PackFileInfo>;
+    /** Imports the file at `path`, replacing the game with the same id only with `replace`. */
+    import(path: string, replace: boolean): Promise<PackFileImported>;
+    progress(): Promise<PackFileProgress | null>;
+    cancel(): Promise<void>;
+    /** What is known about an installed pack. */
+    details(packId: string): Promise<PackDetails>;
   };
 }
 
@@ -458,6 +657,17 @@ export function createBridge(invoke: Invoke): DesktopBridge {
     },
     activityLog: {
       read: () => call('activity_log_read'),
+    },
+    packFiles: {
+      options: (id) => call('packfile_options', { id }),
+      export: (id, detail, progress) =>
+        call('packfile_export', { id, detail, progress: progress ?? null }),
+      pick: () => call('packfile_pick'),
+      inspect: (path) => call('packfile_inspect', { path }),
+      import: (path, replace) => call('packfile_import', { path, replace }),
+      progress: () => call('packfile_progress'),
+      cancel: () => call('packfile_cancel'),
+      details: (id) => call('library_pack_details', { id }),
     },
   };
 }

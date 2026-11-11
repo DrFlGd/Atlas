@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { FolderChoice, ListedPack, LocationInfo } from '../desktop';
+import type { FolderChoice, ListedPack, LocationInfo, PackDetails } from '../desktop';
 import { downloadsOffered } from '../features';
 import { notify, switchGame } from '../state/actions';
 import { rebuildPack, updatableGames, updateAll, updateGame } from '../state/importing';
@@ -13,12 +13,14 @@ import {
   reveal,
   setMapsDialogOpen,
 } from '../state/library';
+import { loadPackDetails, openExport, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
 import { ActivityLogSection } from './ActivityLogSection';
 import { DeleteImagesConfirm } from './DeleteImagesConfirm';
 import { DeletePackConfirm } from './DeletePackConfirm';
 import { UiIcon } from './icons';
 import { MapPageActions } from './MapPageActions';
+import { PackDetailsView } from './PackFacts';
 
 /**
  * "Maps", in the desktop app: where maps are kept, the packs it shows and
@@ -238,6 +240,15 @@ function PackList() {
           <button
             type="button"
             className="link-button"
+            data-testid="import-pack-file"
+            title="Add a game from a map pack file (.atlaspack) exported by Atlas on another computer"
+            onClick={() => void pickPackFile()}
+          >
+            Import map pack file…
+          </button>
+          <button
+            type="button"
+            className="link-button"
             data-testid="refresh-maps"
             onClick={() => {
               void refreshLibrary()
@@ -255,10 +266,7 @@ function PackList() {
       </div>
       <ul className="profile-list pack-list" data-testid="pack-list">
         {fromApp.map((pack) => (
-          <li key={pack.id} className="profile-row pack-row" data-testid="pack-row">
-            <PackTitle title={pack.title} active={pack.id === shown} />
-            <span className="muted small">{ORIGIN.bundled}</span>
-          </li>
+          <BundledRow key={pack.id} id={pack.id} title={pack.title} active={pack.id === shown} />
         ))}
         {library.packs.map((pack) => (
           <PackRow
@@ -297,6 +305,87 @@ function PackTitle({ title, active }: { title: string; active: boolean }) {
   );
 }
 
+/** A pack that comes with the app and is served from it. */
+function BundledRow({ id, title, active }: { id: string; title: string; active: boolean }) {
+  const details = usePackDetails(id);
+  return (
+    <li className="profile-row pack-row" data-testid="pack-row" data-pack={id}>
+      <div className="pack-info">
+        <PackTitle title={title} active={active} />
+        <span className="muted small">{ORIGIN.bundled}</span>
+        <div className="row-actions">
+          <ExportButton id={id} title={title} />
+          {details.toggle}
+        </div>
+        {details.panel}
+      </div>
+    </li>
+  );
+}
+
+function ExportButton({ id, title }: { id: string; title: string }) {
+  return (
+    <button
+      type="button"
+      className="link-button"
+      data-testid="export-pack"
+      title="Save this game with its map images in one file, for another computer or Atlas for Android"
+      onClick={() => {
+        openExport(id, title);
+      }}
+    >
+      Export…
+    </button>
+  );
+}
+
+/** "Details" on a pack row, and what is known about the pack, read when opened. */
+function usePackDetails(id: string) {
+  const library = useAtlas((s) => s.library);
+  const [open, setOpen] = useState(false);
+  const [details, setDetails] = useState<PackDetails | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    loadPackDetails(id).then(
+      (loaded) => {
+        if (!live) return;
+        setDetails(loaded);
+        setError(null);
+      },
+      (reason: unknown) => {
+        if (live) setError(reason instanceof Error ? reason.message : String(reason));
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // Read again when the list changes, for example after a download or an import.
+  }, [open, id, library]);
+  const toggle = (
+    <button
+      type="button"
+      className="link-button"
+      data-testid="pack-details-toggle"
+      aria-expanded={open}
+      onClick={() => {
+        setOpen(!open);
+      }}
+    >
+      Details
+    </button>
+  );
+  const panel = !open ? null : details ? (
+    <PackDetailsView details={details} />
+  ) : error ? (
+    <span className="small location-message">{error}</span>
+  ) : (
+    <span className="muted small">Reading…</span>
+  );
+  return { toggle, panel };
+}
+
 function PackRow({
   pack,
   active,
@@ -313,6 +402,7 @@ function PackRow({
     s.config?.importers.some((i) => i.id === pack.imported?.importerId),
   );
   const mapPages = useAtlas(downloadsOffered);
+  const details = usePackDetails(pack.id);
   const deletable = pack.origin === 'maps-folder' && !pack.bundled;
   const close = () => {
     setConfirming(null);
@@ -368,6 +458,8 @@ function PackRow({
                 Update from the site…
               </button>
             ) : null}
+            {!busy ? <ExportButton id={pack.id} title={pack.title} /> : null}
+            {details.toggle}
             {pack.imported && canRebuild ? (
               <button
                 type="button"
@@ -405,6 +497,7 @@ function PackRow({
             ) : null}
           </div>
         )}
+        {details.panel}
         {__ATLAS_DOWNLOADS__ && mapPages && pack.imported ? <MapPageActions pack={pack} /> : null}
       </div>
     </li>
