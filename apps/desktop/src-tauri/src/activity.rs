@@ -251,6 +251,14 @@ impl ActivityLog {
         let dir = self
             .dir()
             .ok_or_else(|| "This app keeps no activity log.".to_owned())?;
+        // Something that is not a folder sits where the log folder should be.
+        // Systems disagree on whether opening a file below it is "not found",
+        // so say it here, the same way everywhere.
+        if fs::metadata(dir).is_ok_and(|meta| !meta.is_dir()) {
+            return Err(
+                "Cannot read the activity log: its folder could not be created.".to_owned(),
+            );
+        }
         let current = dir.join(LOG_FILE);
         let (mut lines, mut truncated) = read_tail(&current, max_bytes)?;
         let used: u64 = lines.iter().map(|line| line.len() as u64 + 1).sum();
