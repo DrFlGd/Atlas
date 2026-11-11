@@ -23,14 +23,22 @@ from .detect import BLOODBORNE, DSR, Detection, detect
 from .events import Events
 from .gamedata import ItemLots, read_item_lots, read_item_text
 from .games import BLOODBORNE_MAIN_AREAS, PROFILES, Area, GameProfile, list_areas
-from .geometry import Cancelled, SourceResult, read_collision, read_map_pieces, read_navmesh
+from .geometry import Cancelled, SourceResult
 from .msb import load_msb, summarize
 from .preview import LEGEND, render
 from .safety import check_output_folder, prepare_soulstruct
+from .worker import PREVIEW_LIMIT, ProcessRunner, Runner, SourceJob
 
 ZIP_NAME = "atlas-check-report.zip"
 GEOMETRY_SOURCES = ("collision", "navmesh", "mapPieces")
 SOURCE_NAMES = {"collision": "collision", "navmesh": "navmesh", "mapPieces": "map piece models"}
+
+# Phase 0 reads a sample of each area's geometry, and gives each source a time budget (see geometry.py); the
+# command line can change these (cli.py).
+COLLISION_SAMPLE = 12
+NAVMESH_SAMPLE = 0
+MAP_PIECE_SAMPLE = 12
+SOURCE_BUDGET = 45.0
 
 # Share of an area's progress for each step.
 STEP_WEIGHTS = {"msb": 0.1, "collision": 0.5, "navmesh": 0.2, "mapPieces": 0.15, "preview": 0.05}
@@ -91,14 +99,21 @@ class Checker:
         out: Path,
         events: Events,
         token: CancelToken | None = None,
-        map_piece_sample: int = 12,
+        map_piece_sample: int = MAP_PIECE_SAMPLE,
         only_areas: tp.Sequence[str] = (),
+        collision_sample: int = COLLISION_SAMPLE,
+        navmesh_sample: int = NAVMESH_SAMPLE,
+        source_budget: float = SOURCE_BUDGET,
+        runner: Runner | None = None,
     ):
         self.folder = Path(folder)
         self.out = Path(out)
         self.events = events
         self.token = token or CancelToken()
-        self.map_piece_sample = map_piece_sample
+        self.samples = {"collision": collision_sample, "navmesh": navmesh_sample, "mapPieces": map_piece_sample}
+        self.source_budget = source_budget
+        # Geometry is read in a child process with a time limit, unless a test passes another runner.
+        self.runner: Runner = runner if runner is not None else ProcessRunner()
         self.only_areas = {a.lower() for a in only_areas}
         self.warnings: list[str] = []
         self.started = time.monotonic()
@@ -108,6 +123,24 @@ class Checker:
         self.events.warning(message)
 
     def run(self) -> dict[str, tp.Any]:
+        try:
+            return self._run()
+        finally:
+            self.runner.close()
+
+    def options(self) -> dict[str, tp.Any]:
+        runner = self.runner
+        return {
+            "mapPieceSample": self.samples["mapPieces"],
+            "collisionSample": self.samples["collision"],
+            "navmeshSample": self.samples["navmesh"],
+            "sourceBudgetSeconds": self.source_budget,
+            "sourceTimeLimitSeconds": runner.time_limit if isinstance(runner, ProcessRunner) else None,
+            "previewTriangleLimit": PREVIEW_LIMIT,
+            "areas": sorted(self.only_areas) or "all",
+        }
+
+    def _run(self) -> dict[str, tp.Any]:
         events = self.events
         events.emit("start", tool=TOOL_NAME, version=__version__, folder=display_path(self.folder))
         events.progress(0.0, "Looking at the folder")
@@ -124,7 +157,7 @@ class Checker:
             "createdAt": _now(),
             "folder": display_path(self.folder),
             "game": game_dict(detection),
-            "options": {"mapPieceSample": self.map_piece_sample, "areas": sorted(self.only_areas) or "all"},
+            "options": self.options(),
             "gameData": None,
             "areas": [],
             "summary": None,
@@ -185,13 +218,7 @@ class Checker:
         for step, weight in STEP_WEIGHTS.items():
             offsets[step] = total
             total += weight
-
-        def tick_for(step: str, what: str) -> tp.Callable[[int, int, str], None]:
-            def tick(done: int, of: int, name: str) -> None:
-                fraction = area_start + area_span * (offsets[step] + STEP_WEIGHTS[step] * done / max(of, 1))
-                self.events.progress(fraction, f"{label}: {what} {done + 1} of {of}", area=area.id, step=step)
-
-            return tick
+        area_started = time.monotonic()
 
         entry: dict[str, tp.Any] = {
             "id": area.id,
@@ -231,30 +258,36 @@ class Checker:
         geometry: dict[str, SourceResult] = {}
         for source in GEOMETRY_SOURCES:
             self.token.stop()
-            self.events.progress(
-                area_start + area_span * offsets[source],
-                f"{label}: reading {SOURCE_NAMES[source]}",
-                area=area.id,
-                step=source,
+            base = area_start + area_span * offsets[source]
+            weight = area_span * STEP_WEIGHTS[source]
+
+            def say(within: float, text: str, base: float = base, weight: float = weight, source: str = source) -> None:
+                self.events.progress(base + weight * within, f"{label}: {text}", area=area.id, step=source)
+
+            say(0.0, f"reading {SOURCE_NAMES[source]}")
+            job = SourceJob(
+                source,
+                profile.game,
+                area,
+                root,
+                instances,
+                sample=self.samples[source],
+                budget=self.source_budget,
             )
             try:
-                if source == "collision":
-                    result = read_collision(
-                        profile, area, root, instances, tick_for(source, "collision file"), self.token.stop
-                    )
-                elif source == "navmesh":
-                    result = read_navmesh(
-                        profile, area, root, instances, tick_for(source, "navmesh file"), self.token.stop
-                    )
-                else:
-                    result = read_map_pieces(
-                        profile, area, root, tick_for(source, "model"), self.token.stop, self.map_piece_sample
-                    )
+                result, mesh = self.runner.run(job, say, self.token)
             except Cancelled:
                 raise
             except Exception as error:  # a reader bug must not end the whole check
-                result = SourceResult(source, status="failed")
+                result, mesh = SourceResult(source, status="failed"), None
                 result.add_error(error)
+            if mesh is not None and len(mesh):
+                result.mesh = [mesh]
+            if result.status == "timed-out":
+                self.warn(
+                    f"{area.name}: reading {SOURCE_NAMES[source]} was stopped after {result.time_limit:g} s "
+                    f"({result.stopped_on}); the check went on without it"
+                )
             geometry[source] = result
         entry["geometry"] = {source: result.to_dict() for source, result in geometry.items()}
 
@@ -268,6 +301,8 @@ class Checker:
             mesh = geometry[source].triangles_array()
             if len(mesh):
                 triangles, drawn_from = mesh, source
+                if geometry[source].sampled:
+                    drawn_from += f" (a sample of {geometry[source].read} of {geometry[source].entries} files)"
                 break
         picture = None
         try:
@@ -283,6 +318,7 @@ class Checker:
             entry["preview"] = None
         for result in geometry.values():
             result.mesh.clear()
+        entry["seconds"] = round(time.monotonic() - area_started, 1)
         self.events.emit(
             "area",
             id=area.id,
@@ -301,7 +337,15 @@ class Checker:
     ) -> dict[str, tp.Any]:
         geometry: dict[str, dict[str, int]] = {}
         for source in GEOMETRY_SOURCES:
-            counts = {"ok": 0, "partial": 0, "failed": 0, "missing": 0, "not-decoded": 0, "triangles": 0}
+            counts = {
+                "ok": 0,
+                "partial": 0,
+                "failed": 0,
+                "missing": 0,
+                "not-decoded": 0,
+                "timed-out": 0,
+                "triangles": 0,
+            }
             for area in areas:
                 result = area["geometry"][source]
                 counts[result["status"]] = counts.get(result["status"], 0) + 1

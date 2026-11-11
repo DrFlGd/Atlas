@@ -171,8 +171,12 @@ impl Progress {
                     .map(|geometry| {
                         geometry
                             .iter()
+                            // "timed-out" reads "timed out", "not-decoded" "not decoded".
                             .map(|(source, status)| {
-                                format!("{source} {}", status.as_str().unwrap_or("?"))
+                                format!(
+                                    "{source} {}",
+                                    status.as_str().unwrap_or("?").replace('-', " ")
+                                )
                             })
                             .collect::<Vec<_>>()
                             .join(", ")
@@ -635,6 +639,9 @@ mod tests {
         progress.apply_line(
             r#"{"event":"area","name":"Depths","geometry":{"collision":"ok","navmesh":"missing"}}"#,
         );
+        progress.apply_line(
+            r#"{"event":"area","name":"Blighttown","geometry":{"collision":"timed-out","navmesh":"ok"}}"#,
+        );
         progress.apply_line(r#"{"event":"warning","message":"Something odd"}"#);
         progress.apply_line("not json");
         assert_eq!(progress.fraction, 0.4, "progress never goes back");
@@ -653,6 +660,10 @@ mod tests {
                 Line {
                     kind: "area",
                     text: "Depths: collision ok, navmesh missing".into()
+                },
+                Line {
+                    kind: "area",
+                    text: "Blighttown: collision timed out, navmesh ok".into()
                 },
                 Line {
                     kind: "warning",

@@ -11,6 +11,11 @@ Sources, in the order the map plan prefers them:
   optional overview picture.
 
 Local mesh coordinates are moved into the area's frame with the transform of each MSB part that places the model.
+
+Phase 0 is a check, not the full map, so each reader can take an evenly spaced sample of the files (`sample`) and
+stop early at a time budget (`budget` seconds): either way the result says `sampled`. Each file's reading time is
+recorded, so the report shows how fast real files parse. The readers run in a child process (see worker.py), which
+the check can stop if a file takes far too long.
 """
 
 from __future__ import annotations
@@ -31,14 +36,37 @@ class Cancelled(Exception):
     pass
 
 
-Tick = tp.Callable[[int, int, str], None]
+class Feedback:
+    """What a reader says while it works. This one says nothing and never stops; the check's own versions report
+    progress, and stop the reader (by raising `Cancelled`) when the player cancels."""
+
+    def opening(self, name: str) -> None:
+        """Before a binder (or other container) is opened: `name` is its file name."""
+
+    def planned(self, entries: int, chosen: int) -> None:
+        """The binder holds `entries` files, of which `chosen` will be read."""
+
+    def file(self, index: int, total: int, name: str) -> None:
+        """Before file `index` (from 0) of the `total` chosen."""
+
+
+def even_sample(items: tp.Sequence[tp.Any], count: int) -> list[tp.Any]:
+    """Up to `count` items spread evenly from first to last (all of them when `count` is 0 or more than there are)."""
+    if count <= 0 or len(items) <= count:
+        return list(items)
+    if count == 1:
+        return [items[0]]
+    step = (len(items) - 1) / (count - 1)
+    return [items[round(index * step)] for index in range(count)]
+
+
 Instances = dict[str, list[tuple[tuple[float, float, float], tuple[float, float, float]]]]
 
 
 @dataclass
 class SourceResult:
     source: str
-    status: str = ""  # ok | partial | failed | missing | not-decoded
+    status: str = ""  # ok | partial | failed | missing | not-decoded | timed-out
     format: str = ""
     files: list[str] = field(default_factory=list)
     entries: int = 0
@@ -52,6 +80,13 @@ class SourceResult:
     sampled: bool = False
     classes: list[str] = field(default_factory=list)
     seconds: float = 0.0
+    # Seconds to open the binder, and to read each file (name, seconds).
+    open_seconds: float | None = None
+    file_seconds: list[tuple[str, float]] = field(default_factory=list)
+    # For a source stopped at the time limit: the file it was on, and how many files it had got through.
+    stopped_on: str | None = None
+    files_done: int | None = None
+    time_limit: float | None = None
     # World-space triangles (n, 3, 3), for previews; not part of the report.
     mesh: list[np.ndarray] = field(default_factory=list, repr=False)
 
@@ -96,11 +131,65 @@ class SourceResult:
             data["sampled"] = True
         if self.classes:
             data["havokClasses"] = self.classes
+        if self.open_seconds is not None:
+            data["openSeconds"] = round(self.open_seconds, 2)
+        if self.file_seconds:
+            times = sorted(seconds for _, seconds in self.file_seconds)
+            data["fileSeconds"] = {
+                "files": len(times),
+                "min": round(times[0], 3),
+                "median": round(float(np.median(times)), 3),
+                "max": round(times[-1], 3),
+            }
+            data["slowestFile"] = max(self.file_seconds, key=lambda item: item[1])[0]
+        if self.stopped_on is not None:
+            data["stoppedOn"] = self.stopped_on
+            data["filesDone"] = self.files_done or 0
+        if self.time_limit is not None:
+            data["timeLimitSeconds"] = self.time_limit
         if self.errors:
             data["errors"] = self.errors
         if self.note:
             data["note"] = self.note
         return data
+
+
+def _files(
+    result: SourceResult,
+    chosen: tp.Sequence[tuple[str, tp.Any]],
+    feedback: Feedback,
+    budget: float,
+    started: float,
+    words: str,
+) -> tp.Iterator[tuple[str, tp.Any]]:
+    """The chosen (name, item) pairs, one at a time: says each one to `feedback`, records how long the caller spent
+    on it, and stops early once `budget` seconds (0: no budget) have passed since `started`."""
+    for index, (name, item) in enumerate(chosen):
+        if budget > 0 and index > 0 and time.monotonic() - started > budget:
+            result.sampled = True
+            stopped = f"stopped at the {budget:g} s time budget after {index} of {len(chosen)} {words}"
+            result.note = f"{result.note}; {stopped}" if result.note else stopped[0].upper() + stopped[1:]
+            return
+        feedback.file(index, len(chosen), name)
+        file_started = time.monotonic()
+        yield name, item
+        result.file_seconds.append((name, time.monotonic() - file_started))
+
+
+def _open_binder(result: SourceResult, path: Path, feedback: Feedback) -> tp.Any:
+    feedback.opening(path.name)
+    from soulstruct.containers import Binder
+
+    opened = time.monotonic()
+    binder = Binder.from_path(path)
+    result.open_seconds = time.monotonic() - opened
+    return binder
+
+
+def _sample_note(result: SourceResult, chosen: int, words: str) -> None:
+    if chosen < result.entries:
+        result.sampled = True
+        result.note = f"Read an evenly spaced sample of {chosen} of {result.entries} {words}"
 
 
 def rotation_matrix(degrees: tuple[float, float, float]) -> np.ndarray:
@@ -146,7 +235,13 @@ def _havok_classes(hkx: tp.Any) -> list[str]:
 
 
 def read_collision(
-    profile: GameProfile, area: Area, root: Path, instances: Instances, tick: Tick, stop: tp.Callable[[], None]
+    profile: GameProfile,
+    area: Area,
+    root: Path,
+    instances: Instances,
+    feedback: Feedback,
+    sample: int = 0,
+    budget: float = 0.0,
 ) -> SourceResult:
     started = time.monotonic()
     result = SourceResult("collision")
@@ -156,29 +251,31 @@ def read_collision(
         result.status = "missing"
         result.note = f"no hAA_BB_CC_DD.hkxbhd collision file in map/{area.id}"
         return result
-    from soulstruct.containers import Binder
-    from soulstruct.havok.core import HKX
-    from soulstruct.havok.fromsoft.shared.map_collision import MapCollisionModel
-
     result.format = "Havok 2015 hkp mesh (HKX in HKXBHD/HKXBDT)" if profile.collision_kind == "dsr" else (
         "Havok 2014 hknp compressed mesh (HKX in HKXBHD/HKXBDT)"
     )
     binder_path = binders[0]
     result.files.append(_relative(binder_path, root))
     try:
-        binder = Binder.from_path(binder_path)
+        binder = _open_binder(result, binder_path, feedback)
+    except Cancelled:
+        raise
     except Exception as error:
         result.add_error(error)
         result.status = "failed"
         result.seconds = time.monotonic() - started
         return result
+    from soulstruct.havok.core import HKX
+    from soulstruct.havok.fromsoft.shared.map_collision import MapCollisionModel
+
     entries = [e for e in binder.entries if entry_basename(e.path or "").lower().split(".", 1)[-1] in ("hkx", "hkx.dcx")]
     result.entries = len(entries)
+    named = [(entry_basename(entry.path or f"entry {index}"), entry) for index, entry in enumerate(entries)]
+    chosen = even_sample(named, sample)
+    feedback.planned(len(entries), len(chosen))
+    _sample_note(result, len(chosen), "collision files")
     parsed_only = 0
-    for index, entry in enumerate(entries):
-        stop()
-        name = entry_basename(entry.path or f"entry {index}")
-        tick(index, len(entries), name)
+    for name, entry in _files(result, chosen, feedback, budget, started, "collision files"):
         try:
             model = MapCollisionModel.from_bytes(entry.data)
         except Exception as error:
@@ -221,13 +318,17 @@ def read_collision(
 
 
 def read_navmesh(
-    profile: GameProfile, area: Area, root: Path, instances: Instances, tick: Tick, stop: tp.Callable[[], None]
+    profile: GameProfile,
+    area: Area,
+    root: Path,
+    instances: Instances,
+    feedback: Feedback,
+    sample: int = 0,
+    budget: float = 0.0,
 ) -> SourceResult:
     started = time.monotonic()
     result = SourceResult("navmesh")
     folder = area.map_folder
-    from soulstruct.containers import Binder
-
     if profile.navmesh_kind == "nvm":
         binders = files_matching(folder, r"m\d\d_\d\d_\d\d_\d\d\.nvmbnd(\.dcx)?")
         result.format = "NVM in NVMBND"
@@ -240,22 +341,26 @@ def read_navmesh(
         return result
     result.files.append(_relative(binders[0], root))
     try:
-        binder = Binder.from_path(binders[0])
+        binder = _open_binder(result, binders[0], feedback)
+    except Cancelled:
+        raise
     except Exception as error:
         result.add_error(error)
         result.status = "failed"
         result.seconds = time.monotonic() - started
         return result
 
+    suffix = ".nvm" if profile.navmesh_kind == "nvm" else ".hkx"
+    entries = [e for e in binder.entries if suffix in entry_basename(e.path or "").lower()]
+    result.entries = len(entries)
+    named = [(entry_basename(entry.path or f"entry {index}"), entry) for index, entry in enumerate(entries)]
+    chosen = even_sample(named, sample)
+    feedback.planned(len(entries), len(chosen))
+    _sample_note(result, len(chosen), "navmesh files")
     if profile.navmesh_kind == "nvm":
         from soulstruct.base.maps.navmesh.nvm import NVM
 
-        entries = [e for e in binder.entries if ".nvm" in entry_basename(e.path or "").lower()]
-        result.entries = len(entries)
-        for index, entry in enumerate(entries):
-            stop()
-            name = entry_basename(entry.path or f"entry {index}")
-            tick(index, len(entries), name)
+        for name, entry in _files(result, chosen, feedback, budget, started, "navmesh files"):
             try:
                 nvm = NVM.from_bytes(entry.data)
             except Exception as error:
@@ -273,11 +378,7 @@ def read_navmesh(
     else:
         from soulstruct.havok.core import HKX
 
-        entries = [e for e in binder.entries if ".hkx" in entry_basename(e.path or "").lower()]
-        result.entries = len(entries)
-        for index, entry in enumerate(entries):
-            stop()
-            tick(index, len(entries), entry_basename(entry.path or f"entry {index}"))
+        for name, entry in _files(result, chosen, feedback, budget, started, "navmesh files"):
             try:
                 hkx = HKX.from_bytes(entry.data)
             except Exception as error:
@@ -300,7 +401,7 @@ def read_navmesh(
 
 
 def read_map_pieces(
-    profile: GameProfile, area: Area, root: Path, tick: Tick, stop: tp.Callable[[], None], sample: int
+    profile: GameProfile, area: Area, root: Path, feedback: Feedback, sample: int, budget: float = 0.0
 ) -> SourceResult:
     """Read up to `sample` map piece models (all of them when `sample` is 0) and count meshes and vertices."""
     started = time.monotonic()
@@ -312,6 +413,7 @@ def read_map_pieces(
         result.status = "missing"
         result.note = f"no map piece models (.flver or .mapbnd) in map/{area.id}"
         return result
+    feedback.opening(f"map/{folder.name}")
     from soulstruct.containers import Binder
     from soulstruct.flver import FLVER
 
@@ -327,11 +429,10 @@ def read_map_pieces(
         sources.append((path.name, load))
     result.entries = len(sources)
     result.files = [f"map/{folder.name}/ ({len(flvers)} .flver, {len(binders)} .mapbnd)"]
-    chosen = sources if sample <= 0 or len(sources) <= sample else sources[:: max(1, len(sources) // sample)][:sample]
-    result.sampled = len(chosen) < len(sources)
-    for index, (name, load) in enumerate(chosen):
-        stop()
-        tick(index, len(chosen), name)
+    chosen = even_sample(sources, sample)
+    feedback.planned(len(sources), len(chosen))
+    _sample_note(result, len(chosen), "models")
+    for name, load in _files(result, chosen, feedback, budget, started, "models"):
         try:
             models = load()
         except Exception as error:
@@ -350,7 +451,5 @@ def read_map_pieces(
                 except Exception:
                     pass
     result.finish()
-    if result.sampled:
-        result.note = f"read a sample of {len(chosen)} of {len(sources)} models"
     result.seconds = time.monotonic() - started
     return result

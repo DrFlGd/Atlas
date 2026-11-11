@@ -8,7 +8,7 @@ It only reads the game folder. It never changes, copies or uploads anything from
 
 No command line needed, ever.
 
-1. **Install.** Open the repository's Releases page, find **Atlas Map Maker 0.1.0** (tag `mapmaker-v0.1.0`) and download **Atlas-Map-Maker-0.1.0-setup.exe**. Run it. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**. The installer shows the GNU GPL licence (see below): click **I Agree**, then install. It installs next to Atlas and changes nothing in it.
+1. **Install.** Open the repository's Releases page, find **Atlas Map Maker 0.1.1** (tag `mapmaker-v0.1.1`) and download **Atlas-Map-Maker-0.1.1-setup.exe**. Run it. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**. The installer shows the GNU GPL licence (see below): click **I Agree**, then install. It installs next to Atlas and changes nothing in it.
 2. **Start** Atlas Map Maker from the Start menu.
 3. **Choose your Dark Souls Remastered folder.** Click **Choose folder…** and pick the game's folder, the one that holds `DarkSoulsRemastered.exe`. With Steam it is usually:
 
@@ -16,7 +16,7 @@ No command line needed, ever.
 
    If it is somewhere else: in Steam, right-click Dark Souls Remastered, then **Manage**, **Browse local files**, and choose the folder that opens. Choosing a folder above it also works. The app remembers the folder for next time.
 
-4. **Click Check game files.** A progress bar shows each area as it is read. It may take a few minutes. **Cancel** stops it.
+4. **Click Check game files.** A progress bar shows each area as it is read, with the file it is on; while a file takes long, the line says so every few seconds ("still reading …, 20 s"). It may take a few minutes: each area's collision is read from a sample of 12 files, for at most about 45 seconds, and a file reader that takes longer than 90 seconds is stopped (the table then says "Took too long") and the check goes on. **Cancel** stops it at once.
 5. **Read the result.** The top says which game and version it found and which geometry source works best (collision, navmesh or map pieces). The table lists every area with its parts, treasure, item lots, bonfire candidates and what each geometry source gave. Below are the preview pictures, seen from above.
 6. **Click Save report…** and save the `.zip` file (Documents is suggested). **Show in folder** opens the folder it is in.
 7. **Upload that .zip file to the thread.**
@@ -32,7 +32,7 @@ The Atlas repository is MIT, but **the Map Maker installer is GPL-3.0**: it carr
 ## How it works
 
 - `src/`: the window (React, with the Atlas viewer's theme from `apps/web/src/styles/theme.css`). It calls the shell's commands through Tauri's injected `invoke`, like the viewer, with no Tauri package.
-- `src-tauri/`: the Tauri 2 shell (`dev.atlas.mapmaker`). `checks.rs` starts the helper with the chosen folder and a new output folder in the app's data (`%LOCALAPPDATA%\dev.atlas.mapmaker\checks\run-…`, the last three kept), reads its JSON progress lines, keeps the last lines of its error output for a failed check, and reads `report.json` when it is done. **Cancel** writes `cancel` to the helper's standard input; if it has not stopped five seconds later, the app ends it and its child process. Closing the app ends a running check. The last folder is kept in `%APPDATA%\dev.atlas.mapmaker\settings.json`.
+- `src-tauri/`: the Tauri 2 shell (`dev.atlas.mapmaker`). `checks.rs` starts the helper with the chosen folder and a new output folder in the app's data (`%LOCALAPPDATA%\dev.atlas.mapmaker\checks\run-…`, the last three kept), reads its JSON progress lines, keeps the last lines of its error output for a failed check, and reads `report.json` when it is done. **Cancel** writes `cancel` to the helper's standard input (the helper then stops its file reader process at once); if it has not stopped five seconds later, the app ends it and its child processes. Closing the app ends a running check. The last folder is kept in `%APPDATA%\dev.atlas.mapmaker\settings.json`.
 - The helper ships as a Tauri sidecar: `scripts/build.js` copies the PyInstaller-built `atlas-gamefiles` to `src-tauri/binaries/atlas-gamefiles-<target triple>[.exe]` and runs `tauri build` with `src-tauri/tauri.build.conf.json`, which lists it under `bundle.externalBin`, so the installer puts it next to `atlas-mapmaker.exe`. Plain `cargo` builds and tests need no helper.
 
 ## Building

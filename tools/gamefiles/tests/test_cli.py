@@ -37,7 +37,7 @@ def lines(stdout: str) -> list[dict]:
 def test_version() -> None:
     result = helper("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "atlas-gamefiles 0.1.0"
+    assert result.stdout.strip() == "atlas-gamefiles 0.1.1"
 
 
 def test_check_prints_only_json_lines(dsr_folder: Path, tmp_path: Path) -> None:
@@ -50,6 +50,37 @@ def test_check_prints_only_json_lines(dsr_folder: Path, tmp_path: Path) -> None:
     assert events[-1]["summary"]["areas"] == 2
     assert Path(events[-1]["zip"]).is_file()
     assert snapshot(dsr_folder) == before
+
+
+def test_sampling_and_time_limit_options(dsr_folder: Path, tmp_path: Path) -> None:
+    result = helper(
+        "check",
+        str(dsr_folder),
+        "--out",
+        str(tmp_path / "out"),
+        "--areas",
+        "m10_01",
+        "--collision-sample",
+        "1",
+        "--source-budget",
+        "30",
+        "--source-time-limit",
+        "60",
+        "--heartbeat",
+        "1",
+    )
+    assert result.returncode == 0, result.stderr
+    events = lines(result.stdout)
+    messages = [e["message"] for e in events if e["event"] == "progress"]
+    assert any("opening the collision files (h10_01_00_00.hkxbhd)" in message for message in messages)
+    assert any("collision file 1 of 1 (h0000B1A10.hkx.dcx)" in message for message in messages)
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    assert report["options"]["collisionSample"] == 1
+    assert report["options"]["sourceBudgetSeconds"] == 30
+    assert report["options"]["sourceTimeLimitSeconds"] == 60
+    collision = report["areas"][0]["geometry"]["collision"]
+    assert (collision["status"], collision["entries"], collision["read"], collision["sampled"]) == ("ok", 2, 1, True)
+    assert collision["fileSeconds"]["files"] == 1
 
 
 def test_output_inside_the_game_folder_is_refused(dsr_folder: Path) -> None:
