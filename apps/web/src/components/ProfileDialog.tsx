@@ -9,6 +9,7 @@ import {
 } from '@atlas/core';
 import { useEffect, useId, useRef, useState } from 'react';
 import { desktop } from '../desktop';
+import { progressFilesOffered } from '../features';
 import {
   applyImport,
   createProfile,
@@ -53,6 +54,7 @@ function download(name: string, text: string): void {
 /** Profiles of the current game, and export and import of progress. */
 export function ProfileDialog() {
   const open = useAtlas((s) => s.profileDialogOpen);
+  const progressFiles = useAtlas(progressFilesOffered);
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -94,10 +96,26 @@ export function ProfileDialog() {
           </header>
           <ProfileList />
           <NewProfile />
-          <ExportImport />
+          {progressFiles ? <ExportImport /> : <NoProgressFiles />}
         </div>
       ) : null}
     </dialog>
+  );
+}
+
+/**
+ * In place of export and import where the shell cannot save or open files
+ * (the Android app, whose system dialogs give addresses it cannot use yet).
+ */
+function NoProgressFiles() {
+  return (
+    <section className="dialog-section" aria-label="Export and import">
+      <h3 className="section-title">Export and import</h3>
+      <p className="muted small" data-testid="no-progress-files">
+        Progress files cannot be exported or imported in this app yet. Your progress is saved on
+        this device.
+      </p>
+    </section>
   );
 }
 

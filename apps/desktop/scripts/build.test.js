@@ -4,7 +4,13 @@ import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { downloadsEnabled, identityConfig, tauriArgs } from './build.js';
+import {
+  androidCommands,
+  androidEnv,
+  downloadsEnabled,
+  identityConfig,
+  tauriArgs,
+} from './build.js';
 import { checkBinary, DOWNLOAD_MARKERS } from './check-binary.js';
 
 const base = {
@@ -93,4 +99,24 @@ test('the binary check tells a viewer from a build with downloads', async () => 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('an Android build creates its project once, then builds an APK', () => {
+  assert.deepEqual(androidCommands({ initialised: false, extra: ['--', '--target', 'aarch64'] }), [
+    ['android', 'init', '--ci', '--skip-targets-install'],
+    ['android', 'build', '--apk', '--ci', '--target', 'aarch64'],
+  ]);
+  assert.deepEqual(androidCommands({ initialised: true, extra: [] }), [
+    ['android', 'build', '--apk', '--ci'],
+  ]);
+});
+
+test('an Android build is a viewer with folder tiles and no importers', () => {
+  const env = androidEnv({ PATH: '/bin', ATLAS_ENABLE_DOWNLOADS: '0' });
+  assert.equal(env.ATLAS_ENABLE_DOWNLOADS, '0');
+  assert.equal(env.ATLAS_DEMO_TILES, 'xyz');
+  assert.equal(env.PATH, '/bin');
+  assert.throws(() => androidEnv({ ATLAS_ENABLE_DOWNLOADS: '1' }), /viewer/);
+  assert.throws(() => androidEnv({ ATLAS_BUNDLE_IMPORTERS: 'x.js' }), /no importers/);
+  assert.throws(() => androidEnv({ ATLAS_APP_NAME: 'X', ATLAS_APP_IDENTIFIER: 'a.b' }), /android/);
 });

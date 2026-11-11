@@ -9,9 +9,10 @@ publish = false
 
 [lib]
 # The `_lib` suffix keeps the library name distinct from the binary, which
-# avoids a Cargo name clash on Windows.
+# avoids a Cargo name clash on Windows. The desktop binary links the rlib;
+# the Android app loads the cdylib (`libatlas_desktop_lib.so`).
 name = "atlas_desktop_lib"
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 # "Download map images" and "View map page and save images as I browse":

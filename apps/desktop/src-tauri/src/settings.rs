@@ -7,6 +7,8 @@
 //! - Windows: `%LOCALAPPDATA%\Atlas\settings.json`
 //! - macOS: `~/Library/Application Support/Atlas/settings.json`
 //! - Linux: `$XDG_DATA_HOME/atlas/settings.json` (`~/.local/share/atlas/…`)
+//! - Android: `Atlas/settings.json` in the app's own data folder, which no
+//!   other app reads
 //!
 //! ```json
 //! { "format": "atlas-settings", "version": 1,

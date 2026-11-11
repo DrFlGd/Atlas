@@ -175,6 +175,19 @@ export interface DesktopInfo {
    * with `ATLAS_ENABLE_DOWNLOADS=1`). Without it, those commands do not exist.
    */
   downloads: boolean;
+  /**
+   * Folders can be chosen and shown in the file manager, so the Maps dialog
+   * is offered. False in the Android app, which keeps its maps in its own
+   * storage. Absent counts as true.
+   */
+  folders?: boolean;
+  /**
+   * Progress can be exported to and imported from files through the
+   * system's dialogs. False in the Android app. Absent counts as true.
+   */
+  progressFiles?: boolean;
+  /** Web pages can be opened for importers. False in the Android app. Absent counts as true. */
+  imports?: boolean;
 }
 
 /** Where a listed pack comes from. */

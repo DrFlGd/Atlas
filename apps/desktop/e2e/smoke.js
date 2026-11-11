@@ -166,6 +166,10 @@ try {
     info?.downloads === downloads,
     `the shell says it ${downloads ? 'downloads' : 'does not download'} map images`,
   );
+  check(
+    info?.folders === true && info?.progressFiles === true && info?.imports === true,
+    'the desktop shell offers folders, progress files and the import window',
+  );
   if (!downloads) {
     // The commands are not in the build, so the page cannot reach them.
     for (const [command, args] of /** @type {[string, Record<string, unknown>][]} */ ([
