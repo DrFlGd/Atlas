@@ -5,9 +5,7 @@ import { DEFAULT_MAX_UNPACKED, isContainer, unpackContainer, UnpackedTooLarge } 
 import { readHeader, readPayload, type PayloadHeader } from './payload';
 import { readFactsOf, readPins, readPlayer, readWorld, readWorlds } from './summary';
 import { buildTree, type SaveTree } from './tree';
-import { WITCHER3_TUNING } from './tuning';
-
-export const WITCHER3_TITLE = 'The Witcher 3: Wild Hunt';
+import { WITCHER3_GAME, WITCHER3_TITLE } from './tuning';
 
 /**
  * The save versions this reader knows, by the header's third number (the
@@ -103,12 +101,7 @@ export function readWitcher3(bytes: Uint8Array, options: ReadOptions = {}): Save
 }
 
 export const witcher3Reader: SaveReader = {
-  id: 'witcher3',
-  title: WITCHER3_TITLE,
-  extensions: ['.sav'],
+  ...WITCHER3_GAME,
   detect: isContainer,
   read: readWitcher3,
-  matchesPack: ({ gameId, title }) =>
-    /witcher[\s_-]*(3|iii)|wild[\s_-]*hunt/i.test(`${gameId} ${title}`),
-  tuning: WITCHER3_TUNING,
 };

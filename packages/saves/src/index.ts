@@ -12,12 +12,16 @@ import { witcher3Reader } from './witcher3/reader';
 
 export * from './reader';
 export * from './summary';
-export * from './match/transform';
-export * from './match/calibrate';
-export * from './match/worlds';
-export * from './match/match';
+export * from './match/index';
+export * from './games';
 export { witcher3Reader, WITCHER3_VERSIONS, readWitcher3Tree } from './witcher3/reader';
-export { WITCHER3_TUNING, WITCHER3_WORLDS, WITCHER3_PIN_KINDS } from './witcher3/tuning';
+export {
+  WITCHER3_GAME,
+  WITCHER3_TITLE,
+  WITCHER3_TUNING,
+  WITCHER3_WORLDS,
+  WITCHER3_PIN_KINDS,
+} from './witcher3/tuning';
 
 /** Every save reader Atlas has. */
 export const SAVE_READERS: readonly SaveReader[] = [witcher3Reader];

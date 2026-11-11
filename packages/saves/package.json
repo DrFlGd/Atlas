@@ -3,8 +3,11 @@
   "version": "0.3.5",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./games": "./src/games.ts",
+    "./match": "./src/match/index.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {

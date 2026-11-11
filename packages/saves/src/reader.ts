@@ -71,21 +71,28 @@ export interface ReadOptions {
 }
 
 /**
- * A reader for one game's saves. Readers are pure: they take the bytes of
- * a copy of the save and never touch a file.
+ * A game whose saves Atlas can read, without the reading code: what the
+ * app needs to offer it (the reader itself can stay in a worker).
  */
-export interface SaveReader {
+export interface SaveGame {
   /** Stable id, such as `witcher3`. */
   id: string;
   /** The game's title. */
   title: string;
   /** File name endings of saves, lowercase with the dot, for file pickers. */
   extensions: string[];
+  /** Whether a pack is for this game, from its id and title. */
+  matchesPack(pack: { gameId: string; title: string }): boolean;
+  tuning: SaveTuning;
+}
+
+/**
+ * A reader for one game's saves. Readers are pure: they take the bytes of
+ * a copy of the save and never touch a file.
+ */
+export interface SaveReader extends SaveGame {
   /** Whether the bytes look like this game's save (a quick check of the first bytes). */
   detect(bytes: Uint8Array): boolean;
   /** Reads a save. Throws {@link SaveReadError} when it cannot. */
   read(bytes: Uint8Array, options?: ReadOptions): SaveSummary;
-  /** Whether a pack is for this game, from its id and title. */
-  matchesPack(pack: { gameId: string; title: string }): boolean;
-  tuning: SaveTuning;
 }

@@ -1,4 +1,4 @@
-import type { GameWorld, PinKindRule, SaveTuning } from '../reader';
+import type { GameWorld, PinKindRule, SaveGame, SaveTuning } from '../reader';
 
 /**
  * Everything about The Witcher 3 that the matcher can be tuned with, in
@@ -149,6 +149,18 @@ export const WITCHER3_TUNING: SaveTuning = {
   // map site may put its marker a few metres off.
   matchRadius: 25,
   minRadiusPx: 6,
+};
+
+export const WITCHER3_TITLE = 'The Witcher 3: Wild Hunt';
+
+/** The Witcher 3 as a game whose saves Atlas reads (the reader is in `reader.ts`). */
+export const WITCHER3_GAME: SaveGame = {
+  id: 'witcher3',
+  title: WITCHER3_TITLE,
+  extensions: ['.sav'],
+  matchesPack: ({ gameId, title }) =>
+    /witcher[\s_-]*(3|iii)|wild[\s_-]*hunt/i.test(`${gameId} ${title}`),
+  tuning: WITCHER3_TUNING,
 };
 
 /** The world id of a world path: its folder (`levels\novigrad\novigrad.w2w` is `novigrad`). */
