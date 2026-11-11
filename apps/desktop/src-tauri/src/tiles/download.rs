@@ -1720,8 +1720,9 @@ pub mod tests {
             concurrency: 1,
             delay: Duration::from_millis(5),
             requests_per_minute: None,
-            // Each image takes 150 ms of the budget.
-            bytes_per_second: Some(size * 1000 / 150),
+            // Each image takes 400 ms of the budget. The waits are long so
+            // that a busy machine's own delays stay small beside them.
+            bytes_per_second: Some(size * 1000 / 400),
         }));
         let downloader = Arc::new(
             Downloader::new(
@@ -1738,7 +1739,7 @@ pub mod tests {
             .await
             .unwrap();
         assert!(
-            started.elapsed() >= Duration::from_millis(440),
+            started.elapsed() >= Duration::from_millis(1150),
             "{:?}",
             started.elapsed()
         );
@@ -1757,11 +1758,12 @@ pub mod tests {
                 .collect(),
         );
         // Wait out what the cap booked before.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(450)).await;
         let started = Instant::now();
         downloader.run(more, Arc::new(|_, _| {})).await.unwrap();
         assert!(
-            started.elapsed() < Duration::from_millis(300),
+            // With the cap these four would take 1.2 s again.
+            started.elapsed() < Duration::from_millis(1000),
             "{:?}",
             started.elapsed()
         );
