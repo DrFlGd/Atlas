@@ -38,4 +38,6 @@ export const SETTINGS = {
   profile: (gameId: string) => `profile:${gameId}`,
   filters: (gameId: string) => `filters:${gameId}`,
   place: (gameId: string) => `place:${gameId}`,
+  /** A site's list of games as it was last read, kept so it need not be read each time. */
+  catalogue: (importerId: string) => `catalogue:${importerId}`,
 } as const;
