@@ -1,0 +1,10 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Atlas",
+  "identifier": "dev.atlas.android",
+  "bundle": {
+    "android": {
+      "minSdkVersion": 29
+    }
+  }
+}

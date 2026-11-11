@@ -10,8 +10,10 @@
 use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager as _, Runtime, State, Url, WebviewWindow};
-use tauri_plugin_dialog::{DialogExt, FilePath};
+#[cfg(desktop)]
+use tauri::Manager as _;
+use tauri::{AppHandle, Runtime, State, Url, WebviewWindow};
+use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
@@ -45,6 +47,34 @@ pub struct DesktopInfo {
     /// The build downloads map images and saves them from map pages (the
     /// `downloads` feature). Without it, those commands do not exist.
     downloads: bool,
+    /// Folders can be chosen and shown in the file manager: the maps folder
+    /// can be changed, pack folders added and the Maps dialog used. False
+    /// on Android, which keeps its maps in the app's own storage.
+    folders: bool,
+    /// Progress can be exported to and imported from files through the
+    /// system's save and open dialogs. False on Android, whose dialogs give
+    /// `content://` addresses that this shell does not read or write yet.
+    progress_files: bool,
+    /// Web pages can be opened in the import window, for importers. False on
+    /// Android.
+    imports: bool,
+}
+
+/// Whether this platform has what `DesktopInfo::folders`,
+/// `DesktopInfo::progress_files` and `DesktopInfo::imports` need: a
+/// desktop's dialogs, file manager and windows.
+const DESKTOP_ONLY: bool = cfg!(desktop);
+
+/// The answer of a desktop-only command on Android, whose web app does not
+/// offer it.
+const NOT_ON_THIS_DEVICE: &str = "This is not available on this device.";
+
+fn desktop_only() -> Result<(), String> {
+    if DESKTOP_ONLY {
+        Ok(())
+    } else {
+        Err(NOT_ON_THIS_DEVICE.to_owned())
+    }
 }
 
 #[tauri::command]
@@ -54,6 +84,9 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         version: app.package_info().version.to_string(),
         platform: std::env::consts::OS,
         downloads: Downloads::in_build(),
+        folders: DESKTOP_ONLY,
+        progress_files: DESKTOP_ONLY,
+        imports: DESKTOP_ONLY,
     }
 }
 
@@ -74,6 +107,14 @@ pub fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &Url) -> Result<(), 
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|error| format!("Could not open the link: {error}"))
+}
+
+/// A file dialog over `window`: on top of it, where the platform has windows.
+fn file_dialog<R: Runtime>(window: &WebviewWindow<R>, title: &str) -> FileDialogBuilder<R> {
+    let dialog = window.dialog().file();
+    #[cfg(desktop)]
+    let dialog = dialog.set_parent(window);
+    dialog.set_title(title)
 }
 
 async fn chosen_path(
@@ -121,11 +162,8 @@ pub async fn save_text_file<R: Runtime>(
     suggested_name: String,
     contents: String,
 ) -> Result<Option<SavedFile>, String> {
-    let dialog = window
-        .dialog()
-        .file()
-        .set_parent(&window)
-        .set_title("Export progress")
+    desktop_only()?;
+    let dialog = file_dialog(&window, "Export progress")
         .set_file_name(safe_file_name(&suggested_name))
         .add_filter("Atlas progress", &["json"]);
     let Some(path) = chosen_path(|done| dialog.save_file(done)).await? else {
@@ -175,12 +213,8 @@ fn read_text(path: &std::path::Path) -> Result<OpenedFile, String> {
 pub async fn open_text_file<R: Runtime>(
     window: WebviewWindow<R>,
 ) -> Result<Option<OpenedFile>, String> {
-    let dialog = window
-        .dialog()
-        .file()
-        .set_parent(&window)
-        .set_title("Import progress")
-        .add_filter("Atlas progress", &["json"]);
+    desktop_only()?;
+    let dialog = file_dialog(&window, "Import progress").add_filter("Atlas progress", &["json"]);
     match chosen_path(|done| dialog.pick_file(done)).await? {
         None => Ok(None),
         Some(path) => read_text(&path).map(Some),
@@ -312,16 +346,27 @@ async fn blocking<T: Send + 'static>(
         .map_err(|error| error.to_string())?
 }
 
+/// Asks for a folder. Android has no folder dialog.
+#[cfg(desktop)]
 async fn pick_folder<R: Runtime>(
     window: &WebviewWindow<R>,
     title: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let mut dialog = window.dialog().file().set_parent(window).set_title(title);
+    let mut dialog = file_dialog(window, title);
     // Start in the home folder rather than a list of recent files.
     if let Ok(home) = window.path().home_dir() {
         dialog = dialog.set_directory(home);
     }
     chosen_path(|done| dialog.pick_folder(done)).await
+}
+
+#[cfg(mobile)]
+#[allow(clippy::unused_async)]
+async fn pick_folder<R: Runtime>(
+    _window: &WebviewWindow<R>,
+    _title: &str,
+) -> Result<Option<PathBuf>, String> {
+    Err(NOT_ON_THIS_DEVICE.to_owned())
 }
 
 /// Lists every pack the app can show, after looking at every folder again.
@@ -414,6 +459,7 @@ pub fn library_reveal<R: Runtime>(
     library: LibraryState<'_>,
     target: RevealTarget,
 ) -> Result<(), String> {
+    desktop_only()?;
     let path = match target {
         RevealTarget::MapsFolder => {
             let folder = library.maps_folder();
@@ -676,6 +722,7 @@ pub async fn import_open<R: Runtime>(
     wait_seconds: Option<u32>,
     purpose: Option<String>,
 ) -> Result<(), String> {
+    desktop_only()?;
     *lock_poll() = None;
     // Only for the log: what is read from the page. Nothing about the window changes.
     let listing = matches!(purpose.as_deref(), Some("game" | "catalogue"));

@@ -194,3 +194,93 @@ jobs:
           path: apps/desktop/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  # Builds the Android app for 64-bit ARM phones: a viewer with the demo pack
+  # in its web build, as folder tiles. The APK is unsigned; releases are
+  # signed elsewhere. Then checks the APK: no download code, the demo pack
+  # only, the app id, name and minimum Android version.
+  android:
+    name: Android (aarch64, unsigned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          key: android
+
+      # The runner comes with the Android SDK (ANDROID_HOME) and NDKs.
+      - name: Use the runner's Android SDK and NDK
+        run: |
+          echo "Android SDK: $ANDROID_HOME"
+          echo "Android NDK: $ANDROID_NDK_LATEST_HOME"
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      - run: pnpm install --frozen-lockfile
+
+      # The Android shell leaves out what Android cannot do (folder dialogs,
+      # the import window, moving 0.2.0 images); no warning may be left.
+      - name: Rust lint for Android
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets --locked --target aarch64-linux-android -- -D warnings
+
+      # Creates the Android project (src-tauri/gen/android) and builds the
+      # web app, the demo pack and the APK. Downloads stay off.
+      - name: Build the Android app
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '0'
+        run: pnpm android:build --target aarch64
+
+      - name: Check the APK
+        run: |
+          shopt -s nullglob
+          apks=(apps/desktop/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::Expected one release APK, found ${#apks[@]}: ${apks[*]}"
+            exit 1
+          fi
+          apk="${apks[0]}"
+          ls -l "$apk"
+          echo "APK=$apk" >> "$GITHUB_ENV"
+          node apps/desktop/scripts/check-apk.js "$apk" --packs demo
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          "${build_tools}aapt2" dump badging "$apk" | tee badging.txt
+          grep -q "^package: name='dev.atlas.android'" badging.txt
+          grep -Eq "^(sdkVersion|minSdkVersion):'29'" badging.txt
+          grep -q "^application-label:'Atlas'" badging.txt
+          grep -q "^native-code: 'arm64-v8a'" badging.txt
+          echo "The APK is dev.atlas.android, \"Atlas\", for Android 10 (API 29) and later on arm64-v8a."
+
+      # The signing of android-release.yml, with a key made for this run
+      # only (no secrets here), and the checks again on the signed APK.
+      - name: Sign with a throwaway key and check
+        run: |
+          bash apps/desktop/scripts/sign-apk.sh "$APK" signed.apk
+          node apps/desktop/scripts/check-apk.js signed.apk --packs demo
+
+      - name: Upload the unsigned APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: atlas-android-unsigned
+          path: ${{ env.APK }}
+          if-no-files-found: error
+          retention-days: 7

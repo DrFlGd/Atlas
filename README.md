@@ -35,6 +35,7 @@ The first `pnpm dev` or `pnpm build` generates the demo pack, which takes about 
 | `pnpm demo:build`                    | Rebuilds the demo pack from scratch.                                              |
 | `pnpm desktop:dev`                   | Runs the desktop app on a Vite dev server at port 1420 (see below).               |
 | `pnpm desktop:build`                 | Builds the desktop app and its installers (see below).                            |
+| `pnpm android:build`                 | Builds the Android app as an unsigned APK (see below).                            |
 
 Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwright install chromium`. To use a browser that is already installed instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path. The tests start their own preview server on port 4380; set `ATLAS_E2E_PORT` to use another port. They never reuse a server that is already running.
 
@@ -123,6 +124,8 @@ Workspace packages export their TypeScript sources directly; the web app bundles
 In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also shows packs from a maps folder and from folders the person chooses, exports and imports progress through native file dialogs, opens web links in the system browser, and shows the map images that are in a pack's folder. The public Atlas app is a viewer: it never fetches map images from other servers. Only a build made with `ATLAS_ENABLE_DOWNLOADS=1` can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, into the pack's folder, one pack at a time across every Atlas app on the computer ([apps/desktop/README.md](apps/desktop/README.md#building-another-app-from-the-shell)). Every Atlas desktop app writes what it does to a shared activity log, which the app shows and can copy to send with a question ([apps/desktop/README.md](apps/desktop/README.md#activity-log)). A desktop build can include importers that add maps from web pages ("Add a map"); the plain build has none. Not there yet: code signing, auto-update and save-file sync.
 
 The `Release` workflow (`.github/workflows/release.yml`, run by hand or by pushing a `v*` tag) builds the plain viewer's Windows installer and publishes it as a GitHub Release.
+
+The same shell builds an Android app (Android 10 and later), a viewer with the demo pack: `pnpm android:build --target aarch64` writes an unsigned APK, CI builds and checks one on every run, and the `Android release` workflow (run by hand) attaches a signed one to a draft release `android-v<version>`. See [apps/desktop/README.md](apps/desktop/README.md#android).
 
 ## Data packs
 
