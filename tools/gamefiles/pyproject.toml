@@ -1,0 +1,29 @@
+[project]
+name = "atlas-gamefiles"
+version = "0.1.0"
+description = "Atlas Map Maker helper: checks a player's own game files and reports what map data can be read."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+# Exact versions, with every transitive dependency, are in requirements.txt.
+dependencies = [
+  "soulstruct==2.6.0",
+  "soulstruct-havok==1.5.0",
+  "colorama==0.4.6",
+  "numpy",
+]
+
+[project.scripts]
+atlas-gamefiles = "atlas_gamefiles.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["atlas_gamefiles"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

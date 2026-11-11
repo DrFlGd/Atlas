@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Atlas Map Maker mark: the Atlas folded map on a warm background, with a drafting square. Source for `tauri icon`. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#4a2c14"/>
+  <path d="M232 300 L412 236 L612 300 L792 236 L792 724 L612 788 L412 724 L232 788 Z" fill="#f3ead9"/>
+  <path d="M412 236 L412 724 L612 788 L612 300 Z" fill="#e2d3b8"/>
+  <path d="M300 640 L300 420 L520 640 Z" fill="none" stroke="#4a2c14" stroke-width="34" stroke-linejoin="round"/>
+  <circle cx="660" cy="430" r="46" fill="#e6b450"/>
+  <circle cx="660" cy="430" r="18" fill="#4a2c14"/>
+</svg>
