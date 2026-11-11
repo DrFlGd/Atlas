@@ -691,7 +691,8 @@ pub async fn import_open<R: Runtime>(
         .unwrap_or_else(|| "unknown".to_owned());
     let page = page_address(&url);
     let wait = wait_seconds.map_or_else(String::new, |seconds| {
-        format!(", waiting up to {seconds} s for its map data")
+        let what = if listing { "list" } else { "map data" };
+        format!(", waiting up to {seconds} s for its {what}")
     });
     match imports.open(&app, &url, reader) {
         Ok(()) => {
@@ -922,6 +923,11 @@ fn report_host(report: &ImportReport) -> String {
 }
 
 /// The line a report about reading a list (a game's pages, or games) becomes.
+/// "1 game", "2 games".
+fn count(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 fn listing_report_line(report: &ImportReport) -> (bool, String) {
     let host = report_host(report);
     let added = report.already_added.unwrap_or(0);
@@ -945,7 +951,8 @@ fn listing_report_line(report: &ImportReport) -> (bool, String) {
             (
                 false,
                 format!(
-                    "Read the list of a game's pages from {host}: {maps} map pages ({added} already added, {} new){others}",
+                    "Read the list of a game's pages from {host}: {} ({added} already added, {} new){others}",
+                    count(maps, "map page", "map pages"),
                     maps.saturating_sub(added)
                 ),
             )
@@ -953,8 +960,8 @@ fn listing_report_line(report: &ImportReport) -> (bool, String) {
         ImportOutcome::CatalogueListed => (
             false,
             format!(
-                "Read the list of games from {host}: {} games ({added} already in the maps folder)",
-                report.games.unwrap_or(0)
+                "Read the list of games from {host}: {} ({added} already in the maps folder)",
+                count(report.games.unwrap_or(0), "game", "games")
             ),
         ),
         ImportOutcome::UpdateStarted => {
@@ -962,9 +969,14 @@ fn listing_report_line(report: &ImportReport) -> (bool, String) {
             (
                 false,
                 format!(
-                    "Updating {} games from their site: reading {} game pages, one at a time, from {}",
-                    report.games.unwrap_or(0),
-                    pages.len(),
+                    "Updating {} from {} site: reading {}, one at a time, from {}",
+                    count(report.games.unwrap_or(0), "game", "games"),
+                    if report.games == Some(1) {
+                        "its"
+                    } else {
+                        "their"
+                    },
+                    count(pages.len() as u64, "game page", "game pages"),
                     if pages.is_empty() {
                         "no site (only the pages they were made from)".to_owned()
                     } else {
@@ -1006,9 +1018,9 @@ fn run_report_line(report: &ImportReport) -> (bool, String) {
             (
                 false,
                 format!(
-                    "{} {} maps, one page at a time, from {}{left_out}",
+                    "{} {}, one page at a time, from {}{left_out}",
                     if report.update { "Updating" } else { "Adding" },
-                    pages.len(),
+                    count(pages.len() as u64, "page", "pages"),
                     run_hosts(pages)
                 ),
             )
@@ -1188,7 +1200,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             import_report_line(&report).1,
-            "Updating 1 maps, one page at a time, from https://maps.example.com"
+            "Updating 1 page, one page at a time, from https://maps.example.com"
         );
         let report: ImportReport = serde_json::from_str(
             r#"{"importerId":"demo-maps","outcome":"listing-failed","pages":["https://maps.example.com/a"],"message":"No list."}"#,
@@ -1217,7 +1229,7 @@ mod tests {
             import_report_line(&report),
             (
                 false,
-                "Adding 4 maps, one page at a time, from https://maps.example.com, http://127.0.0.1:4432 | left out, as no importer recognises them: 1".to_owned()
+                "Adding 4 pages, one page at a time, from https://maps.example.com, http://127.0.0.1:4432 | left out, as no importer recognises them: 1".to_owned()
             )
         );
         let report: ImportReport = serde_json::from_str(

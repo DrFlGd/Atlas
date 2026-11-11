@@ -3,8 +3,8 @@
  * Desktop maps library and "Add a map" test, on a build with the made-up
  * demo importer and with downloads:
  *
- *   node apps/desktop/e2e/remotePack.js          # writes packs/e2e-remote/
- *   ATLAS_ENABLE_DOWNLOADS=1 ATLAS_BUNDLE_PACKS=e2e-remote,demo \
+ *   pnpm --filter @atlas/desktop e2e:pack        # writes packs/e2e-remote/ and packs/test-isles/
+ *   ATLAS_ENABLE_DOWNLOADS=1 ATLAS_BUNDLE_PACKS=e2e-remote,demo,test-isles \
  *     ATLAS_BUNDLE_IMPORTERS=packages/importer-api/demo/demo-importer.js \
  *     pnpm desktop:build --no-bundle
  *   xvfb-run -a pnpm --filter @atlas/desktop test:e2e:import [path/to/binary]
@@ -37,11 +37,26 @@
  * that comes with the app, a page whose data never appears, a repeat and an
  * address no importer knows. The pages open one at a time, in the order
  * given, with the pause between them, and the run goes on past the pages
- * that were not added.
+ * that were not added. Then a game's address: its game page is read, its
+ * pages are listed (maps first, a guide as not supported yet), and the
+ * ticked ones are added, a checklist among them; the site adds a map, and
+ * "Update from the site…" lists it as new and adds it. The game that comes
+ * with the app and was made from the site's pages (`islesPack.js`) is
+ * refreshed from the site into the maps folder with a newer version, its
+ * other map kept, and the site's list of worlds is read.
+ * Launch 3: the refreshed game that comes with the app is kept.
  */
 import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { startDemoSite, tileCount, UPDATED_PLACE, WORLDS } from './demoSite.js';
+import {
+  SITE_PORT,
+  startDemoSite,
+  tileCount,
+  UPDATED_ISLE_PLACE,
+  UPDATED_PLACE,
+  WORLDS,
+} from './demoSite.js';
+import { ISLES_ID } from './islesPack.js';
 import {
   DEFAULT_PORT,
   levelGrid,
@@ -221,7 +236,8 @@ async function importLog() {
 }
 
 const tiles = await startTileServer({ port });
-const site = await startDemoSite();
+// On the port the bundled test pack and the demo importer's list of worlds name.
+const site = await startDemoSite({ port: SITE_PORT });
 const page = (/** @type {string} */ world, /** @type {string} */ map) =>
   `${site.url}demo-maps/${world}/${map}`;
 const driver = await startDriver({ env: environment.env });
@@ -259,6 +275,15 @@ try {
   check(
     (await readJson(join(pack, '.atlas', 'download-job.json'))).detail === 'standard',
     'the unfinished job moved with them',
+  );
+
+  // The game that comes with the app and was made from web pages is in the
+  // maps folder (its map images can be downloaded), with its page data.
+  const isles = join(maps, ISLES_ID);
+  check(
+    (await readJson(join(isles, 'manifest.json'))).packVersion === '1.0.0' &&
+      (await readJson(join(isles, 'import', 'index.json'))).sources.length === 2,
+    'the bundled game made from web pages is installed with the pages it was made from',
   );
 
   // Download settings are saved for every app, then the job finishes.
@@ -634,11 +659,11 @@ try {
   // The log: the run's start, each page opened only after the one before
   // ended and the pause, and the summary.
   const log = (await importLog()).slice(logBefore);
-  const start = log.findIndex((l) => l.message.startsWith('Adding 5 maps, one page at a time'));
+  const start = log.findIndex((l) => l.message.startsWith('Adding 5 pages, one page at a time'));
   check(
     start >= 0 &&
       log[start]?.message ===
-        `Adding 5 maps, one page at a time, from ${site.url.slice(0, -1)} | left out, as no importer recognises them: 1`,
+        `Adding 5 pages, one page at a time, from ${site.url.slice(0, -1)} | left out, as no importer recognises them: 1`,
     'the activity log has the start of the run, with the site only',
   );
   let ended = /** @type {number | null} */ (null);
@@ -666,6 +691,271 @@ try {
     'the activity log has the summary',
   );
   await closeAddMap(s);
+
+  // ---- A game's address -------------------------------------------------------
+  /** Each page of the choice: title | kind | state | ticked | enabled. @param {Session} s */
+  const choiceRows = (s) =>
+    s.run(`return [...document.querySelectorAll('[data-testid="add-map-choose-page"]')].map((row) => {
+      const box = row.querySelector('input');
+      return [row.querySelector('label').textContent, row.dataset.kind, row.dataset.state,
+        box.checked ? 'ticked' : 'unticked', box.disabled ? 'disabled' : 'enabled'].join(' | ');
+    });`);
+  /** The paths the site was asked for since `from`, map, game and checklist pages only. */
+  const pagesAsked = (/** @type {number} */ from) =>
+    site.seen
+      .slice(from)
+      .filter((r) => r.path.startsWith('/demo-maps'))
+      .map((r) => r.path);
+  /** One page at a time, with the pause between them, from the activity log. */
+  const paced = (/** @type {{ at: number, message: string }[]} */ lines) => {
+    let ended = /** @type {number | null} */ (null);
+    let opened = 0;
+    let ok = true;
+    for (const line of lines) {
+      if (line.message.startsWith('Opened ')) {
+        if (ended === null && opened > 0) ok = false;
+        if (ended !== null && line.at - ended < 3000) ok = false;
+        opened++;
+        ended = null;
+      } else if (/^Read the page's (map data|list)|timed out/.test(line.message)) {
+        ended = line.at;
+      }
+    }
+    return { opened, ok };
+  };
+  const waitForRun = (/** @type {Session} */ s, timeout = 180_000) =>
+    s.waitFor(
+      `document.querySelector('[data-testid="add-map-dialog"]')?.dataset.run === 'finished'`,
+      { timeout, what: 'the run to end' },
+    );
+  const runRows = (/** @type {Session} */ s) =>
+    s.run(
+      `return [...document.querySelectorAll('[data-testid="add-map-run-page"]')].map((row) => row.dataset.state + ': ' + row.textContent);`,
+    );
+
+  const gameUrl = `${site.url}demo-maps/test-valley`;
+  const seenBeforeGame = site.seen.length;
+  const logBeforeGame = (await importLog()).length;
+  // A game address with other addresses is refused before anything opens.
+  await importFrom(s, `${gameUrl}, ${page('test-coast', 'north-bay')}`);
+  await waitForPhase(s, 'failed');
+  check(
+    ((await text(s, 'add-map-error')) ?? '').includes('has to be added on its own'),
+    'a game address must be added on its own',
+  );
+  await closeAddMap(s);
+  await importFrom(s, gameUrl);
+  await waitForPhase(s, 'listing');
+  await waitForPhase(s, 'choose', 60_000);
+  const gameChoice = await choiceRows(s);
+  check(
+    JSON.stringify(gameChoice) ===
+      JSON.stringify([
+        'East Field | map | new | ticked | enabled',
+        'West Ridge | map | new | ticked | enabled',
+        'Getting started | guides | off | unticked | disabled',
+        'Every beacon | checklists | new | ticked | enabled',
+      ]),
+    `the game page's pages are listed, maps first, the guide not supported yet (${gameChoice.join('; ')})`,
+  );
+  await s.screenshot('import-14-game-pages');
+  await s.click(
+    `[data-testid="add-map-choose-page"][data-url="${page('test-valley', 'west-ridge')}"] input`,
+  );
+  check(
+    (await text(s, 'add-map-choose-confirm')) === 'Add 2 pages',
+    'unticking a map leaves two pages to add',
+  );
+  await s.click('[data-testid="add-map-choose-confirm"]');
+  await waitForRun(s);
+  const gameRun = await runRows(s);
+  console.log(gameRun.join('\n'));
+  check(
+    gameRun.length === 2 &&
+      gameRun[0]?.startsWith('added: ') === true &&
+      gameRun[0].includes('Added “East Field” to Test Valley') &&
+      gameRun[1]?.includes('a checklist of 1 item (2 left out until their maps are added)') ===
+        true,
+    'the map and the checklist were added; rows on maps not added yet are left out',
+  );
+  check(
+    JSON.stringify(pagesAsked(seenBeforeGame)) ===
+      JSON.stringify([
+        '/demo-maps/test-valley',
+        '/demo-maps/test-valley/east-field',
+        '/demo-maps/test-valley/checklists/beacons',
+      ]),
+    `the game page, then the ticked pages, each once (${pagesAsked(seenBeforeGame).join(' ')})`,
+  );
+  const valleyLists = /** @type {any[]} */ (await readJson(join(valleyDir, 'checklists.json')));
+  const valleyItems = /** @type {any[]} */ (await readJson(join(valleyDir, 'checklistItems.json')));
+  check(
+    valleyLists.length === 1 &&
+      valleyLists[0].name === 'Every beacon' &&
+      valleyItems.length === 1 &&
+      valleyItems[0].locationIds[0] === 'test-valley:loc:east-field-1',
+    'the checklist is in the pack, with the rows whose places are in it',
+  );
+  const gameLog = (await importLog()).slice(logBeforeGame);
+  check(
+    gameLog.some(
+      (l) =>
+        l.message ===
+        `Read the list of a game's pages from ${site.url.slice(0, -1)}: 2 map pages (0 already added, 2 new), 1 of kind checklists, 1 of kind guides`,
+    ),
+    'the activity log names the kinds of pages found, and the site only',
+  );
+  const gamePacing = paced(gameLog);
+  check(
+    gamePacing.opened === 3 && gamePacing.ok,
+    'the game page and the pages after it opened one at a time, with the pause between them',
+  );
+  await closeAddMap(s);
+
+  // ---- Update from the site: a new map ----------------------------------------
+  site.addMap();
+  const seenBeforeUpdate = site.seen.length;
+  await s.click('[data-testid="maps-button"]');
+  await s.waitFor(
+    `document.querySelector('[data-pack="test-valley"] [data-testid="update-pack"]')`,
+    {
+      what: '"Update from the site…" for the game added from web pages',
+    },
+  );
+  await s.click('[data-pack="test-valley"] [data-testid="update-pack"]');
+  await waitForPhase(s, 'choose', 60_000);
+  const updateChoice = await choiceRows(s);
+  check(
+    JSON.stringify(updateChoice) ===
+      JSON.stringify([
+        'East Field | map | added | ticked | enabled',
+        'West Ridge | map | new | ticked | enabled',
+        'North Lake | map | new | ticked | enabled',
+        'Getting started | guides | off | unticked | disabled',
+        'Every beacon | checklists | added | ticked | enabled',
+      ]),
+    `the update lists the new map as new and the added pages as added (${updateChoice.join('; ')})`,
+  );
+  await s.screenshot('import-15-update');
+  await s.click('[data-testid="add-map-choose-confirm"]');
+  await waitForRun(s);
+  const updateRun = await runRows(s);
+  console.log(updateRun.join('\n'));
+  check(
+    (await text(s, 'add-map-summary')) === '2 pages added, 2 refreshed.' &&
+      updateRun[3]?.includes('a checklist of 3 items') === true,
+    'the update added the new maps and refreshed the rest; the checklist has every row now',
+  );
+  check(
+    JSON.stringify(pagesAsked(seenBeforeUpdate)) ===
+      JSON.stringify([
+        '/demo-maps/test-valley',
+        '/demo-maps/test-valley/east-field',
+        '/demo-maps/test-valley/west-ridge',
+        '/demo-maps/test-valley/north-lake',
+        '/demo-maps/test-valley/checklists/beacons',
+      ]),
+    'the update read the game page, then each ticked page once',
+  );
+  const valleyMaps = /** @type {any[]} */ (await readJson(join(valleyDir, 'maps.json')));
+  check(
+    valleyMaps.map((m) => m.name).join(', ') === 'East Field, West Ridge, North Lake',
+    'the game has the new map',
+  );
+  await closeAddMap(s);
+
+  // ---- Refreshing the game that comes with the app ----------------------------
+  const seenBeforeIsles = site.seen.length;
+  const logBeforeIsles = (await importLog()).length;
+  await s.click('[data-testid="maps-button"]');
+  await s.waitFor(
+    `document.querySelector('[data-pack="${ISLES_ID}"] [data-testid="update-pack"]')`,
+    {
+      what: '"Update from the site…" for the game that comes with the app',
+    },
+  );
+  await s.click(`[data-pack="${ISLES_ID}"] [data-testid="update-pack"]`);
+  await waitForPhase(s, 'choose', 60_000);
+  const islesChoice = await choiceRows(s);
+  check(
+    JSON.stringify(islesChoice) ===
+      JSON.stringify([
+        'North Isle | map | added | ticked | enabled',
+        'South Isle | map | added | ticked | enabled',
+      ]),
+    `the bundled game's maps are listed as added (${islesChoice.join('; ')})`,
+  );
+  await s.click(
+    `[data-testid="add-map-choose-page"][data-url="${page(ISLES_ID, 'south-isle')}"] input`,
+  );
+  await s.click('[data-testid="add-map-choose-confirm"]');
+  await waitForRun(s);
+  check(
+    (await text(s, 'add-map-summary')) === '1 map refreshed.',
+    'one map of the bundled game was refreshed',
+  );
+  await s.screenshot('import-16-bundled-refreshed');
+  const islesManifest = await readJson(join(isles, 'manifest.json'));
+  const islesMaps = /** @type {any[]} */ (await readJson(join(isles, 'maps.json')));
+  const islesPlaces = /** @type {any[]} */ (await readJson(join(isles, 'locations.json')));
+  check(
+    islesManifest.packVersion === '1.1.0' &&
+      islesMaps.map((m) => m.id).join(' ') ===
+        `${ISLES_ID}:map:north-isle ${ISLES_ID}:map:south-isle` &&
+      islesPlaces.find((l) => l.name === UPDATED_ISLE_PLACE.name)?.since === '1.1.0' &&
+      islesPlaces.find((l) => l.name === 'Reef cave')?.since === '1.0.0',
+    'the refreshed copy has a newer version, the same ids, its other map and the new place',
+  );
+  check(
+    JSON.stringify(pagesAsked(seenBeforeIsles)) ===
+      JSON.stringify([`/demo-maps/${ISLES_ID}`, `/demo-maps/${ISLES_ID}/north-isle`]),
+    'its game page and the ticked map were read',
+  );
+  check(
+    (await importLog())
+      .slice(logBeforeIsles)
+      .some((l) =>
+        l.message.startsWith(
+          `Updating 1 game from its site: reading 1 game page, one at a time, from ${site.url.slice(0, -1)}`,
+        ),
+      ),
+    'the activity log has the update',
+  );
+  await closeAddMap(s);
+
+  // ---- The site's list of worlds ----------------------------------------------
+  await s.click('[data-testid="add-map-button"]');
+  await s.click('[data-testid="add-map-browse-games"]');
+  await waitForPhase(s, 'catalogue', 60_000);
+  const worlds = await s.run(
+    `return [...document.querySelectorAll('[data-testid="add-map-catalogue-game"]')].map((row) => row.textContent);`,
+  );
+  console.log(worlds.join('\n'));
+  check(
+    worlds.length === Object.keys(WORLDS).length &&
+      worlds.some(
+        (/** @type {string} */ w) =>
+          w.startsWith('Test Valley') && w.includes('In your maps folder'),
+      ),
+    'the list of worlds is read, and the worlds in the maps folder are marked',
+  );
+  await s.screenshot('import-17-worlds');
+  await closeAddMap(s);
+  await s.close();
+  session = null;
+
+  // ---- Launch 3 --------------------------------------------------------------
+  session = await driver.session();
+  s = session;
+  await s.waitFor(`document.querySelector('[data-testid="marker-count"]')`, {
+    what: 'the app after a restart',
+  });
+  await sleep(2000);
+  check(
+    (await readJson(join(isles, 'manifest.json'))).packVersion === '1.1.0' &&
+      (await readJson(join(isles, 'import', 'index.json'))).sources.length === 2,
+    'the refreshed game that comes with the app is kept at start-up',
+  );
   passed = true;
 } finally {
   await session?.close();
