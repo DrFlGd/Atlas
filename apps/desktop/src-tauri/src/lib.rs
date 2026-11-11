@@ -22,6 +22,7 @@ mod downloads;
 mod imports;
 pub mod library;
 pub mod manifest;
+pub mod packfile;
 mod packs;
 #[cfg(feature = "downloads")]
 mod pageview;
@@ -79,6 +80,14 @@ macro_rules! viewer_commands {
             commands::import_close,
             commands::import_report,
             commands::activity_log_read,
+            commands::packfile_options,
+            commands::packfile_export,
+            commands::packfile_pick,
+            commands::packfile_inspect,
+            commands::packfile_import,
+            commands::packfile_progress,
+            commands::packfile_cancel,
+            commands::library_pack_details,
             $($more)*
         ]
     };
@@ -121,7 +130,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(registry)
-        .manage(imports::Imports::default());
+        .manage(imports::Imports::default())
+        .manage(commands::PackFileJobs::default());
     #[cfg(feature = "downloads")]
     let builder = builder.manage(pageview::PageViews::default());
     builder

@@ -23,6 +23,14 @@ const COMMANDS: &[&str] = &[
     "import_close",
     "import_report",
     "activity_log_read",
+    "packfile_options",
+    "packfile_export",
+    "packfile_pick",
+    "packfile_inspect",
+    "packfile_import",
+    "packfile_progress",
+    "packfile_cancel",
+    "library_pack_details",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map
