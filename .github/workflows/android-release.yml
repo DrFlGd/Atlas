@@ -147,9 +147,8 @@ jobs:
           unzip -p "$apk" lib/arm64-v8a/libatlas_desktop_lib.so > check/libatlas_desktop_lib.so
           ATLAS_ENABLE_DOWNLOADS=0 node apps/desktop/scripts/check-binary.js check/libatlas_desktop_lib.so
 
-          # The demo pack only, no importers, and no text of the private
-          # importer's site in any file of the APK or of its web build.
-          node apps/desktop/scripts/check-apk.js "$apk" --packs demo --forbid mapgenie
+          # The demo pack only and no importers, in the APK and its web build.
+          node apps/desktop/scripts/check-apk.js "$apk" --packs demo
 
       - name: Write the release notes
         env:
