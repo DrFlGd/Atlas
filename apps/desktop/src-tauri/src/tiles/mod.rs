@@ -15,6 +15,8 @@ pub mod images;
 #[cfg(feature = "downloads")]
 pub mod manager;
 pub mod pyramid;
+#[cfg(feature = "downloads")]
+pub mod renumber;
 pub mod status;
 pub mod store;
 

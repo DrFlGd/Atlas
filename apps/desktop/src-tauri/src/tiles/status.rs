@@ -97,16 +97,36 @@ pub fn add_levels(
 ) -> std::io::Result<BTreeSet<u8>> {
     let mut levels = read_levels(overlay, layer);
     levels.extend(new_levels);
+    write_levels(overlay, layer, &levels)?;
+    Ok(levels)
+}
+
+/// Records exactly these complete levels for a layer, atomically, replacing
+/// what was recorded.
+pub fn write_levels(
+    overlay: &Path,
+    layer: &LayerPlan,
+    levels: &BTreeSet<u8>,
+) -> std::io::Result<()> {
     let path = status_path(overlay, layer);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let json =
-        serde_json::to_string_pretty(&status_for(layer, &levels)).expect("the status serialises");
+        serde_json::to_string_pretty(&status_for(layer, levels)).expect("the status serialises");
     let part = path.with_extension("json.part");
     fs::write(&part, format!("{json}\n"))?;
-    fs::rename(&part, &path)?;
-    Ok(levels)
+    fs::rename(&part, &path)
+}
+
+/// Removes a layer's status file, so that no level counts as complete.
+pub fn remove_status(overlay: &Path, layer: &LayerPlan) -> std::io::Result<()> {
+    let path = status_path(overlay, layer);
+    let _ = fs::remove_file(path.with_extension("json.part"));
+    match fs::remove_file(&path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]

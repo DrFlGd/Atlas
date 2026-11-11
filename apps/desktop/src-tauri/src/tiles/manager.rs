@@ -1535,7 +1535,7 @@ fn record_images(
 }
 
 /// The image files of a layer in a pack folder, and their bytes.
-fn count_images(folder: &Path, layer: &LayerPlan) -> (u64, u64) {
+pub(crate) fn count_images(folder: &Path, layer: &LayerPlan) -> (u64, u64) {
     fn walk(dir: &Path, totals: &mut (u64, u64)) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;

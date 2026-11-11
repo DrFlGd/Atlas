@@ -99,7 +99,7 @@ pub fn is_allowed_remote(template: &str) -> bool {
 }
 
 /// One level of a layer that is a copy of a remote level.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteLevel {
     pub z: u8,
@@ -395,6 +395,20 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
 pub fn read_pack_plan(pack_root: &Path) -> Result<PackPlan, String> {
     let maps: Vec<MapDef> = read_json(&pack_root.join("maps.json"))?;
     let layers: Vec<LayerDef> = read_json(&pack_root.join("layers.json"))?;
+    plan_of(maps, layers)
+}
+
+/// The same as [`read_pack_plan`] for the text of a `maps.json` and a
+/// `layers.json` that are not on disk yet, such as an import's.
+pub fn parse_pack_plan(maps: &str, layers: &str) -> Result<PackPlan, String> {
+    let maps: Vec<MapDef> =
+        serde_json::from_str(maps).map_err(|error| format!("maps.json is not valid: {error}"))?;
+    let layers: Vec<LayerDef> = serde_json::from_str(layers)
+        .map_err(|error| format!("layers.json is not valid: {error}"))?;
+    plan_of(maps, layers)
+}
+
+fn plan_of(maps: Vec<MapDef>, layers: Vec<LayerDef>) -> Result<PackPlan, String> {
     let mut plan = PackPlan {
         layers: Vec::new(),
         maps: Vec::new(),
@@ -436,7 +450,7 @@ pub fn read_pack_plan(pack_root: &Path) -> Result<PackPlan, String> {
     Ok(plan)
 }
 
-fn check_layer(layer: &LayerPlan) -> Result<(), String> {
+pub(crate) fn check_layer(layer: &LayerPlan) -> Result<(), String> {
     let fail = |reason: &str| Err(format!("layer {}: {reason}", layer.layer_id));
     if !is_safe_segment(&layer.local_id) {
         return fail("unusable layer id");

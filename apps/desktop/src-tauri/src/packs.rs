@@ -199,6 +199,16 @@ impl PackRegistry {
             .unwrap_or_else(PoisonError::into_inner) = Some(root);
     }
 
+    /// Where the overlay folder of a pack id is, whether or not the pack is
+    /// registered or the folder exists; none before an overlay root is set.
+    pub fn overlay_folder(&self, id: &str) -> Option<PathBuf> {
+        self.overlay_root
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|root| root.join(id))
+    }
+
     /// The overlay folder of a registered bundled pack, if it exists.
     fn overlay(&self, id: &str) -> Option<PathBuf> {
         if self.kind(id) != Some(PackKind::Bundled) {
