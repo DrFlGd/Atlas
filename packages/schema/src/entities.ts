@@ -351,13 +351,35 @@ export const entitySchema = z.strictObject({
   description: z.string().optional(),
 });
 
+/** What a list of items is to its reader, for grouping lists in the app. */
+export const checklistKindSchema = z.enum(['checklist', 'guide']);
+
+/**
+ * A titled list of items. `kind` is optional and was added without a schema
+ * version change; Atlas 0.3.3 and earlier refuse a pack whose checklists
+ * have it.
+ */
 export const checklistSchema = z.strictObject({
   id: idOf('checklist'),
   name: nonEmpty,
   description: z.string().optional(),
   order: z.int(),
+  /**
+   * `checklist` (the default when absent): things to do or collect.
+   * `guide`: a route or guide that is a list of places. The app lists the
+   * two under separate headings; both work the same way.
+   */
+  kind: checklistKindSchema.optional(),
 });
 
+/**
+ * One entry of a checklist. An item that names locations is done when every
+ * one of them that can be marked found is found; an item without such
+ * locations (a step, a quest stage) has a done mark of its own.
+ *
+ * `section` and `note` are optional and were added without a schema version
+ * change; Atlas 0.3.3 and earlier refuse a pack whose items have them.
+ */
 export const checklistItemSchema = z.strictObject({
   id: idOf('checkitem'),
   checklistId: idOf('checklist'),
@@ -365,14 +387,31 @@ export const checklistItemSchema = z.strictObject({
   order: z.int(),
   locationIds: z.array(idOf('loc')),
   entityIds: z.array(idOf('entity')),
+  /**
+   * The heading the item is listed under. Items in `order` that share a
+   * section are shown together under one heading.
+   */
+  section: nonEmpty.max(200).optional(),
+  /** A short note in Markdown, shown under the item's name. */
+  note: z.string().optional(),
 });
 
+/**
+ * A guide in Markdown. A guide that belongs to exactly one location is that
+ * location's note; any other guide (a walkthrough page, a chapter) is listed
+ * on its own.
+ *
+ * `order` is optional and was added without a schema version change; Atlas
+ * 0.3.3 and earlier refuse a pack whose guides have it.
+ */
 export const guideEntrySchema = z.strictObject({
   id: idOf('guide'),
   title: nonEmpty,
   /** Markdown text. */
   body: z.string(),
   locationIds: z.array(idOf('loc')),
+  /** Place in the list of guides, ascending; guides without one follow, by title. */
+  order: z.int().optional(),
 });
 
 /** A directed relation between two pieces of content, e.g. a portal between two locations. */
@@ -410,6 +449,7 @@ export type Category = z.infer<typeof categorySchema>;
 export type Location = z.infer<typeof locationSchema>;
 export type Entity = z.infer<typeof entitySchema>;
 export type Checklist = z.infer<typeof checklistSchema>;
+export type ChecklistKind = z.infer<typeof checklistKindSchema>;
 export type ChecklistItem = z.infer<typeof checklistItemSchema>;
 export type GuideEntry = z.infer<typeof guideEntrySchema>;
 export type Link = z.infer<typeof linkSchema>;

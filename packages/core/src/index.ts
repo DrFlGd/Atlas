@@ -10,6 +10,8 @@ export * from './pack/tileStatus';
 export * from './icons/glyphs';
 export * from './filters/visibility';
 export * from './search/searchIndex';
+export * from './checklists/checklists';
+export * from './checklists/facets';
 export * from './progress/records';
 export * from './progress/store';
 export * from './progress/memoryStore';

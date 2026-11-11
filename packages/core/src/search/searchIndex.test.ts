@@ -8,13 +8,13 @@ describe('SearchIndex', () => {
   const index = new SearchIndex(makeTestPack());
   const titles = (query: string) => index.search(query).map((hit) => hit.entry.title);
 
-  it('indexes locations, entities and guides', () => {
-    // 6 locations, 1 entity, 1 guide.
-    expect(index.size).toBe(8);
+  it('indexes locations, entities, guides, checklists and checklist items', () => {
+    // 6 locations, 1 entity, 1 guide, 1 checklist, 1 item.
+    expect(index.size).toBe(10);
   });
 
   it('finds by word prefix, ignoring case and accents', () => {
-    expect(titles('moss')).toEqual(['Moss', 'Moss herb', 'Glow moss']);
+    expect(titles('moss')).toEqual(['Moss', 'Moss herb', 'Glow moss', 'Pick moss']);
     expect(titles('GILD')).toEqual(['Gilded chest']);
     expect(normalizeText('Crème Brûlée')).toBe('creme brulee');
     expect(titles('hunters camp')).toEqual(['Hunters’ camp']);
@@ -27,10 +27,11 @@ describe('SearchIndex', () => {
       ['Gilded chest', 2],
     ]);
     expect(index.search('moss herb')[0]).toMatchObject({ score: 0 });
-    expect(index.search('herb').map((h) => h.entry.title)).toEqual([
-      'Herbs',
-      'Moss herb',
-      'Salt herb',
+    expect(index.search('herb').map((h) => [h.entry.title, h.entry.kind])).toEqual([
+      ['Herbs', 'guide'],
+      ['Herbs', 'checklist'],
+      ['Moss herb', 'location'],
+      ['Salt herb', 'location'],
     ]);
     expect(index.search('erb')[0]?.score).toBe(3);
   });
@@ -43,6 +44,19 @@ describe('SearchIndex', () => {
     });
     const [guide] = index.search('herbs').filter((h) => h.entry.kind === 'guide');
     expect(guide?.entry.locationIds).toEqual(['demo:loc:0001']);
+    const [checklist] = index.search('herbs').filter((h) => h.entry.kind === 'checklist');
+    expect(checklist?.entry).toMatchObject({
+      id: 'demo:checklist:herbs',
+      detail: 'Checklist · 1 item',
+      locationIds: [],
+    });
+    const [item] = index.search('pick');
+    expect(item?.entry).toMatchObject({
+      kind: 'checkitem',
+      id: 'demo:checkitem:moss',
+      detail: 'Checklist item · Herbs',
+      locationIds: ['demo:loc:0001'],
+    });
     const [location] = index.search('glow');
     expect(location?.entry).toMatchObject({
       kind: 'location',
@@ -57,7 +71,7 @@ describe('SearchIndex', () => {
     expect(index.count('chest')).toBe(2);
   });
 
-  it('stays fast with eight thousand locations', () => {
+  it('stays fast with eight thousand locations and two thousand checklist items', () => {
     const data = makeTestPackData();
     const template = data.locations[0]!;
     const words = ['Ember', 'Frost', 'Gale', 'Stone', 'Tide', 'Ash', 'Dawn', 'Mire'];
@@ -71,7 +85,14 @@ describe('SearchIndex', () => {
     data.locations = many;
     data.guides = [];
     data.links = [];
-    data.checklistItems = [];
+    data.checklistItems = Array.from({ length: 2000 }, (_, i) => ({
+      id: `demo:checkitem:n${i}`,
+      checklistId: 'demo:checklist:herbs',
+      name: `Collect ${words[i % words.length]} relic ${i}`,
+      order: i,
+      locationIds: [`demo:loc:n${i}`],
+      entityIds: [],
+    }));
 
     const started = performance.now();
     const big = new SearchIndex(indexPack(data, new URL('https://x.test/')));
@@ -83,6 +104,7 @@ describe('SearchIndex', () => {
     const perQueryMs = (performance.now() - queryStarted) / (10 * queries.length);
 
     expect(big.search('frost relic 1')[0]?.entry.title).toBe('Frost relic 1');
+    expect(big.search('collect frost relic 1')[0]?.entry.kind).toBe('checkitem');
     expect(big.search('relic')).toHaveLength(50);
     // Generous bounds for slow CI machines; typical values are far lower.
     expect(buildMs).toBeLessThan(1000);

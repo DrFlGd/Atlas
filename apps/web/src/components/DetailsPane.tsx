@@ -1,10 +1,10 @@
-import { percent, pixelToWorld } from '@atlas/core';
-import { useMemo } from 'react';
-import { renderGuideMarkdown } from '../markdown';
+import { itemState, percent, pixelToWorld } from '@atlas/core';
 import { goToLocation, toggleFound } from '../state/actions';
+import { checklistScreenTitle, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
-import { useAtlas } from '../state/store';
+import { useAtlas, type LoadedGame } from '../state/store';
 import { GlyphBadge, UiIcon } from './icons';
+import { MarkdownBody } from './MarkdownBody';
 
 /** Right pane: the selected location, its found toggle and its guide entry. */
 export function DetailsPane() {
@@ -16,6 +16,8 @@ export function DetailsPane() {
 }
 
 function EmptyDetails() {
+  const game = useAtlas((s) => s.game);
+  const checklists = game && !game.checklists.isEmpty ? checklistScreenTitle(game) : null;
   return (
     <div className="pane-body empty-details" data-testid="details-empty">
       <p>Select a marker on the map, or search for a place.</p>
@@ -37,6 +39,14 @@ function EmptyDetails() {
           <kbd>Z</kbd>
         </dt>
         <dd>Undo</dd>
+        {checklists ? (
+          <>
+            <dt>
+              <kbd>C</kbd>
+            </dt>
+            <dd>{checklists}</dd>
+          </>
+        ) : null}
         <dt>
           <kbd>Esc</kbd>
         </dt>
@@ -60,7 +70,6 @@ function LocationDetails({ locationId }: { locationId: string }) {
   const guide = location.guideId
     ? pack.data.guides.find((g) => g.id === location.guideId)
     : undefined;
-  const guideHtml = useMemo(() => (guide ? renderGuideMarkdown(guide.body) : ''), [guide]);
   const entities = location.entityIds.flatMap(
     (id) => pack.data.entities.find((e) => e.id === id) ?? [],
   );
@@ -163,10 +172,72 @@ function LocationDetails({ locationId }: { locationId: string }) {
           <h3 className="guide-title" id="guide-title">
             {guide.title}
           </h3>
-          {/* markdown-it runs with raw HTML disabled, so this holds only renderer-made tags. */}
-          <div className="guide-body" dangerouslySetInnerHTML={{ __html: guideHtml }} />
+          <MarkdownBody source={guide.body} className="guide-body" />
         </section>
       ) : null}
+
+      <AlsoIn game={game} locationId={location.id} ownGuideId={guide?.id ?? null} />
     </article>
+  );
+}
+
+/**
+ * The checklist items that name a location, and the listed guides that
+ * mention it, each a button that opens it on the checklists screen.
+ */
+function AlsoIn({
+  game,
+  locationId,
+  ownGuideId,
+}: {
+  game: LoadedGame;
+  locationId: string;
+  ownGuideId: string | null;
+}) {
+  const found = useAtlas((s) => s.found);
+  const items = game.checklists.itemsAt(locationId);
+  const guides = game.checklists.guidesAt(locationId).filter((g) => g.id !== ownGuideId);
+  if (items.length === 0 && guides.length === 0) return null;
+  return (
+    <section className="also-in" aria-labelledby="also-in-title" data-testid="also-in">
+      <h3 className="section-title" id="also-in-title">
+        On checklists and in guides
+      </h3>
+      <ul className="plain-list">
+        {items.map((entry) => {
+          const checklist = game.checklists.checklistOf(entry.item.id)!;
+          const done = itemState(entry, (id) => found.has(id)).done;
+          return (
+            <li key={entry.item.id}>
+              <button
+                type="button"
+                className="list-link"
+                onClick={() => {
+                  openChecklistItem(entry.item.id);
+                }}
+              >
+                <span className="list-link-name">{entry.item.name}</span>
+                {done ? <span className="found-tag">done</span> : null}
+                <span className="list-link-detail">Checklist: {checklist.checklist.name}</span>
+              </button>
+            </li>
+          );
+        })}
+        {guides.map((guide) => (
+          <li key={guide.id}>
+            <button
+              type="button"
+              className="list-link"
+              onClick={() => {
+                openGuide(guide.id);
+              }}
+            >
+              <span className="list-link-name">{guide.title}</span>
+              <span className="list-link-detail">Guide</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

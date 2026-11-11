@@ -1,4 +1,5 @@
 import {
+  ChecklistIndex,
   ProgressCounter,
   SearchIndex,
   buildExport,
@@ -22,6 +23,7 @@ import {
   type ImportPlan,
   type PackEntry,
   type Profile,
+  type ProgressChange,
   type ProgressRecord,
   type VisibilityOverrides,
 } from '@atlas/core';
@@ -31,7 +33,7 @@ import type { HashView } from '../viewHash';
 import { catalogFrom } from './library';
 import { loadMapImages } from './mapImages';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
-import { useAtlas, type AtlasState, type PaneName, type Theme } from './store';
+import { useAtlas, type AtlasState, type PaneName, type Theme, type UndoEntry } from './store';
 
 const get = useAtlas.getState;
 const set = useAtlas.setState;
@@ -139,6 +141,7 @@ export async function loadGame(
     const gameId = pack.manifest.gameId;
     const counter = new ProgressCounter(pack);
     const search = new SearchIndex(pack);
+    const checklists = new ChecklistIndex(pack, (id) => counter.isTrackable(id));
 
     let profiles = await store.listProfiles(gameId);
     if (profiles.length === 0) {
@@ -151,7 +154,7 @@ export async function loadGame(
     const rows = await store.listProgress(profile.id, { includeDeleted: true });
 
     const filters = (await store.getSetting(SETTINGS.filters(gameId))) as
-      { overrides?: VisibilityOverrides; hideFound?: boolean } | undefined;
+      { overrides?: VisibilityOverrides; hideFound?: boolean; hideDone?: boolean } | undefined;
     const userPresets = await store.listPresets(gameId);
 
     const place = (await store.getSetting(SETTINGS.place(gameId))) as
@@ -165,7 +168,7 @@ export async function loadGame(
     const rowMap = new Map(rows.map((r) => [r.targetId, r]));
     set({
       status: { kind: 'ready' },
-      game: { entry, pack, counter, search },
+      game: { entry, pack, counter, search, checklists },
       mapId: layer.mapId,
       layerId: layer.id,
       selectedId: null,
@@ -174,6 +177,10 @@ export async function loadGame(
       fly: initialView ? { ...initialView, animate: false, seq: 1 } : null,
       overrides: filters?.overrides ?? {},
       hideFound: filters?.hideFound ?? false,
+      hideDone: filters?.hideDone ?? false,
+      leftTab: checklists.isEmpty ? 'filters' : get().leftTab,
+      checklistPages: [],
+      itemFocus: null,
       userPresets: sortByName(userPresets),
       profiles: sortProfiles(profiles),
       profileId: profile.id,
@@ -315,41 +322,62 @@ export function markerFilter(
 // ---------------------------------------------------------------------------
 // Found tracking
 
-async function writeProgress(row: ProgressRecord): Promise<void> {
+async function writeProgress(rows: ProgressRecord[]): Promise<void> {
   try {
-    await progressStore().write({ progress: [row] });
+    await progressStore().write({ progress: rows });
   } catch (error) {
     notify(`Could not save progress: ${errorText(error)}`, 'error');
   }
 }
 
 /**
- * Marks a location found or not. Only trackable categories can be marked.
- * Returns whether anything changed.
+ * Sets or clears found marks (of locations, or the own marks of checklist
+ * items) in the active profile, saved together. With `undo`, the change is
+ * one entry that `Z` takes back as a whole. Changes that set a mark to what
+ * it is already are skipped. Returns whether anything changed.
  */
-export function setFound(
-  locationId: string,
-  found: boolean,
-  options: { undoable?: boolean } = {},
+export function applyProgress(
+  changes: readonly ProgressChange[],
+  undo: Pick<UndoEntry, 'undone' | 'selectId'> | null,
 ): boolean {
   const state = get();
   const { game, profileId } = state;
-  if (!game || !profileId || !game.counter.isTrackable(locationId)) return false;
-  const wasFound = state.found.has(locationId);
-  if (wasFound === found) return false;
-  const row = progressRow(profileId, locationId, found, clock());
+  if (!game || !profileId) return false;
+  const now = clock();
+  const touched = changes.filter((c) => state.found.has(c.targetId) !== c.found);
+  if (touched.length === 0) return false;
   const rows = new Map(state.rows);
-  rows.set(locationId, row);
+  const written = touched.map((c) => {
+    const row = progressRow(profileId, c.targetId, c.found, now);
+    rows.set(c.targetId, row);
+    return row;
+  });
+  const entry: UndoEntry | null = undo && {
+    profileId,
+    changes: touched.map((c) => ({ targetId: c.targetId, wasFound: !c.found })),
+    ...undo,
+  };
   set({
     rows,
     found: resolveProgress([...rows.values()], game.pack.currentId),
-    undo:
-      options.undoable === false
-        ? state.undo
-        : [...state.undo.slice(-99), { profileId, targetId: locationId, wasFound }],
+    undo: entry ? [...state.undo.slice(-99), entry] : state.undo,
   });
-  void writeProgress(row);
+  void writeProgress(written);
   return true;
+}
+
+/**
+ * Marks a location found or not. Only trackable categories can be marked.
+ * Returns whether anything changed.
+ */
+export function setFound(locationId: string, found: boolean): boolean {
+  const { game } = get();
+  if (!game?.counter.isTrackable(locationId)) return false;
+  const name = game.pack.locations.get(locationId)?.name ?? locationId;
+  return applyProgress([{ targetId: locationId, found }], {
+    undone: `Undone: ${name} is ${found ? 'not found' : 'found'} again.`,
+    selectId: locationId,
+  });
 }
 
 /** Flips the found state of a location (the selection by default). */
@@ -369,7 +397,7 @@ export function toggleFound(locationId = get().selectedId): void {
   notify(`${location.name}: ${next ? 'found' : 'not found'}. Press Z to undo.`);
 }
 
-/** Takes back the last found change in the active profile. */
+/** Takes back the last found change, or checklist tick, in the active profile. */
 export function undo(): void {
   const { undo: stack, profileId, game } = get();
   const last = stack.at(-1);
@@ -378,18 +406,22 @@ export function undo(): void {
     return;
   }
   set({ undo: stack.slice(0, -1) });
-  setFound(last.targetId, last.wasFound, { undoable: false });
-  const name = game.pack.locations.get(last.targetId)?.name ?? last.targetId;
-  notify(`Undone: ${name} is ${last.wasFound ? 'found' : 'not found'} again.`);
-  set({ selectedId: last.targetId });
+  applyProgress(
+    last.changes.map((c) => ({ targetId: c.targetId, found: c.wasFound })),
+    null,
+  );
+  notify(last.undone);
+  if (last.selectId) set({ selectedId: last.selectId });
 }
 
 // ---------------------------------------------------------------------------
 // Filters and presets
 
 function saveFilters(): void {
-  const { game, overrides, hideFound } = get();
-  if (game) saveSetting(SETTINGS.filters(game.pack.manifest.gameId), { overrides, hideFound });
+  const { game, overrides, hideFound, hideDone } = get();
+  if (game) {
+    saveSetting(SETTINGS.filters(game.pack.manifest.gameId), { overrides, hideFound, hideDone });
+  }
 }
 
 export function setCategoriesVisible(categoryIds: readonly string[], visible: boolean): void {
@@ -401,6 +433,12 @@ export function setCategoriesVisible(categoryIds: readonly string[], visible: bo
 
 export function setHideFound(hideFound: boolean): void {
   set({ hideFound });
+  saveFilters();
+}
+
+/** Hides done items on the checklists screen. Kept per game with the filters. */
+export function setHideDone(hideDone: boolean): void {
+  set({ hideDone });
   saveFilters();
 }
 

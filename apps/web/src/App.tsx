@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityLogDialog } from './components/ActivityLogDialog';
 import { AddMapDialog } from './components/AddMapDialog';
+import { ChecklistsPane } from './components/ChecklistsPane';
 import { DetailsPane } from './components/DetailsPane';
 import { FilterPane } from './components/FilterPane';
 import { UiIcon } from './components/icons';
@@ -14,7 +15,8 @@ import { TopBar } from './components/TopBar';
 import { downloadsOffered } from './features';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
-import { useAtlas, type PaneName } from './state/store';
+import { checklistScreenTitle, showLeftTab } from './state/checklists';
+import { useAtlas, type LeftTab, type PaneName } from './state/store';
 import { formatViewHash, parseViewHash } from './viewHash';
 
 /** Loads the configuration and the first pack, then shows the three-pane layout. */
@@ -50,6 +52,10 @@ export function App() {
 
 function Shell() {
   const panes = useAtlas((s) => s.panes);
+  const game = useAtlas((s) => s.game)!;
+  const leftTab = useAtlas((s) => s.leftTab);
+  const hasChecklists = !game.checklists.isEmpty;
+  const showChecklists = hasChecklists && leftTab === 'checklists';
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const persistent = useAtlas((s) => s.persistent);
   const pageViews = useAtlas(downloadsOffered);
@@ -58,13 +64,41 @@ function Shell() {
       className="shell"
       data-filters={panes.filters ? 'open' : 'closed'}
       data-details={panes.details ? 'open' : 'closed'}
+      data-left={showChecklists ? 'checklists' : 'filters'}
       data-storage={persistent ? 'saved' : 'memory'}
       aria-busy={loading}
     >
       <TopBar search={<SearchBox />} />
-      <SidePane name="filters" title="Filters">
-        <FilterPane />
-      </SidePane>
+      {hasChecklists ? (
+        <SidePane
+          name="filters"
+          title={showChecklists ? checklistScreenTitle(game) : 'Filters'}
+          head={<LeftTabs current={showChecklists ? 'checklists' : 'filters'} />}
+        >
+          <div
+            className="pane-panel"
+            role="tabpanel"
+            id="left-tab-filters"
+            aria-labelledby="left-tab-filters-tab"
+            hidden={showChecklists}
+          >
+            <FilterPane />
+          </div>
+          <div
+            className="pane-panel"
+            role="tabpanel"
+            id="left-tab-checklists"
+            aria-labelledby="left-tab-checklists-tab"
+            hidden={!showChecklists}
+          >
+            <ChecklistsPane visible={panes.filters && showChecklists} />
+          </div>
+        </SidePane>
+      ) : (
+        <SidePane name="filters" title="Filters">
+          <FilterPane />
+        </SidePane>
+      )}
       <main className="map-main" aria-label="Map area">
         <MapPane />
         {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
@@ -84,10 +118,13 @@ function Shell() {
 function SidePane({
   name,
   title,
+  head,
   children,
 }: {
   name: PaneName;
   title: string;
+  /** Shown in place of the title, such as tabs that name the pane's parts. */
+  head?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const open = useAtlas((s) => s.panes[name]);
@@ -100,7 +137,7 @@ function SidePane({
       data-testid={`${name}-pane`}
     >
       <div className="pane-head">
-        <h1 className="pane-title">{title}</h1>
+        {head ?? <h1 className="pane-title">{title}</h1>}
         <button
           type="button"
           className="icon-button"
@@ -114,6 +151,54 @@ function SidePane({
       </div>
       {children}
     </aside>
+  );
+}
+
+const LEFT_TABS: LeftTab[] = ['filters', 'checklists'];
+
+/**
+ * The left pane's tabs: the filters, and the checklists and guides. Arrow
+ * keys move between them, as in any tab list.
+ */
+function LeftTabs({ current }: { current: LeftTab }) {
+  const game = useAtlas((s) => s.game)!;
+  const label = (tab: LeftTab) => (tab === 'filters' ? 'Filters' : checklistScreenTitle(game));
+  return (
+    <div
+      className="pane-tabs"
+      role="tablist"
+      aria-label="Left pane"
+      onKeyDown={(event) => {
+        const step = { ArrowRight: 1, ArrowLeft: -1, Home: -9, End: 9 }[event.key];
+        if (step === undefined) return;
+        event.preventDefault();
+        const index = Math.max(
+          0,
+          Math.min(LEFT_TABS.length - 1, LEFT_TABS.indexOf(current) + step),
+        );
+        const next = LEFT_TABS[index]!;
+        showLeftTab(next);
+        document.getElementById(`left-tab-${next}-tab`)?.focus();
+      }}
+    >
+      {LEFT_TABS.map((tab) => (
+        <button
+          key={tab}
+          type="button"
+          role="tab"
+          id={`left-tab-${tab}-tab`}
+          className="pane-tab"
+          aria-selected={tab === current}
+          aria-controls={`left-tab-${tab}`}
+          tabIndex={tab === current ? 0 : -1}
+          onClick={() => {
+            showLeftTab(tab);
+          }}
+        >
+          {label(tab)}
+        </button>
+      ))}
+    </div>
   );
 }
 

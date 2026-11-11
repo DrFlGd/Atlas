@@ -3,6 +3,24 @@ import { makeTestPack } from '../testing/packs';
 import { ProgressCounter, percent } from './counters';
 import { progressRow, resolveProgress } from './resolve';
 
+describe('checklist marks', () => {
+  it('resolve like found marks but never count as found locations', () => {
+    const pack = makeTestPack();
+    const counter = new ProgressCounter(pack);
+    const resolved = resolveProgress([
+      progressRow('p', 'demo:loc:0001', true, 1),
+      progressRow('p', 'demo:checkitem:moss', true, 2),
+      progressRow('p', 'demo:checkitem:step', true, 3),
+      progressRow('p', 'demo:checkitem:step', false, 4),
+    ]);
+    expect([...resolved.keys()]).toEqual(['demo:loc:0001', 'demo:checkitem:moss']);
+    expect(counter.isTrackable('demo:checkitem:moss')).toBe(false);
+    const summary = counter.summarize(resolved.keys());
+    expect(summary.pack.found).toBe(1);
+    expect(summary.category('demo:cat:herb').found).toBe(1);
+  });
+});
+
 describe('resolveProgress', () => {
   it('keeps live rows and drops tombstones', () => {
     const resolved = resolveProgress([

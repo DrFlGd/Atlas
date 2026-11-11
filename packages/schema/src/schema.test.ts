@@ -3,6 +3,9 @@ import {
   FALLBACK_ICON,
   ICON_NAMES,
   checkPackIntegrity,
+  checklistItemSchema,
+  checklistSchema,
+  guideEntrySchema,
   idOf,
   layerSchema,
   locationSchema,
@@ -155,6 +158,56 @@ describe('region schema', () => {
     );
     expect(packDataSchema.safeParse(pack).success).toBe(true);
     expect(checkPackIntegrity(pack)).toEqual([]);
+  });
+});
+
+describe('checklist and guide schemas', () => {
+  const pack = makeFixturePack();
+  const item = pack.checklistItems[0]!;
+  const guide = pack.guides[0]!;
+
+  it('accepts items with a section and a Markdown note, and guides with an order', () => {
+    expect(checklistItemSchema.safeParse(item).success).toBe(true);
+    expect(
+      checklistItemSchema.safeParse({ ...item, section: 'Chapter 1', note: 'Ask *twice*.' })
+        .success,
+    ).toBe(true);
+    expect(checklistItemSchema.safeParse({ ...item, locationIds: [] }).success).toBe(true);
+    expect(guideEntrySchema.safeParse(guide).success).toBe(true);
+    expect(guideEntrySchema.safeParse({ ...guide, order: -2 }).success).toBe(true);
+    const withAll = makeFixturePack();
+    withAll.checklistItems[0] = { ...item, section: 'Chapter 1', note: '' };
+    withAll.guides[0] = { ...guide, order: 3 };
+    expect(packDataSchema.safeParse(withAll).success).toBe(true);
+    expect(checkPackIntegrity(withAll)).toEqual([]);
+  });
+
+  it('accepts a checklist kind of checklist or guide, and nothing else', () => {
+    const [checklist] = pack.checklists;
+    expect(checklistSchema.safeParse(checklist).success).toBe(true);
+    for (const kind of ['checklist', 'guide']) {
+      expect(checklistSchema.safeParse({ ...checklist, kind }).success).toBe(true);
+    }
+    for (const kind of ['Guide', 'route', '', null]) {
+      expect(checklistSchema.safeParse({ ...checklist, kind }).success).toBe(false);
+    }
+  });
+
+  it('refuses malformed values and unknown fields', () => {
+    const badItems = [
+      { ...item, section: '' },
+      { ...item, section: '   ' },
+      { ...item, section: 'x'.repeat(201) },
+      { ...item, note: 5 },
+      { ...item, heading: 'Chapter 1' },
+    ];
+    for (const value of badItems) expect(checklistItemSchema.safeParse(value).success).toBe(false);
+    const badGuides = [
+      { ...guide, order: 1.5 },
+      { ...guide, order: '1' },
+      { ...guide, chapter: 1 },
+    ];
+    for (const value of badGuides) expect(guideEntrySchema.safeParse(value).success).toBe(false);
   });
 });
 

@@ -1,4 +1,5 @@
 import type {
+  ChecklistIndex,
   LoadedPack,
   PackEntry,
   Profile,
@@ -23,20 +24,33 @@ import type {
 
 export type Theme = 'dark' | 'light';
 export type PaneName = 'filters' | 'details';
+/** What the left pane shows: the filters, or the checklists and guides. */
+export type LeftTab = 'filters' | 'checklists';
+
+/** A page of the checklists and guides screen. */
+export type ChecklistPage =
+  { kind: 'index' } | { kind: 'checklist'; id: string } | { kind: 'guide'; id: string };
 
 export interface LoadedGame {
   entry: PackEntry;
   pack: LoadedPack;
   counter: ProgressCounter;
   search: SearchIndex;
+  checklists: ChecklistIndex;
 }
 
-/** One found/not-found change that `Z` can take back. */
+/**
+ * One change that `Z` can take back: a location marked found or not, or a
+ * checklist item ticked or unticked, which can change several marks at once.
+ */
 export interface UndoEntry {
   profileId: string;
-  targetId: string;
-  /** Whether the target was found before the change. */
-  wasFound: boolean;
+  /** Each target the change touched, and whether it was found (or done) before. */
+  changes: { targetId: string; wasFound: boolean }[];
+  /** The notice shown once the change is undone. */
+  undone: string;
+  /** The location to select once the change is undone, if any. */
+  selectId: string | null;
 }
 
 /** A request for the map to move, consumed by the map pane. */
@@ -106,6 +120,13 @@ export interface AtlasState {
   theme: Theme;
   /** Whether each side pane is open. */
   panes: Record<PaneName, boolean>;
+  leftTab: LeftTab;
+  /** The checklists screen's pages, the one shown last; the index when empty. */
+  checklistPages: ChecklistPage[];
+  /** Hide done items on the checklists screen. */
+  hideDone: boolean;
+  /** A checklist item to bring into view, with a sequence number so it can be asked for again. */
+  itemFocus: { itemId: string; seq: number } | null;
   profileDialogOpen: boolean;
   /** Increments when the search box should take focus. */
   searchFocus: number;
@@ -163,6 +184,10 @@ export const useAtlas = create<AtlasState>()(() => ({
 
   theme: 'dark',
   panes: { filters: true, details: true },
+  leftTab: 'filters',
+  checklistPages: [],
+  hideDone: false,
+  itemFocus: null,
   profileDialogOpen: false,
   searchFocus: 0,
   notice: null,
