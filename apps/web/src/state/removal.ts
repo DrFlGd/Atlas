@@ -38,15 +38,12 @@ function titleOf(id: string): string {
   );
 }
 
-/** Takes the pack out of the list at once, before the folders are looked at again. */
-function dropFromList(id: string): void {
-  const library = get().library;
-  if (library) applyListing({ ...library, packs: library.packs.filter((p) => p.id !== id) });
-}
-
 /**
  * Deletes a pack, with its map images, from the maps folder, stopping its
  * download first. Progress kept in this app is deleted too only when asked.
+ * The list is looked at again at once, so the pack leaves it (and a pack
+ * with the same id that it hid shows up); if it was the game shown, another
+ * one is shown.
  */
 export async function deletePack(id: string, deleteProgress: boolean): Promise<RemovalOutcome> {
   if (!desktop) return { ok: false, error: 'Maps can only be deleted in the desktop app.' };
@@ -57,7 +54,7 @@ export async function deletePack(id: string, deleteProgress: boolean): Promise<R
   } catch (error) {
     return { ok: false, error: plainError(error, `delete ${title}`) };
   }
-  dropFromList(id);
+  await refreshWithout(id);
   if (deleteProgress) {
     try {
       const store = progressStore();
@@ -67,13 +64,23 @@ export async function deletePack(id: string, deleteProgress: boolean): Promise<R
       }
     } catch {
       notify(`Deleted ${title}, but your progress for it could not be deleted.`, 'error');
-      await refresh();
       return { ok: true };
     }
   }
+  // Said last, in place of "no longer available" when it was the game shown.
   notify(deletePackResult(title, outcome, deleteProgress));
-  await refresh();
   return { ok: true };
+}
+
+/** Lists the packs again; if that fails, takes the deleted pack out of the list anyway. */
+async function refreshWithout(id: string): Promise<void> {
+  try {
+    applyListing(await desktop!.library.list());
+  } catch {
+    // The shell does not list it any more either; the next refresh shows the rest.
+    const listing = get().library;
+    if (listing) applyListing({ ...listing, packs: listing.packs.filter((p) => p.id !== id) });
+  }
 }
 
 /**
@@ -97,13 +104,4 @@ export async function deleteImages(id: string): Promise<RemovalOutcome> {
     await loadDownloads(game);
   }
   return { ok: true };
-}
-
-async function refresh(): Promise<void> {
-  if (!desktop) return;
-  try {
-    applyListing(await desktop.library.list());
-  } catch {
-    // The pack is out of the list already; the next refresh shows the rest.
-  }
 }

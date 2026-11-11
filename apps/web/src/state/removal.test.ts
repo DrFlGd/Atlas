@@ -79,6 +79,17 @@ describe('deleting a pack', () => {
     );
   });
 
+  it('takes it out of the list even when the folders cannot be listed again', async () => {
+    replies.library_delete_pack = () => ({ complete: true });
+    replies.library_list = () => new Refusal('The maps folder cannot be read.');
+    const { removal, useAtlas } = await load();
+    expect(await removal.deletePack('my-game', false)).toEqual({ ok: true });
+    expect(useAtlas.getState().library?.packs.map((p) => p.id)).toEqual(['other']);
+    expect(useAtlas.getState().notice?.text).toBe(
+      'Deleted My Game. Your progress is kept in case you add it again.',
+    );
+  });
+
   it('keeps it listed and returns the plain reason when the shell refuses', async () => {
     const reason =
       'Another Atlas window or app is working on this map’s files right now. Try again when it has finished.';
