@@ -2361,13 +2361,13 @@ mod tests {
         ensure_crypto();
         let dir = TempDir::new("manager-store-resume");
         let base = tile_server();
-        // The first tile of level 2 to be asked for is not on the store.
-        let server = MockServer::start(Arc::new(move |path, count| {
-            if path == "/remote/5/4/6.png" {
-                no_such_object()
-            } else {
-                base(path, count)
-            }
+        // The first tile of level 2 to be asked for is not on the store; the
+        // second, asked for at the same time, is slow, so no image of this
+        // download arrives before the denial.
+        let server = MockServer::start(Arc::new(move |path, count| match path {
+            "/remote/5/4/6.png" => no_such_object(),
+            "/remote/5/5/6.png" => base(path, count).delayed(Duration::from_millis(300)),
+            _ => base(path, count),
         }))
         .await;
         let pack = dir.0.join("pack");
