@@ -40,7 +40,7 @@ use crate::{
     library::{PackLock, META_DIR},
     manifest::{clear_images, MANIFEST_FILE},
     tiles::{
-        manager::stop::ImagesLocation,
+        images::ImagesLocation,
         status::{status_path, STATUS_DIR},
         store::{MISSING_SUFFIX, PART_SUFFIX},
     },

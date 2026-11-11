@@ -5,7 +5,7 @@
  * the built app.
  *
  *   node apps/desktop/e2e/remotePack.js          # writes packs/e2e-remote/
- *   ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
+ *   ATLAS_ENABLE_DOWNLOADS=1 ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
  *   xvfb-run -a pnpm --filter @atlas/desktop test:e2e:delete [path/to/binary]
  *
  * Linux only, like the other desktop tests: the app's data and the shared

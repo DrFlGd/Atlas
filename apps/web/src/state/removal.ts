@@ -2,8 +2,8 @@ import { deletedProfile } from '@atlas/core';
 import { deleteImagesResult, deletePackResult, plainError } from '../components/removalText';
 import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
-import { loadDownloads } from './downloads';
 import { applyListing } from './library';
+import { loadMapImages } from './mapImages';
 import { clock, progressStore } from './services';
 import { useAtlas } from './store';
 
@@ -101,7 +101,7 @@ export async function deleteImages(id: string): Promise<RemovalOutcome> {
   const game = get().game;
   if (game && (game.entry.id === id || get().downloads.packFolder === id)) {
     set({ tileRevision: get().tileRevision + 1 });
-    await loadDownloads(game);
+    await loadMapImages(game);
   }
   return { ok: true };
 }

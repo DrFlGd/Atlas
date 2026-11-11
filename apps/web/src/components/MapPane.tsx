@@ -1,6 +1,7 @@
 import { isDownloadable, layerViewSpec, nativeZoomOf, readTileStatus } from '@atlas/core';
 import { createMapView, type MapView } from '@atlas/core/mapview';
 import { useEffect, useRef, useState } from 'react';
+import { downloadsOffered } from '../features';
 import { select, showMap } from '../state/actions';
 import { numberFormat, useLayerMarkers, useSummary } from '../state/derived';
 import { setDownloadPanelOpen } from '../state/downloads';
@@ -125,8 +126,7 @@ export function MapPane() {
       <LayerSwitcher />
       <MarkerTooltip />
       <TileNotice />
-      <MapImagesButton />
-      <DownloadPanel />
+      <DownloadControls />
       <MapStatus markerCount={markers.length} />
     </div>
   );
@@ -181,10 +181,26 @@ function MarkerTooltip() {
   );
 }
 
-/** Says when the map image is missing, and offers to download it where the app can. */
+/** The "Map images" button and the download panel, in a build with downloads. */
+function DownloadControls() {
+  const offered = useAtlas(downloadsOffered);
+  return __ATLAS_DOWNLOADS__ && offered ? (
+    <>
+      <MapImagesButton />
+      <DownloadPanel />
+    </>
+  ) : null;
+}
+
+/**
+ * Says when the map image is missing, and offers to download it where the
+ * app can: only a build with downloads ever does.
+ */
 function TileNotice() {
   const tileStatus = useAtlas((s) => s.tileStatus);
-  const canDownload = useAtlas((s) => s.downloads.packFolder !== null);
+  const canDownload = useAtlas(
+    (s) => __ATLAS_DOWNLOADS__ && downloadsOffered(s) && s.downloads.packFolder !== null,
+  );
   const job = useAtlas((s) => s.downloads.job);
   const panelOpen = useAtlas((s) => s.downloads.panelOpen);
   if (tileStatus?.status !== 'missing' || panelOpen) return null;
@@ -196,7 +212,7 @@ function TileNotice() {
           ? `Downloading map images (${downloadPercent(job)}%). The map appears as soon as the first level is ready.`
           : 'Map image not installed. Markers are shown on a plain background.'}
       </span>
-      {canDownload ? (
+      {__ATLAS_DOWNLOADS__ && canDownload ? (
         <button
           type="button"
           className="button button-primary button-small"

@@ -11,6 +11,7 @@ import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
 import { TopBar } from './components/TopBar';
+import { downloadsOffered } from './features';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { useAtlas, type PaneName } from './state/store';
@@ -51,6 +52,7 @@ function Shell() {
   const panes = useAtlas((s) => s.panes);
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const persistent = useAtlas((s) => s.persistent);
+  const pageViews = useAtlas(downloadsOffered);
   return (
     <div
       className="shell"
@@ -65,7 +67,7 @@ function Shell() {
       </SidePane>
       <main className="map-main" aria-label="Map area">
         <MapPane />
-        <MapPageStatus />
+        {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
       </main>
       <SidePane name="details" title="Details">
         <DetailsPane />

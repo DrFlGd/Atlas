@@ -26,8 +26,8 @@ import {
 import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
 import { desktop } from '../desktop';
 import type { HashView } from '../viewHash';
-import { loadDownloads } from './downloads';
 import { catalogFrom } from './library';
+import { loadMapImages } from './mapImages';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
 import { useAtlas, type AtlasState, type PaneName, type Theme } from './store';
 
@@ -180,7 +180,7 @@ export async function loadGame(
       undo: [],
     });
     saveSetting(SETTINGS.activePack, entry.id);
-    void loadDownloads(get().game!);
+    void loadMapImages(get().game!);
     return true;
   } catch (error) {
     if (token !== loadToken) return false;

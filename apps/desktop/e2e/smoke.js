@@ -9,6 +9,14 @@
  * guide link opens in the system browser, not in the app window, and opens
  * a pack folder through the native folder picker.
  *
+ * It also checks that the app has map image downloads exactly when it was
+ * built with them (as `pnpm desktop:build` recorded, or as
+ * `ATLAS_ENABLE_DOWNLOADS` says when set): in a viewer build (the default)
+ * the binary holds no download code, the download and map page commands do
+ * not exist, a map without its images only says so, and the Maps dialog
+ * offers no download and no saving, also for a pack that was added from a
+ * web page.
+ *
  *   pnpm --filter @atlas/desktop test:e2e [path/to/binary]
  *
  * Needs `tauri-driver` (`cargo install tauri-driver --locked`) and the
@@ -26,8 +34,10 @@ import { execFile } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { checkBinary, expectDownloads } from '../scripts/check-binary.js';
+import { PACK_ID as IMPORTED_PACK, writePack as writeImportedPack } from './mapPageSite.js';
 import { writeRemotePack } from './remotePack.js';
-import { check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
+import { appPath, check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
 
 const linux = process.platform === 'linux';
 const version = /** @type {{ version: string }} */ (
@@ -35,6 +45,8 @@ const version = /** @type {{ version: string }} */ (
 ).version;
 const timeoutMs = 60_000;
 const run = promisify(execFile);
+/** The app was built with map image downloads. */
+const downloads = await expectDownloads();
 
 /**
  * Waits for a native dialog with this title, then types a path into it and
@@ -79,7 +91,22 @@ async function answerFolderDialog(title, path) {
   }
 }
 
+const problem = await checkBinary(appPath, downloads);
+check(
+  problem === null,
+  problem ?? `the binary ${downloads ? 'holds' : 'holds no'} code to download map images`,
+);
+
 const environment = linux ? await isolatedEnvironment() : null;
+if (environment) {
+  // A pack added from a web page, in the maps folder. Its addresses are
+  // never visited: nothing here opens its pages.
+  await writeImportedPack(
+    join(environment.env.XDG_DATA_HOME ?? '', 'atlas', 'maps', IMPORTED_PACK),
+    'http://127.0.0.1:9',
+    'http://127.0.0.1:9',
+  );
+}
 const driver = await startDriver({ env: environment?.env });
 /** @type {import('./webdriver.js').Session | null} */
 let session = null;
@@ -135,6 +162,26 @@ try {
   const info = await s.runAsync(`return window.__TAURI_INTERNALS__.invoke('desktop_info');`);
   console.log('Desktop info:', JSON.stringify(info));
   check(info?.version === version, `the shell reports version ${version}`);
+  check(
+    info?.downloads === downloads,
+    `the shell says it ${downloads ? 'downloads' : 'does not download'} map images`,
+  );
+  if (!downloads) {
+    // The commands are not in the build, so the page cannot reach them.
+    for (const [command, args] of /** @type {[string, Record<string, unknown>][]} */ ([
+      ['tiles_plan', { packId: 'demo' }],
+      ['tiles_start', { packId: 'demo', detail: 'overview' }],
+      ['download_settings_get', {}],
+      ['view_pages', { packId: 'demo' }],
+      ['view_open', { packId: 'demo', url: 'http://127.0.0.1:9/', save: true }],
+    ])) {
+      const result = await s.runAsync(
+        `try { await window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)}); return 'ok'; }
+         catch (error) { return 'refused: ' + String(error && error.message || error); }`,
+      );
+      check(String(result).startsWith('refused'), `${command} is refused (${result})`);
+    }
+  }
   check(
     !(await s.run(
       `return !!document.querySelector('[data-testid="download-map-images"], [data-testid="map-images-button"]');`,
@@ -238,6 +285,60 @@ try {
     );
     check(true, 'a pack folder opened through the folder picker is shown');
     await s.screenshot('desktop-smoke-opened-pack');
+
+    // Its map images are not there: the notice says so, and only a build
+    // with downloads offers to download them.
+    const dialogOpen = () =>
+      s.run(`return !!document.querySelector('[data-testid="maps-dialog"]')?.open;`);
+    if (await dialogOpen()) await s.click('[data-testid="maps-dialog"] .dialog-head .icon-button');
+    await s.waitFor(`!document.querySelector('[data-testid="maps-dialog"]')?.open`);
+    await s.waitFor(`document.querySelector('[data-testid="tile-notice"]')`, {
+      what: 'the map image notice',
+    });
+    const notice = await s.run(
+      `return document.querySelector('[data-testid="tile-notice"]')?.textContent ?? '';`,
+    );
+    const offers = await s.run(
+      `return [...document.querySelectorAll('[data-testid="download-map-images"], [data-testid="map-images-button"], [data-testid="download-panel"]')].length;`,
+    );
+    if (downloads) {
+      check(offers > 0, 'a map without its images offers to download them');
+    } else {
+      check(
+        notice === 'Map image not installed. Markers are shown on a plain background.',
+        `the notice only says the map image is not installed ("${notice}")`,
+      );
+      check(offers === 0, 'nothing offers to download map images');
+    }
+    // The note that the pack was added goes away by itself.
+    await s.waitFor(`!document.querySelector('[data-testid="toast"]')`, {
+      timeout: 20_000,
+      what: 'the toast to go',
+    });
+    await s.screenshot('desktop-smoke-image-notice');
+
+    // The Maps dialog lists the pack added from a web page; only a build
+    // with downloads offers its map page, to view it and save its images.
+    await s.click('[data-testid="maps-button"]');
+    await s.waitFor(`document.querySelector('[data-pack="${IMPORTED_PACK}"]')`, {
+      what: 'the pack added from a web page in the Maps dialog',
+    });
+    const dialog = await s.run(`
+      const dialog = document.querySelector('[data-testid="maps-dialog"]');
+      return {
+        mapPages: dialog.querySelectorAll('[data-testid="map-page-details"]').length,
+        text: dialog.textContent,
+      };`);
+    if (downloads) {
+      check(dialog.mapPages > 0, 'the Maps dialog offers the map page of the added pack');
+    } else {
+      check(dialog.mapPages === 0, 'the Maps dialog offers no map page');
+      check(
+        !/download map images|save (map )?images as I browse|map page/i.test(dialog.text),
+        'the Maps dialog offers no download and no saving',
+      );
+    }
+    await s.screenshot('desktop-smoke-maps-dialog');
   } else {
     console.log(
       '# skipped: native dialogs and the system browser are only driven on Linux (xdotool)',

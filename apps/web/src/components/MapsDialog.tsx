@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FolderChoice, ListedPack, LocationInfo } from '../desktop';
+import { downloadsOffered } from '../features';
 import { notify, switchGame } from '../state/actions';
 import { rebuildPack } from '../state/importing';
 import {
@@ -79,6 +80,7 @@ export function MapsDialog() {
 function MapsFolder() {
   const library = useAtlas((s) => s.library);
   const importers = useAtlas((s) => s.config?.importers.length ?? 0);
+  const downloads = useAtlas(downloadsOffered);
   const [choice, setChoice] = useState<FolderChoice | null>(null);
   const [working, setWorking] = useState(false);
   if (!library) return null;
@@ -87,9 +89,13 @@ function MapsFolder() {
     <section className="dialog-section" aria-label="Maps folder">
       <h3 className="dialog-subhead">Where maps are saved</h3>
       <p className="muted small">
-        {importers > 0
-          ? 'Maps you add and map images you download are saved here. '
-          : 'Map images you download are saved here. '}
+        {__ATLAS_DOWNLOADS__ && downloads
+          ? importers > 0
+            ? 'Maps you add and map images you download are saved here. '
+            : 'Map images you download are saved here. '
+          : importers > 0
+            ? 'Maps you add are saved here, and the maps in it are shown. '
+            : 'The maps in this folder are shown. '}
         Every Atlas app on this computer uses the same folder.
       </p>
       <p className="path" data-testid="maps-folder-path">
@@ -262,6 +268,7 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
   const canRebuild = useAtlas((s) =>
     s.config?.importers.some((i) => i.id === pack.imported?.importerId),
   );
+  const mapPages = useAtlas(downloadsOffered);
   const deletable = pack.origin === 'maps-folder' && !pack.bundled;
   const close = () => {
     setConfirming(null);
@@ -343,7 +350,7 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
             ) : null}
           </div>
         )}
-        {pack.imported ? <MapPageActions pack={pack} /> : null}
+        {__ATLAS_DOWNLOADS__ && mapPages && pack.imported ? <MapPageActions pack={pack} /> : null}
       </div>
     </li>
   );

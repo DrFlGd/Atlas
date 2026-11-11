@@ -8,8 +8,19 @@
  * A build with its own identifier installs next to the plain Atlas app
  * instead of replacing it, with its own app data (and so its own saved
  * progress); both read the same maps folder (see README, "Two apps, one
- * maps folder"). Both variables must be set together. Other arguments are
- * passed on to `tauri build`.
+ * maps folder"). Both variables must be set together.
+ *
+ * `ATLAS_ENABLE_DOWNLOADS=1` builds an app that fetches map images from
+ * other servers ("Download map images", "View map page and save images as
+ * I browse"). It turns on the shell's `downloads` Cargo feature, which
+ * compiles that code and its commands in and makes `build.rs` read the
+ * capability in `capabilities/downloads/`, and the web app's flag of the
+ * same name (`apps/web/vite.config.ts`), which keeps their interface in the
+ * bundle. Without it, the default, the app is a viewer only. The choice is
+ * recorded in `src-tauri/atlas-build.json` (ignored by git), so the tests of
+ * the built app know what to expect without being told again.
+ *
+ * Other arguments are passed on to `tauri build`.
  */
 import { spawn } from 'node:child_process';
 import { readFile, rm, writeFile } from 'node:fs/promises';
@@ -53,6 +64,33 @@ export function identityConfig({ name, identifier }, baseConfig) {
   };
 }
 
+/**
+ * Whether `ATLAS_ENABLE_DOWNLOADS` asks for downloads: `1` yes; unset, empty
+ * or `0` no; anything else is refused. Exported for tests.
+ * @param {string | undefined} value
+ */
+export function downloadsEnabled(value) {
+  const text = value?.trim() ?? '';
+  if (text === '' || text === '0') return false;
+  if (text === '1') return true;
+  throw new Error(`ATLAS_ENABLE_DOWNLOADS must be 1, 0 or unset, not "${value}".`);
+}
+
+/** Where a build records whether it has downloads; see `scripts/check-binary.js`. */
+export const BUILD_RECORD = here('../src-tauri/atlas-build.json');
+
+/**
+ * The arguments for `tauri build`. Exported for tests.
+ * @param {{ identity: boolean, downloads: boolean, extra: string[] }} options
+ */
+export function tauriArgs({ identity, downloads, extra }) {
+  const args = ['build', '--config', 'src-tauri/tauri.build.conf.json'];
+  if (identity) args.push('--config', 'src-tauri/tauri.identity.conf.json');
+  if (downloads) args.push('--features', 'downloads');
+  args.push(...extra.filter((arg) => arg !== '--'));
+  return args;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const base = JSON.parse(await readFile(here('../src-tauri/tauri.conf.json'), 'utf8'));
   const identity = identityConfig(
@@ -62,17 +100,32 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     },
     base,
   );
-  const args = ['build', '--config', 'src-tauri/tauri.build.conf.json'];
+  const downloads = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
   // A file rather than a JSON argument, which Windows shells would mangle.
   const identityFile = here('../src-tauri/tauri.identity.conf.json');
   await rm(identityFile, { force: true });
   if (identity) {
     await writeFile(identityFile, `${JSON.stringify(identity, null, 2)}\n`);
-    args.push('--config', 'src-tauri/tauri.identity.conf.json');
     console.log(`Building "${identity.productName}" (${identity.identifier})`);
   }
-  args.push(...process.argv.slice(2).filter((arg) => arg !== '--'));
-  const child = spawn('tauri', args, { stdio: 'inherit', shell: process.platform === 'win32' });
+  console.log(
+    downloads
+      ? 'With map image downloads (ATLAS_ENABLE_DOWNLOADS=1)'
+      : 'Without map image downloads: a viewer (set ATLAS_ENABLE_DOWNLOADS=1 for them)',
+  );
+  const args = tauriArgs({
+    identity: identity !== null,
+    downloads,
+    extra: process.argv.slice(2),
+  });
+  // The web build that `tauri build` runs first reads the same variable.
+  const env = { ...process.env, ATLAS_ENABLE_DOWNLOADS: downloads ? '1' : '0' };
+  await writeFile(BUILD_RECORD, `${JSON.stringify({ downloads }, null, 2)}\n`);
+  const child = spawn('tauri', args, {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+    env,
+  });
   child.on('exit', (code) => {
     process.exitCode = code ?? 1;
   });

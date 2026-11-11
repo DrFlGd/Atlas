@@ -1,10 +1,10 @@
 // @ts-check
 /**
  * Desktop maps library and "Add a map" test, on a build with the made-up
- * demo importer:
+ * demo importer and with downloads:
  *
  *   node apps/desktop/e2e/remotePack.js          # writes packs/e2e-remote/
- *   ATLAS_BUNDLE_PACKS=e2e-remote,demo \
+ *   ATLAS_ENABLE_DOWNLOADS=1 ATLAS_BUNDLE_PACKS=e2e-remote,demo \
  *     ATLAS_BUNDLE_IMPORTERS=packages/importer-api/demo/demo-importer.js \
  *     pnpm desktop:build --no-bundle
  *   xvfb-run -a pnpm --filter @atlas/desktop test:e2e:import [path/to/binary]
