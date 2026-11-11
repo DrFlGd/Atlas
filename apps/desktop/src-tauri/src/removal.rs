@@ -283,12 +283,6 @@ pub struct ImagesDeleted {
     pub left: u64,
 }
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name: OsString = path.as_os_str().to_owned();
-    name.push(suffix);
-    PathBuf::from(name)
-}
-
 /// A directory, and not a symbolic link or junction to one.
 pub fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
@@ -340,6 +334,25 @@ struct Written {
     bytes: u64,
 }
 
+/// The files and links directly in one folder, read once: on Windows a
+/// folder listing carries each file's size, so this is much quicker than
+/// asking for every possible tile on its own.
+fn listing(dir: &Path) -> HashMap<OsString, fs::DirEntry> {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_file() || kind.is_symlink())
+                })
+                .map(|entry| (entry.file_name(), entry))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Every file a download wrote for the location's layers, that is still
 /// there. `shipped` is the pack as it comes with the app, if it does: an
 /// image that is there too came with the pack and is not counted.
@@ -349,6 +362,7 @@ fn written_files(location: &ImagesLocation, shipped: Option<&Path>) -> Vec<Writt
         return out;
     }
     let mut dirs = SafeDirs::new(&location.root);
+    let mut listings: HashMap<PathBuf, HashMap<OsString, fs::DirEntry>> = HashMap::new();
     for layer in &location.plan.layers {
         for z in layer.min_zoom..=layer.max_zoom {
             for tile in layer.tiles_of(z) {
@@ -357,26 +371,32 @@ fn written_files(location: &ImagesLocation, shipped: Option<&Path>) -> Vec<Writt
                 if !dirs.check(parent) {
                     continue;
                 }
-                let candidates = [
-                    (relative.clone(), true),
-                    (with_suffix(&relative, MISSING_SUFFIX), false),
-                    (with_suffix(&relative, PART_SUFFIX), false),
-                ];
-                for (candidate, image) in candidates {
-                    let Ok(metadata) = fs::symlink_metadata(location.root.join(&candidate)) else {
+                let files = listings
+                    .entry(parent.to_path_buf())
+                    .or_insert_with(|| listing(&location.root.join(parent)));
+                let Some(name) = relative.file_name() else {
+                    continue;
+                };
+                for (suffix, image) in [("", true), (MISSING_SUFFIX, false), (PART_SUFFIX, false)] {
+                    let mut candidate = name.to_owned();
+                    candidate.push(suffix);
+                    let Some(entry) = files.get(&candidate) else {
                         continue;
                     };
-                    let link = metadata.file_type().is_symlink();
-                    if !(metadata.is_file() || link) {
-                        continue;
-                    }
-                    if image && shipped.is_some_and(|pack| pack.join(&candidate).is_file()) {
+                    let link = entry.file_type().is_ok_and(|kind| kind.is_symlink());
+                    let relative = parent.join(&candidate);
+                    if image && !link && shipped.is_some_and(|pack| pack.join(&relative).is_file())
+                    {
                         continue;
                     }
                     out.push(Written {
-                        bytes: if link { 0 } else { metadata.len() },
+                        bytes: if image && !link {
+                            entry.metadata().map_or(0, |m| m.len())
+                        } else {
+                            0
+                        },
                         image: image && !link,
-                        relative: candidate,
+                        relative,
                     });
                 }
             }
