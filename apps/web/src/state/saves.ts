@@ -10,6 +10,7 @@ import {
 } from '@atlas/saves/match';
 import type { SaveGame, SaveSummary } from '@atlas/saves';
 import { desktop, type SaveFileEntry, type SaveFolderInfo } from '../desktop';
+import { nothingNotice } from '../saves/explain';
 import { packForMatching } from '../saves/pack';
 import type { SaveJobContext } from '../saves/process';
 import { runSaveJob } from '../saves/run';
@@ -248,7 +249,10 @@ async function takeSave(bytes: Uint8Array, file: ReadFile): Promise<void> {
 
 function readNotice(file: string, match: SaveMatch, marked: number): string {
   const parts = [`Read ${file}:`];
-  parts.push(marked > 0 ? `${placesText(marked)} marked found.` : 'nothing new to mark.');
+  const nothing = nothingNotice(match);
+  if (marked > 0) parts.push(`${placesText(marked)} marked found.`);
+  else if (nothing) parts.push(`nothing to mark. ${nothing}`);
+  else parts.push('nothing new to mark.');
   const current = match.current;
   if (current && !current.mapId) parts.push(`No map of this pack shows ${current.name}.`);
   else if (match.needsCalibration) parts.push('Open “Game save” to place yourself on the map.');

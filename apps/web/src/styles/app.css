@@ -2361,6 +2361,11 @@ label.tree-row:hover,
   margin: 8px 0;
 }
 
+/* The file picker's own row, inside a row of buttons. */
+.save-buttons .save-buttons {
+  margin: 0;
+}
+
 .save-linked {
   margin: 4px 0 0;
 }

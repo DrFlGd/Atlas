@@ -1,6 +1,7 @@
 import type { Unmatched, WorldMatch } from '@atlas/saves';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { desktop } from '../desktop';
+import { mapStateText, nothingExplained } from '../saves/explain';
 import { numberFormat } from '../state/derived';
 import {
   linkSaveFile,
@@ -360,6 +361,8 @@ function SaveResult() {
     ) : null;
   }
   const maps = game.pack.data.maps;
+  const why = nothingExplained(match);
+  const mapState = mapStateText(summary);
   return (
     <>
       <section className="dialog-section" data-testid="save-worlds">
@@ -403,7 +406,16 @@ function SaveResult() {
 
       <section className="dialog-section" data-testid="save-categories">
         <h3 className="dialog-subhead">What the save shows done</h3>
-        {match.categories.length === 0 ? (
+        {mapState ? (
+          <p className="small" data-testid="save-map-state">
+            {mapState}
+          </p>
+        ) : null}
+        {why ? (
+          <p className="small" data-testid="save-why">
+            {why}
+          </p>
+        ) : match.categories.length === 0 ? (
           <p className="muted small">No places of this pack match the save yet.</p>
         ) : (
           <ul className="save-counts">

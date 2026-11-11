@@ -12,7 +12,14 @@ const id = (kind: string, local: string) => `witcher3:${kind}:${local}`;
 const MAP = id('map', 'velen');
 const LAYER = id('layer', 'ground');
 
-function location(local: string, name: string, x: number, y: number, category: string) {
+function location(
+  local: string,
+  name: string,
+  x: number,
+  y: number,
+  category: string,
+  flagId?: string,
+) {
   return {
     id: id('loc', local),
     mapId: MAP,
@@ -25,6 +32,7 @@ function location(local: string, name: string, x: number, y: number, category: s
     entityIds: [],
     guideId: null,
     since: '1.0.0',
+    ...(flagId ? { flagId } : {}),
   };
 }
 
@@ -80,26 +88,27 @@ const PACK: Record<string, unknown> = {
       defaultVisible: true,
     },
   ],
+  // Each place names the game's tag for its map pin, as a pack with a table of tags would.
   'locations.json': [
-    location('sign-a', 'Crossroads signpost', 512, 512, 'sign'), // world (0, 0)
-    location('sign-b', 'Mill signpost', 600, 512, 'sign'), // world (176, 0)
-    location('nest-a', 'Drowner nest', 300, 300, 'nest'), // world (-424, 424)
-    location('nest-b', 'Ghoul nest', 700, 700, 'nest'), // world (376, -376)
+    location('sign-a', 'Crossroads signpost', 512, 512, 'sign', 'sign_a'), // world (0, 0)
+    location('sign-b', 'Mill signpost', 600, 512, 'sign', 'sign_b'), // world (176, 0)
+    location('nest-a', 'Drowner nest', 300, 300, 'nest', 'nest_a'), // world (-424, 424)
+    location('nest-b', 'Ghoul nest', 700, 700, 'nest', 'nest_b'), // world (376, -376)
   ],
 };
 
-/** A save in Velen: the crossroads sign found and the drowner nest destroyed. */
+/**
+ * A save in Velen: the crossroads sign found and the drowner nest destroyed.
+ * The ghoul nest is only discovered and the mill sign only known of.
+ */
 const VELEN_SAVE = typicalSave({
   world: WORLD_PATHS.novigrad,
   player: { x: 10, y: -20, yaw: 90 },
   facts: { q001_done: 1 },
-  pins: {
-    [WORLD_PATHS.novigrad]: [
-      { name: 'sign_a', type: 'RoadSign', x: 3, y: 4, discovered: true },
-      { name: 'sign_b', type: 'RoadSign', x: 176, y: 0, discovered: false },
-      { name: 'nest_a', type: 'MonsterNestDisabled', x: -420, y: 424 },
-      { name: 'nest_b', type: 'MonsterNest', x: 376, y: -376, discovered: true },
-    ],
+  mapPins: {
+    known: ['sign_b'],
+    discovered: ['sign_a', 'nest_a', 'nest_b'],
+    disabled: ['nest_a'],
   },
 });
 
@@ -233,6 +242,49 @@ test('a save of an unknown version is refused, and a world without a map is said
   await expect(page.getByTestId('save-no-map')).toHaveCount(0);
 });
 
+test('a save that marks nothing says why, without calling it a failure', async ({ page }) => {
+  await servePack(page);
+  await page.goto('./');
+  await expect(page.getByTestId('marker-count')).toHaveText('4');
+  const dialog = page.getByTestId('save-dialog');
+
+  // A new game: nothing discovered yet.
+  await openSave(
+    page,
+    'AutoSave_0.sav',
+    typicalSave({
+      version: [64, 27, 163],
+      world: WORLD_PATHS.novigrad,
+      player: { x: 0, y: 0, yaw: 0 },
+    }),
+  );
+  await expect(page.getByTestId('toast')).toHaveText(
+    'Read AutoSave_0.sav: nothing to mark. The save has not discovered any places yet.',
+  );
+  await expect(dialog.getByTestId('save-why')).toContainText(
+    'has not discovered or cleared any places yet',
+  );
+  await expect(dialog.getByTestId('save-map-state')).toHaveText(
+    'On the save’s own map: 0 places discovered, 0 cleared, 0 known of.',
+  );
+  await expect(dialog.getByTestId('save-error')).toHaveCount(0);
+
+  // Places the save names by tags this pack does not know.
+  await openSave(
+    page,
+    'AutoSave_1.sav',
+    typicalSave({
+      player: { x: 0, y: 0, yaw: 0 },
+      mapPins: { discovered: ['elsewhere_1', 'elsewhere_2'], disabled: ['elsewhere_2'] },
+    }),
+  );
+  await expect(page.getByTestId('toast')).toHaveText(
+    'Read AutoSave_1.sav: nothing to mark. The save names 2 discovered places by the game’s own tags only, and Atlas has no table yet of where those are.',
+  );
+  await expect(dialog.getByTestId('save-why')).toContainText('Nothing is wrong with the save.');
+  await expectOverallFound(page, 0);
+});
+
 test('placing yourself twice lines a map up when the pack cannot', async ({ page }) => {
   // The same pack without a world transform.
   const maps = PACK['maps.json'] as { worldTransform?: unknown }[];
@@ -360,9 +412,7 @@ test('in the desktop app, the saves folder is linked and each new save is read a
   const folder = 'C:\\Users\\someone\\Documents\\The Witcher 3\\gamesaves';
   const first = typicalSave({
     player: { x: 10, y: -20, yaw: 0 },
-    pins: {
-      [WORLD_PATHS.novigrad]: [{ name: 'sign_a', type: 'RoadSign', x: 3, y: 4, discovered: true }],
-    },
+    mapPins: { discovered: ['sign_a'] },
   });
   await servePack(page);
   await page.addInitScript(installFakeSaves, {
