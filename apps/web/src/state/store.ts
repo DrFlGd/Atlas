@@ -5,6 +5,7 @@ import type {
   Profile,
   ProgressCounter,
   ProgressRecord,
+  ProgressSource,
   SearchIndex,
   TargetProgress,
   UserPreset,
@@ -14,6 +15,7 @@ import type { MapViewState, MarkerHover, TileStatus } from '@atlas/core/mapview'
 import { create } from 'zustand';
 import type { LogArea } from '../activityLog';
 import type { RuntimeConfig } from '../config';
+import type { GameTableState, SaveState } from './saves';
 import type {
   DesktopInfo,
   DownloadPlan,
@@ -52,6 +54,8 @@ export interface UndoEntry {
   undone: string;
   /** The location to select once the change is undone, if any. */
   selectId: string | null;
+  /** Where the change came from; undoing it writes the same source. Default `manual`. */
+  source?: ProgressSource;
 }
 
 /** A request for the map to move, consumed by the map pane. */
@@ -150,9 +154,34 @@ export interface AtlasState {
   addMapOpen: boolean;
   /** The activity log dialog, with the area it opened on; null when closed. */
   logViewer: { area: LogArea | 'all' } | null;
+  saveDialogOpen: boolean;
+  /** The game save linked to the active profile, and what it says. */
+  save: SaveState;
   /** The map pack file dialog; null when closed. */
   packFileDialog: PackFileDialogState | null;
 }
+
+export const NO_GAME_TABLE: GameTableState = {
+  folder: null,
+  table: null,
+  busy: null,
+  error: null,
+  last: null,
+};
+
+export const NO_SAVE: SaveState = {
+  link: null,
+  busy: false,
+  error: null,
+  summary: null,
+  match: null,
+  folder: null,
+  placing: null,
+  worldMaps: {},
+  calibrations: {},
+  points: {},
+  gameTable: NO_GAME_TABLE,
+};
 
 export const NO_DOWNLOADS: DownloadState = {
   packFolder: null,
@@ -207,5 +236,7 @@ export const useAtlas = create<AtlasState>()(() => ({
   mapsDialogOpen: false,
   addMapOpen: false,
   logViewer: null,
+  saveDialogOpen: false,
+  save: NO_SAVE,
   packFileDialog: null,
 }));

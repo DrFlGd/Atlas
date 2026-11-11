@@ -58,6 +58,18 @@ describe('desktop bridge', () => {
     await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
     await bridge.activityLog.read();
     await bridge.library.reveal({ kind: 'log-folder' });
+    await bridge.saves.defaultFolder('witcher3');
+    await bridge.saves.chooseFolder('witcher3');
+    await bridge.saves.list('C:/Saves');
+    await bridge.saves.watch('C:/Saves');
+    await bridge.saves.watchStatus();
+    await bridge.saves.unwatch();
+    await bridge.saves.report({ file: 'QuickSave.sav', ok: true, matched: 2, marked: 1 });
+    await bridge.gameFiles.folder('witcher3');
+    await bridge.gameFiles.chooseFolder('witcher3');
+    await bridge.gameFiles.forgetFolder('witcher3');
+    await bridge.gameFiles.scan('witcher3');
+    await bridge.gameFiles.report({ kind: 'match', saveTags: 3, saveTagsFound: 2, fits: {} });
     expect(calls).toEqual([
       ['tiles_start', { packId: 'demo', detail: 'standard' }],
       ['tiles_pause', { packId: 'demo' }],
@@ -99,7 +111,39 @@ describe('desktop bridge', () => {
       ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],
       ['activity_log_read', undefined],
       ['library_reveal', { target: { kind: 'log-folder' } }],
+      ['saves_default_folder', { game: 'witcher3' }],
+      ['saves_choose_folder', { game: 'witcher3' }],
+      ['saves_list', { folder: 'C:/Saves' }],
+      ['saves_watch', { path: 'C:/Saves' }],
+      ['saves_watch_status', undefined],
+      ['saves_unwatch', undefined],
+      ['saves_report', { report: { file: 'QuickSave.sav', ok: true, matched: 2, marked: 1 } }],
+      ['game_folder_get', { game: 'witcher3' }],
+      ['game_folder_choose', { game: 'witcher3' }],
+      ['game_folder_forget', { game: 'witcher3' }],
+      ['game_files_scan', { game: 'witcher3' }],
+      ['game_files_report', { report: { kind: 'match', saveTags: 3, saveTagsFound: 2, fits: {} } }],
     ]);
+  });
+
+  it('reads save files as bytes', async () => {
+    const answers: unknown[] = [Uint8Array.of(1, 2).buffer, [3, 4], 'text'];
+    const bridge = createBridge(() => Promise.resolve(answers.shift()));
+    expect(await bridge.saves.read('a.sav')).toEqual(Uint8Array.of(1, 2));
+    expect(await bridge.saves.screenshot('a.sav')).toEqual(Uint8Array.of(3, 4));
+    await expect(bridge.saves.read('a.sav')).rejects.toThrow('not a file');
+  });
+
+  it('reads the game’s map files as bytes', async () => {
+    const calls: unknown[] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(Uint8Array.of(0x43, 0x52, 0x32, 0x57).buffer);
+    });
+    expect(await bridge.gameFiles.read('witcher3', 4)).toEqual(
+      Uint8Array.of(0x43, 0x52, 0x32, 0x57),
+    );
+    expect(calls).toEqual([['game_files_read', { game: 'witcher3', index: 4 }]]);
   });
 
   it('sends only links to other web sites outside', () => {

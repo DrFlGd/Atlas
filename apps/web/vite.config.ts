@@ -15,13 +15,16 @@ export default defineConfig({
   base: './',
   plugins: [react(), packsPlugin({ packsDir, bundle })],
   define: { __ATLAS_DOWNLOADS__: JSON.stringify(downloads) },
+  // The save reader runs in a module worker (src/saves/saveWorker.ts).
+  worker: { format: 'es' },
   server: { port: 5173 },
   preview: { port: 4173 },
   build: {
     outDir: 'dist',
     sourcemap: true,
     // React DOM, Leaflet, Zod, Dexie and markdown-it make up most of the
-    // single bundle, so the default 500 kB warning is expected.
-    chunkSizeWarningLimit: 900,
+    // main bundle, so the default 500 kB warning is expected. The save
+    // reader and the "Game save" dialog are chunks of their own.
+    chunkSizeWarningLimit: 950,
   },
 });

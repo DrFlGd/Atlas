@@ -38,6 +38,20 @@ export const SETTINGS = {
   profile: (gameId: string) => `profile:${gameId}`,
   filters: (gameId: string) => `filters:${gameId}`,
   place: (gameId: string) => `place:${gameId}`,
+  /** The game save linked to a profile (see `state/saves.ts`). */
+  saveLink: (profileId: string) => `saveLink:${profileId}`,
+  /** Which map shows which game world, as the person chose. */
+  saveWorlds: (gameId: string) => `saveWorlds:${gameId}`,
+  /** World-to-map transforms made from saves, by map id. */
+  saveCalibration: (gameId: string) => `saveCalibration:${gameId}`,
+  /** Spots the person marked on a map that is not lined up yet, by map id. */
+  savePoints: (gameId: string) => `savePoints:${gameId}`,
+  /**
+   * The table of a game's own map pins, read from the game's files in the
+   * desktop app, by the save reader's id. It holds data from the game, so
+   * it stays on this device: settings are never exported.
+   */
+  gamePins: (readerId: string) => `gamePins:${readerId}`,
   /** A site's list of games as it was last read, kept so it need not be read each time. */
   catalogue: (importerId: string) => `catalogue:${importerId}`,
 } as const;

@@ -78,6 +78,17 @@ export interface FlyToTarget {
   zoom?: number;
 }
 
+/** Where the player stood in a game save: drawn above the markers, as an arrow when the facing is known. */
+export interface PlayerMarker {
+  /** Image pixel, origin top-left. */
+  x: number;
+  y: number;
+  /** Facing in degrees clockwise from up on the map; null draws a dot. */
+  heading: number | null;
+  /** Shown as the marker's tooltip and accessible name. */
+  label: string;
+}
+
 export type Unsubscribe = () => void;
 
 /**
@@ -96,6 +107,8 @@ export interface MapView {
    * in the same order) the clusters are reused, so this is cheap.
    */
   setMarkers(markers: readonly MapMarker[]): void;
+  /** Shows the player's position from a game save, or hides it (null). */
+  setPlayer(player: PlayerMarker | null): void;
   /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
   setSelected(markerId: string | null): void;
   /** Re-reads theme colours from CSS custom properties and redraws. */
@@ -111,6 +124,8 @@ export interface MapView {
   flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
   /** Called with the marker id when the user clicks a marker, or null when they click empty map. */
   onSelect(listener: (markerId: string | null) => void): Unsubscribe;
+  /** Called with the image pixel of every click on the map, on a marker or not. */
+  onMapClick(listener: (point: PixelPoint) => void): Unsubscribe;
   /** Called when the pointer moves onto a marker, or off it (null). */
   onHover(listener: (hover: MarkerHover | null) => void): Unsubscribe;
   /** Called when the tile status of the current layer changes. */

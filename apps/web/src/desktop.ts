@@ -1,3 +1,5 @@
+import type { PinTableStats, TableFit } from '@atlas/saves';
+
 /**
  * The bridge to the desktop shell (`apps/desktop`). The web app has no
  * dependency on Tauri: inside the shell, Tauri injects an `invoke` function,
@@ -116,6 +118,98 @@ export interface RecentLog {
   lines: string[];
   /** Older lines exist that were not loaded. */
   truncated: boolean;
+}
+
+/** A game save on disk, as the shell lists it. */
+export interface SaveFileEntry {
+  path: string;
+  name: string;
+  /** Last change, in milliseconds since the epoch. */
+  modified: number;
+  size: number;
+  /** The game keeps a screenshot of the save next to it. */
+  screenshot: boolean;
+}
+
+export interface SaveFolderInfo {
+  path: string;
+  name: string;
+  exists: boolean;
+  /** Newest first. */
+  saves: SaveFileEntry[];
+}
+
+/** What "Follow new saves" sees: the newest save, and the last one that stopped changing. */
+export interface SaveWatchStatus {
+  path: string | null;
+  newest: SaveFileEntry | null;
+  settled: SaveFileEntry | null;
+  /** Increases each time a new save has settled. */
+  revision: number;
+}
+
+/** The game's folder (desktop app), as the shell checks it. */
+export interface GameFolderInfo {
+  path: string | null;
+  name: string | null;
+  /** It is the game's folder, and it is there. */
+  valid: boolean;
+  /** The game's executable's size and time; changes when the game is patched. */
+  stamp: string | null;
+  /** Why it cannot be used, in plain words. */
+  problem: string | null;
+}
+
+/** A map file in the game's bundles that the shell can unpack. */
+export interface GameFileEntry {
+  index: number;
+  /** The game's own path, such as `game\hub_pins\novigrad.w2em`. */
+  path: string;
+  size: number;
+  compression: string;
+}
+
+/** What a scan of the game's bundles found, in counts and game paths. */
+export interface GameFilesScan {
+  stamp: string;
+  bundles: number;
+  entries: number;
+  /** Lowest precedence first. */
+  files: GameFileEntry[];
+  extensions: Record<string, number>;
+  compressions: Record<string, number>;
+  /** Bundles by table of contents layout (`1`, `2` or `unknown`). */
+  layouts: Record<string, number>;
+  duplicates: number;
+  outside: number;
+  unreadable: number;
+}
+
+/**
+ * How reading the game's map places went, or how a save used them, for the
+ * activity log: counts, game world ids and pin types only.
+ */
+export type GameFilesReport =
+  | ({ kind: 'table'; readFailed: number } & Omit<PinTableStats, 'worlds'> & {
+        worlds: Record<string, { pins: number; types: Record<string, number> }>;
+      })
+  | {
+      kind: 'match';
+      saveTags: number;
+      saveTagsFound: number;
+      fits: Record<string, Omit<TableFit, 'kinds'> & { kinds: string }>;
+    };
+
+/** How reading a save went, for the activity log. Never anything from inside the save but these. */
+export interface SaveReport {
+  /** The file name only. */
+  file: string;
+  ok: boolean;
+  version?: string;
+  world?: string;
+  matched?: number;
+  marked?: number;
+  message?: string;
 }
 
 /** How an import ended, for the activity log. Never page data. */
@@ -563,6 +657,29 @@ export interface DesktopBridge {
   activityLog: {
     read(): Promise<RecentLog>;
   };
+  /** Game saves, read-only: the shell reads only where the person chose. */
+  saves: {
+    /** Where a game keeps its saves (under Documents), with the saves there. */
+    defaultFolder(game: string): Promise<SaveFolderInfo>;
+    chooseFolder(game: string): Promise<SaveFolderInfo | null>;
+    chooseFile(game: string): Promise<SaveFileEntry | null>;
+    list(folder: string): Promise<SaveFolderInfo>;
+    read(path: string): Promise<Uint8Array>;
+    screenshot(path: string): Promise<Uint8Array>;
+    watch(path: string): Promise<SaveWatchStatus>;
+    watchStatus(): Promise<SaveWatchStatus>;
+    unwatch(): Promise<void>;
+    report(report: SaveReport): Promise<void>;
+  };
+  /** The game's own files, read-only: only in the folder the person chose. */
+  gameFiles: {
+    folder(game: string): Promise<GameFolderInfo>;
+    chooseFolder(game: string): Promise<GameFolderInfo | null>;
+    forgetFolder(game: string): Promise<void>;
+    scan(game: string): Promise<GameFilesScan>;
+    read(game: string, index: number): Promise<Uint8Array>;
+    report(report: GameFilesReport): Promise<void>;
+  };
   /** Map pack files (`.atlaspack`): one game in one file, for another device. */
   packFiles: {
     /** What can be exported of a pack, and how large each detail is. */
@@ -658,6 +775,26 @@ export function createBridge(invoke: Invoke): DesktopBridge {
     activityLog: {
       read: () => call('activity_log_read'),
     },
+    saves: {
+      defaultFolder: (game) => call('saves_default_folder', { game }),
+      chooseFolder: (game) => call('saves_choose_folder', { game }),
+      chooseFile: (game) => call('saves_choose_file', { game }),
+      list: (folder) => call('saves_list', { folder }),
+      read: (path) => call<unknown>('saves_read', { path }).then(bytesOf),
+      screenshot: (path) => call<unknown>('saves_screenshot', { path }).then(bytesOf),
+      watch: (path) => call('saves_watch', { path }),
+      watchStatus: () => call('saves_watch_status'),
+      unwatch: () => call('saves_unwatch'),
+      report: (report) => call('saves_report', { report }),
+    },
+    gameFiles: {
+      folder: (game) => call('game_folder_get', { game }),
+      chooseFolder: (game) => call('game_folder_choose', { game }),
+      forgetFolder: (game) => call('game_folder_forget', { game }),
+      scan: (game) => call('game_files_scan', { game }),
+      read: (game, index) => call<unknown>('game_files_read', { game, index }).then(bytesOf),
+      report: (report) => call('game_files_report', { report }),
+    },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
       export: (id, detail, progress) =>
@@ -670,6 +807,16 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       details: (id) => call('library_pack_details', { id }),
     },
   };
+}
+
+/** The bytes of a command that answers with raw bytes (an ArrayBuffer; a number array in older shells). */
+function bytesOf(value: unknown): Uint8Array {
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (Array.isArray(value)) return Uint8Array.from(value as number[]);
+  throw new Error('The desktop app sent something that is not a file.');
 }
 
 function detect(): DesktopBridge | null {

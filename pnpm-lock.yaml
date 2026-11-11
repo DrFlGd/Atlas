@@ -84,6 +84,9 @@ importers:
       '@atlas/importer-api':
         specifier: workspace:*
         version: link:../../packages/importer-api
+      '@atlas/saves':
+        specifier: workspace:*
+        version: link:../../packages/saves
       '@atlas/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -173,6 +176,12 @@ importers:
       sharp:
         specifier: ^0.35.5
         version: 0.35.5(@types/node@26.6.6)
+    devDependencies:
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+
+  packages/saves:
     devDependencies:
       tsx:
         specifier: ^4.23.15

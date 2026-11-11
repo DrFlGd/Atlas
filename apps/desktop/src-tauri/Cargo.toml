@@ -1,6 +1,6 @@
 [package]
 name = "atlas-desktop"
-version = "0.3.6"
+version = "0.3.7"
 description = "Atlas desktop shell"
 edition = "2021"
 license = "MIT"
@@ -33,6 +33,11 @@ percent-encoding = "2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1.45", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+# Unpacking the game's map files from its bundles (game files, read-only):
+# zlib (MIT/Apache-2.0), Snappy (BSD-3-Clause) and LZ4 blocks (MIT).
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
+snap = "1.1.1"
+lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-decode", "safe-encode", "checked-decode"] }
 # Map pack files (`.atlaspack`, see src/packfile.rs): ZIP with deflate only,
 # through the flate2 already in the build. No encryption, no other methods.
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }

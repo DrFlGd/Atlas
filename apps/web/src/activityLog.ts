@@ -7,7 +7,7 @@
  * Lines are untrusted text: they are parsed here and only ever shown as text.
  */
 
-export const LOG_AREAS = ['download', 'import', 'library', 'migration', 'app'] as const;
+export const LOG_AREAS = ['download', 'import', 'library', 'saves', 'migration', 'app'] as const;
 export type LogArea = (typeof LOG_AREAS)[number];
 export type LogLevel = 'info' | 'warn' | 'error';
 
@@ -32,7 +32,7 @@ export interface LogEntry {
 }
 
 const LINE =
-  /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) \[([^\]]*)\] (app|download|import|library|migration) (info|warn|error): (.*)$/;
+  /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) \[([^\]]*)\] (app|download|import|library|migration|saves) (info|warn|error): (.*)$/;
 
 export function parseLogLine(line: string): LogEntry {
   const match = LINE.exec(line);

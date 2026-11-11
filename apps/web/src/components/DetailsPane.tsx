@@ -114,6 +114,11 @@ function LocationDetails({ locationId }: { locationId: string }) {
       ) : (
         <p className="muted small">This category is not tracked.</p>
       )}
+      {found?.source === 'save' ? (
+        <p className="muted small" data-testid="found-from-save">
+          Marked found from a game save.
+        </p>
+      ) : null}
 
       <dl className="facts">
         <dt>Region</dt>
