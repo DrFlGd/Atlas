@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { ActivityLogDialog } from './components/ActivityLogDialog';
 import { AddMapDialog } from './components/AddMapDialog';
 import { ChecklistsPane } from './components/ChecklistsPane';
@@ -16,8 +16,14 @@ import { downloadsOffered } from './features';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
+import { initSaves } from './state/saves';
 import { useAtlas, type LeftTab, type PaneName } from './state/store';
 import { formatViewHash, parseViewHash } from './viewHash';
+
+// Opened rarely, so loaded when first opened.
+const SaveDialog = lazy(() =>
+  import('./components/SaveDialog').then((module) => ({ default: module.SaveDialog })),
+);
 
 /** Loads the configuration and the first pack, then shows the three-pane layout. */
 export function App() {
@@ -25,7 +31,9 @@ export function App() {
   const game = useAtlas((s) => s.game);
 
   useEffect(() => {
+    const stopSaves = initSaves();
     void boot(parseViewHash(window.location.hash));
+    return stopSaves;
   }, []);
 
   useViewHashSync();
@@ -58,6 +66,7 @@ function Shell() {
   const showChecklists = hasChecklists && leftTab === 'checklists';
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const persistent = useAtlas((s) => s.persistent);
+  const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
   const pageViews = useAtlas(downloadsOffered);
   return (
     <div
@@ -108,6 +117,11 @@ function Shell() {
       </SidePane>
       <Toast />
       <ProfileDialog />
+      {saveDialogOpen ? (
+        <Suspense fallback={null}>
+          <SaveDialog />
+        </Suspense>
+      ) : null}
       <MapsDialog />
       <AddMapDialog />
       <ActivityLogDialog />

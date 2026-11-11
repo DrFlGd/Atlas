@@ -57,6 +57,7 @@ const UI_PATHS = {
   upload: 'M10 14V4M6 8l4-4l4 4M4 16h12',
   folder: 'M2.5 5h5l1.5 2h8.5v9h-15z',
   checklist: 'M9 5.5h8M9 10h8M9 14.5h8M2.8 5.5l1.4 1.4l2.6-2.6M2.8 10l1.4 1.4l2.6-2.6M3 14.5h3',
+  save: 'M4 3.5h9.5L16.5 6.5v10h-13zM7 3.5v4h6v-4M6.5 16.5v-5h7v5',
   mapPlus: 'M2.5 5l5-2l5 2l5-2v7M2.5 5v12l5-2l4 1.6M7.5 3v12M12.5 5v6M15.5 12.5v5M13 15h5',
 } as const;
 

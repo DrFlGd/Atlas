@@ -22,6 +22,7 @@ const AREA_LABELS: Record<LogArea | 'all', string> = {
   download: 'Downloads',
   import: 'Adding maps',
   library: 'Maps library',
+  saves: 'Game saves',
   migration: 'Moving from 0.2.0',
   app: 'App',
 };

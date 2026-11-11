@@ -38,4 +38,12 @@ export const SETTINGS = {
   profile: (gameId: string) => `profile:${gameId}`,
   filters: (gameId: string) => `filters:${gameId}`,
   place: (gameId: string) => `place:${gameId}`,
+  /** The game save linked to a profile (see `state/saves.ts`). */
+  saveLink: (profileId: string) => `saveLink:${profileId}`,
+  /** Which map shows which game world, as the person chose. */
+  saveWorlds: (gameId: string) => `saveWorlds:${gameId}`,
+  /** World-to-map transforms made from saves, by map id. */
+  saveCalibration: (gameId: string) => `saveCalibration:${gameId}`,
+  /** Spots the person marked on a map that is not lined up yet, by map id. */
+  savePoints: (gameId: string) => `savePoints:${gameId}`,
 } as const;

@@ -2342,3 +2342,117 @@ label.tree-row:hover,
   font-weight: 600;
   color: var(--atlas-muted);
 }
+
+/* ------------------------------------------------------------------ */
+/* Game save */
+
+.save-button-linked {
+  color: var(--atlas-accent);
+}
+
+.save-choice {
+  margin: 8px 0 10px;
+}
+
+.save-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.save-linked {
+  margin: 4px 0 0;
+}
+
+.save-facts {
+  margin-top: 8px;
+}
+
+.save-follow {
+  margin: 10px 0 4px;
+}
+
+.save-error {
+  color: var(--atlas-danger);
+}
+
+.save-screenshot {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  margin: 8px 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+.save-worlds,
+.save-counts,
+.save-unmatched,
+.save-notes {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.save-world {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.save-world > .save-lined-up,
+.save-world > .save-buttons {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.save-counts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.save-unmatched li,
+.save-notes li {
+  padding: 2px 0;
+}
+
+.show-me-button {
+  position: absolute;
+  z-index: 1000;
+  top: 82px;
+  left: 10px;
+  border-radius: 999px;
+  background: var(--atlas-surface-translucent);
+  box-shadow: var(--atlas-shadow);
+}
+
+.placing-notice {
+  position: absolute;
+  z-index: 1000;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  width: max-content;
+  max-width: calc(100% - 120px);
+  padding: 6px 12px;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+  border: 1px solid var(--atlas-accent);
+  box-shadow: var(--atlas-shadow);
+  font-size: 13px;
+}
+
+.map-area:has(.placing-notice) .map-pane {
+  cursor: crosshair;
+}

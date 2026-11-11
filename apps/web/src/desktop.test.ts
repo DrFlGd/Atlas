@@ -58,6 +58,13 @@ describe('desktop bridge', () => {
     await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
     await bridge.activityLog.read();
     await bridge.library.reveal({ kind: 'log-folder' });
+    await bridge.saves.defaultFolder('witcher3');
+    await bridge.saves.chooseFolder('witcher3');
+    await bridge.saves.list('C:/Saves');
+    await bridge.saves.watch('C:/Saves');
+    await bridge.saves.watchStatus();
+    await bridge.saves.unwatch();
+    await bridge.saves.report({ file: 'QuickSave.sav', ok: true, matched: 2, marked: 1 });
     expect(calls).toEqual([
       ['tiles_start', { packId: 'demo', detail: 'standard' }],
       ['tiles_pause', { packId: 'demo' }],
@@ -99,7 +106,22 @@ describe('desktop bridge', () => {
       ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],
       ['activity_log_read', undefined],
       ['library_reveal', { target: { kind: 'log-folder' } }],
+      ['saves_default_folder', { game: 'witcher3' }],
+      ['saves_choose_folder', { game: 'witcher3' }],
+      ['saves_list', { folder: 'C:/Saves' }],
+      ['saves_watch', { path: 'C:/Saves' }],
+      ['saves_watch_status', undefined],
+      ['saves_unwatch', undefined],
+      ['saves_report', { report: { file: 'QuickSave.sav', ok: true, matched: 2, marked: 1 } }],
     ]);
+  });
+
+  it('reads save files as bytes', async () => {
+    const answers: unknown[] = [Uint8Array.of(1, 2).buffer, [3, 4], 'text'];
+    const bridge = createBridge(() => Promise.resolve(answers.shift()));
+    expect(await bridge.saves.read('a.sav')).toEqual(Uint8Array.of(1, 2));
+    expect(await bridge.saves.screenshot('a.sav')).toEqual(Uint8Array.of(3, 4));
+    await expect(bridge.saves.read('a.sav')).rejects.toThrow('not a file');
   });
 
   it('sends only links to other web sites outside', () => {

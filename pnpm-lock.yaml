@@ -59,6 +59,9 @@ importers:
       '@atlas/importer-api':
         specifier: workspace:*
         version: link:../../packages/importer-api
+      '@atlas/saves':
+        specifier: workspace:*
+        version: link:../../packages/saves
       '@atlas/schema':
         specifier: workspace:*
         version: link:../../packages/schema

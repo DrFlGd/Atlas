@@ -118,6 +118,46 @@ export interface RecentLog {
   truncated: boolean;
 }
 
+/** A game save on disk, as the shell lists it. */
+export interface SaveFileEntry {
+  path: string;
+  name: string;
+  /** Last change, in milliseconds since the epoch. */
+  modified: number;
+  size: number;
+  /** The game keeps a screenshot of the save next to it. */
+  screenshot: boolean;
+}
+
+export interface SaveFolderInfo {
+  path: string;
+  name: string;
+  exists: boolean;
+  /** Newest first. */
+  saves: SaveFileEntry[];
+}
+
+/** What "Follow new saves" sees: the newest save, and the last one that stopped changing. */
+export interface SaveWatchStatus {
+  path: string | null;
+  newest: SaveFileEntry | null;
+  settled: SaveFileEntry | null;
+  /** Increases each time a new save has settled. */
+  revision: number;
+}
+
+/** How reading a save went, for the activity log. Never anything from inside the save but these. */
+export interface SaveReport {
+  /** The file name only. */
+  file: string;
+  ok: boolean;
+  version?: string;
+  world?: string;
+  matched?: number;
+  marked?: number;
+  message?: string;
+}
+
 /** How an import ended, for the activity log. Never page data. */
 export interface ImportReport {
   importerId: string | null;
@@ -371,6 +411,20 @@ export interface DesktopBridge {
   activityLog: {
     read(): Promise<RecentLog>;
   };
+  /** Game saves, read-only: the shell reads only where the person chose. */
+  saves: {
+    /** Where a game keeps its saves (under Documents), with the saves there. */
+    defaultFolder(game: string): Promise<SaveFolderInfo>;
+    chooseFolder(game: string): Promise<SaveFolderInfo | null>;
+    chooseFile(game: string): Promise<SaveFileEntry | null>;
+    list(folder: string): Promise<SaveFolderInfo>;
+    read(path: string): Promise<Uint8Array>;
+    screenshot(path: string): Promise<Uint8Array>;
+    watch(path: string): Promise<SaveWatchStatus>;
+    watchStatus(): Promise<SaveWatchStatus>;
+    unwatch(): Promise<void>;
+    report(report: SaveReport): Promise<void>;
+  };
 }
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -446,7 +500,29 @@ export function createBridge(invoke: Invoke): DesktopBridge {
     activityLog: {
       read: () => call('activity_log_read'),
     },
+    saves: {
+      defaultFolder: (game) => call('saves_default_folder', { game }),
+      chooseFolder: (game) => call('saves_choose_folder', { game }),
+      chooseFile: (game) => call('saves_choose_file', { game }),
+      list: (folder) => call('saves_list', { folder }),
+      read: (path) => call<unknown>('saves_read', { path }).then(bytesOf),
+      screenshot: (path) => call<unknown>('saves_screenshot', { path }).then(bytesOf),
+      watch: (path) => call('saves_watch', { path }),
+      watchStatus: () => call('saves_watch_status'),
+      unwatch: () => call('saves_unwatch'),
+      report: (report) => call('saves_report', { report }),
+    },
   };
+}
+
+/** The bytes of a command that answers with raw bytes (an ArrayBuffer; a number array in older shells). */
+function bytesOf(value: unknown): Uint8Array {
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (Array.isArray(value)) return Uint8Array.from(value as number[]);
+  throw new Error('The desktop app sent something that is not a file.');
 }
 
 function detect(): DesktopBridge | null {
