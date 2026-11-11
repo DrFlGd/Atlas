@@ -513,6 +513,7 @@ test('downloads map images from the notice, with pause, errors and progress', as
 });
 
 test('shows map images saved while browsing a map page without a restart', async ({ page }) => {
+  test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 saves map images');
   const errors = collectErrors(page);
   // Which tiles are on disk: none, then every second one, then all.
   let saved: 'none' | 'some' | 'all' = 'none';
@@ -523,7 +524,7 @@ test('shows map images saved while browsing a map page without a restart', async
   await page.addInitScript(() => {
     (window as unknown as { __listRemote: boolean }).__listRemote = true;
   });
-  await page.addInitScript(installFakeShell);
+  await page.addInitScript(installFakeShell, true);
   await servePack(
     page,
     () => null,
