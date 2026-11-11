@@ -11,6 +11,7 @@ import type {
 } from '@atlas/core';
 import type { MapViewState, MarkerHover, TileStatus } from '@atlas/core/mapview';
 import { create } from 'zustand';
+import type { LogArea } from '../activityLog';
 import type { RuntimeConfig } from '../config';
 import type {
   DesktopInfo,
@@ -121,6 +122,8 @@ export interface AtlasState {
   library: Listing | null;
   mapsDialogOpen: boolean;
   addMapOpen: boolean;
+  /** The activity log dialog, with the area it opened on; null when closed. */
+  logViewer: { area: LogArea | 'all' } | null;
 }
 
 export const NO_DOWNLOADS: DownloadState = {
@@ -171,4 +174,5 @@ export const useAtlas = create<AtlasState>()(() => ({
   library: null,
   mapsDialogOpen: false,
   addMapOpen: false,
+  logViewer: null,
 }));

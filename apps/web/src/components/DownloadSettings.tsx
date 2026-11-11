@@ -74,8 +74,9 @@ function SettingsForm({
       }}
     >
       <p className="muted small">
-        These settings are shared by every Atlas app on this computer. Faster settings put more load
-        on the image server; there is no unlimited setting.
+        These settings are shared by every Atlas app on this computer and cover everything it
+        downloads: only one download runs at a time, in any Atlas app, and the others wait their
+        turn. Faster settings put more load on the image server; there is no unlimited setting.
       </p>
       <div className="settings-grid">
         <label htmlFor={ids.parallel}>Parallel downloads</label>

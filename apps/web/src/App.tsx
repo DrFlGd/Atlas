@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ActivityLogDialog } from './components/ActivityLogDialog';
 import { AddMapDialog } from './components/AddMapDialog';
 import { DetailsPane } from './components/DetailsPane';
 import { FilterPane } from './components/FilterPane';
@@ -71,6 +72,7 @@ function Shell() {
       <ProfileDialog />
       <MapsDialog />
       <AddMapDialog />
+      <ActivityLogDialog />
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import { isDownloadable } from '@atlas/core';
 import { useId, useState } from 'react';
-import type { Detail, DetailOption, DownloadSnapshot } from '../desktop';
+import type { Detail, DetailOption, DownloadPlan, DownloadSnapshot, StopDetail } from '../desktop';
 import { numberFormat } from '../state/derived';
 import {
   cancelDownload,
+  isActive,
   pauseDownload,
   resumeDownload,
   setDownloadPanelOpen,
@@ -13,6 +14,7 @@ import { useAtlas } from '../state/store';
 import { downloadPercent, formatBytes, roughDuration } from './downloadFormat';
 import { DownloadSettingsSection } from './DownloadSettings';
 import { UiIcon } from './icons';
+import { StopDetails, ViewLogButton } from './StopDetails';
 
 const DETAILS: Record<Detail, { label: string; description: string }> = {
   overview: {
@@ -29,8 +31,17 @@ const DETAILS: Record<Detail, { label: string; description: string }> = {
   },
 };
 
-const active = (job: DownloadSnapshot | null) =>
-  job?.state === 'running' || job?.state === 'paused';
+const active = isActive;
+
+/** What a waiting download waits for, in words. */
+function waitingText(job: DownloadSnapshot): string {
+  if (job.state === 'waiting') {
+    return 'Another Atlas app on this computer is downloading map images. This download starts when that one has finished; Atlas checks every few seconds.';
+  }
+  return `Waiting for ${job.waitingFor ?? 'another download'} to finish${
+    job.queuePosition ? ` (number ${job.queuePosition} in line)` : ''
+  }. It starts by itself; only one download runs at a time.`;
+}
 
 /** The host the pack's map images come from, shown so the user knows where Atlas connects. */
 function useSourceHosts(): string[] {
@@ -61,7 +72,9 @@ export function MapImagesButton() {
   if (tileStatus?.status === 'missing' && !active(job)) return null;
   const label =
     job && active(job)
-      ? `Map images ${downloadPercent(job)}%${job.state === 'paused' ? ' (paused)' : ''}`
+      ? job.state === 'queued' || job.state === 'waiting'
+        ? 'Map images (waiting)'
+        : `Map images ${downloadPercent(job)}%${job.state === 'paused' ? ' (paused)' : ''}`
       : 'Map images';
   return (
     <button
@@ -93,6 +106,8 @@ export function DownloadPanel() {
   const heading = !showJob
     ? 'Download map images'
     : {
+        queued: 'Download waiting its turn',
+        waiting: 'Download waiting its turn',
         running: 'Downloading map images',
         paused: 'Download paused',
         stopped: 'Download stopped',
@@ -127,6 +142,7 @@ export function DownloadPanel() {
           {error}
         </p>
       ) : null}
+      {plan ? <QueueList plan={plan} current={downloads.packFolder} /> : null}
       {showJob ? (
         <JobView
           job={job}
@@ -172,7 +188,7 @@ function ChooseView({
   title: string;
   options: DetailOption[];
   recommended: Detail;
-  unfinished: { detail: Detail; reason: string | null } | null;
+  unfinished: DownloadPlan['unfinished'];
   busyWith: string | null;
   pending: boolean;
   onStart: (detail: Detail) => void;
@@ -195,11 +211,12 @@ function ChooseView({
             <strong>A download was not finished.</strong>{' '}
             {unfinished.reason ?? 'It stopped when Atlas was closed.'}
           </p>
+          {unfinished.stopDetail ? <StopDetails detail={unfinished.stopDetail} /> : null}
           <div className="row-actions wrap">
             <button
               type="button"
               className="button button-primary"
-              disabled={pending || busyWith !== null}
+              disabled={pending}
               onClick={() => {
                 onStart(unfinished.detail);
               }}
@@ -256,8 +273,8 @@ function ChooseView({
       </fieldset>
       {busyWith ? (
         <p className="download-note" role="status">
-          Map images for another game are downloading. Switch to it to pause or cancel that download
-          first.
+          Map images for {busyWith} are downloading. A download started here waits its turn and
+          starts by itself when that one is done.
         </p>
       ) : null}
       <div className="row-actions">
@@ -265,12 +282,12 @@ function ChooseView({
           type="button"
           className="button button-primary"
           data-testid="start-download"
-          disabled={pending || busyWith !== null || !option || option.remaining === 0}
+          disabled={pending || !option || option.remaining === 0}
           onClick={() => {
             onStart(chosen);
           }}
         >
-          <UiIcon name="download" size={16} /> Start download
+          <UiIcon name="download" size={16} /> {busyWith ? 'Download after it' : 'Start download'}
         </button>
         <button
           type="button"
@@ -306,6 +323,12 @@ function JobView({
       {job.state === 'stopped' && job.reason ? (
         <p className="download-error" role="alert" data-testid="download-reason">
           {job.reason}
+        </p>
+      ) : null}
+      {job.state === 'stopped' ? <StoppedDetail detail={job.stopDetail} /> : null}
+      {job.state === 'queued' || job.state === 'waiting' ? (
+        <p className="download-note" role="status" data-testid="download-waiting">
+          {waitingText(job)}
         </p>
       ) : null}
       <div className="download-overall">
@@ -410,7 +433,7 @@ function JobView({
               Try again
             </button>
           ) : null}
-          {running || job.state === 'paused' ? (
+          {active(job) ? (
             <button
               type="button"
               className="button"
@@ -441,6 +464,48 @@ function JobView({
         </div>
       )}
       {active(job) ? <DownloadSettingsSection running /> : null}
+    </div>
+  );
+}
+
+function StoppedDetail({ detail }: { detail: StopDetail | null }) {
+  if (detail) return <StopDetails detail={detail} />;
+  return (
+    <p className="muted small">
+      The activity log says more: <ViewLogButton />
+    </p>
+  );
+}
+
+const QUEUE_STATE: Record<DownloadSnapshot['state'], string> = {
+  running: 'downloading',
+  waiting: 'waiting for another Atlas app',
+  queued: 'waiting its turn',
+  paused: 'paused',
+  stopped: 'stopped',
+  cancelled: 'cancelled',
+  done: 'done',
+};
+
+/** The downloads of this app that are not over, in the order they run. */
+function QueueList({ plan, current }: { plan: DownloadPlan; current: string | null }) {
+  const others = plan.queue.filter((entry) => entry.packId !== current);
+  if (others.length === 0) return null;
+  return (
+    <div className="download-queue" data-testid="download-queue">
+      <p className="muted small">One download runs at a time. In line:</p>
+      <ol>
+        {plan.queue.map((entry) => (
+          <li
+            key={entry.packId}
+            data-pack={entry.packId}
+            aria-current={entry.packId === current ? 'true' : undefined}
+          >
+            <span className="download-map-name">{entry.title}</span>{' '}
+            <span className="muted small">{QUEUE_STATE[entry.state]}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

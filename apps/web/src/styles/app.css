@@ -1676,3 +1676,159 @@ label.tree-row:hover,
 .cap-input .text-input {
   flex: 0 0 90px;
 }
+
+/* Stop details, download queue and the activity log (desktop app) */
+
+.stop-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stop-detail-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.stop-detail-list dt {
+  color: var(--atlas-muted);
+}
+
+.stop-detail-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.stop-detail-url {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+}
+
+.stop-detail-answer summary {
+  cursor: pointer;
+  color: var(--atlas-muted);
+}
+
+.stop-detail-headers,
+.stop-detail-body {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stop-detail-headers {
+  list-style: none;
+}
+
+.download-queue p {
+  margin: 0;
+}
+
+.download-queue ol {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.download-queue li {
+  margin: 2px 0;
+}
+
+.download-queue li[aria-current='true'] .download-map-name {
+  font-weight: 600;
+}
+
+.log-dialog {
+  width: min(980px, calc(100% - 24px));
+}
+
+.log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: flex-end;
+}
+
+.log-actions {
+  margin-left: auto;
+}
+
+.log-list {
+  max-height: min(52vh, 560px);
+  margin: 8px 0 0;
+  padding: 6px 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.log-list:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 0 10px;
+  padding: 1px 10px;
+}
+
+.log-row[data-level='warn'] .log-level {
+  color: var(--atlas-focus);
+}
+
+.log-row[data-level='error'] {
+  background: var(--atlas-danger-soft);
+}
+
+.log-row[data-level='error'] .log-level {
+  color: var(--atlas-danger);
+}
+
+.log-time,
+.log-tags {
+  color: var(--atlas-muted);
+  white-space: nowrap;
+}
+
+.log-level {
+  font-weight: 600;
+}
+
+.log-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log-message:only-child,
+.log-row.muted {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 899px) {
+  .log-actions {
+    margin-left: 0;
+  }
+
+  .log-row {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
+  .log-message {
+    grid-column: 1 / -1;
+  }
+}

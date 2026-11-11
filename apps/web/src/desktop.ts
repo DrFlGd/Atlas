@@ -20,7 +20,41 @@ export interface DetailOption {
   installed: boolean;
 }
 
-export type JobState = 'running' | 'paused' | 'stopped' | 'cancelled' | 'done';
+/**
+ * `queued`: waiting for another download of this app; `waiting`: for
+ * another Atlas app on this computer to finish downloading.
+ */
+export type JobState =
+  'queued' | 'waiting' | 'running' | 'paused' | 'stopped' | 'cancelled' | 'done';
+
+/** Where a map image sits in its level. Columns and rows count from 0. */
+export interface TilePlace {
+  z: number;
+  sourceZ: number;
+  x: number;
+  y: number;
+  columns: number;
+  rows: number;
+}
+
+/** The answer that stopped a download (a refusal or a web page), in full. */
+export interface StopDetail {
+  kind: 'refused' | 'web-page';
+  url: string;
+  status: number;
+  /** The layer and map: "Surface (Island)". */
+  layer: string | null;
+  place: TilePlace | null;
+  attempt: number;
+  /** Images this download had saved before it. */
+  savedBefore: number;
+  savedFromHost: number;
+  host: string;
+  headers: [string, string][];
+  /** The start of a text body. */
+  body: string | null;
+  at: string;
+}
 
 export interface MapProgress {
   mapId: string;
@@ -32,10 +66,17 @@ export interface MapProgress {
 /** The state of a download job. */
 export interface DownloadSnapshot {
   packId: string;
+  /** The pack's title. */
+  title: string;
   detail: Detail;
   state: JobState;
   /** Why the job stopped, or a note on a finished one. */
   reason: string | null;
+  stopDetail: StopDetail | null;
+  /** Queued: its place in line, from 1. */
+  queuePosition: number | null;
+  /** Queued or waiting: what it waits for, in words. */
+  waitingFor: string | null;
   maps: MapProgress[];
   done: number;
   total: number;
@@ -55,10 +96,31 @@ export interface DownloadPlan {
   options: DetailOption[];
   recommended: Detail;
   /** A job left unfinished, for example when the app was closed. */
-  unfinished: { detail: Detail; reason: string | null } | null;
+  unfinished: { detail: Detail; reason: string | null; stopDetail: StopDetail | null } | null;
   job: DownloadSnapshot | null;
-  /** Another pack's job that is running. */
+  /** The title of another pack that is downloading now; a new download waits for it. */
   busyWith: string | null;
+  /** Downloads of this app that are not over, in queue order. */
+  queue: { packId: string; title: string; state: JobState }[];
+}
+
+/** The most recent lines of the activity log, newest last. */
+export interface RecentLog {
+  folder: string;
+  file: string;
+  lines: string[];
+  /** Older lines exist that were not loaded. */
+  truncated: boolean;
+}
+
+/** How an import ended, for the activity log. Never page data. */
+export interface ImportReport {
+  importerId: string | null;
+  outcome: 'added' | 'updated' | 'rebuilt' | 'failed' | 'cancelled' | 'timed-out';
+  packId?: string;
+  mapId?: string;
+  message?: string;
+  counts?: { mapLocations: number; maps: number; locations: number; categories: number };
 }
 
 export interface DesktopInfo {
@@ -170,7 +232,10 @@ export interface DownloadSettingsInfo {
 }
 
 export type RevealTarget =
-  { kind: 'maps-folder' } | { kind: 'pack'; id: string } | { kind: 'location'; path: string };
+  | { kind: 'maps-folder' }
+  | { kind: 'pack'; id: string }
+  | { kind: 'location'; path: string }
+  | { kind: 'log-folder' };
 
 export interface DesktopBridge {
   info(): Promise<DesktopInfo>;
@@ -207,9 +272,18 @@ export interface DesktopBridge {
     saveImport(request: SaveImportRequest): Promise<Listing>;
   };
   importWindow: {
-    open(url: string, reader: string): Promise<void>;
+    open(
+      url: string,
+      reader: string,
+      importer?: { id: string; waitSeconds: number },
+    ): Promise<void>;
     poll(): Promise<PollResult>;
     close(): Promise<void>;
+    /** Records how an import ended in the activity log. */
+    report(report: ImportReport): Promise<void>;
+  };
+  activityLog: {
+    read(): Promise<RecentLog>;
   };
 }
 
@@ -250,9 +324,19 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       saveImport: (request) => call('library_save_import', { request }),
     },
     importWindow: {
-      open: (url, reader) => call('import_open', { url, reader }),
+      open: (url, reader, importer) =>
+        call(
+          'import_open',
+          importer
+            ? { url, reader, importerId: importer.id, waitSeconds: importer.waitSeconds }
+            : { url, reader },
+        ),
       poll: () => call('import_poll'),
       close: () => call('import_close'),
+      report: (report) => call('import_report', { report }),
+    },
+    activityLog: {
+      read: () => call('activity_log_read'),
     },
   };
 }

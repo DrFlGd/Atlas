@@ -14,6 +14,7 @@ import {
   setMapsDialogOpen,
 } from '../state/library';
 import { useAtlas } from '../state/store';
+import { ActivityLogSection } from './ActivityLogSection';
 import { UiIcon } from './icons';
 
 /**
@@ -65,6 +66,7 @@ export function MapsDialog() {
           <MapsFolder />
           <PackList />
           <Locations />
+          <ActivityLogSection />
         </div>
       ) : null}
     </dialog>
