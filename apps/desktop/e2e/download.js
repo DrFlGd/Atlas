@@ -37,7 +37,7 @@ const port = Number(process.env.ATLAS_E2E_TILE_PORT ?? DEFAULT_PORT);
 const version = /** @type {{ version: string }} */ (
   JSON.parse(await readFile(here('../package.json'), 'utf8'))
 ).version;
-const userAgent = `Atlas/${version} (offline map viewer)`;
+const userAgent = `Atlas/${version}`;
 
 const [island, cave] = MAPS;
 if (!island || !cave) throw new Error('remotePack.js defines two maps');

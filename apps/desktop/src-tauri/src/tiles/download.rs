@@ -51,7 +51,7 @@ use super::{downscale::looks_like_image, store::TileStore};
 use crate::activity::{self, ActivityLog, Area};
 
 /// The User-Agent of every tile request.
-pub const USER_AGENT: &str = concat!("Atlas/", env!("CARGO_PKG_VERSION"), " (offline map viewer)");
+pub const USER_AGENT: &str = concat!("Atlas/", env!("CARGO_PKG_VERSION"));
 
 /// Response headers recorded with a refusal or a web page, when present.
 pub const RECORDED_HEADERS: &[&str] = &[
@@ -1333,13 +1333,8 @@ pub mod tests {
         assert_eq!(settings.concurrency, 2);
         assert_eq!(settings.delay, Duration::from_millis(250));
         assert_eq!(settings.max_consecutive_failures, 10);
-        assert!(USER_AGENT.starts_with("Atlas/"));
-        assert!(USER_AGENT.ends_with(" (offline map viewer)"));
         assert!(!USER_AGENT.contains("Mozilla"));
-        assert_eq!(
-            USER_AGENT,
-            format!("Atlas/{} (offline map viewer)", env!("CARGO_PKG_VERSION"))
-        );
+        assert_eq!(USER_AGENT, format!("Atlas/{}", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
