@@ -266,6 +266,13 @@ jobs:
           grep -q "^native-code: 'arm64-v8a'" badging.txt
           echo "The APK is dev.atlas.android, \"Atlas\", for Android 10 (API 29) and later on arm64-v8a."
 
+      # The signing of android-release.yml, with a key made for this run
+      # only (no secrets here), and the checks again on the signed APK.
+      - name: Sign with a throwaway key and check
+        run: |
+          bash apps/desktop/scripts/sign-apk.sh "$APK" signed.apk
+          node apps/desktop/scripts/check-apk.js signed.apk --packs demo
+
       - name: Upload the unsigned APK
         uses: actions/upload-artifact@v7
         with:

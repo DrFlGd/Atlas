@@ -1,0 +1,218 @@
+# Builds the Atlas Android app (a viewer with the demo world, no importers
+# and no map image downloads) for 64-bit ARM phones, signs it, checks it,
+# and attaches it to the release android-v<version> of this repository: a
+# draft by default, which only people with write access to the repository
+# can see.
+#
+# Run it from the Actions tab ("Android release", "Run workflow") with the
+# version in apps/desktop/package.json. Its tags start with "android-v",
+# which release.yml (tags "v*") does not take.
+#
+# Signing: with the repository secrets ANDROID_KEY_BASE64 (the keystore,
+# base64), ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD (of the keystore and
+# the key) the APK is signed with that key, so each release installs over
+# the last. Without them it is signed with a key made for this run only, and
+# the release notes say to uninstall the old app first. No key is ever
+# committed to this repository.
+
+name: Android release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example 0.3.4 (the tag is android-v<version>); must match apps/desktop/package.json
+        required: true
+        type: string
+      draft:
+        description: Keep the release a draft (only people with write access see it)
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Work out the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::\"$version\" is not a version like 0.3.4"
+            exit 1
+          fi
+          app_version="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$version" != "$app_version" ]; then
+            echo "::error::The app is version $app_version (apps/desktop/package.json), not $version"
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag=android-v$version"
+            echo "asset=Atlas-$version-android.apk"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          key: android
+
+      # The runner comes with the Android SDK (ANDROID_HOME) and NDKs.
+      - name: Use the runner's Android SDK and NDK
+        run: |
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          echo "Android SDK: $ANDROID_HOME, build tools: $build_tools"
+          echo "Android NDK: $ANDROID_NDK_LATEST_HOME"
+          {
+            echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME"
+            echo "BUILD_TOOLS=$build_tools"
+          } >> "$GITHUB_ENV"
+
+      - run: pnpm install --frozen-lockfile
+
+      # The demo pack only; no importers, no downloads.
+      - name: Build the Android app
+        env:
+          ATLAS_BUNDLE_PACKS: demo
+          ATLAS_BUNDLE_IMPORTERS: ''
+          ATLAS_ENABLE_DOWNLOADS: '0'
+        run: pnpm android:build --target aarch64
+
+      - name: Sign the APK
+        id: sign
+        env:
+          ASSET: ${{ steps.version.outputs.asset }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          shopt -s nullglob
+          apks=(apps/desktop/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::Expected one release APK, found ${#apks[@]}: ${apks[*]}"
+            exit 1
+          fi
+          mkdir -p release
+          bash apps/desktop/scripts/sign-apk.sh "${apks[0]}" "release/$ASSET"
+          ls -l release
+
+      - name: Check the signed APK
+        env:
+          ASSET: ${{ steps.version.outputs.asset }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          apk="release/$ASSET"
+
+          # The app: id, name, version, Android 10 and later, 64-bit ARM.
+          "${BUILD_TOOLS}aapt2" dump badging "$apk" | tee badging.txt
+          grep -q "^package: name='dev.atlas.android'.* versionName='$VERSION'" badging.txt
+          grep -Eq "^(sdkVersion|minSdkVersion):'29'" badging.txt
+          grep -q "^application-label:'Atlas'" badging.txt
+          grep -q "^native-code: 'arm64-v8a'" badging.txt
+
+          # The native library holds no download code.
+          mkdir -p check
+          unzip -p "$apk" lib/arm64-v8a/libatlas_desktop_lib.so > check/libatlas_desktop_lib.so
+          ATLAS_ENABLE_DOWNLOADS=0 node apps/desktop/scripts/check-binary.js check/libatlas_desktop_lib.so
+
+          # The demo pack only, no importers, and no text of the private
+          # importer's site in any file of the APK or of its web build.
+          node apps/desktop/scripts/check-apk.js "$apk" --packs demo --forbid mapgenie
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ steps.version.outputs.asset }}
+          KEY: ${{ steps.sign.outputs.key }}
+          CERTIFICATE: ${{ steps.sign.outputs.certificate }}
+        run: |
+          commit="$(git rev-parse --short HEAD)"
+          if [ "$KEY" = throwaway ]; then
+            signing="This APK is signed with a key made for this build only. **If Atlas for Android is already on the phone, uninstall it first** (this deletes its found marks): Android does not install an app over one signed with another key."
+          else
+            signing="Every release is signed with the same key, so this one installs over an earlier one and keeps your found marks. Uninstalling the app deletes them."
+          fi
+          # No backticks below: this heredoc expands variables.
+          cat > release/notes.md <<EOF
+          Atlas $VERSION for Android phones: the Atlas map viewer with the made-up demo world. It has no game maps, cannot download map images and cannot add maps. A prototype.
+
+          It needs Android 10 or later on a 64-bit phone.
+
+          ## How to install
+
+          1. On the phone, open this release page in Chrome. While the release is a draft, sign in to github.com first with an account that can see it.
+          2. Under **Assets**, tap **$ASSET**. If Chrome warns that the file might be harmful, tap **Download anyway**.
+          3. When the download finishes, tap **Open**. The first time, Android asks whether Chrome may install apps: tap **Settings**, turn on **Allow from this source** (the setting is called "Install unknown apps"), then go back.
+          4. Tap **Install**. If Google Play Protect warns about an unknown app, tap **More details**, then **Install anyway**.
+          5. Open **Atlas** from the app drawer.
+
+          ## Updating
+
+          $signing
+
+          ## What works in this version
+
+          The demo world's map with its markers, filters, search, checklists, profiles, and marking places found. Found marks are saved on the phone.
+
+          Not in this version: the Maps button and map folders, exporting and importing progress files, adding maps and downloading map images.
+
+          ---
+
+          Built from Atlas $commit. Signing certificate SHA-256: $CERTIFICATE ($KEY key).
+          EOF
+          cat release/notes.md
+
+      # --latest=false keeps the desktop release as the repository's latest.
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ steps.version.outputs.asset }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG exists: replacing its APK and notes."
+            gh release upload "$TAG" "release/$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release/notes.md --draft="$DRAFT"
+          else
+            gh release create "$TAG" "release/$ASSET" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Atlas for Android $VERSION" \
+              --notes-file release/notes.md \
+              --draft="$DRAFT" \
+              --latest=false
+          fi
