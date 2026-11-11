@@ -10,9 +10,10 @@
  * running and responding a few seconds later. It then saves a picture of the
  * desktop to `apps/desktop/test-results/desktop-windows.png`, for a person to
  * look at. Before that it checks that the binary holds the code that
- * downloads map images exactly when the build was meant to
- * (`ATLAS_ENABLE_DOWNLOADS`, as for the build): a viewer build, the
- * default, holds none of it, so it offers no download.
+ * downloads map images exactly when the build was meant to (as
+ * `pnpm desktop:build` recorded, or as `ATLAS_ENABLE_DOWNLOADS` says when
+ * set): a viewer build, the default, holds none of it, so it offers no
+ * download.
  *
  * It does not look inside the page. The WebDriver route used on Linux needs
  * an Edge driver matching the installed WebView2 exactly, and both that
@@ -24,8 +25,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { downloadsEnabled } from '../scripts/build.js';
-import { checkBinary } from '../scripts/check-binary.js';
+import { checkBinary, expectDownloads } from '../scripts/check-binary.js';
 import { appPath, check, here, resultsDir } from './webdriver.js';
 
 if (process.platform !== 'win32') {
@@ -33,7 +33,7 @@ if (process.platform !== 'win32') {
   process.exit(1);
 }
 
-const downloads = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
+const downloads = await expectDownloads();
 const problem = await checkBinary(appPath, downloads);
 check(
   problem === null,

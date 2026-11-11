@@ -10,11 +10,12 @@
  * a pack folder through the native folder picker.
  *
  * It also checks that the app has map image downloads exactly when it was
- * built with them (`ATLAS_ENABLE_DOWNLOADS`, which must be the same as for
- * the build): in a viewer build (the default) the binary holds no download
- * code, the download and map page commands do not exist, a map without its
- * images only says so, and the Maps dialog offers no download and no
- * saving, also for a pack that was added from a web page.
+ * built with them (as `pnpm desktop:build` recorded, or as
+ * `ATLAS_ENABLE_DOWNLOADS` says when set): in a viewer build (the default)
+ * the binary holds no download code, the download and map page commands do
+ * not exist, a map without its images only says so, and the Maps dialog
+ * offers no download and no saving, also for a pack that was added from a
+ * web page.
  *
  *   pnpm --filter @atlas/desktop test:e2e [path/to/binary]
  *
@@ -33,8 +34,7 @@ import { execFile } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { downloadsEnabled } from '../scripts/build.js';
-import { checkBinary } from '../scripts/check-binary.js';
+import { checkBinary, expectDownloads } from '../scripts/check-binary.js';
 import { PACK_ID as IMPORTED_PACK, writePack as writeImportedPack } from './mapPageSite.js';
 import { writeRemotePack } from './remotePack.js';
 import { appPath, check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
@@ -46,7 +46,7 @@ const version = /** @type {{ version: string }} */ (
 const timeoutMs = 60_000;
 const run = promisify(execFile);
 /** The app was built with map image downloads. */
-const downloads = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
+const downloads = await expectDownloads();
 
 /**
  * Waits for a native dialog with this title, then types a path into it and

@@ -16,7 +16,9 @@
  * compiles that code and its commands in and makes `build.rs` read the
  * capability in `capabilities/downloads/`, and the web app's flag of the
  * same name (`apps/web/vite.config.ts`), which keeps their interface in the
- * bundle. Without it, the default, the app is a viewer only.
+ * bundle. Without it, the default, the app is a viewer only. The choice is
+ * recorded in `src-tauri/atlas-build.json` (ignored by git), so the tests of
+ * the built app know what to expect without being told again.
  *
  * Other arguments are passed on to `tauri build`.
  */
@@ -74,6 +76,9 @@ export function downloadsEnabled(value) {
   throw new Error(`ATLAS_ENABLE_DOWNLOADS must be 1, 0 or unset, not "${value}".`);
 }
 
+/** Where a build records whether it has downloads; see `scripts/check-binary.js`. */
+export const BUILD_RECORD = here('../src-tauri/atlas-build.json');
+
 /**
  * The arguments for `tauri build`. Exported for tests.
  * @param {{ identity: boolean, downloads: boolean, extra: string[] }} options
@@ -115,6 +120,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   });
   // The web build that `tauri build` runs first reads the same variable.
   const env = { ...process.env, ATLAS_ENABLE_DOWNLOADS: downloads ? '1' : '0' };
+  await writeFile(BUILD_RECORD, `${JSON.stringify({ downloads }, null, 2)}\n`);
   const child = spawn('tauri', args, {
     stdio: 'inherit',
     shell: process.platform === 'win32',
