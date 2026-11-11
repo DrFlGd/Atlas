@@ -58,6 +58,50 @@ export const WORLDS = {
       },
     ],
   },
+  // Two more games, for adding several maps at once.
+  'test-coast': {
+    name: 'Test Coast',
+    maps: [
+      {
+        slug: 'north-bay',
+        name: 'North Bay',
+        width: 512,
+        height: 256,
+        maxZoom: 1,
+        colour: [70, 120, 170],
+        places: [
+          { id: 1, name: 'Harbour light', kind: 'beacon', x: 60, y: 40 },
+          { id: 2, name: 'Dune camp', kind: 'camp', x: 300, y: 200 },
+        ],
+      },
+      {
+        slug: 'south-cape',
+        name: 'South Cape',
+        width: 256,
+        height: 256,
+        maxZoom: 0,
+        colour: [190, 170, 110],
+        places: [{ id: 1, name: 'Cape beacon', kind: 'beacon', x: 128, y: 128 }],
+      },
+    ],
+  },
+  'test-hills': {
+    name: 'Test Hills',
+    maps: [
+      {
+        slug: 'high-pass',
+        name: 'High Pass',
+        width: 256,
+        height: 512,
+        maxZoom: 1,
+        colour: [140, 120, 100],
+        places: [
+          { id: 1, name: 'Pass camp', kind: 'camp', x: 100, y: 400 },
+          { id: 2, name: 'Summit cave', kind: 'cave', x: 150, y: 60 },
+        ],
+      },
+    ],
+  },
   // A world with the id of a pack that comes with the app.
   demo: {
     name: 'Demo again',
