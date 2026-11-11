@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { numberFormat } from '../state/derived';
+import { downloadsOffered } from '../features';
 import { setDownloadPanelOpen } from '../state/downloads';
 import {
   STILL_WAITING_SECONDS,
@@ -190,7 +191,11 @@ function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | '
 function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
   const { summary } = phase;
   const downloadable = useAtlas(
-    (s) => s.game?.entry.id === phase.packId && s.downloads.packFolder !== null,
+    (s) =>
+      __ATLAS_DOWNLOADS__ &&
+      downloadsOffered(s) &&
+      s.game?.entry.id === phase.packId &&
+      s.downloads.packFolder !== null,
   );
   return (
     <section className="dialog-section" data-testid="add-map-result">
@@ -218,11 +223,12 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
         <dd>{numberFormat.format(summary.categories)}</dd>
       </dl>
       <p className="muted small">
-        Its map images are not downloaded yet, so the markers show on a blank map until you download
-        them.
+        {__ATLAS_DOWNLOADS__ && downloadable
+          ? 'Its map images are not downloaded yet, so the markers show on a blank map until you download them.'
+          : 'Its map images are not installed, so the markers show on a plain background.'}
       </p>
       <div className="row-actions wrap">
-        {downloadable ? (
+        {__ATLAS_DOWNLOADS__ && downloadable ? (
           <button
             type="button"
             className="button button-primary"

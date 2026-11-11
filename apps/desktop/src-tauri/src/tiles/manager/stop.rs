@@ -3,31 +3,16 @@
 //! it only reads, so that both can change without getting in each other's
 //! way.
 
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{fs, sync::Arc, time::Duration};
 
 use tokio::time::Instant;
 
 use super::{lock, DownloadManager};
-use crate::tiles::pyramid::PackPlan;
 
 /// How often [`DownloadManager::stop_and_wait`] looks whether the job has ended.
 const POLL: Duration = Duration::from_millis(25);
 
-/// Where a pack's downloaded map images and their bookkeeping are.
-#[derive(Clone, Debug)]
-pub struct ImagesLocation {
-    /// The pack's downloadable layers, which say where each image goes.
-    pub plan: PackPlan,
-    /// The folder the images and their status files (`offline-tiles/`) are
-    /// written to: the pack folder itself, or the overlay of a pack that
-    /// comes with the app.
-    pub root: PathBuf,
-    /// The pack folder when the images are written into it; its manifest
-    /// records them.
-    pub pack_folder: Option<PathBuf>,
-    /// The record of an unfinished job.
-    pub job_record: PathBuf,
-}
+pub use crate::tiles::images::ImagesLocation;
 
 impl DownloadManager {
     /// Cancels a pack's running or paused job and waits until it has really

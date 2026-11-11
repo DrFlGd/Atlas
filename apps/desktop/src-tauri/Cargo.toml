@@ -13,6 +13,14 @@ publish = false
 name = "atlas_desktop_lib"
 crate-type = ["rlib"]
 
+[features]
+# "Download map images" and "View map page and save images as I browse":
+# fetching map images from other servers. Off in the public viewer; a build
+# turns it on with ATLAS_ENABLE_DOWNLOADS=1 (see README, "Building another
+# app from the shell"), which passes `--features downloads` to tauri build.
+default = []
+downloads = ["dep:reqwest", "dep:rustls", "dep:image", "dep:httpdate"]
+
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
 
@@ -23,13 +31,14 @@ tauri-plugin-opener = "2.7.3"
 percent-encoding = "2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-# Map image downloads. rustls with the ring provider and the system's
-# certificate store; no cookies, no compression negotiation.
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { version = "1.45", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
-httpdate = "1.0.3"
+# Map image downloads (the `downloads` feature only). rustls with the ring
+# provider and the system's certificate store; no cookies, no compression
+# negotiation.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"], optional = true }
+httpdate = { version = "1.0.3", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.45", features = ["io-util", "net"] }

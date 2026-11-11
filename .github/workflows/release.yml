@@ -1,6 +1,6 @@
-# Builds the plain Atlas viewer for Windows (with the demo world, and no
-# importers) and publishes the installer as a GitHub Release of this
-# repository.
+# Builds the plain Atlas viewer for Windows (with the demo world, no
+# importers and no map image downloads) and publishes the installer as a
+# GitHub Release of this repository.
 #
 # Run it from the Actions tab ("Release", "Run workflow") with a version such
 # as 0.3.0, or push a tag such as v0.3.0. The version must match the one in
@@ -87,12 +87,26 @@ jobs:
       # commit being released has passed them. They are not repeated here: on
       # Windows the checkout has CRLF line endings, which the format check
       # reports as style issues.
-      # The plain viewer: the demo world only, no importers, the app's own
-      # name and identifier. No signing keys are set: the installer is unsigned.
+      # The plain viewer: the demo world only, no importers, no map image
+      # downloads (ATLAS_ENABLE_DOWNLOADS stays off), the app's own name and
+      # identifier. No signing keys are set: the installer is unsigned.
       - name: Build the desktop app
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '0'
         run: pnpm desktop:build
 
+      # The viewer must not be able to fetch map images: the download and map
+      # page code is not compiled in, so the executable that the installer
+      # holds names none of its commands (tiles_start and others) and has
+      # none of its texts. Fails the release otherwise.
+      - name: Check that the viewer holds no download code
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '0'
+        run: node apps/desktop/scripts/check-binary.js apps/desktop/src-tauri/target/release/atlas-desktop.exe
+
       - name: Start-up test of the app window
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '0'
         run: pnpm --filter @atlas/desktop test:e2e:windows
 
       - name: Collect the installer and write the release notes
@@ -121,7 +135,7 @@ jobs:
           2. Open the downloaded file. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**.
           3. Follow the installer, then start **Atlas** from the Start menu.
 
-          Map packs and downloaded map images are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
+          Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
           ---
 

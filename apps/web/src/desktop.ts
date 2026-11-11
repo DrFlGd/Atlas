@@ -128,6 +128,11 @@ export interface DesktopInfo {
   name: string;
   version: string;
   platform: string;
+  /**
+   * The shell downloads map images and saves them from map pages (a build
+   * with `ATLAS_ENABLE_DOWNLOADS=1`). Without it, those commands do not exist.
+   */
+  downloads: boolean;
 }
 
 /** Where a listed pack comes from. */
@@ -271,6 +276,7 @@ export interface DesktopBridge {
   saveTextFile(suggestedName: string, contents: string): Promise<{ name: string } | null>;
   /** Asks for a file and reads it. Null when the dialog was closed. */
   openTextFile(): Promise<{ name: string; contents: string } | null>;
+  /** Only in a build with downloads; see `downloadsOffered` in `features.ts`. */
   tiles: {
     plan(packId: string): Promise<DownloadPlan>;
     start(packId: string, detail: Detail): Promise<DownloadSnapshot>;
@@ -320,6 +326,24 @@ export interface DesktopBridge {
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+/**
+ * The download commands of a build without downloads, which never calls
+ * them: the shell has no such commands.
+ */
+function noDownloads(): DesktopBridge['tiles'] {
+  const missing = () => Promise.reject(new Error('This app does not download map images.'));
+  return {
+    plan: missing,
+    start: missing,
+    pause: missing,
+    resume: missing,
+    cancel: missing,
+    snapshot: missing,
+    settings: missing,
+    setSettings: missing,
+  };
+}
+
 /** Builds the bridge over an `invoke` function. Exported for tests. */
 export function createBridge(invoke: Invoke): DesktopBridge {
   const call = <T>(command: string, args?: Record<string, unknown>) =>
@@ -332,16 +356,18 @@ export function createBridge(invoke: Invoke): DesktopBridge {
     openExternal: (url) => call('open_external', { url }),
     saveTextFile: (suggestedName, contents) => call('save_text_file', { suggestedName, contents }),
     openTextFile: () => call('open_text_file'),
-    tiles: {
-      plan: (packId) => call('tiles_plan', { packId }),
-      start: (packId, detail) => call('tiles_start', { packId, detail }),
-      pause: (packId) => call('tiles_pause', { packId }),
-      resume: (packId) => call('tiles_resume', { packId }),
-      cancel: (packId) => call('tiles_cancel', { packId }),
-      snapshot: (packId) => call('tiles_snapshot', { packId }),
-      settings: () => call('download_settings_get'),
-      setSettings: (settings) => call('download_settings_set', { settings }),
-    },
+    tiles: __ATLAS_DOWNLOADS__
+      ? {
+          plan: (packId) => call('tiles_plan', { packId }),
+          start: (packId, detail) => call('tiles_start', { packId, detail }),
+          pause: (packId) => call('tiles_pause', { packId }),
+          resume: (packId) => call('tiles_resume', { packId }),
+          cancel: (packId) => call('tiles_cancel', { packId }),
+          snapshot: (packId) => call('tiles_snapshot', { packId }),
+          settings: () => call('download_settings_get'),
+          setSettings: (settings) => call('download_settings_set', { settings }),
+        }
+      : noDownloads(),
     library: {
       list: () => call('library_list'),
       openPack: () => call('library_open_pack'),

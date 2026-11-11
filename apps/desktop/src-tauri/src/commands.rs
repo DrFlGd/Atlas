@@ -1,9 +1,11 @@
-//! The commands the web app may call (see `capabilities/main.json`).
+//! The commands the web app may call (see `capabilities/main.json`, and
+//! `capabilities/downloads/` for the commands of a build with downloads).
 //!
 //! They cover what a browser does differently from a desktop app: saving and
 //! opening progress files through the system's dialogs, opening links in the
-//! system browser, and downloading map images. The web app reaches them
-//! through a small bridge that it only uses when it runs inside this shell.
+//! system browser, the maps library, and, in a build with the `downloads`
+//! feature only, downloading map images. The web app reaches them through a
+//! small bridge that it only uses when it runs inside this shell.
 
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
@@ -15,9 +17,13 @@ use tokio::sync::oneshot;
 
 use crate::{
     activity::{self, ActivityLog, Area, RecentLog},
+    downloads::Downloads,
     imports::{Imports, PollResult},
     library::{FolderChoice, Library, Listing, SaveImport, SavedSource},
     removal::{ImagesCount, ImagesDeleted, PackDeleted},
+};
+#[cfg(feature = "downloads")]
+use crate::{
     settings::DownloadSettings,
     tiles::{
         manager::{PlanInfo, Snapshot},
@@ -36,6 +42,9 @@ pub struct DesktopInfo {
     name: String,
     version: String,
     platform: &'static str,
+    /// The build downloads map images and saves them from map pages (the
+    /// `downloads` feature). Without it, those commands do not exist.
+    downloads: bool,
 }
 
 #[tauri::command]
@@ -44,6 +53,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         name: app.package_info().name.clone(),
         version: app.package_info().version.to_string(),
         platform: std::env::consts::OS,
+        downloads: Downloads::in_build(),
     }
 }
 
@@ -177,9 +187,11 @@ pub async fn open_text_file<R: Runtime>(
     }
 }
 
+#[cfg(feature = "downloads")]
 type Manager<'a> = State<'a, Arc<DownloadManager>>;
 
 /// The download choices for a pack, with estimates.
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_plan(manager: Manager<'_>, pack_id: String) -> Result<PlanInfo, String> {
     let manager = Arc::clone(&manager);
@@ -189,6 +201,7 @@ pub async fn tiles_plan(manager: Manager<'_>, pack_id: String) -> Result<PlanInf
         .map_err(|error| error.to_string())?
 }
 
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_start(
     manager: Manager<'_>,
@@ -198,21 +211,25 @@ pub async fn tiles_start(
     manager.start(&pack_id, detail)
 }
 
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_pause(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
     manager.pause(&pack_id)
 }
 
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_resume(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
     manager.resume(&pack_id)
 }
 
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_cancel(manager: Manager<'_>, pack_id: String) -> Result<(), String> {
     manager.cancel(&pack_id)
 }
 
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_snapshot(
     manager: Manager<'_>,
@@ -224,6 +241,7 @@ pub async fn tiles_snapshot(
 // ---------------------------------------------------------------------------
 // Download settings
 
+#[cfg(feature = "downloads")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadSettingsInfo {
@@ -232,6 +250,7 @@ pub struct DownloadSettingsInfo {
     bounds: DownloadBounds,
 }
 
+#[cfg(feature = "downloads")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadBounds {
@@ -243,6 +262,7 @@ pub struct DownloadBounds {
 
 type LibraryState<'a> = State<'a, Arc<Library>>;
 
+#[cfg(feature = "downloads")]
 fn settings_info(settings: DownloadSettings) -> DownloadSettingsInfo {
     DownloadSettingsInfo {
         settings,
@@ -255,12 +275,14 @@ fn settings_info(settings: DownloadSettings) -> DownloadSettingsInfo {
     }
 }
 
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub fn download_settings_get(library: LibraryState<'_>) -> DownloadSettingsInfo {
     settings_info(library.settings().read().downloads)
 }
 
 /// Saves the download settings for every Atlas app and applies them at once.
+#[cfg(feature = "downloads")]
 #[tauri::command]
 pub fn download_settings_set(
     library: LibraryState<'_>,
@@ -277,6 +299,10 @@ pub fn download_settings_set(
 
 // ---------------------------------------------------------------------------
 // The maps library
+
+/// This app's downloads, as the library sees them; none in a build without
+/// downloads.
+type DownloadsState<'a> = State<'a, Downloads>;
 
 async fn blocking<T: Send + 'static>(
     task: impl FnOnce() -> Result<T, String> + Send + 'static,
@@ -357,10 +383,10 @@ pub async fn library_choose_maps_folder<R: Runtime>(
 #[tauri::command]
 pub async fn library_apply_maps_folder(
     library: LibraryState<'_>,
-    manager: Manager<'_>,
+    downloads: DownloadsState<'_>,
     move_packs: bool,
 ) -> Result<Vec<String>, String> {
-    let busy = manager.active_packs();
+    let busy = downloads.active_packs();
     let library = Arc::clone(&library);
     blocking(move || library.apply_maps_folder(move_packs, &busy)).await
 }
@@ -424,8 +450,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Stops a pack's download, if one is running or paused, and waits until it
 /// has let go of the pack's files.
-async fn stop_download(manager: &Arc<DownloadManager>, id: &str) -> Result<(), String> {
-    if manager.stop_and_wait(id, STOP_TIMEOUT).await {
+async fn stop_download(downloads: &Downloads, id: &str) -> Result<(), String> {
+    if downloads.stop_and_wait(id, STOP_TIMEOUT).await {
         Ok(())
     } else {
         Err("The download of this map did not stop in time, so nothing was deleted. Try again in a moment.".to_owned())
@@ -446,15 +472,15 @@ fn listed(library: &Library, id: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn library_delete_pack(
     library: LibraryState<'_>,
-    manager: Manager<'_>,
+    downloads: DownloadsState<'_>,
     id: String,
 ) -> Result<PackDeleted, String> {
-    delete_pack(Arc::clone(&library), Arc::clone(&manager), id).await
+    delete_pack(Arc::clone(&library), downloads.inner().clone(), id).await
 }
 
 async fn delete_pack(
     library: Arc<Library>,
-    manager: Arc<DownloadManager>,
+    downloads: Downloads,
     id: String,
 ) -> Result<PackDeleted, String> {
     listed(&library, &id)?;
@@ -464,7 +490,7 @@ async fn delete_pack(
         let id = id.clone();
         blocking(move || library.check_deletable(&id)).await?;
     }
-    stop_download(&manager, &id).await?;
+    stop_download(&downloads, &id).await?;
     let deleted = {
         let id = id.clone();
         blocking(move || library.delete_pack(&id)).await
@@ -479,7 +505,7 @@ async fn delete_pack(
             return Err(error);
         }
     };
-    manager.forget(&id);
+    downloads.forget(&id);
     activity::info(
         Area::Library,
         if deleted.complete {
@@ -509,20 +535,20 @@ pub struct ImagesInfo {
 #[tauri::command]
 pub async fn library_images_info(
     library: LibraryState<'_>,
-    manager: Manager<'_>,
+    downloads: DownloadsState<'_>,
     id: String,
 ) -> Result<ImagesInfo, String> {
-    images_info(Arc::clone(&library), Arc::clone(&manager), id).await
+    images_info(Arc::clone(&library), downloads.inner().clone(), id).await
 }
 
 async fn images_info(
     library: Arc<Library>,
-    manager: Arc<DownloadManager>,
+    downloads: Downloads,
     id: String,
 ) -> Result<ImagesInfo, String> {
     listed(&library, &id)?;
-    let downloading = manager.is_active(&id);
-    let Ok(location) = manager.images_location(&id) else {
+    let downloading = downloads.is_active(&id);
+    let Ok(location) = downloads.images_location(&id) else {
         return Ok(ImagesInfo {
             count: ImagesCount::default(),
             downloading,
@@ -537,22 +563,22 @@ async fn images_info(
 #[tauri::command]
 pub async fn library_delete_images(
     library: LibraryState<'_>,
-    manager: Manager<'_>,
+    downloads: DownloadsState<'_>,
     id: String,
 ) -> Result<ImagesDeleted, String> {
-    delete_images(Arc::clone(&library), Arc::clone(&manager), id).await
+    delete_images(Arc::clone(&library), downloads.inner().clone(), id).await
 }
 
 async fn delete_images(
     library: Arc<Library>,
-    manager: Arc<DownloadManager>,
+    downloads: Downloads,
     id: String,
 ) -> Result<ImagesDeleted, String> {
     listed(&library, &id)?;
-    let location = manager
+    let location = downloads
         .images_location(&id)
         .map_err(|_| "This map has no map images to delete.".to_owned())?;
-    stop_download(&manager, &id).await?;
+    stop_download(&downloads, &id).await?;
     let deleted = {
         let id = id.clone();
         blocking(move || library.delete_images(&id, &location)).await
@@ -570,7 +596,7 @@ async fn delete_images(
             return Err(error);
         }
     };
-    manager.forget(&id);
+    downloads.forget(&id);
     activity::info(
         Area::Library,
         format!(
@@ -599,10 +625,10 @@ pub async fn library_import_sources(
 #[tauri::command]
 pub async fn library_save_import(
     library: LibraryState<'_>,
-    manager: Manager<'_>,
+    downloads: DownloadsState<'_>,
     request: SaveImport,
 ) -> Result<Listing, String> {
-    if manager.is_active(&request.pack_id) {
+    if downloads.is_active(&request.pack_id) {
         return Err(
             "Map images of this game are downloading. Pause or cancel that first.".to_owned(),
         );
@@ -939,6 +965,123 @@ mod tests {
         assert!(write_text(&dir.0.join("no/such/dir/x.json"), "x").is_err());
     }
 
+    /// Images another Atlas app or an earlier version downloaded, which every
+    /// build counts and deletes, also one without downloads.
+    mod images_on_disk {
+        use std::path::Path;
+
+        use super::*;
+        use crate::{library::BundledPack, packs::PackRegistry, settings::SettingsFile};
+
+        /// A pack "My Game" whose one map's levels 0 and 1 come from a
+        /// remote source, with three images, a status file and the record
+        /// of an unfinished download on disk, as a download leaves them.
+        fn write_downloaded_pack(dir: &Path, id: &str) {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(
+                dir.join("manifest.json"),
+                format!(
+                    r#"{{"schemaVersion":1,"gameId":"{id}","title":"My Game","packVersion":"1.0.0","gamePatch":"1","attribution":[],"idMigrations":{{}}}}"#
+                ),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("maps.json"),
+                format!(r#"[{{"id":"{id}:map:a","name":"Island","width":512,"height":512}}]"#),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("layers.json"),
+                format!(
+                    r#"[{{"id":"{id}:layer:a","mapId":"{id}:map:a","name":"Surface","minZoom":0,"maxZoom":1,"tileSize":256,
+                      "tiles":{{"type":"xyz","url":"tiles/a/{{z}}/{{x}}/{{y}}.png","remote":{{
+                        "urlTemplate":"https://tiles.invalid/{{z}}/{{x}}/{{y}}.png",
+                        "levels":[{{"z":1,"sourceZ":1,"offsetX":0,"offsetY":0}}]}}}}}}]"#
+                ),
+            )
+            .unwrap();
+            fs::write(dir.join("locations.json"), "[]").unwrap();
+            for tile in ["0/0/0", "1/0/0", "1/1/0"] {
+                let path = dir.join(format!("tiles/a/{tile}.png"));
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, b"\x89PNG image").unwrap();
+            }
+            fs::create_dir_all(dir.join("offline-tiles")).unwrap();
+            fs::write(dir.join("offline-tiles/a.json"), "{}").unwrap();
+            fs::create_dir_all(dir.join(".atlas")).unwrap();
+            fs::write(
+                dir.join(".atlas/download-job.json"),
+                format!(r#"{{"packId":"{id}","detail":"full","stopReason":"closed"}}"#),
+            )
+            .unwrap();
+        }
+
+        fn setup(dir: &TempDir) -> (Arc<Library>, Downloads) {
+            let registry = PackRegistry::default();
+            let library = Arc::new(Library::new(
+                SettingsFile::new(dir.0.join("shared")),
+                registry.clone(),
+                Vec::<BundledPack>::new(),
+                Vec::new(),
+            ));
+            let downloads = crate::downloads::for_tests(&registry, dir.0.join("data"));
+            (library, downloads)
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn counts_and_deletes_images_another_app_downloaded() {
+            let dir = TempDir::new("images-on-disk");
+            let (library, downloads) = setup(&dir);
+            let pack = library.maps_folder().join("my-game");
+            write_downloaded_pack(&pack, "my-game");
+            library.scan();
+
+            let info = images_info(Arc::clone(&library), downloads.clone(), "my-game".into())
+                .await
+                .unwrap();
+            assert_eq!((info.count.files, info.downloading), (3, false));
+            let deleted = delete_images(Arc::clone(&library), downloads.clone(), "my-game".into())
+                .await
+                .unwrap();
+            assert_eq!((deleted.files, deleted.left), (3, 0));
+            assert!(!pack.join("tiles").exists());
+            assert!(!pack.join("offline-tiles").exists());
+            assert!(!pack.join(".atlas/download-job.json").exists());
+            assert!(pack.join("manifest.json").exists(), "the pack stays");
+            assert!(pack.join("layers.json").exists());
+
+            delete_pack(Arc::clone(&library), downloads.clone(), "my-game".into())
+                .await
+                .unwrap();
+            assert!(!pack.exists());
+            assert!(library.scan().packs.is_empty());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn deletes_a_pack_that_nothing_downloads() {
+            let dir = TempDir::new("images-on-disk-pack");
+            let (library, downloads) = setup(&dir);
+            let pack = library.maps_folder().join("my-game");
+            write_downloaded_pack(&pack, "my-game");
+            library.scan();
+            assert!(downloads.active_packs().is_empty());
+            assert!(!downloads.is_active("my-game"));
+            assert!(downloads.stop_and_wait("my-game", Duration::ZERO).await);
+            delete_pack(Arc::clone(&library), downloads.clone(), "my-game".into())
+                .await
+                .unwrap();
+            assert!(!pack.exists());
+            // Nothing to delete for a pack that is gone or not listed.
+            for id in ["my-game", "../my-game", ""] {
+                let error = delete_images(Arc::clone(&library), downloads.clone(), id.into())
+                    .await
+                    .unwrap_err();
+                assert!(error.contains("not in the list"), "{id}: {error}");
+            }
+        }
+    }
+
+    #[cfg(feature = "downloads")]
     mod deleting {
         use std::path::Path;
 
@@ -1008,6 +1151,7 @@ mod tests {
             registry: PackRegistry,
             library: Arc<Library>,
             manager: Arc<DownloadManager>,
+            downloads: Downloads,
         }
 
         fn setup(name: &str, bundled: Vec<BundledPack>) -> Setup {
@@ -1031,6 +1175,7 @@ mod tests {
                 dir,
                 registry,
                 library,
+                downloads: Downloads::new(Arc::clone(&manager)),
                 manager,
             }
         }
@@ -1072,7 +1217,7 @@ mod tests {
 
             let info = images_info(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1082,7 +1227,7 @@ mod tests {
 
             let deleted = delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1102,7 +1247,7 @@ mod tests {
             // It is not there to delete again.
             let again = delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1132,7 +1277,7 @@ mod tests {
             assert!(pack.join(".atlas/download-job.json").exists());
             delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1154,7 +1299,7 @@ mod tests {
             s.manager.start("my-game", Detail::Full).unwrap();
             let error = delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1166,12 +1311,12 @@ mod tests {
 
             // Ids that are not listed, or try to leave the maps folder.
             for id in ["../my-game", "..", "my-game/..", "", "C:\\Windows"] {
-                let error = delete_pack(Arc::clone(&s.library), Arc::clone(&s.manager), id.into())
+                let error = delete_pack(Arc::clone(&s.library), s.downloads.clone(), id.into())
                     .await
                     .unwrap_err();
                 assert!(error.contains("not in the list"), "{id}: {error}");
                 assert!(
-                    delete_images(Arc::clone(&s.library), Arc::clone(&s.manager), id.into())
+                    delete_images(Arc::clone(&s.library), s.downloads.clone(), id.into())
                         .await
                         .is_err()
                 );
@@ -1193,7 +1338,7 @@ mod tests {
             let other_app = PackLock::acquire(&pack).unwrap();
             let error = delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1201,7 +1346,7 @@ mod tests {
             assert!(error.contains("Another Atlas window or app"), "{error}");
             let error = delete_images(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1213,7 +1358,7 @@ mod tests {
             drop(other_app);
             delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1236,7 +1381,7 @@ mod tests {
 
             let deleted = delete_images(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1272,7 +1417,7 @@ mod tests {
             assert_eq!(s.library.scan().packs.len(), 1);
             let info = images_info(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1316,7 +1461,7 @@ mod tests {
             assert!(pack.join("offline-tiles/a.json").exists());
             let info = images_info(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1327,7 +1472,7 @@ mod tests {
 
             let deleted = delete_images(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await
@@ -1344,7 +1489,7 @@ mod tests {
             // The pack itself still cannot be deleted: it comes with the app.
             let error = delete_pack(
                 Arc::clone(&s.library),
-                Arc::clone(&s.manager),
+                s.downloads.clone(),
                 "my-game".into(),
             )
             .await

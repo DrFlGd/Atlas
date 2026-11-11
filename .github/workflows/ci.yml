@@ -39,7 +39,16 @@ jobs:
       - name: Install Chromium for Playwright
         run: pnpm --filter @atlas/web exec playwright install --with-deps chromium
 
+      # The default build: a viewer, with no download interface in its bundle.
       - run: pnpm test:e2e
+
+      # The interface for map image downloads, in a build with them.
+      - name: Web build with downloads, and its download tests
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '1'
+        run: |
+          pnpm build
+          pnpm --filter @atlas/web test:e2e e2e/downloads.spec.ts
 
       - name: Upload Playwright results
         if: failure()
@@ -96,28 +105,39 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Both feature sets: the viewer (default) and a build with map image
+      # downloads (the `downloads` feature, ATLAS_ENABLE_DOWNLOADS=1).
       - name: Rust format, lint and unit tests
         working-directory: apps/desktop/src-tauri
         run: |
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
+          cargo clippy --all-targets --locked --features downloads -- -D warnings
           cargo test --locked
+          cargo test --locked --features downloads
 
-      # Also builds the web app and the demo pack. No signing keys are set.
+      # The default build: a viewer without map image downloads. Also builds
+      # the web app and the demo pack. No signing keys are set.
       - run: pnpm desktop:build
+
+      # The download and map page code is not in it: no command, no text.
+      - name: The viewer holds no download code
+        run: node apps/desktop/scripts/check-binary.js
 
       - if: runner.os == 'Linux'
         run: cargo install tauri-driver --locked
 
       # Window, map, markers, pack protocol byte ranges, the save and open
-      # dialogs (driven with xdotool) and links opening in the system browser.
+      # dialogs (driven with xdotool) and links opening in the system browser;
+      # and that the viewer offers no download or saving anywhere.
       - name: Smoke test the app window (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @atlas/desktop test:e2e
 
       # Starts the built app and checks from outside that its window opens,
-      # the embedded browser starts its page and it keeps running. Saves a
-      # picture of the desktop with the screenshots below.
+      # the embedded browser starts its page and it keeps running, and that
+      # its binary holds no download code. Saves a picture of the desktop
+      # with the screenshots below.
       - name: Start-up test of the app window (Windows)
         if: runner.os == 'Windows'
         run: pnpm --filter @atlas/desktop test:e2e:windows
@@ -135,15 +155,19 @@ jobs:
           retention-days: 14
 
       # Downloads map images from a mock tile server on 127.0.0.1 through the
-      # app's interface. Rebuilds the binary with the test pack as the default
-      # game, after the bundles above have been uploaded.
+      # app's interface. Rebuilds the binary with downloads, the test pack as
+      # the default game and the demo importer, after the viewer's bundles
+      # above have been uploaded.
       - name: Download, maps library, import, delete and map page tests (Linux)
         if: runner.os == 'Linux'
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '1'
         run: |
           pnpm --filter @atlas/desktop e2e:pack
           ATLAS_BUNDLE_PACKS=e2e-remote,demo \
             ATLAS_BUNDLE_IMPORTERS=packages/importer-api/demo/demo-importer.js \
             pnpm desktop:build --no-bundle
+          node apps/desktop/scripts/check-binary.js
           xvfb-run -a pnpm --filter @atlas/desktop test:e2e:download
           xvfb-run -a pnpm --filter @atlas/desktop test:e2e:import
           xvfb-run -a pnpm --filter @atlas/desktop test:e2e:delete

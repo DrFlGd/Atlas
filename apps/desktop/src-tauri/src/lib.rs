@@ -1,14 +1,21 @@
 //! The Atlas desktop shell: one window that shows the web app, the
 //! `atlas-pack` protocol that serves data packs to it, the maps library on
 //! disk, an optional window for importing a map from a web page, and the
-//! commands the web app uses for files, links, maps and map image downloads.
+//! commands the web app uses for files, links and maps.
+//!
+//! Fetching map images from other servers ("Download map images" in
+//! `tiles`, and "View map page and save images as I browse" in `pageview`)
+//! is only in a build with the `downloads` feature; without it that code
+//! and its commands are not compiled in.
 
 pub mod activity;
 mod commands;
+mod downloads;
 mod imports;
 pub mod library;
 pub mod manifest;
 mod packs;
+#[cfg(feature = "downloads")]
 mod pageview;
 mod removal;
 pub mod settings;
@@ -23,9 +30,11 @@ use tauri::{
 };
 
 use activity::{ActivityLog, Area};
+use downloads::Downloads;
 use library::{BundledPack, Library, LEGACY_IDENTIFIER};
 pub use packs::{PackRegistry, SCHEME as PACK_SCHEME};
 use settings::{shared_dir, SettingsFile};
+#[cfg(feature = "downloads")]
 use tiles::DownloadManager;
 
 /// The label of the app's own window, the only one the pack protocol and the
@@ -36,31 +45,15 @@ pub const MAIN_WINDOW: &str = "main";
 /// sub-folder per pack. Each is served as `<scheme URL>/<folder name>/`.
 const BUNDLED_PACKS_DIR: &str = "packs";
 
-pub fn run() {
-    // Map image downloads use rustls with the ring provider.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let registry = PackRegistry::default();
-    let protocol_registry = registry.clone();
-
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .manage(registry)
-        .manage(imports::Imports::default())
-        .manage(pageview::PageViews::default())
-        .invoke_handler(tauri::generate_handler![
+/// The commands of every build; `build.rs` and `capabilities/main.json`
+/// list the same.
+macro_rules! viewer_commands {
+    ($($more:tt)*) => {
+        tauri::generate_handler![
             commands::desktop_info,
             commands::open_external,
             commands::save_text_file,
             commands::open_text_file,
-            commands::tiles_plan,
-            commands::tiles_start,
-            commands::tiles_pause,
-            commands::tiles_resume,
-            commands::tiles_cancel,
-            commands::tiles_snapshot,
-            commands::download_settings_get,
-            commands::download_settings_set,
             commands::library_list,
             commands::library_open_pack,
             commands::library_add_folder,
@@ -78,13 +71,52 @@ pub fn run() {
             commands::import_close,
             commands::import_report,
             commands::activity_log_read,
-            pageview::view_pages,
-            pageview::view_open,
-            pageview::view_status,
-            pageview::view_stop_saving,
-            pageview::view_close,
-            pageview::view_open_in_browser,
-        ])
+            $($more)*
+        ]
+    };
+}
+
+/// The commands the web app can call. A build with the `downloads` feature
+/// adds those for map image downloads and map pages, which `build.rs` and
+/// `capabilities/downloads/` list and grant.
+fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync {
+    #[cfg(feature = "downloads")]
+    return viewer_commands![
+        commands::tiles_plan,
+        commands::tiles_start,
+        commands::tiles_pause,
+        commands::tiles_resume,
+        commands::tiles_cancel,
+        commands::tiles_snapshot,
+        commands::download_settings_get,
+        commands::download_settings_set,
+        pageview::view_pages,
+        pageview::view_open,
+        pageview::view_status,
+        pageview::view_stop_saving,
+        pageview::view_close,
+        pageview::view_open_in_browser,
+    ];
+    #[cfg(not(feature = "downloads"))]
+    viewer_commands![]
+}
+
+pub fn run() {
+    // Map image downloads use rustls with the ring provider.
+    #[cfg(feature = "downloads")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let registry = PackRegistry::default();
+    let protocol_registry = registry.clone();
+
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(registry)
+        .manage(imports::Imports::default());
+    #[cfg(feature = "downloads")]
+    let builder = builder.manage(pageview::PageViews::default());
+    builder
+        .invoke_handler(invoke_handler())
         .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |ctx, request, responder| {
             // Only the app's own window reads packs; a web page in the import
             // or map page window gets nothing.
@@ -117,7 +149,7 @@ pub fn run() {
             let registry = app.state::<PackRegistry>().inner().clone();
             // Map images downloaded for bundled packs live here, served before
             // the pack's own files.
-            registry.set_overlay_root(DownloadManager::overlay_root(&app_data));
+            registry.set_overlay_root(tiles::images::overlay_root(&app_data));
             let mut legacy = vec![paths.data_dir()?.join(LEGACY_IDENTIFIER)];
             if !legacy.contains(&app_data) {
                 legacy.push(app_data.clone());
@@ -131,9 +163,17 @@ pub fn run() {
                 legacy,
             ));
             library.start();
-            let manager = DownloadManager::new(app_data, registry).with_shared_folder(&shared);
-            manager.set_download_settings(&library.settings().read().downloads);
-            app.manage(Arc::new(manager));
+            #[cfg(feature = "downloads")]
+            let downloads = {
+                let manager = DownloadManager::new(app_data, registry).with_shared_folder(&shared);
+                manager.set_download_settings(&library.settings().read().downloads);
+                let manager = Arc::new(manager);
+                app.manage(Arc::clone(&manager));
+                Downloads::new(manager)
+            };
+            #[cfg(not(feature = "downloads"))]
+            let downloads = Downloads::new(registry, app_data);
+            app.manage(downloads);
             app.manage(Arc::clone(&library));
             // Map images that version 0.2.0 downloaded move into the pack
             // folders in the background; the map shows them as they arrive.
@@ -193,13 +233,14 @@ fn log_start(app: &App, shared: &std::path::Path, bundled: &[BundledPack]) {
     activity::info(
         Area::App,
         format!(
-            "{} {} started on {} ({}) | maps folder: {maps} | {} other locations remembered | packs that come with the app: {packs} | importers: {}",
+            "{} {} started on {} ({}) | maps folder: {maps} | {} other locations remembered | packs that come with the app: {packs} | importers: {} | map image downloads: {}",
             info.name,
             info.version,
             std::env::consts::OS,
             std::env::consts::ARCH,
             settings.locations.len(),
-            bundled_importers(app)
+            bundled_importers(app),
+            if Downloads::in_build() { "in this build" } else { "not in this build" }
         ),
     );
 }

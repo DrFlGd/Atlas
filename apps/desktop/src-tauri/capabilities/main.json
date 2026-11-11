@@ -1,21 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window only: the app's own commands for desktop features (file dialogs for progress export and import, web links in the system browser, map image downloads and their settings, the maps library and its folder dialogs, importing from a web page, reading the activity log and recording how an import ended). No plugin commands are granted; the dialog and opener plugins are only used from Rust. No other window, and no remote page, is granted anything.",
+  "description": "The main window only: the app's own commands for desktop features in every build (file dialogs for progress export and import, web links in the system browser, the maps library and its folder dialogs, deleting maps and their downloaded images, importing from a web page, reading the activity log and recording how an import ended). The commands for downloading map images and for viewing a map page and saving its images are granted in downloads/main-downloads.json, which only a build with downloads reads. No plugin commands are granted; the dialog and opener plugins are only used from Rust. No other window, and no remote page, is granted anything.",
   "windows": ["main"],
   "permissions": [
     "allow-desktop-info",
     "allow-open-external",
     "allow-save-text-file",
     "allow-open-text-file",
-    "allow-tiles-plan",
-    "allow-tiles-start",
-    "allow-tiles-pause",
-    "allow-tiles-resume",
-    "allow-tiles-cancel",
-    "allow-tiles-snapshot",
-    "allow-download-settings-get",
-    "allow-download-settings-set",
     "allow-library-list",
     "allow-library-open-pack",
     "allow-library-add-folder",
@@ -32,12 +24,6 @@
     "allow-import-poll",
     "allow-import-close",
     "allow-import-report",
-    "allow-activity-log-read",
-    "allow-view-pages",
-    "allow-view-open",
-    "allow-view-status",
-    "allow-view-stop-saving",
-    "allow-view-close",
-    "allow-view-open-in-browser"
+    "allow-activity-log-read"
   ]
 }

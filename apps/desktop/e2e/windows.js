@@ -9,7 +9,10 @@
  * title, the embedded browser starts a page for it, and the app is still
  * running and responding a few seconds later. It then saves a picture of the
  * desktop to `apps/desktop/test-results/desktop-windows.png`, for a person to
- * look at.
+ * look at. Before that it checks that the binary holds the code that
+ * downloads map images exactly when the build was meant to
+ * (`ATLAS_ENABLE_DOWNLOADS`, as for the build): a viewer build, the
+ * default, holds none of it, so it offers no download.
  *
  * It does not look inside the page. The WebDriver route used on Linux needs
  * an Edge driver matching the installed WebView2 exactly, and both that
@@ -21,12 +24,24 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { downloadsEnabled } from '../scripts/build.js';
+import { checkBinary } from '../scripts/check-binary.js';
 import { appPath, check, here, resultsDir } from './webdriver.js';
 
 if (process.platform !== 'win32') {
   console.error('This test runs on Windows only. Use test:e2e on Linux.');
   process.exit(1);
 }
+
+const downloads = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
+const problem = await checkBinary(appPath, downloads);
+check(
+  problem === null,
+  problem ??
+    (downloads
+      ? 'the binary holds the code to download map images'
+      : 'the binary holds no code to download map images, so the app offers none'),
+);
 
 const waitSeconds = Number(process.env.ATLAS_E2E_TIMEOUT ?? 90);
 const settleSeconds = 10;
