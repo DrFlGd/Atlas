@@ -21,10 +21,12 @@ import {
   toggleCatalogueGame,
   toggleChoice,
   toggleUpdateGame,
+  updateCatalogue,
   type ImportPhase,
   type ListingPurpose,
 } from '../state/importing';
 import { MAX_RUN_ADDRESSES, stopReasonText, type RunState } from '../state/importRun';
+import { localDate } from './packFileText';
 
 /**
  * The steps of Add a map that come before pages are added: reading game
@@ -129,6 +131,20 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
         Tick the games to add. This app then opens the game page of each, one at a time, and lists
         their maps for you to choose from.
       </p>
+      {pick.keptFrom !== null ? (
+        <p className="muted small" data-testid="add-map-catalogue-kept">
+          This is the list as this app read it on {localDate(pick.keptFrom)}. Games the site added
+          since then are not in it.{' '}
+          <button
+            type="button"
+            className="link-button"
+            data-testid="add-map-catalogue-update"
+            onClick={() => void updateCatalogue()}
+          >
+            Update the list
+          </button>
+        </p>
+      ) : null}
       <label htmlFor={searchId} className="field-label">
         Find a game
       </label>
@@ -176,8 +192,9 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
       )}
       {plan.leftOut.length > 0 ? (
         <p className="download-note" role="alert" data-testid="add-map-catalogue-cap">
-          This app opens at most {MAX_RUN_ADDRESSES} pages at a time, and the list of games was one
-          of them. Each game needs its game page and at least one map, so only the first{' '}
+          This app opens at most {MAX_RUN_ADDRESSES} pages at a time
+          {pick.keptFrom === null ? ', and the list of games was one of them' : ''}. Each game needs
+          its game page and at least one map, so only the first{' '}
           {plural(plan.games.length, 'ticked game fits', 'ticked games fit')} in this go. These are
           left for afterwards: {plan.leftOut.map((game) => game.name).join(', ')}.
         </p>

@@ -1,6 +1,7 @@
 import {
   MAP_KIND,
   canAddPage,
+  checkCatalogue,
   pageKey,
   type AtlasImporter,
   type CatalogueGame,
@@ -230,6 +231,39 @@ export interface GamePick {
   /** Ids of the ticked games. Nothing is ticked at first. */
   ticked: string[];
   query: string;
+  /**
+   * When the list was read from the site, if this is the copy the app kept
+   * from then; null when it was read just now.
+   */
+  keptFrom: string | null;
+}
+
+/** A site's list of games as the app keeps it between readings. */
+export interface KeptCatalogue {
+  /** The list of games' address. */
+  url: string;
+  /** When it was read, as an ISO time. */
+  readAt: string;
+  games: CatalogueGame[];
+}
+
+/**
+ * The kept list of games, if `value` (what the app stored) is one this
+ * importer can still use: read from its list's address as it is now, with
+ * a time, and with games that pass the same check as a list read from the
+ * site. Anything else is null, and the list is read again.
+ */
+export function keptCatalogue(
+  value: unknown,
+  importer: Pick<AtlasImporter, 'matches' | 'games' | 'catalogue'>,
+): KeptCatalogue | null {
+  if (!value || typeof value !== 'object') return null;
+  const { url, readAt, games } = value as Record<string, unknown>;
+  if (typeof url !== 'string' || url !== importer.catalogue?.address) return null;
+  if (typeof readAt !== 'string' || Number.isNaN(Date.parse(readAt))) return null;
+  const checked = checkCatalogue({ ok: true, games }, url, importer);
+  if (!checked.ok || checked.games.length === 0) return null;
+  return { url, readAt, games: checked.games };
 }
 
 export function newPick(
@@ -237,7 +271,9 @@ export function newPick(
   url: string,
   games: readonly CatalogueGame[],
   addedIds: ReadonlySet<string>,
+  options: { keptFrom?: string | null; ticked?: readonly string[] } = {},
 ): GamePick {
+  const listed = new Set(games.map((game) => game.id));
   return {
     importerId: importer.id,
     importerTitle: importer.title,
@@ -247,8 +283,10 @@ export function newPick(
       added: addedIds.has(game.id),
       direct: canAddPage(importer, game.address),
     })),
-    ticked: [],
+    // Ticks carried over from the list shown before, for games still listed.
+    ticked: (options.ticked ?? []).filter((id) => listed.has(id)),
     query: '',
+    keptFrom: options.keptFrom ?? null,
   };
 }
 
@@ -274,13 +312,17 @@ export function toggleGame(pick: GamePick, id: string): GamePick {
   };
 }
 
+/** Pages opened for the list of games in this go: one, or none for a kept list. */
+export const pickOpened = (pick: Pick<GamePick, 'keptFrom'>) => (pick.keptFrom === null ? 1 : 0);
+
 /**
  * Which ticked games fit in one go, in the list's order: the list of games
- * was one page, and each game needs at least its game page and one more
- * (a game with one map, just that map). The rest are left for later.
+ * was one page when it was read just now, and each game needs at least its
+ * game page and one more (a game with one map, just that map). The rest
+ * are left for later.
  */
 export function planPick(pick: GamePick): { games: PickGame[]; leftOut: PickGame[] } {
-  let room = pagesLeft(1);
+  let room = pagesLeft(pickOpened(pick));
   const games: PickGame[] = [];
   const leftOut: PickGame[] = [];
   for (const game of pick.games) {

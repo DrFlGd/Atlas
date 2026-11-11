@@ -156,6 +156,13 @@ pub fn now_rfc3339() -> String {
 
 /// Formats seconds since 1970 as RFC 3339 UTC.
 pub fn rfc3339(seconds: u64) -> String {
+    let (year, month, day, hour, minute, second) = civil(seconds);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Seconds since 1970 as a UTC date and time: year, month, day, hour,
+/// minute, second.
+pub fn civil(seconds: u64) -> (i64, i64, i64, u64, u64, u64) {
     let days = i64::try_from(seconds / 86_400).unwrap_or(0);
     let rest = seconds % 86_400;
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
@@ -168,12 +175,7 @@ pub fn rfc3339(seconds: u64) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rest / 3600,
-        (rest % 3600) / 60,
-        rest % 60
-    )
+    (year, month, day, rest / 3600, (rest % 3600) / 60, rest % 60)
 }
 
 /// The images of one layer as last recorded.
