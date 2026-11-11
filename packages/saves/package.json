@@ -1,0 +1,18 @@
+{
+  "name": "@atlas/saves",
+  "version": "0.3.5",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.scripts.json",
+    "dump": "tsx scripts/dump.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}
