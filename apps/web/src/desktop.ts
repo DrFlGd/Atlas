@@ -121,11 +121,32 @@ export interface RecentLog {
 /** How an import ended, for the activity log. Never page data. */
 export interface ImportReport {
   importerId: string | null;
-  outcome: 'added' | 'updated' | 'rebuilt' | 'failed' | 'cancelled' | 'timed-out';
+  outcome:
+    | 'added'
+    | 'updated'
+    | 'rebuilt'
+    | 'failed'
+    | 'cancelled'
+    | 'timed-out'
+    /** Several addresses: the run started, stopped early, or ended (its summary). */
+    | 'run-started'
+    | 'run-stopped'
+    | 'run-finished';
   packId?: string;
   mapId?: string;
   message?: string;
   counts?: { mapLocations: number; maps: number; locations: number; categories: number };
+  /** The pages of a run, when it starts. The log keeps only their hosts. */
+  pages?: string[];
+  /** A run's figures. */
+  run?: {
+    added?: number;
+    refreshed?: number;
+    notAdded?: number;
+    notStarted?: number;
+    /** Addresses left out because no importer recognises them. */
+    leftOut?: number;
+  };
 }
 
 export interface DesktopInfo {

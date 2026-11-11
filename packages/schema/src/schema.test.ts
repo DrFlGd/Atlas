@@ -10,6 +10,7 @@ import {
   manifestSchema,
   packDataSchema,
   parseId,
+  regionSchema,
   resolveIconName,
   tileSourceSchema,
 } from './index';
@@ -119,6 +120,44 @@ describe('entity schemas', () => {
   });
 });
 
+describe('region schema', () => {
+  const [region] = makeFixturePack().regions;
+  const { polygon: _polygon, ...withoutOutline } = region!;
+
+  it('accepts an outline, a centre, both or neither', () => {
+    expect(regionSchema.safeParse(region).success).toBe(true);
+    expect(regionSchema.safeParse({ ...region, center: [500, 150] }).success).toBe(true);
+    expect(regionSchema.safeParse({ ...withoutOutline, center: [500, 150] }).success).toBe(true);
+    // Neither: the region still groups its locations for progress.
+    expect(regionSchema.safeParse(withoutOutline).success).toBe(true);
+  });
+
+  it('rejects a malformed outline or centre', () => {
+    const bad = [
+      { ...region, polygon: [] },
+      { ...region, polygon: region!.polygon!.slice(0, 2) },
+      { ...region, polygon: null },
+      { ...region, center: null },
+      { ...region, center: [500] },
+      { ...region, center: [500, 150, 0] },
+      { ...region, center: ['500', '150'] },
+      { ...region, center: [Number.NaN, 150] },
+      { ...region, center: [Number.POSITIVE_INFINITY, 150] },
+      { ...region, centre: [500, 150] },
+    ];
+    for (const value of bad) expect(regionSchema.safeParse(value).success).toBe(false);
+  });
+
+  it('keeps a pack with regions without geometry valid', () => {
+    const pack = makeFixturePack();
+    pack.regions = pack.regions.map(({ polygon: _p, ...rest }, i) =>
+      i === 0 ? rest : { ...rest, center: [750, 150] as [number, number] },
+    );
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+    expect(checkPackIntegrity(pack)).toEqual([]);
+  });
+});
+
 describe('checkPackIntegrity', () => {
   it('finds no issues in a consistent pack', () => {
     expect(checkPackIntegrity(makeFixturePack())).toEqual([]);
@@ -155,6 +194,16 @@ describe('checkPackIntegrity', () => {
     pack.locations[1]!.x = 1001;
     expect(checkPackIntegrity(pack)).toEqual([
       { path: 'locations[1]', message: 'point (1001, 500) lies outside demo:map:world' },
+    ]);
+  });
+
+  it('reports region outlines and centres outside their map', () => {
+    const pack = makeFixturePack();
+    pack.regions[0]!.center = [1200, 100];
+    pack.regions[1]!.polygon![2] = [1000, 601];
+    expect(checkPackIntegrity(pack)).toEqual([
+      { path: 'regions[0].center', message: 'point (1200, 100) lies outside demo:map:world' },
+      { path: 'regions[1].polygon[2]', message: 'point (1000, 601) lies outside demo:map:world' },
     ]);
   });
 

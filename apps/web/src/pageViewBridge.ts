@@ -25,10 +25,15 @@ export interface PagesInfo {
 export interface CaptureCounts {
   saved: number;
   alreadyHad: number;
+  /**
+   * Found not to be on the server by the page's own requests (the map's
+   * edge), and recorded as missing as "Download map images" records them.
+   */
+  notOnServer: number;
   notSaved: number;
   /** Of `notSaved`: shown by the page in a way that cannot be copied. */
   fromElements: number;
-  /** Of `notSaved`: unreadable, too large, not an image, too many at once. */
+  /** Of `notSaved`: unreadable, an error answer, not an image, too large, too many at once. */
   otherProblems: number;
   bytes: number;
 }
@@ -45,7 +50,7 @@ export interface ViewStatus {
   counts: CaptureCounts;
   /** The page loads things in background workers, which cannot be seen. */
   usesWorkers: boolean;
-  /** Increases when map images were saved, so the map looks again. */
+  /** Increases when map images were saved or found not to be on the server, so the map looks again. */
   revision: number;
   message: string | null;
 }

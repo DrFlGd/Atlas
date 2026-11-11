@@ -71,6 +71,7 @@ export function countPhrases(counts: CaptureCounts): string[] {
   return [
     `${numberFormat.format(counts.saved)} saved`,
     `${numberFormat.format(counts.alreadyHad)} already had`,
+    `${numberFormat.format(counts.notOnServer)} not on the server (the map’s edge)`,
     `${numberFormat.format(counts.notSaved)} could not be saved`,
   ];
 }
@@ -86,7 +87,7 @@ export function problemNotes(status: ViewStatus): string[] {
   }
   if (otherProblems > 0) {
     notes.push(
-      `${images(otherProblems)} could not be saved for another reason: the page did not let Atlas read ${otherProblems === 1 ? 'it' : 'them'}, ${otherProblems === 1 ? 'it was' : 'they were'} not a usable image, or too many came at once.`,
+      `${images(otherProblems)} could not be saved for another reason: the page did not let Atlas read ${otherProblems === 1 ? 'it' : 'them'}, the server answered with an error, ${otherProblems === 1 ? 'it was' : 'they were'} not a usable image, or too many came at once.`,
     );
   }
   if (status.usesWorkers) {

@@ -4,12 +4,14 @@ import {
   categoryCount,
   collectErrors,
   demoLocations,
+  demoRegions,
   expectOverallFound,
   mapStatus,
   openMap,
   overall,
   searchAndChoose,
   selectByName,
+  type PackRegion,
 } from './helpers';
 
 const HERB = 'demo:cat:herb';
@@ -159,6 +161,112 @@ test('N jumps to the nearest unfound marker; shortcuts do not fire while typing'
   await page.keyboard.type('fz');
   await expect(page.getByRole('combobox', { name: 'Search locations' })).toHaveValue('fz');
   await expectOverallFound(page, 1);
+});
+
+/**
+ * How far the map's centre is from a point, in screen pixels at the zoom
+ * shown. The view lands on whole screen pixels, so a few image pixels of
+ * difference at low zoom are expected.
+ */
+async function distanceFromView(
+  page: Page,
+  [x, y]: readonly [number, number],
+  maxZoom = 5,
+): Promise<number> {
+  const view = await mapStatus(page);
+  return Math.hypot(view.x - x, view.y - y) / 2 ** (maxZoom - view.zoom);
+}
+
+/** Whether a point is inside the visible part of the map, for a layer whose 1:1 level is `maxZoom`. */
+async function inView(page: Page, [x, y]: readonly [number, number], maxZoom: number) {
+  const view = await mapStatus(page);
+  const box = (await page.getByTestId('map').boundingBox())!;
+  const imagePixels = 2 ** (maxZoom - view.zoom);
+  return (
+    Math.abs(view.x - x) <= (box.width / 2) * imagePixels &&
+    Math.abs(view.y - y) <= (box.height / 2) * imagePixels
+  );
+}
+
+/** Whether every point of a region's outline is in view. */
+async function outlineInView(page: Page, region: PackRegion, maxZoom: number) {
+  for (const point of region.polygon!) if (!(await inView(page, point, maxZoom))) return false;
+  return true;
+}
+
+test('a region row moves the map to the region, by mouse or keyboard', async ({
+  page,
+  request,
+}) => {
+  const errors = collectErrors(page);
+  const regions = (await demoRegions(request)).filter((r) => r.mapId === 'demo:map:world');
+  // The demo has both kinds: child regions with a centre, top-level ones with an outline only.
+  const outlineOnly = regions.find((r) => !r.center && r.polygon)!;
+  const withCenter = regions.find((r) => r.center && r.parentId === outlineOnly.id)!;
+  expect(outlineOnly).toBeDefined();
+  expect(withCenter).toBeDefined();
+  await openMap(page, './#@4096,4096,1');
+  const progress = page.getByTestId('region-progress');
+
+  // Each region row is a button named for where it goes, and keeps its figures and meter.
+  const go = progress.getByRole('button', { name: `Go to ${withCenter.name}`, exact: true });
+  await expect(go).toBeVisible();
+  const figures = /^[\d,]+\/[\d,]+ \d+%$/;
+  await expect(go).toHaveAccessibleDescription(figures);
+  await expect(go.locator('.progress-figure')).toHaveText(figures);
+  await expect(go.locator('.meter')).toHaveCount(1);
+  // The whole-map row is not a button.
+  await expect(progress.locator('div.progress-row')).toHaveCount(1);
+  await expect(progress.getByRole('button')).toHaveCount(regions.length);
+
+  const before = await mapStatus(page);
+  await go.click();
+  await expect.poll(() => distanceFromView(page, withCenter.center!)).toBeLessThan(3);
+  await expect.poll(async () => (await mapStatus(page)).zoom).toBeGreaterThan(before.zoom);
+  expect((await mapStatus(page)).layer).toBe('demo:layer:surface');
+  // Zoomed so that the whole outline shows around the centre.
+  expect(await outlineInView(page, withCenter, 5)).toBe(true);
+
+  // Keyboard: focus the row of a region without a centre and press Enter.
+  const goOutline = progress.getByRole('button', {
+    name: `Go to ${outlineOnly.name}`,
+    exact: true,
+  });
+  await goOutline.focus();
+  await expect(goOutline).toBeFocused();
+  await page.keyboard.press('Enter');
+  // A large outline is shown whole; near the image's edges the map may hold
+  // the view a little off the outline's middle.
+  await expect.poll(() => outlineInView(page, outlineOnly, 5)).toBe(true);
+  expect(await outlineInView(page, withCenter, 5)).toBe(true);
+  // Space works too, as on any button.
+  await go.focus();
+  await page.keyboard.press(' ');
+  await expect.poll(() => distanceFromView(page, withCenter.center!)).toBeLessThan(3);
+  expect(errors).toEqual([]);
+});
+
+test('on narrow windows a region row closes the filter sheet and shows the region', async ({
+  page,
+  request,
+}) => {
+  const errors = collectErrors(page);
+  const region = (await demoRegions(request)).find((r) => r.center)!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openMap(page, './#@7000,1000,4');
+  expect(await inView(page, region.center!, 5)).toBe(false);
+  await page.getByRole('button', { name: 'Filters', exact: true }).click();
+  await expect(page.getByTestId('filters-pane')).toBeVisible();
+  await page
+    .getByTestId('region-progress')
+    .getByRole('button', { name: `Go to ${region.name}`, exact: true })
+    .click();
+  await expect(page.getByTestId('filters-pane')).toBeHidden();
+  await expect(page.getByTestId('details-pane')).toBeHidden();
+  // A tall, narrow map area shows the whole region at a low zoom, where the
+  // map's edges can hold the view off the exact centre; the centre is in view.
+  await expect.poll(() => inView(page, region.center!, 5)).toBe(true);
+  expect(errors).toEqual([]);
 });
 
 async function openProfiles(page: Page) {

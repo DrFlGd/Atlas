@@ -1,4 +1,4 @@
-import { loadPack } from '@atlas/core';
+import { loadPack, type PackEntry } from '@atlas/core';
 import {
   DEFAULT_WAIT_SECONDS,
   MAX_PAGE_DATA_CHARS,
@@ -24,6 +24,17 @@ import { create } from 'zustand';
 import type { ImporterEntry } from '../config';
 import { desktop, type ImportReport, type Listing, type StoredSource } from '../desktop';
 import { loadGame, notify } from './actions';
+import {
+  ImportRun,
+  checkAddresses,
+  parseAddresses,
+  runCounts,
+  stopReasonText,
+  tooManyMessage,
+  type CheckedAddress,
+  type PageOutcome,
+  type RunState,
+} from './importRun';
 import { applyListing } from './library';
 import { useAtlas } from './store';
 
@@ -32,7 +43,8 @@ import { useAtlas } from './store';
  * recognises it is chosen, the shell opens the page in a window of its own
  * and reads the page data out of it with the importer's page reader, and
  * the importer turns that data into a pack, which the shell writes to the
- * maps folder. See `packages/importer-api` for the contract.
+ * maps folder. See `packages/importer-api` for the contract. Several
+ * addresses are added one after another in the same way (`importRun.ts`).
  *
  * The page cannot call the app. Page data is untrusted: it is capped,
  * parsed as JSON and only handed to the importer's `convert`, whose result
@@ -53,10 +65,29 @@ export type ImportPhase =
       note: string | null;
     }
   | { kind: 'converting'; url: string; importer: string }
-  | { kind: 'done'; packId: string; title: string; summary: ImportSummary; rebuilt: boolean }
-  | { kind: 'failed'; message: string };
+  | {
+      kind: 'done';
+      packId: string;
+      mapId: string;
+      title: string;
+      summary: ImportSummary;
+      rebuilt: boolean;
+    }
+  | { kind: 'failed'; message: string }
+  /** Several addresses, some of which no importer recognises: shown before the run. */
+  | {
+      kind: 'check';
+      addresses: { url: string; importer: string | null; problem: string | null }[];
+      /** The titles of the importers of this app. */
+      importers: string[];
+    }
+  /** Several pages, one after another; `shownPackId` is the game shown when it ended. */
+  | { kind: 'run'; run: RunState; shownPackId: string | null };
 
-export const useImport = create<{ phase: ImportPhase }>()(() => ({ phase: { kind: 'idle' } }));
+export const useImport = create<{ phase: ImportPhase; draft: string }>()(() => ({
+  phase: { kind: 'idle' },
+  draft: '',
+}));
 
 const setPhase = (phase: ImportPhase) => {
   useImport.setState({ phase });
@@ -154,6 +185,80 @@ let currentImporter: string | null = null;
 
 let session = 0;
 
+/** How reading one page ended. */
+type PageRead =
+  | { state: 'ready'; data: string }
+  /** The person closed the page window. */
+  | { state: 'closed'; message: string }
+  /** The page's data could not be used (not JSON, too large). */
+  | { state: 'failed'; message: string }
+  /** The data did not appear within the wait (reported to the log). */
+  | { state: 'timed-out'; message: string }
+  /** The window did not open. */
+  | { state: 'open-failed'; message: string }
+  /** Another import or a cancel took over. */
+  | { state: 'cancelled' };
+
+const CLOSED_MESSAGE =
+  'The page window was closed before the page provided the map data. Nothing was added.';
+
+/**
+ * Opens `url` in the import window, asks it for its data every few seconds
+ * until it appears, the window is closed or the wait runs out, and closes
+ * the window. The same for one page and for each page of a run.
+ */
+async function readPage(
+  shell: NonNullable<typeof desktop>,
+  url: string,
+  importer: AtlasImporter,
+  id: number,
+  onWaiting: (waiting: {
+    startedAt: number;
+    now: number;
+    waitSeconds: number;
+    loading: boolean;
+    note: string | null;
+  }) => void,
+): Promise<PageRead> {
+  const waitSeconds = importer.waitSeconds ?? DEFAULT_WAIT_SECONDS;
+  const startedAt = Date.now();
+  onWaiting({ startedAt, now: startedAt, waitSeconds, loading: true, note: null });
+  try {
+    await shell.importWindow.open(url, importer.pageReader, { id: importer.id, waitSeconds });
+  } catch (error) {
+    return id === session
+      ? { state: 'open-failed', message: errorText(error) }
+      : { state: 'cancelled' };
+  }
+
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    if (id !== session) return { state: 'cancelled' };
+    const now = Date.now();
+    if (now - startedAt > waitSeconds * 1000) {
+      await shell.importWindow.close().catch(() => undefined);
+      const message = `The page did not provide the map data within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the map load; you can try again later. Nothing was added.`;
+      report({ importerId: importer.id, outcome: 'timed-out', message });
+      return { state: 'timed-out', message };
+    }
+    let result;
+    try {
+      result = await shell.importWindow.poll();
+    } catch (error) {
+      result = { state: 'failed', message: errorText(error) } as const;
+    }
+    if (id !== session) return { state: 'cancelled' };
+    if (result.state === 'waiting') {
+      onWaiting({ startedAt, now, waitSeconds, loading: result.loading, note: result.note });
+      continue;
+    }
+    await shell.importWindow.close().catch(() => undefined);
+    if (result.state === 'closed') return { state: 'closed', message: CLOSED_MESSAGE };
+    if (result.state === 'failed') return { state: 'failed', message: result.message };
+    return { state: 'ready', data: result.data };
+  }
+}
+
 /** Starts an import from a page address. */
 export async function startImport(text: string): Promise<void> {
   const shell = desktop;
@@ -172,78 +277,30 @@ export async function startImport(text: string): Promise<void> {
     return;
   }
   currentImporter = importer.id;
-  const waitSeconds = importer.waitSeconds ?? DEFAULT_WAIT_SECONDS;
-  const startedAt = Date.now();
-  const waiting = {
-    kind: 'waiting',
+  const read = await readPage(shell, url, importer, id, (waiting) => {
+    setPhase({ kind: 'waiting', url, importer: importer.title, ...waiting });
+  });
+  if (read.state === 'cancelled') return;
+  if (read.state !== 'ready') {
+    if (id === session) setPhase({ kind: 'failed', message: read.message });
+    return;
+  }
+  setPhase({ kind: 'converting', url, importer: importer.title });
+  const outcome = await convertAndSave(importer, {
     url,
-    importer: importer.title,
-    startedAt,
-    now: startedAt,
-    waitSeconds,
-    loading: true,
-    note: null,
-  } as const;
-  setPhase(waiting);
-  try {
-    await shell.importWindow.open(url, importer.pageReader, { id: importer.id, waitSeconds });
-  } catch (error) {
-    if (id === session) setPhase({ kind: 'failed', message: errorText(error) });
-    return;
-  }
-
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-    if (id !== session) return;
-    const now = Date.now();
-    if (now - startedAt > waitSeconds * 1000) {
-      await shell.importWindow.close().catch(() => undefined);
-      const message = `The page did not provide the map data within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the map load; you can try again later. Nothing was added.`;
-      report({ importerId: importer.id, outcome: 'timed-out', message });
-      setPhase({ kind: 'failed', message });
-      return;
-    }
-    let result;
-    try {
-      result = await shell.importWindow.poll();
-    } catch (error) {
-      result = { state: 'failed', message: errorText(error) } as const;
-    }
-    if (id !== session) return;
-    if (result.state === 'waiting') {
-      setPhase({ ...waiting, now, loading: result.loading, note: result.note });
-      continue;
-    }
-    await shell.importWindow.close().catch(() => undefined);
-    if (result.state === 'closed') {
-      setPhase({
-        kind: 'failed',
-        message:
-          'The page window was closed before the page provided the map data. Nothing was added.',
-      });
-      return;
-    }
-    if (result.state === 'failed') {
-      setPhase({ kind: 'failed', message: result.message });
-      return;
-    }
-    setPhase({ kind: 'converting', url, importer: importer.title });
-    const outcome = await convertAndSave(importer, {
-      url,
-      pageData: result.data,
-      importedAt: new Date().toISOString(),
-    });
-    reportPhase(importer.id, outcome);
-    if (id === session) setPhase(outcome);
-    return;
-  }
+    pageData: read.data,
+    importedAt: new Date().toISOString(),
+  });
+  reportPhase(importer.id, outcome);
+  if (id === session) setPhase(outcome);
 }
 
-/** Stops waiting and closes the page window. */
+/** Stops waiting and closes the page window; a run stops with it. */
 export async function cancelImport(): Promise<void> {
   if (useImport.getState().phase.kind === 'waiting') {
     report({ importerId: currentImporter, outcome: 'cancelled' });
   }
+  currentRun?.cancel();
   session++;
   setPhase({ kind: 'idle' });
   await desktop?.importWindow.close().catch(() => undefined);
@@ -251,7 +308,179 @@ export async function cancelImport(): Promise<void> {
 
 /** Back to the address field, after a result or a failure. */
 export function resetImport(): void {
-  if (useImport.getState().phase.kind !== 'waiting') setPhase({ kind: 'idle' });
+  const { phase } = useImport.getState();
+  if (phase.kind === 'waiting' || (phase.kind === 'run' && phase.run.status === 'running')) return;
+  setPhase({ kind: 'idle' });
+}
+
+// ---------------------------------------------------------------------------
+// Several addresses
+
+/** The run in progress, if any. */
+let currentRun: ImportRun | null = null;
+
+/** Keeps what the person typed, so it is still there after going back. */
+export function setDraft(draft: string): void {
+  useImport.setState({ draft });
+}
+
+/**
+ * Starts adding what the person pasted: one address as before; several
+ * one after another, after showing any that cannot be added.
+ */
+export async function submitAddresses(text: string): Promise<void> {
+  const { addresses, tooMany } = parseAddresses(text);
+  if (addresses.length === 0) return;
+  if (addresses.length === 1) {
+    await startImport(addresses[0]!);
+    return;
+  }
+  if (tooMany) {
+    setPhase({ kind: 'failed', message: tooManyMessage(addresses.length) });
+    return;
+  }
+  const importers = await loadImporters();
+  const checked = checkAddresses(addresses, importers);
+  if (checked.some((address) => !address.importer)) {
+    setPhase({
+      kind: 'check',
+      addresses: checked.map(({ url, importer, problem }) => ({
+        url,
+        importer: importer?.title ?? null,
+        problem,
+      })),
+      importers: importers.map((importer) => importer.title),
+    });
+    return;
+  }
+  await startRun(checked, 0);
+}
+
+/** After the check: adds the addresses that can be added and leaves out the rest. */
+export async function confirmChecked(): Promise<void> {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'check') return;
+  const usable = phase.addresses.filter((address) => address.importer !== null);
+  if (usable.length === 0) return;
+  if (usable.length === 1) {
+    await startImport(usable[0]!.url);
+    return;
+  }
+  const importers = await loadImporters();
+  await startRun(
+    checkAddresses(
+      usable.map((address) => address.url),
+      importers,
+    ),
+    phase.addresses.length - usable.length,
+  );
+}
+
+/** Stops the run after the page that is open now. */
+export function stopRun(): void {
+  currentRun?.stop();
+}
+
+const outcomeOf = (read: Exclude<PageRead, { state: 'ready' }>): PageOutcome => {
+  switch (read.state) {
+    case 'closed':
+      return { kind: 'closed', message: read.message };
+    case 'failed':
+      return { kind: 'failed', message: read.message };
+    case 'timed-out':
+    case 'open-failed':
+      return { kind: 'no-data', message: read.message };
+    case 'cancelled':
+      return { kind: 'cancelled', message: 'Stopped before the page provided the map data.' };
+  }
+};
+
+/**
+ * Works through several pages, one at a time, in the order given (see
+ * `importRun.ts`), then shows the game of the last map added.
+ */
+async function startRun(
+  checked: readonly CheckedAddress<AtlasImporter>[],
+  leftOut: number,
+): Promise<void> {
+  const shell = desktop;
+  if (!shell) return;
+  const pages = checked.flatMap(({ url, importer }) => (importer ? [{ url, importer }] : []));
+  const id = ++session;
+  const run = new ImportRun(
+    pages.map((page) => page.url),
+    leftOut,
+    {
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      onChange: (state) => {
+        if (id === session) setPhase({ kind: 'run', run: state, shownPackId: null });
+      },
+      async importPage(index, url, update) {
+        const importer = pages[index]!.importer;
+        currentImporter = importer.id;
+        const read = await readPage(shell, url, importer, id, (waiting) => {
+          update({ kind: 'open', ...waiting });
+        });
+        if (read.state !== 'ready') {
+          if (read.state === 'cancelled') {
+            report({ importerId: importer.id, outcome: 'cancelled' });
+          }
+          return outcomeOf(read);
+        }
+        update({ kind: 'converting' });
+        const outcome = await convertAndSave(
+          importer,
+          { url, pageData: read.data, importedAt: new Date().toISOString() },
+          false,
+          false,
+        );
+        reportPhase(importer.id, outcome);
+        if (outcome.kind === 'done') {
+          return {
+            kind: 'added',
+            game: outcome.summary.game,
+            map: outcome.summary.map,
+            packId: outcome.packId,
+            mapId: outcome.mapId,
+            refreshed: outcome.summary.refreshed,
+          };
+        }
+        return {
+          kind: 'failed',
+          message: outcome.kind === 'failed' ? outcome.message : 'Nothing was added.',
+        };
+      },
+    },
+  );
+  currentRun = run;
+  report({
+    importerId: null,
+    outcome: 'run-started',
+    pages: pages.map((page) => page.url),
+    run: { leftOut },
+  });
+  const final = await run.run();
+  if (currentRun === run) currentRun = null;
+  const counts = runCounts(final);
+  if (final.stopReason) {
+    report({
+      importerId: null,
+      outcome: 'run-stopped',
+      message: stopReasonText(final.stopReason),
+      run: { ...counts, leftOut },
+    });
+  }
+  report({ importerId: null, outcome: 'run-finished', run: { ...counts, leftOut } });
+  if (id !== session) return;
+
+  // Show the game of the last map added, as after a single import.
+  const last = final.pages.findLast((page) => page.state.kind === 'added')?.state;
+  let shownPackId: string | null = null;
+  if (last?.kind === 'added') {
+    const entry = useAtlas.getState().catalog.find((p) => p.id === last.packId);
+    if (entry && (await showMap(entry, last.mapId))) shownPackId = last.packId;
+  }
+  if (id === session) setPhase({ kind: 'run', run: final, shownPackId });
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +565,7 @@ async function convertAndSave(
   importer: AtlasImporter,
   page: { url: string; pageData: string; importedAt: string },
   rebuilt = false,
+  show = true,
 ): Promise<ImportPhase> {
   const shell = desktop;
   if (!shell) return { kind: 'idle' };
@@ -401,20 +631,25 @@ async function convertAndSave(
   }
   applyListing(listing);
   const entry = useAtlas.getState().catalog.find((p) => p.id === outcome.packId);
-  if (entry) {
-    // Load the new pack and show the imported map.
-    await loadGame(entry);
-    const game = useAtlas.getState().game;
-    const layer = game?.pack.layersOf(outcome.mapId)[0];
-    if (game && layer) useAtlas.setState({ mapId: outcome.mapId, layerId: layer.id });
-  }
+  // Load the new pack and show the imported map; a run does that at its end.
+  if (entry && show) await showMap(entry, outcome.mapId);
   return {
     kind: 'done',
     packId: outcome.packId,
+    mapId: outcome.mapId,
     title: outcome.summary.game,
     summary: outcome.summary,
     rebuilt,
   };
+}
+
+/** Loads a game and shows one of its maps. */
+async function showMap(entry: PackEntry, mapId: string): Promise<boolean> {
+  if (!(await loadGame(entry))) return false;
+  const game = useAtlas.getState().game;
+  const layer = game?.pack.layersOf(mapId)[0];
+  if (game && layer) useAtlas.setState({ mapId, layerId: layer.id });
+  return true;
 }
 
 /**
@@ -460,5 +695,8 @@ export async function rebuildPack(packId: string): Promise<void> {
 
 export function setAddMapOpen(open: boolean): void {
   useAtlas.setState({ addMapOpen: open });
-  if (!open) resetImport();
+  if (!open) {
+    resetImport();
+    setDraft('');
+  }
 }

@@ -1,5 +1,5 @@
 import { pointInPolygon, polygonArea } from '@atlas/core';
-import { checkPackIntegrity, isIconName } from '@atlas/schema';
+import { checkPackIntegrity, isIconName, type Region } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
 import { rectangle, voronoiCells } from '../geometry/voronoi';
 import { createRandom, deriveSeed } from '../random';
@@ -10,6 +10,8 @@ import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
 const SIZE = 2048;
 const SEED = 7;
 const terrain = createTerrain(SEED, SIZE);
+/** Every demo region has an outline; an empty one fails the checks that use it. */
+const outline = (region: Region) => region.polygon ?? [];
 
 function generate(seed = SEED) {
   const layout = layoutRegions(seed, terrain);
@@ -80,9 +82,20 @@ describe('demo content', () => {
       expect(loc.x).toBeLessThanOrEqual(SIZE);
       if (elevationAt(terrain, loc.x, loc.y) > 0) onLand++;
       const region = loc.regionId ? regions.get(loc.regionId) : undefined;
-      if (region) expect(pointInPolygon(loc, region.polygon)).toBe(true);
+      if (region) expect(pointInPolygon(loc, outline(region))).toBe(true);
     }
     expect(onLand / pack.locations.length).toBeGreaterThan(0.9);
+  });
+
+  it('gives child regions a centre inside their outline, and top-level regions none', () => {
+    for (const region of pack.regions) {
+      if (region.parentId === null) {
+        expect(region.center).toBeUndefined();
+      } else {
+        const [x, y] = region.center!;
+        expect(pointInPolygon({ x, y }, outline(region))).toBe(true);
+      }
+    }
   });
 
   it('splits each top-level region into child regions that cover it', () => {
@@ -91,9 +104,9 @@ describe('demo content', () => {
     for (const parent of parents) {
       const children = pack.regions.filter((r) => r.parentId === parent.id);
       expect(children.length).toBeGreaterThan(1);
-      const childArea = children.reduce((sum, r) => sum + polygonArea(r.polygon), 0);
+      const childArea = children.reduce((sum, r) => sum + polygonArea(outline(r)), 0);
       // Child vertices are rounded to whole pixels, so allow a small tolerance.
-      expect(childArea / polygonArea(parent.polygon)).toBeCloseTo(1, 2);
+      expect(childArea / polygonArea(outline(parent))).toBeCloseTo(1, 2);
     }
   });
 });

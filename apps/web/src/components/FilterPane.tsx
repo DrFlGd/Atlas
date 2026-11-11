@@ -1,9 +1,10 @@
-import { percent, type ProgressSummary, type Tally } from '@atlas/core';
+import { hasRegionTarget, percent, type ProgressSummary, type Tally } from '@atlas/core';
 import type { Category, CategoryGroup, Region } from '@atlas/schema';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   applyPreset,
   deleteUserPreset,
+  goToRegion,
   resetFilters,
   saveUserPreset,
   setCategoriesVisible,
@@ -13,7 +14,10 @@ import { numberFormat, useSummary, useVisibleCategories } from '../state/derived
 import { useAtlas } from '../state/store';
 import { GlyphBadge, UiIcon } from './icons';
 
-/** Left pane: presets, the "hide found" toggle, the category tree and region progress. */
+/**
+ * Left pane: presets, the "hide found" toggle, the category tree and region
+ * progress. A region row the map can go to is a button that does so.
+ */
 export function FilterPane() {
   const game = useAtlas((s) => s.game);
   const mapId = useAtlas((s) => s.mapId);
@@ -357,7 +361,18 @@ function RegionProgress({ mapId, summary }: { mapId: string; summary: ProgressSu
       if (tally.count === 0) return null;
       return (
         <li key={region.id}>
-          <ProgressRow name={region.name} tally={tally} depth={depth} />
+          <ProgressRow
+            name={region.name}
+            tally={tally}
+            depth={depth}
+            onGo={
+              hasRegionTarget(region)
+                ? () => {
+                    goToRegion(region.id);
+                  }
+                : undefined
+            }
+          />
           {tree.get(region.id) ? (
             <ul className="region-list">{renderRegions(tree.get(region.id)!, depth + 1)}</ul>
           ) : null}
@@ -380,23 +395,31 @@ function RegionProgress({ mapId, summary }: { mapId: string; summary: ProgressSu
   );
 }
 
+/**
+ * One row of progress: name, found/total and a meter. With `onGo` the row is
+ * a button that moves the map to the region; its name says so, and the
+ * figures are read as its description.
+ */
 function ProgressRow({
   name,
   tally,
   depth,
   strong = false,
+  onGo,
 }: {
   name: string;
   tally: Tally;
   depth: number;
   strong?: boolean;
+  onGo?: () => void;
 }) {
-  return (
-    <div className="progress-row" style={{ paddingLeft: `${depth * 14}px` }}>
+  const figureId = useId();
+  const content = (
+    <>
       <span className={strong ? 'progress-name progress-name-strong' : 'progress-name'}>
         {name}
       </span>
-      <span className="progress-figure">
+      <span className="progress-figure" id={figureId}>
         {numberFormat.format(tally.found)}/{numberFormat.format(tally.total)}
         <span className="muted"> {percent(tally)}%</span>
       </span>
@@ -406,6 +429,27 @@ function ProgressRow({
           style={{ width: `${(tally.found / Math.max(1, tally.total)) * 100}%` }}
         />
       </span>
-    </div>
+    </>
+  );
+  const style = { paddingLeft: `${depth * 14}px` };
+  if (!onGo) {
+    return (
+      <div className="progress-row" style={style}>
+        {content}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="progress-row progress-row-button"
+      style={style}
+      aria-label={`Go to ${name}`}
+      aria-describedby={figureId}
+      title={`Go to ${name}`}
+      onClick={onGo}
+    >
+      {content}
+    </button>
   );
 }

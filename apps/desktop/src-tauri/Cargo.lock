@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-desktop"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "httpdate",
  "image",

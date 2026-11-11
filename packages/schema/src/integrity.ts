@@ -10,7 +10,8 @@ export interface PackIssue {
 /**
  * Checks the rules a per-file schema cannot see: ids are unique and belong to
  * the pack's game, references point at existing content of the right kind,
- * coordinates fall inside their map, and each tile pyramid matches its map.
+ * coordinates (of locations, region outlines and region centres) fall inside
+ * their map, and each tile pyramid matches its map.
  * Returns an empty array for a consistent pack.
  */
 export function checkPackIntegrity(pack: PackData): PackIssue[] {
@@ -86,13 +87,17 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
     if (!map) {
       report(`regions[${i}].mapId`, `unknown map ${region.mapId}`);
     } else {
-      region.polygon.forEach(([x, y], p) => {
+      const inside = ([x, y]: readonly [number, number], path: string) => {
         expect(
           x >= 0 && y >= 0 && x <= map.width && y <= map.height,
-          `regions[${i}].polygon[${p}]`,
+          path,
           `point (${x}, ${y}) lies outside ${map.id}`,
         );
+      };
+      region.polygon?.forEach((point, p) => {
+        inside(point, `regions[${i}].polygon[${p}]`);
       });
+      if (region.center) inside(region.center, `regions[${i}].center`);
     }
     if (region.parentId !== null) {
       const parent = regions.get(region.parentId);

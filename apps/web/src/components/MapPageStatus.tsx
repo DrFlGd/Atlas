@@ -14,8 +14,8 @@ import '../styles/pageView.css';
 
 /**
  * A card over the map while the map page window is open: whether map images
- * are being saved, how many were saved, were there already or could not be
- * saved, and buttons to stop saving and to close the page. After the window
+ * are being saved, how many were saved, were there already, were found not
+ * to be on the server (the map's edge) or could not be saved, and buttons to stop saving and to close the page. After the window
  * closes it stays until dismissed, with the final counts.
  */
 export function MapPageStatus() {
@@ -26,7 +26,7 @@ export function MapPageStatus() {
   );
   if (!shouldShow(status)) return null;
   const state = status.open ? (status.saving ? 'saving' : 'open') : 'closed';
-  const [saved, had, notSaved] = countPhrases(status.counts);
+  const [saved, had, notOnServer, notSaved] = countPhrases(status.counts);
   const notes = problemNotes(status);
   return (
     <section
@@ -60,6 +60,9 @@ export function MapPageStatus() {
           </li>
           <li data-testid="map-page-had" data-count={status.counts.alreadyHad}>
             {had}
+          </li>
+          <li data-testid="map-page-not-on-server" data-count={status.counts.notOnServer}>
+            {notOnServer}
           </li>
           <li
             data-testid="map-page-not-saved"

@@ -275,14 +275,27 @@ export const layerSchema = z
     },
   );
 
+/**
+ * A named area of a map. Locations name the region they are in, and the app
+ * counts progress per region (a region includes its sub-regions).
+ *
+ * Both geometry fields are optional and independent. A region can have an
+ * outline, a centre, both or neither: one without either still groups its
+ * locations for progress, but the app cannot show where it is.
+ */
 export const regionSchema = z.strictObject({
   id: idOf('region'),
   mapId: idOf('map'),
   /** Enclosing region, or null for a top-level region. */
   parentId: idOf('region').nullable(),
   name: nonEmpty,
-  /** Outline in map image pixels; implicitly closed. */
-  polygon: z.array(pointSchema).min(3),
+  /** Outline in map image pixels; implicitly closed. Absent when the region has none. */
+  polygon: z.array(pointSchema).min(3).optional(),
+  /**
+   * The point the map goes to for this region, in map image pixels. When
+   * absent, the app goes to the middle of the outline, if there is one.
+   */
+  center: pointSchema.optional(),
 });
 
 // ---------------------------------------------------------------------------

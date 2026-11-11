@@ -11,8 +11,10 @@ import {
   overridesShowingOnly,
   planImport,
   progressRow,
+  regionTarget,
   renamedProfile,
   resolveProgress,
+  viewportSize,
   visibleCategoryIds,
   type ExportFile,
   type ExportSelection,
@@ -257,6 +259,32 @@ export function goToLocation(locationId: string): void {
     },
   });
   select(locationId);
+}
+
+/**
+ * Moves the map to a region: to its centre, or else the middle of its
+ * outline, fitting the outline when it has one (see `regionTarget`). Switches
+ * to the region's map first if another map is shown. On narrow screens the
+ * filter sheet closes so the map can be seen.
+ */
+export function goToRegion(regionId: string): void {
+  const { game, view, layerId } = get();
+  const region = game?.pack.regions.get(regionId);
+  if (!game || !region) return;
+  // The map area keeps its size across maps; measure it on the layer shown now.
+  const shown = layerId ? game.pack.layers.get(layerId) : undefined;
+  const viewport =
+    view && shown
+      ? viewportSize(view, shown.maxZoom)
+      : { width: window.innerWidth, height: window.innerHeight };
+  const changesMap = region.mapId !== get().mapId;
+  if (changesMap) showMap(region.mapId);
+  const layer = game.pack.layers.get(get().layerId ?? '');
+  if (layer?.mapId !== region.mapId) return;
+  const target = regionTarget(region, layer, viewport);
+  if (!target) return;
+  set({ fly: { ...target, animate: !changesMap, seq: ++flySeq } });
+  if (isNarrow()) setPane('filters', false);
 }
 
 /** Selects the nearest visible, trackable location not yet found, measured from the selection or the map centre. */
