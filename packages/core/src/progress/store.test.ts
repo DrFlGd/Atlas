@@ -1,3 +1,4 @@
+import { Dexie } from 'dexie';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { describe, expect, it } from 'vitest';
 import { createDexieStore } from './dexieStore';
@@ -103,6 +104,40 @@ describe('dexie store', () => {
   });
 });
 
+describe('stores written by earlier versions', () => {
+  it('opens a database written by Atlas 0.3.3 as is, and keeps checklist marks beside found marks', async () => {
+    const indexedDB = new IDBFactory();
+    // The database as Atlas 0.3.3 created it: Dexie version 1, these tables and keys.
+    const legacy = new Dexie('legacy', { indexedDB, IDBKeyRange });
+    legacy.version(1).stores({
+      profiles: 'id, gameId',
+      progress: '[profileId+targetId], profileId',
+      presets: 'id, gameId',
+      settings: 'key',
+    });
+    await legacy.table('profiles').put(newProfile('demo', 'Old run', 1, 'old'));
+    await legacy.table('progress').put(progressRow('old', 'demo:loc:0001', true, 2));
+    await legacy.table('settings').put({ key: 'theme', value: 'light', updatedAt: 3 });
+    legacy.close();
+
+    const store = createDexieStore('legacy', { indexedDB, IDBKeyRange });
+    expect((await store.listProfiles('demo'))[0]?.name).toBe('Old run');
+    expect(await store.getSetting('theme')).toBe('light');
+    // A checklist step's own done mark is a progress row keyed by the item's id.
+    await store.write({ progress: [progressRow('old', 'demo:checkitem:step-1', true, 4)] });
+    const rows = await store.listProgress('old');
+    expect(rows.map((r) => r.targetId).sort()).toEqual(['demo:checkitem:step-1', 'demo:loc:0001']);
+    expect((await store.snapshot()).progress).toHaveLength(2);
+    store.close();
+
+    // No upgrade was needed: the database is still at the version 0.3.3 wrote.
+    const reopened = new Dexie('legacy', { indexedDB, IDBKeyRange });
+    await reopened.open();
+    expect(reopened.verno).toBe(1);
+    reopened.close();
+  });
+});
+
 describe('profile helpers', () => {
   it('duplicates live progress into a new profile', () => {
     const source = newProfile('demo', 'Main', 1, 'main');
@@ -110,6 +145,7 @@ describe('profile helpers', () => {
       progressRow('main', 'demo:loc:0001', true, 2),
       progressRow('main', 'demo:loc:0002', false, 3),
       progressRow('other', 'demo:loc:0003', true, 4),
+      progressRow('main', 'demo:checkitem:step-1', true, 5),
     ];
     const copy = duplicateProfile(source, rows, 'Copy', 10, 'copy');
     expect(copy.profiles[0]).toMatchObject({
@@ -118,7 +154,11 @@ describe('profile helpers', () => {
       name: 'Copy',
       createdAt: 10,
     });
-    expect(copy.progress).toEqual([{ ...rows[0], profileId: 'copy', updatedAt: 10 }]);
+    // Checklist marks are progress rows too, so they are copied with the found marks.
+    expect(copy.progress).toEqual([
+      { ...rows[0], profileId: 'copy', updatedAt: 10 },
+      { ...rows[3], profileId: 'copy', updatedAt: 10 },
+    ]);
   });
 
   it('tombstones a profile and its live progress', () => {

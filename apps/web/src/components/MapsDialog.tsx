@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FolderChoice, ListedPack, LocationInfo } from '../desktop';
 import { downloadsOffered } from '../features';
 import { notify, switchGame } from '../state/actions';
-import { rebuildPack } from '../state/importing';
+import { rebuildPack, updatableGames, updateAll, updateGame } from '../state/importing';
 import {
   addPacksFolder,
   applyMapsFolder,
@@ -192,10 +192,30 @@ const ORIGIN: Record<ListedPack['origin'], string> = {
   location: 'Added folder',
 };
 
+/** The ids of the games that "Update from the site…" can read again. */
+function useUpdatable(): ReadonlySet<string> {
+  const library = useAtlas((s) => s.library);
+  const [ids, setIds] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    let live = true;
+    updatableGames().then(
+      (games) => {
+        if (live) setIds(new Set(games.map((game) => game.packId)));
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [library]);
+  return ids;
+}
+
 function PackList() {
   const library = useAtlas((s) => s.library);
   const bundled = useAtlas((s) => s.bundledCatalog);
   const shown = useAtlas((s) => s.game?.entry.id);
+  const updatable = useUpdatable();
   if (!library) return null;
   const listed = new Set(library.packs.map((p) => p.id));
   const fromApp = bundled.filter((p) => !listed.has(p.id));
@@ -203,22 +223,35 @@ function PackList() {
     <section className="dialog-section" aria-label="Map packs">
       <div className="dialog-subhead-row">
         <h3 className="dialog-subhead">Map packs</h3>
-        <button
-          type="button"
-          className="link-button"
-          data-testid="refresh-maps"
-          onClick={() => {
-            void refreshLibrary()
-              .then(() => {
-                notify('Looked at every folder again.');
-              })
-              .catch((error: unknown) => {
-                notify(String(error), 'error');
-              });
-          }}
-        >
-          Refresh
-        </button>
+        <span className="dialog-subhead-actions">
+          {updatable.size > 0 ? (
+            <button
+              type="button"
+              className="link-button"
+              data-testid="update-all"
+              title="Read the game pages of the games added from web pages, then choose the maps to refresh or add"
+              onClick={() => void updateAll()}
+            >
+              Update all…
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="link-button"
+            data-testid="refresh-maps"
+            onClick={() => {
+              void refreshLibrary()
+                .then(() => {
+                  notify('Looked at every folder again.');
+                })
+                .catch((error: unknown) => {
+                  notify(String(error), 'error');
+                });
+            }}
+          >
+            Refresh
+          </button>
+        </span>
       </div>
       <ul className="profile-list pack-list" data-testid="pack-list">
         {fromApp.map((pack) => (
@@ -233,6 +266,7 @@ function PackList() {
             pack={pack}
             active={pack.id === shown}
             busy={library.busy.includes(pack.id)}
+            updatable={updatable.has(pack.id)}
           />
         ))}
       </ul>
@@ -263,7 +297,17 @@ function PackTitle({ title, active }: { title: string; active: boolean }) {
   );
 }
 
-function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; busy: boolean }) {
+function PackRow({
+  pack,
+  active,
+  busy,
+  updatable,
+}: {
+  pack: ListedPack;
+  active: boolean;
+  busy: boolean;
+  updatable: boolean;
+}) {
   const [confirming, setConfirming] = useState<'pack' | 'images' | null>(null);
   const canRebuild = useAtlas((s) =>
     s.config?.importers.some((i) => i.id === pack.imported?.importerId),
@@ -311,6 +355,17 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
                 }}
               >
                 Open folder
+              </button>
+            ) : null}
+            {updatable && !busy ? (
+              <button
+                type="button"
+                className="link-button"
+                data-testid="update-pack"
+                title="Read the game's page on its site again, then choose the maps to refresh or add"
+                onClick={() => void updateGame(pack.id)}
+              >
+                Update from the site…
               </button>
             ) : null}
             {pack.imported && canRebuild ? (

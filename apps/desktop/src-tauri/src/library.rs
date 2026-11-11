@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     activity::{self, Area},
-    manifest::{read_head, version_key, write_atomic, ManifestHead, MANIFEST_FILE},
+    manifest::{read_head, version_key, write_atomic, ManifestHead, SourcePage, MANIFEST_FILE},
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
     removal::{self, FileOps, ImagesCount, ImagesDeleted, PackDeleted},
     settings::{default_maps_folder, Location, LocationKind, SettingsFile, SharedSettings},
@@ -171,6 +171,8 @@ pub struct ListedPack {
     /// A pack with this id comes with the app.
     pub bundled: bool,
     pub imported: Option<ImportedFrom>,
+    /// The web pages the pack was made from, as its manifest records them.
+    pub pages: Vec<SourcePage>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -284,11 +286,18 @@ pub struct SaveImport {
     pub source_key: String,
     pub page_url: String,
     pub imported_at: String,
-    pub map_id: String,
+    /// The map the page became; none for a page that became something else,
+    /// such as a checklist.
+    #[serde(default)]
+    pub map_id: Option<String>,
     /// The page data as JSON text.
     pub page_data: String,
     /// Pack files by name, as JSON text.
     pub files: BTreeMap<String, String>,
+    /// The pack refreshes a pack that comes with the app (its importer
+    /// allows that). Without it, such packs are refused.
+    #[serde(default)]
+    pub refresh_bundled: bool,
 }
 
 pub struct Library {
@@ -349,13 +358,25 @@ impl Library {
         self.bundled.iter().any(|pack| pack.id == id)
     }
 
+    fn bundled_pack(&self, id: &str) -> Option<&BundledPack> {
+        self.bundled.iter().find(|pack| pack.id == id)
+    }
+
+    /// The version of a bundled pack, as it compares; 0.0.0 when unreadable.
+    fn bundled_version(&self, pack: &BundledPack) -> (u64, u64, u64) {
+        read_head(&pack.path).map_or((0, 0, 0), |head| version_key(&head.pack_version))
+    }
+
     /// Start-up: registers bundled packs, installs the downloadable ones into
     /// the maps folder when they are not anywhere yet (or the maps folder has
     /// an older version), and lists every folder.
     pub fn start(&self) -> Listing {
         let mut listing = self.scan();
         for pack in &self.bundled {
-            let installed = pack.downloadable
+            // Packs without remote images stay in the app, unless the maps
+            // folder has a copy of one (a refresh from its site).
+            let has_copy = self.maps_folder_copy(&pack.id).is_some();
+            let installed = (pack.downloadable || has_copy)
                 && self
                     .install_bundled(pack, &listing)
                     .inspect_err(|error| {
@@ -380,37 +401,70 @@ impl Library {
         self.scan()
     }
 
+    /// The pack folder in the maps folder holding a pack with this id, and its manifest.
+    fn maps_folder_copy(&self, id: &str) -> Option<(PathBuf, ManifestHead)> {
+        packs_in(&self.maps_folder())
+            .0
+            .into_iter()
+            .find(|(_, head)| head.id == id)
+    }
+
     /// Copies a bundled pack into the maps folder when the maps folder has no
-    /// pack with its id, or updates the pack files of the maps folder's copy
-    /// when the bundled one is newer. Map images and other files in the folder
-    /// are never touched. A copy in another location is then not shown, since
-    /// the maps folder comes first, and the Maps dialog says so.
+    /// pack with its id, or updates the maps folder's copy from it when the
+    /// bundled one is newer, or the same version and the copy lacks the page
+    /// data the bundled pack carries (`import/`, so it can be refreshed from
+    /// its site). An update replaces the files the bundled pack has and its
+    /// page data; map images and other files in the folder are never
+    /// touched. A copy that is newer, such as one refreshed from its site,
+    /// is kept. A copy in another location is then not shown, since the
+    /// maps folder comes first, and the Maps dialog says so.
     fn install_bundled(&self, pack: &BundledPack, listing: &Listing) -> Result<(), String> {
         let bundled = read_head(&pack.path)?;
-        let shown = listing.packs.iter().find(|listed| listed.id == pack.id);
         let target = self.maps_folder().join(&pack.id);
-        match shown {
-            Some(listed) if listed.origin == Origin::MapsFolder => {
-                let existing = listed.path.as_deref().map(PathBuf::from).unwrap_or(target);
-                if version_key(&bundled.pack_version) <= version_key(&listed.pack_version) {
+        let copy = self.maps_folder_copy(&pack.id).or_else(|| {
+            // A shown copy in the maps folder under another folder name.
+            listing
+                .packs
+                .iter()
+                .find(|listed| listed.id == pack.id && listed.origin == Origin::MapsFolder)
+                .and_then(|listed| listed.path.as_deref().map(PathBuf::from))
+                .and_then(|dir| read_head(&dir).ok().map(|head| (dir, head)))
+        });
+        match copy {
+            Some((existing, head)) => {
+                let newer = version_key(&bundled.pack_version) > version_key(&head.pack_version);
+                let same = version_key(&bundled.pack_version) == version_key(&head.pack_version);
+                let adds_page_data = same
+                    && read_import_index(&pack.path).is_some()
+                    && read_import_index(&existing).is_none();
+                if !newer && !adds_page_data {
                     return Ok(());
                 }
                 let _lock = PackLock::acquire(&existing)?;
-                copy_pack_files(&pack.path, &existing, true)
+                copy_bundled_files(&pack.path, &existing)
                     .map_err(|error| format!("Could not update {}: {error}", pack.id))?;
                 activity::info(
                     Area::Library,
-                    format!(
-                        "Updated the pack files of {} in {} from version {} to {} (map images kept)",
-                        pack.id,
-                        existing.display(),
-                        listed.pack_version,
-                        bundled.pack_version
-                    ),
+                    if newer {
+                        format!(
+                            "Updated the pack files of {} in {} from version {} to {} (map images kept)",
+                            pack.id,
+                            existing.display(),
+                            head.pack_version,
+                            bundled.pack_version
+                        )
+                    } else {
+                        format!(
+                            "Added the page data that comes with {} (version {}) to {}, so it can be refreshed from its site",
+                            pack.id,
+                            bundled.pack_version,
+                            existing.display()
+                        )
+                    },
                 );
                 Ok(())
             }
-            _ => {
+            None => {
                 if target.join(MANIFEST_FILE).exists() {
                     return Err(format!("{} holds another pack", target.display()));
                 }
@@ -443,8 +497,18 @@ impl Library {
         let mut seen: BTreeMap<String, String> = BTreeMap::new();
         let mut folders: BTreeMap<String, PathBuf> = BTreeMap::new();
 
+        // A bundled pack without remote images is served from the app,
+        // unless the maps folder has a copy of it at least as new (one that
+        // was refreshed from its site, see `save_import`).
+        let in_maps_folder = packs_in(&maps_folder).0;
         for pack in &self.bundled {
-            if !pack.downloadable {
+            let refreshed = || {
+                let bundled = self.bundled_version(pack);
+                in_maps_folder.iter().any(|(_, head)| {
+                    head.id == pack.id && version_key(&head.pack_version) >= bundled
+                })
+            };
+            if !pack.downloadable && !refreshed() {
                 seen.insert(pack.id.clone(), "this app".to_owned());
             }
         }
@@ -477,11 +541,12 @@ impl Library {
                 origin,
                 path: Some(path),
                 pack_version: head.pack_version,
+                pages: head.pages,
             });
             true
         };
 
-        for (dir, head) in packs_in(&maps_folder).0 {
+        for (dir, head) in in_maps_folder {
             consider(&dir, head, Origin::MapsFolder);
         }
 
@@ -548,6 +613,13 @@ impl Library {
                 }
             }
         });
+        // A bundled pack whose copy in the maps folder has gone is served
+        // from the app again.
+        for pack in &self.bundled {
+            if !pack.downloadable && self.registry.kind(&pack.id).is_none() {
+                let _ = self.registry.register(&pack.id, &pack.path);
+            }
+        }
 
         let mut busy: Vec<String> = lock(&self.busy).iter().cloned().collect();
         busy.sort();
@@ -886,8 +958,9 @@ impl Library {
         if !is_valid_pack_id(&request.pack_id) {
             return Err("The importer named an unusable pack id.".to_owned());
         }
-        if self.is_bundled(&request.pack_id)
-            || self.registry.kind(&request.pack_id) == Some(PackKind::Bundled)
+        let bundled = self.bundled_pack(&request.pack_id);
+        if (bundled.is_some() || self.registry.kind(&request.pack_id) == Some(PackKind::Bundled))
+            && !request.refresh_bundled
         {
             return Err(
                 "A pack with this id comes with the app, so it is not replaced.".to_owned(),
@@ -930,6 +1003,9 @@ impl Library {
         if game_id.as_deref() != Some(request.pack_id.as_str()) {
             return Err("The pack's manifest names another pack id.".to_owned());
         }
+        if let Some(pack) = bundled {
+            check_bundled_refresh(pack, &request.files)?;
+        }
 
         let dir = match self.pack_folder(&request.pack_id) {
             Some(dir) => dir,
@@ -951,10 +1027,19 @@ impl Library {
                     "This pack was made by another importer, so it is not replaced.".to_owned(),
                 );
             }
-        } else if read_head(&dir).is_ok() {
+        } else if read_head(&dir).is_ok() && bundled.is_none() {
             return Err("A pack with this id that was not imported from a web page is already there, so it is not replaced.".to_owned());
         }
         let _lock = PackLock::acquire(&dir)?;
+        if let Some(pack) = bundled {
+            // A refresh of a pack that comes with the app lives in the maps
+            // folder. One served from the app's resources is copied there
+            // first, with everything it came with (its map images, its page
+            // data); a copy already there keeps its downloaded images.
+            copy_tree_missing(&pack.path, &dir).map_err(|error| {
+                format!("Could not copy {} into the maps folder: {error}", pack.id)
+            })?;
+        }
         let write = |path: &Path, text: &str| {
             write_atomic(path, text.as_bytes())
                 .map_err(|error| format!("Could not write {}: {error}", path.display()))
@@ -977,7 +1062,7 @@ impl Library {
             key: request.source_key.clone(),
             url: request.page_url.clone(),
             imported_at: request.imported_at.clone(),
-            map_id: Some(request.map_id.clone()),
+            map_id: request.map_id.clone(),
             file,
         };
         match index
@@ -1247,16 +1332,106 @@ fn same_volume(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Copies the top-level pack files of `from` into `to`, replacing them when
-/// `replace` is set. Map images and other folders are not touched.
-fn copy_pack_files(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
-    for name in PACK_FILES {
-        let source = from.join(name);
-        if !source.is_file() {
-            continue;
+/// The maps (`id` and `name`) of a `maps.json` text; none when unreadable.
+fn map_names(text: &str) -> Vec<(String, String)> {
+    #[derive(Deserialize)]
+    struct Map {
+        id: String,
+        #[serde(default)]
+        name: String,
+    }
+    serde_json::from_str::<Vec<Map>>(text)
+        .map(|maps| maps.into_iter().map(|map| (map.id, map.name)).collect())
+        .unwrap_or_default()
+}
+
+/// Checks a refresh of a pack that comes with the app: its version must be
+/// above the bundled one, and it must keep every map the bundled one has,
+/// so that refreshing one page never drops the others.
+fn check_bundled_refresh(
+    pack: &BundledPack,
+    files: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let bundled = read_head(&pack.path)?;
+    let manifest: serde_json::Value = files
+        .get(MANIFEST_FILE)
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_default();
+    let version = manifest
+        .get("packVersion")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let title = &bundled.title;
+    if version_key(version) <= version_key(&bundled.pack_version) {
+        return Err(format!(
+            "{title} comes with this app, and a refreshed copy must have a newer version than the one that comes with it ({}). Nothing was changed.",
+            bundled.pack_version
+        ));
+    }
+    let bundled_maps = fs::metadata(pack.path.join("maps.json"))
+        .ok()
+        .filter(|metadata| metadata.len() <= MAX_PACK_FILE_BYTES as u64)
+        .and_then(|_| fs::read_to_string(pack.path.join("maps.json")).ok())
+        .map(|text| map_names(&text))
+        .unwrap_or_default();
+    let new_maps: HashSet<String> = files
+        .get("maps.json")
+        .map(|text| map_names(text).into_iter().map(|(id, _)| id).collect())
+        .unwrap_or_default();
+    let missing: Vec<String> = bundled_maps
+        .into_iter()
+        .filter(|(id, _)| !new_maps.contains(id))
+        .map(|(id, name)| if name.trim().is_empty() { id } else { name })
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "{title} comes with this app, and refreshing it from this page would leave out maps it came with: {}. Nothing was changed.",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// Updates a copy of a bundled pack from it: every file the bundled pack
+/// has is copied over the copy's (the manifest last), and the copy's page
+/// data (`import/`) is replaced with the bundled pack's, or removed when the
+/// bundled pack has none, so it is never mixed with older pages. Map images
+/// and other files that only the copy has are kept.
+fn copy_bundled_files(from: &Path, to: &Path) -> io::Result<()> {
+    let import = to.join(IMPORT_DIR);
+    if is_real_dir(&import) {
+        for entry in fs::read_dir(&import)?.flatten() {
+            if fs::symlink_metadata(entry.path()).is_ok_and(|m| m.is_file()) {
+                fs::remove_file(entry.path())?;
+            }
         }
-        let target = to.join(name);
-        if replace || !target.exists() {
+    }
+    copy_tree_replacing(from, to)?;
+    write_atomic(
+        &to.join(MANIFEST_FILE),
+        &fs::read(from.join(MANIFEST_FILE))?,
+    )
+}
+
+/// Copies every file of `from` into `to`, replacing what is there, except
+/// the top-level manifest, which the caller writes last. Symbolic links in
+/// `to` are not written through.
+fn copy_tree_replacing(from: &Path, to: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(to).is_ok_and(|m| m.is_symlink()) {
+        return Ok(());
+    }
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_tree_replacing(&source, &target)?;
+        } else if kind.is_file()
+            && !(from.join(MANIFEST_FILE) == source)
+            && !fs::symlink_metadata(&target).is_ok_and(|m| m.is_symlink())
+        {
             write_atomic(&target, &fs::read(&source)?)?;
         }
     }
@@ -1630,13 +1805,14 @@ mod tests {
             source_key: key.into(),
             page_url: format!("http://127.0.0.1/demo-maps/{pack_id}/{key}"),
             imported_at: "2026-11-10T00:00:00Z".into(),
-            map_id: format!("{pack_id}:map:{key}"),
+            map_id: Some(format!("{pack_id}:map:{key}")),
             page_data: r#"{"page":1}"#.into(),
             files: [
                 ("manifest.json".to_owned(), manifest),
                 ("maps.json".to_owned(), "[]".to_owned()),
             ]
             .into(),
+            refresh_bundled: false,
         }
     }
 
@@ -1823,5 +1999,241 @@ mod tests {
             s.library.apply_maps_folder(false, &[]).is_err(),
             "needs a new choice"
         );
+    }
+
+    /// A bundled pack with two maps, and, when asked, the page data it was made from.
+    fn write_bundled(dir: &Path, id: &str, version: &str, page_data: bool) {
+        write_pack(dir, id, "Isles", version);
+        fs::write(
+            dir.join("maps.json"),
+            format!(r#"[{{"id":"{id}:map:north","name":"North"}},{{"id":"{id}:map:south","name":"South"}}]"#),
+        )
+        .unwrap();
+        if page_data {
+            fs::create_dir_all(dir.join("import")).unwrap();
+            fs::write(dir.join("import/north.json"), r#"{"page":"north"}"#).unwrap();
+            fs::write(dir.join("import/south.json"), r#"{"page":"south"}"#).unwrap();
+            fs::write(
+                dir.join("import/index.json"),
+                r#"{"format":"atlas-import","version":1,"importer":{"id":"demo-maps","title":"Demo"},"sources":[
+                  {"key":"north","url":"http://127.0.0.1/demo-maps/isles/north","importedAt":"2026-01-01T00:00:00Z","mapId":"isles:map:north","file":"north.json"},
+                  {"key":"south","url":"http://127.0.0.1/demo-maps/isles/south","importedAt":"2026-01-01T00:00:00Z","mapId":"isles:map:south","file":"south.json"}]}"#,
+            )
+            .unwrap();
+        }
+    }
+
+    /// A refresh of the bundled pack `isles` with the given version and maps.
+    fn refresh(version: &str, maps: &[&str]) -> SaveImport {
+        let mut request = import("isles", "north");
+        request.refresh_bundled = true;
+        request.files.insert(
+            "manifest.json".into(),
+            format!(
+                r#"{{"schemaVersion":2,"gameId":"isles","title":"Isles refreshed","packVersion":"{version}","source":{{"importer":{{"id":"demo-maps","title":"Demo"}},"pages":[{{"url":"http://127.0.0.1/demo-maps/isles/north"}}]}}}}"#
+            ),
+        );
+        let maps: Vec<String> = maps
+            .iter()
+            .map(|map| format!(r#"{{"id":"isles:map:{map}","name":"{map}"}}"#))
+            .collect();
+        request
+            .files
+            .insert("maps.json".into(), format!("[{}]", maps.join(",")));
+        request
+    }
+
+    #[test]
+    fn refreshes_a_bundled_pack_with_downloaded_images_in_the_maps_folder() {
+        let src = TempDir::new("library-refresh-dl-src");
+        let resource = src.0.join("isles");
+        write_bundled(&resource, "isles", "1.0.0", true);
+        let bundled = vec![BundledPack {
+            id: "isles".into(),
+            path: resource.clone(),
+            downloadable: true,
+        }];
+        let s = setup("library-refresh-dl", bundled.clone());
+        s.library.start();
+        let copy = s.library.maps_folder().join("isles");
+        // Installed with the page data it came with, so it can be refreshed.
+        assert_eq!(
+            s.library.saved_sources("isles", "demo-maps").unwrap().len(),
+            2
+        );
+        fs::create_dir_all(copy.join("tiles/north/0/0")).unwrap();
+        fs::write(copy.join("tiles/north/0/0/0.png"), b"downloaded").unwrap();
+
+        // Not without the importer's say-so, not at the same version, not without a map.
+        let mut plain = refresh("1.1.0", &["north", "south"]);
+        plain.refresh_bundled = false;
+        assert!(s
+            .library
+            .save_import(&plain)
+            .unwrap_err()
+            .contains("comes with the app"));
+        assert!(s
+            .library
+            .save_import(&refresh("1.0.0", &["north", "south"]))
+            .unwrap_err()
+            .contains("newer version"));
+        let error = s
+            .library
+            .save_import(&refresh("1.1.0", &["north"]))
+            .unwrap_err();
+        assert!(
+            error.contains("leave out maps it came with: South"),
+            "{error}"
+        );
+        assert_eq!(read_head(&copy).unwrap().pack_version, "1.0.0");
+
+        let dir = s
+            .library
+            .save_import(&refresh("1.1.0", &["north", "south"]))
+            .unwrap();
+        assert_eq!(dir, copy.canonicalize().unwrap());
+        let listing = s.library.scan();
+        assert_eq!(listing.packs[0].title, "Isles refreshed");
+        assert!(listing.packs[0].bundled);
+        assert_eq!(listing.packs[0].pages.len(), 1);
+        assert_eq!(
+            fs::read(copy.join("tiles/north/0/0/0.png")).unwrap(),
+            b"downloaded"
+        );
+        let sources = s.library.saved_sources("isles", "demo-maps").unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].data, r#"{"page":1}"#, "the page read now");
+        assert_eq!(
+            sources[1].data, r#"{"page":"south"}"#,
+            "the page it came with"
+        );
+
+        // A start-up keeps the refresh while it is at least the bundled version.
+        let again = || {
+            Library::new(
+                SettingsFile::new(s.dir.0.join("shared")),
+                s.registry.clone(),
+                bundled.clone(),
+                Vec::new(),
+            )
+        };
+        assert_eq!(again().start().packs[0].title, "Isles refreshed");
+        // An app whose bundled pack is newer replaces it, page data too, and keeps the images.
+        write_bundled(&resource, "isles", "2.0.0", true);
+        fs::write(resource.join("import/north.json"), r#"{"page":"north v2"}"#).unwrap();
+        let listing = again().start();
+        assert_eq!(listing.packs[0].title, "Isles");
+        assert_eq!(listing.packs[0].pack_version, "2.0.0");
+        let sources = s.library.saved_sources("isles", "demo-maps").unwrap();
+        assert_eq!(sources[0].data, r#"{"page":"north v2"}"#);
+        assert_eq!(
+            fs::read(copy.join("tiles/north/0/0/0.png")).unwrap(),
+            b"downloaded"
+        );
+    }
+
+    #[test]
+    fn adds_the_page_data_a_bundled_pack_comes_with_to_an_older_install() {
+        let src = TempDir::new("library-refresh-add-src");
+        let resource = src.0.join("isles");
+        write_bundled(&resource, "isles", "1.0.0", false);
+        let bundled = vec![BundledPack {
+            id: "isles".into(),
+            path: resource.clone(),
+            downloadable: true,
+        }];
+        let s = setup("library-refresh-add", bundled.clone());
+        s.library.start();
+        assert!(s
+            .library
+            .saved_sources("isles", "demo-maps")
+            .unwrap()
+            .is_empty());
+        // The same version, now with page data.
+        write_bundled(&resource, "isles", "1.0.0", true);
+        Library::new(
+            SettingsFile::new(s.dir.0.join("shared")),
+            s.registry.clone(),
+            bundled,
+            Vec::new(),
+        )
+        .start();
+        assert_eq!(
+            s.library.saved_sources("isles", "demo-maps").unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn refreshes_a_bundled_pack_served_from_the_app_into_the_maps_folder() {
+        let src = TempDir::new("library-refresh-app-src");
+        let resource = src.0.join("isles");
+        write_bundled(&resource, "isles", "1.0.0", true);
+        fs::create_dir_all(resource.join("tiles")).unwrap();
+        fs::write(resource.join("tiles/north.pmtiles"), b"shipped").unwrap();
+        let bundled = vec![BundledPack {
+            id: "isles".into(),
+            path: resource.clone(),
+            downloadable: false,
+        }];
+        let s = setup("library-refresh-app", bundled.clone());
+        assert!(s.library.start().packs.is_empty());
+        assert_eq!(s.registry.kind("isles"), Some(PackKind::Bundled));
+        // Its page data is not read from the app's own folder.
+        assert!(s
+            .library
+            .saved_sources("isles", "demo-maps")
+            .unwrap()
+            .is_empty());
+
+        let dir = s
+            .library
+            .save_import(&refresh("1.1.0", &["north", "south"]))
+            .unwrap();
+        let copy = s.library.maps_folder().join("isles");
+        assert_eq!(dir, copy);
+        assert_eq!(
+            fs::read(copy.join("tiles/north.pmtiles")).unwrap(),
+            b"shipped"
+        );
+        let listing = s.library.scan();
+        assert_eq!(ids(&listing), ["isles"]);
+        assert_eq!(listing.packs[0].origin, Origin::MapsFolder);
+        assert_eq!(s.registry.kind("isles"), Some(PackKind::Folder));
+        assert_eq!(
+            s.library.saved_sources("isles", "demo-maps").unwrap().len(),
+            2
+        );
+        assert!(
+            resource.join("manifest.json").exists(),
+            "the app's copy is untouched"
+        );
+        assert_eq!(read_head(&resource).unwrap().pack_version, "1.0.0");
+
+        // Kept at the next start; replaced by a newer bundled version.
+        let again = || {
+            Library::new(
+                SettingsFile::new(s.dir.0.join("shared")),
+                s.registry.clone(),
+                bundled.clone(),
+                Vec::new(),
+            )
+        };
+        assert_eq!(again().start().packs[0].title, "Isles refreshed");
+        write_bundled(&resource, "isles", "1.2.0", true);
+        fs::write(resource.join("tiles/north.pmtiles"), b"shipped v2").unwrap();
+        let listing = again().start();
+        assert_eq!(listing.packs[0].pack_version, "1.2.0");
+        assert_eq!(listing.packs[0].origin, Origin::MapsFolder);
+        assert_eq!(
+            fs::read(copy.join("tiles/north.pmtiles")).unwrap(),
+            b"shipped v2"
+        );
+        // An older copy (from a newer app's refresh being replaced) never wins over the app.
+        write_pack(&copy, "isles", "Old copy", "0.1.0");
+        let listing = s.library.scan();
+        assert!(listing.packs.is_empty());
+        assert_eq!(listing.hidden.len(), 1);
+        assert_eq!(s.registry.kind("isles"), Some(PackKind::Bundled));
     }
 }

@@ -1,15 +1,15 @@
 import type { LoadedPack } from '../pack/loadedPack';
 
-export type SearchKind = 'location' | 'entity' | 'guide';
+export type SearchKind = 'location' | 'entity' | 'guide' | 'checklist' | 'checkitem';
 
-/** One searchable thing: a location, an entity or a guide entry. */
+/** One searchable thing: a location, an entity, a guide entry, a checklist or a checklist item. */
 export interface SearchEntry {
   kind: SearchKind;
   id: string;
   title: string;
   /** Short context shown under the title, such as category and region. */
   detail: string;
-  /** Map of a location; null for entities and guides. */
+  /** Map of a location; null for everything else. */
   mapId: string | null;
   /** Locations to show when the entry is chosen: the location itself, or those it refers to. */
   locationIds: string[];
@@ -39,11 +39,17 @@ export function normalizeText(text: string): string {
 }
 
 const WORD_SPLIT = /[^\p{L}\p{N}]+/u;
-const KIND_ORDER: Record<SearchKind, number> = { location: 0, entity: 1, guide: 2 };
+const KIND_ORDER: Record<SearchKind, number> = {
+  location: 0,
+  entity: 1,
+  guide: 2,
+  checklist: 3,
+  checkitem: 4,
+};
 
 /**
- * An in-memory search index over a pack's location names, entity names and
- * guide titles, across every map. Built once when a pack loads; each query is
+ * An in-memory search index over a pack's location names, entity names,
+ * guide titles, checklist names and checklist item names, across every map. Built once when a pack loads; each query is
  * a linear scan over pre-normalised text, which stays well under a frame for
  * tens of thousands of entries.
  *
@@ -113,6 +119,32 @@ export class SearchIndex {
         detail: `Guide · ${plural(locationIds.length, 'location')}`,
         mapId: null,
         locationIds,
+      });
+    }
+
+    const checklistNames = new Map(pack.data.checklists.map((c) => [c.id, c.name]));
+    const itemCounts = new Map<string, number>();
+    for (const item of pack.data.checklistItems) {
+      itemCounts.set(item.checklistId, (itemCounts.get(item.checklistId) ?? 0) + 1);
+    }
+    for (const checklist of pack.data.checklists) {
+      entries.push({
+        kind: 'checklist',
+        id: checklist.id,
+        title: checklist.name,
+        detail: `Checklist · ${plural(itemCounts.get(checklist.id) ?? 0, 'item')}`,
+        mapId: null,
+        locationIds: [],
+      });
+    }
+    for (const item of pack.data.checklistItems) {
+      entries.push({
+        kind: 'checkitem',
+        id: item.id,
+        title: item.name,
+        detail: `Checklist item · ${checklistNames.get(item.checklistId) ?? ''}`,
+        mapId: null,
+        locationIds: [...new Set(item.locationIds)],
       });
     }
 

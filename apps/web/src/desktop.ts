@@ -131,13 +131,29 @@ export interface ImportReport {
     /** Several addresses: the run started, stopped early, or ended (its summary). */
     | 'run-started'
     | 'run-stopped'
-    | 'run-finished';
+    | 'run-finished'
+    /** A game page was read: its pages by kind. */
+    | 'game-listed'
+    /** A list of games was read. */
+    | 'catalogue-listed'
+    /** A game page or a list of games gave no usable list. */
+    | 'listing-failed'
+    /** Reading game pages to update games started. */
+    | 'update-started';
   packId?: string;
   mapId?: string;
   message?: string;
   counts?: { mapLocations: number; maps: number; locations: number; categories: number };
-  /** The pages of a run, when it starts. The log keeps only their hosts. */
+  /** The pages of a run, when it starts, or the page a list was read from. The log keeps only their hosts. */
   pages?: string[];
+  /** A run that updates games, rather than adding maps. */
+  update?: boolean;
+  /** A game page's pages by kind. */
+  kinds?: Record<string, number>;
+  /** Of a game page's map pages, or a list's games: how many are added already. */
+  alreadyAdded?: number;
+  /** Games in a list of games, or to update. */
+  games?: number;
   /** A run's figures. */
   run?: {
     added?: number;
@@ -176,6 +192,8 @@ export interface ListedPack {
   bundled: boolean;
   /** The importer that made the pack, if it was added from a web page. */
   imported: { importerId: string; importerTitle: string } | null;
+  /** The web pages the pack was made from, as its manifest records them. */
+  pages?: { url: string; mapId: string | null }[];
 }
 
 /** A pack that is not shown because another with the same id is. */
@@ -232,11 +250,14 @@ export interface SaveImportRequest {
   sourceKey: string;
   pageUrl: string;
   importedAt: string;
-  mapId: string;
+  /** The map the page became; absent for a page that became something else, such as a checklist. */
+  mapId?: string;
   /** The page data as JSON text. */
   pageData: string;
   /** Pack files by name, as JSON text. */
   files: Record<string, string>;
+  /** The pack refreshes one that comes with the app (its importer allows that). */
+  refreshBundled?: boolean;
 }
 
 /** What the shell found when it looked at the import window. */
@@ -339,6 +360,8 @@ export interface DesktopBridge {
       url: string,
       reader: string,
       importer?: { id: string; waitSeconds: number },
+      /** What is read, for the activity log: a map page (default), a game page, or a list of games. */
+      purpose?: 'map' | 'game' | 'catalogue',
     ): Promise<void>;
     poll(): Promise<PollResult>;
     close(): Promise<void>;
@@ -409,13 +432,13 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       saveImport: (request) => call('library_save_import', { request }),
     },
     importWindow: {
-      open: (url, reader, importer) =>
-        call(
-          'import_open',
-          importer
-            ? { url, reader, importerId: importer.id, waitSeconds: importer.waitSeconds }
-            : { url, reader },
-        ),
+      open: (url, reader, importer, purpose) =>
+        call('import_open', {
+          url,
+          reader,
+          ...(importer ? { importerId: importer.id, waitSeconds: importer.waitSeconds } : {}),
+          ...(purpose && purpose !== 'map' ? { purpose } : {}),
+        }),
       poll: () => call('import_poll'),
       close: () => call('import_close'),
       report: (report) => call('import_report', { report }),

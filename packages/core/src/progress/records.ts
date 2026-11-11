@@ -24,13 +24,23 @@ export const profileSchema = z.object({
 /** Where a progress record came from: the user, a save-file import, or a memory reader. */
 export const progressSourceSchema = z.enum(['manual', 'save', 'memory']);
 
-/** What is known about a target. A deleted record means "not done". */
+/**
+ * What is known about a target: `found` means found for a location and done
+ * for a checklist item. A deleted record means "not done".
+ */
 export const progressStateSchema = z.enum(['found']);
 
-/** The state of one pack content id (usually a location) in one profile. */
+/**
+ * The state of one pack content id in one profile: a location marked found,
+ * or a checklist item with a done mark of its own (an item that names no
+ * location that can be marked found; see `ChecklistIndex`). Checklist marks
+ * need no table or export format of their own: they are rows like any other,
+ * so profiles, undo, duplication, deletion, export and import carry them,
+ * and the found counters ignore them because they count locations only.
+ */
 export const progressRecordSchema = z.object({
   profileId: recordId,
-  /** Stable content id from the pack, such as `demo:loc:0412`. */
+  /** Stable content id from the pack, such as `demo:loc:0412` or `demo:checkitem:step-3`. */
   targetId: anyIdSchema,
   state: progressStateSchema,
   updatedAt: timestamp,

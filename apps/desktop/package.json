@@ -1,6 +1,6 @@
 {
   "name": "@atlas/desktop",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "test:e2e:download": "node e2e/download.js",
     "test:e2e:windows": "node e2e/windows.js",
-    "e2e:pack": "node e2e/remotePack.js",
+    "e2e:pack": "node e2e/remotePack.js && node e2e/islesPack.js",
     "test:e2e:import": "node e2e/import.js",
     "test:e2e:delete": "node e2e/delete.js",
     "test:e2e:view": "node e2e/view.js"

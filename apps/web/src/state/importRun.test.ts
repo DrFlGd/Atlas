@@ -281,4 +281,52 @@ describe('ImportRun', () => {
     expect(final.stopReason).toBe('cancelled');
     expect(states(final)).toEqual(['added', 'not-started', 'not-started']);
   });
+
+  it('waits out the pause left from pages read before, and counts lists that were read', async () => {
+    const log: string[] = [];
+    const run = new ImportRun(
+      [page(1), page(2)],
+      0,
+      {
+        importPage: (index) => {
+          log.push(`open ${index}`);
+          return Promise.resolve<PageOutcome>(
+            index === 0
+              ? { kind: 'listed', game: 'Test valley', count: 3, other: 1 }
+              : added(index + 1),
+          );
+        },
+        sleep: (ms) => {
+          log.push(`pause ${ms}`);
+          return Promise.resolve();
+        },
+        onChange: () => undefined,
+      },
+      RUN_PAUSE_MS,
+      1200,
+    );
+    const final = await run.run();
+    expect(log).toEqual(['pause 1200', 'open 0', `pause ${RUN_PAUSE_MS}`, 'open 1']);
+    expect(states(final)).toEqual(['listed', 'added']);
+    expect(final.pages[0]!.state).toEqual({
+      kind: 'listed',
+      game: 'Test valley',
+      count: 3,
+      other: 1,
+    });
+  });
+
+  it('counts pages, not maps, once a checklist was added', async () => {
+    const checklist: PageOutcome = {
+      kind: 'added',
+      game: 'Test valley',
+      map: 'Shrines',
+      packId: 'test-valley',
+      refreshed: false,
+      checklist: { items: 4, leftOut: 1 },
+    };
+    const { run } = fakeRun([added(1), checklist]);
+    expect(runSummary(await run.run())).toBe('2 pages added');
+    expect(runSummary(await fakeRun([added(1)]).run.run())).toBe('1 map added');
+  });
 });

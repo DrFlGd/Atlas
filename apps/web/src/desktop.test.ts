@@ -49,6 +49,12 @@ describe('desktop bridge', () => {
       id: 'demo-maps',
       waitSeconds: 30,
     });
+    await bridge.importWindow.open(
+      'https://example.com/game',
+      '() => 2',
+      { id: 'demo-maps', waitSeconds: 30 },
+      'game',
+    );
     await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
     await bridge.activityLog.read();
     await bridge.library.reveal({ kind: 'log-folder' });
@@ -78,6 +84,16 @@ describe('desktop bridge', () => {
           reader: '() => 1',
           importerId: 'demo-maps',
           waitSeconds: 30,
+        },
+      ],
+      [
+        'import_open',
+        {
+          url: 'https://example.com/game',
+          reader: '() => 2',
+          importerId: 'demo-maps',
+          waitSeconds: 30,
+          purpose: 'game',
         },
       ],
       ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],

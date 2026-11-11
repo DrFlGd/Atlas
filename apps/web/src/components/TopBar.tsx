@@ -2,6 +2,7 @@ import { percent, type Tally } from '@atlas/core';
 import { useId } from 'react';
 import { desktop } from '../desktop';
 import { setProfileDialogOpen, setTheme, showMap, switchGame, togglePane } from '../state/actions';
+import { checklistScreenTitle, toggleLeftTab } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
 import { setAddMapOpen } from '../state/importing';
 import { setMapsDialogOpen } from '../state/library';
@@ -11,6 +12,11 @@ import { UiIcon } from './icons';
 /** The bar across the top: panes, game and map switchers, search, overall progress and profile. */
 export function TopBar({ search }: { search: React.ReactNode }) {
   const panes = useAtlas((s) => s.panes);
+  const leftTab = useAtlas((s) => s.leftTab);
+  const game = useAtlas((s) => s.game);
+  const checklists = game && !game.checklists.isEmpty ? checklistScreenTitle(game) : null;
+  const filtersShown = panes.filters && (leftTab === 'filters' || !checklists);
+  const checklistsShown = panes.filters && leftTab === 'checklists' && checklists !== null;
   const theme = useAtlas((s) => s.theme);
   const summary = useSummary();
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
@@ -23,14 +29,31 @@ export function TopBar({ search }: { search: React.ReactNode }) {
         className="icon-button topbar-filters"
         aria-label="Filters"
         title="Filters"
-        aria-expanded={panes.filters}
+        aria-expanded={filtersShown}
         aria-controls="filters-pane"
         onClick={() => {
-          togglePane('filters');
+          toggleLeftTab('filters');
         }}
       >
         <UiIcon name="filters" />
       </button>
+      {checklists ? (
+        <button
+          type="button"
+          className="icon-button topbar-checklists"
+          aria-label={checklists}
+          title={`${checklists} (C)`}
+          aria-expanded={checklistsShown}
+          aria-controls="filters-pane"
+          aria-keyshortcuts="C"
+          data-testid="checklists-button"
+          onClick={() => {
+            toggleLeftTab('checklists');
+          }}
+        >
+          <UiIcon name="checklist" />
+        </button>
+      ) : null}
       <span className="brand" aria-hidden="true">
         {appName}
       </span>

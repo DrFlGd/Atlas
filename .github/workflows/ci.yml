@@ -164,7 +164,7 @@ jobs:
           ATLAS_ENABLE_DOWNLOADS: '1'
         run: |
           pnpm --filter @atlas/desktop e2e:pack
-          ATLAS_BUNDLE_PACKS=e2e-remote,demo \
+          ATLAS_BUNDLE_PACKS=e2e-remote,demo,test-isles \
             ATLAS_BUNDLE_IMPORTERS=packages/importer-api/demo/demo-importer.js \
             pnpm desktop:build --no-bundle
           node apps/desktop/scripts/check-binary.js

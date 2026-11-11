@@ -5,6 +5,7 @@ import { cutPyramid } from '../tiles/cutPyramid';
 import { writePmtiles } from '../tiles/pmtiles';
 import { assertValidPack, writePackJson, writeTileFolder } from '../pack/writePack';
 import { deriveSeed } from '../random';
+import { addChecklists } from './checklists';
 import { generateDemoContent, layoutRegions, regionBorderStrength } from './content';
 import { createTerrain, renderTerrain } from './terrain';
 import { addUnderground, tintAsCave } from './underground';
@@ -98,13 +99,15 @@ export async function buildDemoPack(
     tiles,
   });
   const data = assertValidPack(
-    addUnderground(surface, {
-      seed: options.seed,
-      size: UNDERGROUND_SIZE,
-      tileSize: options.tileSize,
-      locationsPerLayer: options.undergroundLocations,
-      layers: underground,
-    }),
+    addChecklists(
+      addUnderground(surface, {
+        seed: options.seed,
+        size: UNDERGROUND_SIZE,
+        tileSize: options.tileSize,
+        locationsPerLayer: options.undergroundLocations,
+        layers: underground,
+      }),
+    ),
   );
   const contentMs = lap();
 

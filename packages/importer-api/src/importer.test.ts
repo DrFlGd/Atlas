@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import demo from '../demo/demo-importer.js';
 import {
+  MAX_CATALOGUE_GAMES,
+  MAX_LISTED_PAGES,
   asImporter,
+  canAddPage,
+  checkCatalogue,
+  checkGameListing,
   checkOutcome,
+  findCatalogueImporter,
+  findGameImporter,
   findImporter,
+  gameAddressOf,
   isAllowedPageUrl,
+  pageKey,
+  sameSite,
+  type AtlasImporter,
   type ImportContext,
   type SavedSource,
 } from './index';
@@ -146,8 +157,102 @@ describe('the demo importer', () => {
       ok: false,
       message: expect.stringMatching(/expected shape/) as string,
     });
-    const bundled = await demo.convert(page('east'), context([], ['test-valley']));
-    expect(bundled.ok).toBe(false);
+  });
+
+  it('refreshes a world that comes with the app, keeping its ids', async () => {
+    const saved: SavedSource[] = [
+      { key: 'east', url: 'u', importedAt: 't', data: page('east') },
+      { key: 'west', url: 'u', importedAt: 't', data: page('west') },
+    ];
+    const outcome = checkOutcome(
+      await demo.convert(page('east', [{ id: 1, kind: 'camp' }]), context(saved, ['test-valley'])),
+    );
+    expect(demo.refreshesBundledGames).toBe(true);
+    expect(outcome.ok && outcome.pack.maps.map((m) => m.id)).toEqual([
+      'test-valley:map:east',
+      'test-valley:map:west',
+    ]);
+    expect(outcome.ok && outcome.summary.refreshed).toBe(true);
+  });
+});
+
+describe('checklist pages', () => {
+  const list = (rows: [string, number][]) => ({
+    world: { slug: 'test-valley', name: 'Test Valley' },
+    checklist: {
+      slug: 'beacons',
+      name: ' All beacons ',
+      rows: rows.map(([map, place]) => ({ map, place, name: `${map} ${place}` })),
+    },
+  });
+
+  it('adds a checklist to a world with maps, leaving out rows of maps not added', async () => {
+    const none = await demo.convert(list([['east', 1]]), context());
+    expect(none.ok).toBe(false);
+    expect(!none.ok && none.message).toMatch(/Add its maps first/);
+
+    const saved: SavedSource[] = [{ key: 'east', url: 'u', importedAt: 't', data: page('east') }];
+    const outcome = checkOutcome(
+      await demo.convert(
+        list([
+          ['east', 1],
+          ['east', 1],
+          ['west', 1],
+        ]),
+        context(saved),
+      ),
+    );
+    if (!outcome.ok) throw new Error(outcome.message);
+    expect(outcome.mapId).toBeUndefined();
+    expect(outcome.checklistId).toBe('test-valley:checklist:beacons');
+    expect(outcome.sourceKey).toBe('checklist-beacons');
+    expect(outcome.summary).toMatchObject({
+      map: 'All beacons',
+      checklist: { items: 1, leftOut: 1 },
+    });
+    expect(outcome.pack.checklistItems).toEqual([
+      {
+        id: 'test-valley:checkitem:beacons-east-1',
+        checklistId: 'test-valley:checklist:beacons',
+        name: 'east 1',
+        order: 0,
+        locationIds: ['test-valley:loc:east-1'],
+        entityIds: [],
+      },
+    ]);
+
+    // The checklist stays when another map is added, and gains the rows of that map.
+    saved.push({
+      key: 'checklist-beacons',
+      url: 'u',
+      importedAt: 't',
+      data: list([
+        ['east', 1],
+        ['west', 1],
+      ]),
+    });
+    const map = checkOutcome(await demo.convert(page('west'), context(saved)));
+    expect(map.ok && map.pack.checklistItems.map((item) => item.id)).toEqual([
+      'test-valley:checkitem:beacons-east-1',
+      'test-valley:checkitem:beacons-west-1',
+    ]);
+  });
+
+  it('checks that an outcome names a map or a checklist of its pack', async () => {
+    const good = await demo.convert(page('east'), context());
+    if (!good.ok) throw new Error('expected a pack');
+    const { mapId: _mapId, ...withoutMap } = good;
+    expect(checkOutcome(withoutMap)).toMatchObject({
+      ok: false,
+      message: /either the map or the checklist/,
+    });
+    expect(checkOutcome({ ...good, checklistId: 'test-valley:checklist:x' })).toMatchObject({
+      ok: false,
+    });
+    expect(checkOutcome({ ...withoutMap, checklistId: 'test-valley:checklist:x' })).toMatchObject({
+      ok: false,
+      message: /checklist that is not in its pack/,
+    });
   });
 });
 
@@ -183,5 +288,244 @@ describe('outcome checks', () => {
       context(),
     );
     expect(checkOutcome(outcome).ok).toBe(false);
+  });
+});
+
+describe("listing a game's pages and a site's games", () => {
+  const site = 'http://127.0.0.1:4432/demo-maps';
+  const game = `${site}/test-valley`;
+  const listed = (pages: unknown[], name: unknown = 'Test Valley') => ({
+    ok: true,
+    game: name,
+    pages,
+  });
+  const map = (slug: string, title = `Map ${slug}`) => ({
+    url: `${game}/${slug}`,
+    kind: 'map',
+    title,
+  });
+
+  it('accepts importers with the capabilities, and only a catalogue with game pages', () => {
+    expect(asImporter(demo).games).toBeDefined();
+    expect(asImporter(demo).catalogue?.address).toBe(site);
+    const { games: _games, ...withoutGames } = demo;
+    expect(() => asImporter(withoutGames)).toThrow(/catalogue/);
+    expect(() => asImporter({ ...demo, games: { ...demo.games, pageReader: '' } })).toThrow();
+    expect(() =>
+      asImporter({ ...demo, catalogue: { ...demo.catalogue, address: 'ftp://x/' } }),
+    ).toThrow();
+    expect(() => asImporter({ ...demo, refreshesBundledGames: 'yes' })).toThrow();
+    // Importers without them keep working.
+    const { games: _g, catalogue: _c, refreshesBundledGames: _r, ...plain } = demo;
+    expect(asImporter(plain).games).toBeUndefined();
+  });
+
+  it('finds the importer of a game address or a list of games', () => {
+    expect(findGameImporter([demo], game)).toBe(demo);
+    expect(findGameImporter([demo], `${game}/east-field`)).toBeNull();
+    expect(findGameImporter([demo], 'http://example.com/demo-maps/x')).toBeNull();
+    expect(findCatalogueImporter([demo], `${site}/`)).toBe(demo);
+    expect(findCatalogueImporter([demo], game)).toBeNull();
+    const throwing = {
+      games: {
+        ...demo.games!,
+        matches: () => {
+          throw new Error('boom');
+        },
+      },
+    };
+    expect(findGameImporter([throwing], game)).toBeNull();
+  });
+
+  it('checks a game listing', () => {
+    const good = checkGameListing(
+      listed([
+        map('east'),
+        { ...map('west'), title: '  West  ', group: ' Extra ' },
+        {
+          url: `${game}/guides/start`,
+          kind: 'guides',
+          title: 'Start',
+        },
+      ]),
+      game,
+      demo,
+    );
+    expect(good).toEqual({
+      ok: true,
+      game: 'Test Valley',
+      pages: [
+        map('east'),
+        { ...map('west'), title: 'West', group: 'Extra' },
+        { url: `${game}/guides/start`, kind: 'guides', title: 'Start' },
+      ],
+    });
+    const bad: [unknown, RegExp][] = [
+      [
+        listed([{ ...map('a'), url: 'https://elsewhere.example.com/demo-maps/test-valley/a' }]),
+        /not a page on the site/,
+      ],
+      [
+        listed([{ ...map('a'), url: 'http://127.0.0.1:4433/demo-maps/test-valley/a' }]),
+        /not a page on the site/,
+      ],
+      [listed([{ ...map('a'), url: 'javascript:alert(1)' }]), /not a page on the site/],
+      [listed([map('a'), { ...map('a'), url: `${game}/a/` }]), /listed twice/],
+      [listed([{ ...map('a'), url: `${game}/guides/x` }]), /does not read it/],
+      [listed([{ ...map('a'), kind: 'Not A Word' }]), /unexpected|cannot use/],
+      [listed([{ ...map('a'), title: '' }]), /cannot use/],
+      [listed([{ ...map('a'), extra: 1 }]), /cannot use/],
+      [listed([map('a')], ''), /cannot use/],
+      [listed(Array.from({ length: MAX_LISTED_PAGES + 1 }, (_, i) => map(`m${i}`))), /cannot use/],
+      ['text', /cannot use/],
+    ];
+    for (const [value, message] of bad) {
+      const outcome = checkGameListing(value, game, demo);
+      expect(outcome.ok, JSON.stringify(value).slice(0, 100)).toBe(false);
+      expect(!outcome.ok && outcome.message).toMatch(message);
+    }
+    expect(checkGameListing({ ok: false, message: 'No list here.' }, game, demo)).toEqual({
+      ok: false,
+      message: 'No list here.',
+    });
+    expect(checkGameListing(listed([]), game, demo)).toEqual({
+      ok: true,
+      game: 'Test Valley',
+      pages: [],
+    });
+  });
+
+  it('checks a catalogue', () => {
+    const games = (list: unknown[]) => ({ ok: true, games: list });
+    expect(
+      checkCatalogue(
+        games([
+          { id: 'test-valley', name: ' Test Valley ', address: game, search: ' tv ' },
+          { id: 'test-hills', name: 'Test Hills', address: `${site}/test-hills/high-pass` },
+        ]),
+        site,
+        demo,
+      ),
+    ).toEqual({
+      ok: true,
+      games: [
+        { id: 'test-valley', name: 'Test Valley', address: game, search: 'tv' },
+        { id: 'test-hills', name: 'Test Hills', address: `${site}/test-hills/high-pass` },
+      ],
+    });
+    const bad: unknown[] = [
+      games([{ id: 'a', name: 'A', address: 'https://elsewhere.example.com/demo-maps/a' }]),
+      games([{ id: 'a', name: 'A', address: `${site}/a/guides/x` }]),
+      games([{ id: 'Bad Id', name: 'A', address: `${site}/a` }]),
+      games([
+        { id: 'a', name: 'A', address: `${site}/a` },
+        { id: 'a', name: 'B', address: `${site}/b` },
+      ]),
+      games(
+        Array.from({ length: MAX_CATALOGUE_GAMES + 1 }, (_, i) => ({
+          id: `g${i}`,
+          name: 'G',
+          address: `${site}/g${i}`,
+        })),
+      ),
+      { ok: true },
+    ];
+    for (const value of bad) expect(checkCatalogue(value, site, demo).ok).toBe(false);
+  });
+
+  it('gives the game address of a map page only when it is usable', () => {
+    expect(gameAddressOf(demo, `${game}/east-field`)).toBe(game);
+    const lying = (address: string): Pick<AtlasImporter, 'games'> => ({
+      games: { ...demo.games!, gameAddress: () => address },
+    });
+    expect(
+      gameAddressOf(lying('https://elsewhere.example.com/demo-maps/x'), `${game}/a`),
+    ).toBeNull();
+    expect(gameAddressOf(lying(`${game}/east-field`), `${game}/a`)).toBeNull();
+    expect(
+      gameAddressOf({ games: { ...demo.games!, gameAddress: undefined } }, `${game}/a`),
+    ).toBeNull();
+    expect(gameAddressOf({}, `${game}/a`)).toBeNull();
+  });
+
+  it('compares sites and pages', () => {
+    expect(sameSite('https://www.example.com/a', 'https://example.com/b')).toBe(true);
+    expect(sameSite('https://example.com/a', 'https://cdn.example.com/b')).toBe(true);
+    expect(sameSite('https://example.com/a', 'http://example.com/b')).toBe(false);
+    expect(sameSite('https://example.com/a', 'https://example.com.evil.net/b')).toBe(false);
+    expect(sameSite('nonsense', 'https://example.com/')).toBe(false);
+    expect(pageKey('https://www.Example.com/a/b/?x=1#y')).toBe(pageKey('https://example.com/a/b'));
+    expect(canAddPage(demo, `${game}/east`)).toBe(true);
+    expect(canAddPage(demo, `${game}/guides/x`)).toBe(false);
+  });
+
+  it("lists a demo world's pages and the demo worlds from their links", async () => {
+    const links = (list: [string, string][]) => ({
+      heading: 'Test Valley',
+      links: list.map(([href, text]) => ({ href, text })),
+    });
+    const listing = checkGameListing(
+      await demo.games!.convert(
+        links([
+          [`${game}/east-field`, 'East Field'],
+          [`${game}/west-ridge/`, ''],
+          [`${game}/east-field`, 'East Field again'],
+          [`${game}/guides/getting-started`, 'Getting started'],
+          [`${site}/test-hills/high-pass`, 'Another world'],
+          ['https://elsewhere.example.com/demo-maps/test-valley/x', 'Elsewhere'],
+        ]),
+        { url: game, app: { name: 'Atlas', version: '0' } },
+      ),
+      game,
+      demo,
+    );
+    expect(listing).toEqual({
+      ok: true,
+      game: 'Test Valley',
+      pages: [
+        { url: `${game}/east-field`, kind: 'map', title: 'East Field' },
+        { url: `${game}/west-ridge`, kind: 'map', title: 'West ridge' },
+        { url: `${game}/guides/getting-started`, kind: 'guides', title: 'Getting started' },
+      ],
+    });
+    const catalogue = checkCatalogue(
+      await demo.catalogue!.convert(
+        links([
+          [game, 'Test Valley'],
+          [`${site}/test-hills/high-pass`, 'Test Hills'],
+          [`${game}/east-field`, 'Again'],
+          ['https://elsewhere.example.com/demo-maps/x', 'Elsewhere'],
+        ]),
+        { url: site, app: { name: 'Atlas', version: '0' } },
+      ),
+      site,
+      demo,
+    );
+    expect(catalogue.ok && catalogue.games.map((g) => [g.id, g.address])).toEqual([
+      ['test-valley', game],
+      ['test-hills', `${site}/test-hills/high-pass`],
+    ]);
+    expect(
+      (await demo.games!.convert('nonsense', { url: game, app: { name: 'A', version: '0' } })).ok,
+    ).toBe(false);
+  });
+
+  it('reads links only once the page says it is ready', () => {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const reader = new Function(`return (${demo.games!.pageReader})();`) as () => unknown;
+    const anchors = [{ href: `${game}/east-field`, textContent: ' East Field ' }];
+    const body = { dataset: { ready: 'no' } };
+    (globalThis as Record<string, unknown>).document = {
+      body,
+      querySelectorAll: () => anchors,
+      querySelector: () => ({ textContent: 'Test Valley' }),
+    };
+    expect(reader()).toBeNull();
+    body.dataset.ready = 'yes';
+    expect(reader()).toEqual({
+      heading: 'Test Valley',
+      links: [{ href: `${game}/east-field`, text: 'East Field' }],
+    });
+    delete (globalThis as Record<string, unknown>).document;
   });
 });
