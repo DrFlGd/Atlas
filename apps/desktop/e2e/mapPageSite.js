@@ -20,7 +20,11 @@
  * - the **image server**, which answers `/tiles/<map>/<z>/<x>/<y>.png` with
  *   a PNG whose colour encodes its address, allows other sites to read them
  *   (CORS), and records every request, so the test can check that each
- *   image was asked for exactly once.
+ *   image was asked for exactly once. With `setStoreMissing(true)` it
+ *   answers the images of `STORE_MISSING` (the world map's bottom edge on
+ *   level 2) the way an object store answers for an image it does not have
+ *   (403, `AccessDenied`), as if the map's grid were padded beyond the
+ *   picture; off unless a test turns it on.
  *
  *   node apps/desktop/e2e/mapPageSite.js   # serve until stopped
  */
@@ -28,7 +32,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encodePng } from './tileServer.js';
+import { encodePng, NO_SUCH_OBJECT } from './tileServer.js';
 
 export const PACK_ID = 'view-test';
 
@@ -61,6 +65,17 @@ export const CAVES = {
   maxZoom: 1,
   levels: [{ z: 1, sourceZ: 1, offsetX: 0, offsetY: 0 }],
 };
+
+/**
+ * World map images (layer level, column, row) that the image server answers
+ * like an object store without them, once `setStoreMissing(true)`: one
+ * loaded by `fetch`, one by binary `XMLHttpRequest` and one as a blob.
+ */
+export const STORE_MISSING = [
+  { z: 2, x: 1, y: 2 },
+  { z: 2, x: 2, y: 2 },
+  { z: 2, x: 3, y: 2 },
+];
 
 /** Columns and rows of a level. */
 export function levelGrid(/** @type {SiteMap} */ map, /** @type {number} */ z) {
@@ -188,10 +203,28 @@ export async function startMapPageSite() {
   const imageRequests = new Map();
   /** @type {Record<string, unknown>[]} */
   const probes = [];
+  let storeMissing = false;
+  const missingPaths = new Set(
+    remoteTiles(WORLD)
+      .filter((tile) =>
+        STORE_MISSING.some((t) => t.z === tile.z && t.x === tile.x && t.y === tile.y),
+      )
+      .map((tile) => tile.path),
+  );
 
   const imageServer = createServer((request, response) => {
     const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
     imageRequests.set(path, (imageRequests.get(path) ?? 0) + 1);
+    if (storeMissing && missingPaths.has(path)) {
+      response
+        .writeHead(403, {
+          'content-type': 'application/xml',
+          'access-control-allow-origin': '*',
+          'cache-control': 'no-store',
+        })
+        .end(NO_SUCH_OBJECT);
+      return;
+    }
     if (/^\/tiles\/[a-z]+\/\d+\/\d+\/\d+\.png$/.test(path)) {
       response
         .writeHead(200, {
@@ -262,6 +295,10 @@ export async function startMapPageSite() {
     seen,
     probes,
     imageRequests,
+    /** Answers the images of `STORE_MISSING` like an object store without them. */
+    setStoreMissing(/** @type {boolean} */ on) {
+      storeMissing = on;
+    },
     close: () => Promise.all([close(site), close(imageServer)]),
   };
 }

@@ -18,6 +18,10 @@
 //!   that place that is not an image is replaced.
 //! - Files are written through a `.part` file and a rename, only below the
 //!   pack folder, never through a symbolic link.
+//! - A tile the page's own request found not on the server gets the marker
+//!   the downloader writes ([`mark_tile_missing`]), never when a file is at
+//!   its place; an image that arrives later replaces the marker. Which
+//!   answers count is decided in `mod.rs`.
 //! - The levels a person cannot have loaded by hand (the ones the downloader
 //!   builds by shrinking) are built from the saved tiles, tile by tile, as the
 //!   downloader would; the status files and the manifest's image summary are
@@ -369,6 +373,41 @@ pub fn write_tile(
     Ok(Written::Saved(bytes.len() as u64))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Marked {
+    /// A new "not on the server" marker.
+    New,
+    /// The marker was there already.
+    Already,
+    /// A file is at the tile's place (an image, or something else): it is
+    /// left as it is and no marker is written.
+    FileThere,
+}
+
+/// Records that the server has no image for a tile, with the marker the
+/// downloader writes (`TileStore::mark_missing`). Never when a file is at
+/// the tile's place, and never through a symbolic link.
+pub fn mark_tile_missing(
+    root: &Path,
+    layer: &LayerPlan,
+    hit: &TileHit,
+) -> Result<Marked, WriteError> {
+    let relative = tile_relative(layer, hit.z, hit.x, hit.y).ok_or(WriteError::Unsafe)?;
+    let marker = with_suffix(&relative, MISSING_SUFFIX);
+    if !plain_path(root, &relative) || !plain_path(root, &marker) {
+        return Err(WriteError::Unsafe);
+    }
+    let store = TileStore::new(root.to_path_buf(), None);
+    if store.has_overlay_image(&relative) {
+        return Ok(Marked::FileThere);
+    }
+    if store.is_missing(&relative) {
+        return Ok(Marked::Already);
+    }
+    store.mark_missing(&relative).map_err(WriteError::Disk)?;
+    Ok(Marked::New)
+}
+
 /// Whether the pack already has a readable image for a tile.
 pub fn has_tile(root: &Path, layer: &LayerPlan, hit: &TileHit) -> bool {
     tile_relative(layer, hit.z, hit.x, hit.y)
@@ -530,6 +569,12 @@ impl Pending {
                     .insert((hit.x, hit.y));
             }
         }
+    }
+
+    /// A tile recorded as not on the server: its levels may now be complete.
+    /// Nothing is built from it.
+    pub fn add_missing(&mut self, hit: &TileHit) {
+        self.layers.insert(hit.layer);
     }
 
     pub fn is_empty(&self) -> bool {

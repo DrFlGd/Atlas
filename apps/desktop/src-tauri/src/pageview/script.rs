@@ -14,6 +14,13 @@
 //! - Answers whose bytes the page cannot read (`no-cors` requests), text
 //!   answers and anything over the limits are not kept but noted, with the
 //!   address, so the person can be told.
+//! - When such a request was answered with an error status (400 to 599),
+//!   the address, the status and the answer's content type are noted, so
+//!   the shell can learn where the map ends. Only for 403 the start of the
+//!   body is read too, from a copy (`Response.clone()` for `fetch`, the
+//!   finished `XMLHttpRequest` response), at most `MAX_FAILURE_BODY` bytes:
+//!   a longer body is not read to its end and is noted without it. Reading
+//!   it never touches the page's own answer; every error is swallowed.
 //! - Images the page loads with `<img>` elements or style sheets cannot be
 //!   read without asking the server again, so they are only noted, from the
 //!   page's resource timing list (a `PerformanceObserver`). Requests made
@@ -37,6 +44,11 @@ use super::capture::MAX_IMAGE_BYTES;
 pub const MAX_QUEUED_CHARS: usize = 64 << 20;
 /// Notes the page keeps between two looks by the shell, at most.
 const MAX_NOTES: usize = 2000;
+/// Error answers the page keeps between two looks by the shell, at most.
+const MAX_FAILURES: usize = 500;
+/// Bytes of a 403 answer's body that are read, at most: an object store's
+/// "no such object" document is a few hundred bytes.
+pub const MAX_FAILURE_BODY: usize = 2048;
 
 /// The script added to the page. `key` is the hidden name of its handle,
 /// `prefixes` the fixed starts of the pack's remote image addresses.
@@ -52,12 +64,15 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
   var MAX_IMAGE = {MAX_IMAGE_BYTES};
   var MAX_QUEUED = {MAX_QUEUED_CHARS};
   var MAX_NOTES = {MAX_NOTES};
+  var MAX_FAILURES = {MAX_FAILURES};
+  var MAX_BODY = {MAX_FAILURE_BODY};
   var on = true;
   var queue = [];
   var queuedChars = 0;
   var nextId = 1;
   var kept = new Set();
   var notes = [];
+  var failures = [];
   var workers = false;
 
   function absolute(input) {{
@@ -70,6 +85,70 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
   }}
   function note(url, reason) {{
     if (on && notes.length < MAX_NOTES) notes.push({{ url: url, reason: reason }});
+  }}
+  function failed(url, status, type, body) {{
+    if (!on || failures.length >= MAX_FAILURES) return;
+    failures.push({{ url: url, status: status, type: String(type || '').slice(0, 200), body: typeof body === 'string' ? body : null }});
+  }}
+  function isFailure(status) {{
+    return typeof status === 'number' && status >= 400 && status <= 599;
+  }}
+  // The text of a body of at most MAX_BODY bytes, if it is UTF-8; else null.
+  function startOf(buffer) {{
+    try {{
+      if (!buffer || buffer.byteLength > MAX_BODY) return null;
+      return new TextDecoder('utf-8', {{ fatal: true }}).decode(new Uint8Array(buffer));
+    }} catch (e) {{ return null; }}
+  }}
+  // Reads at most MAX_BODY bytes of a copy of an answer; stops reading the
+  // copy when there is more.
+  function readStart(copy) {{
+    var reader = copy.body.getReader();
+    var parts = [], size = 0;
+    function step() {{
+      return reader.read().then(function (chunk) {{
+        if (chunk.done) {{
+          var all = new Uint8Array(size), at = 0;
+          for (var i = 0; i < parts.length; i++) {{ all.set(parts[i], at); at += parts[i].byteLength; }}
+          return startOf(all.buffer);
+        }}
+        size += chunk.value.byteLength;
+        if (size > MAX_BODY) {{
+          try {{ reader.cancel().then(null, function () {{}}); }} catch (e) {{}}
+          return null;
+        }}
+        parts.push(chunk.value);
+        return step();
+      }});
+    }}
+    return step();
+  }}
+  function failureFromResponse(url, response) {{
+    var status = response.status, type = '';
+    try {{ type = response.headers.get('content-type') || ''; }} catch (e) {{}}
+    if (status !== 403) {{ failed(url, status, type, null); return; }}
+    try {{
+      if (Number(response.headers.get('content-length')) > MAX_BODY) {{ failed(url, status, type, null); return; }}
+      var copy = response.clone();
+      if (!copy.body || typeof copy.body.getReader !== 'function') {{ failed(url, status, type, null); return; }}
+      readStart(copy).then(function (text) {{ failed(url, status, type, text); }}, function () {{ failed(url, status, type, null); }});
+    }} catch (e) {{ failed(url, status, type, null); }}
+  }}
+  function failureFromXhr(url, xhr) {{
+    var status = xhr.status, type = '';
+    try {{ type = xhr.getResponseHeader('content-type') || ''; }} catch (e) {{}}
+    if (status !== 403) {{ failed(url, status, type, null); return; }}
+    try {{
+      var kind = xhr.responseType;
+      if (kind === 'arraybuffer') failed(url, status, type, startOf(xhr.response));
+      else if (kind === 'blob' && xhr.response && typeof xhr.response.arrayBuffer === 'function') {{
+        if (xhr.response.size > MAX_BODY) {{ failed(url, status, type, null); return; }}
+        xhr.response.arrayBuffer().then(function (buffer) {{ failed(url, status, type, startOf(buffer)); }}, function () {{ failed(url, status, type, null); }});
+      }} else if (kind === '' || kind === 'text') {{
+        var text = xhr.responseText;
+        failed(url, status, type, typeof text === 'string' && text.length <= MAX_BODY ? text : null);
+      }} else failed(url, status, type, null);
+    }} catch (e) {{ failed(url, status, type, null); }}
   }}
   function toBase64(buffer) {{
     var bytes = new Uint8Array(buffer);
@@ -95,6 +174,7 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
     try {{
       if (!on || !response) return;
       if (response.type === 'opaque' || response.type === 'opaqueredirect') {{ note(url, 'hidden'); return; }}
+      if (isFailure(response.status)) {{ failureFromResponse(url, response); return; }}
       if (response.status !== 200) return;
       var length = Number(response.headers.get('content-length'));
       if (length > MAX_IMAGE) {{ note(url, 'tooLarge'); return; }}
@@ -134,7 +214,9 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
           var xhr = this;
           xhr.addEventListener('load', function () {{
             try {{
-              if (!on || xhr.status !== 200) return;
+              if (!on) return;
+              if (isFailure(xhr.status)) {{ failureFromXhr(request.url, xhr); return; }}
+              if (xhr.status !== 200) return;
               var type = xhr.responseType;
               if (type === 'arraybuffer') keep(request.url, xhr.response);
               else if (type === 'blob' && xhr.response && typeof xhr.response.arrayBuffer === 'function') {{
@@ -195,9 +277,10 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
         used += item.data.length;
         items.push({{ id: item.id, url: item.url, data: item.data }});
       }}
-      var noted = notes;
+      var noted = notes, answered = failures;
       notes = [];
-      return JSON.stringify({{ items: items, large: large, notSaved: noted, workers: workers, waiting: queue.length }});
+      failures = [];
+      return JSON.stringify({{ items: items, large: large, notSaved: noted, failed: answered, workers: workers, waiting: queue.length }});
     }},
     slice: function (id, start, count) {{
       for (var i = 0; i < queue.length; i++) {{
@@ -209,7 +292,7 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
       return null;
     }},
     drop: function (ids) {{ remove(ids); return 'ok'; }},
-    off: function () {{ on = false; queue = []; queuedChars = 0; notes = []; kept.clear(); return 'ok'; }}
+    off: function () {{ on = false; queue = []; queuedChars = 0; notes = []; failures = []; kept.clear(); return 'ok'; }}
   }};
   Object.defineProperty(window, KEY, {{ value: handle, configurable: false, enumerable: false, writable: false }});
 }})();"#
@@ -291,6 +374,19 @@ pub struct Note {
     pub reason: NoteReason,
 }
 
+/// A request of the page that was answered with an error status.
+#[derive(Debug, Deserialize)]
+pub struct Failure {
+    pub url: String,
+    pub status: u16,
+    /// The answer's `Content-Type`, as the page saw it.
+    #[serde(rename = "type", default)]
+    pub content_type: String,
+    /// The start of a 403 answer's body, when it was short and UTF-8.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
 /// What `next` returns.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -298,6 +394,8 @@ pub struct Batch {
     pub items: Vec<Item>,
     pub large: Vec<LargeItem>,
     pub not_saved: Vec<Note>,
+    #[serde(default)]
+    pub failed: Vec<Failure>,
     pub workers: bool,
 }
 
@@ -344,6 +442,17 @@ mod tests {
         assert!(script.contains("originalOpen.apply(this, arguments)"));
         assert!(script.contains("originalSend.apply(this, arguments)"));
         assert!(script.contains("response.clone().arrayBuffer()"));
+        // Error answers: a copy's start is read, only for 403 and capped.
+        assert!(script.contains("var copy = response.clone();"));
+        assert_eq!(
+            script
+                .matches("if (status !== 403) { failed(url, status, type, null); return; }")
+                .count(),
+            2
+        );
+        assert!(script.contains("var MAX_BODY = 2048;"));
+        assert!(script.contains("var MAX_FAILURES = 500;"));
+        assert!(script.contains("failures.length >= MAX_FAILURES"));
         assert!(next_script("__atlasView1", 10).contains(r#"window["__atlasView1"]"#));
         assert!(next_script("__atlasView1", 10).contains("handle.next(10)"));
         assert!(slice_script("k", 3, 5, 7).contains("handle.slice(3, 5, 7)"));
@@ -364,6 +473,20 @@ mod tests {
         assert_eq!(batch.large[0].length, 9_000_000);
         assert_eq!(batch.not_saved[0].reason, NoteReason::Element);
         assert!(batch.workers);
+        assert!(
+            batch.failed.is_empty(),
+            "older pages hand over no error answers"
+        );
+        let batch: Batch = serde_json::from_str(
+            r#"{"items":[],"large":[],"notSaved":[],"workers":false,
+                "failed":[{"url":"https://t.example.com/1/9/9.png","status":403,"type":"application/xml","body":"<Error/>"},
+                          {"url":"https://t.example.com/1/8/9.png","status":404,"type":"","body":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(batch.failed[0].status, 403);
+        assert_eq!(batch.failed[0].content_type, "application/xml");
+        assert_eq!(batch.failed[0].body.as_deref(), Some("<Error/>"));
+        assert_eq!(batch.failed[1].body, None);
         assert!(serde_json::from_str::<Batch>(
             r#"{"items":[],"large":[],"notSaved":[{"url":"x","reason":"pwned"}],"workers":false}"#
         )

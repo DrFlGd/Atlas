@@ -18,6 +18,25 @@
 //! page, never asks a server for anything, and never changes a request the
 //! page makes. What it takes is checked and written by `capture.rs`.
 //!
+//! The answers the page's own requests got also show where the map ends,
+//! with no request of the shell's own. For an address of one of the pack's
+//! map images (as `TileMatcher` finds it), with no image of it on disk:
+//!
+//! - 404 or 410: the tile is recorded as not on the server, with the marker
+//!   "Download map images" writes for the same answer.
+//! - 403 whose body is an object store's "no such object"
+//!   (`is_store_no_such_object`, as the downloader decides it): the same,
+//!   but only once that layer's host is proven to serve it: an image of the
+//!   layer from that host was saved while browsing, or an image of the layer
+//!   is in the pack folder (`layer_has_images`, the downloader's proof).
+//!   Until then the tile is held in memory and recorded when such an image
+//!   is saved; held tiles are forgotten when saving stops.
+//! - Anything else (another 401 or 403, 5xx, …): nothing is recorded; the
+//!   image counts as not saved.
+//!
+//! Tiles below a missing one are not marked here; the downloader does that
+//! when it runs. An image that arrives later replaces the marker.
+//!
 //! Saving holds the pack folder's lock (`.atlas/lock`) for as long as it is
 //! on, so a download, an import or a delete of the same pack waits until it
 //! stops, and it does not start while a download of the pack is running or
@@ -27,7 +46,7 @@ pub mod capture;
 mod script;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
@@ -48,10 +67,18 @@ use crate::{
     library::PackLock,
     manifest::{MANIFEST_FILE, MAX_MANIFEST_BYTES},
     packs::{PackKind, PackRegistry},
-    tiles::{pyramid::read_pack_plan, DownloadManager},
+    tiles::{
+        download::{host_of, is_store_no_such_object},
+        manager::{layer_has_images, layer_host},
+        pyramid::read_pack_plan,
+        store::TileStore,
+        DownloadManager,
+    },
 };
-use capture::{has_tile, write_tile, Pending, TileHit, TileMatcher, Written};
-use script::{Batch, NoteReason};
+use capture::{
+    has_tile, mark_tile_missing, write_tile, Marked, Pending, TileHit, TileMatcher, Written,
+};
+use script::{Batch, NoteReason, MAX_FAILURE_BODY};
 
 /// The label of the map page window. No capability names it.
 pub const VIEW_WINDOW: &str = "map-page";
@@ -208,11 +235,14 @@ fn pages_info(registry: &PackRegistry, pack_id: &str) -> Result<PagesInfo, Strin
 pub struct Counts {
     pub saved: u64,
     pub already_had: u64,
+    /// Found not to be on the server by the page's own requests (the map's
+    /// edge), and recorded as missing.
+    pub not_on_server: u64,
     pub not_saved: u64,
     /// Of `not_saved`: shown by the page in a way that cannot be copied.
     pub from_elements: u64,
     /// Of `not_saved`: everything else (unreadable, too large, not an image,
-    /// too many at once, or a disk problem).
+    /// too many at once, an error answer, or a disk problem).
     pub other_problems: u64,
     pub bytes: u64,
 }
@@ -221,6 +251,8 @@ pub struct Counts {
 enum Outcome {
     Saved,
     AlreadyHad,
+    /// Recorded as not on the server.
+    NotOnServer,
     NotSaved(Problem),
 }
 
@@ -233,8 +265,8 @@ enum Problem {
 impl Counts {
     fn summary(&self) -> String {
         format!(
-            "{} saved ({} bytes), {} already there, {} could not be saved ({} shown as picture elements, {} for other reasons)",
-            self.saved, self.bytes, self.already_had, self.not_saved, self.from_elements, self.other_problems
+            "{} saved ({} bytes), {} already there, {} not on the server (the map's edge), {} could not be saved ({} shown as picture elements, {} for other reasons)",
+            self.saved, self.bytes, self.already_had, self.not_on_server, self.not_saved, self.from_elements, self.other_problems
         )
     }
 }
@@ -253,7 +285,8 @@ pub struct ViewStatus {
     pub counts: Counts,
     /// The page started background workers, whose loading cannot be seen.
     pub uses_workers: bool,
-    /// Increases when map images were saved, so the map looks again.
+    /// Increases when map images were saved or recorded as not on the
+    /// server, so the map looks again.
     pub revision: u64,
     /// A plain note, such as why saving stopped.
     pub message: Option<String>,
@@ -273,6 +306,48 @@ struct Saving {
     logged_problems: u8,
     logged_ignored: u8,
     logged_first: bool,
+    /// Layers (by index) and hosts that sent an image of the layer that was
+    /// saved in this session.
+    proven: HashSet<(usize, String)>,
+    /// Whether an image of each layer was in the pack folder, once asked.
+    on_disk: HashMap<usize, bool>,
+    /// Store denials of layers and hosts not proven yet: the tiles, with the
+    /// address the page asked for.
+    held: HashMap<(usize, String), BTreeMap<TileHit, String>>,
+    /// Layers and kinds of reason ([`Edge::kind`]) whose first missing
+    /// tile has been logged.
+    logged_edge_kinds: HashSet<(usize, u8)>,
+    /// Missing tiles logged after those first lines.
+    logged_edges: u8,
+    /// Layers whose first held store denial has been logged.
+    logged_held: HashSet<usize>,
+}
+
+/// Why "access denied" counts as "not on the server" for a layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Proof {
+    /// An image of the layer from the host was saved while browsing.
+    ThisSession,
+    /// An image of the layer is in the pack folder.
+    OnDisk,
+}
+
+/// Why a tile counts as not on the server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Edge {
+    /// 404 or 410.
+    NotFound(u16),
+    /// A store's "no such object", with the host proven.
+    Store(Proof),
+}
+
+impl Edge {
+    fn kind(self) -> u8 {
+        match self {
+            Edge::NotFound(_) => 0,
+            Edge::Store(_) => 1,
+        }
+    }
 }
 
 impl Saving {
@@ -311,6 +386,7 @@ impl Saving {
             match outcome {
                 Outcome::Saved => counts.saved += 1,
                 Outcome::AlreadyHad => counts.already_had += 1,
+                Outcome::NotOnServer => counts.not_on_server += 1,
                 Outcome::NotSaved(problem) => {
                     counts.not_saved += 1;
                     match problem {
@@ -324,11 +400,200 @@ impl Saving {
     }
 
     /// Records an outcome; a better one replaces a worse one, never the
-    /// other way round.
+    /// other way round: an image beats "not on the server", which beats
+    /// "not saved".
     fn record(&mut self, hit: TileHit, outcome: Outcome) {
         let entry = self.outcomes.entry(hit).or_insert(outcome);
-        if matches!(entry, Outcome::NotSaved(_)) {
+        let better = match entry {
+            Outcome::NotSaved(_) => true,
+            Outcome::NotOnServer => matches!(outcome, Outcome::Saved | Outcome::AlreadyHad),
+            Outcome::Saved | Outcome::AlreadyHad => false,
+        };
+        if better {
             *entry = outcome;
+        }
+    }
+
+    /// Whether the host's "access denied" counts as "not on the server" for
+    /// a layer, and why.
+    fn proof(&mut self, layer: usize, host: &str) -> Option<Proof> {
+        if self.proven.contains(&(layer, host.to_owned())) {
+            return Some(Proof::ThisSession);
+        }
+        let plan = self.matcher.plan().layers.get(layer)?;
+        if host != layer_host(plan) {
+            return None;
+        }
+        let root = &self.root;
+        let on_disk = *self
+            .on_disk
+            .entry(layer)
+            .or_insert_with(|| layer_has_images(plan, &TileStore::new(root.clone(), None)));
+        on_disk.then_some(Proof::OnDisk)
+    }
+
+    /// Records a tile as not on the server, unless a file is at its place.
+    fn mark_missing(&mut self, hit: TileHit, url: &str, why: Edge) {
+        let layer = &self.matcher.plan().layers[hit.layer];
+        let outcome = match mark_tile_missing(&self.root, layer, &hit) {
+            Ok(Marked::New) => {
+                self.pending.add_missing(&hit);
+                Outcome::NotOnServer
+            }
+            Ok(Marked::Already) => Outcome::NotOnServer,
+            Ok(Marked::FileThere) if has_tile(&self.root, layer, &hit) => Outcome::AlreadyHad,
+            Ok(Marked::FileThere) => {
+                self.log_problem(url, "it is not on the server, but a file that is not an image is at its place, so it is left as it is");
+                Outcome::NotSaved(Problem::Other)
+            }
+            Err(error) => {
+                self.log_problem(
+                    url,
+                    &format!("it is not on the server, but that could not be recorded: {error}"),
+                );
+                Outcome::NotSaved(Problem::Other)
+            }
+        };
+        if outcome == Outcome::NotOnServer {
+            self.log_edge(hit.layer, url, why);
+        }
+        self.record(hit, outcome);
+    }
+
+    /// Says in the log why a layer's first missing tile of each kind counts
+    /// as not on the server, and names a few more.
+    fn log_edge(&mut self, layer: usize, url: &str, why: Edge) {
+        if self.logged_edge_kinds.insert((layer, why.kind())) {
+            let message = match why {
+                Edge::NotFound(status) => format!(
+                    "Saving as you browse: counting {} as not on the server (the map's edge): the page's own request for it was answered with HTTP {status}. It is recorded as missing, as Download map images records it, and counted in the summary when saving stops",
+                    log_address(url)
+                ),
+                Edge::Store(proof) => format!(
+                    "Saving as you browse: counting {} as not on the server (the map's edge): the store answered the page's own request with \"access denied\" (HTTP 403 with an AccessDenied error document), as it does for images that do not exist, and {}. It is recorded as missing, as Download map images records it, and counted in the summary when saving stops",
+                    log_address(url),
+                    match proof {
+                        Proof::OnDisk => "images of this layer from it are on disk",
+                        Proof::ThisSession => "it has sent images of this layer while you browsed",
+                    }
+                ),
+            };
+            activity::info(Area::Download, message);
+        } else if self.logged_edges < MAX_LOGGED_PROBLEMS {
+            self.logged_edges += 1;
+            activity::info(
+                Area::Download,
+                format!(
+                    "Saving as you browse: {} is not on the server ({})",
+                    log_address(url),
+                    match why {
+                        Edge::NotFound(status) => format!("HTTP {status}"),
+                        Edge::Store(_) => "the store answered \"access denied\"".to_owned(),
+                    }
+                ),
+            );
+        }
+    }
+
+    /// Records the store denials held for a layer and host, now that the
+    /// host has sent an image of the layer.
+    fn release_held(&mut self, layer: usize, host: String) {
+        let Some(held) = self.held.remove(&(layer, host)) else {
+            return;
+        };
+        for (hit, url) in held {
+            if matches!(
+                self.outcomes.get(&hit),
+                Some(Outcome::Saved | Outcome::AlreadyHad | Outcome::NotOnServer)
+            ) {
+                continue;
+            }
+            self.mark_missing(hit, &url, Edge::Store(Proof::ThisSession));
+        }
+    }
+
+    /// Store denials still held and not settled otherwise (an image, or
+    /// another answer that counts), which are forgotten when saving stops.
+    fn held_count(&self) -> usize {
+        self.held
+            .values()
+            .flat_map(BTreeMap::keys)
+            .filter(|hit| matches!(self.outcomes.get(hit), Some(Outcome::NotSaved(_))))
+            .count()
+    }
+
+    /// Says in the log that held store denials were not recorded.
+    fn log_dropped(&self) {
+        let held = self.held_count();
+        if held > 0 {
+            activity::info(
+                Area::Download,
+                format!(
+                    "Saving as you browse: {held} map images answered \"access denied\" by a store are not recorded as missing: no image of their layer came from that host while saving was on, so Download map images asks for them again"
+                ),
+            );
+        }
+    }
+
+    /// Takes in the page's requests that were answered with an error status.
+    fn take_failures(&mut self, batch: &Batch) {
+        for failure in &batch.failed {
+            let url = failure.url.as_str();
+            if url.len() > MAX_URL_CHARS {
+                continue;
+            }
+            let Some(hit) = self.matcher.find(url) else {
+                self.log_ignored(url);
+                continue;
+            };
+            if matches!(
+                self.outcomes.get(&hit),
+                Some(Outcome::Saved | Outcome::AlreadyHad | Outcome::NotOnServer)
+            ) {
+                continue;
+            }
+            let layer = &self.matcher.plan().layers[hit.layer];
+            if has_tile(&self.root, layer, &hit) {
+                // Never marked: the image on disk stays what counts.
+                self.record(hit, Outcome::AlreadyHad);
+                continue;
+            }
+            let host = host_of(url);
+            // The page reads at most MAX_FAILURE_BODY bytes, or as many
+            // UTF-16 characters from a text XHR; anything longer is not one.
+            let store_denial = failure.status == 403
+                && failure.body.as_deref().is_some_and(|body| {
+                    body.len() <= MAX_FAILURE_BODY * 3
+                        && is_store_no_such_object(&failure.content_type, body.as_bytes())
+                });
+            match failure.status {
+                status @ (404 | 410) => self.mark_missing(hit, url, Edge::NotFound(status)),
+                403 if store_denial => match self.proof(hit.layer, &host) {
+                    Some(proof) => self.mark_missing(hit, url, Edge::Store(proof)),
+                    None => {
+                        if self.logged_held.insert(hit.layer) {
+                            activity::info(
+                                Area::Download,
+                                format!(
+                                    "Saving as you browse: the store answered \"access denied\" (HTTP 403 with an AccessDenied error document) for {}, as it does for images that do not exist; it counts as not on the server only once {host} has sent an image of this layer while saving is on",
+                                    log_address(url)
+                                ),
+                            );
+                        }
+                        self.held
+                            .entry((hit.layer, host))
+                            .or_default()
+                            .insert(hit, url.to_owned());
+                        self.record(hit, Outcome::NotSaved(Problem::Other));
+                    }
+                },
+                status => {
+                    if !self.outcomes.contains_key(&hit) {
+                        self.log_problem(url, &format!("the server answered HTTP {status}"));
+                    }
+                    self.record(hit, Outcome::NotSaved(Problem::Other));
+                }
+            }
         }
     }
 
@@ -347,6 +612,8 @@ impl Saving {
         // What to write to the activity log, once the loop has let go of `self`.
         let mut problems: Vec<(String, Option<String>)> = Vec::new();
         let mut first_saved: Option<String> = None;
+        // Layers and hosts that sent an image that was saved.
+        let mut proofs: Vec<(usize, String)> = Vec::new();
         for (url, bytes) in items {
             if url.len() > MAX_URL_CHARS {
                 continue;
@@ -374,6 +641,7 @@ impl Saving {
                     Ok(Written::Saved(size)) => {
                         self.bytes += size;
                         changes.push(hit);
+                        proofs.push((hit.layer, host_of(url)));
                         first_saved.get_or_insert_with(|| url.to_owned());
                         Outcome::Saved
                     }
@@ -388,6 +656,11 @@ impl Saving {
         }
         for hit in changes {
             self.pending.add(self.matcher.plan(), &hit);
+        }
+        for (layer, host) in proofs {
+            if self.proven.insert((layer, host.clone())) {
+                self.release_held(layer, host);
+            }
         }
         if let Some(url) = first_saved.filter(|_| !self.logged_first) {
             self.logged_first = true;
@@ -444,12 +717,13 @@ impl Saving {
             }
             self.record(hit, outcome);
         }
+        self.take_failures(batch);
     }
 
     /// Brings status files and the manifest up to date. Returns whether the
-    /// map should look again: images were saved since the last time, whether
-    /// or not that completed a level (the map asks again for single images
-    /// that were missing).
+    /// map should look again: images were saved or recorded as not on the
+    /// server since the last time, whether or not that completed a level
+    /// (the map asks again for single images that were missing).
     fn flush(&mut self) -> bool {
         self.last_flush = Instant::now();
         if self.pending.is_empty() {
@@ -760,6 +1034,7 @@ impl PageViews {
                     }
                 ),
             );
+            saving.log_dropped();
             if message.is_some() {
                 session.message = message;
             }
@@ -811,6 +1086,7 @@ impl PageViews {
                         session.counts.summary()
                     ),
                 );
+                saving.log_dropped();
             }
             if changed {
                 inner.revision += 1;
@@ -898,6 +1174,12 @@ fn start_saving(
         logged_problems: 0,
         logged_ignored: 0,
         logged_first: false,
+        proven: HashSet::new(),
+        on_disk: HashMap::new(),
+        held: HashMap::new(),
+        logged_edge_kinds: HashSet::new(),
+        logged_edges: 0,
+        logged_held: HashSet::new(),
     })
 }
 
@@ -1023,7 +1305,7 @@ pub async fn view_open_in_browser<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::store::tests::TempDir;
+    use crate::tiles::{status::read_levels, store::tests::TempDir};
 
     fn write_pack(root: &Path) {
         fs::create_dir_all(root).unwrap();
@@ -1139,9 +1421,40 @@ mod tests {
         assert!(PackLock::acquire(&root).is_ok());
     }
 
-    #[test]
-    fn counts_each_image_once_and_never_downgrades() {
-        let dir = TempDir::new("pageview-counts");
+    /// A PNG map image.
+    fn png() -> Vec<u8> {
+        let image = image::RgbImage::from_pixel(256, 256, image::Rgb([5, 6, 7]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    /// Standard base64, as the page's btoa writes it.
+    fn encode(bytes: &[u8]) -> String {
+        const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    /// A pack in a kept folder whose one layer is 2 x 2 tiles on level 1
+    /// (remote zoom 1), level 0 built; `before` runs before saving starts.
+    fn saving_pack(name: &str, before: impl FnOnce(&Path)) -> (TempDir, PathBuf, Saving) {
+        let dir = TempDir::new(name);
         let root = dir.0.join("pack");
         write_pack(&root);
         fs::write(
@@ -1152,37 +1465,18 @@ mod tests {
                   "levels":[{"z":1,"sourceZ":1,"offsetX":0,"offsetY":0}]}}}]"#,
         )
         .unwrap();
+        before(&root);
         let registry = PackRegistry::default();
         registry.register_folder("my-game", &root).unwrap();
         let manager = DownloadManager::new(dir.0.join("data"), registry.clone());
-        let mut saving = start_saving(&registry, &manager, "my-game", &root).unwrap();
-        let png = {
-            let image = image::RgbImage::from_pixel(256, 256, image::Rgb([5, 6, 7]));
-            let mut out = std::io::Cursor::new(Vec::new());
-            image.write_to(&mut out, image::ImageFormat::Png).unwrap();
-            out.into_inner()
-        };
-        let encode = |bytes: &[u8]| {
-            // Standard base64, as the page's btoa writes it.
-            const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            let mut out = String::new();
-            for chunk in bytes.chunks(3) {
-                let b = [
-                    chunk[0],
-                    *chunk.get(1).unwrap_or(&0),
-                    *chunk.get(2).unwrap_or(&0),
-                ];
-                let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-                for i in 0..4 {
-                    if i <= chunk.len() {
-                        out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
-                    } else {
-                        out.push('=');
-                    }
-                }
-            }
-            out
-        };
+        let saving = start_saving(&registry, &manager, "my-game", &root).unwrap();
+        (dir, root, saving)
+    }
+
+    #[test]
+    fn counts_each_image_once_and_never_downgrades() {
+        let (_dir, root, mut saving) = saving_pack("pageview-counts", |_| {});
+        let png = png();
         let batch: Batch = serde_json::from_value(serde_json::json!({
             "items": [
                 {"id": 1, "url": "https://tiles.example.com/1/0/0.png", "data": encode(&png)},
@@ -1206,6 +1500,7 @@ mod tests {
             Counts {
                 saved: 1,
                 already_had: 0,
+                not_on_server: 0,
                 not_saved: 2,
                 from_elements: 1,
                 other_problems: 1,
@@ -1245,6 +1540,280 @@ mod tests {
             root.join("tiles/world/0/0/0.png").exists(),
             "level 0 was built"
         );
+    }
+
+    /// An object store's answer for an object it does not have.
+    const NO_SUCH_OBJECT: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>0000TEST</RequestId><HostId>dGVzdC1ob3N0</HostId></Error>";
+
+    fn tile_url(x: u64, y: u64) -> String {
+        format!("https://tiles.example.com/1/{x}/{y}.png")
+    }
+
+    fn marker(root: &Path, x: u64, y: u64) -> PathBuf {
+        root.join(format!("tiles/world/1/{x}/{y}.png.404"))
+    }
+
+    /// A batch with these error answers: (x, y, status, content type, body).
+    fn failures(answers: &[(u64, u64, u16, &str, Option<&str>)]) -> Batch {
+        serde_json::from_value(serde_json::json!({
+            "items": [], "large": [], "notSaved": [], "workers": false,
+            "failed": answers.iter().map(|(x, y, status, kind, body)| serde_json::json!({
+                "url": tile_url(*x, *y), "status": status, "type": kind, "body": body,
+            })).collect::<Vec<_>>(),
+        }))
+        .unwrap()
+    }
+
+    /// A batch with an image of each of these tiles.
+    fn images(tiles: &[(u64, u64)]) -> Batch {
+        let data = encode(&png());
+        serde_json::from_value(serde_json::json!({
+            "items": tiles.iter().enumerate().map(|(id, (x, y))| serde_json::json!({
+                "id": id, "url": tile_url(*x, *y), "data": data,
+            })).collect::<Vec<_>>(),
+            "large": [], "notSaved": [], "workers": false,
+        }))
+        .unwrap()
+    }
+
+    fn store_denial(x: u64, y: u64) -> Batch {
+        failures(&[(x, y, 403, "application/xml", Some(NO_SUCH_OBJECT))])
+    }
+
+    #[test]
+    fn records_tiles_the_server_does_not_have() {
+        let (_dir, root, mut saving) = saving_pack("pageview-404", |_| {});
+        saving.take(
+            &failures(&[
+                (1, 1, 404, "text/plain", None),
+                (0, 1, 410, "", None),
+                // The same tile again: counted once.
+                (1, 1, 404, "text/plain", None),
+            ]),
+            Vec::new(),
+        );
+        assert!(
+            marker(&root, 1, 1).is_file(),
+            "404: the downloader's marker"
+        );
+        assert!(marker(&root, 0, 1).is_file(), "410 too");
+        assert_eq!(fs::read(marker(&root, 1, 1)).unwrap(), b"");
+        assert!(!root.join("tiles/world/1/1/1.png").exists());
+        // Other answers for the same tiles change nothing.
+        saving.take(
+            &failures(&[(1, 1, 404, "text/plain", None), (1, 1, 500, "", None)]),
+            Vec::new(),
+        );
+        let counts = saving.counts();
+        assert_eq!(counts.not_on_server, 2, "each tile once");
+        assert_eq!(counts.not_saved, 0);
+        // Not marked below the missing tile, and nothing for other addresses.
+        assert!(!root.join("tiles/world/2").exists());
+        assert!(!root.join("tiles/world/0/0/0.png.404").exists());
+    }
+
+    #[test]
+    fn holds_a_store_denial_until_the_host_sends_an_image_of_the_layer() {
+        let (_dir, root, mut saving) = saving_pack("pageview-held", |_| {});
+        saving.take(&store_denial(1, 1), Vec::new());
+        assert!(
+            !marker(&root, 1, 1).exists(),
+            "no image of the layer yet: the host is not proven"
+        );
+        assert_eq!(saving.held_count(), 1);
+        assert_eq!(saving.counts().not_on_server, 0);
+        assert_eq!(saving.counts().other_problems, 1);
+        assert!(!saving.flush(), "nothing was written");
+
+        // An image of the layer from the same host: the held denial counts.
+        saving.take(&images(&[(0, 0)]), Vec::new());
+        assert!(marker(&root, 1, 1).is_file());
+        assert_eq!(saving.held_count(), 0);
+        let counts = saving.counts();
+        assert_eq!(
+            (counts.saved, counts.not_on_server, counts.not_saved),
+            (1, 1, 0)
+        );
+        // Later denials of the proven host count at once.
+        saving.take(&store_denial(0, 1), Vec::new());
+        assert!(marker(&root, 0, 1).is_file());
+        assert_eq!(saving.counts().not_on_server, 2);
+    }
+
+    #[test]
+    fn counts_a_store_denial_at_once_when_an_image_of_the_layer_is_on_disk() {
+        let (_dir, root, mut saving) = saving_pack("pageview-proof-on-disk", |root| {
+            fs::create_dir_all(root.join("tiles/world/1/0")).unwrap();
+            fs::write(root.join("tiles/world/1/0/0.png"), png()).unwrap();
+        });
+        assert_eq!(saving.proof(0, "tiles.example.com"), Some(Proof::OnDisk));
+        assert_eq!(saving.proof(0, "cdn.example.com"), None);
+        saving.take(&store_denial(1, 0), Vec::new());
+        assert!(marker(&root, 1, 0).is_file());
+        assert_eq!(saving.held_count(), 0);
+        assert_eq!(saving.counts().not_on_server, 1);
+    }
+
+    #[test]
+    fn forgets_held_denials_when_saving_stops() {
+        let (_dir, root, mut saving) = saving_pack("pageview-dropped", |_| {});
+        saving.take(&store_denial(1, 1), Vec::new());
+        saving.take(&store_denial(0, 1), Vec::new());
+        assert_eq!(saving.held_count(), 2);
+        // A held tile that a later 404 settles is not held any more.
+        saving.take(&failures(&[(0, 1, 404, "", None)]), Vec::new());
+        assert!(marker(&root, 0, 1).is_file());
+        assert_eq!(saving.held_count(), 1);
+        saving.flush();
+        saving.log_dropped();
+        drop(saving);
+        assert!(
+            !marker(&root, 1, 1).exists(),
+            "the held denial was forgotten"
+        );
+    }
+
+    #[test]
+    fn records_nothing_for_other_refusals_and_failures() {
+        let (_dir, root, mut saving) = saving_pack("pageview-refusals", |root| {
+            // The host is proven, so only the answer decides.
+            fs::create_dir_all(root.join("tiles/world/1/0")).unwrap();
+            fs::write(root.join("tiles/world/1/0/0.png"), png()).unwrap();
+        });
+        let other_code = "<Error><Code>RequestTimeTooSkewed</Code></Error>";
+        let page = "<!doctype html><title>Forbidden</title>";
+        saving.take(
+            &failures(&[
+                (1, 0, 403, "application/xml", Some(other_code)),
+                (0, 1, 403, "text/html", Some(page)),
+                // The right document, but not as XML, or not read.
+                (1, 1, 403, "text/html", Some(NO_SUCH_OBJECT)),
+            ]),
+            Vec::new(),
+        );
+        saving.take(
+            &failures(&[
+                (1, 1, 403, "application/xml", None),
+                (1, 1, 401, "application/xml", Some(NO_SUCH_OBJECT)),
+                (1, 1, 500, "application/xml", Some(NO_SUCH_OBJECT)),
+                (1, 1, 429, "", None),
+            ]),
+            Vec::new(),
+        );
+        for (x, y) in [(1, 0), (0, 1), (1, 1)] {
+            assert!(!marker(&root, x, y).exists(), "{x}/{y}");
+        }
+        let counts = saving.counts();
+        assert_eq!(counts.not_on_server, 0);
+        assert_eq!((counts.not_saved, counts.other_problems), (3, 3));
+        assert_eq!(saving.held_count(), 0);
+        assert!(!saving.flush());
+    }
+
+    #[test]
+    fn never_marks_a_tile_whose_image_is_on_disk() {
+        let (_dir, root, mut saving) = saving_pack("pageview-image-stays", |root| {
+            fs::create_dir_all(root.join("tiles/world/1/1")).unwrap();
+            fs::write(root.join("tiles/world/1/1/1.png"), png()).unwrap();
+        });
+        saving.take(
+            &failures(&[
+                (1, 1, 404, "", None),
+                (1, 1, 403, "application/xml", Some(NO_SUCH_OBJECT)),
+            ]),
+            Vec::new(),
+        );
+        assert!(!marker(&root, 1, 1).exists());
+        assert_eq!(fs::read(root.join("tiles/world/1/1/1.png")).unwrap(), png());
+        assert_eq!(saving.counts().already_had, 1);
+        assert_eq!(saving.counts().not_on_server, 0);
+
+        // Saved in this session, then answered "not there": the image stays.
+        saving.take(&images(&[(0, 1)]), Vec::new());
+        saving.take(&failures(&[(0, 1, 404, "", None)]), Vec::new());
+        assert!(!marker(&root, 0, 1).exists());
+
+        // A denial held, then the page loads that very image: no marker.
+        let (_dir, root, mut saving) = saving_pack("pageview-image-wins-held", |_| {});
+        saving.take(&store_denial(1, 1), Vec::new());
+        saving.take(&images(&[(1, 1)]), Vec::new());
+        assert!(!marker(&root, 1, 1).exists());
+        assert!(root.join("tiles/world/1/1/1.png").is_file());
+        assert_eq!(saving.counts().saved, 1);
+        assert_eq!(saving.counts().not_on_server, 0);
+        assert_eq!(saving.counts().not_saved, 0);
+    }
+
+    #[test]
+    fn an_image_that_arrives_later_replaces_the_marker() {
+        let (_dir, root, mut saving) = saving_pack("pageview-image-later", |_| {});
+        saving.take(&failures(&[(1, 0, 404, "", None)]), Vec::new());
+        assert!(marker(&root, 1, 0).is_file());
+        assert_eq!(saving.counts().not_on_server, 1);
+        saving.take(&images(&[(1, 0)]), Vec::new());
+        assert!(!marker(&root, 1, 0).exists());
+        assert_eq!(fs::read(root.join("tiles/world/1/1/0.png")).unwrap(), png());
+        let counts = saving.counts();
+        assert_eq!(
+            (counts.saved, counts.not_on_server),
+            (1, 0),
+            "each tile once"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn never_writes_a_marker_through_a_link() {
+        let (dir, root, mut saving) = saving_pack("pageview-marker-link", |_| {});
+        let outside = dir.0.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(root.join("tiles/world/1/1")).unwrap();
+        std::os::unix::fs::symlink(outside.join("x"), marker(&root, 1, 1)).unwrap();
+        saving.take(&failures(&[(1, 1, 404, "", None)]), Vec::new());
+        assert!(!outside.join("x").exists());
+        assert_eq!(saving.counts().not_on_server, 0);
+        assert_eq!(saving.counts().other_problems, 1);
+    }
+
+    #[test]
+    fn markers_alone_complete_levels_and_make_the_map_look_again() {
+        let (_dir, root, saving) = saving_pack("pageview-revision", |_| {});
+        let views = PageViews::default();
+        {
+            let mut inner = lock(&views.inner);
+            inner.session = Some(Session {
+                id: 1,
+                pack_id: "my-game".into(),
+                url: "https://maps.example.com/my-game/world".into(),
+                site: "maps.example.com".into(),
+                saving: Some(saving),
+                saved_session: true,
+                counts: Counts::default(),
+                uses_workers: false,
+                message: None,
+            });
+        }
+        // Three of level 1's four tiles arrive.
+        views.take(1, &images(&[(0, 0), (1, 0), (0, 1)]), Vec::new());
+        views.flush(1, true);
+        let first = views.status().revision;
+        assert_eq!(first, 1);
+        assert!(!root.join("offline-tiles/world.json").exists());
+        // The fourth is not on the server: only a marker is written.
+        views.take(1, &failures(&[(1, 1, 404, "", None)]), Vec::new());
+        views.flush(1, true);
+        let status = views.status();
+        assert_eq!(status.revision, first + 1, "the map and counts look again");
+        assert_eq!(status.counts.not_on_server, 1);
+        assert_eq!(
+            read_levels(&root, &read_pack_plan(&root).unwrap().layers[0]),
+            std::collections::BTreeSet::from([0, 1]),
+            "the level is complete: its last tile is not on the server"
+        );
+        // Nothing new: no new revision.
+        views.take(1, &failures(&[(1, 1, 404, "", None)]), Vec::new());
+        views.flush(1, true);
+        assert_eq!(views.status().revision, first + 1);
     }
 
     #[test]

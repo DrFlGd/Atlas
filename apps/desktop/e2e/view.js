@@ -17,7 +17,11 @@
  * and then, with saving on, that the map images the page loads with fetch
  * and XMLHttpRequest land in the pack where "Download map images" puts
  * them, that the image already there is kept, that other images are
- * ignored, that the status file and the manifest are brought up to date,
+ * ignored, that three images at the map's edge, which the image server
+ * answers the way an object store answers for an image it does not have,
+ * are recorded as not on the server (the downloader's marker, the count on
+ * the card and a line in the activity log) and let their level complete,
+ * that the status file and the manifest are brought up to date,
  * that a download of the same pack cannot start meanwhile, that the page
  * cannot reach the app, and, the point of it all, that the image server saw
  * each image asked for exactly once: saving makes no request of its own.
@@ -32,6 +36,7 @@ import {
   PACK_ID,
   remoteTiles,
   startMapPageSite,
+  STORE_MISSING,
   tileImage,
   WORLD,
   writePack,
@@ -61,6 +66,11 @@ const caveTiles = remoteTiles(CAVES);
 const kept = worldTiles.find((tile) => tile.z === 2 && tile.x === 0 && tile.y === 0);
 if (!kept) throw new Error('the world map has a level 2');
 const keptBytes = tileImage('/0/0/0');
+// The world map's edge on level 2, which the store does not have once saving starts.
+const edgeTiles = worldTiles.filter((tile) =>
+  STORE_MISSING.some((t) => t.z === tile.z && t.x === tile.x && t.y === tile.y),
+);
+if (edgeTiles.length !== STORE_MISSING.length) throw new Error('the edge tiles are on the map');
 await mkdir(join(pack, 'tiles', 'world', '2', '0'), { recursive: true });
 await writeFile(join(pack, 'tiles', 'world', '2', '0', '0.png'), keptBytes);
 
@@ -266,6 +276,7 @@ try {
   site.imageRequests.clear();
 
   // ---- Saving while browsing -------------------------------------------------------
+  site.setStoreMissing(true);
   await openPageList(s);
   await pageAction(s, 0, 'map-page-save');
   await waitForCard(s, 'saving');
@@ -277,15 +288,26 @@ try {
   );
   await waitForImageRequests(worldRequests);
   await s.waitFor(
-    `document.querySelector('[data-testid="map-page-saved"]')?.dataset.count === '${worldTiles.length - 1}' &&
-      document.querySelector('[data-testid="map-page-had"]')?.dataset.count === '1'`,
-    { what: 'every image of the world page to be saved' },
+    `document.querySelector('[data-testid="map-page-saved"]')?.dataset.count === '${worldTiles.length - 1 - edgeTiles.length}' &&
+      document.querySelector('[data-testid="map-page-had"]')?.dataset.count === '1' &&
+      document.querySelector('[data-testid="map-page-not-on-server"]')?.dataset.count === '${edgeTiles.length}'`,
+    { what: 'every image of the world page to be saved or found not on the server' },
   );
   check((await count(s, 'map-page-not-saved')) === 0, 'nothing on the world page failed');
+  const edgeLine = String(
+    await s.run(
+      `return document.querySelector('[data-testid="map-page-not-on-server"]').textContent;`,
+    ),
+  );
+  check(
+    edgeLine === `${edgeTiles.length} not on the server (the map’s edge)`,
+    `the card counts the images not on the server (${edgeLine})`,
+  );
   await s.screenshot('view-1-saving');
 
   let same = true;
   for (const tile of worldTiles) {
+    if (edgeTiles.includes(tile)) continue;
     const bytes = await readFile(tilePath('world', tile));
     const expected = tile === kept ? keptBytes : tileImage(tile.path);
     same &&= Buffer.compare(bytes, expected) === 0;
@@ -295,6 +317,17 @@ try {
     Buffer.compare(await readFile(tilePath('world', kept)), keptBytes) === 0,
     'the image that was already there is kept as it was',
   );
+  let marked = true;
+  for (const tile of edgeTiles) {
+    marked &&=
+      !(await exists(tilePath('world', tile))) &&
+      (await readFile(`${tilePath('world', tile)}.404`)).length === 0;
+  }
+  check(
+    marked,
+    'the images the store does not have get the downloader’s "not on the server" marker',
+  );
+  check(!(await exists(join(pack, 'tiles', 'world', '3'))), 'nothing is marked below them');
   check(
     !(await exists(join(pack, 'tiles', 'icons'))) &&
       !(await exists(join(pack, 'tiles', 'world', '4'))),
@@ -324,7 +357,7 @@ try {
   const manifest = await readJson(join(pack, 'manifest.json'));
   const images = manifest.contents.maps[0].layers[0].images;
   check(
-    images?.complete === true && images.files === worldTiles.length + 1,
+    images?.complete === true && images.files === worldTiles.length + 1 - edgeTiles.length,
     `the manifest records the images (${JSON.stringify(images)})`,
   );
   check(
@@ -340,6 +373,24 @@ try {
   check(
     worldTiles.every((tile) => site.imageRequests.get(tile.path) === 1),
     'saving made no request of its own',
+  );
+  const logText = await readFile(join(data, 'atlas', 'logs', 'atlas.log'), 'utf8');
+  const edgeLog = logText
+    .split('\n')
+    .find((line) => line.includes('Saving as you browse: counting'));
+  console.log('Logged edge:', edgeLog);
+  check(
+    !!edgeLog &&
+      new RegExp(
+        `counting ${site.images.replace(/[.]/g, '\\.')}/tiles/world/6/\\d+/6\\.png as not on the server \\(the map's edge\\): the store answered the page's own request with "access denied" \\(HTTP 403 with an AccessDenied error document\\), as it does for images that do not exist, and (it has sent images of this layer while you browsed|images of this layer from it are on disk)`,
+      ).test(edgeLog) &&
+      logText.split('\n').filter((line) => line.includes('Saving as you browse: counting'))
+        .length === 1,
+    'the activity log says once why the map’s edge counts as not on the server',
+  );
+  check(
+    logText.includes(`${edgeTiles.length} not on the server (the map's edge)`),
+    'the summary when saving stops counts them',
   );
   await s.click('[data-testid="map-page-close"]');
   await waitForCard(s, 'closed');
@@ -365,6 +416,8 @@ try {
   );
   await s.click('[data-testid="map-page-dismiss"]');
   site.imageRequests.clear();
+
+  site.setStoreMissing(false);
 
   // ---- A page with <img> elements ---------------------------------------------------
   await openPageList(s);

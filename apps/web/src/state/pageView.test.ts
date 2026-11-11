@@ -28,7 +28,15 @@ const status = (patch: Partial<ViewStatus> = {}): ViewStatus => ({
   url: 'https://maps.example.com/my-game/world',
   saving: true,
   savedSession: true,
-  counts: { saved: 0, alreadyHad: 0, notSaved: 0, fromElements: 0, otherProblems: 0, bytes: 0 },
+  counts: {
+    saved: 0,
+    alreadyHad: 0,
+    notOnServer: 0,
+    notSaved: 0,
+    fromElements: 0,
+    otherProblems: 0,
+    bytes: 0,
+  },
   usesWorkers: false,
   revision: 0,
   message: null,
@@ -115,10 +123,18 @@ describe('map page words', () => {
   });
 
   it('counts plainly', () => {
-    const counts = { saved: 1234, alreadyHad: 1, notSaved: 0, fromElements: 0, otherProblems: 0 };
+    const counts = {
+      saved: 1234,
+      alreadyHad: 1,
+      notOnServer: 12,
+      notSaved: 0,
+      fromElements: 0,
+      otherProblems: 0,
+    };
     expect(countPhrases({ ...counts, bytes: 0 })).toEqual([
       '1,234 saved',
       '1 already had',
+      '12 not on the server (the map’s edge)',
       '0 could not be saved',
     ]);
   });
@@ -130,6 +146,7 @@ describe('map page words', () => {
         counts: {
           saved: 3,
           alreadyHad: 0,
+          notOnServer: 2,
           notSaved: 3,
           fromElements: 2,
           otherProblems: 1,
@@ -144,7 +161,7 @@ describe('map page words', () => {
     );
     expect(notes[0]).toMatch(/Download map images/);
     expect(notes[1]).toBe(
-      '1 map image could not be saved for another reason: the page did not let Atlas read it, it was not a usable image, or too many came at once.',
+      '1 map image could not be saved for another reason: the page did not let Atlas read it, the server answered with an error, it was not a usable image, or too many came at once.',
     );
     expect(notes[2]).toMatch(/in the background/);
   });
@@ -183,7 +200,15 @@ describe('map page state', () => {
     useAtlas.setState({ mapsDialogOpen: true, tileRevision: 0 });
     const saved = status({
       revision: 1,
-      counts: { saved: 4, alreadyHad: 1, notSaved: 0, fromElements: 0, otherProblems: 0, bytes: 9 },
+      counts: {
+        saved: 4,
+        alreadyHad: 1,
+        notOnServer: 1,
+        notSaved: 0,
+        fromElements: 0,
+        otherProblems: 0,
+        bytes: 9,
+      },
     });
     const closed = { ...saved, open: false, saving: false, revision: 2 };
     const { bridge, calls } = fakeShell({ open: [status()], status: [saved, closed] });
@@ -195,6 +220,7 @@ describe('map page state', () => {
 
     await vi.advanceTimersByTimeAsync(1000);
     expect(usePageView.getState().status?.counts.saved).toBe(4);
+    expect(usePageView.getState().status?.counts.notOnServer).toBe(1);
     await vi.advanceTimersByTimeAsync(1000);
     expect(usePageView.getState().status?.open).toBe(false);
     expect(shouldShow(usePageView.getState().status)).toBe(true);

@@ -1284,22 +1284,26 @@ fn count_present(plan: &PackPlan, detail: Detail, store: &TileStore) -> u64 {
 }
 
 /// The host (and port) a layer's images come from.
-fn layer_host(layer: &LayerPlan) -> String {
+pub fn layer_host(layer: &LayerPlan) -> String {
     host_of(&layer.url_template.replace(['{', '}'], ""))
 }
 
-/// For each layer, whether any of its remote tiles is an image on disk (not
-/// a marker): proof that its host has sent images of it before.
+/// Whether any of a layer's remote tiles is an image on disk (not a
+/// marker): proof that its host has sent images of it before. Saving as
+/// you browse uses the same proof (`pageview/mod.rs`).
+pub fn layer_has_images(layer: &LayerPlan, store: &TileStore) -> bool {
+    layer.levels.iter().any(|level| {
+        layer
+            .tiles_of(level.z)
+            .any(|tile| store.has_overlay_image(&layer.tile_path(tile.z, tile.x, tile.y)))
+    })
+}
+
+/// For each layer, [`layer_has_images`].
 fn layers_with_images(plan: &PackPlan, store: &TileStore) -> Vec<bool> {
     plan.layers
         .iter()
-        .map(|layer| {
-            layer.levels.iter().any(|level| {
-                layer
-                    .tiles_of(level.z)
-                    .any(|tile| store.has_overlay_image(&layer.tile_path(tile.z, tile.x, tile.y)))
-            })
-        })
+        .map(|layer| layer_has_images(layer, store))
         .collect()
 }
 
