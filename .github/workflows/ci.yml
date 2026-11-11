@@ -261,7 +261,7 @@ jobs:
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
           "${build_tools}aapt2" dump badging "$apk" | tee badging.txt
           grep -q "^package: name='dev.atlas.android'" badging.txt
-          grep -q "^sdkVersion:'29'" badging.txt
+          grep -Eq "^(sdkVersion|minSdkVersion):'29'" badging.txt
           grep -q "^application-label:'Atlas'" badging.txt
           grep -q "^native-code: 'arm64-v8a'" badging.txt
           echo "The APK is dev.atlas.android, \"Atlas\", for Android 10 (API 29) and later on arm64-v8a."
