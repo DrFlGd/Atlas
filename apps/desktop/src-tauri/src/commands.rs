@@ -691,7 +691,7 @@ pub async fn import_open<R: Runtime>(
         .unwrap_or_else(|| "unknown".to_owned());
     let page = page_address(&url);
     let wait = wait_seconds.map_or_else(String::new, |seconds| {
-        let what = if listing { "list" } else { "map data" };
+        let what = if listing { "list" } else { "page data" };
         format!(", waiting up to {seconds} s for its {what}")
     });
     match imports.open(&app, &url, reader) {
@@ -753,7 +753,8 @@ fn lock_poll() -> std::sync::MutexGuard<'static, Option<&'static str>> {
 }
 
 /// Whether the open page is read for a list (a game's pages, or games)
-/// rather than map data, for the wording of the log.
+/// rather than page data (a map page, or a checklist or guide page), for
+/// the wording of the log.
 fn lock_listing() -> std::sync::MutexGuard<'static, bool> {
     static LISTING: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
     LISTING
@@ -768,7 +769,8 @@ pub async fn import_poll<R: Runtime>(
     imports: State<'_, Imports>,
 ) -> Result<PollResult, String> {
     let result = imports.poll(&app).await;
-    let what = if *lock_listing() { "list" } else { "map data" };
+    let listing = *lock_listing();
+    let what = if listing { "list" } else { "page data" };
     // What the page holds is never logged; only what the app saw happen.
     let (state, line) = match &result {
         PollResult::Waiting { loading: true, .. } => ("loading", None),
@@ -783,7 +785,11 @@ pub async fn import_poll<R: Runtime>(
             "ready",
             Some((
                 false,
-                format!("Read the page's {what} ({} characters)", data.len()),
+                if listing {
+                    format!("Read the page's list ({} characters)", data.len())
+                } else {
+                    format!("Read the page data ({} characters)", data.len())
+                },
             )),
         ),
         PollResult::Closed => (

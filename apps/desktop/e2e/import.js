@@ -676,7 +676,7 @@ try {
       if (ended !== null && line.at - ended < 3000) pausesOk = false;
       opened++;
       ended = null;
-    } else if (/^Read the page's map data|timed out/.test(line.message)) {
+    } else if (/^Read the page data|timed out/.test(line.message)) {
       ended = line.at;
     }
   }
@@ -717,7 +717,7 @@ try {
         if (ended !== null && line.at - ended < 3000) ok = false;
         opened++;
         ended = null;
-      } else if (/^Read the page's (map data|list)|timed out/.test(line.message)) {
+      } else if (/^Read the page(?:'s list| data)|timed out/.test(line.message)) {
         ended = line.at;
       }
     }

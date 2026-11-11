@@ -247,11 +247,15 @@ export interface AtlasImporter {
   matches(url: string): boolean;
   /**
    * Source text of a function taking no arguments, evaluated in the page as
-   * `(<pageReader>)()`. It must be synchronous, must not change the page and
-   * must not make requests. It returns `null` or `undefined` while the data
-   * is not there yet (the app asks again a few seconds later), and otherwise
-   * a JSON-serialisable value with only the parts the importer needs. An
-   * exception counts as "not there yet".
+   * `(<pageReader>)()`. It must be synchronous and must not change the page.
+   * It must not make requests, with one exception: when the data the page
+   * was served with is no longer in the document, it may read the page's own
+   * address once (same origin, no added headers, never repeated), starting
+   * that request in one call and reading its answer in a later one. It
+   * returns `null` or `undefined` while the data is not there yet (the app
+   * asks again a few seconds later), and otherwise a JSON-serialisable value
+   * with only the parts the importer needs. An exception counts as "not
+   * there yet".
    */
   pageReader: string;
   /** How long to wait for the page data, in seconds. */
