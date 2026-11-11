@@ -52,6 +52,9 @@ use crate::{
     settings::DownloadSettings,
 };
 
+// Stopping a pack's downloads for good, before its images or the pack are deleted.
+pub mod stop;
+
 /// Assumed server answer time, for estimates before a job has started.
 const ASSUMED_LATENCY: Duration = Duration::from_millis(200);
 /// Speed is measured over this recent span.

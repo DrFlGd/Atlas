@@ -24,6 +24,8 @@
     "allow-library-apply-maps-folder",
     "allow-library-reveal",
     "allow-library-delete-pack",
+    "allow-library-images-info",
+    "allow-library-delete-images",
     "allow-library-import-sources",
     "allow-library-save-import",
     "allow-import-open",
