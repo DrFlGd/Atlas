@@ -171,6 +171,7 @@ function installFakeShell() {
     unfinished: null,
     job: snapshot(),
     busyWith: null,
+    queue: [],
   });
   const advance = () => {
     const job = shell.job;
