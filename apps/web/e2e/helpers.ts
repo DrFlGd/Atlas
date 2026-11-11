@@ -80,6 +80,21 @@ export async function demoLocations(request: APIRequestContext): Promise<PackLoc
   return (await response.json()) as PackLocation[];
 }
 
+export interface PackRegion {
+  id: string;
+  mapId: string;
+  parentId: string | null;
+  name: string;
+  polygon?: [number, number][];
+  center?: [number, number];
+}
+
+/** The demo pack's regions, read from the server the tests run against. */
+export async function demoRegions(request: APIRequestContext): Promise<PackRegion[]> {
+  const response = await request.get('./packs/demo/regions.json');
+  return (await response.json()) as PackRegion[];
+}
+
 /** Overall found and total, from the top bar. */
 export async function overall(page: Page): Promise<{ found: number; total: number }> {
   const element = page.getByTestId('overall-progress');

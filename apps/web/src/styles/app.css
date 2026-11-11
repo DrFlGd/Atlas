@@ -810,6 +810,31 @@ label.tree-row:hover,
   grid-column: 1 / -1;
 }
 
+/* A region row that moves the map to the region: the same row, as a button. */
+.progress-row-button {
+  width: 100%;
+  margin: 0;
+  padding-right: 0;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.progress-row-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.progress-row-button:hover .progress-name {
+  color: var(--atlas-accent);
+}
+
+/* Inside the scrolling pane an outside outline would be cut off. */
+.progress-row-button:focus-visible {
+  outline-offset: -2px;
+}
+
 /* ------------------------------------------------------------------ */
 /* Details pane */
 
