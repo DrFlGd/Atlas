@@ -1,0 +1,33 @@
+[package]
+name = "atlas-mapmaker"
+version = "0.1.0"
+description = "Atlas Map Maker: checks a player's own game files for map data"
+edition = "2021"
+# This crate is MIT like the rest of the repository. The installer it builds also carries the GPL-3.0 helper
+# from tools/gamefiles as a separate program, so the installer is distributed under GPL-3.0.
+license = "MIT"
+rust-version = "1.90"
+publish = false
+
+[lib]
+# The `_lib` suffix keeps the library name distinct from the binary, which avoids a Cargo name clash on Windows.
+name = "atlas_mapmaker_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-dialog = "2.8.4"
+tauri-plugin-opener = "2.7.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1.45", features = ["sync"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

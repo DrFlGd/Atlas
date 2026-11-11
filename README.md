@@ -107,11 +107,13 @@ pnpm demo:build --seed 42 --locations 10000
 ```
 apps/web            React + Vite web app (static output)
 apps/desktop        Tauri 2 desktop shell around the web build
+apps/mapmaker       Atlas Map Maker: a separate Tauri 2 app that checks a player's own game files (installer GPL-3.0)
 packages/schema     Pack schema (manifest versions 1 and 2) in Zod, id helpers, integrity checks
 packages/core       Pack loader, coordinate maths, marker clustering, MapView
 packages/importer-api  The contract for importers that turn a web page into a pack, and a demo importer
 packages/pipeline   Demo pack generator, tile cutter and PMTiles writer (Node)
 packs/demo          Generated demo pack (not committed)
+tools/gamefiles     The Map Maker's game file reader, in Python with Soulstruct (GPL-3.0)
 ```
 
 Workspace packages export their TypeScript sources directly; the web app bundles them and the pipeline runs them with `tsx`, so there is no separate library build step.
@@ -123,6 +125,10 @@ Workspace packages export their TypeScript sources directly; the web app bundles
 In the desktop app, packs are served by a small protocol in the Rust shell that answers range requests, because the protocol Tauri uses for the bundled frontend does not. The desktop app also shows packs from a maps folder and from folders the person chooses, exports and imports progress through native file dialogs, opens web links in the system browser, and shows the map images that are in a pack's folder. The public Atlas app is a viewer: it never fetches map images from other servers. Only a build made with `ATLAS_ENABLE_DOWNLOADS=1` can download a pack's map images from the tile server its layers name (`tiles.remote`), politely and resumably, into the pack's folder, one pack at a time across every Atlas app on the computer ([apps/desktop/README.md](apps/desktop/README.md#building-another-app-from-the-shell)). Every Atlas desktop app writes what it does to a shared activity log, which the app shows and can copy to send with a question ([apps/desktop/README.md](apps/desktop/README.md#activity-log)). A desktop build can include importers that add maps from web pages ("Add a map"); the plain build has none. Not there yet: code signing, auto-update and save-file sync.
 
 The `Release` workflow (`.github/workflows/release.yml`, run by hand or by pushing a `v*` tag) builds the plain viewer's Windows installer and publishes it as a GitHub Release.
+
+## Map Maker
+
+`apps/mapmaker` is Atlas Map Maker, a separate Windows app for making Atlas maps from a player's own game files: Dark Souls Remastered first, then Bloodborne. Its first version only checks the game folder and reports what map data can be read (areas, treasure, item lots, collision, navmesh and map pieces), with a top-down preview of each area and a report to save. It runs `tools/gamefiles`, a Python program built with PyInstaller, as a sidecar. They only read the chosen game folder: they never write into it, copy game files from it or make network requests, and no game files or data from them are in this repository. See [apps/mapmaker/README.md](apps/mapmaker/README.md) and [tools/gamefiles/README.md](tools/gamefiles/README.md). The `Release Map Maker` workflow publishes its installer under `mapmaker-v*` tags, separately from the viewer's releases.
 
 ## Data packs
 
@@ -288,3 +294,5 @@ All map rendering sits behind the `MapView` interface in `packages/core/src/mapv
 ## Licence
 
 Atlas is released under the [MIT licence](LICENSE). The licence covers this repository: the app, its packages and the made-up demo pack. Data packs made by other people or tools are not part of this repository and keep their own terms.
+
+Two exceptions are under the [GNU General Public License version 3](tools/gamefiles/LICENSE) (or later): `tools/gamefiles`, because it uses the GPL-3.0 libraries Soulstruct and soulstruct-havok, and the Atlas Map Maker installer, which carries the program built from it. The Map Maker app's own code in `apps/mapmaker` is MIT. Nothing from `tools/gamefiles` goes into the Atlas viewer, the desktop app or the importers.
