@@ -39,7 +39,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     manifest::{read_head, version_key, write_atomic, ManifestHead, MANIFEST_FILE},
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
+    removal::{self, FileOps, ImagesCount, ImagesDeleted, PackDeleted},
     settings::{default_maps_folder, Location, LocationKind, SettingsFile, SharedSettings},
+    tiles::manager::stop::ImagesLocation,
 };
 
 /// The shell's own files inside a pack folder; never served.
@@ -287,6 +289,8 @@ pub struct Library {
     legacy_dirs: Vec<PathBuf>,
     busy: Mutex<HashSet<String>>,
     pending_folder: Mutex<Option<PathBuf>>,
+    /// How files are removed; tests act out files that are in use.
+    file_ops: FileOps,
 }
 
 impl Library {
@@ -303,7 +307,13 @@ impl Library {
             legacy_dirs,
             busy: Mutex::new(HashSet::new()),
             pending_folder: Mutex::new(None),
+            file_ops: FileOps::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub fn set_file_ops(&mut self, file_ops: FileOps) {
+        self.file_ops = file_ops;
     }
 
     pub fn settings(&self) -> &SettingsFile {
@@ -857,25 +867,98 @@ impl Library {
         Ok(dir)
     }
 
-    /// Deletes a pack folder from the maps folder, with its map images.
-    pub fn delete_pack(&self, id: &str) -> Result<(), String> {
+    /// Whether a pack id is listed (registered to be served).
+    pub fn is_listed(&self, id: &str) -> bool {
+        self.registry.root(id).is_some()
+    }
+
+    fn check_not_moving(&self, id: &str) -> Result<(), String> {
+        if lock(&self.busy).contains(id) {
+            return Err("Its map images are being moved from an older version of Atlas. Try again when that has finished.".to_owned());
+        }
+        Ok(())
+    }
+
+    /// The folder of a pack that may be deleted from disk: one in the maps
+    /// folder that does not come with the app and is not being moved.
+    pub fn check_deletable(&self, id: &str) -> Result<PathBuf, String> {
         let dir = self
             .pack_folder(id)
             .ok_or_else(|| "There is no such pack in the maps folder.".to_owned())?;
         if !self.in_maps_folder(&dir) {
-            return Err("Only packs in the maps folder can be deleted here. Remove the location instead; its files are left alone.".to_owned());
+            return Err("Only packs in the maps folder can be deleted. This one is in a folder you added, so use \u{201c}Remove from list\u{201d} instead; its files are left alone.".to_owned());
         }
         if self.is_bundled(id) {
-            return Err("This pack comes with the app.".to_owned());
+            return Err("This map comes with the app, so it cannot be deleted. You can delete its downloaded map images instead.".to_owned());
         }
+        self.check_not_moving(id)?;
+        if !removal::is_real_dir(&dir) {
+            return Err("There is no such pack in the maps folder.".to_owned());
+        }
+        Ok(dir)
+    }
+
+    /// Deletes a pack folder from the maps folder, with its map images. Its
+    /// download must have been stopped. The pack is out of every list as
+    /// soon as this returns; files that are still in use are removed at the
+    /// next start (see `removal.rs`).
+    pub fn delete_pack(&self, id: &str) -> Result<PackDeleted, String> {
+        let dir = self.check_deletable(id)?;
+        let maps = dir
+            .parent()
+            .ok_or_else(|| "There is no such pack in the maps folder.".to_owned())?
+            .to_path_buf();
         let lock = PackLock::acquire(&dir)?;
-        // Move it out of the way first, so the folder is never half deleted under its own name.
-        let doomed = dir.with_file_name(format!(".deleting-{id}"));
-        drop(lock);
-        fs::rename(&dir, &doomed).map_err(|error| format!("Could not delete the pack: {error}"))?;
-        self.registry.unregister(id);
-        fs::remove_dir_all(&doomed)
-            .map_err(|error| format!("Could not delete every file of the pack: {error}"))
+        removal::delete_pack_folder(&self.file_ops, &maps, &dir, id, lock, || {
+            self.registry.unregister(id);
+        })
+    }
+
+    /// Finishes deleting packs that a run before could not delete completely
+    /// because some of their files were in use. Returns what is still there.
+    pub fn finish_deletes(&self) -> Vec<PathBuf> {
+        removal::finish_pending_deletes(&self.file_ops, &self.maps_folder())
+    }
+
+    /// The pack folder a bundled pack was installed from, when `location`
+    /// is that pack's folder in the maps folder: images there came with it.
+    fn shipped_images(&self, id: &str, location: &ImagesLocation) -> Option<PathBuf> {
+        location.pack_folder.as_ref()?;
+        self.bundled
+            .iter()
+            .find(|pack| pack.id == id)
+            .map(|pack| pack.path.clone())
+    }
+
+    /// How many map images were downloaded for a pack. Blocking.
+    pub fn count_images(&self, id: &str, location: &ImagesLocation) -> ImagesCount {
+        removal::count_images(location, self.shipped_images(id, location).as_deref())
+    }
+
+    /// Deletes the map images downloaded for a pack, with their status files,
+    /// unfinished job and manifest summary, and nothing else. Its download
+    /// must have been stopped. Blocking.
+    pub fn delete_images(
+        &self,
+        id: &str,
+        location: &ImagesLocation,
+    ) -> Result<ImagesDeleted, String> {
+        self.check_not_moving(id)?;
+        let _lock = match &location.pack_folder {
+            Some(folder) => Some(PackLock::acquire(folder).map_err(|error| {
+                if error.starts_with("Another Atlas") {
+                    error
+                } else {
+                    "Atlas cannot change the files in this map's folder. It may be on a drive that is read-only or not connected.".to_owned()
+                }
+            })?),
+            None => None,
+        };
+        removal::delete_images(
+            &self.file_ops,
+            location,
+            self.shipped_images(id, location).as_deref(),
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -1468,6 +1551,83 @@ mod tests {
         s.library.delete_pack("valley").unwrap();
         assert!(!dir.exists());
         assert!(s.registry.root("valley").is_none());
+    }
+
+    #[test]
+    fn a_pack_with_files_in_use_is_hidden_at_once_and_removed_at_the_next_start() {
+        let mut s = setup("library-delete-held", Vec::new());
+        let maps = s.library.maps_folder();
+        write_pack(&maps.join("my-game"), "my-game", "My Game", "1.0.0");
+        write_pack(&maps.join("other"), "other", "Other", "1.0.0");
+        fs::create_dir_all(maps.join("my-game/tiles/a/0/0")).unwrap();
+        fs::write(maps.join("my-game/tiles/a/0/0/0.png"), b"image").unwrap();
+        assert_eq!(ids(&s.library.scan()), ["my-game", "other"]);
+        // A file in the pack stays in use, as another program can do on Windows.
+        s.library.set_file_ops(FileOps {
+            remove_tree: std::sync::Arc::new(|_| {
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "in use"))
+            }),
+            retry_waits: vec![std::time::Duration::from_millis(1)],
+            ..FileOps::default()
+        });
+        let deleted = s.library.delete_pack("my-game").unwrap();
+        assert!(!deleted.complete);
+        assert_eq!(
+            ids(&s.library.scan()),
+            ["other"],
+            "gone from the list at once"
+        );
+        assert!(s.registry.root("my-game").is_none());
+        assert!(maps.join(".deleting-my-game").is_dir());
+        assert_eq!(s.library.finish_deletes().len(), 1, "still in use");
+
+        // The next start, with the file released.
+        let next = Library::new(
+            SettingsFile::new(s.dir.0.join("shared")),
+            s.registry.clone(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(ids(&next.start()), ["other"]);
+        assert!(next.finish_deletes().is_empty());
+        assert!(!maps.join(".deleting-my-game").exists());
+        assert!(maps.join("other/manifest.json").exists());
+    }
+
+    #[test]
+    fn refuses_to_delete_packs_that_come_with_the_app_or_live_elsewhere() {
+        let dir = TempDir::new("library-delete-refuse-src");
+        let resource = dir.0.join("valley");
+        write_pack(&resource, "valley", "Valley", "1.0.0");
+        let s = setup(
+            "library-delete-refuse",
+            vec![BundledPack {
+                id: "valley".into(),
+                path: resource,
+                downloadable: true,
+            }],
+        );
+        s.library.start();
+        assert!(s
+            .library
+            .delete_pack("valley")
+            .unwrap_err()
+            .contains("comes with the app"));
+        let usb = s.dir.0.join("usb/My Game");
+        write_pack(&usb, "my-game", "My Game", "1.0.0");
+        s.library.add_pack_location(&usb).unwrap();
+        s.library.scan();
+        assert!(s
+            .library
+            .delete_pack("my-game")
+            .unwrap_err()
+            .contains("Remove from list"));
+        assert!(usb.join("manifest.json").exists());
+        assert!(s
+            .library
+            .maps_folder()
+            .join("valley/manifest.json")
+            .exists());
     }
 
     #[test]

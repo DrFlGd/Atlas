@@ -1235,6 +1235,19 @@ label.tree-row:hover,
   margin: 0 0 8px;
 }
 
+.removal-confirm {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-danger);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  line-height: 1.45;
+}
+
+.removal-confirm .download-error {
+  margin: 0 0 8px;
+}
+
 .toast-region {
   position: absolute;
   z-index: 1500;

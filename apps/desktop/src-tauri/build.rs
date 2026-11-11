@@ -23,6 +23,8 @@ fn main() {
             "library_apply_maps_folder",
             "library_reveal",
             "library_delete_pack",
+            "library_images_info",
+            "library_delete_images",
             "library_import_sources",
             "library_save_import",
             "import_open",

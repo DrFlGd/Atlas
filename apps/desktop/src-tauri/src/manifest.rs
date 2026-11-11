@@ -205,6 +205,55 @@ pub fn update_images(dir: &Path, updates: &[ImagesUpdate<'_>]) -> Result<bool, S
     Ok(changed)
 }
 
+/// Removes the image summaries of layers from a version 2 manifest, after
+/// their downloaded images were deleted. Every other field is kept. Returns
+/// whether the file was changed.
+pub fn clear_images(dir: &Path, layer_ids: &[&str]) -> Result<bool, String> {
+    let path = dir.join(MANIFEST_FILE);
+    let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_MANIFEST_BYTES {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let Ok(mut manifest) = serde_json::from_str::<Value>(&text) else {
+        return Ok(false);
+    };
+    let Some(maps) = manifest
+        .pointer_mut("/contents/maps")
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(false);
+    };
+    let mut changed = false;
+    for layer in maps
+        .iter_mut()
+        .filter_map(|map| map.get_mut("layers").and_then(Value::as_array_mut))
+        .flatten()
+    {
+        let named = layer
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| layer_ids.contains(&id));
+        if named {
+            if let Some(object) = layer.as_object_mut() {
+                changed |= object.remove("images").is_some();
+            }
+        }
+    }
+    if changed {
+        write_atomic(
+            &path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?
+            )
+            .as_bytes(),
+        )
+        .map_err(|error| format!("could not update manifest.json: {error}"))?;
+    }
+    Ok(changed)
+}
+
 /// Writes a file through a `.part` file and a rename, so readers never see
 /// half of it. Retries the rename a few times: on Windows another process
 /// reading the file can make it fail for a moment.
@@ -318,5 +367,25 @@ mod tests {
             counts: None,
         };
         assert!(!update_images(&dir.0, &[update]).unwrap());
+    }
+
+    #[test]
+    fn clears_image_summaries_of_named_layers_only() {
+        let dir = TempDir::new("manifest-clear");
+        let manifest = r#"{"schemaVersion":2,"gameId":"t","title":"T","packVersion":"1.0.0",
+          "contents":{"maps":[{"id":"t:map:a","layers":[
+            {"id":"t:layer:a","name":"Map","images":{"levels":[0],"complete":false}},
+            {"id":"t:layer:b","images":{"levels":[0,1],"complete":true}}]}]}}"#;
+        fs::write(dir.0.join(MANIFEST_FILE), manifest).unwrap();
+        assert!(clear_images(&dir.0, &["t:layer:a"]).unwrap());
+        let written: Value =
+            serde_json::from_str(&fs::read_to_string(dir.0.join(MANIFEST_FILE)).unwrap()).unwrap();
+        let layers = &written["contents"]["maps"][0]["layers"];
+        assert!(layers[0].get("images").is_none());
+        assert_eq!(layers[0]["name"], "Map");
+        assert_eq!(layers[1]["images"]["levels"], json!([0, 1]));
+        assert_eq!(written["gameId"], "t");
+        // Nothing left to clear: the file is not written again.
+        assert!(!clear_images(&dir.0, &["t:layer:a"]).unwrap());
     }
 }
