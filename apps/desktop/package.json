@@ -12,7 +12,8 @@
     "test:e2e:download": "node e2e/download.js",
     "test:e2e:windows": "node e2e/windows.js",
     "e2e:pack": "node e2e/remotePack.js",
-    "test:e2e:import": "node e2e/import.js"
+    "test:e2e:import": "node e2e/import.js",
+    "test:e2e:delete": "node e2e/delete.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4"
