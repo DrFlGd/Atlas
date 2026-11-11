@@ -1,4 +1,11 @@
-import type { SaveMapState, SavePin, SavePlayer, SaveWorld } from '../summary';
+import type {
+  SaveAgentPin,
+  SaveMapState,
+  SavePin,
+  SavePlayer,
+  SaveQuestPin,
+  SaveWorld,
+} from '../summary';
 import { readFacts } from './facts';
 import { worldIdOf, worldName } from './tuning';
 import {
@@ -15,8 +22,8 @@ import { isRecord, memberNumber, readValue, vectorOf, type SaveValue } from './v
 
 /**
  * The parts of a Witcher 3 save that Atlas uses, read from the variable
- * tree. Where each lives (save version 64 of patch 4.04 checked on a real
- * save; 67 of 5.0x by others' notes):
+ * tree. Where each lives (checked on real saves of patch 4.04, save
+ * version 64, and patch 5.01, save version 67):
  *
  * - current world: `worldInfo` > `world` (String), the world's file path;
  * - player: `universe` > `Player` > `position` (Vector, world metres,
@@ -32,10 +39,16 @@ import { isRecord, memberNumber, readValue, vectorOf, type SaveValue } from './v
  *   `CachedWorldDataMap` (per world: `CachedWorldDataPath`,
  *   `CachedWorldVisited`, then `CachedQuestMapPinsMap`,
  *   `CachedShopkeeperDataMap`, `CachedBoatDataArray`),
- *   `MapPinFilterHiddenList` and `MapBorderData`. Every list was empty in
- *   the save checked, so the entries' own layout is NOT KNOWN yet: an entry
- *   of a tag list is read as one `VL` with a name (most likely
- *   `VL KnownMapPinTag : CName`), a block holding one, or one array value.
+ *   `MapPinFilterHiddenList` and `MapBorderData`. Entries are variables
+ *   after the `Size`, one per field: a `QuestMapPinStates` entry is
+ *   `ObjectiveGuid`, `MapPinGuid` (CGUID) and `MapPinState` (Bool); a
+ *   `CustomAgentMapPins` entry is `CustomAgentMapPinTag`,
+ *   `CustomAgentMapPinType` (CName) and `CustomAgentMapPinShowAlways`
+ *   (Bool); a `CachedBoatDataArray` entry is `CachedBoatDataPosition`
+ *   (Vector) (seen in a 5.01 save). The tag lists were empty in every save
+ *   checked, so their entries' layout is NOT KNOWN yet: an entry is read as
+ *   one `VL` with a name (most likely `VL KnownMapPinTag : CName`), a block
+ *   holding one, or one array value.
  */
 
 /** The value of a `VL`/`OP` node, or undefined when it has none that can be read. */
@@ -204,6 +217,92 @@ function readTagList(tree: SaveTree, node: SaveNode): TagList {
   return result;
 }
 
+interface RecordList {
+  declared: number | null;
+  records: Record<string, SaveValue>[];
+}
+
+/**
+ * Reads a list of records: after its `Size`, one variable per field, a new
+ * record starting where a field name comes again (as `QuestMapPinStates`
+ * and `CustomAgentMapPins` are laid out), or one block per record.
+ */
+function readRecordList(tree: SaveTree, node: SaveNode): RecordList {
+  const result: RecordList = { declared: null, records: [] };
+  let current: Record<string, SaveValue> = {};
+  const finish = () => {
+    if (Object.keys(current).length > 0) result.records.push(current);
+    current = {};
+  };
+  for (const child of node.children) {
+    if (child.kind === 'BS') {
+      finish();
+      for (const part of child.children) {
+        const value = part.name === null ? undefined : nodeValue(tree, part);
+        if (value !== undefined) current[part.name!] = value;
+      }
+      finish();
+      continue;
+    }
+    if ((child.kind !== 'VL' && child.kind !== 'OP') || child.name === null) continue;
+    const value = nodeValue(tree, child);
+    if (result.declared === null && isLengthName(child.name) && typeof value === 'number') {
+      result.declared = value;
+      continue;
+    }
+    if (value === undefined) continue;
+    if (Object.hasOwn(current, child.name)) finish();
+    current[child.name] = value;
+  }
+  finish();
+  return result;
+}
+
+/** The records of a list of the map, with a note when some could not be read. */
+function recordsOf(
+  tree: SaveTree,
+  manager: SaveNode,
+  list: string,
+  label: string,
+  notes: string[],
+): Record<string, SaveValue>[] {
+  const node = childNamed(manager, list);
+  if (node?.kind !== 'BS') return [];
+  const { declared, records } = readRecordList(tree, node);
+  if (declared !== null && declared > records.length) {
+    notes.push(
+      `Read ${records.length} of ${declared} ${label}; the rest has a layout Atlas does not know.`,
+    );
+  }
+  return records;
+}
+
+function readQuestPins(tree: SaveTree, manager: SaveNode, notes: string[]): SaveQuestPin[] {
+  const pins: SaveQuestPin[] = [];
+  for (const record of recordsOf(tree, manager, 'QuestMapPinStates', 'quest map pins', notes)) {
+    const objective = record.ObjectiveGuid;
+    const pin = record.MapPinGuid;
+    if (typeof objective !== 'string' || typeof pin !== 'string') continue;
+    pins.push({ objective, pin, shown: record.MapPinState === true });
+  }
+  return pins;
+}
+
+function readAgentPins(tree: SaveTree, manager: SaveNode, notes: string[]): SaveAgentPin[] {
+  const pins: SaveAgentPin[] = [];
+  for (const record of recordsOf(tree, manager, 'CustomAgentMapPins', 'pins on people', notes)) {
+    const tag = nameIn(record.CustomAgentMapPinTag);
+    if (!tag) continue;
+    const showAlways = record.CustomAgentMapPinShowAlways;
+    pins.push({
+      tag,
+      type: nameIn(record.CustomAgentMapPinType),
+      showAlways: typeof showAlways === 'boolean' ? showAlways : null,
+    });
+  }
+  return pins;
+}
+
 /** Every list's declared length in the map manager, added up by name. */
 function listLengths(tree: SaveTree, manager: SaveNode): Record<string, number> {
   const lengths: Record<string, number> = {};
@@ -278,6 +377,8 @@ export function readMap(
       discovered: counts.discovered,
       disabled: counts.cleared,
       visited: visitedWorlds(tree, manager),
+      questPins: readQuestPins(tree, manager, notes),
+      agentPins: readAgentPins(tree, manager, notes),
       lists: listLengths(tree, manager),
     },
     pins: [...pins.values()],

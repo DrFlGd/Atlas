@@ -128,6 +128,39 @@ describe('reading a Witcher 3 save', () => {
     }
   });
 
+  it('reads quest pin states and pins on people, as a 5.01 save lists them', () => {
+    const guid = (first: number) => Uint8Array.from({ length: 16 }, (_, i) => first + i);
+    const summary = readWitcher3(
+      typicalSave({
+        player: { x: 0, y: 0 },
+        questPins: [
+          { objective: guid(1), pin: guid(17), shown: true },
+          { objective: guid(33), pin: guid(49), shown: false },
+        ],
+        agentPins: [{ tag: 'npc_with_quest', type: 'QuestAvailable', showAlways: true }],
+      }),
+    );
+    expect(summary.map?.questPins).toEqual([
+      {
+        objective: '0102030405060708090a0b0c0d0e0f10',
+        pin: '1112131415161718191a1b1c1d1e1f20',
+        shown: true,
+      },
+      {
+        objective: '2122232425262728292a2b2c2d2e2f30',
+        pin: '3132333435363738393a3b3c3d3e3f40',
+        shown: false,
+      },
+    ]);
+    expect(summary.map?.agentPins).toEqual([
+      { tag: 'npc_with_quest', type: 'QuestAvailable', showAlways: true },
+    ]);
+    expect(summary.map?.lists).toMatchObject({ QuestMapPinStates: 2, CustomAgentMapPins: 1 });
+    // They are not places: no pins come of them.
+    expect(summary.pins).toEqual([]);
+    expect(summary.notes).toEqual([]);
+  });
+
   it('says so when list entries cannot be read, and when the map is missing', () => {
     const odd = save([
       bs('CCommonMapManager', [
@@ -140,6 +173,7 @@ describe('reading a Witcher 3 save', () => {
     ]);
     const summary = readWitcher3(odd);
     expect(summary.pins.map((pin) => pin.id)).toEqual(['sign_a']);
+    expect(summary.map).toMatchObject({ questPins: [], agentPins: [] });
     expect(summary.map?.discovered).toBe(3);
     expect(summary.notes).toContain(
       'Read 1 of 3 discovered map pins; the rest has a layout Atlas does not know.',

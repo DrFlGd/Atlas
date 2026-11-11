@@ -94,7 +94,15 @@ function summary(parts: Partial<SaveSummary> = {}): SaveSummary {
         { cleared: true },
       ),
     ],
-    map: { known: 0, discovered: 3, disabled: 6, visited: ['novigrad'], lists: {} },
+    map: {
+      known: 0,
+      discovered: 3,
+      disabled: 6,
+      visited: ['novigrad'],
+      questPins: [],
+      agentPins: [],
+      lists: {},
+    },
     unpackedBytes: 1000,
     notes: [],
     ...parts,
@@ -330,7 +338,15 @@ describe('headingOnMap', () => {
     const newGame = summary({
       facts: { q001_done: 0 },
       pins: [],
-      map: { known: 0, discovered: 0, disabled: 0, visited: ['kaer_morhen'], lists: {} },
+      map: {
+        known: 0,
+        discovered: 0,
+        disabled: 0,
+        visited: ['kaer_morhen'],
+        questPins: [],
+        agentPins: [],
+        lists: {},
+      },
     });
     const nothing = matchSave({ ...base, summary: newGame });
     expect(nothing.found).toEqual([]);

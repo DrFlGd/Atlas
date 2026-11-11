@@ -58,6 +58,25 @@ export interface SavePin {
   tags?: string[];
 }
 
+/** A quest objective's map pin that the save switches on or off. */
+export interface SaveQuestPin {
+  /** The journal objective's GUID, as hex. */
+  objective: string;
+  /** The map pin's GUID, as hex. */
+  pin: string;
+  shown: boolean;
+}
+
+/** A pin a quest puts on a person (an agent), such as one with a quest to give. */
+export interface SaveAgentPin {
+  /** The person's tag in the game. */
+  tag: string;
+  /** The pin type, such as `QuestAvailable`; null when the save does not say. */
+  type: string | null;
+  /** Shown even when the person is far away; null when the save does not say. */
+  showAlways: boolean | null;
+}
+
 /**
  * What the save's own world map holds, in counts, before any matching.
  * Each count is how many map pins the save lists in that state, by tag.
@@ -71,6 +90,10 @@ export interface SaveMapState {
   disabled: number;
   /** World ids the map marks as visited. */
   visited: string[];
+  /** Quest objectives' map pins, as the save switches them. */
+  questPins: SaveQuestPin[];
+  /** Pins quests put on people. */
+  agentPins: SaveAgentPin[];
   /**
    * The length every list of the map declares, by the list's name in the
    * save, added up over worlds. For diagnostics: it says which lists hold

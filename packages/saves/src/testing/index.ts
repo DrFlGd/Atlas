@@ -437,6 +437,10 @@ export interface TypicalSaveOptions {
   /** World paths the map marks visited. Default: the save's world. */
   visited?: string[];
   listLayout?: TestListLayout;
+  /** Quest objectives' map pins, with 16-byte GUIDs, as a 5.01 save lists them. */
+  questPins?: { objective: Uint8Array; pin: Uint8Array; shown: boolean }[];
+  /** Pins on people, as a 5.01 save lists them. */
+  agentPins?: { tag: string; type: string; showAlways: boolean }[];
   /** Leave the map out. */
   noMap?: boolean;
   extraBlocks?: TestNode[];
@@ -469,11 +473,11 @@ export function typicalSaveOptions(options: TypicalSaveOptions = {}): TestSaveOp
       : [
           bs(
             'CCommonMapManager',
-            mapManager(
-              options.mapPins ?? {},
-              options.visited ?? [world],
-              options.listLayout ?? 'entries',
-            ),
+            mapManager(options.mapPins ?? {}, options.visited ?? [world], {
+              layout: options.listLayout ?? 'entries',
+              questPins: options.questPins ?? [],
+              agentPins: options.agentPins ?? [],
+            }),
           ),
         ]),
     bs('worldInfo', [vl('world', value.string(world))]),
@@ -530,7 +534,14 @@ function list(name: string, entry: string, tags: readonly string[], layout: Test
 const empty = (name: string, length = 'Size') => bs(name, [vl(length, value.u32(0))]);
 
 /** The map manager as the game writes it, with the lists of pins given. */
-function mapManager(pins: TestMapPins, visited: readonly string[], layout: TestListLayout) {
+function mapManager(
+  pins: TestMapPins,
+  visited: readonly string[],
+  lists: Required<Pick<TypicalSaveOptions, 'questPins' | 'agentPins'>> & {
+    layout: TestListLayout;
+  },
+) {
+  const { layout, questPins, agentPins } = lists;
   const worlds = [...MAP_WORLDS, ...visited.filter((path) => !MAP_WORLDS.includes(path))];
   const cached: TestNode[] = [vl('Size', value.u32(worlds.length))];
   for (const path of worlds) {
@@ -545,14 +556,28 @@ function mapManager(pins: TestMapPins, visited: readonly string[], layout: TestL
     );
   }
   return [
-    empty('QuestMapPinStates'),
+    bs('QuestMapPinStates', [
+      vl('Size', value.u32(questPins.length)),
+      ...questPins.flatMap((entry) => [
+        vl('ObjectiveGuid', value.raw('CGUID', entry.objective)),
+        vl('MapPinGuid', value.raw('CGUID', entry.pin)),
+        vl('MapPinState', value.bool(entry.shown)),
+      ]),
+    ]),
     list('KnownMapPinTags', 'KnownMapPinTag', pins.known ?? [], layout),
     list('DiscoveredMapPinTags', 'DiscoveredMapPinTag', pins.discovered ?? [], layout),
     list('DisabledMapPinTags', 'DisabledMapPinTag', pins.disabled ?? [], layout),
     empty('DiscoveredAgentEntityTags'),
     empty('DiscoveredPaths'),
     empty('CustomEntityMapPins'),
-    empty('CustomAgentMapPins'),
+    bs('CustomAgentMapPins', [
+      vl('Size', value.u32(agentPins.length)),
+      ...agentPins.flatMap((entry) => [
+        vl('CustomAgentMapPinTag', value.cname(entry.tag)),
+        vl('CustomAgentMapPinType', value.cname(entry.type)),
+        vl('CustomAgentMapPinShowAlways', value.bool(entry.showAlways)),
+      ]),
+    ]),
     empty('UserMapPin', 'UserMapPinsCount'),
     bs('CachedWorldDataMap', cached),
     empty('MapPinFilterHiddenList'),
