@@ -92,6 +92,68 @@ describe('parseExport', () => {
   });
 });
 
+describe('exports with checklist marks, and exports from earlier versions', () => {
+  /** An export as Atlas 0.3.3 writes it. */
+  const OLD_EXPORT = JSON.stringify({
+    format: 'atlas-progress',
+    version: 1,
+    exportedAt: '2026-11-01T10:00:00.000Z',
+    scope: 'profile',
+    profiles: [
+      { id: 'run', gameId: 'demo', name: 'Run', createdAt: 1, updatedAt: 1, deleted: false },
+    ],
+    progress: [
+      {
+        profileId: 'run',
+        targetId: 'demo:loc:0001',
+        state: 'found',
+        updatedAt: 2,
+        deleted: false,
+        source: 'manual',
+      },
+    ],
+    presets: [],
+  });
+
+  it('imports an export written by Atlas 0.3.3', async () => {
+    const parsed = parseExport(OLD_EXPORT);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const store = createMemoryStore();
+    await store.write(planImport(await store.snapshot(), parsed.file, 'merge', 10).batch);
+    expect([...resolveProgress(await store.listProgress('run')).keys()]).toEqual(['demo:loc:0001']);
+  });
+
+  it('carries the done marks of checklist steps, in the same format version', async () => {
+    const local = localState();
+    local.progress.push(
+      progressRow('main', 'demo:checkitem:step-1', true, 30),
+      progressRow('main', 'demo:checkitem:step-2', false, 31),
+    );
+    const file = roundTrip(buildExport(local, { scope: 'profile', profileId: 'main' }, NOW));
+    // Version 1 still: Atlas 0.3.3 reads this file and keeps the marks, without showing them.
+    expect(file.version).toBe(1);
+    expect(file.progress.map((r) => r.targetId)).toContain('demo:checkitem:step-1');
+
+    const target = createMemoryStore();
+    await target.write(planImport(await target.snapshot(), file, 'replace', 99).batch);
+    expect([...resolveProgress(await target.listProgress('main')).keys()].sort()).toEqual([
+      'demo:checkitem:step-1',
+      'demo:loc:0001',
+      'demo:loc:0002',
+    ]);
+    // A newer tombstone in a merge un-ticks a step, as it un-marks a location.
+    const untick = {
+      ...file,
+      progress: [progressRow('main', 'demo:checkitem:step-1', false, 140)],
+    };
+    await target.write(planImport(await target.snapshot(), untick, 'merge', 100).batch);
+    expect([...resolveProgress(await target.listProgress('main')).keys()]).not.toContain(
+      'demo:checkitem:step-1',
+    );
+  });
+});
+
 describe('planImport, merge', () => {
   it('changes nothing when importing the same data', () => {
     const local = localState();

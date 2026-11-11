@@ -7,6 +7,7 @@ import {
   toggleFound,
   undo,
 } from './state/actions';
+import { toggleLeftTab } from './state/checklists';
 import { useAtlas } from './state/store';
 
 /** Whether a key event comes from somewhere the user types, where shortcuts must not fire. */
@@ -24,8 +25,9 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * Global shortcuts: `F` marks the selection found (or not), `Z` undoes,
- * `/` focuses search, `N` jumps to the nearest unfound visible marker and
- * `Escape` clears the selection. None fire while typing or inside a dialog.
+ * `/` focuses search, `N` jumps to the nearest unfound visible marker, `C`
+ * opens or closes the checklists and guides, and `Escape` clears the
+ * selection. None fire while typing or inside a dialog.
  */
 export function useShortcuts(): void {
   useEffect(() => {
@@ -58,6 +60,10 @@ export function useShortcuts(): void {
         case 'n':
           event.preventDefault();
           jumpToNearestUnfound();
+          break;
+        case 'c':
+          event.preventDefault();
+          toggleLeftTab('checklists');
           break;
         case 'escape':
           if (useAtlas.getState().selectedId) {

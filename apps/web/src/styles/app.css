@@ -122,6 +122,11 @@ kbd {
   --right: 340px;
 }
 
+/* Checklists and guides are read more than scanned: a little more room. */
+.shell[data-filters='open'][data-left='checklists'] {
+  --left: 360px;
+}
+
 .topbar {
   grid-area: top;
 }
@@ -974,6 +979,387 @@ label.tree-row:hover,
 .guide-body code {
   font-family: var(--atlas-mono);
   font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Left pane tabs, checklists and guides */
+
+.pane-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  margin-left: -8px;
+}
+
+.pane-tab {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pane-tab:hover {
+  color: var(--atlas-text);
+  background: var(--atlas-surface-hover);
+}
+
+.pane-tab[aria-selected='true'] {
+  color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.pane-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.pane-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.plain-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.list-link:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.list-link:hover .list-link-name {
+  color: var(--atlas-accent);
+}
+
+.list-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.list-link-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.list-link-detail {
+  grid-column: 1 / -1;
+  font-size: 12.5px;
+  color: var(--atlas-muted);
+}
+
+.list-link .meter {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+.list-link .found-tag {
+  margin-left: 0;
+}
+
+.checklists-total {
+  margin: 0 0 8px;
+  color: var(--atlas-muted);
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 10px -4px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-accent);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.back-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.back-arrow {
+  display: inline-grid;
+  transform: rotate(180deg);
+}
+
+.checklist-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.checklist-title:focus {
+  outline: none;
+}
+
+.checklist-title:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+}
+
+.checklist-description {
+  margin: 0 0 6px;
+  color: var(--atlas-muted);
+}
+
+.checklist-progress {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.checklist-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.checklist-controls .switch {
+  margin: 0;
+}
+
+.checklist-filter {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.checklist-filter .text-input {
+  width: 100%;
+}
+
+.check-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.virtual-row {
+  margin: 0;
+  padding: 0;
+}
+
+/* Rows are measured as they render; anchoring would fight the measuring. */
+.checklists {
+  overflow-anchor: none;
+}
+
+.check-section {
+  margin: 0;
+  padding: 14px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--atlas-muted);
+}
+
+.check-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.check-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.check-item-head .check-item-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.check-item-go {
+  flex: none;
+}
+
+.note-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.checklist-facets {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.facet-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.facet-group .row-actions {
+  margin: 0 0 4px;
+}
+
+.facet-group ul {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.check-box {
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: var(--atlas-accent);
+  cursor: pointer;
+}
+
+.check-item-body {
+  min-width: 0;
+}
+
+.check-item-name {
+  display: block;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.check-item-done .check-item-name {
+  color: var(--atlas-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--atlas-border-strong);
+}
+
+.check-item-meta {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--atlas-muted);
+}
+
+.check-item-note {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.check-item-note p:last-child {
+  margin-bottom: 0;
+}
+
+.check-item .link-button {
+  margin-top: 2px;
+  font-size: 12.5px;
+}
+
+.place-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.place-button {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.place-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.place-button:hover .place-name {
+  color: var(--atlas-accent);
+}
+
+.place-button:focus-visible {
+  outline-offset: -2px;
+}
+
+.place-name {
+  text-decoration: underline;
+  text-decoration-color: var(--atlas-border-strong);
+  text-underline-offset: 2px;
+}
+
+.show-more {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.guide-page .guide-body {
+  margin-top: 8px;
+}
+
+.guide-places {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+/* An in-app link in guide text: looks like a link, is a button. */
+.app-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.app-link:hover {
+  color: var(--atlas-accent-strong);
+}
+
+.app-link-missing {
+  color: var(--atlas-muted);
+}
+
+.also-in {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--atlas-border);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1947,4 +2333,12 @@ label.tree-row:hover,
   .log-message {
     grid-column: 1 / -1;
   }
+}
+
+.facet-heading {
+  margin: 6px 0 2px;
+  padding-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--atlas-muted);
 }

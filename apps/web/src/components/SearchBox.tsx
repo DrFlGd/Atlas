@@ -1,17 +1,25 @@
 import type { SearchHit } from '@atlas/core';
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { goToLocation } from '../state/actions';
+import { openChecklist, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
 import { useAtlas } from '../state/store';
 import { GlyphBadge, UiIcon } from './icons';
 
 const LIMIT = 50;
-const KIND_LABEL = { location: 'Location', entity: 'Thing', guide: 'Guide' } as const;
+const KIND_LABEL = {
+  location: 'Location',
+  entity: 'Thing',
+  guide: 'Guide',
+  checklist: 'List',
+  checkitem: 'Entry',
+} as const;
 
 /**
- * One search box over every location, entity and guide in the pack, across
- * all maps, as an ARIA combobox with a listbox of results. Choosing a result
- * flies the map to it and selects it.
+ * One search box over every location, entity, guide, checklist and checklist
+ * item in the pack, across all maps, as an ARIA combobox with a listbox of
+ * results. Choosing a place flies the map to it and selects it; choosing a
+ * checklist, an item or a listed guide opens it on the checklists screen.
  */
 export function SearchBox() {
   const game = useAtlas((s) => s.game);
@@ -39,9 +47,13 @@ export function SearchBox() {
   }, [focusRequest]);
 
   const choose = (hit: SearchHit | undefined) => {
-    const target = hit?.entry.locationIds[0];
-    if (!target) return;
-    goToLocation(target);
+    if (!hit || !game) return;
+    const { entry } = hit;
+    if (entry.kind === 'checklist') openChecklist(entry.id);
+    else if (entry.kind === 'checkitem') openChecklistItem(entry.id);
+    else if (entry.kind === 'guide' && game.checklists.isListed(entry.id)) openGuide(entry.id);
+    else if (entry.locationIds[0]) goToLocation(entry.locationIds[0]);
+    else return;
     setOpen(false);
     inputRef.current?.blur();
   };
@@ -148,7 +160,11 @@ function SearchResult({ id, hit, active, onChoose, onHover }: SearchResultProps)
   const { entry } = hit;
   const location = entry.kind === 'location' ? game?.pack.locations.get(entry.id) : undefined;
   const category = location ? game?.pack.categories.get(location.categoryId) : undefined;
-  const reachable = entry.locationIds.length > 0;
+  const opens =
+    entry.kind === 'checklist' ||
+    entry.kind === 'checkitem' ||
+    (entry.kind === 'guide' && (game?.checklists.isListed(entry.id) ?? false));
+  const reachable = opens || entry.locationIds.length > 0;
   return (
     <li
       id={id}

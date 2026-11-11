@@ -1,10 +1,11 @@
 import { pointInPolygon, polygonArea } from '@atlas/core';
-import { checkPackIntegrity, isIconName, type Region } from '@atlas/schema';
+import { checkPackIntegrity, isIconName, packDataSchema, type Region } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
 import { rectangle, voronoiCells } from '../geometry/voronoi';
 import { createRandom, deriveSeed } from '../random';
 import { generateDemoContent, layoutRegions } from './content';
 import { createTerrain, elevationAt, renderTerrain } from './terrain';
+import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
 
 const SIZE = 2048;
@@ -150,6 +151,121 @@ describe('underground map', () => {
     const tinted = tintAsCave(image, [200, 100, 50]);
     expect(tinted[0]!).toBeLessThan(tinted[3]!); // water darker than land
     expect(tinted[3]!).toBeGreaterThan(tinted[4]!); // hue follows the tint
+  });
+});
+
+describe('demo checklists and guides', () => {
+  const caves = createTerrain(SEED + 1, 512);
+  const pack = addChecklists(
+    addUnderground(generate(), {
+      seed: SEED,
+      size: 512,
+      tileSize: 256,
+      locationsPerLayer: 60,
+      layers: [
+        {
+          local: 'deep-upper',
+          name: 'Upper',
+          terrain: caves,
+          tiles: { type: 'pmtiles', url: 'tiles/u.pmtiles' },
+        },
+        {
+          local: 'deep-lower',
+          name: 'Lower',
+          terrain: caves,
+          tiles: { type: 'pmtiles', url: 'tiles/l.pmtiles' },
+        },
+      ],
+    }),
+  );
+  const items = (checklistId: string) =>
+    pack.checklistItems.filter((i) => i.checklistId === checklistId);
+  const locations = new Map(pack.locations.map((l) => [l.id, l]));
+
+  it('is valid', () => {
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+  });
+
+  it('has a checklist tied to one category, one of steps and a long mixed one', () => {
+    expect(pack.checklists.map((c) => c.id)).toEqual(Object.values(DEMO_CHECKLISTS));
+    const waystones = items(DEMO_CHECKLISTS.waystones);
+    expect(waystones.length).toBeGreaterThan(0);
+    for (const item of waystones) {
+      expect(item.locationIds.map((l) => locations.get(l)?.categoryId)).toEqual([
+        'demo:cat:waystone',
+      ]);
+    }
+    const story = items(DEMO_CHECKLISTS.story);
+    expect(story.every((i) => i.locationIds.length === 0 && i.section)).toBe(true);
+    const lore = items(DEMO_CHECKLISTS.lore);
+    const kinds = new Set(
+      lore.map((i) =>
+        i.locationIds.length === 0
+          ? 'step'
+          : i.locationIds.length > 1
+            ? 'several'
+            : locations.get(i.locationIds[0]!)!.categoryId,
+      ),
+    );
+    expect(kinds).toEqual(
+      new Set(['step', 'several', 'demo:cat:tablet', 'demo:cat:camp', 'demo:cat:relic']),
+    );
+    // Some items are on the second map.
+    expect(
+      lore.some((i) => i.locationIds.some((l) => locations.get(l)?.mapId === DEEP_MAP_ID)),
+    ).toBe(true);
+    expect(lore.map((i) => i.order)).toEqual(lore.map((_, n) => n));
+  });
+
+  it('has a long guide list of single places across both maps', () => {
+    const route = items(DEMO_CHECKLISTS.route);
+    expect(pack.checklists.find((c) => c.id === DEMO_CHECKLISTS.route)?.kind).toBe('guide');
+    expect(route.filter((i) => i.locationIds.length === 0)).toHaveLength(2);
+    expect(route.every((i) => i.locationIds.length <= 1)).toBe(true);
+    const maps = new Set(route.flatMap((i) => i.locationIds.map((l) => locations.get(l)!.mapId)));
+    expect(maps.size).toBe(2);
+  });
+
+  it('gives tablets and chests on the surface a note of their own', () => {
+    const notes = new Map(pack.guides.map((g) => [g.id, g]));
+    const chest = pack.locations.find(
+      (l) => l.categoryId === 'demo:cat:chest' && l.mapId !== DEEP_MAP_ID,
+    )!;
+    const note = notes.get(chest.guideId!)!;
+    expect(note.locationIds).toEqual([chest.id]);
+    expect(note.title).toBe(chest.name);
+    expect(note.body).toMatch(/\]\(demo:loc:\d+\)/);
+  });
+
+  it('adds walkthrough guides whose in-app links all point at content of the pack', () => {
+    const ids = new Set(
+      [
+        pack.locations,
+        pack.regions,
+        pack.maps,
+        pack.checklists,
+        pack.checklistItems,
+        pack.guides,
+      ].flatMap((list) => list.map((x) => x.id)),
+    );
+    const guideIds = new Set<string>(Object.values(DEMO_GUIDES));
+    const listed = pack.guides.filter((g) => guideIds.has(g.id));
+    expect(listed.map((g) => g.order)).toEqual([1, 2, 3]);
+    const texts = [
+      ...pack.guides.map((g) => g.body),
+      ...pack.checklistItems.flatMap((i) => i.note ?? []),
+    ];
+    const targets = texts.flatMap((text) =>
+      [...text.matchAll(/\]\((demo:[a-z]+:[^)\s]+)\)/g)].map((m) => m[1]!),
+    );
+    expect(targets.length).toBeGreaterThan(10);
+    for (const target of targets) expect(ids.has(target), target).toBe(true);
+  });
+
+  it('uses no real game, site or brand names', () => {
+    const text = JSON.stringify([pack.checklists, pack.checklistItems, pack.guides]);
+    expect(text).not.toMatch(/https?:\/\/(?!github\.com\/DrFlGd\/atlas)/);
   });
 });
 

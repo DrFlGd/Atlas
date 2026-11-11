@@ -4,7 +4,7 @@ A local-first map, checklist and guide companion for video games. One TypeScript
 
 This repository holds the engine only. It contains no game assets and no data taken from other map sites. Game content is loaded from data packs that live outside this repository.
 
-Status: early development. The web app covers the core loop: filter the map, find a place, mark it found and watch the counters. It works offline from a static build and keeps progress in the browser.
+Status: early development. The web app covers the core loop: filter the map, find a place, mark it found and watch the counters, and work through a pack's checklists and guides. It works offline from a static build and keeps progress in the browser.
 
 ## Requirements
 
@@ -45,23 +45,27 @@ Playwright downloads its own Chromium with `pnpm --filter @atlas/web exec playwr
 - **Found tracking.** Select a marker (click it, or pick a search result) and press the found switch in the details pane, or `F`. Found markers fade but stay on the map. Only categories the pack marks as trackable can be marked. `Z` (or Ctrl/Cmd+Z) undoes the last change.
 - **Counters.** Found/total per category, group, region, map and pack, always derived from the stored progress. The top bar shows the pack total; the map switcher shows each map's total.
 - **Regions.** Under Filters, Progress lists the regions of the active map with their counts. Clicking a region (or pressing Enter on it) moves the map there: to the region's centre when the pack gives one, otherwise to the middle of its outline, zoomed to show the whole outline. A region with neither stays a plain row. On narrow windows the filter sheet closes so the map can be seen.
-- **Search.** `/` focuses the search box. It matches location names, entities and guide titles across every map, and choosing a result switches map and layer if needed, flies there and selects it.
+- **Search.** `/` focuses the search box. It matches location names, entities, guide titles, checklist names and checklist items across every map. Choosing a place switches map and layer if needed, flies there and selects it; choosing a checklist, a checklist item or a guide opens it on the checklists screen, with the item scrolled into view.
+- **Checklists and guides.** The list button next to Filters in the top bar (or `C`) shows the pack's checklists and guides as a second tab of the left pane, so the map and the details pane stay usable beside it; below 900 px it is a bottom sheet like the filters. It lists the checklists, then the guides (lists of places marked as guides, and guide texts that belong to no single place), each list with its found/total and a total over all lists. A list shows its items in order, under their section headings, each with a tick, its name, the category and region of its place (and the map, when the list spans several), the place's own note, and "Show on map", which switches map if needed and selects the place. Long lists render only the rows in view, so lists of thousands of items open at once. A list can be filtered by region and by category (each with found/total, Select all and Deselect all), searched, and set to hide found items. A guide text opens as Markdown with its places as "show on map" buttons. The details pane names the checklists and guides a place is on. A pack with no checklists and no guide texts of its own has no button, tab or shortcut for them, as a pack with one map has no map switcher.
+- **Ticking items.** An item with places is found exactly when all its places that can be marked are found, so ticking it on the list or marking its places on the map show in both at once. Ticking it marks its places that are not found yet; unticking it marks all of its places not found, also those marked on the map before. Either is one change that `Z` takes back, and a notice says how many places changed. An item without a place (a step, or a place in a category that is not tracked) has a tick of its own, kept per profile like found marks. Item ticks never change the top bar's found counter, which still counts places found.
 - **Maps and layers.** The map switcher sits in the top bar; maps with more than one layer get a layer switcher on the map. Filters and counters follow the active map.
 - **Details.** Name, category, region, coordinates, the found switch and the guide entry. Hovering a marker shows its name only.
 - **Profiles.** Each pack has its own profiles (for example one per playthrough): create, rename, duplicate, delete and switch them from the profile button.
 - **Export and import.** The profile dialog exports the current profile or all profiles of every pack as one JSON file, and imports such a file by merging (newer change wins) or replacing.
-- **Keyboard.** `/` search, `F` mark found, `Z` undo, `N` select the nearest marker not yet found, `Esc` clear the selection. Shortcuts are ignored while typing in a field or while a dialog is open.
+- **Keyboard.** `/` search, `F` mark found, `Z` undo, `N` select the nearest marker not yet found, `C` show or hide the checklists and guides, `Esc` clear the selection. Shortcuts are ignored while typing in a field or while a dialog is open.
 
 ### Where progress is kept
 
 Progress lives in the browser's IndexedDB (database `atlas`, through Dexie), behind the `ProgressStore` interface in `packages/core/src/progress` (`@atlas/core/dexie` holds the Dexie implementation). If IndexedDB is unavailable, for example in some private windows, the app keeps progress in memory and says so. Stored records:
 
-| Record      | Fields                                                                                                    |
-| ----------- | --------------------------------------------------------------------------------------------------------- |
-| Profile     | `id`, `gameId`, `name`, `createdAt`, `updatedAt`, `deleted`                                               |
-| Progress    | `profileId`, `targetId`, `state` (`found`), `updatedAt`, `deleted`, `source` (`manual`, `save`, `memory`) |
-| User preset | `id`, `gameId`, `name`, `categoryIds`, `updatedAt`, `deleted`                                             |
-| Setting     | `key`, `value` (device-local: theme, panes, active pack, last map and view per pack)                      |
+| Record   | Fields                                                                                                    |
+| -------- | --------------------------------------------------------------------------------------------------------- |
+| Profile  | `id`, `gameId`, `name`, `createdAt`, `updatedAt`, `deleted`                                               |
+| Progress | `profileId`, `targetId`, `state` (`found`), `updatedAt`, `deleted`, `source` (`manual`, `save`, `memory`) |
+
+`targetId` is a location id, or the id of a checklist item that has a tick of its own (an item without a place that can be marked found); for such an item `found` means done. An item with places has no record of its own: its state is read from its places. Item ticks are ordinary progress records, so they needed no new table, no IndexedDB upgrade (the database is still at version 1) and no new export version: profiles, duplication, deletion, undo, export and import carry them, the found counters ignore them because they count locations only, exports from Atlas 0.3.3 import unchanged, and Atlas 0.3.3 imports an export with item ticks and keeps them without showing them.
+| User preset | `id`, `gameId`, `name`, `categoryIds`, `updatedAt`, `deleted` |
+| Setting | `key`, `value` (device-local: theme, panes, active pack, last map and view per pack) |
 
 Deletions are kept as tombstones (`deleted: true`) with their time, so merging two copies always keeps the newer change. Progress rows store the target id as it was when marked; a pack's `idMigrations` map old ids to new ones when progress is read, so a renamed location keeps its found state.
 
@@ -71,11 +75,24 @@ The export file is `{ "format": "atlas-progress", "version": 1, "exportedAt", "s
 
 ### Guides
 
-Guide entries are Markdown, rendered with markdown-it with raw HTML disabled, so any HTML in a pack shows as text. Images are not rendered, and links open in a new tab with `rel="noopener noreferrer"`.
+Guide entries are Markdown, rendered with markdown-it with raw HTML disabled, so any HTML in a pack shows as text. Images are not rendered, and web links open in a new tab with `rel="noopener noreferrer"` (in the desktop app, in the system browser).
+
+A link whose target is a content id of the same pack is an in-app link: `[the old well](demo:loc:0412)`, or `<demo:loc:0412>`. It is drawn as a button and acts in the app instead of opening a browser:
+
+| Target                               | What the link does                                                    |
+| ------------------------------------ | --------------------------------------------------------------------- |
+| a location (`<gameId>:loc:…`)        | shows it on the map and selects it, switching map and layer if needed |
+| a region (`<gameId>:region:…`)       | moves the map to the region, as a region row in Progress does         |
+| a map (`<gameId>:map:…`)             | shows that map                                                        |
+| a checklist (`<gameId>:checklist:…`) | opens it on the checklists screen                                     |
+| an item (`<gameId>:checkitem:…`)     | opens its checklist with the item in view                             |
+| a guide (`<gameId>:guide:…`)         | opens it on the checklists screen                                     |
+
+Ids from an earlier pack version are followed through `idMigrations`. A link to an id the pack does not have, to another pack, or to another kind of content is shown as plain text. In-app links work in every Markdown text: location notes in the details pane and in checklist rows, guide pages and item notes.
 
 ## The demo pack
 
-`packs/demo` is a fictional island generated entirely by code in `packages/pipeline`: an 8192 × 8192 px relief map drawn from seeded noise, cut into a 256 px WebP tile pyramid (zoom 0–5, 1,365 tiles), with ten regions, twelve categories in three groups and 5,000 locations. A second, smaller map, an underground cave system of 2048 × 2048 px with two layers and 240 locations on each, exercises the map and layer switchers. The pack also has entities, guides with Markdown and three presets. The same seed always produces the same pack.
+`packs/demo` is a fictional island generated entirely by code in `packages/pipeline`: an 8192 × 8192 px relief map drawn from seeded noise, cut into a 256 px WebP tile pyramid (zoom 0–5, 1,365 tiles), with ten regions, twelve categories in three groups and 5,000 locations. A second, smaller map, an underground cave system of 2048 × 2048 px with two layers and 240 locations on each, exercises the map and layer switchers. The pack also has entities, guides with Markdown, three presets, a note of its own for each lore tablet and chest on the surface, four lists (a checklist of every waystone, a story of steps without places, a long mixed list of 326 items with sections, and a guide list of 2,015 places across both maps) and three walkthrough guides that use in-app links. The same seed always produces the same pack.
 
 The generated files are not committed; only the folder's README and `.gitignore` are. This keeps the repository small, and the build is quick enough to run on first use. `pnpm dev` and `pnpm build` call `pnpm demo:ensure`, which rebuilds only when the generator source or options changed (recorded in `packs/demo/.build-stamp.json`).
 
@@ -138,6 +155,9 @@ A pack folder is self-contained: every path in it is relative, nothing names a c
 - The schema lives in `packages/schema` and is shared by the app and the pipeline. `loadPack` in `packages/core` validates every file and checks references between files before the app uses a pack.
 - A region (`regions.json`) has an id, its map, an optional parent region and a name, and two optional geometry fields: `polygon`, its outline (at least three points, implicitly closed), and `center`, the `[x, y]` point the map goes to when the region is picked. A region may have both, either or neither; one with neither still counts the progress of the locations that name it, but the app cannot show where it is. Outline points and the centre must lie inside the map. Both fields are optional, so adding them did not change the manifest's `schemaVersion`; Atlas 0.3.3 and earlier refuse a pack with a region that has a `center` or no `polygon`.
 - An `xyz` layer may name a remote source (`tiles.remote`: an `https` URL template and the remote zoom and tile offset of each pyramid level). A desktop app built with downloads can download such tiles into the pack's folder, and every desktop app shows the ones that are there; see [apps/desktop/README.md](apps/desktop/README.md#downloading-map-images). The web app shows its usual "not installed" notice for them.
+- A checklist (`checklists.json`) has an id, a name, an optional description, an `order` and an optional `kind`: `"checklist"` (the default) for things to do or collect, or `"guide"` for a guide that is a list of places. The app lists the two under separate headings; they work the same way. Its items (`checklistItems.json`) have an id, the checklist, a name, an `order`, the locations they stand for (`locationIds`, often one, may be on several maps, may be none) and related entities, and two optional fields: `section`, the heading the item is listed under (items in order that share a section are shown together), and `note`, a short Markdown note shown under the item. An item with no location that can be marked found has a tick of its own (see "Ticking items" above).
+- A guide (`guides.json`) has an id, a title, a Markdown `body`, the locations it is about and an optional `order`, its place among the listed guides (guides without one follow, by title). A guide tied to exactly one location, by its own `locationIds` or by that location's `guideId`, is that location's note and shows in the details pane and in checklist rows. Any other guide (a walkthrough, a chapter, or a guide shared by many places) is listed on the checklists screen.
+- `kind`, `section`, `note` and `order` (on guides) are optional, so adding them did not change the manifest's `schemaVersion`; Atlas 0.3.3 and earlier refuse a pack that uses any of them, as they do for unknown fields anywhere.
 - Pack ids (`gameId`) are lowercase letters, digits, `-` and `_`. In the desktop app only one pack with an id is shown at a time; see [apps/desktop/README.md](apps/desktop/README.md#maps-folder-and-other-locations).
 - PMTiles archives are read with HTTP range requests, so whatever serves a pack must support them (the Vite dev and preview servers and common static servers do).
 
