@@ -182,6 +182,19 @@ try {
       check(String(result).startsWith('refused'), `${command} is refused (${result})`);
     }
   }
+  // Game saves: nothing is followed yet, and a file nobody chose is not read.
+  const watching = await s.runAsync(
+    `return window.__TAURI_INTERNALS__.invoke('saves_watch_status');`,
+  );
+  check(watching?.path === null && watching?.revision === 0, 'no saves are followed at first');
+  const unchosen = await s.runAsync(
+    `try { await window.__TAURI_INTERNALS__.invoke('saves_read', { path: '/etc/hostname.sav' }); return 'ok'; }
+     catch (error) { return 'refused: ' + String(error && error.message || error); }`,
+  );
+  check(
+    String(unchosen).startsWith('refused'),
+    `saves_read refuses a file nobody chose (${unchosen})`,
+  );
   check(
     !(await s.run(
       `return !!document.querySelector('[data-testid="download-map-images"], [data-testid="map-images-button"]');`,
