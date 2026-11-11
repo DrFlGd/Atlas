@@ -1699,9 +1699,14 @@ pub mod tests {
         assert_eq!(seen.len(), 6);
         let mut times: Vec<Instant> = seen.iter().map(|s| s.at).collect();
         times.sort();
+        // The times are when the server saw each request, so each carries
+        // the delay of its own journey: the whole run is held to the cap,
+        // and no two requests may come as a burst.
+        let span = times[5] - times[0];
+        assert!(span >= Duration::from_millis(450), "{span:?}");
         for pair in times.windows(2) {
             assert!(
-                pair[1] - pair[0] >= Duration::from_millis(90),
+                pair[1] - pair[0] >= Duration::from_millis(50),
                 "{:?}",
                 pair[1] - pair[0]
             );
