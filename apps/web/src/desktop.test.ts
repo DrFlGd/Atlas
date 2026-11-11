@@ -58,6 +58,9 @@ describe('desktop bridge', () => {
     await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
     await bridge.activityLog.read();
     await bridge.library.reveal({ kind: 'log-folder' });
+    await bridge.packFiles.pickCopy();
+    await bridge.packFiles.copyPicked();
+    await bridge.packFiles.discardCopy('/cache/pack-files/1/game.atlaspack');
     expect(calls).toEqual([
       ['tiles_start', { packId: 'demo', detail: 'standard' }],
       ['tiles_pause', { packId: 'demo' }],
@@ -99,6 +102,9 @@ describe('desktop bridge', () => {
       ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],
       ['activity_log_read', undefined],
       ['library_reveal', { target: { kind: 'log-folder' } }],
+      ['packfile_pick_copy', undefined],
+      ['packfile_copy_picked', undefined],
+      ['packfile_discard_copy', { path: '/cache/pack-files/1/game.atlaspack' }],
     ]);
   });
 

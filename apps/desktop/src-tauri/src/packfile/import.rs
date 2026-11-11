@@ -47,7 +47,7 @@ const MAX_STATUS_BYTES: u64 = 1 << 20;
 /// More entries than this is not a map pack file.
 const MAX_ENTRIES: usize = 4_000_000;
 /// Room kept free on the disk besides the unpacked files.
-const SPACE_MARGIN: u64 = 64 << 20;
+pub(crate) const SPACE_MARGIN: u64 = 64 << 20;
 
 const NOT_A_PACK_FILE: &str = "This file is not an Atlas map pack file.";
 
@@ -69,7 +69,14 @@ pub struct Imported {
 /// app that made it.
 pub fn read_header(file: &Path) -> Result<Header, String> {
     let opened = File::open(file).map_err(|error| format!("Could not open the file: {error}"))?;
-    let mut reader = BufReader::new(opened);
+    read_header_from(opened)
+}
+
+/// [`read_header`] from the start of a file being read in order, such as
+/// one Android's picker opened, which may not be able to seek: only the
+/// first entry is read.
+pub fn read_header_from(file: impl Read) -> Result<Header, String> {
+    let mut reader = BufReader::new(file);
     let mut entry = match zip::read::read_zipfile_from_stream(&mut reader) {
         Ok(Some(entry)) => entry,
         _ => return Err(NOT_A_PACK_FILE.to_owned()),

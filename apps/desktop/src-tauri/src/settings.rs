@@ -10,6 +10,9 @@
 //! - Android: `Atlas/settings.json` in the app's own data folder, which no
 //!   other app reads
 //!
+//! On Android the maps folder is not next to the settings file but in
+//! `no_backup/Maps` in the app's data folder (see [`default_maps_folder`]).
+//!
 //! ```json
 //! { "format": "atlas-settings", "version": 1,
 //!   "mapsFolder": null,
@@ -51,12 +54,68 @@ pub fn shared_dir(local_data: &Path) -> PathBuf {
 }
 
 /// The maps folder used until the person chooses another.
+///
+/// On Android, where it cannot be chosen, it is `no_backup/Maps` in the
+/// app's data folder (the shared folder's parent): the folder Android
+/// itself names for files never to back up (`Context.getNoBackupFilesDir`).
+/// Android's Auto Backup keeps at most 25 MB of an app and backs up nothing
+/// of an app over that, so map packs, often hundreds of megabytes, would
+/// stop the found marks (in the web view's storage) being backed up. Until
+/// version 0.3.6 it was `Atlas/Maps`, beside the settings file; see
+/// [`move_old_maps`].
 pub fn default_maps_folder(shared: &Path) -> PathBuf {
-    if cfg!(target_os = "linux") {
+    if cfg!(target_os = "android") {
+        android_maps_folder(shared)
+    } else if cfg!(target_os = "linux") {
         shared.join("maps")
     } else {
         shared.join("Maps")
     }
+}
+
+/// The folder Android never backs up, in the app's data folder.
+const NO_BACKUP_DIR: &str = "no_backup";
+
+/// The Android maps folder: `<app data>/no_backup/Maps`, for the shared
+/// folder `<app data>/Atlas`.
+pub fn android_maps_folder(shared: &Path) -> PathBuf {
+    shared
+        .parent()
+        .unwrap_or(shared)
+        .join(NO_BACKUP_DIR)
+        .join("Maps")
+}
+
+/// The Android maps folder of version 0.3.5 and earlier, which Auto Backup
+/// included: `Atlas/Maps`, beside the settings file.
+pub fn old_android_maps_folder(shared: &Path) -> PathBuf {
+    shared.join("Maps")
+}
+
+/// Moves what is in an old maps folder into the new one (on the same
+/// drive, so each entry is renamed, not copied) and removes the old folder
+/// when it is empty. An entry whose name is taken in the new folder stays
+/// where it is. The names moved, in order.
+pub fn move_old_maps(old: &Path, new: &Path) -> std::io::Result<Vec<String>> {
+    if !crate::removal::is_real_dir(old) {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<_> = fs::read_dir(old)?.flatten().collect();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    let mut moved = Vec::new();
+    for entry in entries {
+        let name = entry.file_name();
+        let target = new.join(&name);
+        if fs::symlink_metadata(&target).is_ok() {
+            continue;
+        }
+        fs::create_dir_all(new)?;
+        fs::rename(entry.path(), &target)?;
+        moved.push(name.to_string_lossy().into_owned());
+    }
+    // Only when empty; an entry left behind keeps it.
+    let _ = fs::remove_dir(old);
+    Ok(moved)
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -300,6 +359,61 @@ mod tests {
         assert_eq!(downloads.pause_ms, 100);
         assert_eq!(downloads.requests_per_minute, Some(600));
         assert_eq!(downloads.kilobytes_per_second, None);
+    }
+
+    #[test]
+    fn android_keeps_maps_where_it_backs_nothing_up() {
+        // `shared_dir` of Android's data folder (`Atlas`, as on Windows).
+        let shared = Path::new("/data/user/0/dev.atlas.android/Atlas");
+        assert_eq!(
+            android_maps_folder(shared),
+            Path::new("/data/user/0/dev.atlas.android/no_backup/Maps")
+        );
+        assert_eq!(
+            old_android_maps_folder(shared),
+            Path::new("/data/user/0/dev.atlas.android/Atlas/Maps")
+        );
+        if !cfg!(target_os = "android") {
+            assert_ne!(default_maps_folder(shared), android_maps_folder(shared));
+        }
+    }
+
+    #[test]
+    fn moves_the_old_android_maps_folder() {
+        let dir = TempDir::new("settings-move-maps");
+        let shared = dir.0.join("Atlas");
+        let old = old_android_maps_folder(&shared);
+        let new = android_maps_folder(&shared);
+        // Nothing there: nothing to do, and nothing is made.
+        assert_eq!(move_old_maps(&old, &new).unwrap(), Vec::<String>::new());
+        assert!(!new.exists());
+
+        fs::create_dir_all(old.join("valley/.atlas")).unwrap();
+        fs::write(old.join("valley/manifest.json"), b"{}").unwrap();
+        fs::create_dir_all(old.join("ridge")).unwrap();
+        fs::create_dir_all(new.join("ridge")).unwrap();
+        fs::write(new.join("ridge/manifest.json"), b"{\"new\":true}").unwrap();
+        assert_eq!(
+            move_old_maps(&old, &new).unwrap(),
+            vec!["valley".to_owned()]
+        );
+        assert_eq!(fs::read(new.join("valley/manifest.json")).unwrap(), b"{}");
+        assert!(new.join("valley/.atlas").is_dir());
+        // A name taken in the new folder stays in the old one, which is kept.
+        assert!(old.join("ridge").is_dir());
+        assert_eq!(
+            fs::read(new.join("ridge/manifest.json")).unwrap(),
+            b"{\"new\":true}"
+        );
+
+        fs::remove_dir(old.join("ridge")).unwrap();
+        assert_eq!(move_old_maps(&old, &new).unwrap(), Vec::<String>::new());
+        assert!(!old.exists(), "the empty old folder is removed");
+        assert!(shared
+            .parent()
+            .unwrap()
+            .join("no_backup/Maps/valley")
+            .is_dir());
     }
 
     #[test]

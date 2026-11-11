@@ -9,6 +9,7 @@ import {
   type PackFileInfo,
   type PackFileOptions,
   type PackFileProgress,
+  type PickedPackFile,
 } from '../desktop';
 import {
   cancelPackFile,
@@ -47,6 +48,8 @@ const DETAIL_DESCRIPTIONS: Record<Detail, string> = {
  * the map images chosen, in one `.atlaspack` file, to copy to another
  * computer or to Atlas for Android. Shown over the Maps dialog. While a
  * file is being written or read the dialog stays open, with a Cancel button.
+ * In the Android app it imports only, after showing the picked file being
+ * copied into the app.
  */
 export function PackFileDialog() {
   const state = useAtlas((s) => s.packFileDialog);
@@ -100,6 +103,8 @@ export function PackFileDialog() {
               title={state.title}
               setBusy={setBusy}
             />
+          ) : state.kind === 'copy' ? (
+            <CopyView picked={state.picked} setBusy={setBusy} />
           ) : (
             <ImportView key={state.file.path} file={state.file} setBusy={setBusy} />
           )}
@@ -132,7 +137,7 @@ function useJobProgress(): PackFileProgress | null {
   return progress;
 }
 
-/** Shown while a file is being written or read. */
+/** Shown while a file is being written, read or (on Android) copied into the app. */
 function JobProgress({ verb }: { verb: string }) {
   const progress = useJobProgress();
   const done = progress?.bytesDone ?? 0;
@@ -144,7 +149,9 @@ function JobProgress({ verb }: { verb: string }) {
         <span className="muted small">
           {progress && progress.entriesTotal > 0
             ? `${progress.entriesDone.toLocaleString('en')} of ${progress.entriesTotal.toLocaleString('en')} files · ${formatBytes(done)} of ${formatBytes(total)}`
-            : 'Starting…'}
+            : progress?.kind === 'copy' && total > 0
+              ? `${formatBytes(done)} of ${formatBytes(total)}`
+              : 'Starting…'}
         </span>
       </span>
       <span
@@ -169,6 +176,38 @@ function JobProgress({ verb }: { verb: string }) {
           {progress?.cancelling ? 'Cancelling…' : 'Cancel'}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Android: the picked file being copied into the app, before the import
+ * dialog shows what is in it. Cancel stops the copy and keeps nothing.
+ */
+function CopyView({
+  picked,
+  setBusy,
+}: {
+  picked: PickedPackFile;
+  setBusy: (busy: boolean) => void;
+}) {
+  useEffect(() => {
+    setBusy(true);
+    return () => {
+      setBusy(false);
+    };
+  }, [setBusy]);
+  return (
+    <div className="download-body">
+      <p className="path" data-testid="copy-file">
+        {picked.fileName}
+        {picked.size !== null ? <span className="muted"> ({formatBytes(picked.size)})</span> : null}
+      </p>
+      <p className="download-note" data-testid="copy-note">
+        <strong>{picked.title}</strong>. The file is copied into the app first; then you see what
+        importing it does. The copy is deleted when the import is over.
+      </p>
+      <JobProgress verb="Copying the file into the app" />
     </div>
   );
 }

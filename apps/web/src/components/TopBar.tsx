@@ -1,7 +1,7 @@
 import { percent, type Tally } from '@atlas/core';
 import { useId } from 'react';
 import { desktop } from '../desktop';
-import { foldersOffered, importsOffered } from '../features';
+import { foldersOffered, importsOffered, keyboardHintsOffered, mapsOffered } from '../features';
 import { setProfileDialogOpen, setTheme, showMap, switchGame, togglePane } from '../state/actions';
 import { checklistScreenTitle, toggleLeftTab } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
@@ -23,6 +23,7 @@ export function TopBar({ search }: { search: React.ReactNode }) {
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   const appName = useAtlas((s) => s.app?.name ?? 'Atlas');
   const appVersion = useAtlas((s) => s.app?.version ?? '');
+  const keyHints = useAtlas(keyboardHintsOffered);
 
   return (
     <header className="topbar">
@@ -44,10 +45,10 @@ export function TopBar({ search }: { search: React.ReactNode }) {
           type="button"
           className="icon-button topbar-checklists"
           aria-label={checklists}
-          title={`${checklists} (C)`}
+          title={keyHints ? `${checklists} (C)` : checklists}
           aria-expanded={checklistsShown}
           aria-controls="filters-pane"
-          aria-keyshortcuts="C"
+          aria-keyshortcuts={keyHints ? 'C' : undefined}
           data-testid="checklists-button"
           onClick={() => {
             toggleLeftTab('checklists');
@@ -142,12 +143,14 @@ function GameSwitcher() {
 }
 
 /**
- * "Add a map" (in builds with importers) and "Maps", in the desktop app
- * only; neither in the Android app, which has no import window or folders.
+ * "Add a map" (in desktop builds with importers) and "Maps" (in the desktop
+ * and Android apps; on Android without folder choices). The Android app has
+ * no import window, so no "Add a map".
  */
 function LibraryButtons() {
   const importers = useAtlas((s) => s.config?.importers.length ?? 0);
   const imports = useAtlas(importsOffered);
+  const maps = useAtlas(mapsOffered);
   const folders = useAtlas(foldersOffered);
   if (!desktop) return null;
   return (
@@ -167,12 +170,16 @@ function LibraryButtons() {
           <UiIcon name="mapPlus" />
         </button>
       ) : null}
-      {folders ? (
+      {maps ? (
         <button
           type="button"
           className="icon-button"
           aria-label="Maps"
-          title="Maps: where they are kept, and packs from other folders"
+          title={
+            folders
+              ? 'Maps: where they are kept, and packs from other folders'
+              : 'Maps: the games on this device, and importing map pack files'
+          }
           aria-haspopup="dialog"
           data-testid="maps-button"
           onClick={() => {

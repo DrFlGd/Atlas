@@ -1,4 +1,5 @@
 import { itemState, percent, pixelToWorld } from '@atlas/core';
+import { keyboardHintsOffered } from '../features';
 import { goToLocation, toggleFound } from '../state/actions';
 import { checklistScreenTitle, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
@@ -18,9 +19,19 @@ export function DetailsPane() {
 function EmptyDetails() {
   const game = useAtlas((s) => s.game);
   const checklists = game && !game.checklists.isEmpty ? checklistScreenTitle(game) : null;
+  const keyHints = useAtlas(keyboardHintsOffered);
   return (
     <div className="pane-body empty-details" data-testid="details-empty">
       <p>Select a marker on the map, or search for a place.</p>
+      {keyHints ? <Shortcuts checklists={checklists} /> : null}
+    </div>
+  );
+}
+
+/** The keys that work anywhere, where there is a keyboard. */
+function Shortcuts({ checklists }: { checklists: string | null }) {
+  return (
+    <>
       <h2 className="section-title">Keyboard</h2>
       <dl className="shortcuts">
         <dt>
@@ -52,13 +63,14 @@ function EmptyDetails() {
         </dt>
         <dd>Clear the selection</dd>
       </dl>
-    </div>
+    </>
   );
 }
 
 function LocationDetails({ locationId }: { locationId: string }) {
   const game = useAtlas((s) => s.game)!;
   const found = useAtlas((s) => s.found.get(locationId));
+  const keyHints = useAtlas(keyboardHintsOffered);
   const summary = useSummary();
   const { pack } = game;
   const location = pack.locations.get(locationId)!;
@@ -109,7 +121,7 @@ function LocationDetails({ locationId }: { locationId: string }) {
         >
           <UiIcon name={found ? 'check' : 'target'} />
           <span>{found ? 'Found' : 'Mark found'}</span>
-          <kbd>F</kbd>
+          {keyHints ? <kbd>F</kbd> : null}
         </button>
       ) : (
         <p className="muted small">This category is not tracked.</p>

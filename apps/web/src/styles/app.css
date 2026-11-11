@@ -4,6 +4,22 @@
   box-sizing: border-box;
 }
 
+/*
+ * Room for the system bars and display cutouts of a phone that draws the
+ * page under them (the Android app, and browsers with viewport-fit=cover):
+ * the larger of what the browser reports and what the Android app's
+ * activity hands over (see src/androidBars.ts). Zero on a computer.
+ */
+:root {
+  --atlas-inset-top: max(env(safe-area-inset-top, 0px), var(--atlas-android-inset-top, 0px));
+  --atlas-inset-right: max(env(safe-area-inset-right, 0px), var(--atlas-android-inset-right, 0px));
+  --atlas-inset-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--atlas-android-inset-bottom, 0px)
+  );
+  --atlas-inset-left: max(env(safe-area-inset-left, 0px), var(--atlas-android-inset-left, 0px));
+}
+
 html,
 body,
 #root {
@@ -17,6 +33,25 @@ body {
   font-family: var(--atlas-font);
   font-size: 14px;
   line-height: 1.4;
+}
+
+/* Everything the app shows stays clear of the system bars. */
+#root {
+  padding: var(--atlas-inset-top) var(--atlas-inset-right) var(--atlas-inset-bottom)
+    var(--atlas-inset-left);
+}
+
+/* Under the status bar: the top bar's colour, so the bar reads as one. */
+body::before {
+  content: '';
+  position: fixed;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--atlas-inset-top);
+  background: var(--atlas-surface);
+  pointer-events: none;
 }
 
 button,
@@ -1687,8 +1722,11 @@ label.tree-row:hover,
 /* Profile dialog */
 
 .dialog {
+  /* Centred in the room the system bars leave (all of it on a computer). */
+  inset: var(--atlas-inset-top) var(--atlas-inset-right) var(--atlas-inset-bottom)
+    var(--atlas-inset-left);
   width: min(560px, calc(100% - 24px));
-  max-height: calc(100% - 48px);
+  max-height: calc(100% - 48px - var(--atlas-inset-top) - var(--atlas-inset-bottom));
   padding: 0;
   border: 1px solid var(--atlas-border-strong);
   border-radius: 14px;
@@ -1956,6 +1994,23 @@ label.tree-row:hover,
     overflow-x: auto;
     width: max-content;
     max-width: calc(100% - 62px);
+  }
+}
+
+/*
+ * Touch screens zoom the map with two fingers: no zoom buttons, and the
+ * layer buttons move into their place on a narrow screen.
+ */
+@media (pointer: coarse) {
+  .leaflet-control-zoom {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) and (max-width: 899px) {
+  .layer-switcher {
+    left: 10px;
+    max-width: calc(100% - 20px);
   }
 }
 

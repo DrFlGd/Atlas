@@ -1,5 +1,6 @@
 import type { SearchHit } from '@atlas/core';
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { keyboardHintsOffered } from '../features';
 import { goToLocation } from '../state/actions';
 import { openChecklist, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
@@ -24,6 +25,7 @@ const KIND_LABEL = {
 export function SearchBox() {
   const game = useAtlas((s) => s.game);
   const focusRequest = useAtlas((s) => s.searchFocus);
+  const keyHints = useAtlas(keyboardHintsOffered);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -74,7 +76,7 @@ export function SearchBox() {
         id={`${listId}-input`}
         className="search-input"
         type="search"
-        placeholder="Search  ( / )"
+        placeholder={keyHints ? 'Search  ( / )' : 'Search'}
         autoComplete="off"
         spellCheck={false}
         role="combobox"

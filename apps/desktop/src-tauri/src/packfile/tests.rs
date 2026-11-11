@@ -1272,3 +1272,75 @@ fn imports_into_the_maps_folder_and_asks_before_replacing() {
             .contains("cannot be found")
     );
 }
+
+/// A file read only in order, like one Android's picker opens from a cloud
+/// drive: no seeking.
+struct InOrder(fs::File);
+
+impl std::io::Read for InOrder {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buffer)
+    }
+}
+
+#[test]
+fn a_picked_file_is_read_in_order_copied_and_imported_from_the_copy() {
+    use crate::picked;
+
+    let dir = TempDir::new("packfile-picked");
+    let (library, registry) = library_with(&dir.0, Vec::new());
+    let downloads = crate::downloads::for_tests(&registry, dir.0.join("data"));
+    let pack = dir.0.join("source");
+    write_pack(&pack, "1.0.0");
+    let file = dir
+        .0
+        .join("Download")
+        .join("Test Valley (standard).atlaspack");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let exported = run_export(&folder_source(&pack), Detail::Standard, &file).unwrap();
+
+    // What the picker step reads: the header, from the start of the file.
+    let header = import::read_header_from(InOrder(fs::File::open(&file).unwrap())).unwrap();
+    assert_eq!(header, exported.header);
+    let size = Some(exported.size);
+    assert!(picked::check_room(size, &header, Some(u64::MAX)).is_ok());
+    assert!(picked::check_room(size, &header, Some(exported.size)).is_err());
+    assert!(
+        import::read_header_from(InOrder(fs::File::open(pack.join("manifest.json")).unwrap()))
+            .unwrap_err()
+            .contains("not an Atlas map pack file")
+    );
+
+    // The copy keeps the picked file's name, so the import dialog and the
+    // game's record name it.
+    let copies = dir.0.join("cache").join(picked::COPIES_DIR);
+    let name = picked::copy_name(Some("Test Valley (standard).atlaspack"));
+    let mut last = 0;
+    let copy = picked::copy_in(
+        &mut InOrder(fs::File::open(&file).unwrap()),
+        &copies,
+        &name,
+        &mut |done| last = done,
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(last, exported.size);
+    assert_eq!(fs::read(&copy).unwrap(), fs::read(&file).unwrap());
+
+    let info = shell::inspect(&library, &downloads, &copy).unwrap();
+    assert_eq!(info.file_name, "Test Valley (standard).atlaspack");
+    assert!(info.blocked.is_none() && !info.replaces);
+    shell::import_pack_file(&library, &downloads, &copy, false, &mut |_| {}, &|| false).unwrap();
+    // The Maps screen lists it again, then reads its details.
+    assert_eq!(library.scan().packs.len(), 1);
+    let details = shell::details(&library, &downloads, ID).unwrap();
+    assert_eq!(details.detail, Some(Detail::Standard));
+    let record = details.pack_file.unwrap();
+    assert_eq!(record.file_name, "Test Valley (standard).atlaspack");
+    assert_eq!(record.header.bytes, header.bytes);
+
+    // Once the import is over the copy goes; the picked file stays.
+    assert_eq!(picked::discard(&copies, &copy), Ok(true));
+    assert!(!copy.exists() && file.exists());
+    assert_eq!(fs::read_dir(&copies).unwrap().count(), 0);
+}

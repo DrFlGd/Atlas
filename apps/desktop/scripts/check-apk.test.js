@@ -1,7 +1,7 @@
 // @ts-check
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { embeddedPacks, forbiddenIn, packProblems } from './check-apk.js';
+import { embeddedPacks, forbiddenIn, missingCode, packProblems } from './check-apk.js';
 
 test('the packs of an embedded web build are read from its asset names', () => {
   const library = Buffer.from(
@@ -24,4 +24,14 @@ test('packs other than those expected, or missing ones, are problems', () => {
     'here has packs it should not: game',
   ]);
   assert.deepEqual(packProblems('here', [], ['demo']), ['here lacks the packs: demo']);
+});
+
+test("the app's code must hold the fs plugin and the app's activity", () => {
+  const plugin = Buffer.from('\0Lcom/plugin/fs/FsPlugin;\0');
+  const activity = Buffer.from('\0AtlasAndroid\0Ldev/atlas/android/MainActivity$Bars;\0');
+  assert.deepEqual(missingCode([plugin, activity]), []);
+  const [problem, ...rest] = missingCode([plugin]);
+  assert.match(problem ?? '', /activity/);
+  assert.deepEqual(rest, []);
+  assert.equal(missingCode([]).length, 2);
 });

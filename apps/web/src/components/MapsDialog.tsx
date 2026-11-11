@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { FolderChoice, ListedPack, LocationInfo, PackDetails } from '../desktop';
-import { downloadsOffered } from '../features';
+import type { Detail, FolderChoice, ListedPack, LocationInfo, PackDetails } from '../desktop';
+import { copiesPickedFiles, downloadsOffered, foldersOffered, importsOffered } from '../features';
 import { notify, switchGame } from '../state/actions';
 import { rebuildPack, updatableGames, updateAll, updateGame } from '../state/importing';
 import {
@@ -13,11 +13,12 @@ import {
   reveal,
   setMapsDialogOpen,
 } from '../state/library';
-import { loadPackDetails, openExport, pickPackFile } from '../state/packFile';
+import { importPickedPackFile, loadPackDetails, openExport, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
 import { ActivityLogSection } from './ActivityLogSection';
 import { DeleteImagesConfirm } from './DeleteImagesConfirm';
 import { DeletePackConfirm } from './DeletePackConfirm';
+import { formatBytes } from './downloadFormat';
 import { UiIcon } from './icons';
 import { MapPageActions } from './MapPageActions';
 import { PackDetailsView } from './PackFacts';
@@ -28,9 +29,14 @@ import { PackDetailsView } from './PackFacts';
  * person added. Nothing here deletes files except "Delete" on a pack in the
  * maps folder and "Delete downloaded images" on a pack with a folder, each
  * after a confirmation.
+ *
+ * In the Android app, which keeps its maps in its own storage, it has no
+ * folders: the games on the device with their detail and size, "Show",
+ * "Details" and "Delete…", and "Import map pack file…".
  */
 export function MapsDialog() {
   const open = useAtlas((s) => s.mapsDialogOpen);
+  const folders = useAtlas(foldersOffered);
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -69,9 +75,9 @@ export function MapsDialog() {
               <UiIcon name="close" />
             </button>
           </header>
-          <MapsFolder />
+          {folders ? <MapsFolder /> : null}
           <PackList />
-          <Locations />
+          {folders ? <Locations /> : null}
           <ActivityLogSection />
           <AppVersion />
         </div>
@@ -206,11 +212,13 @@ const ORIGIN: Record<ListedPack['origin'], string> = {
   location: 'Added folder',
 };
 
-/** The ids of the games that "Update from the site…" can read again. */
+/** The ids of the games that "Update from the site…" can read again; none without importers. */
 function useUpdatable(): ReadonlySet<string> {
   const library = useAtlas((s) => s.library);
+  const imports = useAtlas(importsOffered);
   const [ids, setIds] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
+    if (!imports) return;
     let live = true;
     updatableGames().then(
       (games) => {
@@ -221,7 +229,7 @@ function useUpdatable(): ReadonlySet<string> {
     return () => {
       live = false;
     };
-  }, [library]);
+  }, [library, imports]);
   return ids;
 }
 
@@ -230,9 +238,46 @@ function PackList() {
   const bundled = useAtlas((s) => s.bundledCatalog);
   const shown = useAtlas((s) => s.game?.entry.id);
   const updatable = useUpdatable();
+  const folders = useAtlas(foldersOffered);
+  const copies = useAtlas(copiesPickedFiles);
   if (!library) return null;
   const listed = new Set(library.packs.map((p) => p.id));
   const fromApp = bundled.filter((p) => !listed.has(p.id));
+  if (!folders) {
+    return (
+      <section className="dialog-section" aria-label="Map packs">
+        <h3 className="dialog-subhead">Games on this device</h3>
+        <p className="muted small">
+          Add a game with a map pack file (<code>.atlaspack</code>) exported by Atlas on your
+          computer: copy it to this device, for example into Download, then import it here.
+        </p>
+        <div className="row-actions">
+          <button
+            type="button"
+            className="button button-primary"
+            data-testid="import-pack-file"
+            onClick={() => void (copies ? importPickedPackFile() : pickPackFile())}
+          >
+            Import map pack file…
+          </button>
+        </div>
+        <ul className="profile-list pack-list" data-testid="pack-list">
+          {fromApp.map((pack) => (
+            <BundledRow key={pack.id} id={pack.id} title={pack.title} active={pack.id === shown} />
+          ))}
+          {library.packs.map((pack) => (
+            <PackRow
+              key={pack.id}
+              pack={pack}
+              active={pack.id === shown}
+              busy={library.busy.includes(pack.id)}
+              updatable={false}
+            />
+          ))}
+        </ul>
+      </section>
+    );
+  }
   return (
     <section className="dialog-section" aria-label="Map packs">
       <div className="dialog-subhead-row">
@@ -317,21 +362,89 @@ function PackTitle({ title, active }: { title: string; active: boolean }) {
   );
 }
 
-/** A pack that comes with the app and is served from it. */
+/**
+ * A pack that comes with the app and is served from it. In the Android
+ * app it is part of the web build, which the shell does not list, so it
+ * has no details to read and nothing to export; it can be shown.
+ */
 function BundledRow({ id, title, active }: { id: string; title: string; active: boolean }) {
+  const folders = useAtlas(foldersOffered);
   const details = usePackDetails(id);
   return (
     <li className="profile-row pack-row" data-testid="pack-row" data-pack={id}>
       <div className="pack-info">
         <PackTitle title={title} active={active} />
         <span className="muted small">{ORIGIN.bundled}</span>
-        <div className="row-actions">
-          <ExportButton id={id} title={title} />
-          {details.toggle}
-        </div>
+        {folders ? (
+          <div className="row-actions">
+            <ExportButton id={id} title={title} />
+            {details.toggle}
+          </div>
+        ) : !active ? (
+          <div className="row-actions">
+            <ShowButton id={id} />
+          </div>
+        ) : null}
         {details.panel}
       </div>
     </li>
+  );
+}
+
+function ShowButton({ id }: { id: string }) {
+  return (
+    <button
+      type="button"
+      className="link-button"
+      data-testid="show-pack"
+      onClick={() => {
+        setMapsDialogOpen(false);
+        void switchGame(id);
+      }}
+    >
+      Show
+    </button>
+  );
+}
+
+const DETAIL_WORDS: Record<Detail, string> = {
+  overview: 'Overview detail',
+  standard: 'Standard detail',
+  full: 'Full detail',
+};
+
+/**
+ * Android: the detail of a game's map images and its size, read when the
+ * row is shown. The size is that of the map pack file it was imported
+ * from, unpacked.
+ */
+function PackSummary({ id }: { id: string }) {
+  const library = useAtlas((s) => s.library);
+  const [details, setDetails] = useState<PackDetails | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadPackDetails(id).then(
+      (loaded) => {
+        if (live) setDetails(loaded);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [id, library]);
+  if (!details) return null;
+  const detail = details.detail ?? details.packFile?.header.detail ?? null;
+  const parts = [
+    detail ? DETAIL_WORDS[detail] : null,
+    details.packFile ? formatBytes(details.packFile.header.bytes) : null,
+    `${details.contents.maps.toLocaleString('en')} map${details.contents.maps === 1 ? '' : 's'}`,
+    `${details.contents.locations.toLocaleString('en')} place${details.contents.locations === 1 ? '' : 's'}`,
+  ].filter((part) => part !== null);
+  return (
+    <span className="muted small" data-testid="pack-summary">
+      {parts.join(' · ')}
+    </span>
   );
 }
 
@@ -414,6 +527,9 @@ function PackRow({
     s.config?.importers.some((i) => i.id === pack.imported?.importerId),
   );
   const mapPages = useAtlas(downloadsOffered);
+  // The Android app has no folders to open and saves no map pack files.
+  const folders = useAtlas(foldersOffered);
+  const imports = useAtlas(importsOffered);
   const details = usePackDetails(pack.id);
   const deletable = pack.origin === 'maps-folder' && !pack.bundled;
   const close = () => {
@@ -429,26 +545,16 @@ function PackRow({
           {pack.bundled ? ' · comes with the app' : ''}
           {busy ? ' · moving files from an older version…' : ''}
         </span>
-        {pack.path ? <span className="path small">{pack.path}</span> : null}
+        {!folders ? <PackSummary id={pack.id} /> : null}
+        {pack.path && folders ? <span className="path small">{pack.path}</span> : null}
         {confirming === 'pack' ? (
           <DeletePackConfirm id={pack.id} title={pack.title} onClose={close} />
         ) : confirming === 'images' ? (
           <DeleteImagesConfirm id={pack.id} title={pack.title} onClose={close} />
         ) : (
           <div className="row-actions">
-            {!active ? (
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => {
-                  setMapsDialogOpen(false);
-                  void switchGame(pack.id);
-                }}
-              >
-                Show
-              </button>
-            ) : null}
-            {pack.path ? (
+            {!active ? <ShowButton id={pack.id} /> : null}
+            {pack.path && folders ? (
               <button
                 type="button"
                 className="link-button"
@@ -470,9 +576,9 @@ function PackRow({
                 Update from the site…
               </button>
             ) : null}
-            {!busy ? <ExportButton id={pack.id} title={pack.title} /> : null}
+            {!busy && folders ? <ExportButton id={pack.id} title={pack.title} /> : null}
             {details.toggle}
-            {pack.imported && canRebuild ? (
+            {pack.imported && canRebuild && imports ? (
               <button
                 type="button"
                 className="link-button"
@@ -482,7 +588,7 @@ function PackRow({
                 Rebuild
               </button>
             ) : null}
-            {pack.path && !busy ? (
+            {pack.path && !busy && folders ? (
               <button
                 type="button"
                 className="link-button"

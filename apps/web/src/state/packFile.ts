@@ -15,7 +15,8 @@ import { useAtlas } from './store';
 /**
  * Map pack files (`.atlaspack`), in the desktop app: one game with the map
  * images chosen, in one file, to take to another computer or to Atlas for
- * Android. The shell writes and reads the files; this module opens the
+ * Android. The Android app imports them too, after copying the file the
+ * system's picker gave into the app. The shell writes and reads the files; this module opens the
  * dialog, runs its commands and shows the imported game. Personal data
  * never goes into a pack file: progress is saved beside it, in a file of
  * its own, only when asked for.
@@ -30,8 +31,26 @@ export function openExport(packId: string, title: string): void {
   set({ packFileDialog: { kind: 'export', packId, title } });
 }
 
+/**
+ * The copy of a picked file the Android app made for the import dialog
+ * shown now, if any. It is deleted once the import has finished, or when
+ * the dialog closes (after a failed or cancelled import, or none), so a
+ * failed import can be tried again without copying the file again.
+ */
+let pickedCopy: string | null = null;
+
+function discardPickedCopy(): void {
+  const path = pickedCopy;
+  if (path === null) return;
+  pickedCopy = null;
+  desktop!.packFiles.discardCopy(path).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
 export function closePackFileDialog(): void {
   set({ packFileDialog: null });
+  discardPickedCopy();
 }
 
 /** Asks for a map pack file and shows what importing it would do. */
@@ -55,6 +74,36 @@ export async function openPackFileAt(path: string): Promise<void> {
   } catch (error) {
     notify(errorText(error), 'error');
   }
+}
+
+/**
+ * "Import map pack file…" in the Android app: asks for a file with the
+ * system's picker, copies it into the app (the picker gives no path; the
+ * dialog shows how far the copy is, with Cancel), then shows what
+ * importing it would do. The copy is deleted when the import is over.
+ */
+export async function importPickedPackFile(): Promise<void> {
+  let path: string;
+  try {
+    const picked = await desktop!.packFiles.pickCopy();
+    if (!picked) return;
+    discardPickedCopy();
+    set({ packFileDialog: { kind: 'copy', picked } });
+    path = await desktop!.packFiles.copyPicked();
+    pickedCopy = path;
+  } catch (error) {
+    if (get().packFileDialog?.kind === 'copy') closePackFileDialog();
+    notify(errorText(error), 'error');
+    return;
+  }
+  // Still copying when the dialog closed: the copy is not wanted.
+  if (get().packFileDialog?.kind !== 'copy') {
+    discardPickedCopy();
+    return;
+  }
+  await openPackFileAt(path);
+  // The copy could not be read (openPackFileAt said why).
+  if (get().packFileDialog?.kind !== 'import') closePackFileDialog();
 }
 
 export function loadExportOptions(packId: string): Promise<PackFileOptions> {
@@ -92,6 +141,8 @@ export async function importPackFile(
   replace: boolean,
 ): Promise<PackFileImported> {
   const imported = await desktop!.packFiles.import(file.path, replace);
+  // The game is in the maps folder: Android's copy of the file is not needed.
+  if (pickedCopy === file.path) discardPickedCopy();
   applyListing(imported.listing);
   const entry = get().catalog.find((pack) => pack.id === imported.packId);
   if (entry) {

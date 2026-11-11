@@ -32,10 +32,14 @@
  * (`src-tauri/gen/android`, ignored by git) with `tauri android init` when
  * there is none, then runs `tauri android build --apk` with the other
  * arguments, for example `--target aarch64`. The APK is unsigned; a release
- * signs it.
+ * signs it. Before building, it writes the app's own activity
+ * (`android/MainActivity.kt`: the page is told the system bar sizes) over
+ * the generated one, keeping its package, and adds `android/atlas-rules.pro`
+ * to the release shrinking rules, since the generated project is made anew.
  */
 import { spawn } from 'node:child_process';
-import { access, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = (/** @type {string} */ path) => fileURLToPath(new URL(path, import.meta.url));
@@ -117,6 +121,40 @@ export function androidCommands({ initialised, extra }) {
 }
 
 /**
+ * The app's activity for the generated Android project: `ours` with the
+ * package line of the generated `MainActivity.kt`. Exported for tests.
+ * @param {string} generated @param {string} ours
+ */
+export function mainActivitySource(generated, ours) {
+  const packageLine = /^package\s+[\w.`]+\s*$/m;
+  const found = packageLine.exec(generated);
+  if (!found) throw new Error('The generated MainActivity.kt has no package line.');
+  if (!packageLine.test(ours)) throw new Error('android/MainActivity.kt has no package line.');
+  return ours.replace(packageLine, found[0].trim());
+}
+
+/**
+ * The generated `MainActivity.kt` under a folder, at any depth.
+ * @param {string} dir @returns {Promise<string | null>}
+ */
+async function findMainActivity(dir) {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  const found = entries.find((entry) => entry.isFile() && entry.name === 'MainActivity.kt');
+  return found ? join(found.parentPath, found.name) : null;
+}
+
+/** Puts the app's own activity and shrinking rules into the generated Android project. */
+async function prepareAndroidProject() {
+  const app = here('../src-tauri/gen/android/app/');
+  const activity = await findMainActivity(join(app, 'src/main/java'));
+  if (!activity) throw new Error(`No MainActivity.kt under ${app}src/main/java`);
+  const ours = await readFile(here('../android/MainActivity.kt'), 'utf8');
+  await writeFile(activity, mainActivitySource(await readFile(activity, 'utf8'), ours));
+  await copyFile(here('../android/atlas-rules.pro'), join(app, 'atlas-rules.pro'));
+  console.log(`Wrote the app's activity to ${activity} and its shrinking rules beside it`);
+}
+
+/**
  * The environment of an Android build, or an error for settings it cannot
  * have. Exported for tests.
  * @param {NodeJS.ProcessEnv} env
@@ -162,6 +200,7 @@ async function buildAndroid() {
   );
   console.log('Building the Android app: a viewer, with folder tiles (ATLAS_DEMO_TILES=xyz)');
   for (const args of androidCommands({ initialised, extra: process.argv.slice(3) })) {
+    if (args[1] === 'build') await prepareAndroidProject();
     const code = await tauri(args, env);
     if (code !== 0) {
       process.exitCode = code;

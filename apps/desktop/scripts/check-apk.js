@@ -13,6 +13,11 @@
  *   library (its file names are kept as they are, while the files are
  *   compressed), and in the prepared frontend it was built from
  *   (`apps/desktop/dist`, its `packs/` folder and `config.json`);
+ * - the app's code (`classes*.dex`) holds what the Android app needs at
+ *   run time besides the web build: the fs plugin, which reads and writes
+ *   the `content://` files of the system's picker and save screen, and the
+ *   app's own activity, which tells the page the system bar sizes
+ *   (`window.AtlasAndroid`, from `android/MainActivity.kt`);
  * - no file in the APK, and no file of the prepared frontend, contains any
  *   `--forbid` text, ignoring case. The frontend is searched as well because
  *   the library holds it compressed.
@@ -43,6 +48,26 @@ export function embeddedPacks(bytes) {
     found.add(match[1]);
   }
   return [...found].sort();
+}
+
+/**
+ * What the app's code must hold, with why: names the shrinker keeps.
+ * @type {readonly { text: string, what: string }[]}
+ */
+export const REQUIRED_CODE = [
+  { text: 'Lcom/plugin/fs/FsPlugin;', what: 'the fs plugin (picked and saved files)' },
+  { text: 'AtlasAndroid', what: "the app's activity (system bar sizes for the page)" },
+];
+
+/**
+ * What of {@link REQUIRED_CODE} the app's code files together lack, as problems.
+ * @param {readonly Buffer[]} dexFiles
+ */
+export function missingCode(dexFiles) {
+  const texts = dexFiles.map((bytes) => bytes.toString('latin1'));
+  return REQUIRED_CODE.filter(({ text }) => !texts.some((dex) => dex.includes(text))).map(
+    ({ text, what }) => `The APK's code lacks ${what}: no ${text} in classes*.dex`,
+  );
 }
 
 /**
@@ -103,6 +128,9 @@ export async function checkApk({ apk, frontend, packs, forbid }) {
       console.log(`  packs in its web build: ${found.join(', ') || 'none'}`);
       problems.push(...packProblems(name, found, packs));
     }
+    const dexFiles = files.filter((file) => /^classes\d*\.dex$/.test(relative(dir, file)));
+    console.log(`App code: ${dexFiles.map((file) => relative(dir, file)).join(', ') || 'none'}`);
+    problems.push(...missingCode(await Promise.all(dexFiles.map((file) => readFile(file)))));
     if (forbid.length > 0) {
       for (const file of files) {
         const words = forbiddenIn(await readFile(file), forbid);
