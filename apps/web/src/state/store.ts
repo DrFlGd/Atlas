@@ -20,6 +20,7 @@ import type {
   DownloadSettingsInfo,
   DownloadSnapshot,
   Listing,
+  PackFileInfo,
 } from '../desktop';
 
 export type Theme = 'dark' | 'light';
@@ -84,6 +85,10 @@ export interface DownloadState {
   settings: DownloadSettingsInfo | null;
 }
 
+/** The map pack file dialog: exporting a game, or importing a file already read. */
+export type PackFileDialogState =
+  { kind: 'export'; packId: string; title: string } | { kind: 'import'; file: PackFileInfo };
+
 export interface AtlasState {
   config: RuntimeConfig | null;
   catalog: PackEntry[];
@@ -145,6 +150,8 @@ export interface AtlasState {
   addMapOpen: boolean;
   /** The activity log dialog, with the area it opened on; null when closed. */
   logViewer: { area: LogArea | 'all' } | null;
+  /** The map pack file dialog; null when closed. */
+  packFileDialog: PackFileDialogState | null;
 }
 
 export const NO_DOWNLOADS: DownloadState = {
@@ -200,4 +207,5 @@ export const useAtlas = create<AtlasState>()(() => ({
   mapsDialogOpen: false,
   addMapOpen: false,
   logViewer: null,
+  packFileDialog: null,
 }));

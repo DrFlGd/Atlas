@@ -7,7 +7,16 @@
 //! feature only, downloading map images. The web app reaches them through a
 //! small bridge that it only uses when it runs inside this shell.
 
-use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 #[cfg(desktop)]
@@ -22,14 +31,15 @@ use crate::{
     downloads::Downloads,
     imports::{Imports, PollResult},
     library::{FolderChoice, Library, Listing, SaveImport, SavedSource},
+    packfile::{self, AppInfo, ExportOptions, Progress, Stop},
     removal::{ImagesCount, ImagesDeleted, PackDeleted},
+    tiles::pyramid::Detail,
 };
 #[cfg(feature = "downloads")]
 use crate::{
     settings::DownloadSettings,
     tiles::{
         manager::{PlanInfo, Snapshot},
-        pyramid::Detail,
         DownloadManager,
     },
 };
@@ -706,6 +716,501 @@ pub async fn library_save_import(
         Ok(library.scan())
     })
     .await
+}
+
+// ---------------------------------------------------------------------------
+// Map pack files
+
+/// The map pack file being written or read, if any: one at a time. Cheap
+/// to clone.
+#[derive(Clone, Default)]
+pub struct PackFileJobs(Arc<std::sync::Mutex<Option<PackFileJob>>>);
+
+struct PackFileJob {
+    progress: PackFileProgress,
+    cancel: Arc<AtomicBool>,
+}
+
+/// What `packfile_progress` says about the running export or import.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackFileProgress {
+    /// `export` or `import`.
+    kind: &'static str,
+    pack_id: String,
+    title: String,
+    #[serde(flatten)]
+    progress: Progress,
+    cancelling: bool,
+}
+
+/// Clears the job when the work ends, however it ends.
+struct PackFileTurn {
+    jobs: PackFileJobs,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Drop for PackFileTurn {
+    fn drop(&mut self) {
+        *lock_jobs(&self.jobs) = None;
+    }
+}
+
+fn lock_jobs(jobs: &PackFileJobs) -> std::sync::MutexGuard<'_, Option<PackFileJob>> {
+    jobs.0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+impl PackFileJobs {
+    fn begin(
+        &self,
+        kind: &'static str,
+        pack_id: &str,
+        title: &str,
+    ) -> Result<PackFileTurn, String> {
+        let mut job = lock_jobs(self);
+        if job.is_some() {
+            return Err(
+                "Another map pack file is being saved or imported. Wait until it has finished."
+                    .to_owned(),
+            );
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *job = Some(PackFileJob {
+            progress: PackFileProgress {
+                kind,
+                pack_id: pack_id.to_owned(),
+                title: title.to_owned(),
+                progress: Progress::default(),
+                cancelling: false,
+            },
+            cancel: Arc::clone(&cancel),
+        });
+        Ok(PackFileTurn {
+            jobs: self.clone(),
+            cancel,
+        })
+    }
+}
+
+impl PackFileTurn {
+    fn update(&self, progress: Progress) {
+        if let Some(job) = lock_jobs(&self.jobs).as_mut() {
+            job.progress.progress = progress;
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+type PackFileJobsState<'a> = State<'a, PackFileJobs>;
+
+fn app_info<R: Runtime>(app: &AppHandle<R>) -> AppInfo {
+    AppInfo {
+        name: app.package_info().name.clone(),
+        version: app.package_info().version.to_string(),
+        platform: std::env::consts::OS.to_owned(),
+    }
+}
+
+/// The Export dialog's choices for a pack, with their sizes.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackFileChoices {
+    #[serde(flatten)]
+    options: ExportOptions,
+    /// A download of the pack is not over; exporting waits for it.
+    downloading: bool,
+}
+
+/// What can be exported of a pack, and how large each detail is.
+#[tauri::command]
+pub async fn packfile_options(
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+    id: String,
+) -> Result<PackFileChoices, String> {
+    let library = Arc::clone(&library);
+    let downloads = downloads.inner().clone();
+    blocking(move || {
+        let source = packfile::shell::source_for(&library, &downloads, &id)?;
+        Ok(PackFileChoices {
+            options: packfile::export_options(&source)?,
+            downloading: downloads.is_active(&id),
+        })
+    })
+    .await
+}
+
+/// A finished export.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackFileExported {
+    path: String,
+    file_name: String,
+    /// The file's size on disk.
+    size: u64,
+    header: packfile::Header,
+    /// The progress export written beside it, when asked for.
+    progress_file: Option<String>,
+    /// Why the progress export could not be written; the pack file is fine.
+    progress_error: Option<String>,
+}
+
+/// The name of the progress export beside a pack file:
+/// `<name>.progress.json` for `<name>.atlaspack`.
+fn progress_file_beside(pack_file: &std::path::Path) -> PathBuf {
+    let stem = pack_file
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "atlas".to_owned());
+    pack_file.with_file_name(format!("{stem}.progress.json"))
+}
+
+/// Asks where to save a map pack file of a pack at `detail` and writes it.
+/// With `progress` (the text of a progress export, as "Export all
+/// profiles" writes it), that is saved beside it too. `None` when the
+/// person closes the dialog. `packfile_progress` reports how far it is and
+/// `packfile_cancel` stops it.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn packfile_export<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+    jobs: PackFileJobsState<'_>,
+    id: String,
+    detail: Detail,
+    progress: Option<String>,
+) -> Result<Option<PackFileExported>, String> {
+    desktop_only()?;
+    listed(&library, &id)?;
+    if downloads.is_active(&id) {
+        return Err(
+            "Map images of this game are downloading. Pause or cancel that first, then try again."
+                .to_owned(),
+        );
+    }
+    let dialog = file_dialog(&window, "Export map pack file")
+        .set_file_name(packfile::default_file_name(&id, detail))
+        .add_filter("Atlas map pack", &[packfile::EXTENSION]);
+    let Some(mut destination) = chosen_path(|done| dialog.save_file(done)).await? else {
+        return Ok(None);
+    };
+    let named = destination
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(packfile::EXTENSION));
+    if !named {
+        let mut name = destination.as_os_str().to_owned();
+        name.push(format!(".{}", packfile::EXTENSION));
+        destination = PathBuf::from(name);
+    }
+    let title = library
+        .scan()
+        .packs
+        .iter()
+        .find(|pack| pack.id == id)
+        .map_or_else(|| id.clone(), |pack| pack.title.clone());
+    let turn = jobs.begin("export", &id, &title)?;
+    let library = Arc::clone(&library);
+    let downloads = downloads.inner().clone();
+    let app_info = app_info(&app);
+    blocking(move || {
+        activity::info(
+            Area::Library,
+            format!(
+                "Exporting {} at {} detail to the map pack file {}",
+                short(&id),
+                packfile::detail_name(detail),
+                destination.display()
+            ),
+        );
+        let result = packfile::shell::export_pack(
+            &library,
+            &downloads,
+            &id,
+            &app_info,
+            detail,
+            &destination,
+            &mut |done| turn.update(done),
+            &|| turn.cancelled(),
+        );
+        let exported = match result {
+            Ok(exported) => exported,
+            Err(Stop::Cancelled) => {
+                activity::info(
+                    Area::Library,
+                    format!("Cancelled exporting {}; nothing was saved", short(&id)),
+                );
+                return Err(Stop::Cancelled.message());
+            }
+            Err(Stop::Failed(error)) => {
+                activity::warn(
+                    Area::Library,
+                    format!("Could not export {}: {error}", short(&id)),
+                );
+                return Err(error);
+            }
+        };
+        activity::info(
+            Area::Library,
+            format!(
+                "Exported {} ({} detail, {} map images) to {}: {} files, {}",
+                short(&id),
+                packfile::detail_name(detail),
+                exported.header.images.files,
+                exported.path.display(),
+                exported.header.files + 1,
+                packfile::space::describe(exported.size)
+            ),
+        );
+        let (progress_file, progress_error) = match progress {
+            None => (None, None),
+            Some(text) => {
+                let beside = progress_file_beside(&exported.path);
+                match fs::write(&beside, text) {
+                    Ok(()) => {
+                        activity::info(
+                            Area::Library,
+                            format!("Saved the progress export beside it: {}", beside.display()),
+                        );
+                        (Some(beside.display().to_string()), None)
+                    }
+                    Err(error) => {
+                        activity::warn(
+                            Area::Library,
+                            format!(
+                                "Could not save the progress export {}: {error}",
+                                beside.display()
+                            ),
+                        );
+                        (
+                            None,
+                            Some(format!(
+                                "Your progress could not be saved beside it ({}): {error}",
+                                file_name(&beside)
+                            )),
+                        )
+                    }
+                }
+            }
+        };
+        Ok(Some(PackFileExported {
+            file_name: file_name(&exported.path),
+            path: exported.path.display().to_string(),
+            size: exported.size,
+            header: exported.header,
+            progress_file,
+            progress_error,
+        }))
+    })
+    .await
+}
+
+/// Asks for a map pack file to import and says what is in it and what
+/// importing it would do. `None` when the person closes the dialog.
+#[tauri::command]
+pub async fn packfile_pick<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+) -> Result<Option<packfile::shell::FileInfo>, String> {
+    desktop_only()?;
+    let dialog = file_dialog(&window, "Import map pack file")
+        .add_filter("Atlas map pack", &[packfile::EXTENSION]);
+    let Some(path) = chosen_path(|done| dialog.pick_file(done)).await? else {
+        return Ok(None);
+    };
+    inspect_pack_file(Arc::clone(&library), downloads.inner().clone(), path)
+        .await
+        .map(Some)
+}
+
+async fn inspect_pack_file(
+    library: Arc<Library>,
+    downloads: Downloads,
+    path: PathBuf,
+) -> Result<packfile::shell::FileInfo, String> {
+    blocking(move || {
+        packfile::shell::inspect(&library, &downloads, &path).inspect_err(|error| {
+            activity::warn(
+                Area::Library,
+                format!(
+                    "Could not read the map pack file {}: {error}",
+                    path.display()
+                ),
+            );
+        })
+    })
+    .await
+}
+
+/// Reads the header of the map pack file at `path` (a `.atlaspack` file)
+/// and says what importing it would do, without unpacking anything. For a
+/// file the app has a path for already, such as one the Android app
+/// copied from the system's picker.
+#[tauri::command]
+pub async fn packfile_inspect(
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+    path: String,
+) -> Result<packfile::shell::FileInfo, String> {
+    inspect_pack_file(
+        Arc::clone(&library),
+        downloads.inner().clone(),
+        PathBuf::from(path),
+    )
+    .await
+}
+
+/// A finished import.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackFileImported {
+    pack_id: String,
+    title: String,
+    replaced: bool,
+    header: packfile::Header,
+    listing: Listing,
+}
+
+/// Imports the map pack file at `path` (a `.atlaspack` file) into the maps
+/// folder, replacing the game with the same id there only with `replace`,
+/// and lists the packs again. `packfile_progress` reports how far it is and
+/// `packfile_cancel` stops it.
+#[tauri::command]
+pub async fn packfile_import(
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+    jobs: PackFileJobsState<'_>,
+    path: String,
+    replace: bool,
+) -> Result<PackFileImported, String> {
+    import_pack_file(
+        Arc::clone(&library),
+        downloads.inner().clone(),
+        jobs.inner().clone(),
+        PathBuf::from(path),
+        replace,
+    )
+    .await
+}
+
+async fn import_pack_file(
+    library: Arc<Library>,
+    downloads: Downloads,
+    jobs: PackFileJobs,
+    path: PathBuf,
+    replace: bool,
+) -> Result<PackFileImported, String> {
+    let header = {
+        let path = path.clone();
+        blocking(move || packfile::import::read_header(&path)).await?
+    };
+    let turn = jobs.begin("import", &header.pack_id, &header.title)?;
+    blocking(move || {
+        activity::info(
+            Area::Library,
+            format!(
+                "Importing the map pack file {}: {} version {}, {} detail, exported {} by {} {}",
+                path.display(),
+                short(&header.pack_id),
+                short(&header.pack_version),
+                packfile::detail_name(header.detail),
+                short(&header.exported_at),
+                short(&header.exported_by.name),
+                short(&header.exported_by.version)
+            ),
+        );
+        let result = packfile::shell::import_pack_file(
+            &library,
+            &downloads,
+            &path,
+            replace,
+            &mut |done| turn.update(done),
+            &|| turn.cancelled(),
+        );
+        let imported = match result {
+            Ok(imported) => imported,
+            Err(Stop::Cancelled) => {
+                activity::info(
+                    Area::Library,
+                    format!(
+                        "Cancelled importing {}; nothing was changed",
+                        short(&header.pack_id)
+                    ),
+                );
+                return Err(Stop::Cancelled.message());
+            }
+            Err(Stop::Failed(error)) => {
+                activity::warn(
+                    Area::Library,
+                    format!(
+                        "Could not import the map pack file {}: {error}",
+                        path.display()
+                    ),
+                );
+                return Err(error);
+            }
+        };
+        if imported.replaced {
+            // Its old download record went with the old folder.
+            downloads.forget(&imported.pack_id);
+        }
+        activity::info(
+            Area::Library,
+            format!(
+                "Imported {} into {}{}",
+                short(&imported.pack_id),
+                imported.folder.display(),
+                if imported.replaced {
+                    " (replaced the pack that was there; progress is kept)"
+                } else {
+                    ""
+                }
+            ),
+        );
+        Ok(PackFileImported {
+            pack_id: imported.pack_id,
+            title: imported.title,
+            replaced: imported.replaced,
+            header: imported.header,
+            listing: library.scan(),
+        })
+    })
+    .await
+}
+
+/// How far the map pack file being saved or imported is; `None` when none is.
+#[tauri::command]
+pub fn packfile_progress(jobs: PackFileJobsState<'_>) -> Option<PackFileProgress> {
+    lock_jobs(&jobs).as_ref().map(|job| job.progress.clone())
+}
+
+/// Stops the map pack file being saved or imported; it leaves nothing behind.
+#[tauri::command]
+pub fn packfile_cancel(jobs: PackFileJobsState<'_>) {
+    if let Some(job) = lock_jobs(&jobs).as_mut() {
+        job.cancel.store(true, Ordering::Relaxed);
+        job.progress.cancelling = true;
+    }
+}
+
+/// What is known about a listed pack: where its data came from and when,
+/// its version and its map images, as a map pack file would say.
+#[tauri::command]
+pub async fn library_pack_details(
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+    id: String,
+) -> Result<packfile::PackDetails, String> {
+    let library = Arc::clone(&library);
+    let downloads = downloads.inner().clone();
+    blocking(move || packfile::shell::details(&library, &downloads, &id)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,6 +2082,46 @@ mod tests {
                 .map(|entry| entry.file_name().to_string_lossy().into_owned())
                 .filter(|name| name.starts_with('.'))
                 .collect()
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn map_pack_files_wait_for_a_running_download() {
+            ensure_crypto();
+            let server = MockServer::start(slow_server()).await;
+            let s = setup("packfile-downloading", Vec::new());
+            let pack = s.library.maps_folder().join("my-game");
+            write_pack(&pack, "my-game", &server);
+            s.library.scan();
+            s.manager.start("my-game", Detail::Full).unwrap();
+            wait_for_images(&s, "my-game", 1).await;
+            let file = s.dir.0.join("my-game.atlaspack");
+            let error = packfile::shell::export_pack(
+                &s.library,
+                &s.downloads,
+                "my-game",
+                &AppInfo::default(),
+                Detail::Overview,
+                &file,
+                &mut |_| {},
+                &|| false,
+            )
+            .unwrap_err();
+            assert!(error.message().contains("downloading"), "{error:?}");
+            assert!(!file.exists());
+            let header: packfile::Header = serde_json::from_value(serde_json::json!({
+                "format": "atlas-pack-file", "version": 1, "packId": "my-game", "title": "My Game",
+                "packVersion": "1.0.0", "detail": "overview", "exportedAt": "2026-11-11T10:00:00Z",
+                "exportedBy": {"name": "Atlas", "version": "0.3.5", "platform": "linux"},
+                "pack": {"id": "my-game", "title": "My Game", "packVersion": "1.0.0", "schemaVersion": 2},
+                "source": {"kind": "unknown"}, "contents": {},
+                "images": {"detail": "overview", "files": 0, "bytes": 0, "layers": []},
+                "files": 0, "bytes": 0
+            }))
+            .unwrap();
+            let error =
+                packfile::shell::check_import(&s.library, &s.downloads, &header).unwrap_err();
+            assert!(error.contains("downloading"), "{error}");
+            s.manager.cancel("my-game").unwrap();
         }
 
         #[tokio::test(flavor = "multi_thread")]

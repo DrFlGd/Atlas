@@ -2347,3 +2347,68 @@ label.tree-row:hover,
   font-weight: 600;
   color: var(--atlas-muted);
 }
+
+/* ------------------------------------------------------------------ */
+/* Map pack files */
+
+.pack-file-dialog {
+  width: min(640px, calc(100% - 24px));
+}
+
+.pack-file-check {
+  align-items: flex-start;
+  line-height: 1.45;
+}
+
+.pack-file-check input {
+  margin: 3px 0 0;
+  accent-color: var(--atlas-accent);
+}
+
+.pack-file-hint {
+  display: block;
+}
+
+.pack-compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pack-compare th,
+.pack-compare td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--atlas-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.pack-compare tbody th {
+  color: var(--atlas-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pack-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 6px 0 2px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pack-details dt {
+  color: var(--atlas-muted);
+}
+
+.pack-details dd {
+  margin: 0;
+}
+
+.pack-file-dialog time,
+.pack-details time {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}

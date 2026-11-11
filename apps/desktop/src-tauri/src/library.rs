@@ -69,8 +69,8 @@ pub const PACK_FILES: &[&str] = &[
     "links.json",
     "presets.json",
 ];
-const MAX_PACK_FILE_BYTES: usize = 64 << 20;
-const MAX_PACK_BYTES: usize = 256 << 20;
+pub const MAX_PACK_FILE_BYTES: usize = 64 << 20;
+pub const MAX_PACK_BYTES: usize = 256 << 20;
 /// Page data larger than this is refused (the web app checks the same).
 pub const MAX_PAGE_DATA_BYTES: usize = 64 << 20;
 
@@ -343,6 +343,11 @@ impl Library {
         &self.settings
     }
 
+    /// The packs served to the map.
+    pub fn registry(&self) -> &PackRegistry {
+        &self.registry
+    }
+
     /// The maps folder in use.
     pub fn maps_folder(&self) -> PathBuf {
         Self::maps_folder_of(&self.settings.read(), self.settings.dir())
@@ -359,7 +364,7 @@ impl Library {
         self.bundled.iter().any(|pack| pack.id == id)
     }
 
-    fn bundled_pack(&self, id: &str) -> Option<&BundledPack> {
+    pub fn bundled_pack(&self, id: &str) -> Option<&BundledPack> {
         self.bundled.iter().find(|pack| pack.id == id)
     }
 
@@ -1120,7 +1125,7 @@ impl Library {
         self.registry.root(id).is_some()
     }
 
-    fn check_not_moving(&self, id: &str) -> Result<(), String> {
+    pub fn check_not_moving(&self, id: &str) -> Result<(), String> {
         if lock(&self.busy).contains(id) {
             return Err("Its map images are being moved from an older version of Atlas. Try again when that has finished.".to_owned());
         }
@@ -1336,6 +1341,32 @@ fn read_import_index(dir: &Path) -> Option<ImportIndex> {
             .iter()
             .all(|source| is_slug(&source.key) && source.file == format!("{}.json", source.key)))
     .then_some(index)
+}
+
+/// The importer and pages recorded in a pack folder's page data index
+/// (`import/index.json`), for describing where the pack came from. None
+/// when the pack was not imported from web pages.
+pub fn read_import_sources(dir: &Path) -> Option<crate::packfile::ImportSources> {
+    let index = read_import_index(dir)?;
+    Some(crate::packfile::ImportSources {
+        importer: Some(crate::packfile::ImporterFacts {
+            id: index.importer.id,
+            title: index.importer.title,
+        }),
+        pages: index
+            .sources
+            .into_iter()
+            .filter(|source| {
+                source.url.starts_with("https://") || source.url.starts_with("http://")
+            })
+            .map(|source| crate::packfile::PageFacts {
+                url: source.url,
+                map_id: source.map_id,
+                imported_at: Some(source.imported_at)
+                    .filter(|at| crate::packfile::iso_millis(at).is_some()),
+            })
+            .collect(),
+    })
 }
 
 /// Whether two folders are on the same drive, so one can be renamed into the other.

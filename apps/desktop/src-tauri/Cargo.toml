@@ -1,6 +1,6 @@
 [package]
 name = "atlas-desktop"
-version = "0.3.5"
+version = "0.3.6"
 description = "Atlas desktop shell"
 edition = "2021"
 license = "MIT"
@@ -33,6 +33,9 @@ percent-encoding = "2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1.45", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+# Map pack files (`.atlaspack`, see src/packfile.rs): ZIP with deflate only,
+# through the flate2 already in the build. No encryption, no other methods.
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Map image downloads (the `downloads` feature only). rustls with the ring
 # provider and the system's certificate store; no cookies, no compression
 # negotiation.
@@ -40,6 +43,13 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"], optional = true }
 httpdate = { version = "1.0.3", optional = true }
+
+# Free disk space before a map pack file is unpacked (src/packfile/space.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tokio = { version = "1.45", features = ["io-util", "net"] }
