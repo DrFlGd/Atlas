@@ -11,6 +11,7 @@ import {
 } from '../activityLog';
 import { copyText } from '../clipboard';
 import { desktop, type RecentLog } from '../desktop';
+import { foldersOffered } from '../features';
 import { numberFormat } from '../state/derived';
 import { closeActivityLog } from '../state/activityLog';
 import { reveal } from '../state/library';
@@ -93,6 +94,7 @@ function LogView({
   const [area, setArea] = useState<LogArea | 'all'>(initialArea);
   const [level, setLevel] = useState<LogLevel>('info');
   const [note, setNote] = useState('');
+  const folders = useAtlas(foldersOffered);
   const listRef = useRef<HTMLOListElement>(null);
   const ids = { area: useId(), level: useId(), status: useId() };
 
@@ -202,16 +204,18 @@ function LogView({
           >
             <UiIcon name="copy" size={16} /> Copy all shown
           </button>
-          <button
-            type="button"
-            className="button"
-            data-testid="log-open-folder"
-            onClick={() => {
-              reveal({ kind: 'log-folder' });
-            }}
-          >
-            <UiIcon name="folder" size={16} /> Open log folder
-          </button>
+          {folders ? (
+            <button
+              type="button"
+              className="button"
+              data-testid="log-open-folder"
+              onClick={() => {
+                reveal({ kind: 'log-folder' });
+              }}
+            >
+              <UiIcon name="folder" size={16} /> Open log folder
+            </button>
+          ) : null}
         </div>
       </div>
       <p className="muted small" id={ids.status} role="status" data-testid="log-status">
