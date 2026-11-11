@@ -15,7 +15,7 @@ import type { MapViewState, MarkerHover, TileStatus } from '@atlas/core/mapview'
 import { create } from 'zustand';
 import type { LogArea } from '../activityLog';
 import type { RuntimeConfig } from '../config';
-import type { SaveState } from './saves';
+import type { GameTableState, SaveState } from './saves';
 import type {
   DesktopInfo,
   DownloadPlan,
@@ -154,6 +154,14 @@ export interface AtlasState {
   save: SaveState;
 }
 
+export const NO_GAME_TABLE: GameTableState = {
+  folder: null,
+  table: null,
+  busy: null,
+  error: null,
+  last: null,
+};
+
 export const NO_SAVE: SaveState = {
   link: null,
   busy: false,
@@ -165,6 +173,7 @@ export const NO_SAVE: SaveState = {
   worldMaps: {},
   calibrations: {},
   points: {},
+  gameTable: NO_GAME_TABLE,
 };
 
 export const NO_DOWNLOADS: DownloadState = {

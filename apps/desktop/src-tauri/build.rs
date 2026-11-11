@@ -33,6 +33,12 @@ const COMMANDS: &[&str] = &[
     "saves_watch_status",
     "saves_unwatch",
     "saves_report",
+    "game_folder_get",
+    "game_folder_choose",
+    "game_folder_forget",
+    "game_files_scan",
+    "game_files_read",
+    "game_files_report",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

@@ -8,15 +8,23 @@ import {
   type PlayerOnMap,
   type SaveMatch,
 } from '@atlas/saves/match';
-import type { SaveGame, SaveSummary } from '@atlas/saves';
-import { desktop, type SaveFileEntry, type SaveFolderInfo } from '../desktop';
+import type { GameFileInput, SaveGame, SaveSummary } from '@atlas/saves';
+import { isPinTable, type GamePinTable } from '@atlas/saves/table';
+import {
+  desktop,
+  type GameFilesReport,
+  type GameFilesScan,
+  type GameFolderInfo,
+  type SaveFileEntry,
+  type SaveFolderInfo,
+} from '../desktop';
 import { nothingNotice } from '../saves/explain';
 import { packForMatching } from '../saves/pack';
 import type { SaveJobContext } from '../saves/process';
-import { runSaveJob } from '../saves/run';
+import { runSaveJob, runTableJob } from '../saves/run';
 import { applyProgress, goToPoint, notify, saveSetting, showMap } from './actions';
 import { progressStore, SETTINGS } from './services';
-import { NO_SAVE, useAtlas, type LoadedGame } from './store';
+import { NO_GAME_TABLE, NO_SAVE, useAtlas, type LoadedGame } from './store';
 
 /**
  * Game saves: linking a save (a folder of saves or one file in the desktop
@@ -25,7 +33,9 @@ import { NO_SAVE, useAtlas, type LoadedGame } from './store';
  *
  * The save is read in a worker (see `saves/run.ts`); the bytes never leave
  * the device. The link, which map shows which world and how maps are lined
- * up with the game world are device-local settings, never exported. Marks
+ * up with the game world are device-local settings, never exported. So is
+ * the table of the game's own map pins, which the desktop app reads from
+ * the game's files (see "The game's own map places" below). Marks
  * made from saves have `source: 'save'`; they never override marks made by
  * hand (see `targetsToMarkFromSave` in `@atlas/core`).
  */
@@ -80,6 +90,20 @@ export interface SaveState {
   calibrations: Record<string, MapCalibration>;
   /** Spots the person marked, by map id. */
   points: Record<string, CalibrationPoint[]>;
+  gameTable: GameTableState;
+}
+
+/** The table of the game's own map pins, and reading it from the game (desktop app). */
+export interface GameTableState {
+  /** The game's folder as last checked; null before checking, or in a browser. */
+  folder: GameFolderInfo | null;
+  /** The table kept on this device; null when none was read. */
+  table: GamePinTable | null;
+  /** What is being done while the game's files are read; null when nothing is. */
+  busy: string | null;
+  error: string | null;
+  /** How the last read in this session went. */
+  last: { files: number; unreadable: number; pins: number } | null;
 }
 
 /** Spots marked by hand must be this far apart in the game world (metres) to line a map up. */
@@ -140,11 +164,13 @@ async function loadSaveState(): Promise<void> {
   }
   const store = progressStore();
   const gameId = game.pack.manifest.gameId;
-  const [link, worldMaps, calibrations, points] = await Promise.all([
+  const reader = saveReaderOf(game)!;
+  const [link, worldMaps, calibrations, points, table] = await Promise.all([
     store.getSetting(SETTINGS.saveLink(profileId)),
     store.getSetting(SETTINGS.saveWorlds(gameId)),
     store.getSetting(SETTINGS.saveCalibration(gameId)),
     store.getSetting(SETTINGS.savePoints(gameId)),
+    reader.readsGameFiles ? store.getSetting(SETTINGS.gamePins(reader.id)) : null,
   ]);
   if (token !== loadToken) return;
   const save: SaveState = {
@@ -153,9 +179,11 @@ async function loadSaveState(): Promise<void> {
     worldMaps: isObject(worldMaps) ? (worldMaps as SaveState['worldMaps']) : {},
     calibrations: isObject(calibrations) ? (calibrations as SaveState['calibrations']) : {},
     points: isObject(points) ? (points as SaveState['points']) : {},
+    gameTable: { ...NO_GAME_TABLE, table: isPinTable(table) ? table : null },
   };
   useAtlas.setState({ save });
   if (desktop && save.link?.follow && save.link.path) void startFollowing();
+  if (desktop && reader.readsGameFiles) void checkGameFolder(token);
 }
 
 /** Keeps the save state with the game and profile shown. Returns the unsubscribe function. */
@@ -181,12 +209,13 @@ function gameIdOf(): string | null {
 // Reading
 
 function matchContext(game: LoadedGame, readerId: string): SaveJobContext {
-  const { worldMaps, calibrations } = get().save;
+  const { worldMaps, calibrations, gameTable } = get().save;
   return {
     readerId,
     pack: packForMatching(game.pack.data),
     worldMaps,
     calibrations,
+    table: gameTable.table,
     now: Date.now(),
   };
 }
@@ -291,6 +320,7 @@ function applyMatch(
     storeLink({ ...link, last });
   }
   patch({ busy: false, error: null, summary, match, calibrations });
+  reportTableUse(match);
   return { marked };
 }
 
@@ -615,4 +645,197 @@ export function showPlayer(): void {
 export function setSaveDialogOpen(open: boolean): void {
   useAtlas.setState({ saveDialogOpen: open });
   if (open) void refreshSaveFolder();
+}
+
+// ---------------------------------------------------------------------------
+// The game's own map places (desktop app)
+//
+// The desktop app unpacks the game's map pin files from the folder the
+// person chose (read-only); the save worker builds the table from them;
+// the table is kept in this device's settings, keyed to the game's
+// executable, and read again when the game is patched. The activity log
+// gets counts only.
+
+function patchTable(part: Partial<GameTableState>): void {
+  patch({ gameTable: { ...get().save.gameTable, ...part } });
+}
+
+/** The table was read from another version of the game than the one in the folder now. */
+export function tableStale(state: GameTableState): boolean {
+  return Boolean(state.table && state.folder?.valid && state.folder.stamp !== state.table.stamp);
+}
+
+function reportGameFiles(report: GameFilesReport): void {
+  desktop?.gameFiles.report(report).catch(() => {
+    // The log is a help, not a reason to bother anyone.
+  });
+}
+
+let lastTableReport = '';
+
+/** Logs how a match used the table: counts and fits only, once per change. */
+function reportTableUse(match: SaveMatch): void {
+  if (!match.table) return;
+  const fits = Object.fromEntries(
+    match.worlds.flatMap((world) => (world.fit ? [[world.worldId, world.fit] as const] : [])),
+  );
+  const report: GameFilesReport = {
+    kind: 'match',
+    saveTags: match.table.tags,
+    saveTagsFound: match.table.found,
+    fits,
+  };
+  const key = JSON.stringify(report);
+  if (key === lastTableReport) return;
+  lastTableReport = key;
+  reportGameFiles(report);
+}
+
+/** Checks the chosen game folder; reads the map places again when the game was patched. */
+async function checkGameFolder(token = loadToken): Promise<void> {
+  const reader = saveReaderOf(get().game);
+  if (!desktop || !reader?.readsGameFiles) return;
+  let folder: GameFolderInfo;
+  try {
+    folder = await desktop.gameFiles.folder(reader.id);
+  } catch {
+    return;
+  }
+  if (token !== loadToken) return;
+  patchTable({ folder: folder.path ? folder : null });
+  if (tableStale(get().save.gameTable)) void readGameTable();
+}
+
+/** Why a scan gave no files to read, in plain words. */
+function noFilesText(scan: GameFilesScan): string {
+  if (scan.bundles === 0) {
+    return 'Atlas found no bundles in the game folder, so it cannot read the map places.';
+  }
+  const unknown = scan.layouts.unknown ?? 0;
+  if (unknown * 2 >= scan.bundles) {
+    return 'The game’s bundles have a file layout Atlas does not know, so it cannot find the map files in them.';
+  }
+  return 'Atlas found no map files in the game’s bundles: an unknown file layout.';
+}
+
+/** Why no map file could be unpacked, in plain words. */
+function unpackFailedText(problems: readonly string[]): string {
+  if (problems.some((p) => p.includes('Doboz') || p.includes('compression Atlas'))) {
+    return 'The game’s map files are packed with a compression Atlas cannot read yet, so it cannot read the map places.';
+  }
+  if (problems.some((p) => p.includes('CR2W'))) {
+    return 'The game’s map files did not unpack the way Atlas expects: an unknown file layout.';
+  }
+  return problems[0] ?? 'Atlas could not read the game’s map files.';
+}
+
+let tableToken = 0;
+
+/** Reads the game's map places from the chosen folder (desktop app), and keeps them on this device. */
+export async function readGameTable(): Promise<void> {
+  const reader = saveReaderOf(get().game);
+  if (!desktop || !reader?.readsGameFiles) return;
+  const bridge = desktop;
+  const token = ++tableToken;
+  const game = get().game;
+  const set = (part: Partial<GameTableState>) => {
+    if (token === tableToken && get().game === game) patchTable(part);
+  };
+  set({ busy: 'Looking through the game’s bundles…', error: null });
+  try {
+    const folder = await bridge.gameFiles.folder(reader.id);
+    set({ folder: folder.path ? folder : null });
+    if (!folder.valid) {
+      set({ busy: null, error: folder.problem ?? 'Choose the game’s folder first.' });
+      return;
+    }
+    const scan = await bridge.gameFiles.scan(reader.id);
+    if (scan.files.length === 0) {
+      set({ busy: null, error: noFilesText(scan) });
+      return;
+    }
+    const files: GameFileInput[] = [];
+    const problems: string[] = [];
+    for (const [i, file] of scan.files.entries()) {
+      set({ busy: `Unpacking the game’s map files (${i + 1} of ${scan.files.length})…` });
+      try {
+        files.push({ path: file.path, bytes: await bridge.gameFiles.read(reader.id, file.index) });
+      } catch (error) {
+        problems.push(errorText(error));
+      }
+    }
+    if (files.length === 0) {
+      set({ busy: null, error: unpackFailedText(problems) });
+      return;
+    }
+    set({ busy: 'Reading the map places…' });
+    const result = await runTableJob({
+      kind: 'table',
+      readerId: reader.id,
+      files,
+      stamp: scan.stamp,
+      now: Date.now(),
+    });
+    if (token !== tableToken || get().game !== game) return;
+    if (!result.ok) {
+      set({ busy: null, error: result.message });
+      return;
+    }
+    reportGameFiles({ kind: 'table', readFailed: problems.length, ...result.stats });
+    const pins = Object.values(result.table.worlds).reduce((sum, list) => sum + list.length, 0);
+    if (pins === 0) {
+      set({
+        busy: null,
+        error:
+          'Atlas read the game’s map files but found no map places in them: an unknown file layout.',
+      });
+      return;
+    }
+    saveSetting(SETTINGS.gamePins(reader.id), result.table);
+    set({
+      busy: null,
+      error: null,
+      table: result.table,
+      last: { files: files.length, unreadable: problems.length, pins },
+    });
+    notify(`Read ${pins === 1 ? '1 map place' : `${pins} map places`} from the game.`);
+    void rematch();
+  } catch (error) {
+    set({ busy: null, error: errorText(error) });
+  }
+}
+
+/** Asks for the game's folder (desktop app), then reads its map places. */
+export async function chooseGameFolder(): Promise<void> {
+  const reader = saveReaderOf(get().game);
+  if (!desktop || !reader?.readsGameFiles) return;
+  let folder: GameFolderInfo | null;
+  try {
+    folder = await desktop.gameFiles.chooseFolder(reader.id);
+  } catch (error) {
+    patchTable({ error: errorText(error) });
+    return;
+  }
+  if (!folder) return;
+  if (!folder.valid) {
+    patchTable({ error: folder.problem ?? 'That is not the game’s folder.' });
+    return;
+  }
+  patchTable({ folder, error: null });
+  await readGameTable();
+}
+
+/** Forgets the game folder and the map places read from it. */
+export async function forgetGameTable(): Promise<void> {
+  const reader = saveReaderOf(get().game);
+  if (!reader?.readsGameFiles) return;
+  tableToken++;
+  saveSetting(SETTINGS.gamePins(reader.id), null);
+  patch({ gameTable: NO_GAME_TABLE });
+  try {
+    await desktop?.gameFiles.forgetFolder(reader.id);
+  } catch {
+    // Nothing remembered.
+  }
+  void rematch();
 }

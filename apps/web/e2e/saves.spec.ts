@@ -1,4 +1,5 @@
-import { typicalSave, WORLD_PATHS } from '@atlas/saves/testing';
+import { mulberry32 } from '@atlas/saves/match';
+import { areaMapPinsFile, entityMapPinsFile, typicalSave, WORLD_PATHS } from '@atlas/saves/testing';
 import { expect, test, type Page } from '@playwright/test';
 import { collectErrors, expectOverallFound, mapStatus, selectByName } from './helpers';
 
@@ -283,6 +284,9 @@ test('a save that marks nothing says why, without calling it a failure', async (
   );
   await expect(dialog.getByTestId('save-why')).toContainText('Nothing is wrong with the save.');
   await expectOverallFound(page, 0);
+  // Reading the game's own map places needs the desktop app.
+  await expect(dialog.getByTestId('game-table-desktop-only')).toBeVisible();
+  await expect(dialog.getByTestId('game-folder-choose')).toHaveCount(0);
 });
 
 test('placing yourself twice lines a map up when the pack cannot', async ({ page }) => {
@@ -337,17 +341,38 @@ test('placing yourself twice lines a map up when the pack cannot', async ({ page
   await expect(page.getByTestId('save-lined-up')).toHaveText('Lined up from the spots you marked.');
 });
 
+interface FakeGameFile {
+  path: string;
+  bytes: number[];
+  /** The shell cannot unpack it, for this reason. */
+  fail?: string;
+}
+
 interface FakeSaves {
   folder: string;
   files: { name: string; modified: number; bytes: number[] }[];
   revision: number;
   calls: [string, Record<string, unknown>][];
   reports: Record<string, unknown>[];
+  /** A made-up game folder and the map files in its bundles. */
+  game?: { folder: string; chosen: boolean; files: FakeGameFile[] };
+  gameReports: Record<string, unknown>[];
 }
 
-/** A stand-in for the desktop shell's save commands, over a made-up saves folder. */
-function installFakeSaves(initial: { folder: string; files: FakeSaves['files'] }) {
-  const state: FakeSaves = { ...initial, revision: 0, calls: [], reports: [] };
+/** A stand-in for the desktop shell's save and game file commands, over made-up folders. */
+function installFakeSaves(initial: {
+  folder: string;
+  files: FakeSaves['files'];
+  game?: { folder: string; files: FakeGameFile[] };
+}) {
+  const state: FakeSaves = {
+    ...initial,
+    game: initial.game && { ...initial.game, chosen: false },
+    revision: 0,
+    calls: [],
+    reports: [],
+    gameReports: [],
+  };
   (window as unknown as { __fakeSaves: FakeSaves }).__fakeSaves = state;
   const entry = (file: FakeSaves['files'][number]) => ({
     path: `${state.folder}\\${file.name}`,
@@ -397,6 +422,55 @@ function installFakeSaves(initial: { folder: string; files: FakeSaves['files'] }
         return Promise.resolve(null);
       case 'saves_report':
         state.reports.push(args.report as Record<string, unknown>);
+        return Promise.resolve(null);
+      case 'game_folder_get':
+      case 'game_folder_choose': {
+        const game = state.game;
+        if (!game) return Promise.resolve(command === 'game_folder_get' ? {} : null);
+        if (command === 'game_folder_choose') game.chosen = true;
+        return Promise.resolve(
+          game.chosen
+            ? {
+                path: game.folder,
+                name: 'The Witcher 3',
+                valid: true,
+                stamp: 'x64:100:200',
+                problem: null,
+              }
+            : { path: null, name: null, valid: false, stamp: null, problem: null },
+        );
+      }
+      case 'game_files_scan':
+        return Promise.resolve({
+          stamp: 'x64:100:200',
+          bundles: 3,
+          entries: 1000,
+          files: (state.game?.files ?? []).map((file, index) => ({
+            index,
+            path: file.path,
+            size: file.bytes.length,
+            compression: file.fail ? 'Doboz' : 'zlib',
+          })),
+          extensions: { w2em: 2, w2am: 1 },
+          compressions: { zlib: 2, Doboz: 1 },
+          layouts: { '2': 3 },
+          duplicates: 0,
+          outside: 0,
+          unreadable: 0,
+        });
+      case 'game_files_read': {
+        const file = state.game?.files[args.index as number];
+        if (!file) {
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+          return Promise.reject('That file is not one Atlas found in the game.');
+        }
+        return file.fail
+          ? // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+            Promise.reject(file.fail)
+          : Promise.resolve(Uint8Array.from(file.bytes).buffer);
+      }
+      case 'game_files_report':
+        state.gameReports.push(args.report as Record<string, unknown>);
         return Promise.resolve(null);
       default:
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
@@ -479,4 +553,122 @@ test('in the desktop app, the saves folder is linked and each new save is read a
       ),
     )
     .toBe(true);
+});
+
+test('in the desktop app, the game’s map places line the map up and place what the save names', async ({
+  page,
+}) => {
+  // A made-up world: signposts and nests at random spots, none from the game.
+  const random = mulberry32(11);
+  const spot = () => ({
+    x: Math.round((random() - 0.5) * 1800),
+    y: Math.round((random() - 0.5) * 1800),
+  });
+  const signs = Array.from({ length: 30 }, (_, i) => ({
+    name: `sign_${i}`,
+    type: 'RoadSign',
+    ...spot(),
+  }));
+  const nests = Array.from({ length: 8 }, (_, i) => ({
+    name: `nest_${i}`,
+    type: 'MonsterNest',
+    ...spot(),
+  }));
+  // The pack's map has no world transform: 2 m a pixel, y up, centred, as the other tests.
+  const toPixel = (p: { x: number; y: number }) => ({ x: (p.x + 1024) / 2, y: (1024 - p.y) / 2 });
+  const maps = PACK['maps.json'] as { worldTransform?: unknown }[];
+  const pack: Record<string, unknown> = {
+    ...PACK,
+    'maps.json': maps.map(({ worldTransform: _t, ...map }) => map),
+    'locations.json': [
+      ...signs.map((p) => {
+        const at = toPixel(p);
+        return location(`l-${p.name}`, 'Signpost', at.x, at.y, 'sign');
+      }),
+      ...nests.map((p) => {
+        const at = toPixel(p);
+        return location(`l-${p.name}`, 'Nest', at.x, at.y, 'nest');
+      }),
+    ],
+  };
+  await page.route('**/config.json', (route) =>
+    route.fulfill({
+      json: { packs: [{ id: 'w3', url: 'packs/w3/', title: 'The Witcher 3 test pack' }] },
+    }),
+  );
+  await page.route('**/packs/w3/**', (route) => {
+    const name = new URL(route.request().url()).pathname.split('/packs/w3/')[1] ?? '';
+    const body = pack[name];
+    return body === undefined
+      ? route.fulfill({ status: 404, body: 'not found' })
+      : route.fulfill({ json: body });
+  });
+  const save = typicalSave({
+    world: WORLD_PATHS.novigrad,
+    player: { x: 10, y: -20, yaw: 0 },
+    mapPins: { discovered: ['sign_3', 'nest_1', 'nest_2'], disabled: ['nest_1'] },
+  });
+  await page.addInitScript(installFakeSaves, {
+    folder: 'C:\\Users\\someone\\Documents\\The Witcher 3\\gamesaves',
+    files: [{ name: 'AutoSave_1.sav', modified: 1000, bytes: [...save] }],
+    game: {
+      folder: 'C:\\Games\\The Witcher 3',
+      files: [
+        { path: 'game\\world.w2am', bytes: [...areaMapPinsFile([WORLD_PATHS.novigrad])] },
+        {
+          path: 'game\\hub_pins\\novigrad.w2em',
+          bytes: [...entityMapPinsFile([...signs, ...nests])],
+        },
+        {
+          path: 'game\\hub_pins\\the_spiral.w2em',
+          bytes: [],
+          fail: 'Could not read game\\hub_pins\\the_spiral.w2em (Doboz, in blob.bundle): it is packed with Doboz, a compression Atlas cannot read yet.',
+        },
+      ],
+    },
+  });
+  await page.goto('./');
+  await expect(page.getByTestId('marker-count')).toHaveText('38');
+
+  await page.getByTestId('save-button').click();
+  const table = page.getByTestId('game-table');
+  await expect(table).toContainText('No game folder chosen yet.');
+  await table.getByTestId('game-folder-choose').click();
+  await expect(page.getByTestId('toast')).toHaveText('Read 38 map places from the game.');
+  await expect(table.getByTestId('game-table-counts')).toHaveText(
+    '38 map places read: Velen and Novigrad 38.',
+  );
+  await expect(table.getByTestId('game-folder')).toHaveText('C:\\Games\\The Witcher 3');
+
+  // The save names a signpost discovered and a nest cleared: both placed, the map lined up.
+  await page.getByTestId('save-use-default').click();
+  await expect(page.getByTestId('toast')).toHaveText('Read AutoSave_1.sav: 2 places marked found.');
+  await expectOverallFound(page, 2);
+  await expect(page.getByTestId('save-lined-up')).toHaveText(
+    'Lined up from the game’s map places (30 of 30 signposts fit).',
+  );
+  await page.getByTestId('save-show-me').click();
+  await expect(page.locator('.atlas-player')).toBeVisible();
+
+  // The log gets counts, world ids and pin types: no pin's name and no position.
+  const reports = await page.evaluate(
+    () => (window as unknown as { __fakeSaves: FakeSaves }).__fakeSaves.gameReports,
+  );
+  expect(reports[0]).toMatchObject({
+    kind: 'table',
+    files: 2,
+    readFailed: 1,
+    parsed: 2,
+    failed: 0,
+    worlds: { novigrad: { pins: 38, types: { RoadSign: 30, MonsterNest: 8 } } },
+  });
+  expect(reports.at(-1)).toMatchObject({
+    kind: 'match',
+    saveTags: 3,
+    saveTagsFound: 3,
+    fits: { novigrad: { kinds: 'first', inliers: 30, candidates: 30, places: 30, passed: true } },
+  });
+  const logged = JSON.stringify(reports);
+  expect(logged).not.toMatch(/sign_|nest_/);
+  for (const p of [...signs, ...nests]) expect(logged).not.toContain(`"x":${p.x}`);
 });

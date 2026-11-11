@@ -195,6 +195,27 @@ try {
     String(unchosen).startsWith('refused'),
     `saves_read refuses a file nobody chose (${unchosen})`,
   );
+  // The game's files: no folder is chosen yet, and nothing is read without one.
+  const gameFolder = await s.runAsync(
+    `return window.__TAURI_INTERNALS__.invoke('game_folder_get', { game: 'witcher3' });`,
+  );
+  check(
+    gameFolder?.path === null && gameFolder?.valid === false,
+    'no game folder is chosen at first',
+  );
+  for (const [command, args] of [
+    ['game_files_scan', { game: 'witcher3' }],
+    ['game_files_read', { game: 'witcher3', index: 0 }],
+  ]) {
+    const result = await s.runAsync(
+      `try { await window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)}); return 'ok'; }
+       catch (error) { return 'refused: ' + String(error && error.message || error); }`,
+    );
+    check(
+      String(result).startsWith('refused'),
+      `${command} is refused without a folder (${result})`,
+    );
+  }
   check(
     !(await s.run(
       `return !!document.querySelector('[data-testid="download-map-images"], [data-testid="map-images-button"]');`,

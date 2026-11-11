@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./games": "./src/games.ts",
     "./match": "./src/match/index.ts",
-    "./testing": "./src/testing/index.ts"
+    "./testing": "./src/testing/index.ts",
+    "./table": "./src/gamefiles/table.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -588,3 +588,8 @@ function mapManager(
     ]),
   ];
 }
+
+// ---------------------------------------------------------------------------
+// CR2W files (the game's own resources)
+
+export * from './cr2w';

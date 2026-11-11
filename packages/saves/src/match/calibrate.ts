@@ -75,6 +75,14 @@ export interface AutoCalibrationInput {
   /** Hypotheses to try (each is tried mirrored and not). Default 12,000. */
   iterations?: number;
   seed?: number;
+  /**
+   * Also guess from neighbours: a pin and its n-th nearest pin of the same
+   * kind against a place and its n-th nearest place. When pins and places
+   * are mostly the same points (a table of every pin of a kind against a
+   * pack's places of that kind), this finds the transform with hundreds of
+   * points, where pairs picked at random would almost never be right.
+   */
+  neighbourPairs?: boolean;
 }
 
 export interface AutoCalibration {
@@ -95,6 +103,14 @@ export const MIN_INLIER_SHARE = 0.3;
 /** The least number of pins that must land on a place for a fit to count. */
 export const MIN_INLIERS = 5;
 
+/** The best fit {@link findFit} found, before any bar is applied. */
+export interface FitFound extends AutoCalibration {
+  /** Places of the kinds of the candidate pins: the most that could be matched from that side. */
+  places: number;
+  /** The matching radius in map pixels, at the fit's scale. */
+  radius: number;
+}
+
 /**
  * Finds world-to-pixel by registering the save's pins against the pack's
  * places of the same kinds, without knowing which pin is which place:
@@ -106,6 +122,20 @@ export const MIN_INLIERS = 5;
  * {@link MIN_INLIERS}, {@link MIN_INLIER_SHARE}).
  */
 export function autoCalibrate(input: AutoCalibrationInput): AutoCalibration | null {
+  const fit = findFit(input);
+  if (!fit || fit.inliers < MIN_INLIERS || fit.inliers < MIN_INLIER_SHARE * fit.candidates) {
+    return null;
+  }
+  const { places: _places, radius: _radius, ...calibration } = fit;
+  return calibration;
+}
+
+/**
+ * The best world-to-pixel fit of pins to places (see {@link autoCalibrate}),
+ * however few pins land: the caller decides whether it is good enough.
+ * Null when no guess made even a few pins land.
+ */
+export function findFit(input: AutoCalibrationInput): FitFound | null {
   const random = mulberry32(input.seed ?? 0x5a7e);
   const pinsByKind = groupByKind(input.pins);
   const placesByKind = groupByKind(input.places);
@@ -113,7 +143,8 @@ export function autoCalibrate(input: AutoCalibrationInput): AutoCalibration | nu
     (kind) => (placesByKind.get(kind)?.length ?? 0) >= 2 && pinsByKind.get(kind)!.length >= 2,
   );
   const candidatePins = input.pins.filter((pin) => placesByKind.has(pin.kind));
-  if (kinds.length === 0 || candidatePins.length < MIN_INLIERS) return null;
+  const candidatePlaces = input.places.filter((place) => pinsByKind.has(place.kind)).length;
+  if (kinds.length === 0 || candidatePins.length < 3) return null;
 
   // Rarer kinds give a correct guess more often, so they are tried more.
   const weights = kinds.map((k) => 1 / (pinsByKind.get(k)!.length * placesByKind.get(k)!.length));
@@ -127,8 +158,17 @@ export function autoCalibrate(input: AutoCalibrationInput): AutoCalibration | nu
     return kinds[kinds.length - 1]!;
   };
   const grid = new KindGrid(input.places, input.mapSize.width, input.mapSize.height);
-  const probe = sample(candidatePins, 24, random);
+  // Enough pins that about eight land when the guess is right, even where
+  // the places cover only part of the pins.
+  const probeSize = Math.min(
+    400,
+    Math.max(24, Math.ceil((8 * candidatePins.length) / Math.max(1, candidatePlaces))),
+  );
+  const probe = sample(candidatePins, probeSize, random);
   const extent = Math.max(input.mapSize.width, input.mapSize.height);
+  const enough = 0.9 * Math.min(candidatePins.length, candidatePlaces);
+  const pinNeighbours = input.neighbourPairs ? neighboursByKind(pinsByKind, kinds) : null;
+  const placeNeighbours = input.neighbourPairs ? neighboursByKind(placesByKind, kinds) : null;
 
   let best: { transform: Affine; reflected: boolean; score: number } | null = null;
   const iterations = input.iterations ?? 12_000;
@@ -136,10 +176,28 @@ export function autoCalibrate(input: AutoCalibrationInput): AutoCalibration | nu
     const kind = pickKind();
     const pins = pinsByKind.get(kind)!;
     const places = placesByKind.get(kind)!;
-    const a = pins[Math.floor(random() * pins.length)]!;
-    const b = pins[Math.floor(random() * pins.length)]!;
-    const c = places[Math.floor(random() * places.length)]!;
-    const d = places[Math.floor(random() * places.length)]!;
+    let a: KindPoint, b: KindPoint, c: KindPoint, d: KindPoint;
+    if (pinNeighbours && placeNeighbours && i % 2 === 0) {
+      // A pin and one of its nearest pins against a place and one of its
+      // nearest places. The same rank is tried more often: where pins and
+      // places are the same points, it is the right one.
+      const n = Math.floor(random() * NEIGHBOURS);
+      const m = random() < 0.5 ? n : Math.floor(random() * NEIGHBOURS);
+      const pin = Math.floor(random() * pins.length);
+      const place = Math.floor(random() * places.length);
+      const pinNext = pinNeighbours.get(kind)![pin]![n];
+      const placeNext = placeNeighbours.get(kind)![place]![m];
+      if (pinNext === undefined || placeNext === undefined) continue;
+      a = pins[pin]!;
+      b = pins[pinNext]!;
+      c = places[place]!;
+      d = places[placeNext]!;
+    } else {
+      a = pins[Math.floor(random() * pins.length)]!;
+      b = pins[Math.floor(random() * pins.length)]!;
+      c = places[Math.floor(random() * places.length)]!;
+      d = places[Math.floor(random() * places.length)]!;
+    }
     if (a === b || c === d || distance(a, b) < 1e-6) continue;
     for (const reflected of [true, false]) {
       const transform = fitSimilarity(
@@ -158,7 +216,7 @@ export function autoCalibrate(input: AutoCalibrationInput): AutoCalibration | nu
       const score = countLanding(candidatePins, transform, radius, grid);
       if (!best || score > best.score) best = { transform, reflected, score };
     }
-    if (best && best.score >= 0.9 * candidatePins.length) break;
+    if (best && best.score >= enough) break;
   }
   if (!best) return null;
 
@@ -173,16 +231,48 @@ export function autoCalibrate(input: AutoCalibrationInput): AutoCalibration | nu
   }
   const radius = Math.max(input.minRadiusPx, input.radiusWorld * affineScale(transform));
   const pairs = oneToOne(candidatePins, transform, radius, grid);
-  const inliers = pairs.length;
-  if (inliers < MIN_INLIERS || inliers < MIN_INLIER_SHARE * candidatePins.length) return null;
   return {
     transform,
     reflected: isReflected(transform),
-    inliers,
+    inliers: pairs.length,
     candidates: candidatePins.length,
-    rms: rmsError(transform, pairs),
+    rms: pairs.length > 0 ? rmsError(transform, pairs) : 0,
     scale: affineScale(transform),
+    places: candidatePlaces,
+    radius,
   };
+}
+
+/** How many nearest neighbours of its kind each point keeps, for guesses from neighbours. */
+const NEIGHBOURS = 4;
+
+/** For each kind, each point's nearest points of that kind, by index, nearest first. */
+function neighboursByKind(
+  byKind: ReadonlyMap<string, readonly KindPoint[]>,
+  kinds: readonly string[],
+): Map<string, number[][]> {
+  const result = new Map<string, number[][]>();
+  for (const kind of kinds) {
+    const points = byKind.get(kind)!;
+    result.set(
+      kind,
+      points.map((point, i) => {
+        const nearest: { index: number; distance: number }[] = [];
+        for (let j = 0; j < points.length; j++) {
+          if (j === i) continue;
+          const d = distance(point, points[j]!);
+          if (d < 1e-6) continue;
+          if (nearest.length < NEIGHBOURS || d < nearest[nearest.length - 1]!.distance) {
+            nearest.push({ index: j, distance: d });
+            nearest.sort((p, q) => p.distance - q.distance);
+            if (nearest.length > NEIGHBOURS) nearest.pop();
+          }
+        }
+        return nearest.map((n) => n.index);
+      }),
+    );
+  }
+  return result;
 }
 
 function groupByKind<T extends KindPoint>(points: readonly T[]): Map<string, T[]> {
@@ -195,17 +285,23 @@ function groupByKind<T extends KindPoint>(points: readonly T[]): Map<string, T[]
   return groups;
 }
 
+/**
+ * How many places pins land on, each place counted once: a guess that
+ * shrinks the world onto a few places must not score as if every pin
+ * landed on one of its own.
+ */
 function countLanding(
   pins: readonly KindPoint[],
   transform: Affine,
   radius: number,
   grid: KindGrid,
 ): number {
-  let count = 0;
+  const landed = new Set<KindPoint>();
   for (const pin of pins) {
-    if (grid.nearest(applyAffine(transform, pin), pin.kind, radius)) count++;
+    const place = grid.nearest(applyAffine(transform, pin), pin.kind, radius);
+    if (place) landed.add(place);
   }
-  return count;
+  return landed.size;
 }
 
 /** Pins and the places they land on, each place used once, nearest first. */

@@ -1,6 +1,13 @@
+import { PinTableIndex, type GamePinTable } from '../gamefiles/table';
 import type { PinKindRule, SaveTuning } from '../reader';
 import type { SavePin, SaveSummary } from '../summary';
-import { autoCalibrate, KindGrid, type AutoCalibration, type KindPoint } from './calibrate';
+import {
+  autoCalibrate,
+  findFit,
+  KindGrid,
+  type AutoCalibration,
+  type KindPoint,
+} from './calibrate';
 import {
   affineScale,
   applyAffine,
@@ -49,10 +56,51 @@ export interface MapCalibration {
   /** For `manual`: the points the person marked. */
   points?: { world: Point2; pixel: Point2 }[];
   /** For `auto`: how well the pins fit. */
-  fit?: { inliers: number; candidates: number; rms: number };
+  fit?: {
+    inliers: number;
+    candidates: number;
+    rms: number;
+    /** From a table: places on the map of the kinds used. */
+    places?: number;
+    /** From a table: the matching radius in map pixels. */
+    radius?: number;
+    /** From a table: which pins were used. */
+    kinds?: FitKinds;
+  };
+  /** For `auto` from the game's map pin table: `table:` and the table's stamp. */
+  from?: string;
   /** When it was made, in milliseconds since the epoch. */
   at: number;
 }
+
+/** The pins a table fit used: the first anchor kind alone (signposts), or every anchor kind. */
+export type FitKinds = 'first' | 'anchors';
+
+/** How well the game's map pins lined up with a map, and whether that is good enough to use. */
+export interface TableFit {
+  kinds: FitKinds;
+  /** Table pins that landed on a place of their kind. */
+  inliers: number;
+  /** Table pins of the kinds used. */
+  candidates: number;
+  /** Places on the map of those kinds. */
+  places: number;
+  /** Root mean square distance of the landed pins from their places, in map pixels. */
+  rms: number;
+  /** The matching radius in map pixels. */
+  radius: number;
+  passed: boolean;
+}
+
+/**
+ * The bar a fit from the game's map pin table must pass to be used: at
+ * least {@link TABLE_FIT.minInliers} pins land, at least `minShare` of the
+ * smaller of pins and places land (a map may show only part of a world,
+ * a pack may lack some places), and the landed pins sit closer to their
+ * places than `maxRmsShare` of the matching radius on average (pins
+ * landing by chance spread over the whole radius).
+ */
+export const TABLE_FIT = { minInliers: 8, minShare: 0.5, maxRmsShare: 0.5 } as const;
 
 export interface MatchInput {
   summary: SaveSummary;
@@ -64,6 +112,8 @@ export interface MatchInput {
   calibrations: Readonly<Record<string, MapCalibration>>;
   /** Try to line maps up from the save's pins when nothing else does. Default true. */
   autoCalibrate?: boolean;
+  /** The game's own map pins, read on this device; null or left out when there is none. */
+  table?: GamePinTable | null;
   now?: number;
 }
 
@@ -74,6 +124,8 @@ export interface WorldMatch {
   mapSource: WorldMapSource;
   /** How world coordinates become pixels on that map; null when they cannot yet. */
   calibration: CalibrationSource | null;
+  /** How the game's map pins fit the map, when a table was tried for it. */
+  fit?: TableFit;
 }
 
 export interface MatchedLocation {
@@ -117,9 +169,19 @@ export interface PlayerOnMap {
  * - `no-tag-table`: the save names its discovered or cleared places by the
  *   game's tags alone, without positions, and no place of the pack names
  *   them; telling which places they are needs a table of where each tag is
- *   (in the game's own files), which Atlas does not have.
+ *   (in the game's own files), which Atlas does not have;
+ * - `not-in-table`: as `no-tag-table`, but Atlas has the table, and it
+ *   does not hold those tags.
  */
-export type NothingReason = 'no-map' | 'nothing-done' | 'no-tag-table';
+export type NothingReason = 'no-map' | 'nothing-done' | 'no-tag-table' | 'not-in-table';
+
+/** What the game's map pin table did for a save. */
+export interface TableUse {
+  /** Pins the save names by tag alone. */
+  tags: number;
+  /** Of those, how many the table holds. */
+  found: number;
+}
 
 export interface SaveMatch {
   /** The world the player is in, with its map. */
@@ -142,6 +204,8 @@ export interface SaveMatch {
   unplaced: number;
   /** Why nothing is found, when nothing is; null when something is, or when `unmatched` says why. */
   nothingBecause: NothingReason | null;
+  /** What the game's map pin table did; null without one. */
+  table: TableUse | null;
 }
 
 /** The pin kind of each category whose name holds one of a kind's keywords. */
@@ -156,6 +220,42 @@ export function categoryKinds(
     if (rule) kinds.set(category.id, rule.kind);
   }
   return kinds;
+}
+
+/** The pin kind of a game pin type (a `Disabled` suffix is the same kind), or null. */
+export function kindOfType(type: string, rules: readonly PinKindRule[]): string | null {
+  const base = type.replace(/disabled$/i, '').toLowerCase();
+  if (!base) return null;
+  return rules.find((rule) => rule.types.some((t) => t.toLowerCase() === base))?.kind ?? null;
+}
+
+/**
+ * The save's pins, with those it names by tag alone placed from the table:
+ * their world, type, kind and position.
+ */
+export function placePinsFromTable(
+  pins: readonly SavePin[],
+  index: PinTableIndex,
+  currentWorld: string | null,
+  rules: readonly PinKindRule[],
+): { pins: SavePin[]; use: TableUse } {
+  const use: TableUse = { tags: 0, found: 0 };
+  const placed = pins.map((pin) => {
+    if (pin.position) return pin;
+    use.tags++;
+    const found = index.find(pin.id, pin.world ?? currentWorld);
+    if (!found) return pin;
+    use.found++;
+    const type = found.pin.type || pin.type;
+    return {
+      ...pin,
+      world: found.world,
+      type,
+      kind: (type ? kindOfType(type, rules) : null) ?? pin.kind,
+      position: { x: found.pin.x, y: found.pin.y, z: found.pin.z },
+    };
+  });
+  return { pins: placed, use };
 }
 
 /** Whether a pin is in the state that makes its place found. */
@@ -180,7 +280,13 @@ export function transformFor(
 }
 
 export function matchSave(input: MatchInput): SaveMatch {
-  const { summary, pack, tuning } = input;
+  const { summary: read, pack, tuning } = input;
+  const index = input.table ? new PinTableIndex(input.table) : null;
+  const fromTable = index
+    ? placePinsFromTable(read.pins, index, read.world?.id ?? null, tuning.pinKinds)
+    : null;
+  const summary: SaveSummary = fromTable ? { ...read, pins: fromTable.pins } : read;
+  const tableKey = input.table ? `table:${input.table.stamp}` : null;
   const rules = new Map(tuning.pinKinds.map((rule) => [rule.kind, rule]));
   const kindOfCategory = categoryKinds(pack.categories, tuning.pinKinds);
   const trackable = new Set(pack.categories.filter((c) => c.trackable).map((c) => c.id));
@@ -196,13 +302,51 @@ export function matchSave(input: MatchInput): SaveMatch {
     tuning.worlds.find((w) => w.id === id)?.name ??
     id;
 
-  // Lines a world up with its map, automatically from pins when it has to.
+  // Lines a world up with its map, automatically from pins when it has to:
+  // from every pin of the game's table when there is one, else from the
+  // save's own pins.
   const worlds = new Map<string, WorldMatch & { transform: Affine | null }>();
   for (const worldId of worldIds) {
     const { mapId, source } = mapForWorld(worldId, pack.maps, tuning.worlds, input.worldMaps);
     const map = mapId ? mapsById.get(mapId) : undefined;
     let found = map ? transformFor(map, calibrations) : null;
-    if (map && (!found || found.source === 'auto') && input.autoCalibrate !== false) {
+    let fit: TableFit | undefined;
+    const kept = map ? calibrations[map.id] : undefined;
+    const tablePins = index?.pinsOf(worldId) ?? [];
+    if (map && found?.source === 'auto' && kept?.from && kept.from === tableKey && kept.fit) {
+      // Made from this very table before.
+      fit = keptFit(kept.fit);
+    } else if (
+      map &&
+      (!found || found.source === 'auto') &&
+      input.autoCalibrate !== false &&
+      tablePins.length > 0
+    ) {
+      const tried = calibrateFromTable(tablePins, map, pack, kindOfCategory, tuning);
+      if (tried) {
+        const { transform, ...report } = tried;
+        fit = report;
+        if (report.passed) {
+          const calibration: MapCalibration = {
+            source: 'auto',
+            transform,
+            fit: {
+              inliers: report.inliers,
+              candidates: report.candidates,
+              rms: report.rms,
+              places: report.places,
+              radius: report.radius,
+              kinds: report.kinds,
+            },
+            from: tableKey!,
+            at: input.now ?? Date.now(),
+          };
+          calibrated[map.id] = calibration;
+          calibrations[map.id] = calibration;
+          found = { transform, source: 'auto' };
+        }
+      }
+    } else if (map && (!found || found.source === 'auto') && input.autoCalibrate !== false) {
       const auto = calibrateFromPins(summary.pins, worldId, map, pack, kindOfCategory, tuning);
       if (auto) {
         const calibration: MapCalibration = {
@@ -222,6 +366,7 @@ export function matchSave(input: MatchInput): SaveMatch {
       mapId: mapId ?? null,
       mapSource: source,
       calibration: found?.source ?? null,
+      ...(fit ? { fit } : {}),
       transform: found?.transform ?? null,
     });
   }
@@ -363,7 +508,9 @@ export function matchSave(input: MatchInput): SaveMatch {
         : done === 0
           ? 'nothing-done'
           : unplaced > 0
-            ? 'no-tag-table'
+            ? index
+              ? 'not-in-table'
+              : 'no-tag-table'
             : null;
 
   // Counts by category.
@@ -387,6 +534,7 @@ export function matchSave(input: MatchInput): SaveMatch {
     needsCalibration: Boolean(currentWorld?.mapId && !currentWorld.transform),
     unplaced,
     nothingBecause,
+    table: fromTable?.use ?? null,
   };
 }
 
@@ -437,4 +585,80 @@ export function calibrateFromPins(
     minRadiusPx: tuning.minRadiusPx,
     mapSize: { width: map.width, height: map.height },
   });
+}
+
+/** A fit kept from before, as a report. */
+function keptFit(fit: NonNullable<MapCalibration['fit']>): TableFit {
+  return {
+    kinds: fit.kinds ?? 'anchors',
+    inliers: fit.inliers,
+    candidates: fit.candidates,
+    places: fit.places ?? 0,
+    rms: fit.rms,
+    radius: fit.radius ?? 0,
+    passed: true,
+  };
+}
+
+/**
+ * Lines a map up from the game's own map pins of its world: every pin of
+ * the first anchor kind (signposts in The Witcher 3) against the map's
+ * places of that kind, then, when that does not pass {@link TABLE_FIT},
+ * every anchor kind. Returns the better report, with its transform; null
+ * when the map has no places of an anchor kind or nothing landed at all.
+ */
+export function calibrateFromTable(
+  pins: readonly { x: number; y: number; type: string }[],
+  map: PackForMatching['maps'][number],
+  pack: PackForMatching,
+  kindOfCategory: ReadonlyMap<string, string>,
+  tuning: SaveTuning,
+): (TableFit & { transform: Affine }) | null {
+  const anchors = tuning.pinKinds.filter((rule) => rule.anchor);
+  const first = anchors[0];
+  if (!first) return null;
+  const typed = pins
+    .map((pin) => ({ x: pin.x, y: pin.y, kind: kindOfType(pin.type, tuning.pinKinds) }))
+    .filter((pin): pin is KindPoint => pin.kind !== null);
+  const places = pack.locations
+    .filter((l) => l.mapId === map.id && kindOfCategory.has(l.categoryId))
+    .map((l) => ({ x: l.x, y: l.y, kind: kindOfCategory.get(l.categoryId)! }));
+  const attempt = (kinds: FitKinds, wanted: ReadonlySet<string>) => {
+    const found = findFit({
+      pins: typed.filter((pin) => wanted.has(pin.kind)),
+      places: places.filter((place) => wanted.has(place.kind)),
+      radiusWorld: tuning.matchRadius,
+      minRadiusPx: tuning.minRadiusPx,
+      mapSize: { width: map.width, height: map.height },
+      neighbourPairs: true,
+      // Hundreds of pins against hundreds of places need more guesses than a save's few.
+      iterations: 30_000,
+    });
+    if (!found) return null;
+    const passed =
+      found.inliers >= TABLE_FIT.minInliers &&
+      found.inliers >= TABLE_FIT.minShare * Math.min(found.candidates, found.places) &&
+      found.rms <= TABLE_FIT.maxRmsShare * found.radius;
+    return {
+      kinds,
+      inliers: found.inliers,
+      candidates: found.candidates,
+      places: found.places,
+      rms: found.rms,
+      radius: found.radius,
+      passed,
+      transform: found.transform,
+    };
+  };
+  const firstFit = attempt('first', new Set([first.kind]));
+  if (firstFit?.passed) return firstFit;
+  const allFit = attempt('anchors', new Set(anchors.map((rule) => rule.kind)));
+  if (allFit?.passed) return allFit;
+  // Neither passed: report the one that came closer.
+  if (!firstFit) return allFit;
+  if (!allFit) return firstFit;
+  return allFit.inliers / Math.max(1, Math.min(allFit.candidates, allFit.places)) >
+    firstFit.inliers / Math.max(1, Math.min(firstFit.candidates, firstFit.places))
+    ? allFit
+    : firstFit;
 }

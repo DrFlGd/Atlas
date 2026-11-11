@@ -164,6 +164,7 @@ export const WITCHER3_GAME: SaveGame = {
   matchesPack: ({ gameId, title }) =>
     /witcher[\s_-]*(3|iii)|wild[\s_-]*hunt/i.test(`${gameId} ${title}`),
   tuning: WITCHER3_TUNING,
+  readsGameFiles: true,
 };
 
 /** The world id of a world path: its folder (`levels\novigrad\novigrad.w2w` is `novigrad`). */

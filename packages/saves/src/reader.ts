@@ -84,6 +84,11 @@ export interface SaveGame {
   /** Whether a pack is for this game, from its id and title. */
   matchesPack(pack: { gameId: string; title: string }): boolean;
   tuning: SaveTuning;
+  /**
+   * The desktop app can read a table of the game's own map pins from the
+   * game's files (see `pinTableBuilder`).
+   */
+  readsGameFiles?: boolean;
 }
 
 /**

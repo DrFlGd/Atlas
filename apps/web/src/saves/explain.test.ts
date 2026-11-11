@@ -13,6 +13,7 @@ const match = (parts: Partial<SaveMatch>): SaveMatch => ({
   needsCalibration: false,
   unplaced: 0,
   nothingBecause: null,
+  table: null,
   ...parts,
 });
 
@@ -33,6 +34,18 @@ describe('why a save marks nothing', () => {
     expect(nothingNotice(match({ nothingBecause: 'no-tag-table', unplaced: 1 }))).toContain(
       '1 discovered place by',
     );
+  });
+
+  it('says when the table read from the game does not hold the save’s tags', () => {
+    const missing = match({
+      nothingBecause: 'not-in-table',
+      unplaced: 3,
+      table: { tags: 3, found: 0 },
+    });
+    expect(nothingNotice(missing)).toBe(
+      'The save names 3 discovered places by tags that are not among the map places Atlas read from the game.',
+    );
+    expect(nothingExplained(missing)).toContain('read the map places again');
   });
 
   it('says nothing when there is nothing to explain', () => {

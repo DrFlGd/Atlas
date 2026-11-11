@@ -1,12 +1,15 @@
-import type { Unmatched, WorldMatch } from '@atlas/saves';
+import type { TableFit, Unmatched, WorldMatch } from '@atlas/saves';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { desktop } from '../desktop';
 import { mapStateText, nothingExplained } from '../saves/explain';
 import { numberFormat } from '../state/derived';
 import {
+  chooseGameFolder,
+  forgetGameTable,
   linkSaveFile,
   linkSaveFolder,
   openSaveFile,
+  readGameTable,
   readLinkedSave,
   removeSaveMarks,
   resetCalibration,
@@ -18,6 +21,7 @@ import {
   showPlayer,
   shownPlayer,
   startPlacing,
+  tableStale,
   unlinkSave,
   MIN_SPOT_DISTANCE,
 } from '../state/saves';
@@ -100,8 +104,122 @@ function SaveDialogBody() {
         </p>
       ) : null}
       <SaveResult />
+      {reader.readsGameFiles ? <GameTable /> : null}
       <SaveMarks />
     </>
+  );
+}
+
+/** "Map places from the game": reading the game's own map pins (desktop app). */
+function GameTable() {
+  const state = useAtlas((s) => s.save.gameTable);
+  const game = useAtlas((s) => s.game);
+  const reader = saveReaderOf(game);
+  const { folder, table, busy, error } = state;
+  const counts = useMemo(
+    () =>
+      table
+        ? Object.entries(table.worlds)
+            .map(([id, pins]) => ({
+              id,
+              name: reader?.tuning.worlds.find((world) => world.id === id)?.name ?? id,
+              pins: pins.length,
+            }))
+            .filter((world) => world.pins > 0)
+            .sort((a, b) => b.pins - a.pins)
+        : [],
+    [table, reader],
+  );
+  const total = counts.reduce((sum, world) => sum + world.pins, 0);
+  return (
+    <section className="dialog-section" data-testid="game-table">
+      <h3 className="dialog-subhead">Map places from the game</h3>
+      {!desktop ? (
+        <p className="muted small" data-testid="game-table-desktop-only">
+          Reading where the game’s own map places are, to place what a save names and to line the
+          maps up by themselves, needs the Atlas desktop app: it reads them from your copy of{' '}
+          {reader?.title ?? 'the game'}.
+        </p>
+      ) : (
+        <>
+          <p className="muted small">
+            Atlas can read where the game’s own map places are (signposts, nests, treasure and the
+            rest) from your copy of {reader?.title ?? 'the game'}, to place what a save names and to
+            line the maps up by themselves. It only reads the game’s files, never changes them, and
+            keeps what it reads on this computer.
+          </p>
+          {folder?.path ? (
+            <p className="path" data-testid="game-folder">
+              {folder.path}
+            </p>
+          ) : (
+            <p className="small muted">No game folder chosen yet.</p>
+          )}
+          {table && total > 0 ? (
+            <p className="small" data-testid="game-table-counts">
+              {numberFormat.format(total)} map places read:{' '}
+              {counts.map((world) => `${world.name} ${numberFormat.format(world.pins)}`).join(', ')}
+              .
+            </p>
+          ) : null}
+          {tableStale(state) && !busy ? (
+            <p className="small muted" data-testid="game-table-stale">
+              The game was updated since Atlas read its map places. Read them again.
+            </p>
+          ) : null}
+          {busy ? (
+            <p className="small" role="status" data-testid="game-table-busy">
+              {busy}
+            </p>
+          ) : null}
+          {error ? (
+            <p className="save-error small" role="alert" data-testid="game-table-error">
+              {error}
+            </p>
+          ) : null}
+          <div className="save-buttons">
+            <button
+              type="button"
+              className="button"
+              disabled={Boolean(busy)}
+              data-testid="game-folder-choose"
+              onClick={() => {
+                void chooseGameFolder();
+              }}
+            >
+              <UiIcon name="folder" size={16} />
+              {folder?.path ? 'Choose another game folder…' : 'Choose the game folder…'}
+            </button>
+            {folder?.valid ? (
+              <button
+                type="button"
+                className="button"
+                disabled={Boolean(busy)}
+                data-testid="game-table-read"
+                onClick={() => {
+                  void readGameTable();
+                }}
+              >
+                {table ? 'Read map places again' : 'Read map places from the game'}
+              </button>
+            ) : null}
+            {folder?.path || table ? (
+              <button
+                type="button"
+                className="button"
+                disabled={Boolean(busy)}
+                data-testid="game-table-forget"
+                onClick={() => {
+                  void forgetGameTable();
+                }}
+              >
+                Forget
+              </button>
+            ) : null}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -328,6 +446,12 @@ function Screenshot({ path }: { path: string }) {
   ) : null;
 }
 
+/** How a table fit is said: "118 of 130 signposts". */
+function fitText(fit: Pick<TableFit, 'inliers' | 'candidates' | 'places' | 'kinds'>): string {
+  const of = Math.min(fit.candidates, fit.places || fit.candidates);
+  return `${numberFormat.format(fit.inliers)} of ${numberFormat.format(of)} ${fit.kinds === 'first' ? 'signposts' : 'places'} fit`;
+}
+
 const REASONS: Record<Unmatched['reason'], string> = {
   'no-category': 'this pack has no category for them',
   'no-place-nearby': 'no place of their kind in the pack is close enough',
@@ -492,11 +616,19 @@ function WorldRow({
             ? 'Lined up with the game world by the pack.'
             : world.calibration === 'manual'
               ? 'Lined up from the spots you marked.'
-              : world.calibration === 'auto'
-                ? `Lined up from the save’s map pins${calibration?.fit ? ` (${calibration.fit.inliers} of ${calibration.fit.candidates} fit)` : ''}.`
-                : spots > 0
-                  ? `Not lined up yet: ${spots === 1 ? 'one spot' : `${spots} spots`} marked. Mark one more from a save at least ${MIN_SPOT_DISTANCE} m away.`
-                  : 'Not lined up with the game world yet.'}
+              : world.calibration === 'auto' && calibration?.from?.startsWith('table:')
+                ? `Lined up from the game’s map places${calibration.fit ? ` (${fitText({ kinds: 'anchors', places: 0, ...calibration.fit })})` : ''}.`
+                : world.calibration === 'auto'
+                  ? `Lined up from the save’s map pins${calibration?.fit ? ` (${calibration.fit.inliers} of ${calibration.fit.candidates} fit)` : ''}.`
+                  : spots > 0
+                    ? `Not lined up yet: ${spots === 1 ? 'one spot' : `${spots} spots`} marked. Mark one more from a save at least ${MIN_SPOT_DISTANCE} m away.`
+                    : 'Not lined up with the game world yet.'}
+        </p>
+      ) : null}
+      {world.mapId && world.fit && !world.fit.passed ? (
+        <p className="small muted" data-testid="save-fit-failed">
+          The game’s map places do not line up with this map well enough ({fitText(world.fit)}), so
+          Atlas does not use them for it. Place yourself on the map instead.
         </p>
       ) : null}
       {world.mapId && world.calibration !== 'pack' ? (

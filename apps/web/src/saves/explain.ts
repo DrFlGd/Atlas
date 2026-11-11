@@ -16,6 +16,8 @@ export function nothingNotice(match: SaveMatch): string | null {
       return 'The save has not discovered any places yet.';
     case 'no-tag-table':
       return `The save names ${count(match.unplaced, 'discovered place', 'discovered places')} by the game’s own tags only, and Atlas has no table yet of where those are.`;
+    case 'not-in-table':
+      return `The save names ${count(match.unplaced, 'discovered place', 'discovered places')} by tags that are not among the map places Atlas read from the game.`;
     case 'no-map':
       return 'The save’s map could not be read.';
     case null:
@@ -29,7 +31,9 @@ export function nothingExplained(match: SaveMatch): string | null {
     case 'nothing-done':
       return 'This save has not discovered or cleared any places yet, so there is nothing to mark. That is expected near the start of the game: places are marked once a save has found them.';
     case 'no-tag-table':
-      return `This save lists ${count(match.unplaced, 'place', 'places')} as discovered or cleared, but names them only by the game’s own tags, without saying where they are. To tell which places of this pack they are, Atlas needs a table of where each tag is, from the game’s own files, and it does not have one yet. Nothing is wrong with the save.`;
+      return `This save lists ${count(match.unplaced, 'place', 'places')} as discovered or cleared, but names them only by the game’s own tags, without saying where they are. To tell which places of this pack they are, Atlas needs a table of where each tag is, from the game’s own files, and it does not have one yet. The desktop app can read it from your copy of the game (“Map places from the game”). Nothing is wrong with the save.`;
+    case 'not-in-table':
+      return `This save lists ${count(match.unplaced, 'place', 'places')} as discovered or cleared by the game’s own tags, but none of them is among the map places Atlas read from the game. If the game was updated or a DLC added since, read the map places again. Nothing is wrong with the save.`;
     case 'no-map':
       return 'Atlas could not read this save’s map, so it cannot tell which places the save has found.';
     case null:

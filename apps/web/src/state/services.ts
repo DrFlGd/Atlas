@@ -46,4 +46,10 @@ export const SETTINGS = {
   saveCalibration: (gameId: string) => `saveCalibration:${gameId}`,
   /** Spots the person marked on a map that is not lined up yet, by map id. */
   savePoints: (gameId: string) => `savePoints:${gameId}`,
+  /**
+   * The table of a game's own map pins, read from the game's files in the
+   * desktop app, by the save reader's id. It holds data from the game, so
+   * it stays on this device: settings are never exported.
+   */
+  gamePins: (readerId: string) => `gamePins:${readerId}`,
 } as const;

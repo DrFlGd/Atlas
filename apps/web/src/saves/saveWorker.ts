@@ -1,11 +1,12 @@
 /**
- * The save worker: reads and matches saves off the page's thread, so a
- * large save does not freeze the map. See `process.ts`.
+ * The save worker: reads and matches saves, and builds the table of the
+ * game's map pins, off the page's thread, so large files do not freeze the
+ * map. See `process.ts`.
  */
 
-import { processSave, type SaveJob } from './process';
+import { processJob, type WorkerJob } from './process';
 
-addEventListener('message', (event: MessageEvent<{ id: number; job: SaveJob }>) => {
+addEventListener('message', (event: MessageEvent<{ id: number; job: WorkerJob }>) => {
   const { id, job } = event.data;
-  postMessage({ id, result: processSave(job) });
+  postMessage({ id, result: processJob(job) });
 });

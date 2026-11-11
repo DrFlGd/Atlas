@@ -245,6 +245,10 @@ test('search finds lists, items and guides and opens them', async ({ page, reque
 
   await page.keyboard.press('/');
   await input.fill('arriving on the isle');
+  // Results follow the typing a moment later; Enter opens the first one shown.
+  await expect(
+    page.getByRole('listbox', { name: 'Search results' }).getByRole('option').first(),
+  ).toContainText('Guide');
   await input.press('Enter');
   await expect(page.getByTestId('guide-page')).toContainText('You wake on the western shore');
   expect(errors).toEqual([]);

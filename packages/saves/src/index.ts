@@ -6,14 +6,39 @@
  * of the save.
  */
 
+import type { GamePinTable } from './gamefiles/table';
 import { SaveReadError, type ReadOptions, type SaveReader } from './reader';
 import type { SaveSummary } from './summary';
+import { buildPinTable, type BuildPinTableInput, type PinTableStats } from './witcher3/gameFiles';
 import { witcher3Reader } from './witcher3/reader';
 
 export * from './reader';
 export * from './summary';
 export * from './match/index';
 export * from './games';
+export * from './gamefiles/table';
+export {
+  exportProperties,
+  exportsOf,
+  isCr2w,
+  readCr2w,
+  type Cr2wExport,
+  type Cr2wFile,
+  type Cr2wImport,
+  type Cr2wRecord,
+  type Cr2wValue,
+} from './gamefiles/cr2w';
+export {
+  areaWorldsOf,
+  buildPinTable,
+  entityMapPinsOf,
+  mappinsMountersOf,
+  type BuildPinTableInput,
+  type EntityMapPin,
+  type GameFileInput,
+  type MappinsMounter,
+  type PinTableStats,
+} from './witcher3/gameFiles';
 export { witcher3Reader, WITCHER3_VERSIONS, readWitcher3Tree } from './witcher3/reader';
 export {
   WITCHER3_GAME,
@@ -42,4 +67,14 @@ export function readSave(bytes: Uint8Array, options?: ReadOptions): SaveSummary 
     throw new SaveReadError('not-a-save', 'This file is not a game save that Atlas can read.');
   }
   return reader.read(bytes, options);
+}
+
+/**
+ * Builds the table of a game's own map pins from files of the game, for
+ * the games Atlas can read them for; null for the others.
+ */
+export function pinTableBuilder(
+  readerId: string,
+): ((input: BuildPinTableInput) => { table: GamePinTable; stats: PinTableStats }) | null {
+  return readerId === witcher3Reader.id ? buildPinTable : null;
 }

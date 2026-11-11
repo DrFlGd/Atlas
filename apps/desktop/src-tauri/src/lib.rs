@@ -11,6 +11,7 @@
 pub mod activity;
 mod commands;
 mod downloads;
+pub mod gamefiles;
 mod imports;
 pub mod library;
 pub mod manifest;
@@ -82,6 +83,12 @@ macro_rules! viewer_commands {
             saves::saves_watch_status,
             saves::saves_unwatch,
             saves::saves_report,
+            gamefiles::game_folder_get,
+            gamefiles::game_folder_choose,
+            gamefiles::game_folder_forget,
+            gamefiles::game_files_scan,
+            gamefiles::game_files_read,
+            gamefiles::game_files_report,
             $($more)*
         ]
     };
@@ -186,6 +193,7 @@ pub fn run() {
             let downloads = Downloads::new(registry, app_data);
             app.manage(downloads);
             app.manage(Arc::new(saves::for_app(app)));
+            app.manage(Arc::new(gamefiles::for_app(app)));
             app.manage(Arc::clone(&library));
             // Map images that version 0.2.0 downloaded move into the pack
             // folders in the background; the map shows them as they arrive.

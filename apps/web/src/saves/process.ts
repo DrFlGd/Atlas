@@ -1,18 +1,22 @@
 import {
   matchSave,
+  pinTableBuilder,
   readerById,
   SaveReadError,
+  type GameFileInput,
+  type GamePinTable,
   type MapCalibration,
   type PackForMatching,
+  type PinTableStats,
   type SaveErrorCode,
   type SaveMatch,
   type SaveSummary,
 } from '@atlas/saves';
 
 /**
- * Reading a save and matching it against the pack shown: the work the save
- * worker does (see `saveWorker.ts`), also run on the page when a worker
- * cannot be started.
+ * Reading a save and matching it against the pack shown, and building the
+ * table of the game's own map pins: the work the save worker does (see
+ * `saveWorker.ts`), also run on the page when a worker cannot be started.
  */
 
 /** What a job needs besides the save: the pack and the device's map settings. */
@@ -22,6 +26,8 @@ export interface SaveJobContext {
   pack: PackForMatching;
   worldMaps: Record<string, string | null>;
   calibrations: Record<string, MapCalibration>;
+  /** The game's own map pins, read on this device; null when there is none. */
+  table: GamePinTable | null;
   now: number;
 }
 
@@ -33,6 +39,43 @@ export type SaveJob =
 export type SaveJobResult =
   | { ok: true; summary: SaveSummary; match: SaveMatch }
   | { ok: false; code: SaveErrorCode | 'failed'; message: string };
+
+/** Build the table of the game's map pins from files the desktop app unpacked. */
+export interface TableJob {
+  kind: 'table';
+  readerId: string;
+  files: GameFileInput[];
+  /** The game's executable's stamp, from the desktop app. */
+  stamp: string;
+  now: number;
+}
+
+export type TableJobResult =
+  { ok: true; table: GamePinTable; stats: PinTableStats } | { ok: false; message: string };
+
+export type WorkerJob = SaveJob | TableJob;
+export type WorkerResult = SaveJobResult | TableJobResult;
+
+export function processJob(job: SaveJob): SaveJobResult;
+export function processJob(job: TableJob): TableJobResult;
+export function processJob(job: WorkerJob): WorkerResult;
+export function processJob(job: WorkerJob): WorkerResult {
+  return job.kind === 'table' ? processTable(job) : processSave(job);
+}
+
+export function processTable(job: TableJob): TableJobResult {
+  const build = pinTableBuilder(job.readerId);
+  if (!build) return { ok: false, message: 'Atlas cannot read this game’s files.' };
+  try {
+    return { ok: true, ...build({ files: job.files, stamp: job.stamp, now: job.now }) };
+  } catch (error) {
+    console.error(error);
+    return {
+      ok: false,
+      message: `The game’s map files could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
 
 export function processSave(job: SaveJob): SaveJobResult {
   const reader = readerById(job.readerId);
@@ -47,6 +90,7 @@ export function processSave(job: SaveJob): SaveJobResult {
       tuning: reader.tuning,
       worldMaps: job.worldMaps,
       calibrations: job.calibrations,
+      table: job.table,
       now: job.now,
     });
     return { ok: true, summary, match };

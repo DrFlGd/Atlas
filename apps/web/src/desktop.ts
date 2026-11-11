@@ -1,3 +1,5 @@
+import type { PinTableStats, TableFit } from '@atlas/saves';
+
 /**
  * The bridge to the desktop shell (`apps/desktop`). The web app has no
  * dependency on Tauri: inside the shell, Tauri injects an `invoke` function,
@@ -145,6 +147,58 @@ export interface SaveWatchStatus {
   /** Increases each time a new save has settled. */
   revision: number;
 }
+
+/** The game's folder (desktop app), as the shell checks it. */
+export interface GameFolderInfo {
+  path: string | null;
+  name: string | null;
+  /** It is the game's folder, and it is there. */
+  valid: boolean;
+  /** The game's executable's size and time; changes when the game is patched. */
+  stamp: string | null;
+  /** Why it cannot be used, in plain words. */
+  problem: string | null;
+}
+
+/** A map file in the game's bundles that the shell can unpack. */
+export interface GameFileEntry {
+  index: number;
+  /** The game's own path, such as `game\hub_pins\novigrad.w2em`. */
+  path: string;
+  size: number;
+  compression: string;
+}
+
+/** What a scan of the game's bundles found, in counts and game paths. */
+export interface GameFilesScan {
+  stamp: string;
+  bundles: number;
+  entries: number;
+  /** Lowest precedence first. */
+  files: GameFileEntry[];
+  extensions: Record<string, number>;
+  compressions: Record<string, number>;
+  /** Bundles by table of contents layout (`1`, `2` or `unknown`). */
+  layouts: Record<string, number>;
+  duplicates: number;
+  outside: number;
+  unreadable: number;
+}
+
+/**
+ * How reading the game's map places went, or how a save used them, for the
+ * activity log: counts, game world ids and pin types only.
+ */
+export type GameFilesReport =
+  | ({ kind: 'table'; readFailed: number } & Omit<PinTableStats, 'worlds'> & {
+        worlds: Record<string, { pins: number; types: Record<string, number> }>;
+      })
+  | {
+      kind: 'match';
+      saveTags: number;
+      saveTagsFound: number;
+      fits: Record<string, Omit<TableFit, 'kinds'> & { kinds: string }>;
+    };
 
 /** How reading a save went, for the activity log. Never anything from inside the save but these. */
 export interface SaveReport {
@@ -425,6 +479,15 @@ export interface DesktopBridge {
     unwatch(): Promise<void>;
     report(report: SaveReport): Promise<void>;
   };
+  /** The game's own files, read-only: only in the folder the person chose. */
+  gameFiles: {
+    folder(game: string): Promise<GameFolderInfo>;
+    chooseFolder(game: string): Promise<GameFolderInfo | null>;
+    forgetFolder(game: string): Promise<void>;
+    scan(game: string): Promise<GameFilesScan>;
+    read(game: string, index: number): Promise<Uint8Array>;
+    report(report: GameFilesReport): Promise<void>;
+  };
 }
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -511,6 +574,14 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       watchStatus: () => call('saves_watch_status'),
       unwatch: () => call('saves_unwatch'),
       report: (report) => call('saves_report', { report }),
+    },
+    gameFiles: {
+      folder: (game) => call('game_folder_get', { game }),
+      chooseFolder: (game) => call('game_folder_choose', { game }),
+      forgetFolder: (game) => call('game_folder_forget', { game }),
+      scan: (game) => call('game_files_scan', { game }),
+      read: (game, index) => call<unknown>('game_files_read', { game, index }).then(bytesOf),
+      report: (report) => call('game_files_report', { report }),
     },
   };
 }

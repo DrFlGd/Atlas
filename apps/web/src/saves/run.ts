@@ -1,13 +1,21 @@
-import type { SaveJob, SaveJobResult } from './process';
+import type {
+  SaveJob,
+  SaveJobResult,
+  TableJob,
+  TableJobResult,
+  WorkerJob,
+  WorkerResult,
+} from './process';
 
 /**
- * Runs save jobs in a module worker, one at a time, or on the page when a
- * worker cannot be started (an old browser, a test without workers).
+ * Runs save and table jobs in a module worker, one at a time, or on the
+ * page when a worker cannot be started (an old browser, a test without
+ * workers).
  */
 
 let worker: Worker | null | undefined;
 let nextId = 1;
-const pending = new Map<number, (result: SaveJobResult | null) => void>();
+const pending = new Map<number, (result: WorkerResult | null) => void>();
 
 function startWorker(): Worker | null {
   if (worker !== undefined) return worker;
@@ -15,7 +23,7 @@ function startWorker(): Worker | null {
     worker = new Worker(new URL('./saveWorker.ts', import.meta.url), { type: 'module' });
     worker.addEventListener(
       'message',
-      (event: MessageEvent<{ id: number; result: SaveJobResult }>) => {
+      (event: MessageEvent<{ id: number; result: WorkerResult }>) => {
         pending.get(event.data.id)?.(event.data.result);
         pending.delete(event.data.id);
       },
@@ -36,11 +44,11 @@ function startWorker(): Worker | null {
   return worker;
 }
 
-export async function runSaveJob(job: SaveJob): Promise<SaveJobResult> {
+async function run(job: WorkerJob): Promise<WorkerResult> {
   const target = typeof Worker === 'function' ? startWorker() : null;
   if (target) {
     const id = nextId++;
-    const result = await new Promise<SaveJobResult | null>((resolve) => {
+    const result = await new Promise<WorkerResult | null>((resolve) => {
       pending.set(id, resolve);
       // The bytes are copied rather than moved, so the caller keeps them.
       target.postMessage({ id, job });
@@ -48,6 +56,14 @@ export async function runSaveJob(job: SaveJob): Promise<SaveJobResult> {
     if (result) return result;
   }
   // Loaded only when needed: the worker has its own copy.
-  const { processSave } = await import('./process');
-  return processSave(job);
+  const { processJob } = await import('./process');
+  return processJob(job);
+}
+
+export function runSaveJob(job: SaveJob): Promise<SaveJobResult> {
+  return run(job) as Promise<SaveJobResult>;
+}
+
+export function runTableJob(job: TableJob): Promise<TableJobResult> {
+  return run(job) as Promise<TableJobResult>;
 }
