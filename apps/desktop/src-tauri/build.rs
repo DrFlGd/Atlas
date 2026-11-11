@@ -28,6 +28,8 @@ fn main() {
             "import_open",
             "import_poll",
             "import_close",
+            "import_report",
+            "activity_log_read",
         ]),
     ))
     .expect("failed to run the Tauri build script");

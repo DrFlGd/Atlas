@@ -37,6 +37,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    activity::{self, Area},
     manifest::{read_head, version_key, write_atomic, ManifestHead, MANIFEST_FILE},
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
     settings::{default_maps_folder, Location, LocationKind, SettingsFile, SharedSettings},
@@ -110,10 +111,19 @@ impl PackLock {
             .map_err(|error| format!("Cannot write to the pack folder: {error}"))?;
         match file.try_lock() {
             Ok(()) => Ok(Self { _file: file }),
-            Err(fs::TryLockError::WouldBlock) => Err(
+            Err(fs::TryLockError::WouldBlock) => {
+                activity::warn(
+                    Area::Library,
+                    format!(
+                        "{} is locked: another Atlas window or app is working on it",
+                        pack_dir.display()
+                    ),
+                );
+                Err(
                 "Another Atlas window or app is working on this map's files right now. Try again when it has finished."
                     .to_owned(),
-            ),
+            )
+            }
             Err(fs::TryLockError::Error(error)) => {
                 Err(format!("Cannot lock the pack folder: {error}"))
             }
@@ -287,6 +297,8 @@ pub struct Library {
     legacy_dirs: Vec<PathBuf>,
     busy: Mutex<HashSet<String>>,
     pending_folder: Mutex<Option<PathBuf>>,
+    /// The last scan summary written to the activity log.
+    logged_scan: Mutex<String>,
 }
 
 impl Library {
@@ -303,6 +315,7 @@ impl Library {
             legacy_dirs,
             busy: Mutex::new(HashSet::new()),
             pending_folder: Mutex::new(None),
+            logged_scan: Mutex::new(String::new()),
         }
     }
 
@@ -332,12 +345,21 @@ impl Library {
     pub fn start(&self) -> Listing {
         let mut listing = self.scan();
         for pack in &self.bundled {
-            let installed = pack.downloadable && self.install_bundled(pack, &listing).is_ok();
+            let installed = pack.downloadable
+                && self
+                    .install_bundled(pack, &listing)
+                    .inspect_err(|error| {
+                        activity::warn(
+                            Area::Library,
+                            format!("Could not install the bundled pack {}: {error}", pack.id),
+                        );
+                    })
+                    .is_ok();
             if !installed && self.registry.kind(&pack.id) != Some(PackKind::Folder) {
                 if let Err(error) = self.registry.register(&pack.id, &pack.path) {
-                    eprintln!(
-                        "atlas: skipping bundled pack {}: {error}",
-                        pack.path.display()
+                    activity::warn(
+                        Area::Library,
+                        format!("Skipping the bundled pack {}: {error}", pack.path.display()),
                     );
                 }
             }
@@ -365,7 +387,18 @@ impl Library {
                 }
                 let _lock = PackLock::acquire(&existing)?;
                 copy_pack_files(&pack.path, &existing, true)
-                    .map_err(|error| format!("Could not update {}: {error}", pack.id))
+                    .map_err(|error| format!("Could not update {}: {error}", pack.id))?;
+                activity::info(
+                    Area::Library,
+                    format!(
+                        "Updated the pack files of {} in {} from version {} to {} (map images kept)",
+                        pack.id,
+                        existing.display(),
+                        listed.pack_version,
+                        bundled.pack_version
+                    ),
+                );
+                Ok(())
             }
             _ => {
                 if target.join(MANIFEST_FILE).exists() {
@@ -375,7 +408,17 @@ impl Library {
                     .map_err(|error| format!("Could not create {}: {error}", target.display()))?;
                 let _lock = PackLock::acquire(&target)?;
                 copy_tree_missing(&pack.path, &target)
-                    .map_err(|error| format!("Could not install {}: {error}", pack.id))
+                    .map_err(|error| format!("Could not install {}: {error}", pack.id))?;
+                activity::info(
+                    Area::Library,
+                    format!(
+                        "Installed the bundled pack {} (version {}) into {}",
+                        pack.id,
+                        bundled.pack_version,
+                        target.display()
+                    ),
+                );
+                Ok(())
             }
         }
     }
@@ -487,7 +530,10 @@ impl Library {
             match self.registry.register_folder(&pack.id, dir) {
                 Ok(()) => true,
                 Err(error) => {
-                    eprintln!("atlas: cannot serve {}: {error}", dir.display());
+                    activity::warn(
+                        Area::Library,
+                        format!("Cannot serve {}: {error}", dir.display()),
+                    );
                     false
                 }
             }
@@ -495,6 +541,7 @@ impl Library {
 
         let mut busy: Vec<String> = lock(&self.busy).iter().cloned().collect();
         busy.sort();
+        self.log_scan(&maps_folder, &shown, &hidden, &locations);
         Listing {
             maps_folder: MapsFolderInfo {
                 path: maps_folder.display().to_string(),
@@ -505,6 +552,55 @@ impl Library {
             hidden,
             locations,
             busy,
+        }
+    }
+
+    /// Writes what a scan found to the activity log, when it differs from
+    /// the last scan written.
+    fn log_scan(
+        &self,
+        maps_folder: &Path,
+        shown: &[ListedPack],
+        hidden: &[HiddenPack],
+        locations: &[LocationInfo],
+    ) {
+        let mut summary = format!(
+            "Maps library: maps folder {}{} | shown: {}",
+            maps_folder.display(),
+            if maps_folder.is_dir() {
+                ""
+            } else {
+                " (not created yet)"
+            },
+            if shown.is_empty() {
+                "none".to_owned()
+            } else {
+                shown
+                    .iter()
+                    .map(|pack| format!("{} {} ({:?})", pack.id, pack.pack_version, pack.origin))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        );
+        for pack in hidden {
+            summary.push_str(&format!(
+                " | not shown: {} in {}: {}",
+                pack.id, pack.path, pack.reason
+            ));
+        }
+        for location in locations
+            .iter()
+            .filter(|location| location.state != LocationState::Ok)
+        {
+            summary.push_str(&format!(
+                " | location {} is {:?}",
+                location.path, location.state
+            ));
+        }
+        let mut logged = lock(&self.logged_scan);
+        if *logged != summary {
+            activity::info(Area::Library, &summary);
+            *logged = summary;
         }
     }
 
@@ -529,6 +625,10 @@ impl Library {
         let head = read_head(path)
             .map_err(|reason| format!("That folder is not a map pack: {reason}."))?;
         self.remember(path, LocationKind::Pack)?;
+        activity::info(
+            Area::Library,
+            format!("Added the pack folder {} ({})", path.display(), head.id),
+        );
         Ok(head.id)
     }
 
@@ -545,6 +645,14 @@ impl Library {
             return Err("There are no map packs in that folder.".to_owned());
         }
         self.remember(path, LocationKind::Folder)?;
+        activity::info(
+            Area::Library,
+            format!(
+                "Added the folder of packs {} ({} packs)",
+                path.display(),
+                packs.len()
+            ),
+        );
         Ok(packs.len())
     }
 
@@ -565,6 +673,10 @@ impl Library {
         self.settings.update(|settings| {
             settings.locations.retain(|location| location.path != path);
         })?;
+        activity::info(
+            Area::Library,
+            format!("Forgot the location {path} (no files deleted)"),
+        );
         Ok(())
     }
 
@@ -686,7 +798,31 @@ impl Library {
                 });
             }
         })?;
+        activity::info(
+            Area::Library,
+            format!(
+                "The maps folder is now {target_text} (was {current_text}); {}{}",
+                if move_packs {
+                    format!(
+                        "moved: {}",
+                        if moved.is_empty() {
+                            "none".to_owned()
+                        } else {
+                            moved.join(", ")
+                        }
+                    )
+                } else {
+                    "nothing moved".to_owned()
+                },
+                if keep_old {
+                    "; the old folder stays listed as a folder of packs"
+                } else {
+                    ""
+                }
+            ),
+        );
         if let Some(error) = failure {
+            activity::warn(Area::Library, format!("Moving the maps stopped: {error}"));
             return Err(format!(
                 "{error}. The maps moved so far are in the new folder; the rest stay in the old folder, which is listed under \u{201c}Map packs elsewhere\u{201d}."
             ));
@@ -892,6 +1028,13 @@ impl Library {
         let mut moved = Vec::new();
         for legacy in &self.legacy_dirs {
             let Ok(entries) = fs::read_dir(legacy.join("packs")) else {
+                activity::info(
+                    Area::Migration,
+                    format!(
+                        "Nothing to move from version 0.2.0 in {}",
+                        legacy.join("packs").display()
+                    ),
+                );
                 continue;
             };
             for entry in entries.flatten() {
@@ -904,11 +1047,30 @@ impl Library {
                 }
                 let Some(target) = self.pack_folder(&id).filter(|dir| self.in_maps_folder(dir))
                 else {
+                    activity::info(
+                        Area::Migration,
+                        format!(
+                            "Left the version 0.2.0 images of {id} in {}: no pack {id} in the maps folder",
+                            source.display()
+                        ),
+                    );
                     continue;
                 };
                 let Ok(_lock) = PackLock::acquire(&target) else {
+                    activity::warn(
+                        Area::Migration,
+                        format!("The images of {id} are not moved now: its pack folder is in use; the next start tries again"),
+                    );
                     continue;
                 };
+                activity::info(
+                    Area::Migration,
+                    format!(
+                        "Moving the version 0.2.0 images of {id} from {} into {}",
+                        source.display(),
+                        target.display()
+                    ),
+                );
                 lock(&self.busy).insert(id.clone());
                 let result = migrate_overlay(
                     &source,
@@ -918,7 +1080,10 @@ impl Library {
                 lock(&self.busy).remove(&id);
                 match result {
                     Ok(()) => moved.push(id),
-                    Err(error) => eprintln!("atlas: moving the map images of {id}: {error}"),
+                    Err(error) => activity::error(
+                        Area::Migration,
+                        format!("Moving the map images of {id} stopped: {error}; the next start continues"),
+                    ),
                 }
             }
         }
