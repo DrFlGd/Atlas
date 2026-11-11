@@ -292,24 +292,44 @@ pub fn new_run_folder(base: &Path) -> Result<PathBuf, String> {
                 .collect()
         })
         .unwrap_or_default();
+    // Names have fixed widths, so sorting them sorts the runs oldest first.
     runs.sort();
+    // The new name must sort after every existing run, even one made in the same millisecond, or a
+    // name freed by the pruning below could be reused and the newest run deleted as the oldest.
+    let newest = runs.last().and_then(|path| parse_run_name(path));
     while runs.len() >= KEEP_RUNS {
         let old = runs.remove(0);
         let _ = fs::remove_dir_all(old);
     }
-    let stamp = SystemTime::now()
+    let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
         .unwrap_or_default();
-    let mut folder = base.join(format!("run-{stamp:015}"));
-    let mut extra = 0;
-    while folder.exists() {
+    let (stamp, mut extra) = match newest {
+        // Same millisecond, or the clock went back: count on from the newest run.
+        Some((stamp, extra)) if stamp >= now => (stamp, extra + 1),
+        _ => (now, 0),
+    };
+    let mut name = run_name(stamp, extra);
+    while base.join(&name).exists() {
         extra += 1;
-        folder = base.join(format!("run-{stamp:015}-{extra}"));
+        name = run_name(stamp, extra);
     }
+    let folder = base.join(name);
     fs::create_dir_all(&folder)
         .map_err(|error| format!("Could not create {}: {error}", folder.display()))?;
     Ok(folder)
+}
+
+fn run_name(stamp: u128, extra: u64) -> String {
+    format!("run-{stamp:015}-{extra:06}")
+}
+
+/// The time stamp and counter of a run folder's name, as `run_name` writes them.
+fn parse_run_name(path: &Path) -> Option<(u128, u64)> {
+    let name = path.file_name()?.to_str()?.strip_prefix("run-")?;
+    let (stamp, extra) = name.split_once('-')?;
+    Some((stamp.parse().ok()?, extra.parse().ok()?))
 }
 
 fn is_inside(path: &Path, folder: &Path) -> bool {
@@ -728,8 +748,11 @@ mod tests {
             made.push(new_run_folder(&base).unwrap());
         }
         let left: Vec<_> = made.iter().filter(|path| path.exists()).collect();
-        assert_eq!(left.len(), KEEP_RUNS);
-        assert!(made.last().unwrap().exists());
+        // The newest runs stay, even when several were made in the same millisecond.
+        assert_eq!(
+            left,
+            made[made.len() - KEEP_RUNS..].iter().collect::<Vec<_>>()
+        );
         assert!(
             base.join("keep-me").exists(),
             "only run folders are removed"
