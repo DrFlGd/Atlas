@@ -42,7 +42,7 @@ use crate::{
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
     removal::{self, FileOps, ImagesCount, ImagesDeleted, PackDeleted},
     settings::{default_maps_folder, Location, LocationKind, SettingsFile, SharedSettings},
-    tiles::manager::stop::ImagesLocation,
+    tiles::images::ImagesLocation,
 };
 
 /// The shell's own files inside a pack folder; never served.

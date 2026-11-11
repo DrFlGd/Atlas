@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { deflateSync } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
+import { downloadsEnabled } from '../tooling/buildFlags.ts';
 import { collectErrors } from './helpers';
 
 /**
@@ -10,6 +11,12 @@ import { collectErrors } from './helpers';
  * the pack protocol (`http://atlas-pack.localhost/<id>/`), which the test
  * can intercept. The real shell is covered by the desktop tests.
  */
+
+/**
+ * The app under test was built with map image downloads. Run the tests with
+ * the same `ATLAS_ENABLE_DOWNLOADS` as the build.
+ */
+const DOWNLOADS_BUILD = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
 
 const PACK_URL = 'http://atlas-pack.localhost/remote/';
 const SHOTS = 'test-results/downloads';
@@ -122,8 +129,10 @@ function tilePng(): Buffer {
 /**
  * Stands in for the shell's download commands. Each snapshot poll moves a
  * running job on by `step` images; `__mockShell` lets the test steer it.
+ * `downloads` is what the shell says in `desktop_info`: whether it was built
+ * with downloads.
  */
-function installFakeShell() {
+function installFakeShell(downloads: boolean) {
   interface Job {
     packId: string;
     detail: string;
@@ -270,7 +279,7 @@ function installFakeShell() {
         if (shell.job) shell.job.state = 'cancelled';
         return Promise.resolve(null);
       case 'desktop_info':
-        return Promise.resolve({ name: 'Atlas', version: '0.0.0', platform: 'test' });
+        return Promise.resolve({ name: 'Atlas', version: '0.0.0', platform: 'test', downloads });
       // The pack comes from the index, as a bundled pack would; no other folders.
       case 'library_list':
         return Promise.resolve({
@@ -391,11 +400,32 @@ const shell = (page: Page) =>
     return s.job?.state ?? null;
   });
 
+const shellCalls = (page: Page) =>
+  page.evaluate(
+    () => (window as unknown as { __mockShell: { calls: string[] } }).__mockShell.calls,
+  );
+
+/** The map shows the plain notice, with no way to download or save map images. */
+async function expectNoDownloads(page: Page) {
+  const notice = page.getByTestId('tile-notice');
+  await expect(notice).toHaveText(
+    'Map image not installed. Markers are shown on a plain background.',
+  );
+  await expect(page.getByTestId('download-map-images')).toHaveCount(0);
+  await expect(page.getByTestId('map-images-button')).toHaveCount(0);
+  await expect(page.getByTestId('download-panel')).toHaveCount(0);
+  await expect(page.getByTestId('marker-count')).toHaveText('6');
+  const calls = await shellCalls(page);
+  expect(calls).toContain('desktop_info');
+  expect(calls.filter((call) => /^(tiles_|download_settings_|view_)/.test(call))).toEqual([]);
+}
+
 test('downloads map images from the notice, with pause, errors and progress', async ({ page }) => {
+  test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads map images');
   await mkdir(SHOTS, { recursive: true });
   const errors = collectErrors(page);
   let levelsReady: number | null = null;
-  await page.addInitScript(installFakeShell);
+  await page.addInitScript(installFakeShell, true);
   await servePack(page, () => levelsReady);
   await page.goto('./');
 
@@ -491,6 +521,7 @@ test('downloads map images from the notice, with pause, errors and progress', as
 });
 
 test('shows map images saved while browsing a map page without a restart', async ({ page }) => {
+  test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 saves map images');
   const errors = collectErrors(page);
   // Which tiles are on disk: none, then every second one, then all.
   let saved: 'none' | 'some' | 'all' = 'none';
@@ -501,7 +532,7 @@ test('shows map images saved while browsing a map page without a restart', async
   await page.addInitScript(() => {
     (window as unknown as { __listRemote: boolean }).__listRemote = true;
   });
-  await page.addInitScript(installFakeShell);
+  await page.addInitScript(installFakeShell, true);
   await servePack(
     page,
     () => null,
@@ -576,4 +607,23 @@ test('the plain web app offers no download', async ({ page }) => {
   // Without the shell no status file is asked for: the only 404 is the tile probe.
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   expect(errors.length).toBeLessThanOrEqual(1);
+});
+
+test('a shell without downloads offers none', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.addInitScript(installFakeShell, false);
+  await servePack(page, () => null);
+  await page.goto('./');
+  await expectNoDownloads(page);
+  expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+});
+
+test('a build without downloads offers none, even in a shell that has them', async ({ page }) => {
+  test.skip(DOWNLOADS_BUILD, 'checks a build without ATLAS_ENABLE_DOWNLOADS');
+  const errors = collectErrors(page);
+  await page.addInitScript(installFakeShell, true);
+  await servePack(page, () => null);
+  await page.goto('./');
+  await expectNoDownloads(page);
+  expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
 });

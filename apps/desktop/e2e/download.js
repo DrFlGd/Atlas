@@ -5,7 +5,7 @@
  * under its markers.
  *
  *   node apps/desktop/e2e/remotePack.js          # writes packs/e2e-remote/
- *   ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
+ *   ATLAS_ENABLE_DOWNLOADS=1 ATLAS_BUNDLE_PACKS=e2e-remote,demo pnpm desktop:build --no-bundle
  *   xvfb-run -a pnpm --filter @atlas/desktop test:e2e:download [path/to/binary]
  *
  * Linux only: the app's data, its web storage and the "system browser" are

@@ -1,9 +1,9 @@
 // @ts-check
 /**
- * "View map page" and "Save map images as I browse" test, on any desktop
- * build (Linux):
+ * "View map page" and "Save map images as I browse" test, on a desktop
+ * build with downloads (Linux):
  *
- *   pnpm desktop:build --no-bundle
+ *   ATLAS_ENABLE_DOWNLOADS=1 pnpm desktop:build --no-bundle
  *   xvfb-run -a pnpm --filter @atlas/desktop test:e2e:view [path/to/binary]
  *
  * Only local servers on 127.0.0.1 are used (`mapPageSite.js`): a made-up map

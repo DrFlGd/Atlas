@@ -90,5 +90,8 @@ function detect(): PageViewBridge | null {
   return createPageViewBridge(internals.invoke.bind(internals) as Invoke);
 }
 
-/** The shell's map page commands, or null in a browser. */
-export const pageViewShell: PageViewBridge | null = detect();
+/**
+ * The shell's map page commands, or null in a browser and in a build without
+ * downloads, whose shell has none.
+ */
+export const pageViewShell: PageViewBridge | null = __ATLAS_DOWNLOADS__ ? detect() : null;
