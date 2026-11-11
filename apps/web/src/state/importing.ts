@@ -22,7 +22,7 @@ import {
 } from '@atlas/schema';
 import { create } from 'zustand';
 import type { ImporterEntry } from '../config';
-import { desktop, type Listing, type StoredSource } from '../desktop';
+import { desktop, type ImportReport, type Listing, type StoredSource } from '../desktop';
 import { loadGame, notify } from './actions';
 import { applyListing } from './library';
 import { useAtlas } from './store';
@@ -119,6 +119,37 @@ export function unrecognisedMessage(url: string, titles: readonly string[]): str
 }
 
 // ---------------------------------------------------------------------------
+// The activity log
+
+/** Records how an import ended in the activity log. Never page data. */
+function report(entry: ImportReport): void {
+  desktop?.importWindow.report(entry).catch(() => undefined);
+}
+
+/** Records the phase an import ended in. */
+function reportPhase(importerId: string, phase: ImportPhase): void {
+  if (phase.kind === 'failed') {
+    report({ importerId, outcome: 'failed', message: phase.message });
+  } else if (phase.kind === 'done') {
+    const { summary } = phase;
+    report({
+      importerId,
+      outcome: phase.rebuilt ? 'rebuilt' : summary.refreshed ? 'updated' : 'added',
+      packId: phase.packId,
+      counts: {
+        mapLocations: summary.mapLocations,
+        maps: summary.maps,
+        locations: summary.locations,
+        categories: summary.categories,
+      },
+    });
+  }
+}
+
+/** The importer of the import in progress, for the log. */
+let currentImporter: string | null = null;
+
+// ---------------------------------------------------------------------------
 // Waiting for the page
 
 let session = 0;
@@ -132,15 +163,15 @@ export async function startImport(text: string): Promise<void> {
   const importers = await loadImporters();
   const importer = findImporter(importers, url);
   if (!importer) {
-    setPhase({
-      kind: 'failed',
-      message: unrecognisedMessage(
-        url,
-        importers.map((i) => i.title),
-      ),
-    });
+    const message = unrecognisedMessage(
+      url,
+      importers.map((i) => i.title),
+    );
+    report({ importerId: null, outcome: 'failed', message });
+    setPhase({ kind: 'failed', message });
     return;
   }
+  currentImporter = importer.id;
   const waitSeconds = importer.waitSeconds ?? DEFAULT_WAIT_SECONDS;
   const startedAt = Date.now();
   const waiting = {
@@ -155,7 +186,7 @@ export async function startImport(text: string): Promise<void> {
   } as const;
   setPhase(waiting);
   try {
-    await shell.importWindow.open(url, importer.pageReader);
+    await shell.importWindow.open(url, importer.pageReader, { id: importer.id, waitSeconds });
   } catch (error) {
     if (id === session) setPhase({ kind: 'failed', message: errorText(error) });
     return;
@@ -167,10 +198,9 @@ export async function startImport(text: string): Promise<void> {
     const now = Date.now();
     if (now - startedAt > waitSeconds * 1000) {
       await shell.importWindow.close().catch(() => undefined);
-      setPhase({
-        kind: 'failed',
-        message: `The page did not provide the map data within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the map load; you can try again later. Nothing was added.`,
-      });
+      const message = `The page did not provide the map data within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the map load; you can try again later. Nothing was added.`;
+      report({ importerId: importer.id, outcome: 'timed-out', message });
+      setPhase({ kind: 'failed', message });
       return;
     }
     let result;
@@ -203,6 +233,7 @@ export async function startImport(text: string): Promise<void> {
       pageData: result.data,
       importedAt: new Date().toISOString(),
     });
+    reportPhase(importer.id, outcome);
     if (id === session) setPhase(outcome);
     return;
   }
@@ -210,6 +241,9 @@ export async function startImport(text: string): Promise<void> {
 
 /** Stops waiting and closes the page window. */
 export async function cancelImport(): Promise<void> {
+  if (useImport.getState().phase.kind === 'waiting') {
+    report({ importerId: currentImporter, outcome: 'cancelled' });
+  }
   session++;
   setPhase({ kind: 'idle' });
   await desktop?.importWindow.close().catch(() => undefined);
@@ -416,8 +450,10 @@ export async function rebuildPack(packId: string): Promise<void> {
       { url: last.url, pageData: last.data, importedAt: last.importedAt },
       true,
     );
+    reportPhase(importer.id, outcome);
     if (id === session) setPhase(outcome);
   } catch (error) {
+    report({ importerId: entry.id, outcome: 'failed', message: errorText(error) });
     if (id === session) setPhase({ kind: 'failed', message: errorText(error) });
   }
 }

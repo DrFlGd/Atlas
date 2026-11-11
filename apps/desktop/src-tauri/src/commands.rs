@@ -14,6 +14,7 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
 use crate::{
+    activity::{self, ActivityLog, Area, RecentLog},
     imports::{Imports, PollResult},
     library::{FolderChoice, Library, Listing, SaveImport, SavedSource},
     removal::{ImagesCount, ImagesDeleted, PackDeleted},
@@ -369,8 +370,14 @@ pub async fn library_apply_maps_folder(
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RevealTarget {
     MapsFolder,
-    Pack { id: String },
-    Location { path: String },
+    Pack {
+        id: String,
+    },
+    Location {
+        path: String,
+    },
+    /// The activity log's folder.
+    LogFolder,
 }
 
 /// Opens the maps folder, a pack's folder or a remembered location in the
@@ -394,6 +401,15 @@ pub fn library_reveal<R: Runtime>(
         RevealTarget::Location { path } => library
             .known_location(&path)
             .ok_or_else(|| "That location is not remembered.".to_owned())?,
+        RevealTarget::LogFolder => {
+            let folder = ActivityLog::global()
+                .dir()
+                .map(std::path::Path::to_path_buf)
+                .ok_or_else(|| "This app keeps no activity log.".to_owned())?;
+            fs::create_dir_all(&folder)
+                .map_err(|error| format!("Cannot create the log folder: {error}"))?;
+            folder
+        }
     };
     if !path.is_dir() {
         return Err("That folder cannot be found.".to_owned());
@@ -408,7 +424,7 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Stops a pack's download, if one is running or paused, and waits until it
 /// has let go of the pack's files.
-async fn stop_download(manager: &DownloadManager, id: &str) -> Result<(), String> {
+async fn stop_download(manager: &Arc<DownloadManager>, id: &str) -> Result<(), String> {
     if manager.stop_and_wait(id, STOP_TIMEOUT).await {
         Ok(())
     } else {
@@ -451,9 +467,30 @@ async fn delete_pack(
     stop_download(&manager, &id).await?;
     let deleted = {
         let id = id.clone();
-        blocking(move || library.delete_pack(&id)).await?
+        blocking(move || library.delete_pack(&id)).await
+    };
+    let deleted = match deleted {
+        Ok(deleted) => deleted,
+        Err(error) => {
+            activity::warn(
+                Area::Library,
+                format!("Could not delete the map {}: {error}", short(&id)),
+            );
+            return Err(error);
+        }
     };
     manager.forget(&id);
+    activity::info(
+        Area::Library,
+        if deleted.complete {
+            format!("Deleted the map {} from the maps folder", short(&id))
+        } else {
+            format!(
+                "Deleted the map {} from the maps folder; some files were in use and are removed at the next start",
+                short(&id)
+            )
+        },
+    );
     Ok(deleted)
 }
 
@@ -518,9 +555,32 @@ async fn delete_images(
     stop_download(&manager, &id).await?;
     let deleted = {
         let id = id.clone();
-        blocking(move || library.delete_images(&id, &location)).await?
+        blocking(move || library.delete_images(&id, &location)).await
+    };
+    let deleted = match deleted {
+        Ok(deleted) => deleted,
+        Err(error) => {
+            activity::warn(
+                Area::Library,
+                format!(
+                    "Could not delete the downloaded map images of {}: {error}",
+                    short(&id)
+                ),
+            );
+            return Err(error);
+        }
     };
     manager.forget(&id);
+    activity::info(
+        Area::Library,
+        format!(
+            "Deleted the downloaded map images of {}: {} images, {} bytes; {} left because they were in use",
+            short(&id),
+            deleted.files,
+            deleted.bytes,
+            deleted.left
+        ),
+    );
     Ok(deleted)
 }
 
@@ -549,7 +609,28 @@ pub async fn library_save_import(
     }
     let library = Arc::clone(&library);
     blocking(move || {
-        library.save_import(&request)?;
+        match library.save_import(&request) {
+            Ok(dir) => activity::info(
+                Area::Import,
+                format!(
+                    "Wrote the imported pack {} ({} pack files, page data {} characters) to {}",
+                    request.pack_id,
+                    request.files.len(),
+                    request.page_data.len(),
+                    dir.display()
+                ),
+            ),
+            Err(error) => {
+                activity::warn(
+                    Area::Import,
+                    format!(
+                        "Could not write the imported pack {}: {error}",
+                        short(&request.pack_id)
+                    ),
+                );
+                return Err(error);
+            }
+        }
         Ok(library.scan())
     })
     .await
@@ -565,8 +646,69 @@ pub async fn import_open<R: Runtime>(
     imports: State<'_, Imports>,
     url: String,
     reader: String,
+    importer_id: Option<String>,
+    wait_seconds: Option<u32>,
 ) -> Result<(), String> {
-    imports.open(&app, &url, reader)
+    *lock_poll() = None;
+    let importer = importer_id
+        .as_deref()
+        .map(short)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let page = page_address(&url);
+    let wait = wait_seconds.map_or_else(String::new, |seconds| {
+        format!(", waiting up to {seconds} s for its map data")
+    });
+    match imports.open(&app, &url, reader) {
+        Ok(()) => {
+            activity::info(
+                Area::Import,
+                format!("Opened {page} in the import window for importer {importer}{wait}"),
+            );
+            Ok(())
+        }
+        Err(error) => {
+            activity::warn(
+                Area::Import,
+                format!("Could not open {page} for importer {importer}: {error}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+/// A page address for the log: its host and path, without the query or
+/// fragment, which may hold personal tokens.
+fn page_address(url: &str) -> String {
+    match Url::parse(url.trim()) {
+        Ok(url) => {
+            format!(
+                "{}://{}{}",
+                url.scheme(),
+                url.host_str().unwrap_or_default(),
+                url.port()
+                    .map_or_else(String::new, |port| format!(":{port}"))
+            ) + url.path()
+        }
+        Err(_) => "an address that is not a URL".to_owned(),
+    }
+}
+
+/// A short, clean piece of text from the web app, for the log.
+fn short(text: &str) -> String {
+    let text = activity::clean(text);
+    if text.chars().count() > 300 {
+        text.chars().take(300).collect::<String>() + "…"
+    } else {
+        text
+    }
+}
+
+/// The state of the last poll that was logged, so each change is logged once.
+fn lock_poll() -> std::sync::MutexGuard<'static, Option<&'static str>> {
+    static LAST_POLL: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+    LAST_POLL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Asks the open page for its data once.
@@ -575,7 +717,43 @@ pub async fn import_poll<R: Runtime>(
     app: AppHandle<R>,
     imports: State<'_, Imports>,
 ) -> Result<PollResult, String> {
-    Ok(imports.poll(&app).await)
+    let result = imports.poll(&app).await;
+    // What the page holds is never logged; only what the app saw happen.
+    let (state, line) = match &result {
+        PollResult::Waiting { loading: true, .. } => ("loading", None),
+        PollResult::Waiting { loading: false, .. } => (
+            "waiting",
+            Some((
+                false,
+                "The page has loaded; waiting for its map data".to_owned(),
+            )),
+        ),
+        PollResult::Ready { data } => (
+            "ready",
+            Some((
+                false,
+                format!("Read the page's map data ({} characters)", data.len()),
+            )),
+        ),
+        PollResult::Closed => (
+            "closed",
+            Some((
+                true,
+                "The page window was closed before the map data appeared".to_owned(),
+            )),
+        ),
+        PollResult::Failed { message } => ("failed", Some((true, short(message)))),
+    };
+    let mut last = lock_poll();
+    if *last != Some(state) {
+        *last = Some(state);
+        match line {
+            Some((true, line)) => activity::warn(Area::Import, line),
+            Some((false, line)) => activity::info(Area::Import, line),
+            None => {}
+        }
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -585,6 +763,101 @@ pub async fn import_close<R: Runtime>(
 ) -> Result<(), String> {
     imports.close(&app);
     Ok(())
+}
+
+/// How an import ended, as the web app reports it for the activity log.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    importer_id: Option<String>,
+    outcome: ImportOutcome,
+    pack_id: Option<String>,
+    map_id: Option<String>,
+    /// A failure message, as the dialog shows it.
+    message: Option<String>,
+    /// Locations of the map, maps and locations of the game, categories.
+    counts: Option<ImportCounts>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImportOutcome {
+    Added,
+    Updated,
+    Rebuilt,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportCounts {
+    map_locations: u64,
+    maps: u64,
+    locations: u64,
+    categories: u64,
+}
+
+/// The line an import report becomes.
+fn import_report_line(report: &ImportReport) -> (bool, String) {
+    let importer = report
+        .importer_id
+        .as_deref()
+        .map_or_else(|| "unknown".to_owned(), short);
+    let what = match report.outcome {
+        ImportOutcome::Added => "added",
+        ImportOutcome::Updated => "updated",
+        ImportOutcome::Rebuilt => "rebuilt",
+        ImportOutcome::Failed => "failed",
+        ImportOutcome::Cancelled => "was cancelled",
+        ImportOutcome::TimedOut => "timed out",
+    };
+    let mut line = format!("Import with importer {importer} {what}");
+    if let Some(pack) = &report.pack_id {
+        line.push_str(&format!(": pack {}", short(pack)));
+        if let Some(map) = &report.map_id {
+            line.push_str(&format!(", map {}", short(map)));
+        }
+    }
+    if let Some(counts) = &report.counts {
+        line.push_str(&format!(
+            " | locations on this map: {} | in the game: maps {}, locations {}, categories {}",
+            counts.map_locations, counts.maps, counts.locations, counts.categories
+        ));
+    }
+    if let Some(message) = &report.message {
+        line.push_str(&format!(" | {}", short(message)));
+    }
+    (
+        matches!(
+            report.outcome,
+            ImportOutcome::Failed | ImportOutcome::TimedOut
+        ),
+        line,
+    )
+}
+
+/// Records how an import ended in the activity log.
+#[tauri::command]
+pub fn import_report(report: ImportReport) {
+    match import_report_line(&report) {
+        (true, line) => activity::warn(Area::Import, line),
+        (false, line) => activity::info(Area::Import, line),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The activity log
+
+/// Lines the log viewer loads at most.
+const LOG_LINES: usize = 2000;
+const LOG_BYTES: u64 = 512 * 1024;
+
+/// The most recent lines of the activity log, newest last.
+#[tauri::command]
+pub async fn activity_log_read() -> Result<RecentLog, String> {
+    blocking(|| ActivityLog::global().read_recent(LOG_LINES, LOG_BYTES)).await
 }
 
 #[cfg(test)]
@@ -608,6 +881,34 @@ mod tests {
         ] {
             assert!(external_url(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn logs_page_addresses_and_import_reports_without_page_data() {
+        assert_eq!(
+            page_address("https://maps.example.com:8443/game/map?token=secret#x"),
+            "https://maps.example.com:8443/game/map"
+        );
+        assert_eq!(page_address("nonsense"), "an address that is not a URL");
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"added","packId":"test-valley","mapId":"test-valley:map:east",
+                "counts":{"mapLocations":4,"maps":1,"locations":4,"categories":3}}"#,
+        )
+        .unwrap();
+        let (warn, line) = import_report_line(&report);
+        assert!(!warn);
+        assert_eq!(
+            line,
+            "Import with importer demo-maps added: pack test-valley, map test-valley:map:east | locations on this map: 4 | in the game: maps 1, locations 4, categories 3"
+        );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"outcome":"timed-out","message":"The page did not provide\nthe map data"}"#,
+        )
+        .unwrap();
+        let (warn, line) = import_report_line(&report);
+        assert!(warn);
+        assert!(line.ends_with("timed out | The page did not provide the map data"));
+        assert!(serde_json::from_str::<ImportReport>(r#"{"outcome":"pwned"}"#).is_err());
     }
 
     #[test]

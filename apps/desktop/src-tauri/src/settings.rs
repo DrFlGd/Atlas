@@ -29,6 +29,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::activity::{self, Area};
+
 pub const SETTINGS_FORMAT: &str = "atlas-settings";
 pub const SETTINGS_VERSION: u32 = 1;
 const SETTINGS_FILE: &str = "settings.json";
@@ -180,7 +182,10 @@ impl SettingsFile {
             return SharedSettings::default();
         };
         if metadata.len() > MAX_SETTINGS_BYTES {
-            eprintln!("atlas: ignoring {}: too large", path.display());
+            activity::warn(
+                Area::Library,
+                format!("Ignoring {}: too large", path.display()),
+            );
             return SharedSettings::default();
         }
         let parsed = fs::read_to_string(&path)
@@ -199,14 +204,20 @@ impl SettingsFile {
                 }
             }
             Ok(_) => {
-                eprintln!(
-                    "atlas: ignoring {}: not a settings file of this version",
-                    path.display()
+                activity::warn(
+                    Area::Library,
+                    format!(
+                        "Ignoring {}: not a settings file of this version",
+                        path.display()
+                    ),
                 );
                 SharedSettings::default()
             }
             Err(error) => {
-                eprintln!("atlas: ignoring {}: {error}", path.display());
+                activity::warn(
+                    Area::Library,
+                    format!("Ignoring {}: {error}", path.display()),
+                );
                 SharedSettings::default()
             }
         }

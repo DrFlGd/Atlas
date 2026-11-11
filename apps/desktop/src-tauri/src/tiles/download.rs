@@ -20,12 +20,21 @@
 //! Requests carry an honest User-Agent naming the app and its version, no
 //! cookies and no browser-like headers. Nothing else can be changed from the
 //! web app: it only starts, pauses, resumes and cancels jobs.
+//!
+//! Every answer that is not a success goes to the activity log (see
+//! `activity.rs`) with the image's address, the attempt and what happens
+//! next. A refusal or a web page that stops the job is recorded in full
+//! ([`StopDetail`]): the address, the status, where the image sits in its
+//! level, how many images the job had saved before it, a few response
+//! headers and the start of a text body. That is for diagnosis only: the
+//! job still stops at the first refusal, without retrying.
 
 use std::{
+    collections::HashMap,
     future::Future,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, PoisonError,
     },
     time::{Duration, SystemTime},
@@ -35,12 +44,31 @@ use reqwest::{
     header::{HeaderMap, ACCEPT, CONTENT_TYPE, RETRY_AFTER},
     Client, StatusCode,
 };
+use serde::{Deserialize, Serialize};
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
 use super::{downscale::looks_like_image, store::TileStore};
+use crate::activity::{self, ActivityLog, Area};
 
 /// The User-Agent of every tile request.
 pub const USER_AGENT: &str = concat!("Atlas/", env!("CARGO_PKG_VERSION"), " (offline map viewer)");
+
+/// Response headers recorded with a refusal or a web page, when present.
+pub const RECORDED_HEADERS: &[&str] = &[
+    "server",
+    "content-type",
+    "content-length",
+    "via",
+    "x-cache",
+    "cf-mitigated",
+    "cf-ray",
+    "x-amz-request-id",
+    "retry-after",
+];
+/// Characters of a text body recorded with a refusal or a web page.
+pub const BODY_EXCERPT_CHARS: usize = 300;
+/// At most this much of a refusal's body is read, to find its start.
+const BODY_READ_LIMIT: usize = 16 * 1024;
 
 /// How the downloader paces itself. The app always uses the defaults; tests
 /// shorten the waits.
@@ -145,6 +173,48 @@ pub enum Outcome {
     Failed(String),
 }
 
+/// Where a tile sits in its layer's pyramid level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Place {
+    /// The layer's own level.
+    pub z: u8,
+    /// The remote zoom it is a copy of.
+    pub source_z: u8,
+    /// Column and row in the level, counted from 0.
+    pub x: u64,
+    pub y: u64,
+    /// Columns and rows the level has.
+    pub columns: u64,
+    pub rows: u64,
+}
+
+impl Place {
+    /// Whether the tile is in the first or last column or row.
+    pub fn is_edge(&self) -> bool {
+        self.x == 0 || self.y == 0 || self.x + 1 >= self.columns || self.y + 1 >= self.rows
+    }
+
+    /// "level 3 (remote zoom 5), column 0 of 216, row 231 of 232 (counted
+    /// from 0; an edge tile)".
+    pub fn describe(&self) -> String {
+        format!(
+            "level {} (remote zoom {}), column {} of {}, row {} of {} (counted from 0; {})",
+            self.z,
+            self.source_z,
+            self.x,
+            self.columns,
+            self.y,
+            self.rows,
+            if self.is_edge() {
+                "an edge tile"
+            } else {
+                "not at an edge"
+            }
+        )
+    }
+}
+
 /// One tile to download.
 #[derive(Clone, Debug)]
 pub struct Task {
@@ -153,6 +223,152 @@ pub struct Task {
     pub url: String,
     /// Where the tile goes, relative to the overlay folder.
     pub path: PathBuf,
+    /// The layer and map, for the log: "Surface (Island)".
+    pub label: Option<Arc<str>>,
+    /// Where the tile sits in its level, for the log.
+    pub place: Option<Place>,
+}
+
+impl Task {
+    pub fn new(layer: usize, url: String, path: PathBuf) -> Self {
+        Self {
+            layer,
+            url,
+            path,
+            label: None,
+            place: None,
+        }
+    }
+}
+
+/// The full record of the answer that stopped a job (a refusal or a web
+/// page), kept with the job and shown in the download panel.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopDetail {
+    /// `refused` or `web-page`.
+    pub kind: String,
+    pub url: String,
+    pub status: u16,
+    /// The layer and map: "Surface (Island)".
+    pub layer: Option<String>,
+    pub place: Option<Place>,
+    pub attempt: u32,
+    /// Images this job had saved before this answer.
+    pub saved_before: u64,
+    /// Of those, from the same host.
+    pub saved_from_host: u64,
+    pub host: String,
+    /// Selected response headers, as received.
+    pub headers: Vec<(String, String)>,
+    /// The start of a text body, without control characters.
+    pub body: Option<String>,
+    /// When it happened (ISO 8601 UTC).
+    pub at: String,
+}
+
+impl StopDetail {
+    /// One log line with everything in it.
+    pub fn log_line(&self) -> String {
+        let what = if self.kind == "refused" {
+            format!("the server refused access (HTTP {})", self.status)
+        } else {
+            format!(
+                "the server sent a web page instead of an image (HTTP {})",
+                self.status
+            )
+        };
+        let mut parts = vec![format!("Stopped: {what} for {}", self.url)];
+        let mut position = self.layer.clone().unwrap_or_default();
+        if let Some(place) = &self.place {
+            if !position.is_empty() {
+                position.push_str(", ");
+            }
+            position.push_str(&place.describe());
+        }
+        if !position.is_empty() {
+            parts.push(format!("layer {position}"));
+        }
+        parts.push(format!("attempt {}", self.attempt));
+        parts.push(format!(
+            "this job had saved {} images before it, {} of them from {}",
+            self.saved_before, self.saved_from_host, self.host
+        ));
+        parts.push(if self.headers.is_empty() {
+            "headers: none of interest".to_owned()
+        } else {
+            format!(
+                "headers: {}",
+                self.headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )
+        });
+        parts.push(match &self.body {
+            Some(body) => format!("body: {body}"),
+            None => "body: none, or not text".to_owned(),
+        });
+        parts.push("not retried".to_owned());
+        parts.join(" | ")
+    }
+}
+
+/// The host (and port) of a URL, for counting and the log.
+pub fn host_of(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_owned(),
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// The response headers worth recording, cleaned and capped.
+fn recorded_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+    RECORDED_HEADERS
+        .iter()
+        .filter_map(|name| {
+            let value = headers.get(*name)?;
+            let text = String::from_utf8_lossy(value.as_bytes());
+            let text: String = activity::clean(&text).chars().take(200).collect();
+            Some(((*name).to_owned(), text))
+        })
+        .collect()
+}
+
+/// Whether a body of this type is text worth quoting.
+fn is_text_type(content_type: &str) -> bool {
+    ["html", "xml", "json", "text/"]
+        .iter()
+        .any(|kind| content_type.contains(kind))
+}
+
+/// The first characters of a text body, without control characters and
+/// with runs of spaces collapsed. None when it is not text.
+pub fn body_excerpt(content_type: &str, body: &[u8]) -> Option<String> {
+    let text = match std::str::from_utf8(body) {
+        Ok(text) => text.to_owned(),
+        // Cut in the middle of a character at the read limit.
+        Err(error) if error.error_len().is_none() => {
+            String::from_utf8_lossy(&body[..error.valid_up_to()]).into_owned()
+        }
+        Err(_) if is_text_type(content_type) => String::from_utf8_lossy(body).into_owned(),
+        Err(_) => return None,
+    };
+    if !is_text_type(content_type) && (!content_type.is_empty() || text.contains('\0')) {
+        return None;
+    }
+    let cleaned = activity::clean(&text);
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    Some(collapsed.chars().take(BODY_EXCERPT_CHARS).collect())
 }
 
 /// Called with each tile's outcome.
@@ -174,6 +390,15 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .get(RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| parse_retry_after(value, SystemTime::now()))
+}
+
+/// A wait in words for the log: "250 ms", "4 s".
+pub fn wait_text(wait: Duration) -> String {
+    if wait < Duration::from_secs(1) {
+        format!("{} ms", wait.as_millis())
+    } else {
+        format!("{} s", wait.as_secs_f64().round())
+    }
 }
 
 /// How fast a job may go: chosen by the person within bounds, and read
@@ -216,6 +441,24 @@ impl Pace {
         }
         seconds
     }
+
+    /// The pace in words, for the log.
+    pub fn describe(&self) -> String {
+        format!(
+            "{} parallel, {} pause after each image, {}, {}",
+            self.concurrency,
+            wait_text(self.delay),
+            self.requests_per_minute
+                .map_or("no cap on images a minute".to_owned(), |rpm| format!(
+                    "at most {rpm} images a minute"
+                )),
+            self.bytes_per_second
+                .map_or("no speed cap".to_owned(), |bps| format!(
+                    "at most {} KB/s",
+                    bps / 1000
+                )),
+        )
+    }
 }
 
 /// A pace that every clone shares, so the app can change a running job's pace.
@@ -226,6 +469,30 @@ pub type SharedPace = Arc<Mutex<Pace>>;
 struct Slots {
     next_request: Option<Instant>,
     next_byte: Option<Instant>,
+}
+
+/// One request in flight, counted while the value lives.
+struct InFlight<'a>(&'a AtomicUsize);
+
+impl<'a> InFlight<'a> {
+    fn new(counter: &'a AtomicUsize) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(counter)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// What one attempt at a tile came to.
+enum Attempt {
+    Done(Outcome),
+    /// Worth another try: what went wrong, and how long to wait first if
+    /// not the usual backoff.
+    Retry(String, Option<Duration>),
 }
 
 /// Downloads tiles into a store. One downloader can run several batches
@@ -241,6 +508,13 @@ pub struct Downloader {
     paused_until: Mutex<Option<Instant>>,
     consecutive_failures: AtomicU32,
     stop: Mutex<Option<Stop>>,
+    /// The answer that stopped the job, recorded in full.
+    stop_detail: Mutex<Option<StopDetail>>,
+    log: ActivityLog,
+    /// Images saved by this downloader, in all and by host.
+    saved: AtomicU64,
+    saved_by_host: Mutex<HashMap<String, u64>>,
+    in_flight: AtomicUsize,
 }
 
 impl Downloader {
@@ -266,6 +540,11 @@ impl Downloader {
             paused_until: Mutex::new(None),
             consecutive_failures: AtomicU32::new(0),
             stop: Mutex::new(None),
+            stop_detail: Mutex::new(None),
+            log: ActivityLog::global(),
+            saved: AtomicU64::new(0),
+            saved_by_host: Mutex::new(HashMap::new()),
+            in_flight: AtomicUsize::new(0),
         }
     }
 
@@ -276,12 +555,34 @@ impl Downloader {
         self
     }
 
+    /// Writes to this log instead of the app's.
+    #[must_use]
+    pub fn with_log(mut self, log: ActivityLog) -> Self {
+        self.log = log;
+        self
+    }
+
     fn pace(&self) -> Pace {
         *self.pace.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn store(&self) -> &TileStore {
         &self.store
+    }
+
+    /// The answer that stopped the job, if a refusal or a web page did.
+    pub fn stop_detail(&self) -> Option<StopDetail> {
+        self.stop_detail
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Waits until no request of this downloader is in flight.
+    pub async fn idle(&self) {
+        while self.in_flight.load(Ordering::SeqCst) > 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     /// Waits until the rate caps allow another request, and books it.
@@ -464,6 +765,15 @@ impl Downloader {
                 continue;
             }
             let outcome = self.fetch(task).await?;
+            if matches!(outcome, Outcome::Saved(_)) {
+                self.saved.fetch_add(1, Ordering::SeqCst);
+                *self
+                    .saved_by_host
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .entry(host_of(&task.url))
+                    .or_default() += 1;
+            }
             on_outcome(task, &outcome);
             let failures = if matches!(outcome, Outcome::Failed(_)) {
                 self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1
@@ -472,6 +782,10 @@ impl Downloader {
                 0
             };
             if failures >= self.settings.max_consecutive_failures {
+                self.log.error(
+                    Area::Download,
+                    format!("{failures} map images in a row failed; the job stops"),
+                );
                 return Err(Stop::TooManyFailures(failures));
             }
             if let Outcome::Saved(bytes) = &outcome {
@@ -492,61 +806,196 @@ impl Downloader {
             }
             self.wait_for_server().await?;
             self.wait_for_slot().await?;
-            let request = self
-                .client
-                .get(&task.url)
-                .header(ACCEPT, "image/*")
-                .timeout(settings.timeout)
-                .send();
-            let retry_wait = match self.unless_cancelled(request).await? {
-                Err(error) => {
-                    last_error = network_error(&error);
-                    None
-                }
-                Ok(response) => {
-                    let status = response.status();
-                    match status.as_u16() {
-                        404 | 410 => {
-                            self.store
-                                .mark_missing(&task.path)
-                                .map_err(|error| Stop::Disk(error.to_string()))?;
-                            return Ok(Outcome::Missing);
-                        }
-                        401 | 403 => return Err(Stop::Refused(status.as_u16())),
-                        429 => {
-                            let wait = retry_after(response.headers())
-                                .unwrap_or(delay)
-                                .min(settings.max_retry_after);
-                            // Slow every worker down, not just this one.
-                            self.pause_everyone(wait);
-                            last_error = "the server asked to slow down (HTTP 429)".to_owned();
-                            Some(Duration::ZERO)
-                        }
-                        500..=599 => {
-                            last_error = format!("server error (HTTP {})", status.as_u16());
-                            Some(
-                                retry_after(response.headers())
-                                    .unwrap_or(delay)
-                                    .min(settings.max_backoff),
-                            )
-                        }
-                        _ if status.is_success() => match self.save(task, response).await? {
-                            Ok(outcome) => return Ok(outcome),
-                            Err(error) => {
-                                last_error = error;
-                                None
-                            }
-                        },
-                        _ => return Ok(Outcome::Failed(http_error(status))),
-                    }
+            let retry_wait = match self.attempt(task, attempt, delay).await? {
+                Attempt::Done(outcome) => return Ok(outcome),
+                Attempt::Retry(error, wait) => {
+                    last_error = error;
+                    wait
                 }
             };
-            if attempt < settings.max_attempts {
-                self.sleep(retry_wait.unwrap_or(delay)).await?;
+            let next = (attempt < settings.max_attempts).then(|| retry_wait.unwrap_or(delay));
+            self.log.warn(
+                Area::Download,
+                format!(
+                    "{last_error} for {} (attempt {attempt} of {}); {}",
+                    task.url,
+                    settings.max_attempts,
+                    match next {
+                        Some(Duration::ZERO) => "trying again after that pause".to_owned(),
+                        Some(wait) => format!("trying again in {}", wait_text(wait)),
+                        None => "giving up on this image".to_owned(),
+                    }
+                ),
+            );
+            if let Some(wait) = next {
+                self.sleep(wait).await?;
                 delay = (delay * 2).min(settings.max_backoff);
             }
         }
         Ok(Outcome::Failed(last_error))
+    }
+
+    /// One request for a tile.
+    async fn attempt(&self, task: &Task, attempt: u32, delay: Duration) -> Result<Attempt, Stop> {
+        let settings = &self.settings;
+        let _in_flight = InFlight::new(&self.in_flight);
+        let request = self
+            .client
+            .get(&task.url)
+            .header(ACCEPT, "image/*")
+            .timeout(settings.timeout)
+            .send();
+        let response = match self.unless_cancelled(request).await? {
+            Err(error) => return Ok(Attempt::Retry(network_error(&error), None)),
+            Ok(response) => response,
+        };
+        let status = response.status();
+        Ok(match status.as_u16() {
+            404 | 410 => {
+                self.store.mark_missing(&task.path).map_err(|error| {
+                    self.disk_error(task, &error);
+                    Stop::Disk(error.to_string())
+                })?;
+                Attempt::Done(Outcome::Missing)
+            }
+            code @ (401 | 403) => {
+                // Stop the other workers at once; then record what came back.
+                self.set_stop(Stop::Refused(code));
+                self.record_stop("refused", task, attempt, response, None)
+                    .await;
+                return Err(Stop::Refused(code));
+            }
+            429 => {
+                let header = response
+                    .headers()
+                    .get(RETRY_AFTER)
+                    .map(|value| activity::clean(&String::from_utf8_lossy(value.as_bytes())));
+                let wait = retry_after(response.headers())
+                    .unwrap_or(delay)
+                    .min(settings.max_retry_after);
+                // Slow every worker down, not just this one.
+                self.pause_everyone(wait);
+                Attempt::Retry(
+                    format!(
+                        "The server asked to slow down (HTTP 429, Retry-After: {}); every download waits {}",
+                        header.as_deref().unwrap_or("not given"),
+                        wait_text(wait)
+                    ),
+                    Some(Duration::ZERO),
+                )
+            }
+            500..=599 => Attempt::Retry(
+                format!("Server error ({})", http_error(status)),
+                Some(
+                    retry_after(response.headers())
+                        .unwrap_or(delay)
+                        .min(settings.max_backoff),
+                ),
+            ),
+            _ if status.is_success() => match self.save(task, attempt, response).await? {
+                Ok(outcome) => Attempt::Done(outcome),
+                Err(error) => Attempt::Retry(error, None),
+            },
+            _ => {
+                let error = http_error(status);
+                self.log.warn(
+                    Area::Download,
+                    format!(
+                        "{error} for {} (attempt {attempt}); not retried, the image counts as failed",
+                        task.url
+                    ),
+                );
+                Attempt::Done(Outcome::Failed(error))
+            }
+        })
+    }
+
+    fn disk_error(&self, task: &Task, error: &std::io::Error) {
+        self.log.error(
+            Area::Download,
+            format!(
+                "Could not save {} to {}: {error}",
+                task.url,
+                self.store.overlay.join(&task.path).display()
+            ),
+        );
+    }
+
+    /// Records the answer that stops the job, in the log and for the panel.
+    async fn record_stop(
+        &self,
+        kind: &str,
+        task: &Task,
+        attempt: u32,
+        mut response: reqwest::Response,
+        body: Option<Vec<u8>>,
+    ) {
+        let status = response.status().as_u16();
+        let headers = recorded_headers(response.headers());
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let body = match body {
+            Some(body) => body,
+            None => {
+                let mut body = Vec::new();
+                while body.len() < BODY_READ_LIMIT {
+                    match self.unless_cancelled(response.chunk()).await {
+                        Ok(Ok(Some(chunk))) => body.extend_from_slice(&chunk),
+                        _ => break,
+                    }
+                }
+                body.truncate(BODY_READ_LIMIT);
+                body
+            }
+        };
+        let host = host_of(&task.url);
+        let detail = StopDetail {
+            kind: kind.to_owned(),
+            url: task.url.clone(),
+            status,
+            layer: task.label.as_deref().map(str::to_owned),
+            place: task.place,
+            attempt,
+            saved_before: self.saved.load(Ordering::SeqCst),
+            saved_from_host: self
+                .saved_by_host
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&host)
+                .copied()
+                .unwrap_or(0),
+            host,
+            headers,
+            body: body_excerpt(&content_type, &body),
+            at: activity::timestamp(SystemTime::now()),
+        };
+        let line = detail.log_line();
+        let first = {
+            let mut slot = self
+                .stop_detail
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let first = slot.is_none();
+            slot.get_or_insert(detail);
+            first
+        };
+        // Requests already on their way when the download stopped can be
+        // answered the same way; they are logged, but the first one is kept.
+        self.log.error(
+            Area::Download,
+            if first {
+                line
+            } else {
+                format!(
+                    "{} | a request already on its way when the download stopped",
+                    line.replacen("Stopped: ", "Also: ", 1)
+                )
+            },
+        );
     }
 
     /// Reads a successful answer and saves it if it is an image. The inner
@@ -554,6 +1003,7 @@ impl Downloader {
     async fn save(
         &self,
         task: &Task,
+        attempt: u32,
         mut response: reqwest::Response,
     ) -> Result<Result<Outcome, String>, Stop> {
         let content_type = response
@@ -562,13 +1012,23 @@ impl Downloader {
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default()
             .to_ascii_lowercase();
+        let too_large = || {
+            self.log.warn(
+                Area::Download,
+                format!(
+                    "The answer for {} is too large for a map image; the image counts as failed",
+                    task.url
+                ),
+            );
+            Ok(Ok(Outcome::Failed(
+                "the answer is too large for a map image".to_owned(),
+            )))
+        };
         if response
             .content_length()
             .is_some_and(|len| len > self.settings.max_tile_bytes as u64)
         {
-            return Ok(Ok(Outcome::Failed(
-                "the answer is too large for a map image".to_owned(),
-            )));
+            return too_large();
         }
         let mut body = Vec::new();
         loop {
@@ -576,9 +1036,7 @@ impl Downloader {
                 Ok(Some(chunk)) => {
                     body.extend_from_slice(&chunk);
                     if body.len() > self.settings.max_tile_bytes {
-                        return Ok(Ok(Outcome::Failed(
-                            "the answer is too large for a map image".to_owned(),
-                        )));
+                        return too_large();
                     }
                 }
                 Ok(None) => break,
@@ -586,9 +1044,10 @@ impl Downloader {
             }
         }
         if looks_like_image(&body) {
-            self.store
-                .write(&task.path, &body)
-                .map_err(|error| Stop::Disk(error.to_string()))?;
+            self.store.write(&task.path, &body).map_err(|error| {
+                self.disk_error(task, &error);
+                Stop::Disk(error.to_string())
+            })?;
             return Ok(Ok(Outcome::Saved(body.len() as u64)));
         }
         let starts_like_markup = body
@@ -596,26 +1055,37 @@ impl Downloader {
             .find(|byte| !byte.is_ascii_whitespace())
             .is_some_and(|byte| *byte == b'<');
         if content_type.contains("html") || starts_like_markup {
+            self.set_stop(Stop::WebPage);
+            self.record_stop("web-page", task, attempt, response, Some(body))
+                .await;
             return Err(Stop::WebPage);
         }
+        let kind = if content_type.is_empty() {
+            "no type"
+        } else {
+            &content_type
+        };
+        self.log.warn(
+            Area::Download,
+            format!(
+                "The answer for {} is not an image ({kind}, {} bytes); the image counts as failed",
+                task.url,
+                body.len()
+            ),
+        );
         Ok(Ok(Outcome::Failed(format!(
-            "the answer is not an image ({})",
-            if content_type.is_empty() {
-                "no type"
-            } else {
-                &content_type
-            }
+            "the answer is not an image ({kind})"
         ))))
     }
 }
 
 fn network_error(error: &reqwest::Error) -> String {
     if error.is_timeout() {
-        "the server did not answer in time".to_owned()
+        "The server did not answer in time".to_owned()
     } else if error.is_connect() {
-        "could not connect to the server".to_owned()
+        "Could not connect to the server".to_owned()
     } else {
-        format!("network error: {error}")
+        format!("Network error: {error}")
     }
 }
 
@@ -631,7 +1101,7 @@ fn http_error(status: StatusCode) -> String {
 pub mod tests {
     use super::*;
     use crate::tiles::store::tests::TempDir;
-    use std::{collections::HashMap, net::SocketAddr};
+    use std::net::SocketAddr;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -805,10 +1275,12 @@ pub mod tests {
     fn tasks(server: &MockServer, count: usize) -> Arc<Vec<Task>> {
         Arc::new(
             (0..count)
-                .map(|i| Task {
-                    layer: 0,
-                    url: server.url(&format!("/t/{i}.png")),
-                    path: PathBuf::from(format!("t/{i}.png")),
+                .map(|i| {
+                    Task::new(
+                        0,
+                        server.url(&format!("/t/{i}.png")),
+                        PathBuf::from(format!("t/{i}.png")),
+                    )
                 })
                 .collect(),
         )
@@ -959,10 +1431,12 @@ pub mod tests {
         pace.lock().unwrap().bytes_per_second = None;
         let more: Arc<Vec<Task>> = Arc::new(
             (10..14)
-                .map(|i| Task {
-                    layer: 0,
-                    url: server.url(&format!("/t/{i}.png")),
-                    path: PathBuf::from(format!("t/{i}.png")),
+                .map(|i| {
+                    Task::new(
+                        0,
+                        server.url(&format!("/t/{i}.png")),
+                        PathBuf::from(format!("t/{i}.png")),
+                    )
                 })
                 .collect(),
         );
@@ -1219,6 +1693,267 @@ pub mod tests {
         .await;
         let run = downloader(&dir, fast());
         assert_eq!(run.run(tasks(&server, 5)).await, Err(Stop::WebPage));
+    }
+
+    /// Tasks that say where each tile sits: a level of 4 x 3 tiles, row by row.
+    fn placed_tasks(server: &MockServer, count: usize) -> Arc<Vec<Task>> {
+        let label: Arc<str> = Arc::from("Surface (Island)");
+        Arc::new(
+            (0..count)
+                .map(|i| Task {
+                    label: Some(Arc::clone(&label)),
+                    place: Some(Place {
+                        z: 2,
+                        source_z: 5,
+                        x: i as u64 % 4,
+                        y: i as u64 / 4,
+                        columns: 4,
+                        rows: 3,
+                    }),
+                    ..Task::new(
+                        0,
+                        server.url(&format!("/t/{i}.png")),
+                        PathBuf::from(format!("t/{i}.png")),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn logged(dir: &TempDir) -> String {
+        std::fs::read_to_string(dir.0.join("logs").join(crate::activity::LOG_FILE)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn records_a_refusal_in_full_and_stops_at_once() {
+        ensure_crypto();
+        let dir = TempDir::new("403-detail");
+        let image = png();
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error>\r\n\t<Code>AccessDenied</Code>\u{7}<Message>Access Denied</Message></Error>";
+        let server = MockServer::start(Arc::new(move |path, _| {
+            let n: usize = path[3..path.len() - 4].parse().unwrap();
+            if n < 8 {
+                Reply::image(image.clone())
+            } else {
+                Reply {
+                    body: xml.as_bytes().to_vec(),
+                    ..Reply::status(403)
+                }
+                .header("Content-Type", "application/xml")
+                .header("Server", "TestServer/1.0")
+                .header("x-amz-request-id", "ABC123")
+                .header("X-Unrelated", "not recorded")
+            }
+        }))
+        .await;
+        let log = ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.1");
+        let (control, receiver) = watch::channel(Control::Run);
+        let downloader = Arc::new(
+            Downloader::new(
+                http_client().unwrap(),
+                Settings {
+                    concurrency: 1,
+                    ..fast()
+                },
+                TileStore::new(dir.0.join("overlay"), None),
+                receiver,
+            )
+            .with_log(log),
+        );
+        let stop = downloader
+            .run(placed_tasks(&server, 12), Arc::new(|_, _| {}))
+            .await
+            .unwrap_err();
+        assert_eq!(stop, Stop::Refused(403));
+        // Eight images, then the refusal; nothing after it, and no retry.
+        assert_eq!(server.seen().len(), 9);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(server.seen().len(), 9);
+        drop(control);
+
+        let detail = downloader.stop_detail().unwrap();
+        assert_eq!(detail.kind, "refused");
+        assert_eq!(detail.url, server.url("/t/8.png"));
+        assert_eq!(detail.status, 403);
+        assert_eq!(detail.attempt, 1);
+        assert_eq!(detail.saved_before, 8);
+        assert_eq!(detail.saved_from_host, 8);
+        assert_eq!(detail.host, server.addr.to_string());
+        assert_eq!(detail.layer.as_deref(), Some("Surface (Island)"));
+        let place = detail.place.unwrap();
+        assert_eq!((place.x, place.y, place.columns, place.rows), (0, 2, 4, 3));
+        assert!(place.is_edge());
+        assert!(detail
+            .headers
+            .contains(&("server".to_owned(), "TestServer/1.0".to_owned())));
+        assert!(detail
+            .headers
+            .contains(&("content-type".to_owned(), "application/xml".to_owned())));
+        assert!(detail
+            .headers
+            .contains(&("x-amz-request-id".to_owned(), "ABC123".to_owned())));
+        assert!(!detail.headers.iter().any(|(name, _)| name == "x-unrelated"));
+        assert_eq!(
+            detail.body.as_deref(),
+            Some("<?xml version=\"1.0\" encoding=\"UTF-8\"?> <Error> <Code>AccessDenied</Code><Message>Access Denied</Message></Error>")
+        );
+
+        let text = logged(&dir);
+        let line = text
+            .lines()
+            .find(|line| line.contains("refused access"))
+            .unwrap();
+        assert!(crate::activity::tests::well_formed(line), "{line}");
+        assert!(
+            line.contains("] download error: Stopped: the server refused access (HTTP 403) for ")
+        );
+        for part in [
+            server.url("/t/8.png").as_str(),
+            "layer Surface (Island), level 2 (remote zoom 5), column 0 of 4, row 2 of 3 (counted from 0; an edge tile)",
+            "attempt 1",
+            &format!("this job had saved 8 images before it, 8 of them from {}", server.addr),
+            "server: TestServer/1.0",
+            "x-amz-request-id: ABC123",
+            "body: <?xml version=\"1.0\"",
+            "AccessDenied",
+            "not retried",
+        ] {
+            assert!(line.contains(part), "{part} missing from {line}");
+        }
+    }
+
+    #[tokio::test]
+    async fn records_a_web_page_answer_in_full() {
+        ensure_crypto();
+        let dir = TempDir::new("html-detail");
+        let image = png();
+        let server = MockServer::start(Arc::new(move |path, _| {
+            if path == "/t/0.png" || path == "/t/1.png" {
+                return Reply::image(image.clone());
+            }
+            Reply {
+                headers: vec![
+                    ("Content-Type", "text/html; charset=utf-8".to_owned()),
+                    ("cf-mitigated", "challenge".to_owned()),
+                ],
+                body: format!(
+                    "<!doctype html>\n<title>Checking\tyour browser</title>{}",
+                    "x".repeat(500)
+                )
+                .into_bytes(),
+                ..Reply::status(200)
+            }
+        }))
+        .await;
+        let log = ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.1");
+        let (_control, receiver) = watch::channel(Control::Run);
+        let downloader = Arc::new(
+            Downloader::new(
+                http_client().unwrap(),
+                Settings {
+                    concurrency: 1,
+                    ..fast()
+                },
+                TileStore::new(dir.0.join("overlay"), None),
+                receiver,
+            )
+            .with_log(log),
+        );
+        let stop = downloader
+            .run(placed_tasks(&server, 6), Arc::new(|_, _| {}))
+            .await
+            .unwrap_err();
+        assert_eq!(stop, Stop::WebPage);
+        assert_eq!(server.seen().len(), 3);
+        let detail = downloader.stop_detail().unwrap();
+        assert_eq!(detail.kind, "web-page");
+        assert_eq!(detail.status, 200);
+        assert_eq!(detail.saved_before, 2);
+        assert!(detail
+            .headers
+            .contains(&("cf-mitigated".to_owned(), "challenge".to_owned())));
+        let body = detail.body.unwrap();
+        assert!(body.starts_with("<!doctype html> <title>Checking your browser</title>xxx"));
+        assert_eq!(body.chars().count(), BODY_EXCERPT_CHARS);
+        let text = logged(&dir);
+        assert!(text.contains(&format!(
+            "Stopped: the server sent a web page instead of an image (HTTP 200) for {}",
+            server.url("/t/2.png")
+        )));
+        assert!(text.contains("cf-mitigated: challenge"));
+    }
+
+    #[test]
+    fn quotes_only_text_bodies() {
+        assert_eq!(
+            body_excerpt("application/json", br#"{"error":"forbidden"}"#).as_deref(),
+            Some(r#"{"error":"forbidden"}"#)
+        );
+        assert_eq!(
+            body_excerpt("text/plain", b"Forbidden").as_deref(),
+            Some("Forbidden")
+        );
+        assert_eq!(
+            body_excerpt("", b"plain words").as_deref(),
+            Some("plain words")
+        );
+        assert_eq!(body_excerpt("image/png", &png()), None);
+        assert_eq!(body_excerpt("", &png()), None);
+        assert_eq!(body_excerpt("text/html", b"  \n "), None);
+        // Cut in the middle of a character at the read limit.
+        assert_eq!(
+            body_excerpt("text/plain", "caf\u{e9}".as_bytes()[..4].as_ref()).as_deref(),
+            Some("caf")
+        );
+    }
+
+    #[tokio::test]
+    async fn logs_every_failed_answer_with_its_address() {
+        ensure_crypto();
+        let dir = TempDir::new("log-failures");
+        let image = png();
+        let server = MockServer::start(Arc::new(move |path, count| match (path, count) {
+            ("/t/0.png", 0) => Reply::status(503),
+            ("/t/1.png", 0) => Reply::status(429).header("Retry-After", "0"),
+            ("/t/2.png", _) => Reply::status(400),
+            ("/t/3.png", _) => Reply {
+                headers: vec![("Content-Type", "application/octet-stream".to_owned())],
+                body: vec![0, 1, 2, 3],
+                ..Reply::status(200)
+            },
+            _ => Reply::image(image.clone()),
+        }))
+        .await;
+        let log = ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.1");
+        let (_control, receiver) = watch::channel(Control::Run);
+        let downloader = Arc::new(
+            Downloader::new(
+                http_client().unwrap(),
+                Settings {
+                    concurrency: 1,
+                    ..fast()
+                },
+                TileStore::new(dir.0.join("overlay"), None),
+                receiver,
+            )
+            .with_log(log),
+        );
+        downloader
+            .run(placed_tasks(&server, 5), Arc::new(|_, _| {}))
+            .await
+            .unwrap();
+        let text = logged(&dir);
+        for expected in [
+            format!("Server error (HTTP 503 Service Unavailable) for {} (attempt 1 of 5); trying again in", server.url("/t/0.png")),
+            format!("The server asked to slow down (HTTP 429, Retry-After: 0); every download waits 0 ms for {} (attempt 1 of 5); trying again after that pause", server.url("/t/1.png")),
+            format!("HTTP 400 Bad Request for {} (attempt 1); not retried", server.url("/t/2.png")),
+            format!("The answer for {} is not an image (application/octet-stream, 4 bytes)", server.url("/t/3.png")),
+        ] {
+            assert!(text.contains(&expected), "{expected}\n{text}");
+        }
+        assert!(text.lines().all(crate::activity::tests::well_formed));
+        // No line for an image that simply worked.
+        assert!(!text.contains(&server.url("/t/4.png")));
     }
 
     #[tokio::test]

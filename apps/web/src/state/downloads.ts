@@ -33,8 +33,12 @@ function update(patch: Partial<DownloadState>): void {
   set({ downloads: { ...get().downloads, ...patch } });
 }
 
-const isActive = (job: DownloadSnapshot | null) =>
-  job?.state === 'running' || job?.state === 'paused';
+/** A job that is not over: downloading, paused, or waiting its turn. */
+export const isActive = (job: DownloadSnapshot | null) =>
+  job?.state === 'running' ||
+  job?.state === 'paused' ||
+  job?.state === 'queued' ||
+  job?.state === 'waiting';
 
 let pollTimer = 0;
 let lastRevision = -1;
@@ -51,6 +55,8 @@ function receive(job: DownloadSnapshot | null): void {
   }
   if (isActive(job)) {
     schedulePoll();
+    // Its turn came, or it lost it: the queue shown has changed.
+    if (previous && previous.state !== job.state) void refreshPlan();
   } else if (isActive(previous)) {
     // Just finished: the sizes and what is installed have changed.
     void refreshPlan();

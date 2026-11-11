@@ -13,9 +13,11 @@ import {
   setMapsDialogOpen,
 } from '../state/library';
 import { useAtlas } from '../state/store';
+import { ActivityLogSection } from './ActivityLogSection';
 import { DeleteImagesConfirm } from './DeleteImagesConfirm';
 import { DeletePackConfirm } from './DeletePackConfirm';
 import { UiIcon } from './icons';
+import { MapPageActions } from './MapPageActions';
 
 /**
  * "Maps", in the desktop app: where maps are kept, the packs it shows and
@@ -67,6 +69,7 @@ export function MapsDialog() {
           <MapsFolder />
           <PackList />
           <Locations />
+          <ActivityLogSection />
         </div>
       ) : null}
     </dialog>
@@ -340,6 +343,7 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
             ) : null}
           </div>
         )}
+        {pack.imported ? <MapPageActions pack={pack} /> : null}
       </div>
     </li>
   );

@@ -17,7 +17,9 @@
  * It checks, in three launches of the app:
  *  1. the first game in ATLAS_BUNDLE_PACKS is shown first; its map image is
  *     missing and the notice offers the download; a refusing server stops the
- *     job with a plain reason; Standard detail downloads and the map shows it
+ *     job with a plain reason, the panel shows the refused image's address
+ *     and the activity log has the refusal in full and copies it as it is in
+ *     the log file; Standard detail downloads and the map shows it
  *     (markers on the dots); Full detail fetches only the missing level, pauses
  *     (no requests while paused) and resumes; the app is closed mid-way;
  *  2. the unfinished job is offered again and finishes; nothing is fetched
@@ -26,6 +28,7 @@
  *  3. the demo game is shown again on launch.
  */
 import { readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { DEFAULT_PORT, MAPS, MISSING_TILE, PACK_ID, remoteTileCount } from './remotePack.js';
 import { DOT, startTileServer } from './tileServer.js';
 import { check, here, isolatedEnvironment, sleep, startDriver } from './webdriver.js';
@@ -182,7 +185,90 @@ try {
     refused >= 1 && refused <= 2,
     `the job stopped after the first refusal (${refused} requests)`,
   );
+
+  // The panel says which image was refused, and the activity log has it in full.
+  await s.waitFor(`document.querySelector('[data-testid="stop-detail-url"]')?.value`, {
+    what: 'the address of the refused image',
+  });
+  const stop = await s.run(`return {
+    url: document.querySelector('[data-testid="stop-detail-url"]').value,
+    image: document.querySelector('[data-testid="stop-detail-image"]')?.textContent ?? '',
+    saved: document.querySelector('[data-testid="stop-detail-saved"]')?.textContent ?? '',
+  };`);
+  console.log('Stop details:', JSON.stringify(stop));
+  const refusedUrls = tiles.seen.map((r) => `http://127.0.0.1:${port}${r.path}`);
+  check(refusedUrls.includes(stop.url), 'the panel shows the address of the refused image');
+  check(
+    /level \d+: column \d+ of \d+, row \d+ of \d+/.test(stop.image),
+    'the panel says where the refused image is on the map',
+  );
+  check(stop.saved.startsWith('0 images'), 'the panel says no image was saved before it');
   await s.screenshot('download-3-error');
+
+  await s.click('[data-testid="view-log"]');
+  await s.waitFor(
+    `document.querySelector('[data-testid="log-dialog"]')?.open &&
+      [...document.querySelectorAll('[data-testid="log-row"]')].some((row) =>
+        row.textContent.includes(${JSON.stringify(stop.url)}) &&
+        row.textContent.includes('HTTP 403'))`,
+    { what: 'the refusal in the activity log' },
+  );
+  check(
+    (await s.run(`return document.querySelector('[data-testid="log-area"]').value;`)) ===
+      'download',
+    'the log opens on downloads',
+  );
+  await sleep(300);
+  await s.screenshot('download-3-log');
+  // Errors only, then copy what is shown. The clipboard is stood in for, so
+  // the test reads what would be copied and leaves the real one alone.
+  await s.run(`
+    const select = document.querySelector('[data-testid="log-level"]');
+    select.value = 'error';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    window.atlasCopied = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text) => { window.atlasCopied.push(text); } },
+    });`);
+  await s.waitFor(
+    `[...document.querySelectorAll('[data-testid="log-row"]')].every((row) => row.dataset.level === 'error')`,
+    { what: 'only errors in the log' },
+  );
+  await s.click('[data-testid="log-copy"]');
+  await s.waitFor(`window.atlasCopied.length === 1`, { what: 'the log to be copied' });
+  const copied = /** @type {string} */ (await s.run('return window.atlasCopied[0];'));
+  const logFile = join(environment.root, 'data', 'atlas', 'logs', 'atlas.log');
+  const errorLines = (await readFile(logFile, 'utf8'))
+    .split('\n')
+    .filter((line) => / download error: /.test(line));
+  const refusal = errorLines.find((line) => line.includes(stop.url));
+  console.log('Logged refusal:', refusal);
+  // Lines can be added after the dialog read the file; none can be missing.
+  const copiedLines = copied.endsWith('\n') ? copied.slice(0, -1).split('\n') : [];
+  check(
+    copiedLines.length >= 1 &&
+      copiedLines.every((line, i) => line === errorLines[i]) &&
+      copiedLines.length ===
+        (await s.run(`return document.querySelectorAll('[data-testid="log-row"]').length;`)),
+    `Copy takes the shown download errors as they are in the log file (${copiedLines.length} lines)`,
+  );
+  check(
+    !!refusal &&
+      /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \[[^\]]+\] download error: /.test(refusal) &&
+      refusal.includes('HTTP 403') &&
+      refusal.includes('content-type: text/plain') &&
+      refusal.includes('body: Forbidden'),
+    'the log line has the time, app, address, answer headers and body',
+  );
+  await s.waitFor(
+    `/Copied/.test(document.querySelector('[data-testid="log-status"]')?.textContent ?? '')`,
+    { what: 'the copy to be confirmed' },
+  );
+  await s.click('[data-testid="log-dialog"] .icon-button');
+  await s.waitFor(`!document.querySelector('[data-testid="log-dialog"]')?.open`, {
+    what: 'the activity log to close',
+  });
 
   // Standard detail.
   tiles.setMode('slow');

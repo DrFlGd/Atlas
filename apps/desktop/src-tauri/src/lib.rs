@@ -3,11 +3,13 @@
 //! disk, an optional window for importing a map from a web page, and the
 //! commands the web app uses for files, links, maps and map image downloads.
 
+pub mod activity;
 mod commands;
 mod imports;
 pub mod library;
 pub mod manifest;
 mod packs;
+mod pageview;
 mod removal;
 pub mod settings;
 pub mod tiles;
@@ -20,6 +22,7 @@ use tauri::{
     App, AppHandle, Manager, Url, WebviewWindowBuilder,
 };
 
+use activity::{ActivityLog, Area};
 use library::{BundledPack, Library, LEGACY_IDENTIFIER};
 pub use packs::{PackRegistry, SCHEME as PACK_SCHEME};
 use settings::{shared_dir, SettingsFile};
@@ -44,6 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(registry)
         .manage(imports::Imports::default())
+        .manage(pageview::PageViews::default())
         .invoke_handler(tauri::generate_handler![
             commands::desktop_info,
             commands::open_external,
@@ -72,10 +76,18 @@ pub fn run() {
             commands::import_open,
             commands::import_poll,
             commands::import_close,
+            commands::import_report,
+            commands::activity_log_read,
+            pageview::view_pages,
+            pageview::view_open,
+            pageview::view_status,
+            pageview::view_stop_saving,
+            pageview::view_close,
+            pageview::view_open_in_browser,
         ])
         .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |ctx, request, responder| {
             // Only the app's own window reads packs; a web page in the import
-            // window gets nothing.
+            // or map page window gets nothing.
             if ctx.webview_label() != MAIN_WINDOW {
                 responder.respond(
                     Response::builder()
@@ -94,6 +106,14 @@ pub fn run() {
         .setup(|app| {
             let paths = app.path();
             let app_data = paths.app_data_dir()?;
+            let shared = shared_dir(&paths.local_data_dir()?);
+            let info = app.package_info();
+            ActivityLog::new(
+                activity::log_dir(&shared),
+                &info.name,
+                &info.version.to_string(),
+            )
+            .install();
             let registry = app.state::<PackRegistry>().inner().clone();
             // Map images downloaded for bundled packs live here, served before
             // the pack's own files.
@@ -102,14 +122,16 @@ pub fn run() {
             if !legacy.contains(&app_data) {
                 legacy.push(app_data.clone());
             }
+            let bundled = bundled_packs(app);
+            log_start(app, &shared, &bundled);
             let library = Arc::new(Library::new(
-                SettingsFile::new(shared_dir(&paths.local_data_dir()?)),
+                SettingsFile::new(shared.clone()),
                 registry.clone(),
-                bundled_packs(app),
+                bundled,
                 legacy,
             ));
             library.start();
-            let manager = DownloadManager::new(app_data, registry);
+            let manager = DownloadManager::new(app_data, registry).with_shared_folder(&shared);
             manager.set_download_settings(&library.settings().read().downloads);
             app.manage(Arc::new(manager));
             app.manage(Arc::clone(&library));
@@ -126,9 +148,12 @@ pub fn run() {
                 }
                 let moved = library.migrate_legacy();
                 if !moved.is_empty() {
-                    eprintln!(
-                        "atlas: moved the map images of {} into the maps folder",
-                        moved.join(", ")
+                    activity::info(
+                        Area::Migration,
+                        format!(
+                            "Moved the map images of {} into the maps folder",
+                            moved.join(", ")
+                        ),
                     );
                 }
             });
@@ -137,6 +162,66 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running the Atlas desktop shell");
+}
+
+/// The first lines of a run in the activity log: which app, where its maps
+/// are and what it comes with.
+fn log_start(app: &App, shared: &std::path::Path, bundled: &[BundledPack]) {
+    let info = app.package_info();
+    let settings = SettingsFile::new(shared.to_path_buf()).read();
+    let maps = settings.maps_folder.clone().unwrap_or_else(|| {
+        format!(
+            "{} (the default)",
+            settings::default_maps_folder(shared).display()
+        )
+    });
+    let packs = if bundled.is_empty() {
+        "none".to_owned()
+    } else {
+        bundled
+            .iter()
+            .map(|pack| {
+                if pack.downloadable {
+                    format!("{} (map images downloadable)", pack.id)
+                } else {
+                    pack.id.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    activity::info(
+        Area::App,
+        format!(
+            "{} {} started on {} ({}) | maps folder: {maps} | {} other locations remembered | packs that come with the app: {packs} | importers: {}",
+            info.name,
+            info.version,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            settings.locations.len(),
+            bundled_importers(app)
+        ),
+    );
+}
+
+/// The importers listed in the bundled frontend's `config.json`.
+fn bundled_importers(app: &App) -> String {
+    let Some(asset) = app.asset_resolver().get("config.json".to_owned()) else {
+        return "unknown (no bundled config.json)".to_owned();
+    };
+    let ids: Vec<String> = serde_json::from_slice::<serde_json::Value>(&asset.bytes)
+        .ok()
+        .and_then(|config| config.get("importers").cloned())
+        .and_then(|importers| importers.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|importer| importer.get("id")?.as_str().map(activity::clean))
+        .collect();
+    if ids.is_empty() {
+        "none".to_owned()
+    } else {
+        ids.join(", ")
+    }
 }
 
 /// The packs shipped in the app's resources, one folder each.
@@ -213,7 +298,7 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
 fn open_link_outside(app: &AppHandle, url: &Url) {
     if let Some(url) = commands::external_url(url.as_str()) {
         if let Err(error) = commands::open_in_browser(app, &url) {
-            eprintln!("atlas: {error}");
+            activity::warn(Area::App, error);
         }
     }
 }

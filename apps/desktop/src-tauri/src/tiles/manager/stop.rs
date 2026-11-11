@@ -3,12 +3,12 @@
 //! it only reads, so that both can change without getting in each other's
 //! way.
 
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use tokio::time::Instant;
 
 use super::{lock, DownloadManager};
-use crate::tiles::{download::Control, pyramid::PackPlan};
+use crate::tiles::pyramid::PackPlan;
 
 /// How often [`DownloadManager::stop_and_wait`] looks whether the job has ended.
 const POLL: Duration = Duration::from_millis(25);
@@ -34,12 +34,13 @@ impl DownloadManager {
     /// ended: its workers have stopped, its last files are written and closed,
     /// and the pack folder's lock is released. Returns false when it has not
     /// ended within `timeout`. A pack that is not downloading returns at once.
-    pub async fn stop_and_wait(&self, pack_id: &str, timeout: Duration) -> bool {
+    pub async fn stop_and_wait(self: &Arc<Self>, pack_id: &str, timeout: Duration) -> bool {
         if !self.is_active(pack_id) {
             return true;
         }
+        // Cancelling also takes the job out of the line of waiting downloads.
         // An error only means the job ended in the meantime.
-        let _ = self.set_control(pack_id, Control::Cancel);
+        let _ = self.cancel(pack_id);
         let deadline = Instant::now() + timeout;
         while self.is_active(pack_id) {
             if Instant::now() >= deadline {
@@ -54,14 +55,15 @@ impl DownloadManager {
     /// session and the record of an unfinished job (in the pack folder and in
     /// the app's data folder). A job that is still running is left alone;
     /// stop it first with [`Self::stop_and_wait`]. Anything else kept per
-    /// pack id, such as a place in a download queue, belongs here too.
+    /// pack id, such as its place in the line of waiting downloads, goes too.
     pub fn forget(&self, pack_id: &str) {
-        let mut jobs = lock(&self.jobs);
-        if jobs.get(pack_id).is_some_and(|job| !job.finished) {
+        let mut schedule = lock(&self.schedule);
+        if schedule.jobs.get(pack_id).is_some_and(|job| !job.finished) {
             return;
         }
-        jobs.remove(pack_id);
-        drop(jobs);
+        schedule.jobs.remove(pack_id);
+        schedule.queue.retain(|id| id != pack_id);
+        drop(schedule);
         self.remove_record(pack_id);
         let _ = fs::remove_file(
             self.app_data

@@ -227,7 +227,14 @@ impl Imports {
             .on_navigation(move |next| {
                 let allowed = same_site(&navigation_start, next);
                 if !allowed {
-                    eprintln!("atlas: the import window stays on its site; not opening {next}");
+                    crate::activity::warn(
+                        crate::activity::Area::Import,
+                        format!(
+                            "The import window stays on its site; not opening {}{}",
+                            next.origin().ascii_serialization(),
+                            next.path()
+                        ),
+                    );
                 }
                 allowed
             })

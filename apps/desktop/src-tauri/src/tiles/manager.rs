@@ -1,4 +1,4 @@
-//! Download jobs: one pack at a time, level by level, lowest first.
+//! Download jobs: one at a time on the computer, level by level, lowest first.
 //!
 //! A job fetches every remote level of every downloadable layer of a pack up
 //! to the chosen detail. All layers' lowest remote level comes first, so
@@ -7,25 +7,42 @@
 //! finished level is recorded in the layer's status file, which the map
 //! reads to show the new levels without a restart.
 //!
+//! **One download at a time.** The pace settings are meant for everything
+//! the computer downloads, so jobs take turns:
+//!
+//! - within one app, jobs queue. Only the job at the front downloads; the
+//!   others are `queued` and start by themselves, in order, when it
+//!   finishes, stops on an error, is cancelled or is paused. Pausing a job
+//!   takes it out of the queue (once its requests in flight have finished,
+//!   the next job starts); resuming puts it at the back;
+//! - across apps (the viewer and other builds share the maps folder), the
+//!   job at the front only downloads while it holds a computer-wide lock on
+//!   `<shared folder>/download.lock` (`File::try_lock`, so it dies with the
+//!   process). Without it the job is `waiting` and tries again every few
+//!   seconds. The lock is let go whenever no job of this app is downloading.
+//!
 //! Where files go depends on how the pack is registered (see `packs.rs`):
 //!
 //! - a pack folder the person keeps (the maps folder or an opened location)
 //!   receives the tiles itself, at the layer's own URL paths, with the
 //!   `offline-tiles/<layer local id>.json` status files (see `status.rs`),
 //!   and the image summaries in its `manifest.json` are kept current. The
-//!   job holds the pack folder's lock (`.atlas/lock`) while it runs, so
-//!   another window or app cannot write the same pack at once, and an
-//!   unfinished job is recorded in `.atlas/download-job.json`;
+//!   job holds the pack folder's lock (`.atlas/lock`) from the moment it is
+//!   started until it ends, so another window or app cannot write the same
+//!   pack at once, and an unfinished job is recorded in
+//!   `.atlas/download-job.json`;
 //! - a bundled pack is read only: its tiles and status files go to the
 //!   overlay `<app data>/packs/<pack id>/`, and an unfinished job to
 //!   `<app data>/downloads/<pack id>.json`.
 //!
-//! The job record is `{ "packId", "detail", "stopReason" }`, so the job can
-//! be offered again after the app restarts. It is removed when the job
-//! finishes or is cancelled.
+//! The job record is `{ "packId", "detail", "stopReason", "stopDetail" }`, so
+//! the job can be offered again after the app restarts, with the full record
+//! of a refusal. It is removed when the job finishes or is cancelled. Every
+//! step (queueing, waiting, hand-over, levels, progress, the end) goes to
+//! the activity log.
 
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
@@ -37,17 +54,18 @@ use tokio::{sync::watch, time::Instant};
 
 use super::{
     download::{
-        http_client, Control, Downloader, OnOutcome, Outcome, Pace, Settings, SharedPace, Stop,
-        Task,
+        host_of, http_client, wait_text, Control, Downloader, OnOutcome, Outcome, Pace, Place,
+        Settings, SharedPace, Stop, StopDetail, Task,
     },
     downscale::build_lower_levels,
-    pyramid::{read_pack_plan, Detail, LayerPlan, PackPlan},
+    pyramid::{read_pack_plan, relative_path, Detail, LayerPlan, PackPlan},
     status::{add_levels, read_levels},
     store::TileStore,
 };
 use crate::{
+    activity::{ActivityLog, Area},
     library::{PackLock, JOB_FILE, META_DIR},
-    manifest::{update_images, ImagesUpdate},
+    manifest::{read_head, update_images, ImagesUpdate},
     packs::{PackKind, PackRegistry},
     settings::DownloadSettings,
 };
@@ -59,10 +77,23 @@ pub mod stop;
 const ASSUMED_LATENCY: Duration = Duration::from_millis(200);
 /// Speed is measured over this recent span.
 const SPEED_WINDOW: Duration = Duration::from_secs(20);
+/// The computer-wide download lock, in the shared folder.
+pub const DOWNLOAD_LOCK_FILE: &str = "download.lock";
+/// How often a job waiting for another app tries the lock again.
+const LOCK_RETRY: Duration = Duration::from_secs(3);
+/// A progress line at most this often, or every this many images.
+const PROGRESS_EVERY: Duration = Duration::from_secs(30);
+const PROGRESS_IMAGES: u64 = 500;
+/// Addresses of missing images listed per level in the log.
+const MISSING_EXAMPLES: usize = 3;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
+    /// Waiting for another download of this app to finish.
+    Queued,
+    /// Waiting for another Atlas app on this computer to finish downloading.
+    Waiting,
     Running,
     Paused,
     /// Stopped by a problem; `reason` says which.
@@ -85,9 +116,17 @@ pub struct MapProgress {
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub pack_id: String,
+    /// The pack's title.
+    pub title: String,
     pub detail: Detail,
     pub state: JobState,
     pub reason: Option<String>,
+    /// The answer that stopped the job (a refusal or a web page), in full.
+    pub stop_detail: Option<StopDetail>,
+    /// Queued: its place in the queue, from 1.
+    pub queue_position: Option<usize>,
+    /// Queued or waiting: what it waits for, in words.
+    pub waiting_for: Option<String>,
     pub maps: Vec<MapProgress>,
     /// Tiles dealt with (downloaded, already there, missing or failed).
     pub done: u64,
@@ -110,6 +149,11 @@ struct Progress {
     /// Recent requests: when, and how many bytes.
     recent: VecDeque<(Instant, u64)>,
     started: Instant,
+    /// When the job was started, for its duration.
+    created: Instant,
+    /// The last progress line in the log.
+    logged_at: Instant,
+    logged_done: u64,
 }
 
 impl Progress {
@@ -167,6 +211,62 @@ impl Progress {
         }
         snapshot
     }
+
+    /// The counts in words, for the log.
+    fn counts(&self) -> String {
+        let s = &self.snapshot;
+        let present = s.done - s.saved - s.missing - s.failed;
+        format!(
+            "{} of {} images dealt with: {} saved ({}), {} already there, {} not on the server, {} failed",
+            s.done,
+            s.total,
+            s.saved,
+            bytes_text(s.bytes),
+            present,
+            s.missing,
+            s.failed
+        )
+    }
+
+    /// A progress line, at most every 30 s or 500 images.
+    fn progress_line(&mut self) -> Option<String> {
+        let now = Instant::now();
+        if self.snapshot.done - self.logged_done < PROGRESS_IMAGES
+            && now - self.logged_at < PROGRESS_EVERY
+        {
+            return None;
+        }
+        self.logged_at = now;
+        self.logged_done = self.snapshot.done;
+        let snapshot = self.snapshot();
+        Some(format!(
+            "Progress of {}: {}; {:.1} images/s",
+            snapshot.title,
+            self.counts(),
+            snapshot.tiles_per_second
+        ))
+    }
+}
+
+/// Bytes in words for the log.
+fn bytes_text(bytes: u64) -> String {
+    if bytes >= 1 << 20 {
+        format!("{:.1} MB", bytes as f64 / f64::from(1u32 << 20))
+    } else {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    }
+}
+
+/// A duration in words for the log.
+fn duration_text(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 3600 {
+        format!("{} h {} min", seconds / 3600, (seconds % 3600) / 60)
+    } else if seconds >= 60 {
+        format!("{} min {} s", seconds / 60, seconds % 60)
+    } else {
+        format!("{:.1} s", duration.as_secs_f64())
+    }
 }
 
 /// Rough cost of fetching `tiles` tiles of `bytes` bytes in all at a pace.
@@ -194,6 +294,16 @@ pub struct DetailOption {
 pub struct Unfinished {
     pub detail: Detail,
     pub reason: Option<String>,
+    pub stop_detail: Option<StopDetail>,
+}
+
+/// A download of this app that is not over, in queue order.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueEntry {
+    pub pack_id: String,
+    pub title: String,
+    pub state: JobState,
 }
 
 /// What the web app needs to offer a download.
@@ -207,8 +317,11 @@ pub struct PlanInfo {
     pub unfinished: Option<Unfinished>,
     /// The current or last job of this pack in this session.
     pub job: Option<Snapshot>,
-    /// Another pack's job that is running now, which blocks a new one.
+    /// The title of another pack whose job downloads now; a new job waits for it.
     pub busy_with: Option<String>,
+    /// Every download of this app that is not over: the one downloading
+    /// first, then the queue in order, then paused ones.
+    pub queue: Vec<QueueEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -217,15 +330,40 @@ struct JobRecord {
     pack_id: String,
     detail: Detail,
     stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stop_detail: Option<StopDetail>,
 }
 
 struct Job {
     pack_id: String,
+    title: String,
     control: watch::Sender<Control>,
     progress: Arc<Mutex<Progress>>,
+    downloader: Arc<Downloader>,
     finished: bool,
-    /// Held while the job runs, for a pack folder.
+    /// The person paused it: it is out of the queue until resumed.
+    paused: bool,
+    /// Held from start to end, for a pack folder.
     lock: Option<PackLock>,
+}
+
+/// The computer-wide download lock, while held. Without a file (when the
+/// shared folder cannot be written), downloads go ahead unlocked.
+struct ComputerLock {
+    _file: Option<fs::File>,
+}
+
+#[derive(Default)]
+struct Schedule {
+    jobs: HashMap<String, Job>,
+    /// The job that may download now.
+    holder: Option<String>,
+    /// Jobs waiting for their turn, in order.
+    queue: VecDeque<String>,
+    /// Held while `holder` is set.
+    computer: Option<ComputerLock>,
+    /// A retry of the computer-wide lock is scheduled.
+    retry_pending: bool,
 }
 
 /// Runs and tracks download jobs. Lives in Tauri's managed state.
@@ -235,7 +373,10 @@ pub struct DownloadManager {
     settings: Settings,
     /// The person's download settings; running jobs read them too.
     pace: SharedPace,
-    jobs: Mutex<HashMap<String, Job>>,
+    schedule: Mutex<Schedule>,
+    lock_path: PathBuf,
+    lock_retry: Duration,
+    log: ActivityLog,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -260,33 +401,64 @@ impl DownloadManager {
             bytes_per_second: None,
         }));
         Self {
+            lock_path: app_data.join(DOWNLOAD_LOCK_FILE),
             app_data,
             registry,
             settings,
             pace,
-            jobs: Mutex::new(HashMap::new()),
+            schedule: Mutex::new(Schedule::default()),
+            lock_retry: LOCK_RETRY,
+            log: ActivityLog::global(),
         }
+    }
+
+    /// Uses the computer-wide download lock in `shared` (the folder every
+    /// Atlas app shares).
+    #[must_use]
+    pub fn with_shared_folder(mut self, shared: &Path) -> Self {
+        self.lock_path = shared.join(DOWNLOAD_LOCK_FILE);
+        self
+    }
+
+    /// Writes to this log instead of the app's.
+    #[must_use]
+    pub fn with_log(mut self, log: ActivityLog) -> Self {
+        self.log = log;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_lock_retry(mut self, retry: Duration) -> Self {
+        self.lock_retry = retry;
+        self
     }
 
     /// Applies the person's download settings, to running jobs too.
     pub fn set_download_settings(&self, settings: &DownloadSettings) {
-        *lock(&self.pace) = Pace::from_settings(settings);
+        let pace = Pace::from_settings(settings);
+        *lock(&self.pace) = pace;
+        self.log.info(
+            Area::Download,
+            format!("Download settings are now: {}", pace.describe()),
+        );
     }
 
     fn current_pace(&self) -> Pace {
         *lock(&self.pace)
     }
 
-    /// Whether a pack's job is running or paused.
+    /// Whether a pack's job is running, paused, queued or waiting.
     pub fn is_active(&self, pack_id: &str) -> bool {
-        lock(&self.jobs)
+        lock(&self.schedule)
+            .jobs
             .get(pack_id)
             .is_some_and(|job| !job.finished)
     }
 
-    /// The packs with a running or paused job.
+    /// The packs with a job that is not over.
     pub fn active_packs(&self) -> Vec<String> {
-        lock(&self.jobs)
+        lock(&self.schedule)
+            .jobs
             .values()
             .filter(|job| !job.finished)
             .map(|job| job.pack_id.clone())
@@ -348,7 +520,13 @@ impl DownloadManager {
             fs::rename(path.with_extension("json.part"), &path)
         };
         if let Err(error) = write() {
-            eprintln!("atlas: could not record the download job: {error}");
+            self.log.warn(
+                Area::Download,
+                format!(
+                    "Could not record the download job in {}: {error}",
+                    path.display()
+                ),
+            );
         }
     }
 
@@ -361,18 +539,68 @@ impl DownloadManager {
         let _ = fs::remove_file(self.record_path(pack_id));
     }
 
-    /// The current or last job of a pack.
-    pub fn snapshot(&self, pack_id: &str) -> Option<Snapshot> {
-        lock(&self.jobs)
-            .get(pack_id)
-            .map(|job| lock(&job.progress).snapshot())
+    /// A job's snapshot, with its place in the queue.
+    fn snapshot_in(schedule: &Schedule, job: &Job) -> Snapshot {
+        let mut snapshot = lock(&job.progress).snapshot();
+        let title_of = |id: &str| {
+            schedule
+                .jobs
+                .get(id)
+                .map_or_else(|| id.to_owned(), |job| job.title.clone())
+        };
+        match snapshot.state {
+            JobState::Queued => {
+                snapshot.queue_position = schedule
+                    .queue
+                    .iter()
+                    .position(|id| *id == job.pack_id)
+                    .map(|index| index + 1);
+                let ahead = schedule
+                    .holder
+                    .clone()
+                    .or_else(|| schedule.queue.front().cloned())
+                    .filter(|id| *id != job.pack_id);
+                snapshot.waiting_for = ahead.map(|id| title_of(&id));
+            }
+            JobState::Waiting => {
+                snapshot.queue_position = Some(1);
+                snapshot.waiting_for = Some("another Atlas app on this computer".to_owned());
+            }
+            _ => {}
+        }
+        snapshot
     }
 
-    fn running_pack(&self) -> Option<String> {
-        lock(&self.jobs)
+    /// The current or last job of a pack.
+    pub fn snapshot(&self, pack_id: &str) -> Option<Snapshot> {
+        let schedule = lock(&self.schedule);
+        schedule
+            .jobs
+            .get(pack_id)
+            .map(|job| Self::snapshot_in(&schedule, job))
+    }
+
+    /// Every job that is not over, in queue order.
+    fn queue_entries(schedule: &Schedule) -> Vec<QueueEntry> {
+        let mut order: Vec<&String> = schedule.holder.iter().collect();
+        order.extend(schedule.queue.iter());
+        let mut paused: Vec<&Job> = schedule
+            .jobs
             .values()
-            .find(|job| !job.finished)
-            .map(|job| job.pack_id.clone())
+            .filter(|job| !job.finished && !order.contains(&&job.pack_id))
+            .collect();
+        paused.sort_by(|a, b| a.title.cmp(&b.title));
+        order
+            .into_iter()
+            .filter_map(|id| schedule.jobs.get(id))
+            .chain(paused)
+            .filter(|job| !job.finished)
+            .map(|job| QueueEntry {
+                pack_id: job.pack_id.clone(),
+                title: job.title.clone(),
+                state: lock(&job.progress).snapshot.state,
+            })
+            .collect()
     }
 
     /// The detail options of a pack with their sizes, and any job.
@@ -425,14 +653,32 @@ impl DownloadManager {
         } else {
             *details.last().expect("at least Full")
         };
-        let job = self.snapshot(pack_id);
-        let running = self.running_pack();
-        let unfinished = if running.as_deref() == Some(pack_id) {
+        let schedule = lock(&self.schedule);
+        let job = schedule
+            .jobs
+            .get(pack_id)
+            .map(|job| Self::snapshot_in(&schedule, job));
+        let active = job.as_ref().is_some_and(|job| {
+            !matches!(
+                job.state,
+                JobState::Stopped | JobState::Cancelled | JobState::Done
+            )
+        });
+        let busy_with = schedule
+            .holder
+            .as_ref()
+            .filter(|id| *id != pack_id)
+            .and_then(|id| schedule.jobs.get(id))
+            .map(|job| job.title.clone());
+        let queue = Self::queue_entries(&schedule);
+        drop(schedule);
+        let unfinished = if active {
             None
         } else {
             self.read_record(pack_id).map(|record| Unfinished {
                 detail: record.detail,
                 reason: record.stop_reason,
+                stop_detail: record.stop_detail,
             })
         };
         Ok(PlanInfo {
@@ -441,13 +687,15 @@ impl DownloadManager {
             recommended,
             unfinished,
             job,
-            busy_with: running.filter(|id| id != pack_id),
+            busy_with,
+            queue,
         })
     }
 
     /// Starts (or restarts) the download of a pack at a detail. Tiles
     /// already on disk are skipped, so this also resumes an interrupted job
-    /// and upgrades to more detail without fetching anything twice.
+    /// and upgrades to more detail without fetching anything twice. When
+    /// another job is downloading, the new one queues behind it.
     pub fn start(self: &Arc<Self>, pack_id: &str, detail: Detail) -> Result<Snapshot, String> {
         let (plan, store) = self.plan(pack_id)?;
         if !plan.details().contains(&detail) && detail != Detail::Full {
@@ -456,12 +704,17 @@ impl DownloadManager {
         let client =
             http_client().map_err(|error| format!("Could not start downloading: {error}"))?;
         let folder = self.pack_folder(pack_id);
-        let mut jobs = lock(&self.jobs);
-        if let Some(job) = jobs.values().find(|job| !job.finished) {
-            return Err(if job.pack_id == pack_id {
-                "This pack is already downloading.".to_owned()
+        let title = store
+            .bundled
+            .as_deref()
+            .and_then(|root| read_head(root).ok())
+            .map_or_else(|| pack_id.to_owned(), |head| head.title);
+        let mut schedule = lock(&self.schedule);
+        if let Some(job) = schedule.jobs.get(pack_id).filter(|job| !job.finished) {
+            return Err(if job.paused {
+                "This download is paused. Resume it instead.".to_owned()
             } else {
-                "Another pack is downloading. Pause or cancel it first.".to_owned()
+                "This pack is already downloading or waiting its turn.".to_owned()
             });
         }
 
@@ -501,15 +754,21 @@ impl DownloadManager {
                 layer.remote_tile_count(layer.top_for(detail)) * layer.format().typical_bytes()
             })
             .sum();
-        let status_revision = jobs
+        let status_revision = schedule
+            .jobs
             .get(pack_id)
             .map_or(0, |job| lock(&job.progress).snapshot.status_revision);
+        let now = Instant::now();
         let progress = Arc::new(Mutex::new(Progress {
             snapshot: Snapshot {
                 pack_id: pack_id.to_owned(),
+                title: title.clone(),
                 detail,
-                state: JobState::Running,
+                state: JobState::Queued,
                 reason: None,
+                stop_detail: None,
+                queue_position: None,
+                waiting_for: None,
                 maps,
                 done: 0,
                 total,
@@ -524,58 +783,278 @@ impl DownloadManager {
             },
             layer_maps,
             recent: VecDeque::new(),
-            started: Instant::now(),
+            started: now,
+            created: now,
+            logged_at: now,
+            logged_done: 0,
         }));
-        let (control, receiver) = watch::channel(Control::Run);
+        // Every job starts paused; the schedule lets it run when it is its turn.
+        let (control, receiver) = watch::channel(Control::Pause);
         let downloader = Arc::new(
             Downloader::new(client, self.settings.clone(), store, receiver)
-                .with_pace(Arc::clone(&self.pace)),
+                .with_pace(Arc::clone(&self.pace))
+                .with_log(self.log.clone()),
         );
-        jobs.insert(
+        schedule.jobs.insert(
             pack_id.to_owned(),
             Job {
                 pack_id: pack_id.to_owned(),
+                title: title.clone(),
                 control,
                 progress: Arc::clone(&progress),
+                downloader: Arc::clone(&downloader),
                 finished: false,
+                paused: false,
                 lock: pack_lock,
             },
         );
-        drop(jobs);
+        schedule.queue.push_back(pack_id.to_owned());
+        drop(schedule);
         self.write_record(&JobRecord {
             pack_id: pack_id.to_owned(),
             detail,
             stop_reason: None,
+            stop_detail: None,
         });
 
         let this = Arc::clone(self);
         let pack = pack_id.to_owned();
         tokio::spawn(async move {
-            let result = run_job(&plan, detail, &downloader, &progress, folder.as_deref()).await;
+            let counting = {
+                let (plan, store) = (plan.clone(), downloader.store().clone());
+                tokio::task::spawn_blocking(move || count_present(&plan, detail, &store))
+            };
+            let present = counting.await.unwrap_or(0);
+            this.log_start(&pack, &plan, detail, total, present);
+            let result = run_job(
+                &plan,
+                detail,
+                &downloader,
+                &progress,
+                folder.as_deref(),
+                &this.log,
+            )
+            .await;
             if let Some(folder) = &folder {
                 let plan = plan.clone();
                 let folder = folder.clone();
                 let store = downloader.store().clone();
+                let log = this.log.clone();
                 // Counting every image file takes a moment for a large pack.
                 let _ = tokio::task::spawn_blocking(move || {
-                    record_images(&folder, &plan, &store, true)
+                    record_images(&folder, &plan, &store, true, &log)
                 })
                 .await;
             }
             this.finish(&pack, detail, result);
         });
-        Ok(self.snapshot(pack_id).expect("just added"))
+        self.dispatch();
+        let snapshot = self.snapshot(pack_id).expect("just added");
+        if snapshot.state == JobState::Queued {
+            self.log.info(
+                Area::Download,
+                format!(
+                    "Download of {title} ({pack_id}) is queued, number {} in line, behind {}",
+                    snapshot.queue_position.unwrap_or(0),
+                    snapshot
+                        .waiting_for
+                        .as_deref()
+                        .unwrap_or("another download")
+                ),
+            );
+        }
+        Ok(snapshot)
     }
 
-    fn finish(&self, pack_id: &str, detail: Detail, result: Result<(), Stop>) {
-        let jobs = lock(&self.jobs);
-        let Some(job) = jobs.get(pack_id) else { return };
+    /// The "download started" line: what the job covers and how it goes.
+    fn log_start(&self, pack_id: &str, plan: &PackPlan, detail: Detail, total: u64, present: u64) {
+        let layers = plan
+            .layers
+            .iter()
+            .map(|layer| {
+                let top = layer.top_for(detail);
+                format!(
+                    "{} ({}) levels {}-{} from remote zooms {}",
+                    layer.layer_name,
+                    layer.map_name,
+                    layer.first_remote_z(),
+                    top,
+                    layer
+                        .remote_levels(top)
+                        .map(|level| level.source_z.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut hosts: Vec<String> = plan
+            .layers
+            .iter()
+            .map(|layer| host_of(&layer.url_template.replace(['{', '}'], "")))
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        let snapshot = self.snapshot(pack_id);
+        let state = match snapshot.as_ref().map(|s| s.state) {
+            Some(JobState::Running) => "downloading now".to_owned(),
+            Some(JobState::Queued) => format!(
+                "queued behind {}",
+                snapshot
+                    .as_ref()
+                    .and_then(|s| s.waiting_for.clone())
+                    .unwrap_or_default()
+            ),
+            Some(JobState::Waiting) => "waiting for another Atlas app".to_owned(),
+            Some(other) => format!("{other:?}").to_lowercase(),
+            None => "unknown".to_owned(),
+        };
+        self.log.info(
+            Area::Download,
+            format!(
+                "Download started: {} ({pack_id}), {detail:?} detail | layers: {layers} | {total} images planned, {present} already there, {} to fetch | from {} | settings: {} | {state}",
+                snapshot.as_ref().map_or(pack_id, |s| s.title.as_str()),
+                total.saturating_sub(present),
+                hosts.join(", "),
+                self.current_pace().describe(),
+            ),
+        );
+    }
+
+    /// Lets the next job in line download, if none is downloading: when it
+    /// can have the computer-wide lock; otherwise it waits and tries again.
+    fn dispatch(self: &Arc<Self>) {
+        let mut schedule = lock(&self.schedule);
+        if schedule.holder.is_some() {
+            return;
+        }
+        let next = loop {
+            let Some(front) = schedule.queue.front().cloned() else {
+                // Nothing to download: let other apps have their turn.
+                schedule.computer = None;
+                return;
+            };
+            if schedule
+                .jobs
+                .get(&front)
+                .is_some_and(|job| !job.finished && !job.paused)
+            {
+                break front;
+            }
+            schedule.queue.pop_front();
+        };
+        if schedule.computer.is_none() {
+            match self.try_computer_lock() {
+                Some(computer) => schedule.computer = Some(computer),
+                None => {
+                    let job = schedule.jobs.get(&next).expect("checked above");
+                    let mut progress = lock(&job.progress);
+                    if progress.snapshot.state != JobState::Waiting {
+                        progress.snapshot.state = JobState::Waiting;
+                        self.log.info(
+                            Area::Download,
+                            format!(
+                                "Download of {} waits: another Atlas app on this computer is downloading map images; trying again every {}",
+                                job.title,
+                                wait_text(self.lock_retry)
+                            ),
+                        );
+                    }
+                    drop(progress);
+                    if !schedule.retry_pending {
+                        schedule.retry_pending = true;
+                        let this = Arc::clone(self);
+                        let wait = self.lock_retry;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(wait).await;
+                            lock(&this.schedule).retry_pending = false;
+                            this.dispatch();
+                        });
+                    }
+                    return;
+                }
+            }
+        }
+        schedule.queue.pop_front();
+        schedule.holder = Some(next.clone());
+        let job = schedule.jobs.get(&next).expect("checked above");
         let mut progress = lock(&job.progress);
+        let waited = progress.created.elapsed();
+        let was = progress.snapshot.state;
+        progress.snapshot.state = JobState::Running;
+        progress.recent.clear();
+        progress.started = Instant::now();
+        drop(progress);
+        job.control.send_replace(Control::Run);
+        self.log.info(
+            Area::Download,
+            format!(
+                "Download of {} has its turn and downloads now{} | settings: {}",
+                job.title,
+                match was {
+                    JobState::Queued | JobState::Waiting if waited > Duration::from_millis(100) =>
+                        format!(" (it was {was:?} for {})", duration_text(waited)).to_lowercase(),
+                    _ => String::new(),
+                },
+                self.current_pace().describe()
+            ),
+        );
+    }
+
+    /// The computer-wide download lock, if no other app holds it.
+    fn try_computer_lock(&self) -> Option<ComputerLock> {
+        let open = || -> std::io::Result<fs::File> {
+            if let Some(parent) = self.lock_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&self.lock_path)
+        };
+        match open() {
+            Ok(file) => match file.try_lock() {
+                Ok(()) => Some(ComputerLock { _file: Some(file) }),
+                Err(fs::TryLockError::WouldBlock) => None,
+                Err(fs::TryLockError::Error(error)) => {
+                    self.log.warn(
+                        Area::Download,
+                        format!(
+                            "Cannot lock {}: {error}; downloading without the computer-wide lock",
+                            self.lock_path.display()
+                        ),
+                    );
+                    Some(ComputerLock { _file: None })
+                }
+            },
+            Err(error) => {
+                self.log.warn(
+                    Area::Download,
+                    format!(
+                        "Cannot open {}: {error}; downloading without the computer-wide lock",
+                        self.lock_path.display()
+                    ),
+                );
+                Some(ComputerLock { _file: None })
+            }
+        }
+    }
+
+    fn finish(self: &Arc<Self>, pack_id: &str, detail: Detail, result: Result<(), Stop>) {
+        let mut schedule = lock(&self.schedule);
+        let Some(job) = schedule.jobs.get_mut(pack_id) else {
+            return;
+        };
+        let stop_detail = job.downloader.stop_detail();
+        let mut progress = lock(&job.progress);
+        let duration = progress.created.elapsed();
+        let counts = progress.counts();
         let snapshot = &mut progress.snapshot;
         snapshot.seconds_left = None;
         snapshot.tiles_per_second = 0.0;
         snapshot.bytes_per_second = 0.0;
-        match result {
+        let line = match &result {
             Ok(()) => {
                 snapshot.state = JobState::Done;
                 if snapshot.failed > 0 {
@@ -585,68 +1064,204 @@ impl DownloadManager {
                     ));
                 }
                 self.remove_record(pack_id);
+                format!(
+                    "Download of {} finished after {}: {counts}",
+                    job.title,
+                    duration_text(duration)
+                )
             }
             Err(Stop::Cancelled) => {
                 snapshot.state = JobState::Cancelled;
                 self.remove_record(pack_id);
+                format!(
+                    "Download of {} cancelled after {}: {counts}",
+                    job.title,
+                    duration_text(duration)
+                )
             }
             Err(stop) => {
                 snapshot.state = JobState::Stopped;
                 snapshot.reason = Some(stop.message());
+                let stop_detail =
+                    stop_detail.filter(|_| matches!(stop, Stop::Refused(_) | Stop::WebPage));
+                snapshot.stop_detail = stop_detail.clone();
                 self.write_record(&JobRecord {
                     pack_id: pack_id.to_owned(),
                     detail,
                     stop_reason: Some(stop.message()),
+                    stop_detail,
                 });
+                format!(
+                    "Download of {} stopped after {}: {} | {counts}",
+                    job.title,
+                    duration_text(duration),
+                    stop.message()
+                )
             }
-        }
+        };
         drop(progress);
-        drop(jobs);
-        if let Some(job) = lock(&self.jobs).get_mut(pack_id) {
-            job.finished = true;
-            job.lock = None;
+        job.finished = true;
+        job.paused = false;
+        // Lets go of the pack folder: nothing of this job keeps a file open.
+        job.lock = None;
+        if schedule.holder.as_deref() == Some(pack_id) {
+            schedule.holder = None;
+            schedule.computer = None;
         }
+        schedule.queue.retain(|id| id != pack_id);
+        drop(schedule);
+        if result.as_ref().is_err_and(|stop| *stop != Stop::Cancelled) {
+            self.log.error(Area::Download, line);
+        } else {
+            self.log.info(Area::Download, line);
+        }
+        self.dispatch();
     }
 
-    fn set_control(&self, pack_id: &str, control: Control) -> Result<Snapshot, String> {
-        let jobs = lock(&self.jobs);
-        let job = jobs
-            .get(pack_id)
+    /// Pauses a job: it stops downloading and leaves the queue, so the next
+    /// job can run once its requests in flight have finished.
+    pub fn pause(self: &Arc<Self>, pack_id: &str) -> Result<Snapshot, String> {
+        let mut schedule = lock(&self.schedule);
+        let job = schedule
+            .jobs
+            .get_mut(pack_id)
             .filter(|job| !job.finished)
             .ok_or_else(|| "This pack is not downloading.".to_owned())?;
-        job.control.send_replace(control);
-        let mut progress = lock(&job.progress);
-        match control {
-            Control::Pause => progress.snapshot.state = JobState::Paused,
-            Control::Run => {
+        if !job.paused {
+            job.paused = true;
+            job.control.send_replace(Control::Pause);
+            lock(&job.progress).snapshot.state = JobState::Paused;
+            self.log
+                .info(Area::Download, format!("Download of {} paused", job.title));
+        }
+        let downloader = Arc::clone(&job.downloader);
+        schedule.queue.retain(|id| id != pack_id);
+        let holder = schedule.holder.as_deref() == Some(pack_id);
+        let snapshot = Self::snapshot_in(&schedule, &schedule.jobs[pack_id]);
+        drop(schedule);
+        if holder {
+            // Hand over once this job's last requests have come back.
+            let this = Arc::clone(self);
+            let pack = pack_id.to_owned();
+            tokio::spawn(async move {
+                downloader.idle().await;
+                {
+                    let mut schedule = lock(&this.schedule);
+                    let still_paused = schedule.jobs.get(&pack).is_some_and(|job| job.paused);
+                    if schedule.holder.as_deref() == Some(pack.as_str()) && still_paused {
+                        schedule.holder = None;
+                        schedule.computer = None;
+                        if !schedule.queue.is_empty() {
+                            this.log.info(
+                                Area::Download,
+                                "The paused download lets the next one in line run",
+                            );
+                        }
+                    }
+                }
+                this.dispatch();
+            });
+        } else {
+            self.dispatch();
+        }
+        Ok(snapshot)
+    }
+
+    /// Resumes a paused job: at once if it still has its turn, otherwise at
+    /// the back of the queue.
+    pub fn resume(self: &Arc<Self>, pack_id: &str) -> Result<Snapshot, String> {
+        let mut schedule = lock(&self.schedule);
+        let holder = schedule.holder.as_deref() == Some(pack_id);
+        let job = schedule
+            .jobs
+            .get_mut(pack_id)
+            .filter(|job| !job.finished)
+            .ok_or_else(|| "This pack is not downloading.".to_owned())?;
+        if job.paused {
+            job.paused = false;
+            let mut progress = lock(&job.progress);
+            if holder {
                 progress.snapshot.state = JobState::Running;
                 progress.recent.clear();
                 progress.started = Instant::now();
+                job.control.send_replace(Control::Run);
+            } else {
+                progress.snapshot.state = JobState::Queued;
             }
-            Control::Cancel => {}
+            drop(progress);
+            self.log
+                .info(Area::Download, format!("Download of {} resumed", job.title));
+            if !holder {
+                schedule.queue.push_back(pack_id.to_owned());
+            }
         }
-        Ok(progress.snapshot())
+        drop(schedule);
+        self.dispatch();
+        Ok(self.snapshot(pack_id).expect("checked above"))
     }
 
-    pub fn pause(&self, pack_id: &str) -> Result<Snapshot, String> {
-        self.set_control(pack_id, Control::Pause)
-    }
-
-    pub fn resume(&self, pack_id: &str) -> Result<Snapshot, String> {
-        self.set_control(pack_id, Control::Run)
-    }
-
-    /// Cancels a running job, or forgets an interrupted one. Tiles already
-    /// downloaded are kept, so a later download continues from them.
-    pub fn cancel(&self, pack_id: &str) -> Result<(), String> {
-        match self.set_control(pack_id, Control::Cancel) {
-            Ok(_) => Ok(()),
-            Err(_) => {
+    /// Cancels a job (running, paused, queued or waiting), or forgets an
+    /// interrupted one. Tiles already downloaded are kept, so a later
+    /// download continues from them.
+    pub fn cancel(self: &Arc<Self>, pack_id: &str) -> Result<(), String> {
+        let mut schedule = lock(&self.schedule);
+        match schedule.jobs.get(pack_id).filter(|job| !job.finished) {
+            Some(job) => {
+                job.control.send_replace(Control::Cancel);
+                self.log.info(
+                    Area::Download,
+                    format!("Download of {} cancelled", job.title),
+                );
+                schedule.queue.retain(|id| id != pack_id);
+            }
+            None => {
+                drop(schedule);
+                if self.read_record(pack_id).is_some() {
+                    self.log.info(
+                        Area::Download,
+                        format!("The unfinished download of {pack_id} is forgotten"),
+                    );
+                }
                 self.remove_record(pack_id);
-                Ok(())
             }
         }
+        Ok(())
     }
+
+    /// Forgets every job as if the app had ended, letting go of every lock.
+    #[cfg(test)]
+    fn forget_everything(&self) {
+        let mut schedule = lock(&self.schedule);
+        for job in schedule.jobs.values() {
+            job.control.send_replace(Control::Cancel);
+        }
+        *schedule = Schedule::default();
+    }
+}
+
+/// How many of a job's remote tiles are already on disk or known missing.
+fn count_present(plan: &PackPlan, detail: Detail, store: &TileStore) -> u64 {
+    plan.layers
+        .iter()
+        .map(|layer| {
+            layer
+                .remote_levels(layer.top_for(detail))
+                .flat_map(|level| layer.tiles_of(level.z))
+                .filter(|tile| store.is_done(&layer.tile_path(tile.z, tile.x, tile.y)))
+                .count() as u64
+        })
+        .sum()
+}
+
+/// What happened to the tiles of one level, for the log.
+#[derive(Clone, Default)]
+struct Tally {
+    saved: u64,
+    present: u64,
+    missing: u64,
+    failed: u64,
+    bytes: u64,
+    missing_examples: Vec<String>,
 }
 
 /// Downloads a pack's levels in order and builds the levels below.
@@ -656,6 +1271,7 @@ async fn run_job(
     downloader: &Arc<Downloader>,
     progress: &Arc<Mutex<Progress>>,
     folder: Option<&Path>,
+    log: &ActivityLog,
 ) -> Result<(), Stop> {
     let store = downloader.store().clone();
     let tops: Vec<u8> = plan
@@ -670,6 +1286,11 @@ async fn run_job(
         .map(|(layer, &top)| layer.remote_levels(top).count())
         .max()
         .unwrap_or(0);
+    let labels: Vec<Arc<str>> = plan
+        .layers
+        .iter()
+        .map(|layer| Arc::from(format!("{} ({})", layer.layer_name, layer.map_name)))
+        .collect();
 
     for rank in 0..ranks {
         // The rank-th remote level of each layer, fetched together.
@@ -679,44 +1300,126 @@ async fn run_job(
             let Some(level) = layer.remote_levels(top).nth(rank) else {
                 continue;
             };
-            levels.push((index, level.z));
+            levels.push((index, *level));
+            let grid = layer.grid(level.z);
             tasks.extend(layer.tiles_of(level.z).map(|tile| Task {
                 layer: index,
                 url: layer.remote_url(level, tile.x, tile.y),
                 path: layer.tile_path(tile.z, tile.x, tile.y),
+                label: Some(Arc::clone(&labels[index])),
+                place: Some(Place {
+                    z: level.z,
+                    source_z: level.source_z,
+                    x: tile.x,
+                    y: tile.y,
+                    columns: grid.columns,
+                    rows: grid.rows,
+                }),
             }));
         }
-        let saved_layers = Arc::new(Mutex::new(BTreeSet::new()));
+        let tallies: Arc<Mutex<HashMap<usize, Tally>>> = Arc::default();
         let on_outcome: OnOutcome = {
             let progress = Arc::clone(progress);
-            let saved_layers = Arc::clone(&saved_layers);
+            let tallies = Arc::clone(&tallies);
+            let log = log.clone();
             Arc::new(move |task: &Task, outcome: &Outcome| {
-                if matches!(outcome, Outcome::Saved(_)) {
-                    lock(&saved_layers).insert(task.layer);
+                {
+                    let mut tallies = lock(&tallies);
+                    let tally = tallies.entry(task.layer).or_default();
+                    match outcome {
+                        Outcome::Skipped => tally.present += 1,
+                        Outcome::Saved(bytes) => {
+                            tally.saved += 1;
+                            tally.bytes += bytes;
+                        }
+                        Outcome::Missing => {
+                            tally.missing += 1;
+                            if tally.missing_examples.len() < MISSING_EXAMPLES {
+                                tally.missing_examples.push(task.url.clone());
+                            }
+                        }
+                        Outcome::Failed(_) => tally.failed += 1,
+                    }
                 }
-                lock(&progress).record(task, outcome);
+                let line = {
+                    let mut progress = lock(&progress);
+                    progress.record(task, outcome);
+                    progress.progress_line()
+                };
+                if let Some(line) = line {
+                    log.info(Area::Download, line);
+                }
             })
         };
-        downloader.run(Arc::new(tasks), on_outcome).await?;
+        let result = downloader.run(Arc::new(tasks), on_outcome).await;
+        let tallies = std::mem::take(&mut *lock(&tallies));
+        for (index, level) in &levels {
+            let tally = tallies.get(index).cloned().unwrap_or_default();
+            let layer = &plan.layers[*index];
+            let images = layer.grid(level.z).tiles();
+            let mut line = format!(
+                "Level {} (remote zoom {}) of {} {}: {images} images, {} saved ({}), {} already there, {} not on the server (404/410), {} failed",
+                level.z,
+                level.source_z,
+                labels[*index],
+                if result.is_ok() { "complete" } else { "ended early" },
+                tally.saved,
+                bytes_text(tally.bytes),
+                tally.present,
+                tally.missing,
+                tally.failed
+            );
+            if !tally.missing_examples.is_empty() {
+                line.push_str(&format!(
+                    " | not on the server, for example: {}",
+                    tally.missing_examples.join(", ")
+                ));
+            }
+            if tally.failed > 0 || result.is_err() {
+                log.warn(Area::Download, line);
+            } else {
+                log.info(Area::Download, line);
+            }
+        }
+        result?;
 
-        for (index, z) in levels {
+        for (index, level) in levels {
             let layer = &plan.layers[index];
-            let mut finished = vec![z];
+            let mut finished = vec![level.z];
             if rank == 0 {
                 let recorded = read_levels(&store.overlay, layer);
-                let stale = lock(&saved_layers).contains(&index)
-                    || layer.built_levels().any(|built| !recorded.contains(&built));
-                if stale {
+                let saved_here = tallies.get(&index).is_some_and(|t| t.saved > 0);
+                let stale =
+                    saved_here || layer.built_levels().any(|built| !recorded.contains(&built));
+                if stale && layer.built_levels().next().is_some() {
                     build_levels_below(layer, &store, downloader).await?;
+                    log.info(
+                        Area::Download,
+                        format!(
+                            "Built levels {}-{} of {} by shrinking level {}",
+                            layer.min_zoom,
+                            level.z.saturating_sub(1),
+                            labels[index],
+                            level.z
+                        ),
+                    );
                 }
                 finished.extend(layer.built_levels());
             }
-            add_levels(&store.overlay, layer, finished)
-                .map_err(|error| Stop::Disk(error.to_string()))?;
+            add_levels(&store.overlay, layer, finished).map_err(|error| {
+                log.error(
+                    Area::Download,
+                    format!(
+                        "Could not write the status file of {}: {error}",
+                        labels[index]
+                    ),
+                );
+                Stop::Disk(error.to_string())
+            })?;
             lock(progress).snapshot.status_revision += 1;
         }
         if let Some(folder) = folder {
-            record_images(folder, plan, &store, false);
+            record_images(folder, plan, &store, false, log);
         }
     }
     Ok(())
@@ -724,7 +1427,13 @@ async fn run_job(
 
 /// Records the complete levels of each layer in the pack's manifest, and
 /// with `count` the number and size of its image files.
-fn record_images(folder: &Path, plan: &PackPlan, store: &TileStore, count: bool) {
+fn record_images(
+    folder: &Path,
+    plan: &PackPlan,
+    store: &TileStore,
+    count: bool,
+    log: &ActivityLog,
+) {
     let updates: Vec<ImagesUpdate<'_>> = plan
         .layers
         .iter()
@@ -739,7 +1448,13 @@ fn record_images(folder: &Path, plan: &PackPlan, store: &TileStore, count: bool)
         })
         .collect();
     if let Err(error) = update_images(folder, &updates) {
-        eprintln!("atlas: {error}");
+        log.warn(
+            Area::Download,
+            format!(
+                "Could not update the image summary in {}: {error}",
+                folder.display()
+            ),
+        );
     }
 }
 
@@ -767,7 +1482,7 @@ fn count_images(folder: &Path, layer: &LayerPlan) -> (u64, u64) {
     }
     let prefix = layer.url.split("{z}").next().unwrap_or_default();
     let mut totals = (0, 0);
-    if let Some(relative) = crate::tiles::pyramid::relative_path(prefix.trim_end_matches('/')) {
+    if let Some(relative) = relative_path(prefix.trim_end_matches('/')) {
         walk(&folder.join(relative), &mut totals);
     }
     totals
@@ -799,6 +1514,7 @@ async fn build_levels_below(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activity::ActivityLog;
     use crate::tiles::{
         download::tests::{ensure_crypto, Handler, MockServer, Reply},
         store::tests::TempDir,
@@ -817,13 +1533,18 @@ mod tests {
     /// A pack with one 1000 x 600 map whose levels 1 and 2 come from a mock
     /// server (remote zooms 4 and 5, offset by 1 and 2 tiles).
     fn write_pack(dir: &Path, server: &MockServer) {
+        write_pack_at(dir, server, "/remote");
+    }
+
+    /// The same pack, with its images at `prefix` on the server.
+    fn write_pack_at(dir: &Path, server: &MockServer, prefix: &str) {
         fs::create_dir_all(dir).unwrap();
         fs::write(
             dir.join("maps.json"),
             r#"[{"id":"t:map:a","name":"Island","width":1000,"height":600}]"#,
         )
         .unwrap();
-        let template = server.url("/remote/{z}/{x}/{y}.png");
+        let template = server.url(&format!("{prefix}/{{z}}/{{x}}/{{y}}.png"));
         fs::write(
             dir.join("layers.json"),
             format!(
@@ -840,10 +1561,13 @@ mod tests {
     fn tile_server() -> Handler {
         Arc::new(|path, _| {
             let parts: Vec<u8> = path
-                .trim_start_matches("/remote/")
                 .trim_end_matches(".png")
-                .split('/')
+                .rsplit('/')
+                .take(3)
                 .map(|n| n.parse().unwrap())
+                .collect::<Vec<u8>>()
+                .into_iter()
+                .rev()
                 .collect();
             Reply::image(coloured_tile(parts[0], parts[1], parts[2]))
         })
@@ -852,7 +1576,10 @@ mod tests {
     async fn wait_for(manager: &DownloadManager, pack: &str) -> Snapshot {
         for _ in 0..400 {
             let snapshot = manager.snapshot(pack).unwrap();
-            if !matches!(snapshot.state, JobState::Running | JobState::Paused) {
+            if !matches!(
+                snapshot.state,
+                JobState::Running | JobState::Paused | JobState::Queued | JobState::Waiting
+            ) {
                 return snapshot;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -1081,6 +1808,327 @@ mod tests {
         assert!(cancelled.done < 16);
         assert!(!manager.record_path("test").exists());
         assert!(manager.pause("test").is_err());
+    }
+
+    /// Two packs, `one` and `two`, whose images come from `/one/…` and
+    /// `/two/…` on the server.
+    fn two_packs(dir: &TempDir, server: &MockServer, data: &str) -> Arc<DownloadManager> {
+        let registry = PackRegistry::default();
+        for id in ["one", "two"] {
+            let pack = dir.0.join(id);
+            write_pack_at(&pack, server, &format!("/{id}"));
+            registry.register(id, &pack).unwrap();
+        }
+        Arc::new(
+            DownloadManager::with_settings(
+                dir.0.join(data),
+                registry,
+                Settings {
+                    delay: Duration::from_millis(1),
+                    ..Settings::default()
+                },
+            )
+            .with_shared_folder(&dir.0.join("shared"))
+            .with_lock_retry(Duration::from_millis(100))
+            .with_log(ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.1")),
+        )
+    }
+
+    fn slow_tiles(delay: Duration) -> Handler {
+        let base = tile_server();
+        Arc::new(move |path, count| base(path, count).delayed(delay))
+    }
+
+    /// When the requests for a pack's images came in.
+    fn times(server: &MockServer, pack: &str) -> Vec<Instant> {
+        let prefix = format!("/{pack}/");
+        server
+            .seen()
+            .into_iter()
+            .filter(|seen| seen.path.starts_with(&prefix))
+            .map(|seen| seen.at)
+            .collect()
+    }
+
+    fn logged(dir: &TempDir) -> String {
+        fs::read_to_string(dir.0.join("logs").join(crate::activity::LOG_FILE)).unwrap_or_default()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refusal_is_recorded_with_the_job_and_offered_again() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-refusal");
+        let base = tile_server();
+        // Level 1 (remote zoom 4) downloads; level 2 (remote zoom 5) is refused.
+        let server = MockServer::start(Arc::new(move |path, count| {
+            if path.starts_with("/remote/5/") {
+                Reply {
+                    body: b"<Error><Code>AccessDenied</Code></Error>".to_vec(),
+                    ..Reply::status(403)
+                }
+                .header("Content-Type", "application/xml")
+            } else {
+                base(path, count)
+            }
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        write_pack(&pack, &server);
+        let registry = PackRegistry::default();
+        registry.register("test", &pack).unwrap();
+        let manager = Arc::new(
+            DownloadManager::with_settings(
+                dir.0.join("data"),
+                registry,
+                Settings {
+                    delay: Duration::from_millis(1),
+                    ..Settings::default()
+                },
+            )
+            .with_log(ActivityLog::new(dir.0.join("logs"), "Atlas", "0.3.1")),
+        );
+        manager.start("test", Detail::Full).unwrap();
+        let stopped = wait_for(&manager, "test").await;
+        assert_eq!(stopped.state, JobState::Stopped);
+        // Four images of level 1, then the first refusal of level 2 (two in flight at most).
+        let requests = server.seen().len();
+        assert!((5..=6).contains(&requests), "{requests}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(server.seen().len(), requests, "nothing after the refusal");
+        let detail = stopped.stop_detail.unwrap();
+        assert_eq!(detail.status, 403);
+        assert!(detail.url.starts_with(&server.url("/remote/5/")));
+        assert_eq!(detail.saved_before, 4);
+        assert_eq!(detail.saved_from_host, 4);
+        assert_eq!(detail.layer.as_deref(), Some("Surface (Island)"));
+        let place = detail.place.unwrap();
+        assert_eq!(
+            (place.z, place.source_z, place.columns, place.rows),
+            (2, 5, 4, 3)
+        );
+        assert_eq!(
+            detail.body.as_deref(),
+            Some("<Error><Code>AccessDenied</Code></Error>")
+        );
+
+        // The record keeps it, so a restarted app shows it again.
+        let record = fs::read_to_string(manager.record_path("test")).unwrap();
+        assert!(record.contains("\"stopDetail\""), "{record}");
+        let restarted = self::manager(&dir, &pack);
+        let unfinished = restarted.plan_info("test").unwrap().unfinished.unwrap();
+        assert_eq!(unfinished.stop_detail, Some(detail.clone()));
+
+        let log = logged(&dir);
+        assert!(
+            log.contains("Download started: test (test), Full detail"),
+            "{log}"
+        );
+        assert!(log.contains("16 images planned, 0 already there, 16 to fetch"));
+        assert!(
+            log.contains("Level 1 (remote zoom 4) of Surface (Island) complete: 4 images, 4 saved")
+        );
+        assert!(log.contains(&format!(
+            "Stopped: the server refused access (HTTP 403) for {}",
+            detail.url
+        )));
+        assert!(log.contains("this job had saved 4 images before it, 4 of them from"));
+        assert!(log.contains("Download of test stopped after"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn downloads_one_pack_at_a_time_in_order() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-queue");
+        let delay = Duration::from_millis(40);
+        let server = MockServer::start(slow_tiles(delay)).await;
+        let manager = two_packs(&dir, &server, "data");
+        let first = manager.start("one", Detail::Full).unwrap();
+        assert_eq!(first.state, JobState::Running);
+        let second = manager.start("two", Detail::Full).unwrap();
+        assert_eq!(second.state, JobState::Queued);
+        assert_eq!(second.queue_position, Some(1));
+        assert_eq!(second.waiting_for.as_deref(), Some("one"));
+        let info = manager.plan_info("two").unwrap();
+        assert_eq!(info.busy_with.as_deref(), Some("one"));
+        let order: Vec<(&str, JobState)> = info
+            .queue
+            .iter()
+            .map(|entry| (entry.pack_id.as_str(), entry.state))
+            .collect();
+        assert_eq!(
+            order,
+            vec![("one", JobState::Running), ("two", JobState::Queued)]
+        );
+        // A queued job is recorded, so it is offered again after a restart.
+        assert!(manager.record_path("two").exists());
+
+        assert_eq!(wait_for(&manager, "one").await.state, JobState::Done);
+        assert_eq!(wait_for(&manager, "two").await.state, JobState::Done);
+        let (one, two) = (times(&server, "one"), times(&server, "two"));
+        assert_eq!((one.len(), two.len()), (16, 16));
+        let last_one = *one.iter().max().unwrap();
+        let first_two = *two.iter().min().unwrap();
+        assert!(
+            first_two >= last_one + delay - Duration::from_millis(5),
+            "the second pack started {:?} after the first one's last request",
+            first_two.saturating_duration_since(last_one)
+        );
+        let log = logged(&dir);
+        assert!(log.contains("Download of two (two) is queued, number 1 in line, behind one"));
+        assert!(log.contains("has its turn and downloads now (it was queued for"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_queued_job_can_be_cancelled() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-queue-cancel");
+        let server = MockServer::start(slow_tiles(Duration::from_millis(30))).await;
+        let manager = two_packs(&dir, &server, "data");
+        manager.start("one", Detail::Full).unwrap();
+        manager.start("two", Detail::Full).unwrap();
+        manager.cancel("two").unwrap();
+        assert_eq!(wait_for(&manager, "two").await.state, JobState::Cancelled);
+        assert!(!manager.record_path("two").exists());
+        assert!(manager.plan_info("one").unwrap().queue.len() == 1);
+        assert_eq!(wait_for(&manager, "one").await.state, JobState::Done);
+        assert!(
+            times(&server, "two").is_empty(),
+            "the cancelled job asked for nothing"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pausing_lets_the_next_job_run() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-queue-pause");
+        let delay = Duration::from_millis(40);
+        let server = MockServer::start(slow_tiles(delay)).await;
+        let manager = two_packs(&dir, &server, "data");
+        manager.start("one", Detail::Full).unwrap();
+        manager.start("two", Detail::Full).unwrap();
+        while manager.snapshot("one").unwrap().done < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let paused_at = Instant::now();
+        assert_eq!(manager.pause("one").unwrap().state, JobState::Paused);
+        // The second job starts once the first one's requests are back.
+        for _ in 0..100 {
+            if manager.snapshot("two").unwrap().state == JobState::Running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(manager.snapshot("two").unwrap().state, JobState::Running);
+        // Resuming puts the first job at the back of the queue.
+        let resumed = manager.resume("one").unwrap();
+        assert_eq!(resumed.state, JobState::Queued);
+        assert_eq!(resumed.waiting_for.as_deref(), Some("two"));
+        assert_eq!(wait_for(&manager, "two").await.state, JobState::Done);
+        assert_eq!(wait_for(&manager, "one").await.state, JobState::Done);
+        // No request of the first job was in flight while the second ran.
+        let one_after_pause: Vec<Instant> = times(&server, "one")
+            .into_iter()
+            .filter(|at| *at > paused_at)
+            .collect();
+        let two = times(&server, "two");
+        let (two_first, two_last) = (*two.iter().min().unwrap(), *two.iter().max().unwrap());
+        assert!(one_after_pause
+            .iter()
+            .all(|at| *at + delay <= two_first + Duration::from_millis(5)
+                || *at >= two_last + delay - Duration::from_millis(5)));
+        assert_eq!(times(&server, "one").len(), 16);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_apps_take_turns_with_the_computer_wide_lock() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-two-apps");
+        let delay = Duration::from_millis(40);
+        let server = MockServer::start(slow_tiles(delay)).await;
+        // Two apps: their own app data, the same shared folder.
+        let viewer = two_packs(&dir, &server, "viewer");
+        let other = two_packs(&dir, &server, "other");
+        assert_eq!(
+            viewer.start("one", Detail::Full).unwrap().state,
+            JobState::Running
+        );
+        let waiting = other.start("two", Detail::Full).unwrap();
+        assert_eq!(waiting.state, JobState::Waiting);
+        assert_eq!(
+            waiting.waiting_for.as_deref(),
+            Some("another Atlas app on this computer")
+        );
+        assert_eq!(wait_for(&viewer, "one").await.state, JobState::Done);
+        assert_eq!(wait_for(&other, "two").await.state, JobState::Done);
+        let (one, two) = (times(&server, "one"), times(&server, "two"));
+        assert_eq!((one.len(), two.len()), (16, 16));
+        assert!(
+            *two.iter().min().unwrap()
+                >= *one.iter().max().unwrap() + delay - Duration::from_millis(5)
+        );
+        // The lock is free again: the viewer can download at once.
+        fs::remove_dir_all(dir.0.join("one/tiles")).ok();
+        let again = viewer.start("one", Detail::Full).unwrap();
+        assert_eq!(again.state, JobState::Running);
+        assert!(logged(&dir)
+            .contains("waits: another Atlas app on this computer is downloading map images"));
+        viewer.cancel("one").unwrap();
+        wait_for(&viewer, "one").await;
+    }
+
+    #[test]
+    fn running_and_queued_jobs_are_offered_again_after_a_restart() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-restart");
+        let main = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let first = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let server = main.block_on(MockServer::start(slow_tiles(Duration::from_millis(60))));
+        let before = two_packs(&dir, &server, "data");
+        {
+            let _context = first.enter();
+            before.start("one", Detail::Full).unwrap();
+            before.start("two", Detail::Full).unwrap();
+        }
+        main.block_on(async {
+            while before.snapshot("one").unwrap().saved < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        assert_eq!(before.snapshot("two").unwrap().state, JobState::Queued);
+        // The app closes: its tasks end and its locks go with it.
+        first.shutdown_background();
+        before.forget_everything();
+        drop(before);
+
+        let after = two_packs(&dir, &server, "data");
+        main.block_on(async {
+            for id in ["one", "two"] {
+                let unfinished = after.plan_info(id).unwrap().unfinished.unwrap();
+                assert_eq!(unfinished.detail, Detail::Full);
+                assert_eq!(unfinished.reason, None);
+            }
+            assert_eq!(
+                after.start("one", Detail::Full).unwrap().state,
+                JobState::Running
+            );
+            assert_eq!(
+                after.start("two", Detail::Full).unwrap().state,
+                JobState::Queued
+            );
+            assert_eq!(wait_for(&after, "one").await.state, JobState::Done);
+            assert_eq!(wait_for(&after, "two").await.state, JobState::Done);
+        });
+        assert!(!after.record_path("one").exists());
+        assert!(!after.record_path("two").exists());
+        // Images saved before the restart were not fetched again (one in flight may be).
+        let one = main.block_on(async { times(&server, "one").len() });
+        assert!(one <= 16 + 2, "{one}");
     }
 
     #[test]

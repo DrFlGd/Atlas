@@ -45,6 +45,13 @@ describe('desktop bridge', () => {
     await bridge.library.deletePack('my-game');
     await bridge.importWindow.open('https://example.com/map', '() => 1');
     await bridge.importWindow.poll();
+    await bridge.importWindow.open('https://example.com/map', '() => 1', {
+      id: 'demo-maps',
+      waitSeconds: 30,
+    });
+    await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
+    await bridge.activityLog.read();
+    await bridge.library.reveal({ kind: 'log-folder' });
     expect(calls).toEqual([
       ['tiles_start', { packId: 'demo', detail: 'standard' }],
       ['tiles_pause', { packId: 'demo' }],
@@ -64,6 +71,18 @@ describe('desktop bridge', () => {
       ['library_delete_pack', { id: 'my-game' }],
       ['import_open', { url: 'https://example.com/map', reader: '() => 1' }],
       ['import_poll', undefined],
+      [
+        'import_open',
+        {
+          url: 'https://example.com/map',
+          reader: '() => 1',
+          importerId: 'demo-maps',
+          waitSeconds: 30,
+        },
+      ],
+      ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],
+      ['activity_log_read', undefined],
+      ['library_reveal', { target: { kind: 'log-folder' } }],
     ]);
   });
 
