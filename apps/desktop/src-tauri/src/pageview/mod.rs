@@ -25,12 +25,14 @@
 //! - 404 or 410: the tile is recorded as not on the server, with the marker
 //!   "Download map images" writes for the same answer.
 //! - 403 whose body is an object store's "no such object"
-//!   (`is_store_no_such_object`, as the downloader decides it): the same,
-//!   but only once that layer's host is proven to serve it: an image of the
-//!   layer from that host was saved while browsing, or an image of the layer
-//!   is in the pack folder (`layer_has_images`, the downloader's proof).
-//!   Until then the tile is held in memory and recorded when such an image
-//!   is saved; held tiles are forgotten when saving stops.
+//!   (`is_store_no_such_object`, as the downloader decides it): held in
+//!   memory, and recorded the same way only when the page then gets a real
+//!   image of that layer from that host (written, or already on disk) in
+//!   the same batch or a later one, which shows the server is still serving
+//!   at or after that answer. Held tiles that no image follows are forgotten
+//!   when saving stops, so if a server starts answering everything with that
+//!   document, nothing after its last image is recorded. Images on disk
+//!   alone prove nothing here.
 //! - Anything else (another 401 or 403, 5xx, …): nothing is recorded; the
 //!   image counts as not saved.
 //!
@@ -69,14 +71,13 @@ use crate::{
     packs::{PackKind, PackRegistry},
     tiles::{
         download::{host_of, is_store_no_such_object},
-        manager::{layer_has_images, layer_host},
         pyramid::read_pack_plan,
-        store::TileStore,
         DownloadManager,
     },
 };
 use capture::{
-    has_tile, mark_tile_missing, write_tile, Marked, Pending, TileHit, TileMatcher, Written,
+    check_image, has_tile, mark_tile_missing, write_tile, Marked, Pending, TileHit, TileMatcher,
+    Written,
 };
 use script::{Batch, NoteReason, MAX_FAILURE_BODY};
 
@@ -306,13 +307,9 @@ struct Saving {
     logged_problems: u8,
     logged_ignored: u8,
     logged_first: bool,
-    /// Layers (by index) and hosts that sent an image of the layer that was
-    /// saved in this session.
-    proven: HashSet<(usize, String)>,
-    /// Whether an image of each layer was in the pack folder, once asked.
-    on_disk: HashMap<usize, bool>,
-    /// Store denials of layers and hosts not proven yet: the tiles, with the
-    /// address the page asked for.
+    /// Store denials of layers (by index) and hosts that no image answer of
+    /// the layer from the host has followed yet: the tiles, with the address
+    /// the page asked for.
     held: HashMap<(usize, String), BTreeMap<TileHit, String>>,
     /// Layers and kinds of reason ([`Edge::kind`]) whose first missing
     /// tile has been logged.
@@ -323,29 +320,21 @@ struct Saving {
     logged_held: HashSet<usize>,
 }
 
-/// Why "access denied" counts as "not on the server" for a layer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Proof {
-    /// An image of the layer from the host was saved while browsing.
-    ThisSession,
-    /// An image of the layer is in the pack folder.
-    OnDisk,
-}
-
 /// Why a tile counts as not on the server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Edge {
     /// 404 or 410.
     NotFound(u16),
-    /// A store's "no such object", with the host proven.
-    Store(Proof),
+    /// A store's "no such object", followed by an image of the layer from
+    /// the same host.
+    Store,
 }
 
 impl Edge {
     fn kind(self) -> u8 {
         match self {
             Edge::NotFound(_) => 0,
-            Edge::Store(_) => 1,
+            Edge::Store => 1,
         }
     }
 }
@@ -414,24 +403,6 @@ impl Saving {
         }
     }
 
-    /// Whether the host's "access denied" counts as "not on the server" for
-    /// a layer, and why.
-    fn proof(&mut self, layer: usize, host: &str) -> Option<Proof> {
-        if self.proven.contains(&(layer, host.to_owned())) {
-            return Some(Proof::ThisSession);
-        }
-        let plan = self.matcher.plan().layers.get(layer)?;
-        if host != layer_host(plan) {
-            return None;
-        }
-        let root = &self.root;
-        let on_disk = *self
-            .on_disk
-            .entry(layer)
-            .or_insert_with(|| layer_has_images(plan, &TileStore::new(root.clone(), None)));
-        on_disk.then_some(Proof::OnDisk)
-    }
-
     /// Records a tile as not on the server, unless a file is at its place.
     fn mark_missing(&mut self, hit: TileHit, url: &str, why: Edge) {
         let layer = &self.matcher.plan().layers[hit.layer];
@@ -469,13 +440,9 @@ impl Saving {
                     "Saving as you browse: counting {} as not on the server (the map's edge): the page's own request for it was answered with HTTP {status}. It is recorded as missing, as Download map images records it, and counted in the summary when saving stops",
                     log_address(url)
                 ),
-                Edge::Store(proof) => format!(
-                    "Saving as you browse: counting {} as not on the server (the map's edge): the store answered the page's own request with \"access denied\" (HTTP 403 with an AccessDenied error document), as it does for images that do not exist, and {}. It is recorded as missing, as Download map images records it, and counted in the summary when saving stops",
-                    log_address(url),
-                    match proof {
-                        Proof::OnDisk => "images of this layer from it are on disk",
-                        Proof::ThisSession => "it has sent images of this layer while you browsed",
-                    }
+                Edge::Store => format!(
+                    "Saving as you browse: counting {} as not on the server (the map's edge): the store answered the page's own request with \"access denied\" (HTTP 403 with an AccessDenied error document), as it does for images that do not exist, and then sent an image of this layer, so it is still serving. It is recorded as missing, as Download map images records it, and counted in the summary when saving stops",
+                    log_address(url)
                 ),
             };
             activity::info(Area::Download, message);
@@ -488,7 +455,7 @@ impl Saving {
                     log_address(url),
                     match why {
                         Edge::NotFound(status) => format!("HTTP {status}"),
-                        Edge::Store(_) => "the store answered \"access denied\"".to_owned(),
+                        Edge::Store => "the store answered \"access denied\"".to_owned(),
                     }
                 ),
             );
@@ -496,7 +463,7 @@ impl Saving {
     }
 
     /// Records the store denials held for a layer and host, now that the
-    /// host has sent an image of the layer.
+    /// host has sent an image of the layer after them.
     fn release_held(&mut self, layer: usize, host: String) {
         let Some(held) = self.held.remove(&(layer, host)) else {
             return;
@@ -508,7 +475,7 @@ impl Saving {
             ) {
                 continue;
             }
-            self.mark_missing(hit, &url, Edge::Store(Proof::ThisSession));
+            self.mark_missing(hit, &url, Edge::Store);
         }
     }
 
@@ -529,7 +496,7 @@ impl Saving {
             activity::info(
                 Area::Download,
                 format!(
-                    "Saving as you browse: {held} map images answered \"access denied\" by a store are not recorded as missing: no image of their layer came from that host while saving was on, so Download map images asks for them again"
+                    "Saving as you browse: {held} map images answered \"access denied\" by a store are not recorded as missing: no image of their layer came from that host after them, so Download map images asks for them again"
                 ),
             );
         }
@@ -568,25 +535,22 @@ impl Saving {
                 });
             match failure.status {
                 status @ (404 | 410) => self.mark_missing(hit, url, Edge::NotFound(status)),
-                403 if store_denial => match self.proof(hit.layer, &host) {
-                    Some(proof) => self.mark_missing(hit, url, Edge::Store(proof)),
-                    None => {
-                        if self.logged_held.insert(hit.layer) {
-                            activity::info(
-                                Area::Download,
-                                format!(
-                                    "Saving as you browse: the store answered \"access denied\" (HTTP 403 with an AccessDenied error document) for {}, as it does for images that do not exist; it counts as not on the server only once {host} has sent an image of this layer while saving is on",
-                                    log_address(url)
-                                ),
-                            );
-                        }
-                        self.held
-                            .entry((hit.layer, host))
-                            .or_default()
-                            .insert(hit, url.to_owned());
-                        self.record(hit, Outcome::NotSaved(Problem::Other));
+                403 if store_denial => {
+                    if self.logged_held.insert(hit.layer) {
+                        activity::info(
+                            Area::Download,
+                            format!(
+                                "Saving as you browse: the store answered \"access denied\" (HTTP 403 with an AccessDenied error document) for {}, as it does for images that do not exist; answers like this count as not on the server only when an image of this layer from {host} follows them, and are forgotten otherwise",
+                                log_address(url)
+                            ),
+                        );
                     }
-                },
+                    self.held
+                        .entry((hit.layer, host))
+                        .or_default()
+                        .insert(hit, url.to_owned());
+                    self.record(hit, Outcome::NotSaved(Problem::Other));
+                }
                 status => {
                     if !self.outcomes.contains_key(&hit) {
                         self.log_problem(url, &format!("the server answered HTTP {status}"));
@@ -612,8 +576,8 @@ impl Saving {
         // What to write to the activity log, once the loop has let go of `self`.
         let mut problems: Vec<(String, Option<String>)> = Vec::new();
         let mut first_saved: Option<String> = None;
-        // Layers and hosts that sent an image that was saved.
-        let mut proofs: Vec<(usize, String)> = Vec::new();
+        // Layers and hosts that answered with a real image: they still serve.
+        let mut serving: HashSet<(usize, String)> = HashSet::new();
         for (url, bytes) in items {
             if url.len() > MAX_URL_CHARS {
                 continue;
@@ -622,6 +586,12 @@ impl Saving {
                 problems.push((url.to_owned(), None));
                 continue;
             };
+            if bytes
+                .as_deref()
+                .is_some_and(|bytes| check_image(bytes).is_ok())
+            {
+                serving.insert((hit.layer, host_of(url)));
+            }
             if matches!(
                 self.outcomes.get(&hit),
                 Some(Outcome::Saved | Outcome::AlreadyHad)
@@ -641,7 +611,6 @@ impl Saving {
                     Ok(Written::Saved(size)) => {
                         self.bytes += size;
                         changes.push(hit);
-                        proofs.push((hit.layer, host_of(url)));
                         first_saved.get_or_insert_with(|| url.to_owned());
                         Outcome::Saved
                     }
@@ -657,11 +626,7 @@ impl Saving {
         for hit in changes {
             self.pending.add(self.matcher.plan(), &hit);
         }
-        for (layer, host) in proofs {
-            if self.proven.insert((layer, host.clone())) {
-                self.release_held(layer, host);
-            }
-        }
+
         if let Some(url) = first_saved.filter(|_| !self.logged_first) {
             self.logged_first = true;
             activity::info(
@@ -718,6 +683,11 @@ impl Saving {
             self.record(hit, outcome);
         }
         self.take_failures(batch);
+        // An image answer releases the denials held before it and those of
+        // this batch, whose order within the batch is not known.
+        for (layer, host) in serving {
+            self.release_held(layer, host);
+        }
     }
 
     /// Brings status files and the manifest up to date. Returns whether the
@@ -1174,8 +1144,6 @@ fn start_saving(
         logged_problems: 0,
         logged_ignored: 0,
         logged_first: false,
-        proven: HashSet::new(),
-        on_disk: HashMap::new(),
         held: HashMap::new(),
         logged_edge_kinds: HashSet::new(),
         logged_edges: 0,
@@ -1613,13 +1581,10 @@ mod tests {
     }
 
     #[test]
-    fn holds_a_store_denial_until_the_host_sends_an_image_of_the_layer() {
+    fn holds_every_store_denial_until_an_image_of_the_layer_follows() {
         let (_dir, root, mut saving) = saving_pack("pageview-held", |_| {});
         saving.take(&store_denial(1, 1), Vec::new());
-        assert!(
-            !marker(&root, 1, 1).exists(),
-            "no image of the layer yet: the host is not proven"
-        );
+        assert!(!marker(&root, 1, 1).exists(), "no image has followed yet");
         assert_eq!(saving.held_count(), 1);
         assert_eq!(saving.counts().not_on_server, 0);
         assert_eq!(saving.counts().other_problems, 1);
@@ -1634,29 +1599,67 @@ mod tests {
             (counts.saved, counts.not_on_server, counts.not_saved),
             (1, 1, 0)
         );
-        // Later denials of the proven host count at once.
+        // A later denial is held again, although the host has sent images...
         saving.take(&store_denial(0, 1), Vec::new());
+        assert!(!marker(&root, 0, 1).exists());
+        assert_eq!(saving.held_count(), 1);
+        // ...until the next image answer, even of a tile saved before.
+        saving.take(&images(&[(0, 0)]), Vec::new());
         assert!(marker(&root, 0, 1).is_file());
         assert_eq!(saving.counts().not_on_server, 2);
+        assert_eq!(saving.counts().saved, 1, "each tile once");
     }
 
     #[test]
-    fn counts_a_store_denial_at_once_when_an_image_of_the_layer_is_on_disk() {
-        let (_dir, root, mut saving) = saving_pack("pageview-proof-on-disk", |root| {
+    fn an_image_in_the_same_batch_releases_its_denials() {
+        let (_dir, root, mut saving) = saving_pack("pageview-same-batch", |_| {});
+        let mut batch = store_denial(1, 1);
+        batch.items = images(&[(0, 0)]).items;
+        saving.take(&batch, Vec::new());
+        assert!(marker(&root, 1, 1).is_file());
+        assert_eq!(saving.held_count(), 0);
+    }
+
+    #[test]
+    fn images_on_disk_alone_do_not_record_a_denial() {
+        let (_dir, root, mut saving) = saving_pack("pageview-disk-not-proof", |root| {
             fs::create_dir_all(root.join("tiles/world/1/0")).unwrap();
             fs::write(root.join("tiles/world/1/0/0.png"), png()).unwrap();
         });
-        assert_eq!(saving.proof(0, "tiles.example.com"), Some(Proof::OnDisk));
-        assert_eq!(saving.proof(0, "cdn.example.com"), None);
         saving.take(&store_denial(1, 0), Vec::new());
-        assert!(marker(&root, 1, 0).is_file());
-        assert_eq!(saving.held_count(), 0);
-        assert_eq!(saving.counts().not_on_server, 1);
+        assert!(!marker(&root, 1, 0).exists());
+        assert_eq!(saving.held_count(), 1);
+        assert_eq!(saving.counts().not_on_server, 0);
     }
 
     #[test]
-    fn forgets_held_denials_when_saving_stops() {
+    fn an_image_answer_already_on_disk_releases_held_denials() {
+        let (_dir, root, mut saving) = saving_pack("pageview-already-had", |root| {
+            fs::create_dir_all(root.join("tiles/world/1/0")).unwrap();
+            fs::write(root.join("tiles/world/1/0/0.png"), png()).unwrap();
+        });
+        saving.take(&store_denial(1, 1), Vec::new());
+        // The page gets the image the pack already has: the server serves.
+        saving.take(&images(&[(0, 0)]), Vec::new());
+        assert_eq!(saving.counts().already_had, 1);
+        assert!(marker(&root, 1, 1).is_file());
+        assert_eq!(saving.counts().not_on_server, 1);
+        // An answer that is not an image releases nothing.
+        saving.take(&store_denial(0, 1), Vec::new());
+        let not_an_image: Batch = serde_json::from_value(serde_json::json!({
+            "items": [{"id": 9, "url": tile_url(0, 0), "data": encode(b"<html>")}],
+            "large": [], "notSaved": [], "workers": false,
+        }))
+        .unwrap();
+        saving.take(&not_an_image, Vec::new());
+        assert!(!marker(&root, 0, 1).exists());
+        assert_eq!(saving.held_count(), 1);
+    }
+
+    #[test]
+    fn drops_denials_after_the_last_image_when_saving_stops() {
         let (_dir, root, mut saving) = saving_pack("pageview-dropped", |_| {});
+        saving.take(&images(&[(0, 0)]), Vec::new());
         saving.take(&store_denial(1, 1), Vec::new());
         saving.take(&store_denial(0, 1), Vec::new());
         assert_eq!(saving.held_count(), 2);
@@ -1669,17 +1672,33 @@ mod tests {
         drop(saving);
         assert!(
             !marker(&root, 1, 1).exists(),
-            "the held denial was forgotten"
+            "no image followed the denial: it was forgotten"
         );
     }
 
     #[test]
-    fn records_nothing_for_other_refusals_and_failures() {
-        let (_dir, root, mut saving) = saving_pack("pageview-refusals", |root| {
-            // The host is proven, so only the answer decides.
+    fn a_run_of_denials_with_no_image_records_nothing() {
+        let (_dir, root, mut saving) = saving_pack("pageview-denial-run", |root| {
             fs::create_dir_all(root.join("tiles/world/1/0")).unwrap();
             fs::write(root.join("tiles/world/1/0/0.png"), png()).unwrap();
         });
+        saving.take(&images(&[(0, 0)]), Vec::new());
+        // The server now answers everything with the store's document.
+        for (x, y) in [(1, 0), (0, 1), (1, 1)] {
+            saving.take(&store_denial(x, y), Vec::new());
+            saving.take(&failures(&[]), Vec::new());
+        }
+        assert_eq!(saving.held_count(), 3);
+        assert!(!saving.flush());
+        drop(saving);
+        for (x, y) in [(1, 0), (0, 1), (1, 1)] {
+            assert!(!marker(&root, x, y).exists(), "{x}/{y}");
+        }
+    }
+
+    #[test]
+    fn records_nothing_for_other_refusals_and_failures() {
+        let (_dir, root, mut saving) = saving_pack("pageview-refusals", |_| {});
         let other_code = "<Error><Code>RequestTimeTooSkewed</Code></Error>";
         let page = "<!doctype html><title>Forbidden</title>";
         saving.take(
@@ -1708,6 +1727,12 @@ mod tests {
         assert_eq!((counts.not_saved, counts.other_problems), (3, 3));
         assert_eq!(saving.held_count(), 0);
         assert!(!saving.flush());
+        // An image afterwards records none of them.
+        saving.take(&images(&[(0, 0)]), Vec::new());
+        for (x, y) in [(1, 0), (0, 1), (1, 1)] {
+            assert!(!marker(&root, x, y).exists(), "{x}/{y}");
+        }
+        assert_eq!(saving.counts().not_on_server, 0);
     }
 
     #[test]

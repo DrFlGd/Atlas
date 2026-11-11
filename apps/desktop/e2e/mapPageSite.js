@@ -10,7 +10,8 @@
  *   - `/my-game/world` loads its map images with `fetch` and
  *     `XMLHttpRequest` (binary), the way a map script does while someone
  *     pans and zooms: first the zoomed-out level, then, a moment later, the
- *     zoomed-in one. It also loads a marker icon and a level the pack does
+ *     zoomed-in one, its bottom edge first and the rest a moment after
+ *     that (so images of the layer follow the edge's answers). It also loads a marker icon and a level the pack does
  *     not use, which must be ignored. Before that it tries what a hostile
  *     page might (calling the app, reading the app's packs, opening a
  *     window, leaving for another site) and reports what happened to
@@ -122,7 +123,11 @@ export function tileImage(/** @type {string} */ path) {
 
 /** The page script of the world map: fetch and XHR, in two steps. */
 const worldScript = (/** @type {string} */ images, /** @type {string} */ elsewhere) => {
-  const tiles = remoteTiles(WORLD).map((tile) => ({ z: tile.z, url: images + tile.path }));
+  const tiles = remoteTiles(WORLD).map((tile) => ({
+    z: tile.z,
+    y: tile.y,
+    url: images + tile.path,
+  }));
   return `
 (async () => {
   const results = { userAgent: navigator.userAgent };
@@ -171,11 +176,17 @@ const worldScript = (/** @type {string} */ images, /** @type {string} */ elsewhe
     fetch(${JSON.stringify(`${images}/tiles/world/4/1/1.png`)}).then((r) => r.arrayBuffer()),
   ]);
   document.body.dataset.step = 'zoomed-out';
-  // Zoomed in, a moment later: level 2, some by fetch, some by XHR.
+  // Zoomed in, a moment later: level 2, some by fetch, some by XHR; first
+  // its bottom edge, then, panning up, the rest.
   await new Promise((resolve) => setTimeout(resolve, 1500));
   const level2 = tiles.filter((t) => t.z === 2);
-  await Promise.all(level2.map((t, i) =>
-    i % 3 === 0 ? byFetch(t.url) : byXhr(t.url, i % 3 === 1 ? 'arraybuffer' : 'blob')));
+  const bottom = Math.max(...level2.map((t) => t.y));
+  const load = (t, i) =>
+    i % 3 === 0 ? byFetch(t.url) : byXhr(t.url, i % 3 === 1 ? 'arraybuffer' : 'blob');
+  await Promise.all(level2.map((t, i) => (t.y === bottom ? load(t, i) : null)));
+  document.body.dataset.step = 'bottom-edge';
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await Promise.all(level2.map((t, i) => (t.y === bottom ? null : load(t, i))));
   document.body.dataset.step = 'zoomed-in';
 })();`;
 };

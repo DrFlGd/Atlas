@@ -18,8 +18,9 @@
  * and XMLHttpRequest land in the pack where "Download map images" puts
  * them, that the image already there is kept, that other images are
  * ignored, that three images at the map's edge, which the image server
- * answers the way an object store answers for an image it does not have,
- * are recorded as not on the server (the downloader's marker, the count on
+ * answers the way an object store answers for an image it does not have
+ * before the page loads the rest of their level, are recorded as not on
+ * the server (the downloader's marker, the count on
  * the card and a line in the activity log) and let their level complete,
  * that the status file and the manifest are brought up to date,
  * that a download of the same pack cannot start meanwhile, that the page
@@ -382,7 +383,7 @@ try {
   check(
     !!edgeLog &&
       new RegExp(
-        `counting ${site.images.replace(/[.]/g, '\\.')}/tiles/world/6/\\d+/6\\.png as not on the server \\(the map's edge\\): the store answered the page's own request with "access denied" \\(HTTP 403 with an AccessDenied error document\\), as it does for images that do not exist, and (it has sent images of this layer while you browsed|images of this layer from it are on disk)`,
+        `counting ${site.images.replace(/[.]/g, '\\.')}/tiles/world/6/\\d+/6\\.png as not on the server \\(the map's edge\\): the store answered the page's own request with "access denied" \\(HTTP 403 with an AccessDenied error document\\), as it does for images that do not exist, and then sent an image of this layer, so it is still serving`,
       ).test(edgeLog) &&
       logText.split('\n').filter((line) => line.includes('Saving as you browse: counting'))
         .length === 1,
@@ -391,6 +392,10 @@ try {
   check(
     logText.includes(`${edgeTiles.length} not on the server (the map's edge)`),
     'the summary when saving stops counts them',
+  );
+  check(
+    !logText.includes('are not recorded as missing'),
+    'no "access denied" answer was left without an image after it',
   );
   await s.click('[data-testid="map-page-close"]');
   await waitForCard(s, 'closed');
