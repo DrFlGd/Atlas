@@ -16,5 +16,6 @@ export * from './progress/records';
 export * from './progress/store';
 export * from './progress/memoryStore';
 export * from './progress/resolve';
+export * from './progress/saveMarks';
 export * from './progress/counters';
 export * from './progress/exchange';
