@@ -192,9 +192,10 @@ export const isAllowedRemoteUrl = (url: string) =>
  */
 export const remoteTileSourceSchema = z.strictObject({
   /**
-   * `https` URL template of the remote tiles, with `{z}`, `{x}` and `{y}`.
-   * Plain `http` is accepted only for this computer (`127.0.0.1` or
-   * `localhost`), for tests and local mirrors.
+   * `https` URL template of the remote tiles, with `{z}`, `{x}` (column) and
+   * `{y}` (row) in whatever order the source uses: `{z}/{y}/{x}` for one that
+   * names the row first. Plain `http` is accepted only for this computer
+   * (`127.0.0.1` or `localhost`), for tests and local mirrors.
    */
   urlTemplate: z
     .string()
@@ -231,7 +232,10 @@ export const tileSourceSchema = z.discriminatedUnion('type', [
     url: nonEmpty,
   }),
   z.strictObject({
-    /** A folder of tiles addressed by a `{z}/{x}/{y}` URL template. */
+    /**
+     * A folder of tiles addressed by a URL template with `{z}`, `{x}`
+     * (column) and `{y}` (row), usually `{z}/{x}/{y}`; the order is free.
+     */
     type: z.literal('xyz'),
     url: nonEmpty.refine(hasTileTemplate, 'must contain {z}, {x} and {y}'),
     /** Where the tiles can be downloaded from when they are not in the pack yet. */

@@ -1755,6 +1755,77 @@ mod tests {
         assert!(!pack.join("tiles").exists());
     }
 
+    /// A source that names its images by zoom, row, column: the pack says so
+    /// in both templates, and every image is saved under the address it was
+    /// fetched from.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn follows_templates_with_the_row_before_the_column() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-row-first");
+        // The colour encodes the address as the server reads it: z, row, column.
+        let server = MockServer::start(Arc::new(|path, _| {
+            let parts: Vec<u8> = path
+                .trim_end_matches(".png")
+                .rsplit('/')
+                .take(3)
+                .map(|n| n.parse().unwrap())
+                .collect();
+            let (column, row, z) = (parts[0], parts[1], parts[2]);
+            Reply::image(coloured_tile(z, column, row))
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        fs::create_dir_all(&pack).unwrap();
+        fs::write(
+            pack.join("maps.json"),
+            r#"[{"id":"t:map:a","name":"Island","width":1000,"height":600}]"#,
+        )
+        .unwrap();
+        let template = server.url("/remote/{z}/{y}/{x}.png");
+        fs::write(
+            pack.join("layers.json"),
+            format!(
+                r#"[{{"id":"t:layer:a","mapId":"t:map:a","name":"Surface","minZoom":0,"maxZoom":2,"tileSize":256,
+                  "tiles":{{"type":"xyz","url":"tiles/a/{{z}}/{{y}}/{{x}}.png","remote":{{
+                    "urlTemplate":"{template}",
+                    "levels":[{{"z":1,"sourceZ":4,"offsetX":1,"offsetY":2}},
+                              {{"z":2,"sourceZ":5,"offsetX":2,"offsetY":4}}]}}}}}}]"#
+            ),
+        )
+        .unwrap();
+        let manager = manager(&dir, &pack);
+        manager.start("test", Detail::Standard).unwrap();
+        let done = wait_for(&manager, "test").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let mut seen: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            [
+                "/remote/4/2/1.png",
+                "/remote/4/2/2.png",
+                "/remote/4/3/1.png",
+                "/remote/4/3/2.png"
+            ]
+        );
+        // The layer's tile in column 0, row 1 is the remote tile in column 1,
+        // row 3, saved as `1/<row>/<column>.png`.
+        let overlay = dir.0.join("data/packs/test/tiles/a");
+        assert_eq!(
+            fs::read(overlay.join("1/1/0.png")).unwrap(),
+            coloured_tile(4, 1, 3)
+        );
+        assert_eq!(
+            fs::read(overlay.join("1/0/1.png")).unwrap(),
+            coloured_tile(4, 2, 2)
+        );
+        // Level 0 has each of them in its own quarter: top right, bottom left.
+        let built = image::open(overlay.join("0/0/0.png")).unwrap().to_rgb8();
+        assert_eq!(built.get_pixel(10, 10).0, [80, 40, 80]);
+        assert_eq!(built.get_pixel(200, 10).0, [80, 80, 80]);
+        assert_eq!(built.get_pixel(10, 200).0, [80, 40, 120]);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn downloads_into_a_pack_folder_in_place() {
         ensure_crypto();

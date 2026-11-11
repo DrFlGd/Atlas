@@ -1,7 +1,7 @@
 //! Builds the pyramid levels below the lowest downloaded one by combining
 //! 2 x 2 tiles of the level above and shrinking them to one tile.
 
-use std::io::Cursor;
+use std::{collections::HashMap, fs, io::Cursor, path::Path};
 
 use image::{
     codecs::{jpeg::JpegEncoder, png::PngEncoder, webp::WebPEncoder},
@@ -10,7 +10,8 @@ use image::{
 };
 
 use super::{
-    pyramid::{LayerPlan, TileFormat},
+    pyramid::{read_pack_plan, LayerPlan, TileFormat},
+    status::read_levels,
     store::TileStore,
 };
 
@@ -107,6 +108,62 @@ pub fn build_lower_levels(
         }
     }
     Ok(true)
+}
+
+/// Where each layer of the pack in `pack_root` keeps its tiles: the `url`
+/// template of its `layers.json` entry, by layer id. Empty when the pack has
+/// no readable `layers.json`.
+pub fn tile_addresses(pack_root: &Path) -> HashMap<String, String> {
+    let Some(layers) = fs::read_to_string(pack_root.join("layers.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<serde_json::Value>>(&text).ok())
+    else {
+        return HashMap::new();
+    };
+    layers
+        .iter()
+        .filter_map(|layer| {
+            let id = layer.get("id")?.as_str()?;
+            let url = layer.get("tiles")?.get("url")?.as_str()?;
+            Some((id.to_owned(), url.to_owned()))
+        })
+        .collect()
+}
+
+/// Builds the shrunk levels again for the layers of the pack folder
+/// `pack_root` whose tile address template is no longer the one in `before`
+/// (see [`tile_addresses`]), for example after an importer corrected the
+/// order of `{x}` and `{y}`. The downloaded images of such a layer are read
+/// at their new addresses, so the levels made from them earlier show the old
+/// arrangement. Layers without recorded shrunk levels are left alone.
+/// Returns the ids of the layers that were built again.
+pub fn rebuild_moved_layers(
+    pack_root: &Path,
+    before: &HashMap<String, String>,
+) -> Result<Vec<String>, String> {
+    if before.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Ok(plan) = read_pack_plan(pack_root) else {
+        return Ok(Vec::new());
+    };
+    let store = TileStore::new(pack_root.to_owned(), Some(pack_root.to_owned()));
+    let mut rebuilt = Vec::new();
+    for layer in &plan.layers {
+        if before
+            .get(&layer.layer_id)
+            .is_none_or(|url| *url == layer.url)
+        {
+            continue;
+        }
+        let recorded = read_levels(&store.overlay, layer);
+        if !layer.built_levels().any(|z| recorded.contains(&z)) {
+            continue;
+        }
+        build_lower_levels(layer, &store, || true)?;
+        rebuilt.push(layer.layer_id.clone());
+    }
+    Ok(rebuilt)
 }
 
 /// Whether bytes start like a JPEG, PNG or WebP image.
