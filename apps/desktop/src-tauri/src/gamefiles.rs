@@ -50,7 +50,7 @@ use tauri::{ipc::Response, Manager as _, Runtime, State, WebviewWindow};
 
 use crate::{
     activity::{self, Area},
-    commands::{blocking, chosen_path, file_dialog},
+    commands::{blocking, pick_folder_at},
 };
 
 /// The game whose files the shell reads, by the web app's save reader id.
@@ -1015,11 +1015,13 @@ pub async fn game_folder_choose<R: Runtime>(
         let game = game.clone();
         blocking(move || Ok(files.dialog_start(&game))).await?
     };
-    let mut dialog = file_dialog(&window, "Choose the folder The Witcher 3 is installed in");
-    if let Some(start) = start {
-        dialog = dialog.set_directory(start);
-    }
-    let Some(folder) = chosen_path(|done| dialog.pick_folder(done)).await? else {
+    let Some(folder) = pick_folder_at(
+        &window,
+        "Choose the folder The Witcher 3 is installed in",
+        start,
+    )
+    .await?
+    else {
         return Ok(None);
     };
     let files = Arc::clone(&files);

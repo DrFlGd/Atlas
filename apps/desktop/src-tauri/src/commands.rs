@@ -382,6 +382,31 @@ async fn pick_folder<R: Runtime>(
     Err(NOT_ON_THIS_DEVICE.to_owned())
 }
 
+/// Asks for a folder, starting in `start` when given (saves and game
+/// folders). Android has no folder dialog.
+#[cfg(desktop)]
+pub(crate) async fn pick_folder_at<R: Runtime>(
+    window: &WebviewWindow<R>,
+    title: &str,
+    start: Option<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    let mut dialog = file_dialog(window, title);
+    if let Some(start) = start {
+        dialog = dialog.set_directory(start);
+    }
+    chosen_path(|done| dialog.pick_folder(done)).await
+}
+
+#[cfg(mobile)]
+#[allow(clippy::unused_async)]
+pub(crate) async fn pick_folder_at<R: Runtime>(
+    _window: &WebviewWindow<R>,
+    _title: &str,
+    _start: Option<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    Err(NOT_ON_THIS_DEVICE.to_owned())
+}
+
 /// Lists every pack the app can show, after looking at every folder again.
 #[tauri::command]
 pub async fn library_list(library: LibraryState<'_>) -> Result<Listing, String> {

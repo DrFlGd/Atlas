@@ -33,7 +33,7 @@ use tauri::{ipc::Response, Manager as _, Runtime, State, WebviewWindow};
 
 use crate::{
     activity::{self, Area},
-    commands::{blocking, chosen_path, file_dialog},
+    commands::{blocking, chosen_path, file_dialog, pick_folder_at},
 };
 
 /// No save of a supported game is this large (late-game saves are a few MB).
@@ -567,11 +567,10 @@ pub async fn saves_choose_folder<R: Runtime>(
     saves: SavesState<'_>,
     game: String,
 ) -> Result<Option<SaveFolder>, String> {
-    let mut dialog = file_dialog(&window, "Choose the folder with your game saves");
-    if let Some(start) = saves.dialog_start(&game) {
-        dialog = dialog.set_directory(start);
-    }
-    let Some(folder) = chosen_path(|done| dialog.pick_folder(done)).await? else {
+    let start = saves.dialog_start(&game);
+    let Some(folder) =
+        pick_folder_at(&window, "Choose the folder with your game saves", start).await?
+    else {
         return Ok(None);
     };
     let saves = saves_of(&saves);
