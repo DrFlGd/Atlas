@@ -416,11 +416,27 @@ fn parse_run_name(path: &Path) -> Option<(u128, u64)> {
 }
 
 fn is_inside(path: &Path, folder: &Path) -> bool {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let folder = folder
-        .canonicalize()
-        .unwrap_or_else(|_| folder.to_path_buf());
-    path.starts_with(folder)
+    full_path(path).starts_with(full_path(folder))
+}
+
+/// The canonical form of `path`, even when it does not exist yet: the nearest folder that does
+/// exist is canonicalized and the rest is added back. On Windows a canonical path starts with
+/// `\\?\`, so comparing a canonical path with a plain one would never match.
+fn full_path(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(found) = current.canonicalize() {
+            return rest.iter().rev().fold(found, |acc, part| acc.join(part));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 #[cfg(windows)]
