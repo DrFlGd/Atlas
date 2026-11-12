@@ -82,6 +82,7 @@ export function createLeafletMapView(
   const selectListeners = new Set<(id: string | null) => void>();
   const clickListeners = new Set<(point: { x: number; y: number }) => void>();
   const longPressListeners = new Set<(id: string) => void>();
+  const markerMenuListeners = new Set<(id: string) => void>();
   /** Until when a click is the end of a press and hold, not a click. */
   let swallowClickUntil = 0;
   let player: PlayerMarker | null = null;
@@ -200,9 +201,19 @@ export function createLeafletMapView(
       cancelPress();
     }
   };
-  const onContextMenu = (event: Event) => {
+  const onContextMenu = (event: MouseEvent) => {
     // A held finger opens no menu over the map while presses are wanted.
     if (longPressListeners.size > 0) event.preventDefault();
+    // A right click on a marker, where someone listens: theirs, not the page's menu.
+    if (markerMenuListeners.size === 0 || !layer) return;
+    const rect = container.getBoundingClientRect();
+    const hit = markerLayer?.hitTest(L.point(event.clientX - rect.left, event.clientY - rect.top));
+    if (!hit) return;
+    event.preventDefault();
+    if (hit.kind !== 'point') return;
+    markerMenuListeners.forEach((listener) => {
+      listener(hit.point.id);
+    });
   };
   container.addEventListener('pointerdown', onPointerDown);
   container.addEventListener('pointermove', onPointerMove);
@@ -397,6 +408,11 @@ export function createLeafletMapView(
       return () => longPressListeners.delete(listener);
     },
 
+    onMarkerMenu(listener): Unsubscribe {
+      markerMenuListeners.add(listener);
+      return () => markerMenuListeners.delete(listener);
+    },
+
     onMapClick(listener): Unsubscribe {
       clickListeners.add(listener);
       return () => clickListeners.delete(listener);
@@ -435,6 +451,7 @@ export function createLeafletMapView(
       selectListeners.clear();
       clickListeners.clear();
       longPressListeners.clear();
+      markerMenuListeners.clear();
       viewListeners.clear();
       hoverListeners.clear();
       tileListeners.clear();

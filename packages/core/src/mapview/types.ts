@@ -144,6 +144,14 @@ export interface MapView {
    * nobody listens, pressing and holding does nothing special.
    */
   onLongPress(listener: (markerId: string) => void): Unsubscribe;
+  /**
+   * Called with the marker id when the user right-clicks a marker (or
+   * holds a finger on it where a touch screen opens the context menu that
+   * way, as Windows does). While someone listens,
+   * the page's own menu does not open over a marker or a cluster; over the
+   * plain map it still does.
+   */
+  onMarkerMenu(listener: (markerId: string) => void): Unsubscribe;
   /** Called with the image pixel of every click on the map, on a marker or not. */
   onMapClick(listener: (point: PixelPoint) => void): Unsubscribe;
   /** Called when the pointer moves onto a marker, or off it (null). */
