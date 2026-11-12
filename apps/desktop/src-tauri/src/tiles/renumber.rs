@@ -45,7 +45,7 @@
 //! download.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fs, io,
     path::{Path, PathBuf},
 };
@@ -56,7 +56,7 @@ use super::{
     downscale::build_lower_levels,
     pyramid::{check_layer, LayerPlan, PackPlan, RemoteLevel, TileRef},
     status::{remove_status, status_path, write_levels_showing},
-    store::{TileStore, MISSING_SUFFIX, PART_SUFFIX},
+    store::{Listing, TileStore, MISSING_SUFFIX, PART_SUFFIX},
 };
 use crate::library::META_DIR;
 
@@ -265,11 +265,14 @@ pub fn has_files(root: &Path, layer: &LayerPlan) -> bool {
     if !prefix.is_empty() && !root.join(prefix).exists() {
         return false;
     }
+    let mut listing = Listing::default();
     (layer.min_zoom..=layer.max_zoom).any(|z| {
-        layer.tiles_of(z).any(|tile| {
+        let found = layer.tiles_of(z).any(|tile| {
             let path = root.join(layer.tile_path(tile.z, tile.x, tile.y));
-            is_file(&path) || is_file(&with_suffix(&path, MISSING_SUFFIX))
-        })
+            listing.is_plain(&path) || listing.is_plain(&with_suffix(&path, MISSING_SUFFIX))
+        });
+        listing.forget();
+        found
     })
 }
 
@@ -317,21 +320,29 @@ pub fn stage(root: &Path, from: &LayerPlan, to: &LayerPlan) -> Result<(), String
     write_journal(&dir, &journal).map_err(|error| fail(&dir, error))?;
     remove_status(root, from).map_err(|error| fail(&status_path(root, from), error))?;
 
+    // What is there is read a folder at a time (see `Listing`): most tiles
+    // of a large layer have no file, and asking for each one is slow.
+    let mut listing = Listing::default();
+    let mut folders = HashSet::new();
     for level in &from.levels {
         for tile in from.tiles_of(level.z) {
             let image = root.join(from.tile_path(tile.z, tile.x, tile.y));
             let part = with_suffix(&image, PART_SUFFIX);
-            remove(&part).map_err(|error| fail(&part, error))?;
+            if listing.is_plain(&part) {
+                remove(&part).map_err(|error| fail(&part, error))?;
+            }
             let keep = target(from, to, tile.z, tile.x, tile.y).is_some();
             for suffix in ["", MISSING_SUFFIX] {
                 let file = with_suffix(&image, suffix);
-                if !is_file(&file) {
+                if !listing.is_plain(&file) {
                     continue;
                 }
                 if keep {
                     let staged = staged_path(&tiles, tile.z, tile.x, tile.y, suffix);
                     let parent = staged.parent().expect("has a parent");
-                    fs::create_dir_all(parent).map_err(|error| fail(parent, error))?;
+                    if folders.insert(parent.to_owned()) {
+                        fs::create_dir_all(parent).map_err(|error| fail(parent, error))?;
+                    }
                     fs::rename(&file, &staged).map_err(|error| fail(&file, error))?;
                 } else {
                     remove(&file).map_err(|error| fail(&file, error))?;
@@ -339,18 +350,22 @@ pub fn stage(root: &Path, from: &LayerPlan, to: &LayerPlan) -> Result<(), String
                 }
             }
         }
+        listing.forget();
     }
     for z in from.built_levels() {
         for tile in from.tiles_of(z) {
             let image = root.join(from.tile_path(tile.z, tile.x, tile.y));
             for suffix in [PART_SUFFIX, MISSING_SUFFIX] {
                 let file = with_suffix(&image, suffix);
-                remove(&file).map_err(|error| fail(&file, error))?;
+                if listing.is_plain(&file) {
+                    remove(&file).map_err(|error| fail(&file, error))?;
+                }
             }
-            if remove(&image).map_err(|error| fail(&image, error))? {
+            if listing.is_plain(&image) && remove(&image).map_err(|error| fail(&image, error))? {
                 journal.shrunk += 1;
             }
         }
+        listing.forget();
     }
     // Whatever is still at the new layout's tile paths is none of these
     // images: it would show in the wrong place.
@@ -361,14 +376,18 @@ pub fn stage(root: &Path, from: &LayerPlan, to: &LayerPlan) -> Result<(), String
 
 /// Removes every image, marker and part file at `layer`'s tile paths.
 fn clear(root: &Path, layer: &LayerPlan) -> Result<(), String> {
+    let mut listing = Listing::default();
     for z in layer.min_zoom..=layer.max_zoom {
         for tile in layer.tiles_of(z) {
             let image = root.join(layer.tile_path(tile.z, tile.x, tile.y));
             for suffix in ["", MISSING_SUFFIX, PART_SUFFIX] {
                 let file = with_suffix(&image, suffix);
-                remove(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+                if listing.is_plain(&file) {
+                    remove(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+                }
             }
         }
+        listing.forget();
     }
     Ok(())
 }
@@ -469,6 +488,7 @@ fn place(
     let Ok(levels) = fs::read_dir(tiles) else {
         return Ok(());
     };
+    let mut folders = HashSet::new();
     for level in levels.flatten() {
         let Some(z) = numbered(&level).and_then(|name| name.parse::<u8>().ok()) else {
             continue;
@@ -502,7 +522,9 @@ fn place(
                 };
                 let image = root.join(to.tile_path(tile.z, tile.x, tile.y));
                 let parent = image.parent().expect("a tile path has a folder");
-                fs::create_dir_all(parent).map_err(|error| fail(parent, error))?;
+                if folders.insert(parent.to_owned()) {
+                    fs::create_dir_all(parent).map_err(|error| fail(parent, error))?;
+                }
                 if marker {
                     if is_file(&image) {
                         remove(&staged).map_err(|error| fail(&staged, error))?;
@@ -536,13 +558,16 @@ fn finish(
     }
     // A level is complete when every tile is an image or known not to be on
     // the server; the shrunk levels are when the level they come from is.
+    let mut listed = store.listed();
     let mut levels: BTreeSet<u8> = layer
         .levels
         .iter()
         .filter(|level| {
-            layer
+            let complete = layer
                 .tiles_of(level.z)
-                .all(|tile| store.is_done(&layer.tile_path(tile.z, tile.x, tile.y)))
+                .all(|tile| listed.is_done(&layer.tile_path(tile.z, tile.x, tile.y)));
+            listed.forget();
+            complete
         })
         .map(|level| level.z)
         .collect();
@@ -552,7 +577,7 @@ fn finish(
     // While the lowest level is not complete, the map shows the levels that
     // have images: the new layout's lowest levels can be ones the old layout
     // did not have, with nothing downloaded yet.
-    report.shown = shown_levels(root, bundled, layer);
+    report.shown = shown_levels(&store, layer);
     write_levels_showing(root, layer, &levels, report.shown)
         .map_err(|error| format!("could not write the status file: {error}"))?;
     report.complete = (layer.min_zoom..=layer.max_zoom).all(|z| levels.contains(&z));
@@ -562,13 +587,14 @@ fn finish(
 
 /// The unbroken run of `layer`'s levels that have at least one image, as
 /// (lowest, highest), starting at the lowest level that has one.
-fn shown_levels(root: &Path, bundled: Option<&Path>, layer: &LayerPlan) -> Option<(u8, u8)> {
-    let has_image = |z: u8| {
-        layer.tiles_of(z).any(|tile| {
-            let relative = layer.tile_path(tile.z, tile.x, tile.y);
-            root.join(&relative).is_file()
-                || bundled.is_some_and(|pack| pack.join(&relative).is_file())
-        })
+fn shown_levels(store: &TileStore, layer: &LayerPlan) -> Option<(u8, u8)> {
+    let mut listed = store.listed();
+    let mut has_image = |z: u8| {
+        let found = layer
+            .tiles_of(z)
+            .any(|tile| listed.has_image(&layer.tile_path(tile.z, tile.x, tile.y)));
+        listed.forget();
+        found
     };
     let lowest = (layer.min_zoom..=layer.max_zoom).find(|&z| has_image(z))?;
     let highest = (lowest + 1..=layer.max_zoom)
