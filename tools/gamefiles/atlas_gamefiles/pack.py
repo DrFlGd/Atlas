@@ -102,6 +102,23 @@ def layer_order(floors: list[Floor], main: int) -> list[int]:
     return [main, *rest]
 
 
+def duplicate_ids(pack: dict[str, tp.Any]) -> list[str]:
+    """Ids used twice in one list of the pack (Atlas refuses such a pack), as `list: id`."""
+    found = []
+    for name, items in pack.items():
+        if not isinstance(items, list):
+            continue
+        seen: set[str] = set()
+        for item in items:
+            item_id = item.get("id") if isinstance(item, dict) else None
+            if item_id is None:
+                continue
+            if item_id in seen:
+                found.append(f"{name}: {item_id}")
+            seen.add(item_id)
+    return found
+
+
 def build_pack(
     pack_id: str,
     title: str,

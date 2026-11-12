@@ -31,10 +31,21 @@ from .content import GameContent, read_content
 from .detect import DSR, detect
 from .events import Events
 from .floors import locate, plan_floors, support_fraction
-from .games import PROFILES, Area, GameProfile, list_areas
+from .games import PROFILES, Area, GameProfile, list_areas, newest_versions
 from .geometry import Cancelled, SourceResult, rotation_matrix
 from .msb import load_msb
-from .pack import AreaOut, LayerOut, PackRefused, build_pack, check_target, existing_pack, floor_names, install, write_pack_json
+from .pack import (
+    AreaOut,
+    LayerOut,
+    PackRefused,
+    build_pack,
+    check_target,
+    duplicate_ids,
+    existing_pack,
+    floor_names,
+    install,
+    write_pack_json,
+)
 from .render import BACKGROUND, compose, draw_layer, make_frame, preview_png, triangle_colours
 from .safety import UnsafeOutputError, check_output_folder, is_inside, prepare_soulstruct
 from .tiles import tile_format, write_pyramid
@@ -142,6 +153,8 @@ class MapMaker:
         all_areas = list_areas(profile, root)
         skipped = [a.id for a in all_areas if is_skipped(config, a.id)]
         areas = [a for a in all_areas if not is_skipped(config, a.id)]
+        areas, older = newest_versions(areas)
+        skipped += older
         if self.only_areas:
             areas = [a for a in areas if a.id in self.only_areas or a.id[:6] in self.only_areas]
         areas = [
@@ -222,6 +235,12 @@ class MapMaker:
         events.progress(0.96, "Writing the map pack")
         title = str(config.get("title", detection.title))
         pack = build_pack(pack_id, title, detection.version or "", outs, content, created=previous.get("created"))
+        duplicates = duplicate_ids(pack)
+        if duplicates:
+            raise MakeError(
+                f"The map pack would have {len(duplicates)} ids used twice, which Atlas refuses "
+                f"(first: {duplicates[0]}). Please save the report and send it."
+            )
         write_pack_json(self.staging, pack)
         installed = False
         if self.maps_folder is not None:

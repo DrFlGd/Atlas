@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -11,8 +12,10 @@ import pytest
 
 from atlas_gamefiles.check import CancelToken
 from atlas_gamefiles.events import Events
+from atlas_gamefiles.games import Area, newest_versions
 from atlas_gamefiles.geometry import Cancelled
 from atlas_gamefiles.make import MakeError, MapMaker
+from atlas_gamefiles.pack import duplicate_ids
 from atlas_gamefiles.safety import UnsafeOutputError
 from atlas_gamefiles.worker import InlineRunner
 from conftest import snapshot
@@ -177,6 +180,32 @@ def test_make_again_replaces_its_own_pack(dsr_map_folder: Path, tmp_path: Path) 
     assert again["created"] == first["created"]
     assert len(load(maps / PACK, "maps.json")) == 1
     assert sorted(p.name for p in maps.iterdir()) == [PACK]
+
+
+def test_two_versions_of_an_area_make_one_map(dsr_map_folder: Path, tmp_path: Path) -> None:
+    # Dark Souls Remastered ships Darkroot twice (m12_00_00_00 and m12_00_00_01); the game uses the last.
+    game = tmp_path / "game"
+    shutil.copytree(dsr_map_folder, game)
+    studio = game / "map" / "MapStudio"
+    shutil.copy(studio / "m15_01_00_00.msb", studio / "m15_01_00_01.msb")
+    report, _ = make(game, tmp_path / "out", tmp_path / "Maps", only_areas=["m15_01"])
+    pack = tmp_path / "Maps" / PACK
+    assert [m["id"] for m in load(pack, "maps.json")] == [f"{PACK}:map:m15_01"]
+    assert "m15_01_00_00" in report["skippedAreas"]
+    for name in ("layers.json", "regions.json", "locations.json"):
+        ids = [item["id"] for item in load(pack, name)]
+        assert len(ids) == len(set(ids)), name
+
+
+def test_newest_versions_keeps_the_last_of_each_area() -> None:
+    areas = [Area(id=i, name=i, msb=Path(i), map_folder=None) for i in ("m12_00_00_00", "m12_00_00_01", "m12_01_00_00")]
+    kept, older = newest_versions(areas)
+    assert [a.id for a in kept] == ["m12_00_00_01", "m12_01_00_00"]
+    assert older == ["m12_00_00_00"]
+
+
+def test_duplicate_ids_are_found() -> None:
+    assert duplicate_ids({"maps": [{"id": "a"}, {"id": "b"}, {"id": "a"}], "manifest": {"id": "a"}}) == ["maps: a"]
 
 
 def test_refuses_a_pack_it_did_not_make(dsr_map_folder: Path, tmp_path: Path) -> None:
