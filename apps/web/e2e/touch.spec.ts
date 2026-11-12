@@ -173,8 +173,8 @@ test.describe('on a phone', () => {
     await page.getByTestId('section-lists').tap();
     await page.getByTestId('list-link').filter({ hasText: 'Waystones' }).tap();
     const list = page.getByTestId('checklist-screen');
-    // A collection opens by area; its entries in their own order are a choice away.
-    await list.getByTestId('view-order').tap();
+    // A collection opens by area; all of its entries, by kind, are a choice away.
+    await list.getByTestId('view-kind').tap();
     await expect(list.getByTestId('checklist-done')).toHaveAttribute('data-done', '0');
     const first = list.getByTestId('check-item').first();
     await first.getByTestId('entry-tick').tap();
@@ -321,7 +321,7 @@ test.describe('on a tablet', () => {
     // Lists in the panel; the map stays beside it.
     await page.getByTestId('section-lists').tap();
     await panel.getByTestId('list-link').filter({ hasText: 'Waystones' }).tap();
-    await panel.getByTestId('view-order').tap();
+    await panel.getByTestId('view-kind').tap();
     const entry = panel.getByTestId('check-item').nth(1);
     await entry.getByTestId('entry-show').tap();
     await expect(page.locator('.touch')).toHaveAttribute('data-section', 'lists');

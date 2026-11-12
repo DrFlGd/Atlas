@@ -75,6 +75,7 @@ export function KindList({
   show,
   area,
   scope,
+  more = false,
 }: {
   game: LoadedGame;
   entry: ChecklistEntry;
@@ -84,6 +85,8 @@ export function KindList({
   area?: string;
   /** The entries to group, in list order; all of them by default. */
   scope?: readonly number[];
+  /** Offer each entry's note, guide and places under it. */
+  more?: boolean;
 }) {
   const focus = useAtlas((s) => s.itemFocus);
   const [start] = useState(() => {
@@ -103,14 +106,23 @@ export function KindList({
     }));
   }, [entry, game, scope, area, start]);
 
+  // The entry asked for or shown last, if it is in this list.
+  const focusIndex = useMemo(
+    () => (focus ? entry.items.findIndex((i) => i.item.id === focus.itemId) : -1),
+    [focus, entry],
+  );
+
   const rows = useMemo(() => {
     const list: Row[] = [];
     for (const group of groups) {
       const items =
         show === 'todo' ? group.indices.filter((i) => !start.doneAtStart.has(i)) : group.indices;
       if (items.length === 0) continue;
-      // A kind with nothing left to find starts closed.
-      const open = opened.get(group.key) ?? items.some((i) => !start.doneAtStart.has(i));
+      // A kind with nothing left to find starts closed, unless the entry asked for is in it.
+      const open =
+        opened.get(group.key) ??
+        ((focusIndex >= 0 && items.includes(focusIndex)) ||
+          items.some((i) => !start.doneAtStart.has(i)));
       list.push({
         kind: 'group',
         key: `kind|${group.key}`,
@@ -124,7 +136,7 @@ export function KindList({
       }
     }
     return list;
-  }, [groups, show, opened, start, entry]);
+  }, [groups, show, opened, start, entry, focusIndex]);
 
   const reveal = useMemo(() => {
     if (!focus) return null;
@@ -138,7 +150,11 @@ export function KindList({
     <div className="touch-scroll touch-check-list" data-scroll-root>
       {rows.length === 0 ? (
         <p className="touch-empty">
-          {show === 'todo' ? 'Everything here is found.' : 'Nothing here.'}
+          {scope?.length === 0
+            ? 'No entries match the filters.'
+            : show === 'todo'
+              ? 'Everything here is found.'
+              : 'Nothing here.'}
         </p>
       ) : (
         <VirtualList
@@ -154,6 +170,7 @@ export function KindList({
                   entry={item}
                   state={states[row.index]!}
                   detail={entryNote(game, item) ?? (area === undefined ? undefined : '')}
+                  more={more}
                   area={area}
                 />
               );

@@ -81,7 +81,10 @@ export function areaName(game: LoadedGame, area: string): string {
   return area === NO_AREA ? 'No area' : (game.pack.regions.get(area)?.name ?? 'No area');
 }
 
-/** A list followed step by step (`kind: 'guide'`), shown in order unless chosen otherwise. */
+/**
+ * A list meant to be followed step by step (`kind: 'guide'`): the only kind
+ * of list that has a next step, and that is offered in order.
+ */
 export const isRoute = (entry: ChecklistEntry) => entry.checklist.kind === 'guide';
 
 function cached<K extends object, V>(make: (key: K) => V): (key: K) => V {
@@ -128,18 +131,32 @@ export function doneWord(entry: ChecklistEntry): 'found' | 'done' {
   return isRoute(entry) || placesOf(entry).size === 0 ? 'done' : 'found';
 }
 
+const GROUPED: readonly ListView[] = ['area', 'kind'];
+const AS_WRITTEN: readonly ListView[] = ['order'];
+
 /**
- * The view a list opens in until one is chosen: in order for a route, and
- * for a list with no place at all (there is nothing to group); by area for
- * any other.
+ * The views a list offers. What the list is decides: a route is followed
+ * in order, and can be grouped as well; any other list of places is a
+ * collection, grouped by area or by kind, and is not offered in order. A
+ * list with no place at all has nothing to group: it is shown as it is
+ * written, with no choice (and with a next step only if it is a route).
  */
+export function viewsOf(entry: ChecklistEntry): readonly ListView[] {
+  if (placesOf(entry).size === 0) return AS_WRITTEN;
+  return isRoute(entry) ? VIEWS : GROUPED;
+}
+
+/** The view a list opens in until one is chosen: the first it offers, in order for a route. */
 export function defaultView(entry: ChecklistEntry): ListView {
   return isRoute(entry) || placesOf(entry).size === 0 ? 'order' : 'area';
 }
 
-/** The view a list is shown in: the one chosen last, or its default. */
+/** The view a list is shown in: the one chosen last if the list offers it, or its default. */
 export function useListView(entry: ChecklistEntry): ListView {
-  return useLists((s) => s.views[entry.checklist.id] ?? defaultView(entry));
+  return useLists((s) => {
+    const chosen = s.views[entry.checklist.id];
+    return chosen !== undefined && viewsOf(entry).includes(chosen) ? chosen : defaultView(entry);
+  });
 }
 
 /** The state of each item of a list, worked out again when progress changes. */
@@ -151,10 +168,14 @@ export function useItemStates(entry: ChecklistEntry): ItemState[] {
   }, [entry, found]);
 }
 
-/** The step "In order" points at (see `nextStep`), or null when every step is done. */
+/**
+ * The step a route points at (see `nextStep`): null when every step is
+ * done, and for any list that is not a route.
+ */
 export function useNextStep(entry: ChecklistEntry, states: readonly ItemState[]): number | null {
   const from = useLists((s) => (s.orderFrom?.listId === entry.checklist.id ? s.orderFrom.from : 0));
-  return useMemo(() => nextStep(states, from), [states, from]);
+  const route = isRoute(entry);
+  return useMemo(() => (route ? nextStep(states, from) : null), [route, states, from]);
 }
 
 /** "Skip for now": the step after `index` becomes the next one, without marking anything. */

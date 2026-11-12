@@ -52,39 +52,54 @@ test.describe('on a phone', () => {
     await page.getByTestId('lists-back').click();
     const resume = home.getByTestId('continue');
     await expect(resume).toContainText('Waystones');
-    await expect(resume).toContainText('Next up');
+    // A collection has no next step: what is left to find instead.
+    await expect(resume).toContainText('Left to find');
+    await expect(resume).toContainText('120 entries');
+    await expect(resume).not.toContainText('Next up');
     await expect(home.locator('h2').first()).toHaveText('Continue');
     await resume.getByTestId('continue-resume').click();
     await expect(screen).toHaveAttribute('data-view', 'kind');
     expect(errors).toEqual([]);
   });
 
-  test('each list keeps the view chosen last; a route opens in order', async ({ page }) => {
+  test('only a route is offered in order; each list keeps the view chosen last', async ({
+    page,
+  }) => {
     const errors = collectErrors(page);
     await openMap(page, './?ui=touch');
     await openLists(page);
     const screen = page.getByTestId('checklist-screen');
     await list(page, ROUTE).click();
     await expect(screen).toHaveAttribute('data-view', 'order');
+    const views = screen.locator('.touch-view-switch button');
+    await expect(views).toHaveText(['By area', 'By kind', 'In order']);
+    await expect(page.getByTestId('next-up')).toBeVisible();
     await page.getByTestId('lists-back').click();
-    // A list with no place at all opens in order too.
+    // A list with no place at all is shown as it is written, with no choice
+    // of view; it is not a route, so nothing is "next".
     await list(page, 'The Sundered Isle story').click();
-    await expect(screen).toHaveAttribute('data-view', 'order');
+    await expect(screen.getByTestId('check-item').first()).toBeVisible();
+    await expect(views).toHaveCount(0);
+    await expect(page.getByTestId('next-up')).toHaveCount(0);
+    await expect(screen.locator('[data-next="true"]')).toHaveCount(0);
     await page.getByTestId('lists-back').click();
 
+    // A collection is grouped, by area or by kind, and not offered in order.
     await list(page, 'Waystones').click();
     await expect(screen).toHaveAttribute('data-view', 'area');
-    await screen.getByTestId('view-order').click();
-    await expect(screen).toHaveAttribute('data-view', 'order');
+    await expect(views).toHaveText(['By area', 'By kind']);
+    await screen.getByTestId('view-kind').click();
+    await expect(screen).toHaveAttribute('data-view', 'kind');
+    await expect(page.getByTestId('next-up')).toHaveCount(0);
     await expect
       .poll(() => storedSetting(page, 'listViews:demo'))
       .toEqual({
-        'demo:checklist:waystones': 'order',
+        'demo:checklist:waystones': 'kind',
       });
     await reloadSaved(page);
     await openLists(page);
     await list(page, 'Waystones').click();
-    await expect(screen).toHaveAttribute('data-view', 'order');
+    await expect(screen).toHaveAttribute('data-view', 'kind');
     // Other lists keep their own.
     await page.getByTestId('lists-back').click();
     await list(page, 'Lore of the isle').click();
@@ -151,7 +166,9 @@ test.describe('on a phone', () => {
     expect(errors).toEqual([]);
   });
 
-  test('in order: Next up, Done, the done steps folded, and stages', async ({ page }) => {
+  test('in order: Next up, Done and the done steps folded; a plain list with sections', async ({
+    page,
+  }) => {
     const errors = collectErrors(page);
     await openMap(page, './?ui=touch');
     await openLists(page);
@@ -183,17 +200,20 @@ test.describe('on a phone', () => {
     expect(await back(page)).toBe(true);
     await expect(screen).toHaveAttribute('data-view', 'order');
 
-    // A list with stages: a finished stage closes and is ticked.
+    // A list with sections that is not a route: every section open, ticked by hand.
     await page.getByTestId('lists-back').click();
     await list(page, 'The Sundered Isle story').click();
     const stages = screen.getByTestId('stage');
     await expect(stages.first()).toHaveAttribute('aria-expanded', 'true');
-    for (let i = 0; i < 3; i++) await nextUp.getByTestId('next-up-done').click();
-    await expect(stages.first()).toHaveAttribute('aria-expanded', 'false');
-    await expect(stages.first()).toContainText('3 of 3');
     await expect(stages.nth(1)).toHaveAttribute('aria-expanded', 'true');
+    await expect(screen.getByTestId('check-item')).toHaveCount(10);
+    for (let i = 0; i < 3; i++) {
+      await screen.getByTestId('check-item').nth(i).getByTestId('entry-tick').click();
+    }
+    await expect(stages.first()).toContainText('3 of 3');
+    await expect(screen.getByTestId('done-run')).toHaveCount(0);
+    await expect(screen.locator('[data-done="true"]')).toHaveCount(3);
     // The story's steps have no place: nothing to show on the map.
-    await expect(nextUp.getByTestId('next-up-show')).toHaveCount(0);
     await expect(screen.getByTestId('list-only-switch')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
@@ -304,7 +324,9 @@ test.describe('on a computer', () => {
     expect(errors).toEqual([]);
   });
 
-  test('an entry asked for from a place opens its list in order, this time', async ({ page }) => {
+  test('an entry asked for from a place opens its list with every entry, this time', async ({
+    page,
+  }) => {
     const errors = collectErrors(page);
     await openMap(page, './?ui=standard');
     await choosePlace(page, 'Lore tablet 15');
@@ -313,7 +335,9 @@ test.describe('on a computer', () => {
       .getByRole('button', { name: /On the checklist Lore of the isle/ })
       .click();
     const screen = page.getByTestId('checklist-screen');
-    await expect(screen).toHaveAttribute('data-view', 'order');
+    // A collection: by kind, with nothing left out.
+    await expect(screen).toHaveAttribute('data-view', 'kind');
+    await expect(screen.getByTestId('show-all')).toHaveAttribute('aria-pressed', 'true');
     await expect(screen.locator('[data-item-id="demo:checkitem:lore-001"]')).toBeVisible();
     // Not kept: the list opens by area again.
     await page.keyboard.press('Escape');

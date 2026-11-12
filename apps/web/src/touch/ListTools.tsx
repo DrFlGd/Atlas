@@ -11,7 +11,7 @@ import { FacetGroup } from '../components/ChecklistsPane';
 import { useFacetNames } from '../components/facetNames';
 import type { LoadedGame } from '../state/store';
 
-/** From this many entries a list in order gets a search field, as in the classic layout. */
+/** From this many entries a list gets a search field, as in the classic layout. */
 const SEARCH_FROM = 15;
 const NO_KEYS: ReadonlySet<string> = new Set();
 

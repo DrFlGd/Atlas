@@ -17,7 +17,7 @@ interface EntryRowProps {
   state: ItemState;
   /** The second line; by default, where the entry is. */
   detail?: string;
-  /** Offer to open the entry's note, guide and places under it (the list in order). */
+  /** Offer to open the entry's note, guide and places under it (a view of the whole list). */
   more?: boolean;
   /** Only the places in this area are shown from the row (an area of a list). */
   area?: string;
@@ -29,8 +29,8 @@ interface EntryRowProps {
 
 /**
  * One entry of a list: its tick, its name and a second line, and a way to
- * show it on the map. In order, a button opens its note, guide and places
- * under it.
+ * show it on the map. In a view of the whole list, a button opens its
+ * note, guide and places under it.
  */
 export const EntryRow = memo(
   function EntryRow({ game, entry, state, detail, more = false, area, next, note }: EntryRowProps) {

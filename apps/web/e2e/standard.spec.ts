@@ -295,8 +295,8 @@ test('the filters and lists do all the classic panes did', async ({ page }) => {
   // A long list can be searched and filtered by region and category.
   await page.getByTestId('section-lists').click();
   await panel.getByTestId('list-link').filter({ hasText: 'Waystones' }).click();
-  // A collection opens by area; search and the filters are in its own order.
-  await panel.getByTestId('view-order').click();
+  // A collection opens by area; search and the filters are with all of it, by kind.
+  await panel.getByTestId('view-kind').click();
   const items = panel.getByTestId('check-item');
   await panel.getByTestId('list-search').fill('Thornwood waystone 1');
   await expect(items.first()).toContainText('Attune Thornwood waystone 1');
@@ -324,7 +324,7 @@ test('the filters and lists do all the classic panes did', async ({ page }) => {
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
   await panel.getByTestId('list-link').filter({ hasText: 'Lore of the isle' }).click();
-  await panel.getByTestId('view-order').click();
+  await panel.getByTestId('view-kind').click();
   await panel.getByTestId('list-search').fill('Defeat 3 elite foes in Emberfall Vale');
   const lore = items.filter({ hasText: 'Defeat 3 elite foes in Emberfall Vale' });
   await lore.getByTestId('entry-more').click();
