@@ -11,6 +11,7 @@ import {
 } from '../state/actions';
 import { numberFormat, useSummary, useVisibleCategories } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { ListOnlyChip } from './ListMapChips';
 import { setFiltersOpen, soloKind, toggleSolo, useTouch } from './state';
 import { SwitchTrack } from './widgets';
 
@@ -67,6 +68,7 @@ export function ChipRow() {
   }, [groups]);
   return (
     <div className="touch-chip-row" role="toolbar" aria-label="Filters">
+      <ListOnlyChip />
       <button
         type="button"
         className="touch-chip touch-chip-float"

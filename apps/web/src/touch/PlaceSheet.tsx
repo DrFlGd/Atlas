@@ -6,6 +6,7 @@ import { goToLocation, jumpToNearestUnfound, notify, select } from '../state/act
 import { openChecklistItem, openGuide, showItemPlace } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { listById } from './listViews';
 import { nextOnList } from './ordering';
 import { markFound, setPlaceExpanded, useKeyHints, useTouch } from './state';
 import { KeyHint } from './widgets';
@@ -169,7 +170,7 @@ function PlaceActions({
   found: boolean;
 }) {
   const page = useAtlas((s) => s.checklistPages.at(-1));
-  const list = page?.kind === 'checklist' ? game.checklists.checklist(page.id) : undefined;
+  const list = page?.kind === 'checklist' ? listById(game, page.id) : undefined;
   const listItem = list?.items.find((i) => i.places.includes(locationId));
   const hints = useKeyHints();
   // The next button leads once there is nothing to mark here.

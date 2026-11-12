@@ -2559,3 +2559,571 @@
 .touch-settings .touch-row-detail {
   white-space: normal;
 }
+
+/* ------------------------------------------------------------------ */
+/* Lists: the lists of a game, one list by area, by kind or in order,
+   and one area of a list (src/touch/List*.tsx) */
+
+.touch-lists-home {
+  gap: 8px;
+}
+
+.touch-lists-heading {
+  padding: 12px 4px 6px;
+}
+
+.touch-list-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.touch-list-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 6px 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  text-align: left;
+}
+
+.touch-panel .touch-list-card {
+  background: var(--atlas-surface-raised);
+}
+
+.touch-list-card > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.touch-list-card-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.touch-list-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.touch-list-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-list-card .touch-meter {
+  height: 4px;
+}
+
+.touch-list-card .touch-meter-fill {
+  height: 4px;
+}
+
+.touch-list-card-here {
+  border-color: var(--atlas-accent);
+}
+
+.touch-list-card-finished .touch-list-card-name {
+  color: var(--atlas-muted);
+}
+
+.touch-list-card .touch-tick {
+  width: 26px;
+  height: 26px;
+}
+
+.touch-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Continue: the list opened last */
+
+.touch-continue {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-surface);
+}
+
+.touch-panel .touch-continue {
+  background: var(--atlas-surface-raised);
+}
+
+.touch-continue-kicker {
+  margin: 0;
+  color: var(--atlas-accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.touch-continue-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.touch-continue-figure {
+  margin: 2px 0 0;
+  color: var(--atlas-muted);
+  font-size: 14px;
+}
+
+.touch-continue-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.touch-continue-next {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin: 0;
+}
+
+.touch-continue-label {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.touch-continue-step {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-continue-resume {
+  min-width: 112px;
+  border-radius: 24px;
+  font-size: 15px;
+}
+
+/* One list: the choice of view, and "Only this list on the map" */
+
+.touch-view-switch {
+  flex: none;
+  margin: 0 12px 4px;
+}
+
+.touch-view-switch .touch-segment {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  padding: 0 8px;
+}
+
+.touch-list-only {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  margin: 0 12px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.touch-show-choice {
+  align-items: center;
+  padding-top: 4px;
+}
+
+.touch-show-note {
+  flex: 1;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.touch-area-list {
+  padding-top: 4px;
+}
+
+/* Groups that open and close: kinds, and stages */
+
+.touch-fold-title {
+  margin: 0;
+  font: inherit;
+}
+
+.touch-fold {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--atlas-surface-raised);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.touch-panel .touch-fold {
+  background: var(--atlas-surface-raised);
+}
+
+.touch-fold > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.touch-fold-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+}
+
+.touch-fold-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.touch-fold-finished .touch-fold-name {
+  color: var(--atlas-muted);
+}
+
+.touch-fold .touch-tick {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+}
+
+.touch-stage-number {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid currentColor;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* In order: the next step, a note under it, the folded steps, the link */
+
+.touch-entry-next {
+  background: var(--atlas-accent-soft);
+  box-shadow: inset 3px 0 0 var(--atlas-accent);
+}
+
+.touch-entry-next .touch-entry-name {
+  font-weight: 600;
+}
+
+.touch-entry-note {
+  display: flex;
+  flex-basis: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 0 12px 10px 16px;
+  color: var(--touch-text-soft);
+  font-size: 14px;
+  font-style: italic;
+}
+
+.touch-entry-note .ui-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--atlas-muted);
+}
+
+.touch-run-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px 0 20px;
+  border: 0;
+  border-bottom: 1px solid var(--atlas-surface-raised);
+  background: none;
+  color: var(--atlas-muted);
+  font-size: 14px;
+  text-align: left;
+}
+
+.touch-run-text {
+  flex: 1;
+}
+
+.touch-run-show {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.touch-here-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 24px);
+  min-height: 48px;
+  margin: 8px 12px;
+  padding: 6px 12px 6px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent-strong);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.touch-here-link > span {
+  flex: 1;
+}
+
+/* Pinned at the bottom of a list: "Next area", and "Next up" on a phone */
+
+.touch-pinned {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 12px 8px 16px;
+  border: 0;
+  border-top: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  text-align: left;
+}
+
+.touch-panel .touch-pinned {
+  background: var(--atlas-surface-raised);
+}
+
+.touch-pinned-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.touch-pinned-label {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.touch-pinned-name {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-next-area > .ui-icon {
+  flex: none;
+  color: var(--atlas-accent);
+}
+
+.touch-next-up .touch-pinned-label {
+  color: var(--atlas-accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.touch-next-show {
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 26px;
+  color: var(--atlas-accent);
+}
+
+.touch-done-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 112px;
+  height: 56px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.touch-accent-button {
+  color: var(--atlas-accent);
+}
+
+/* On a wide screen, "Next up" is a card on the map, where the place's card goes when one is shown. */
+
+.touch-next-card {
+  position: absolute;
+  z-index: 20;
+  right: calc(16px + var(--atlas-inset-right));
+  bottom: calc(16px + var(--atlas-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 380px;
+  max-width: calc(100% - 32px);
+  padding: 16px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 20px;
+  background: var(--atlas-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme='light'] .touch-next-card {
+  box-shadow: var(--touch-float-shadow);
+}
+
+.touch-next-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.touch-next-card-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.touch-next-card-name {
+  margin: 2px 0 0;
+  font-size: 19px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.touch-next-card-where,
+.touch-next-card-keys {
+  margin: 2px 0 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.touch-next-card-note {
+  margin: 0;
+  font-size: 14px;
+}
+
+.touch-next-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.touch-next-card-actions .touch-done-button {
+  flex: 1;
+  border-radius: 14px;
+}
+
+.touch-list-only-chip .touch-chip-text {
+  max-width: 180px;
+}
+
+.touch-list-only-chip[aria-pressed='true'] .ui-icon {
+  color: var(--atlas-accent-strong);
+}
+
+/* The toast keeps clear of what is pinned at the bottom of a list, and of the "Next up" card. */
+.touch[data-arrangement='compact'][data-section='lists']:has(.touch-pinned) .touch-toast-region {
+  bottom: calc(var(--touch-bar) + 84px);
+}
+
+.touch[data-arrangement='wide']:has(.touch-next-card) .touch-toast-region {
+  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 380px - 56px);
+}
+
+/* A short wide screen (a phone on its side): the card keeps to what matters. */
+@media (max-height: 519px) {
+  .touch[data-arrangement='wide'] .touch-next-card-note,
+  .touch[data-arrangement='wide'] .touch-next-card-keys {
+    display: none;
+  }
+}
+
+/* With a mouse: a little denser, as the rest of this layout. */
+.touch[data-input='mouse'] .touch-list-card {
+  min-height: 52px;
+}
+
+.touch[data-input='mouse'] .touch-fold,
+.touch[data-input='mouse'] .touch-run-row,
+.touch[data-input='mouse'] .touch-here-link {
+  min-height: 40px;
+}
+
+.touch[data-input='mouse'] .touch-view-switch .touch-segment {
+  height: 34px;
+}
+
+.touch[data-input='mouse'] .touch-list-only {
+  min-height: 44px;
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .touch-done-button {
+  height: 46px;
+  font-size: 15.5px;
+}
+
+@media (hover: hover) {
+  .touch[data-input='mouse']
+    :is(.touch-list-card, .touch-fold, .touch-run-row, .touch-pinned):hover {
+    background: var(--atlas-surface-hover);
+  }
+
+  .touch[data-input='mouse'] .touch-here-link:hover,
+  .touch[data-input='mouse'] .touch-done-button:hover {
+    filter: brightness(1.08);
+  }
+}

@@ -34,7 +34,10 @@ export type LeftTab = 'filters' | 'checklists';
 
 /** A page of the checklists and guides screen. */
 export type ChecklistPage =
-  { kind: 'index' } | { kind: 'checklist'; id: string } | { kind: 'guide'; id: string };
+  | { kind: 'index' }
+  /** A checklist; in the standard layout, `area` opens one of its areas (see `touch/listViews.ts`). */
+  | { kind: 'checklist'; id: string; area?: string }
+  | { kind: 'guide'; id: string };
 
 export interface LoadedGame {
   entry: PackEntry;
@@ -126,6 +129,11 @@ export interface AtlasState {
 
   overrides: VisibilityOverrides;
   hideFound: boolean;
+  /**
+   * The places of the list the standard layout shows alone on the map, or
+   * null. It is set aside of `overrides`, which it never changes.
+   */
+  listOnly: ReadonlySet<string> | null;
   userPresets: UserPreset[];
 
   profiles: Profile[];
@@ -151,8 +159,12 @@ export interface AtlasState {
   checklistPages: ChecklistPage[];
   /** Hide done items on the checklists screen. */
   hideDone: boolean;
-  /** A checklist item to bring into view, with a sequence number so it can be asked for again. */
-  itemFocus: { itemId: string; seq: number } | null;
+  /**
+   * A checklist item to bring into view, with a sequence number so it can
+   * be asked for again. `open` when the item was asked for from outside its
+   * list (search, a place, a link), rather than shown from the list.
+   */
+  itemFocus: { itemId: string; seq: number; open?: boolean } | null;
   profileDialogOpen: boolean;
   /** Increments when the search box should take focus. */
   searchFocus: number;
@@ -227,6 +239,7 @@ export const useAtlas = create<AtlasState>()(() => ({
 
   overrides: {},
   hideFound: false,
+  listOnly: null,
   userPresets: [],
 
   profiles: [],

@@ -1,4 +1,4 @@
-import { tickChanges } from '@atlas/core';
+import { tickChanges, type ChecklistItemEntry } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import { applyProgress, goToLocation, goToRegion, notify, setPane, showMap } from './actions';
 import { useAtlas, type ChecklistPage, type LeftTab, type LoadedGame } from './store';
@@ -35,7 +35,12 @@ export function toggleLeftTab(tab: LeftTab): void {
 }
 
 const samePage = (a: ChecklistPage | undefined, b: ChecklistPage) =>
-  a?.kind === b.kind && (a.kind === 'index' || (b.kind !== 'index' && a.id === b.id));
+  a?.kind === b.kind &&
+  (a.kind === 'index' ||
+    (b.kind !== 'index' &&
+      a.id === b.id &&
+      (a.kind === 'checklist' ? a.area : undefined) ===
+        (b.kind === 'checklist' ? b.area : undefined)));
 
 /** Shows a page of the checklists screen; Back returns to the page shown before. */
 export function openChecklistPage(page: ChecklistPage): void {
@@ -56,7 +61,7 @@ export function openChecklistItem(itemId: string): void {
   const checklist = get().game?.checklists.checklistOf(itemId);
   if (!checklist) return;
   openChecklistPage({ kind: 'checklist', id: checklist.checklist.id });
-  set({ itemFocus: { itemId, seq: ++focusSeq } });
+  set({ itemFocus: { itemId, seq: ++focusSeq, open: true } });
 }
 
 export function openGuide(id: string): void {
@@ -72,9 +77,17 @@ export function checklistBack(): void {
  * change that `Z` takes back, and says what changed.
  */
 export function setItemDone(itemId: string, done: boolean): void {
+  const entry = get().game?.checklists.item(itemId);
+  if (entry) setEntryDone(entry, done);
+}
+
+/**
+ * Ticks or unticks an item of any list, the pack's own or one made by the
+ * app (such as every place of the game), as {@link setItemDone} does.
+ */
+export function setEntryDone(entry: ChecklistItemEntry, done: boolean): void {
   const { game, found } = get();
-  const entry = game?.checklists.item(itemId);
-  if (!game || !entry) return;
+  if (!game) return;
   const changes = tickChanges(entry, done, (id) => found.has(id));
   const name = entry.item.name;
   if (!applyProgress(changes, { undone: `Undone: “${name}” is as it was.`, selectId: null })) {

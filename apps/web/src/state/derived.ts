@@ -26,13 +26,14 @@ export function useLayerMarkers(): readonly MapMarker[] {
   const layerId = useAtlas((s) => s.layerId);
   const overrides = useAtlas((s) => s.overrides);
   const hideFound = useAtlas((s) => s.hideFound);
+  const listOnly = useAtlas((s) => s.listOnly);
   const found = useAtlas((s) => s.found);
   const selectedId = useAtlas((s) => s.selectedId);
   return useMemo(() => {
     if (!game || !layerId) return [];
-    const filter = markerFilter({ game, overrides, hideFound, found });
+    const filter = markerFilter({ game, overrides, hideFound, found, listOnly });
     return layerMarkers(game.pack, layerId, { filter, alwaysInclude: selectedId });
-  }, [game, layerId, overrides, hideFound, found, selectedId]);
+  }, [game, layerId, overrides, hideFound, found, listOnly, selectedId]);
 }
 
 export const numberFormat = new Intl.NumberFormat('en');

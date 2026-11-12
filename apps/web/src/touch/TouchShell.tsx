@@ -21,7 +21,10 @@ import { GamesScreen } from './GamesScreen';
 import { withKey } from './keys';
 import { KeysDialog } from './KeysDialog';
 import { arrangementFor, panelWidthFor, type Arrangement } from './layout';
+import { ListOnlyChip } from './ListMapChips';
+import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
+import { followOpenList, loadListPrefs, orderKeyDone, orderKeyNext, useLists } from './listViews';
 import { PlaceSheet } from './PlaceSheet';
 import { ProgressScreen } from './ProgressScreen';
 import { SearchField, SearchScreen, SearchResults } from './SearchView';
@@ -144,6 +147,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
         </>
       )}
       {placeShown ? <PlaceSheet wide={wide} /> : null}
+      {wide ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
       <TouchToast wide={wide} />
       <ProfileDialog />
@@ -247,7 +251,33 @@ function useTouchEffects(wide: boolean) {
     if (!game) return;
     useTouch.setState({ solo: null });
     void loadRecent(game);
+    void loadListPrefs(game);
   }, [game]);
+
+  // The open list: remembered, and alone on the map while that is on.
+  useEffect(() => {
+    followOpenList();
+    const stopLists = useLists.subscribe((state, previous) => {
+      if (state.onlyOnMap !== previous.onlyOnMap) followOpenList();
+    });
+    const stopAtlas = useAtlas.subscribe((state, previous) => {
+      if (state.checklistPages !== previous.checklistPages || state.game !== previous.game) {
+        followOpenList();
+      }
+    });
+    return () => {
+      stopLists();
+      stopAtlas();
+      // The classic layout shows every place again, and only the pages it knows.
+      const { game, checklistPages } = useAtlas.getState();
+      const pages = checklistPages.filter(
+        (page) =>
+          page.kind !== 'checklist' ||
+          (page.area === undefined && game?.checklists.checklist(page.id) !== undefined),
+      );
+      useAtlas.setState({ listOnly: null, checklistPages: pages });
+    };
+  }, []);
 
   useEffect(
     () =>
@@ -300,6 +330,9 @@ function useTouchEffects(wide: boolean) {
       keys: () => {
         if (keyboardHintsOffered(useAtlas.getState())) setKeysOpen(true);
       },
+      // In a list shown in order: the next step done, and on to the one after.
+      found: orderKeyDone,
+      nearest: orderKeyNext,
     });
     return () => {
       setShortcutOverrides(null);
@@ -411,6 +444,7 @@ function WideMapControls() {
   return (
     <>
       <div className="touch-map-top">
+        <ListOnlyChip />
         <MapChip />
         <span className="touch-map-bottom-space" />
         <ProgressPill />

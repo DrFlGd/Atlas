@@ -76,6 +76,12 @@ export const SETTINGS = {
   place: (gameId: string) => `place:${gameId}`,
   /** Search results chosen in the touch layout, latest first. */
   recentSearches: (gameId: string) => `recentSearches:${gameId}`,
+  /** The view each list was last shown in, in the standard layout, by list id. */
+  listViews: (gameId: string) => `listViews:${gameId}`,
+  /** The list last opened in the standard layout, for Lists to offer to continue. */
+  lastList: (gameId: string) => `lastList:${gameId}`,
+  /** Whether an open list is shown alone on the map in the standard layout (on unless turned off). */
+  listOnlyOnMap: 'listOnlyOnMap',
   /** Whether the Android app keeps the screen on while it is shown. */
   keepScreenOn: 'keepScreenOn',
   /** The game save linked to a profile (see `state/saves.ts`). */
