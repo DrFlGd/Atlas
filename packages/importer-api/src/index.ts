@@ -24,7 +24,10 @@
  *
  * An app that downloads map images may also measure a map's picture for
  * `convert` (see {@link ImportContext.pictureTiles}): which tiles of one zoom
- * of an image set exist on its server. Importers must work without it.
+ * of an image set exist on its server. When the person asks for it, such an
+ * app can also watch which images the page itself loads while an importer's
+ * script zooms the page out (see {@link AtlasImporter.pageMeasure} and
+ * {@link ImportContext.pageObservations}). Importers must work without both.
  */
 
 import {
@@ -111,8 +114,24 @@ export interface ImportContext {
    * `cachedOnly` when it has learnt nothing about that image set. Call it
    * from `convert` only; it may take a while (a few hundred requests at the
    * app's pace at most), and it never rejects.
+   *
+   * What a page showed counts too (see {@link PictureTilesRequest.page}):
+   * tiles the app knows from a page are known without a request, every
+   * tile a page showed as there is in `present`, and the answer may then
+   * leave out a start tile it knows nothing about.
    */
   pictureTiles?(request: PictureTilesRequest): Promise<PictureTiles | null>;
+  /**
+   * Optional: what the page loaded while it was measured with the
+   * importer's {@link AtlasImporter.pageMeasure} script. Only an app that
+   * downloads map images offers it, only when the person ticked "measure
+   * the map picture from the page" for this import, and only for a page the
+   * script applies to. It is never there for a rebuild. Like page data it
+   * comes from the page and is untrusted: the app has checked its shape and
+   * bounds ({@link checkPageObservations}), the importer decides what it
+   * means.
+   */
+  pageObservations?: PageObservations;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,22 +170,53 @@ export interface PictureTilesRequest {
    * any request: for pages that are only built again with a new one.
    */
   cachedOnly?: boolean;
+  /**
+   * Tiles of this image set and zoom that the page of this import showed,
+   * worked out by the importer from {@link ImportContext.pageObservations}:
+   * `present`, tiles the page loaded as images, or loaded an image inside
+   * of at a finer zoom; `absent`, tiles the page
+   * was told are not there (404 or 410, or a store's "access denied" after
+   * the page had loaded an image of this image set from that host). Only
+   * with page observations of the same import: the app checks every tile
+   * against them (the template filled in, compared without query or
+   * fragment) and refuses the whole request when one does not fit.
+   *
+   * The app keeps them with what it learnt about this image set and zoom,
+   * as known from a page, for this and every later answer, `cachedOnly`
+   * ones too: such tiles are never asked for, every tile a page showed as
+   * there is in `present`, and a tile known as there stays so. No image of
+   * them is kept, so they are not put into the pack's layers; "Download map
+   * images" fetches them as usual.
+   */
+  page?: PageTiles;
+}
+
+/** Tiles a page showed, as [column, row] (see {@link PictureTilesRequest.page}). */
+export interface PageTiles {
+  present: [x: number, y: number][];
+  absent: [x: number, y: number][];
 }
 
 /** What {@link ImportContext.pictureTiles} found. */
 export interface PictureTiles {
   zoom: number;
-  /** The tiles that exist, the start tile among them, as [column, row]. */
+  /**
+   * The tiles that exist, as [column, row]: the start tile among them,
+   * unless the app knows nothing about it and answers from what a page
+   * showed (`fromPage` above 0).
+   */
   present: [x: number, y: number][];
   /** Neighbours of those that the server does not have, as [column, row]. */
   absent: [x: number, y: number][];
   /**
    * Every neighbour of every tile that exists was asked about (inside the
-   * world), so the picture lies within `present`. False when the app
-   * stopped at {@link PICTURE_MAX_REQUESTS}, or, with `cachedOnly`, when it
-   * had not learnt them all.
+   * world), or is known from a page, so the picture lies within `present`.
+   * False when the app stopped at {@link PICTURE_MAX_REQUESTS}, or, with
+   * `cachedOnly`, when it had not learnt them all.
    */
   complete: boolean;
+  /** How many of `present` the app knows only from what a page showed. */
+  fromPage?: number;
 }
 
 /**
@@ -188,12 +238,40 @@ const pictureTilesSchema = z.strictObject({
   present: z.array(tileSchema).min(1).max(PICTURE_MAX_TILES),
   absent: z.array(tileSchema).max(PICTURE_MAX_TILES),
   complete: z.boolean(),
+  fromPage: z.int().nonnegative().optional(),
 });
 
-/** Whether `request` is one the app can measure: an allowed template, and a start tile inside the world. */
+const pageTilesSchema = z.strictObject({
+  present: z.array(tileSchema).max(PICTURE_MAX_TILES),
+  absent: z.array(tileSchema).max(PICTURE_MAX_TILES),
+});
+
+/**
+ * Whether a list of tiles (present ones and absent ones) holds each tile
+ * once, inside a world `size` tiles a side, at most {@link PICTURE_MAX_TILES}
+ * in all.
+ */
+function distinctTiles(lists: readonly (readonly [number, number])[][], size: number): boolean {
+  if (lists.reduce((sum, list) => sum + list.length, 0) > PICTURE_MAX_TILES) return false;
+  const seen = new Set<string>();
+  for (const list of lists) {
+    for (const [x, y] of list) {
+      const key = `${x},${y}`;
+      if (x >= size || y >= size || seen.has(key)) return false;
+      seen.add(key);
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether `request` is one the app can measure: an allowed template, a
+ * start tile inside the world, and, when it names tiles a page showed,
+ * each of those once and inside the world.
+ */
 export function isPictureRequest(request: unknown): request is PictureTilesRequest {
   if (!request || typeof request !== 'object') return false;
-  const { urlTemplate, zoom, start, cachedOnly } = request as Record<string, unknown>;
+  const { urlTemplate, zoom, start, cachedOnly, page } = request as Record<string, unknown>;
   if (typeof urlTemplate !== 'string' || urlTemplate.length > MAX_ADDRESS_CHARS) return false;
   if (!isAllowedPictureTemplate(urlTemplate)) return false;
   if (!Number.isInteger(zoom) || (zoom as number) < 0 || (zoom as number) > PICTURE_MAX_ZOOM) {
@@ -201,6 +279,12 @@ export function isPictureRequest(request: unknown): request is PictureTilesReque
   }
   if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') return false;
   const size = 2 ** (zoom as number);
+  if (page !== undefined) {
+    const tiles = pageTilesSchema.safeParse(page);
+    if (!tiles.success || !distinctTiles([tiles.data.present, tiles.data.absent], size)) {
+      return false;
+    }
+  }
   return (
     Array.isArray(start) &&
     start.length === 2 &&
@@ -210,9 +294,10 @@ export function isPictureRequest(request: unknown): request is PictureTilesReque
 
 /**
  * Checks what the app's measurement answered for `request`: the shape, the
- * zoom asked about, every tile inside the world and listed once, the start
- * tile among those that exist, and no tile both present and absent.
- * Anything else is `null`, as is `null` itself.
+ * zoom asked about, every tile inside the world and listed once, no tile
+ * both present and absent, and the start tile among those that exist,
+ * unless the answer has tiles known only from a page (`fromPage`, at most
+ * as many as `present`). Anything else is `null`, as is `null` itself.
  */
 export function checkPictureTiles(
   value: unknown,
@@ -220,17 +305,288 @@ export function checkPictureTiles(
 ): PictureTiles | null {
   const parsed = pictureTilesSchema.safeParse(value);
   if (!parsed.success || parsed.data.zoom !== request.zoom) return null;
-  if (parsed.data.present.length + parsed.data.absent.length > PICTURE_MAX_TILES) return null;
   const size = 2 ** request.zoom;
-  const seen = new Set<string>();
-  for (const [x, y] of [...parsed.data.present, ...parsed.data.absent]) {
-    const key = `${x},${y}`;
-    if (x >= size || y >= size || seen.has(key)) return null;
-    seen.add(key);
-  }
+  if (!distinctTiles([parsed.data.present, parsed.data.absent], size)) return null;
+  const fromPage = parsed.data.fromPage ?? 0;
+  if (fromPage > parsed.data.present.length) return null;
   const [startX, startY] = request.start;
-  if (!parsed.data.present.some(([x, y]) => x === startX && y === startY)) return null;
+  const hasStart = parsed.data.present.some(([x, y]) => x === startX && y === startY);
+  if (!hasStart && fromPage === 0) return null;
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// Measuring a map's picture from its page (optional)
+
+/**
+ * The most times the app runs an importer's {@link PageMeasure.step} for one
+ * page. The desktop shell enforces the same.
+ */
+export const PAGE_MEASURE_MAX_STEPS = 20;
+/** Steps run only this many seconds after the first one. The desktop shell enforces the same. */
+export const PAGE_MEASURE_MAX_SECONDS = 90;
+/**
+ * Before each step, and once after the last, the app waits until the page's
+ * own requests have settled: none open, and none started or answered for
+ * {@link PAGE_SETTLED_MS}, but for at most {@link PAGE_SETTLE_MAX_MS}.
+ */
+export const PAGE_SETTLED_MS = 1500;
+export const PAGE_SETTLE_MAX_MS = 10_000;
+/** Answers of the page that are handed over at most, each address once. */
+export const PAGE_MAX_ANSWERS = 4000;
+/** Longer addresses are cut to this length. */
+export const PAGE_MAX_ADDRESS_CHARS = 512;
+
+/**
+ * An importer's way of measuring a map's picture from the page itself, for
+ * a site whose image server does not answer the app's own requests but
+ * serves the page. Offered to the person as a tick box, off by default; the
+ * app watches what the page loads while the importer's script zooms the
+ * page out, and hands that to `convert` as
+ * {@link ImportContext.pageObservations}.
+ *
+ * How it runs, in an app that downloads map images: the import window is
+ * opened as large as the screen allows (a page's map only loads the tiles
+ * in its view), with a watching script added before the page's own
+ * scripts run. The page reader runs as usual. Once it has returned the
+ * page data, the app runs `step` in the page, once per poll, after the
+ * page's requests have settled (see {@link PAGE_SETTLED_MS}), until the
+ * step says it is done, it has run {@link PAGE_MEASURE_MAX_STEPS} times,
+ * or {@link PAGE_MEASURE_MAX_SECONDS} have passed; then it waits for the
+ * requests to settle once more, reads what was watched and closes the
+ * window.
+ *
+ * The watching script only watches: for each `GET` the page makes with
+ * `fetch` or `XMLHttpRequest`, it notes the address without its query or
+ * fragment, the status, whether the answer starts like an image, and for
+ * a 403 the start of the body. It changes nothing in the request or the
+ * answer, and the page cannot call the app through it.
+ */
+export interface PageMeasure {
+  /**
+   * Whether the importer measures the page at `url` this way (for example
+   * map pages, not checklists); without it, every page `matches` accepts.
+   * Must not throw.
+   */
+  matches?(url: string): boolean;
+  /**
+   * Source text of a function evaluated in the page as
+   * `(<step>)({ step, presses })`: `step` counts the earlier runs from 0,
+   * `presses` those that said they pressed. It must be synchronous and
+   * return `{ done: boolean, pressed?: boolean, note?: string }`, or
+   * anything else for "not done, nothing pressed"; an exception counts as
+   * that too, and its message is logged.
+   *
+   * Unlike {@link AtlasImporter.pageReader}, it may press the page's own
+   * zoom control (a button of the page's map that zooms out, or in), once
+   * per run at most, and say so with `pressed: true`. It must not do
+   * anything else: no panning, scrolling, typing or other clicks, no
+   * navigation or form submission, no requests of its own, no reading or
+   * writing of cookies or storage, and no change to the page. `note` (at
+   * most 200 characters) goes to the activity log, so it must not hold
+   * anything from the page beyond what the step did, such as the zoom.
+   */
+  step: string;
+}
+
+/**
+ * What the page was answered for one address (see {@link PageAnswer}):
+ * `image`, a 2xx answer that starts like a JPEG, PNG or WebP image (or, when
+ * its bytes cannot be read, says it is an image); `missing`, 404 or 410;
+ * `denied`, a 403 whose body is an object store's "access denied" error
+ * document, which stores that do not list their contents send for objects
+ * that do not exist (and for refusals); `error`, anything else, a network
+ * failure among them.
+ */
+export type PageAnswerKind = 'image' | 'missing' | 'denied' | 'error';
+
+/** One address the page asked for with `GET`, and what it was answered. */
+export interface PageAnswer {
+  /**
+   * `scheme://host[:port]/path`, without query or fragment, at most
+   * {@link PAGE_MAX_ADDRESS_CHARS} characters.
+   */
+  url: string;
+  /** When the page asked more than once: `image` over `missing` over `denied` over `error`. */
+  answer: PageAnswerKind;
+  /** The HTTP status of that answer; 0 when there was none (a network failure). */
+  status: number;
+}
+
+/** How measuring a page ended. */
+export type PageMeasureEnd =
+  /** The importer's step said it was done. */
+  | 'done'
+  /** After {@link PAGE_MEASURE_MAX_STEPS} steps. */
+  | 'steps'
+  /** After {@link PAGE_MEASURE_MAX_SECONDS}. */
+  | 'time'
+  /** The person closed the page window; what was watched until then is here. */
+  | 'closed';
+
+/** What the page loaded while it was measured (see {@link PageMeasure}). */
+export interface PageObservations {
+  /** The page's answers, each address once, at most {@link PAGE_MAX_ANSWERS}. */
+  answers: PageAnswer[];
+  /** The page asked for more addresses than are listed. */
+  overflow: boolean;
+  /** How often the importer's step ran, and how often it said it pressed. */
+  steps: number;
+  presses: number;
+  ended: PageMeasureEnd;
+}
+
+const pageAnswerSchema = z.strictObject({
+  url: z.string().min(1).max(PAGE_MAX_ADDRESS_CHARS),
+  answer: z.enum(['image', 'missing', 'denied', 'error']),
+  status: z.int().min(0).max(999),
+});
+
+const pageObservationsSchema = z.strictObject({
+  answers: z.array(pageAnswerSchema).max(PAGE_MAX_ANSWERS),
+  overflow: z.boolean(),
+  steps: z.int().min(0).max(PAGE_MEASURE_MAX_STEPS),
+  presses: z.int().min(0).max(PAGE_MEASURE_MAX_STEPS),
+  ended: z.enum(['done', 'steps', 'time', 'closed']),
+});
+
+/**
+ * Checks what the app's shell handed over from a measured page: the shape,
+ * the bounds, at most as many presses as steps, and each address a web
+ * address (`http` or `https`, no user name or password, no query or
+ * fragment) listed once. Anything else is `null`.
+ */
+export function checkPageObservations(value: unknown): PageObservations | null {
+  const parsed = pageObservationsSchema.safeParse(value);
+  if (!parsed.success || parsed.data.presses > parsed.data.steps) return null;
+  const seen = new Set<string>();
+  for (const { url } of parsed.data.answers) {
+    let address: URL;
+    try {
+      address = new URL(url);
+    } catch {
+      return null;
+    }
+    if (address.protocol !== 'https:' && address.protocol !== 'http:') return null;
+    if (address.username || address.password || address.search || address.hash) return null;
+    if (url.includes('?') || url.includes('#') || seen.has(url)) return null;
+    seen.add(url);
+  }
+  return parsed.data;
+}
+
+/** The step of the importer's page measuring for the page at `url`, or null when there is none. */
+export function pageMeasureStep(
+  importer: Pick<AtlasImporter, 'pageMeasure'>,
+  url: string,
+): string | null {
+  const measure = importer.pageMeasure;
+  if (!measure) return null;
+  if (measure.matches && !safely(() => measure.matches!(url.trim()), false)) return null;
+  return measure.step;
+}
+
+/** A tile an address names: its zoom, column and row. */
+export interface TileAddress {
+  z: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * A reader of the addresses of one image set: for an address of a page
+ * answer, the tile it names when it is `urlTemplate` filled in (compared
+ * without the template's query or fragment, as page answers have none),
+ * otherwise null. Null when the template has no `{z}`, `{x}` and `{y}`
+ * where an address can hold them (in the path), or is not a web address.
+ */
+export function tileAddressReader(
+  urlTemplate: string,
+): ((url: string) => TileAddress | null) | null {
+  const base = urlTemplate.split(/[?#]/)[0] ?? '';
+  const marks = { z: 'atlasmarkz', x: 'atlasmarkx', y: 'atlasmarky' } as const;
+  let normal: string;
+  try {
+    const url = new URL(
+      base.replaceAll('{z}', marks.z).replaceAll('{x}', marks.x).replaceAll('{y}', marks.y),
+    );
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    if (url.username || url.password) return null;
+    normal = url.origin + url.pathname;
+  } catch {
+    return null;
+  }
+  const order: ('z' | 'x' | 'y')[] = [];
+  const parts = normal.split(/(atlasmark[zxy])/);
+  let pattern = '^';
+  for (const part of parts) {
+    const mark = /^atlasmark([zxy])$/.exec(part);
+    if (mark) {
+      order.push(mark[1] as 'z' | 'x' | 'y');
+      pattern += '(\\d{1,10})';
+    } else {
+      pattern += part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  if (!(['z', 'x', 'y'] as const).every((part) => order.includes(part))) return null;
+  const expression = new RegExp(`${pattern}$`);
+  return (url) => {
+    const found = expression.exec(url);
+    if (!found) return null;
+    const tile: Partial<Record<'z' | 'x' | 'y', number>> = {};
+    for (const [i, part] of order.entries()) {
+      const n = Number(found[i + 1]);
+      // The same part twice must name the same number.
+      if (tile[part] !== undefined && tile[part] !== n) return null;
+      tile[part] = n;
+    }
+    const { z, x, y } = tile as TileAddress;
+    if (z > PICTURE_MAX_ZOOM || x >= 2 ** z || y >= 2 ** z) return null;
+    return { z, x, y };
+  };
+}
+
+/**
+ * Checks the tiles an importer says a page showed ({@link PictureTilesRequest.page})
+ * against what the page loaded: each present tile's address answered with an
+ * image, or the address of a tile inside it at a finer zoom did (a page may
+ * stop zooming out before it shows the coarsest tiles, and a tile with an
+ * image below it exists); each absent one's with `missing`, or with `denied`
+ * when the page loaded an image of the same image set (any zoom, so from the
+ * same host).
+ */
+export function pageTilesFit(
+  page: PageTiles,
+  request: Pick<PictureTilesRequest, 'urlTemplate' | 'zoom'>,
+  observations: PageObservations,
+): boolean {
+  const read = tileAddressReader(request.urlTemplate);
+  if (!read) return false;
+  const answers = new Map<string, PageAnswerKind>();
+  // Tiles of the asked zoom that hold an image the page loaded at a finer zoom.
+  const below = new Set<string>();
+  let proven = false;
+  for (const { url, answer } of observations.answers) {
+    const tile = read(url);
+    if (!tile) continue;
+    if (answer === 'image') {
+      proven = true;
+      if (tile.z > request.zoom) {
+        const span = 2 ** (tile.z - request.zoom);
+        below.add(`${Math.floor(tile.x / span)},${Math.floor(tile.y / span)}`);
+      }
+    }
+    if (tile.z === request.zoom) answers.set(`${tile.x},${tile.y}`, answer);
+  }
+  return (
+    page.present.every(
+      ([x, y]) => answers.get(`${x},${y}`) === 'image' || below.has(`${x},${y}`),
+    ) &&
+    page.absent.every(([x, y]) => {
+      const answer = answers.get(`${x},${y}`);
+      return answer === 'missing' || (answer === 'denied' && proven);
+    })
+  );
 }
 
 /** How the size of an imported map's picture was found, for the summary. */
@@ -244,6 +600,27 @@ export interface PictureSummary {
    * measured and what the importer did instead.
    */
   note?: string;
+  /**
+   * When the page was measured ({@link ImportContext.pageObservations}):
+   * what it showed. Set it only when the context has page observations.
+   */
+  page?: PageMeasureSummary;
+}
+
+/** What measuring a map's picture from its page found (see {@link PictureSummary.page}). */
+export interface PageMeasureSummary {
+  /** The zoom whose tiles were counted: the coarsest one the site serves. */
+  zoom: number;
+  /** Tiles of that zoom the page loaded as images. */
+  images: number;
+  /** Tiles of that zoom the page was told are not there. */
+  missing: number;
+  /** Tiles next to an image that the page did not load, or whose answer said nothing. */
+  unseen: number;
+  /** Every tile next to an image was seen, or lies outside the world. */
+  complete: boolean;
+  /** The map's size was taken from it; `note` says how, or why not. */
+  used: boolean;
 }
 
 /** Figures shown to the person after an import. */
@@ -429,6 +806,11 @@ export interface AtlasImporter {
    * there yet".
    */
   pageReader: string;
+  /**
+   * Optional: measuring a map's picture from the page, when the person asks
+   * for it (see {@link PageMeasure}). An app without it never runs it.
+   */
+  pageMeasure?: PageMeasure;
   /** How long to wait for the page data, in seconds. */
   waitSeconds?: number;
   /** Turns page data into a pack. Must not throw for bad data; return a failure instead. */
@@ -483,6 +865,12 @@ export const importerSchema = z
     example: z.string().max(500).optional(),
     matches: z.custom<AtlasImporter['matches']>(isFunction, 'must be a function'),
     pageReader: z.string().min(1).max(MAX_READER_CHARS),
+    pageMeasure: z
+      .object({
+        matches: z.custom<NonNullable<PageMeasure['matches']>>(isFunction).optional(),
+        step: readerSchema,
+      })
+      .optional(),
     waitSeconds: z.int().min(MIN_WAIT_SECONDS).max(MAX_WAIT_SECONDS).optional(),
     convert: z.custom<AtlasImporter['convert']>(isFunction, 'must be a function'),
     games: gamePagesSchema.optional(),
@@ -548,6 +936,16 @@ const summarySchema = z.strictObject({
       measured: z.boolean(),
       tiles: z.int().nonnegative().optional(),
       note: z.string().trim().min(1).max(500).optional(),
+      page: z
+        .strictObject({
+          zoom: z.int().min(0).max(PICTURE_MAX_ZOOM),
+          images: z.int().nonnegative(),
+          missing: z.int().nonnegative(),
+          unseen: z.int().nonnegative(),
+          complete: z.boolean(),
+          used: z.boolean(),
+        })
+        .optional(),
     })
     .optional(),
 });

@@ -101,8 +101,15 @@ export type FailureCause =
 export type RunPageState =
   /** Not reached yet. */
   | { kind: 'waiting' }
-  /** The page is open in the import window. */
-  | { kind: 'open'; startedAt: number; now: number; waitSeconds: number; loading: boolean }
+  /** The page is open in the import window; `measuring` once its map picture is measured from the page. */
+  | {
+      kind: 'open';
+      startedAt: number;
+      now: number;
+      waitSeconds: number;
+      loading: boolean;
+      measuring?: boolean;
+    }
   /** The page data is being turned into a map; `measuring` while its picture is measured. */
   | { kind: 'converting'; measuring?: boolean }
   | {

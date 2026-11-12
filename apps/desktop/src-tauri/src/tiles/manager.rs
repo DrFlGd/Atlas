@@ -1081,14 +1081,14 @@ impl DownloadManager {
                     Area::Download,
                     "Did not measure the picture of an import: another Atlas app on this computer is downloading map images, and the computer downloads one thing at a time. The importer sizes the map without it",
                 );
-                return None;
+                return self.answer_from_page(request).await;
             }
             Err(title) => {
                 self.log.info(
                     Area::Download,
                     format!("Did not measure the picture of an import: the download of {title} is under way, and the computer downloads one thing at a time. The importer sizes the map without it"),
                 );
-                return None;
+                return self.answer_from_page(request).await;
             }
         };
         let fetching = Fetching {
@@ -1098,6 +1098,20 @@ impl DownloadManager {
         };
         self.pictures
             .measure(&self.picture_cache, request, &self.log, Some(fetching))
+            .await
+    }
+
+    /// When a measurement cannot ask the server: with tiles the import's
+    /// page showed, those are still kept, and the answer is what is known
+    /// without a request; otherwise none.
+    async fn answer_from_page(&self, request: &MeasureRequest) -> Option<Measured> {
+        request.page.as_ref()?;
+        let cached = MeasureRequest {
+            cached_only: true,
+            ..request.clone()
+        };
+        self.pictures
+            .measure(&self.picture_cache, &cached, &self.log, None)
             .await
     }
 
@@ -2506,6 +2520,7 @@ mod tests {
             zoom: 4,
             start: [2, 3],
             cached_only: false,
+            page: None,
         };
         manager.start("test", Detail::Full).unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2518,6 +2533,50 @@ mod tests {
         // No request of the measurement reached the server.
         assert!(server.seen().len() <= asked + 2);
         assert!(!dir.0.join("data/measured").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn what_a_page_showed_is_kept_while_a_download_is_under_way() {
+        use crate::tiles::measure::{MeasureRequest, PageTiles};
+        ensure_crypto();
+        let dir = TempDir::new("manager-measure-busy-page");
+        let base = tile_server();
+        let server = MockServer::start(Arc::new(move |path, count| {
+            base(path, count).delayed(Duration::from_millis(100))
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        write_square_pack(&pack, &server);
+        let manager = logged_manager(&dir, &pack);
+        let request = MeasureRequest {
+            url_template: server.url("/remote/{z}/{x}/{y}.png"),
+            zoom: 4,
+            start: [2, 3],
+            cached_only: false,
+            page: Some(PageTiles {
+                present: vec![[2, 3]],
+                absent: vec![
+                    [1, 2],
+                    [2, 2],
+                    [3, 2],
+                    [1, 3],
+                    [3, 3],
+                    [1, 4],
+                    [2, 4],
+                    [3, 4],
+                ],
+            }),
+        };
+        manager.start("test", Detail::Full).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let asked = server.seen().len();
+        let answer = manager.measure_picture(&request).await.expect("an answer");
+        manager.cancel("test").unwrap();
+        assert_eq!(answer.present, [[2, 3]]);
+        assert!(answer.complete);
+        assert_eq!(answer.from_page, 1);
+        assert!(server.seen().len() <= asked + 2);
+        assert!(logged(&dir).contains("Kept what the import's page showed of the picture"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2690,6 +2749,7 @@ mod tests {
                 zoom: 3,
                 start: [2, 2],
                 cached_only: false,
+                page: None,
             })
             .await
             .unwrap();

@@ -29,6 +29,10 @@
 //! - Kept bodies wait in the page as base64 text, at most `MAX_IMAGE_BYTES`
 //!   each and `MAX_QUEUED_CHARS` in all; more is noted as "too busy".
 //!
+//! The wrappers of `fetch` and `XMLHttpRequest` ([`WRAPPERS`]) and the
+//! reading of error answers ([`ERROR_ANSWERS`]) are shared with the watching
+//! script of the import window's page measuring (`pagemeasure.rs`).
+//!
 //! The shell takes them out from the Rust side with `eval_with_callback`, as
 //! the import window does: `next` lists what waits (whole small items and
 //! the sizes of large ones), `slice` hands over part of a large item, `drop`
@@ -49,6 +53,127 @@ const MAX_FAILURES: usize = 500;
 /// Bytes of a 403 answer's body that are read, at most: an object store's
 /// "no such object" document is a few hundred bytes.
 pub const MAX_FAILURE_BODY: usize = 2048;
+
+/// Reading error answers, shared by every watching script: `failed(url,
+/// status, type, body)` is called once for each answer with an error
+/// status, with the start of the body for a 403 when it is short and UTF-8
+/// (`MAX_BODY` bytes at most, read from a copy). Needs `MAX_BODY` and
+/// `failed` in scope.
+pub(crate) const ERROR_ANSWERS: &str = r#"
+  function isFailure(status) {
+    return typeof status === 'number' && status >= 400 && status <= 599;
+  }
+  // The text of a body of at most MAX_BODY bytes, if it is UTF-8; else null.
+  function startOf(buffer) {
+    try {
+      if (!buffer || buffer.byteLength > MAX_BODY) return null;
+      return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buffer));
+    } catch (e) { return null; }
+  }
+  // Reads at most MAX_BODY bytes of a copy of an answer; stops reading the
+  // copy when there is more.
+  function readStart(copy) {
+    var reader = copy.body.getReader();
+    var parts = [], size = 0;
+    function step() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) {
+          var all = new Uint8Array(size), at = 0;
+          for (var i = 0; i < parts.length; i++) { all.set(parts[i], at); at += parts[i].byteLength; }
+          return startOf(all.buffer);
+        }
+        size += chunk.value.byteLength;
+        if (size > MAX_BODY) {
+          try { reader.cancel().then(null, function () {}); } catch (e) {}
+          return null;
+        }
+        parts.push(chunk.value);
+        return step();
+      });
+    }
+    return step();
+  }
+  function failureFromResponse(url, response) {
+    var status = response.status, type = '';
+    try { type = response.headers.get('content-type') || ''; } catch (e) {}
+    if (status !== 403) { failed(url, status, type, null); return; }
+    try {
+      if (Number(response.headers.get('content-length')) > MAX_BODY) { failed(url, status, type, null); return; }
+      var copy = response.clone();
+      if (!copy.body || typeof copy.body.getReader !== 'function') { failed(url, status, type, null); return; }
+      readStart(copy).then(function (text) { failed(url, status, type, text); }, function () { failed(url, status, type, null); });
+    } catch (e) { failed(url, status, type, null); }
+  }
+  function failureFromXhr(url, xhr) {
+    var status = xhr.status, type = '';
+    try { type = xhr.getResponseHeader('content-type') || ''; } catch (e) {}
+    if (status !== 403) { failed(url, status, type, null); return; }
+    try {
+      var kind = xhr.responseType;
+      if (kind === 'arraybuffer') failed(url, status, type, startOf(xhr.response));
+      else if (kind === 'blob' && xhr.response && typeof xhr.response.arrayBuffer === 'function') {
+        if (xhr.response.size > MAX_BODY) { failed(url, status, type, null); return; }
+        xhr.response.arrayBuffer().then(function (buffer) { failed(url, status, type, startOf(buffer)); }, function () { failed(url, status, type, null); });
+      } else if (kind === '' || kind === 'text') {
+        var text = xhr.responseText;
+        failed(url, status, type, typeof text === 'string' && text.length <= MAX_BODY ? text : null);
+      } else failed(url, status, type, null);
+    } catch (e) { failed(url, status, type, null); }
+  }
+"#;
+
+/// The wrappers of `fetch` and `XMLHttpRequest`, shared by every watching
+/// script. For each `GET` the page makes to an address `wanted(url)`
+/// accepts, they call `begin()` when it starts; for `fetch`,
+/// `fromResponse(url, response)` or `fromFetchError(url)` when it is
+/// answered or fails; for `XMLHttpRequest`, `fromXhr(url, xhr)` on `load`
+/// and `fromXhrError(url)` on `error` or `timeout`; and `end()` once it has
+/// settled either way. The page's own call, its arguments and its answer
+/// are passed through unchanged, and every error of the watcher is
+/// swallowed. Needs `absolute(input)` and those functions in scope.
+pub(crate) const WRAPPERS: &str = r#"
+  var originalFetch = window.fetch;
+  if (typeof originalFetch === 'function') {
+    window.fetch = function fetch(input, init) {
+      var answer = originalFetch.apply(this, arguments);
+      try {
+        var isRequest = typeof Request === 'function' && input instanceof Request;
+        var method = (init && init.method) || (isRequest ? input.method : 'GET');
+        var url = absolute(isRequest ? input.url : input);
+        if (String(method).toUpperCase() === 'GET' && wanted(url) && answer && typeof answer.then === 'function') {
+          begin();
+          answer.then(function (response) { end(); fromResponse(url, response); }, function () { end(); fromFetchError(url); });
+        }
+      } catch (e) {}
+      return answer;
+    };
+  }
+
+  var XHR = window.XMLHttpRequest;
+  if (typeof XHR === 'function' && XHR.prototype) {
+    var requests = new WeakMap();
+    var originalOpen = XHR.prototype.open;
+    var originalSend = XHR.prototype.send;
+    XHR.prototype.open = function open(method, url) {
+      try { requests.set(this, { method: String(method).toUpperCase(), url: absolute(url) }); } catch (e) {}
+      return originalOpen.apply(this, arguments);
+    };
+    XHR.prototype.send = function send() {
+      try {
+        var request = requests.get(this);
+        if (request && request.method === 'GET' && wanted(request.url)) {
+          var xhr = this;
+          begin();
+          xhr.addEventListener('load', function () { fromXhr(request.url, xhr); });
+          xhr.addEventListener('error', function () { fromXhrError(request.url); });
+          xhr.addEventListener('timeout', function () { fromXhrError(request.url); });
+          xhr.addEventListener('loadend', function () { end(); });
+        }
+      } catch (e) {}
+      return originalSend.apply(this, arguments);
+    };
+  }
+"#;
 
 /// The script added to the page. `key` is the hidden name of its handle,
 /// `prefixes` the fixed starts of the pack's remote image addresses.
@@ -90,66 +215,7 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
     if (!on || failures.length >= MAX_FAILURES) return;
     failures.push({{ url: url, status: status, type: String(type || '').slice(0, 200), body: typeof body === 'string' ? body : null }});
   }}
-  function isFailure(status) {{
-    return typeof status === 'number' && status >= 400 && status <= 599;
-  }}
-  // The text of a body of at most MAX_BODY bytes, if it is UTF-8; else null.
-  function startOf(buffer) {{
-    try {{
-      if (!buffer || buffer.byteLength > MAX_BODY) return null;
-      return new TextDecoder('utf-8', {{ fatal: true }}).decode(new Uint8Array(buffer));
-    }} catch (e) {{ return null; }}
-  }}
-  // Reads at most MAX_BODY bytes of a copy of an answer; stops reading the
-  // copy when there is more.
-  function readStart(copy) {{
-    var reader = copy.body.getReader();
-    var parts = [], size = 0;
-    function step() {{
-      return reader.read().then(function (chunk) {{
-        if (chunk.done) {{
-          var all = new Uint8Array(size), at = 0;
-          for (var i = 0; i < parts.length; i++) {{ all.set(parts[i], at); at += parts[i].byteLength; }}
-          return startOf(all.buffer);
-        }}
-        size += chunk.value.byteLength;
-        if (size > MAX_BODY) {{
-          try {{ reader.cancel().then(null, function () {{}}); }} catch (e) {{}}
-          return null;
-        }}
-        parts.push(chunk.value);
-        return step();
-      }});
-    }}
-    return step();
-  }}
-  function failureFromResponse(url, response) {{
-    var status = response.status, type = '';
-    try {{ type = response.headers.get('content-type') || ''; }} catch (e) {{}}
-    if (status !== 403) {{ failed(url, status, type, null); return; }}
-    try {{
-      if (Number(response.headers.get('content-length')) > MAX_BODY) {{ failed(url, status, type, null); return; }}
-      var copy = response.clone();
-      if (!copy.body || typeof copy.body.getReader !== 'function') {{ failed(url, status, type, null); return; }}
-      readStart(copy).then(function (text) {{ failed(url, status, type, text); }}, function () {{ failed(url, status, type, null); }});
-    }} catch (e) {{ failed(url, status, type, null); }}
-  }}
-  function failureFromXhr(url, xhr) {{
-    var status = xhr.status, type = '';
-    try {{ type = xhr.getResponseHeader('content-type') || ''; }} catch (e) {{}}
-    if (status !== 403) {{ failed(url, status, type, null); return; }}
-    try {{
-      var kind = xhr.responseType;
-      if (kind === 'arraybuffer') failed(url, status, type, startOf(xhr.response));
-      else if (kind === 'blob' && xhr.response && typeof xhr.response.arrayBuffer === 'function') {{
-        if (xhr.response.size > MAX_BODY) {{ failed(url, status, type, null); return; }}
-        xhr.response.arrayBuffer().then(function (buffer) {{ failed(url, status, type, startOf(buffer)); }}, function () {{ failed(url, status, type, null); }});
-      }} else if (kind === '' || kind === 'text') {{
-        var text = xhr.responseText;
-        failed(url, status, type, typeof text === 'string' && text.length <= MAX_BODY ? text : null);
-      }} else failed(url, status, type, null);
-    }} catch (e) {{ failed(url, status, type, null); }}
-  }}
+{ERROR_ANSWERS}
   function toBase64(buffer) {{
     var bytes = new Uint8Array(buffer);
     var parts = [];
@@ -181,56 +247,25 @@ pub fn capture_script(key: &str, prefixes: &[String]) -> String {
       response.clone().arrayBuffer().then(function (buffer) {{ keep(url, buffer); }}, function () {{ note(url, 'unreadable'); }});
     }} catch (e) {{ note(url, 'unreadable'); }}
   }}
-
-  var originalFetch = window.fetch;
-  if (typeof originalFetch === 'function') {{
-    window.fetch = function fetch(input, init) {{
-      var answer = originalFetch.apply(this, arguments);
-      try {{
-        var isRequest = typeof Request === 'function' && input instanceof Request;
-        var method = (init && init.method) || (isRequest ? input.method : 'GET');
-        var url = absolute(isRequest ? input.url : input);
-        if (String(method).toUpperCase() === 'GET' && wanted(url) && answer && typeof answer.then === 'function') {{
-          answer.then(function (response) {{ fromResponse(url, response); }}, function () {{}});
-        }}
-      }} catch (e) {{}}
-      return answer;
-    }};
+  function fromXhr(url, xhr) {{
+    try {{
+      if (!on) return;
+      if (isFailure(xhr.status)) {{ failureFromXhr(url, xhr); return; }}
+      if (xhr.status !== 200) return;
+      var type = xhr.responseType;
+      if (type === 'arraybuffer') keep(url, xhr.response);
+      else if (type === 'blob' && xhr.response && typeof xhr.response.arrayBuffer === 'function') {{
+        if (xhr.response.size > MAX_IMAGE) {{ note(url, 'tooLarge'); return; }}
+        xhr.response.arrayBuffer().then(function (buffer) {{ keep(url, buffer); }}, function () {{ note(url, 'unreadable'); }});
+      }} else note(url, 'text');
+    }} catch (e) {{ note(url, 'unreadable'); }}
   }}
-
-  var XHR = window.XMLHttpRequest;
-  if (typeof XHR === 'function' && XHR.prototype) {{
-    var requests = new WeakMap();
-    var originalOpen = XHR.prototype.open;
-    var originalSend = XHR.prototype.send;
-    XHR.prototype.open = function open(method, url) {{
-      try {{ requests.set(this, {{ method: String(method).toUpperCase(), url: absolute(url) }}); }} catch (e) {{}}
-      return originalOpen.apply(this, arguments);
-    }};
-    XHR.prototype.send = function send() {{
-      try {{
-        var request = requests.get(this);
-        if (request && request.method === 'GET' && wanted(request.url)) {{
-          var xhr = this;
-          xhr.addEventListener('load', function () {{
-            try {{
-              if (!on) return;
-              if (isFailure(xhr.status)) {{ failureFromXhr(request.url, xhr); return; }}
-              if (xhr.status !== 200) return;
-              var type = xhr.responseType;
-              if (type === 'arraybuffer') keep(request.url, xhr.response);
-              else if (type === 'blob' && xhr.response && typeof xhr.response.arrayBuffer === 'function') {{
-                if (xhr.response.size > MAX_IMAGE) {{ note(request.url, 'tooLarge'); return; }}
-                xhr.response.arrayBuffer().then(function (buffer) {{ keep(request.url, buffer); }}, function () {{ note(request.url, 'unreadable'); }});
-              }} else note(request.url, 'text');
-            }} catch (e) {{ note(request.url, 'unreadable'); }}
-          }});
-        }}
-      }} catch (e) {{}}
-      return originalSend.apply(this, arguments);
-    }};
-  }}
-
+  // Requests that fail, and when they start and end, are not watched here.
+  function begin() {{}}
+  function end() {{}}
+  function fromFetchError() {{}}
+  function fromXhrError() {{}}
+{WRAPPERS}
   try {{
     var observer = new PerformanceObserver(function (list) {{
       var entries = list.getEntries();

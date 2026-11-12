@@ -1649,6 +1649,7 @@ pub async fn library_pack_details(
 
 /// Opens a web page in the import window, for an importer's page reader.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_open<R: Runtime>(
     app: AppHandle<R>,
     imports: State<'_, Imports>,
@@ -1657,6 +1658,7 @@ pub async fn import_open<R: Runtime>(
     importer_id: Option<String>,
     wait_seconds: Option<u32>,
     purpose: Option<String>,
+    measure: Option<String>,
 ) -> Result<(), String> {
     desktop_only()?;
     *lock_poll() = None;
@@ -1677,12 +1679,17 @@ pub async fn import_open<R: Runtime>(
         let what = if listing { "list" } else { "page data" };
         format!(", waiting up to {seconds} s for its {what}")
     });
-    match imports.open(&app, &url, reader) {
+    let measuring = if measure.is_some() {
+        ", and then to measure the map picture from the page: the window is as large as the screen allows, the page's own requests are watched, and the importer's script may press the page's zoom control (at most 20 steps within 90 s)"
+    } else {
+        ""
+    };
+    match imports.open(&app, &url, reader, measure) {
         Ok(()) => {
             activity::info(
                 Area::Import,
                 format!(
-                    "Opened {page} in the import window{reading} for importer {importer}{wait}"
+                    "Opened {page} in the import window{reading} for importer {importer}{wait}{measuring}"
                 ),
             );
             Ok(())
@@ -1764,7 +1771,9 @@ pub async fn import_poll<R: Runtime>(
                 format!("The page has loaded; waiting for its {what}"),
             )),
         ),
-        PollResult::Ready { data } => (
+        // The page measuring logs its own steps.
+        PollResult::Measuring { .. } => ("measuring", None),
+        PollResult::Ready { data, .. } => (
             "ready",
             Some((
                 false,
@@ -1844,6 +1853,20 @@ pub struct PictureReport {
     tiles: Option<u64>,
     /// The importer's words: why it was not measured, or what was done.
     note: Option<String>,
+    /// What the page showed, when the picture was measured from the page.
+    page: Option<PageReport>,
+}
+
+/// What measuring a map's picture from its page found (see `pagemeasure.rs`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageReport {
+    zoom: u64,
+    images: u64,
+    missing: u64,
+    unseen: u64,
+    complete: bool,
+    used: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2089,6 +2112,25 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
                 " | map picture: not measured, sized from where the places are".to_owned()
             }
         });
+        if let Some(page) = &picture.page {
+            line.push_str(&format!(
+                " | measured from the page at zoom {}: {} map images, {} not there, {} next to them not seen, {}, {}",
+                page.zoom,
+                page.images,
+                page.missing,
+                page.unseen,
+                if page.complete {
+                    "complete"
+                } else {
+                    "not complete"
+                },
+                if page.used {
+                    "used for the map's size"
+                } else {
+                    "not used"
+                }
+            ));
+        }
         if let Some(note) = &picture.note {
             line.push_str(&format!(" ({})", short(note)));
         }
@@ -2183,6 +2225,15 @@ mod tests {
         .unwrap();
         assert!(import_report_line(&report).1.ends_with(
             "| map picture: not measured, sized from where the places are (the image server could not be asked)"
+        ));
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"updated","packId":"test-valley",
+                "picture":{"measured":true,"tiles":16,"note":"Measured from the page",
+                  "page":{"zoom":10,"images":16,"missing":4,"unseen":2,"complete":false,"used":true}}}"#,
+        )
+        .unwrap();
+        assert!(import_report_line(&report).1.ends_with(
+            "| map picture: measured, 16 map images found | measured from the page at zoom 10: 16 map images, 4 not there, 2 next to them not seen, not complete, used for the map's size (Measured from the page)"
         ));
         let report: ImportReport = serde_json::from_str(
             r#"{"outcome":"timed-out","message":"The page did not provide\nthe map data"}"#,

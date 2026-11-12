@@ -3,6 +3,10 @@ import demo from '../demo/demo-importer.js';
 import {
   MAX_CATALOGUE_GAMES,
   MAX_LISTED_PAGES,
+  PAGE_MAX_ADDRESS_CHARS,
+  PAGE_MAX_ANSWERS,
+  PAGE_MEASURE_MAX_SECONDS,
+  PAGE_MEASURE_MAX_STEPS,
   PICTURE_MAX_REQUESTS,
   PICTURE_MAX_ZOOM,
   asImporter,
@@ -10,6 +14,7 @@ import {
   checkCatalogue,
   checkGameListing,
   checkOutcome,
+  checkPageObservations,
   checkPictureTiles,
   findCatalogueImporter,
   findGameImporter,
@@ -19,9 +24,14 @@ import {
   isAllowedPictureTemplate,
   isPictureRequest,
   pageKey,
+  pageMeasureStep,
+  pageTilesFit,
   sameSite,
+  tileAddressReader,
   type AtlasImporter,
   type ImportContext,
+  type PageObservations,
+  type PageTiles,
   type PictureTilesRequest,
   type SavedSource,
 } from './index';
@@ -421,6 +431,205 @@ describe('measuring a picture', () => {
     expect(asked).toEqual([]);
     expect('pictureTiles' in context()).toBe(false);
     expect(PICTURE_MAX_REQUESTS).toBe(256);
+  });
+
+  it('takes tiles a page showed in a request, each once and inside the world', () => {
+    const page = { present: [[4, 2]], absent: [[3, 2]] };
+    expect(isPictureRequest({ ...request, page })).toBe(true);
+    expect(isPictureRequest({ ...request, page: { present: [], absent: [] } })).toBe(true);
+    for (const bad of [
+      { present: [[4, 2]] },
+      { present: [[8, 2]], absent: [] },
+      { present: [[4, 2]], absent: [[4, 2]] },
+      {
+        present: [
+          [4, 2],
+          [4, 2],
+        ],
+        absent: [],
+      },
+      { present: [[4, -2]], absent: [] },
+      { present: [], absent: [], extra: 1 },
+      'all of them',
+    ]) {
+      expect(isPictureRequest({ ...request, page: bad }), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('takes an answer without the start tile only when it has tiles known from a page', () => {
+    const answer = { zoom: 3, present: [[5, 2]], absent: [], complete: false };
+    expect(checkPictureTiles(answer, request)).toBeNull();
+    expect(checkPictureTiles({ ...answer, fromPage: 0 }, request)).toBeNull();
+    expect(checkPictureTiles({ ...answer, fromPage: 1 }, request)).toEqual({
+      ...answer,
+      fromPage: 1,
+    });
+    expect(checkPictureTiles({ ...answer, fromPage: 2 }, request)).toBeNull();
+    expect(checkPictureTiles({ ...answer, fromPage: -1 }, request)).toBeNull();
+  });
+});
+
+describe('measuring a picture from its page', () => {
+  const host = 'https://tiles.example.com';
+  const template = `${host}/set/{z}/{x}/{y}.jpg?v=3`;
+  const at = (z: number, x: number, y: number) => `${host}/set/${z}/${x}/${y}.jpg`;
+  const observed = (
+    answers: PageObservations['answers'],
+    more: Partial<PageObservations> = {},
+  ): PageObservations => ({
+    answers,
+    overflow: false,
+    steps: 4,
+    presses: 3,
+    ended: 'done',
+    ...more,
+  });
+
+  it('accepts importers with a page measuring step, and without', () => {
+    const step = '(state) => ({ done: state.step > 2 })';
+    const importer = asImporter({ ...demo, pageMeasure: { step } });
+    expect(pageMeasureStep(importer, `${host}/a`)).toBe(step);
+    expect(pageMeasureStep(demo, `${host}/a`)).toBeNull();
+    const only = asImporter({
+      ...demo,
+      pageMeasure: { step, matches: (url: string) => url.endsWith('/map') },
+    });
+    expect(pageMeasureStep(only, `${host}/map`)).toBe(step);
+    expect(pageMeasureStep(only, `${host}/list`)).toBeNull();
+    const throwing = asImporter({
+      ...demo,
+      pageMeasure: {
+        step,
+        matches: () => {
+          throw new Error('no');
+        },
+      },
+    });
+    expect(pageMeasureStep(throwing, `${host}/map`)).toBeNull();
+    for (const pageMeasure of [
+      { step: '' },
+      { step: 'x'.repeat(64 * 1024 + 1) },
+      { step: 3 },
+      { matches: () => true },
+      { step, matches: 'yes' },
+    ]) {
+      expect(() => asImporter({ ...demo, pageMeasure }), JSON.stringify(pageMeasure)).toThrow();
+    }
+    expect([PAGE_MEASURE_MAX_STEPS, PAGE_MEASURE_MAX_SECONDS]).toEqual([20, 90]);
+  });
+
+  it('checks what the shell hands over from a page', () => {
+    const good = observed([
+      { url: at(3, 4, 2), answer: 'image', status: 200 },
+      { url: at(3, 3, 2), answer: 'denied', status: 403 },
+      { url: 'http://127.0.0.1:4492/api/x', answer: 'error', status: 0 },
+    ]);
+    expect(checkPageObservations(good)).toEqual(good);
+    expect(checkPageObservations(observed([]))).toEqual(observed([]));
+    const answer: PageObservations['answers'][number] = {
+      url: at(3, 4, 2),
+      answer: 'image',
+      status: 200,
+    };
+    for (const bad of [
+      null,
+      { ...good, extra: 1 },
+      { ...good, presses: 5 },
+      { ...good, steps: PAGE_MEASURE_MAX_STEPS + 1, presses: 0 },
+      { ...good, ended: 'later' },
+      observed([answer, answer]),
+      observed([{ ...answer, url: `${at(3, 4, 2)}?token=secret` }]),
+      observed([{ ...answer, url: `${at(3, 4, 2)}#x` }]),
+      observed([{ ...answer, url: 'https://me:secret@tiles.example.com/a' }]),
+      observed([{ ...answer, url: 'file:///etc/passwd' }]),
+      observed([{ ...answer, url: 'not an address' }]),
+      observed([{ ...answer, url: `${host}/${'a'.repeat(PAGE_MAX_ADDRESS_CHARS)}` }]),
+      observed([{ ...answer, answer: 'maybe' as 'image' }]),
+      observed([{ ...answer, status: 1000 }]),
+      observed(
+        Array.from({ length: PAGE_MAX_ANSWERS + 1 }, (_, i) => ({ ...answer, url: at(9, i, 0) })),
+      ),
+    ]) {
+      expect(checkPageObservations(bad), JSON.stringify(bad).slice(0, 120)).toBeNull();
+    }
+  });
+
+  it('reads the tile an address names, by the image set template', () => {
+    const read = tileAddressReader(template)!;
+    expect(read(at(10, 512, 511))).toEqual({ z: 10, x: 512, y: 511 });
+    expect(read(at(3, 8, 0))).toBeNull();
+    expect(read(`${host}/set/3/1/2.png`)).toBeNull();
+    expect(read(`${host}/other/3/1/2.jpg`)).toBeNull();
+    expect(read('https://elsewhere.example.com/set/3/1/2.jpg')).toBeNull();
+    expect(read(`${host}/set/3/a/2.jpg`)).toBeNull();
+    // Rows first, and the zoom twice.
+    const rows = tileAddressReader('https://TILES.example.com/{z}/{y}/{x}/z{z}.png')!;
+    expect(rows('https://tiles.example.com/2/3/1/z2.png')).toEqual({ z: 2, x: 1, y: 3 });
+    expect(rows('https://tiles.example.com/2/3/1/z1.png')).toBeNull();
+    for (const bad of [
+      'https://tiles.example.com/{z}/{x}.png',
+      'https://tiles.example.com/a.png?z={z}&x={x}&y={y}',
+      'ftp://tiles.example.com/{z}/{x}/{y}.png',
+      'nonsense',
+    ]) {
+      expect(tileAddressReader(bad), bad).toBeNull();
+    }
+  });
+
+  it("checks the tiles an importer says a page showed against the page's answers", () => {
+    const request = { urlTemplate: template, zoom: 3 };
+    const page = observed([
+      { url: at(3, 4, 2), answer: 'image', status: 200 },
+      { url: at(3, 5, 2), answer: 'missing', status: 404 },
+      { url: at(3, 3, 2), answer: 'denied', status: 403 },
+      { url: at(3, 3, 3), answer: 'error', status: 500 },
+      { url: at(4, 8, 4), answer: 'image', status: 200 },
+      { url: at(5, 24, 12), answer: 'image', status: 200 },
+    ]);
+    const fits = (tiles: PageTiles, observations = page) =>
+      pageTilesFit(tiles, request, observations);
+    expect(
+      fits({
+        present: [[4, 2]],
+        absent: [
+          [5, 2],
+          [3, 2],
+        ],
+      }),
+    ).toBe(true);
+    expect(fits({ present: [], absent: [] })).toBe(true);
+    expect(fits({ present: [[5, 2]], absent: [] })).toBe(false);
+    expect(fits({ present: [[8, 4]], absent: [] })).toBe(false);
+    // A tile with an image inside it at a finer zoom is there (zoom 5 tile 24, 12 lies in 6, 3).
+    expect(fits({ present: [[6, 3]], absent: [] })).toBe(true);
+    expect(fits({ present: [[6, 2]], absent: [] })).toBe(false);
+    expect(fits({ present: [], absent: [[6, 3]] })).toBe(false);
+    expect(fits({ present: [], absent: [[3, 3]] })).toBe(false);
+    expect(fits({ present: [], absent: [[1, 1]] })).toBe(false);
+    // "Access denied" is "not there" only after an image of the set from that host.
+    const noImage = observed(page.answers.filter((a) => a.answer !== 'image'));
+    expect(fits({ present: [], absent: [[5, 2]] }, noImage)).toBe(true);
+    expect(fits({ present: [], absent: [[3, 2]] }, noImage)).toBe(false);
+    expect(pageTilesFit({ present: [], absent: [] }, { ...request, urlTemplate: 'x' }, page)).toBe(
+      false,
+    );
+  });
+
+  it('takes a summary with what the page showed', async () => {
+    const good = await demo.convert(page('east'), context());
+    if (!good.ok) throw new Error('expected a pack');
+    const pageSummary = { zoom: 3, images: 6, missing: 4, unseen: 0, complete: true, used: true };
+    const picture = { measured: true, tiles: 6, page: pageSummary };
+    expect(checkOutcome({ ...good, summary: { ...good.summary, picture } }).ok).toBe(true);
+    for (const bad of [
+      { ...pageSummary, used: 'yes' },
+      { ...pageSummary, images: -1 },
+      { ...pageSummary, zoom: PICTURE_MAX_ZOOM + 1 },
+      { ...pageSummary, extra: 1 },
+    ]) {
+      const summary = { ...good.summary, picture: { ...picture, page: bad } };
+      expect(checkOutcome({ ...good, summary }).ok, JSON.stringify(bad)).toBe(false);
+    }
   });
 });
 
