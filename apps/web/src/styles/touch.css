@@ -3127,3 +3127,35 @@
     filter: brightness(1.08);
   }
 }
+
+/* A short wide screen (a phone on its side): the list keeps room for its rows.
+   The map's chip turns "Only this list" on and off there. */
+@media (max-height: 519px) {
+  .touch[data-arrangement='wide'] .touch-panel .touch-list-only {
+    display: none;
+  }
+
+  .touch[data-arrangement='wide'] .touch-panel .touch-page-head-back {
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+
+  .touch[data-arrangement='wide'] .touch-panel .touch-list-tools {
+    flex-wrap: nowrap;
+  }
+
+  .touch[data-arrangement='wide'] .touch-panel .touch-list-search {
+    flex: 1 1 55%;
+    min-width: 0;
+  }
+
+  .touch[data-arrangement='wide'] .touch-panel .touch-list-tools .touch-text-button {
+    display: block;
+    flex: 0 1 45%;
+    min-width: 0;
+    overflow: hidden;
+    line-height: 44px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
