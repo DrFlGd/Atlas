@@ -230,19 +230,37 @@ kbd {
 }
 
 .brand {
+  flex: none;
   font-weight: 700;
   font-size: 15px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: var(--atlas-accent);
   padding: 0 4px;
 }
 
+/* A long app, game or map name must not push the rest of the bar out of the
+   window or under its neighbours: the name stays on one line and the two
+   lists give way, cutting their text short. */
 .topbar-switchers {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 1 auto;
   min-width: 0;
+}
+
+.topbar-switchers .field-inline {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 84px;
+}
+
+.topbar-switchers .select {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .map-title {
@@ -253,8 +271,10 @@ kbd {
 }
 
 .topbar-search {
-  flex: 1 1 260px;
-  min-width: 0;
+  /* Takes the room the names leave: it grows from its smallest width, so no
+     name is cut short while the search box could still give way. */
+  flex: 1 1 132px;
+  min-width: 132px;
   max-width: 520px;
   margin: 0 auto;
 }
@@ -304,6 +324,10 @@ kbd {
   border-radius: 999px;
   background: var(--atlas-surface-raised);
   cursor: pointer;
+}
+
+.profile-button svg {
+  flex: none;
 }
 
 .profile-button:hover {
@@ -1879,6 +1903,19 @@ label.tree-row:hover,
 
 /* ------------------------------------------------------------------ */
 /* Narrow windows: side panes become bottom sheets over the map */
+
+/* A narrow window has no room for the app's name beside everything else. */
+@media (max-width: 1199px) {
+  .brand {
+    display: none;
+  }
+}
+
+@media (max-width: 999px) {
+  .profile-button {
+    max-width: 124px;
+  }
+}
 
 @media (max-width: 899px) {
   .shell,
