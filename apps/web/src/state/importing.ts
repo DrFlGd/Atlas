@@ -7,6 +7,7 @@ import {
   checkCatalogue,
   checkGameListing,
   checkOutcome,
+  checkPageObservations,
   checkPictureTiles,
   findCatalogueImporter,
   findGameImporter,
@@ -15,6 +16,8 @@ import {
   isAllowedPageUrl,
   isPictureRequest,
   pageKey,
+  pageMeasureStep,
+  pageTilesFit,
   type AtlasImporter,
   type Catalogue,
   type GameListing,
@@ -22,6 +25,7 @@ import {
   type ImportFailure,
   type ImportSummary,
   type ListingContext,
+  type PageObservations,
   type PictureSummary,
   type PictureTiles,
   type PictureTilesRequest,
@@ -106,6 +110,8 @@ export type ImportPhase =
       waitSeconds: number;
       loading: boolean;
       note: string | null;
+      /** The data has been read and the map picture is being measured from the page. */
+      measuring?: boolean;
     }
   | {
       kind: 'converting';
@@ -160,9 +166,18 @@ export interface UpdateGame {
   recorded: RecordedPage[];
 }
 
-export const useImport = create<{ phase: ImportPhase; draft: string }>()(() => ({
+export const useImport = create<{
+  phase: ImportPhase;
+  draft: string;
+  /**
+   * "Measure the map picture from the page" is ticked: off at first and
+   * whenever the dialog closes, never remembered.
+   */
+  measureFromPage: boolean;
+}>()(() => ({
   phase: { kind: 'idle' },
   draft: '',
+  measureFromPage: false,
 }));
 
 const setPhase = (phase: ImportPhase) => {
@@ -261,11 +276,14 @@ function reportPhase(importerId: string, phase: ImportPhase): void {
  */
 export function pictureText(picture: PictureSummary): string {
   const tiles = picture.tiles;
-  const text = picture.measured
-    ? tiles === undefined
-      ? 'The map picture was measured on the image server.'
-      : `The map picture was measured: ${tiles === 1 ? '1 map image of it was' : `${tiles} map images of it were`} found on the image server.`
-    : 'The map picture could not be measured, so its size was estimated from where the places are.';
+  const fromPage = picture.page?.used === true;
+  const text = fromPage
+    ? `The map picture was measured from the page: it showed ${picture.page!.images === 1 ? '1 map image' : `${picture.page!.images} map images`} of it.`
+    : picture.measured
+      ? tiles === undefined
+        ? 'The map picture was measured on the image server.'
+        : `The map picture was measured: ${tiles === 1 ? '1 map image of it was' : `${tiles} map images of it were`} found on the image server.`
+      : 'The map picture could not be measured, so its size was estimated from where the places are.';
   const note = picture.note?.trim();
   if (!note) return text;
   return `${text} ${note.endsWith('.') ? note : `${note}.`}`;
@@ -301,7 +319,8 @@ let session = 0;
 
 /** How reading one page ended. */
 type PageRead =
-  | { state: 'ready'; data: string }
+  /** The data, and what the page loaded when it was measured. */
+  | { state: 'ready'; data: string; page?: PageObservations }
   /** The person closed the page window. */
   | { state: 'closed'; message: string }
   /** The page's data could not be used (not JSON, too large). */
@@ -343,14 +362,23 @@ async function readPage(
     waitSeconds: number;
     loading: boolean;
     note: string | null;
+    measuring?: boolean;
   }) => void,
   reading: Reading = 'map',
+  /** The importer's page measuring step, when the map picture is to be measured from the page. */
+  measure: string | null = null,
 ): Promise<PageRead> {
   const { pageReader, waitSeconds } = readerFor(importer, reading);
   const startedAt = Date.now();
   onWaiting({ startedAt, now: startedAt, waitSeconds, loading: true, note: null });
   try {
-    await shell.importWindow.open(url, pageReader, { id: importer.id, waitSeconds }, reading);
+    await shell.importWindow.open(
+      url,
+      pageReader,
+      { id: importer.id, waitSeconds },
+      reading,
+      measure ?? undefined,
+    );
   } catch (error) {
     lastClosedAt = Date.now();
     return id === session
@@ -358,11 +386,13 @@ async function readPage(
       : { state: 'cancelled' };
   }
 
+  // Once the data is read, measuring the page has bounds of its own in the shell.
+  let measuring = false;
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     if (id !== session) return { state: 'cancelled' };
     const now = Date.now();
-    if (now - startedAt > waitSeconds * 1000) {
+    if (!measuring && now - startedAt > waitSeconds * 1000) {
       await closeWindow(shell);
       const message = `The page did not provide ${READING_NOUN[reading]} within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the ${reading === 'map' ? 'map' : 'page'} load; you can try again later. Nothing was added.`;
       report({ importerId: importer.id, outcome: 'timed-out', message });
@@ -379,11 +409,48 @@ async function readPage(
       onWaiting({ startedAt, now, waitSeconds, loading: result.loading, note: result.note });
       continue;
     }
+    if (result.state === 'measuring') {
+      measuring = true;
+      onWaiting({ startedAt, now, waitSeconds, loading: false, note: null, measuring: true });
+      continue;
+    }
     await closeWindow(shell);
     if (result.state === 'closed') return { state: 'closed', message: closedMessage(reading) };
     if (result.state === 'failed') return { state: 'failed', message: result.message };
-    return { state: 'ready', data: result.data };
+    // What the page loaded is handed on only when it was asked for and has the expected shape.
+    const page = measure && result.page !== undefined ? checkPageObservations(result.page) : null;
+    return { state: 'ready', data: result.data, ...(page ? { page } : {}) };
   }
+}
+
+/**
+ * The importer's page measuring step for `url`, when the person ticked
+ * "Measure the map picture from the page" and this app can do it.
+ */
+function measureStep(importer: AtlasImporter, url: string): string | null {
+  if (!__ATLAS_DOWNLOADS__ || !downloadsOffered(useAtlas.getState())) return null;
+  if (!useImport.getState().measureFromPage) return null;
+  return pageMeasureStep(importer, url);
+}
+
+/** Ticks or unticks "Measure the map picture from the page". */
+export function setMeasureFromPage(on: boolean): void {
+  useImport.setState({ measureFromPage: on });
+}
+
+/**
+ * Whether "Measure the map picture from the page" can be offered for these
+ * map page addresses: in an app that downloads map images, when the
+ * importer of at least one of them measures such pages.
+ */
+export async function pageMeasureOffered(urls: readonly string[]): Promise<boolean> {
+  if (!__ATLAS_DOWNLOADS__ || !desktop || !downloadsOffered(useAtlas.getState())) return false;
+  if (urls.length === 0) return false;
+  const importers = await loadImporters();
+  return urls.some((url) => {
+    const importer = findImporter(importers, url);
+    return importer !== null && pageMeasureStep(importer, url) !== null;
+  });
 }
 
 /** Starts an import from a page address. */
@@ -404,9 +471,17 @@ export async function startImport(text: string): Promise<void> {
     return;
   }
   currentImporter = importer.id;
-  const read = await readPage(shell, url, importer, id, (waiting) => {
-    setPhase({ kind: 'waiting', url, importer: importer.title, ...waiting });
-  });
+  const read = await readPage(
+    shell,
+    url,
+    importer,
+    id,
+    (waiting) => {
+      setPhase({ kind: 'waiting', url, importer: importer.title, ...waiting });
+    },
+    'map',
+    measureStep(importer, url),
+  );
   if (read.state === 'cancelled') return;
   if (read.state !== 'ready') {
     if (id === session) setPhase({ kind: 'failed', message: read.message });
@@ -415,7 +490,7 @@ export async function startImport(text: string): Promise<void> {
   setPhase({ kind: 'converting', url, importer: importer.title });
   const outcome = await convertAndSave(
     importer,
-    { url, pageData: read.data, importedAt: new Date().toISOString() },
+    { url, pageData: read.data, importedAt: new Date().toISOString(), observations: read.page },
     false,
     true,
     () => {
@@ -585,9 +660,17 @@ async function startRun(
       async importPage(index, url, update) {
         const importer = pages[index]!.importer;
         currentImporter = importer.id;
-        const read = await readPage(shell, url, importer, id, (waiting) => {
-          update({ kind: 'open', ...waiting });
-        });
+        const read = await readPage(
+          shell,
+          url,
+          importer,
+          id,
+          (waiting) => {
+            update({ kind: 'open', ...waiting });
+          },
+          'map',
+          measureStep(importer, url),
+        );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
             report({ importerId: importer.id, outcome: 'cancelled' });
@@ -597,7 +680,12 @@ async function startRun(
         update({ kind: 'converting' });
         const outcome = await convertAndSave(
           importer,
-          { url, pageData: read.data, importedAt: new Date().toISOString() },
+          {
+            url,
+            pageData: read.data,
+            importedAt: new Date().toISOString(),
+            observations: read.page,
+          },
           false,
           false,
           () => {
@@ -689,14 +777,26 @@ async function measurePicture(
   request: unknown,
   rebuilt: boolean,
   onMeasuring?: () => void,
+  observations?: PageObservations,
 ): Promise<PictureTiles | null> {
   const shell = desktop;
   if (!__ATLAS_DOWNLOADS__ || !shell || !isPictureRequest(request)) return null;
+  // Tiles a page showed are taken only from this import's page, as it loaded them.
+  const page = request.page;
+  if (page && (!observations || !pageTilesFit(page, request, observations))) return null;
   const asked: PictureTilesRequest = {
     urlTemplate: request.urlTemplate,
     zoom: request.zoom,
     start: [request.start[0], request.start[1]],
     cachedOnly: rebuilt || request.cachedOnly === true,
+    ...(page
+      ? {
+          page: {
+            present: page.present.map(([x, y]) => [x, y] as [number, number]),
+            absent: page.absent.map(([x, y]) => [x, y] as [number, number]),
+          },
+        }
+      : {}),
   };
   if (!asked.cachedOnly) onMeasuring?.();
   try {
@@ -709,7 +809,8 @@ async function measurePicture(
 /**
  * The context an importer gets: earlier imports and the pack it would
  * replace, and in an app that downloads map images, a way to measure the
- * map's picture. Exported for tests.
+ * map's picture, and what the page loaded when it was measured from the
+ * page. Exported for tests.
  */
 export function importContext(
   url: string,
@@ -717,6 +818,7 @@ export function importContext(
   importerId: string,
   rebuilt = false,
   onMeasuring?: () => void,
+  observations?: PageObservations,
 ): ImportContext {
   const state = useAtlas.getState();
   const listing = state.library;
@@ -754,7 +856,8 @@ export function importContext(
     ...(__ATLAS_DOWNLOADS__ && downloadsOffered(state)
       ? {
           pictureTiles: (request: PictureTilesRequest) =>
-            measurePicture(request, rebuilt, onMeasuring),
+            measurePicture(request, rebuilt, onMeasuring, rebuilt ? undefined : observations),
+          ...(observations && !rebuilt ? { pageObservations: observations } : {}),
         }
       : {}),
   };
@@ -798,7 +901,7 @@ export function packFiles(pack: PackData): Record<string, string> {
  */
 async function convertAndSave(
   importer: AtlasImporter,
-  page: { url: string; pageData: string; importedAt: string },
+  page: { url: string; pageData: string; importedAt: string; observations?: PageObservations },
   rebuilt = false,
   show = true,
   onMeasuring?: () => void,
@@ -812,7 +915,14 @@ async function convertAndSave(
   if (data === undefined) {
     return { kind: 'failed', message: 'The page data was not in the expected shape.' };
   }
-  const context = importContext(page.url, page.importedAt, importer.id, rebuilt, onMeasuring);
+  const context = importContext(
+    page.url,
+    page.importedAt,
+    importer.id,
+    rebuilt,
+    onMeasuring,
+    page.observations,
+  );
   let returned: unknown;
   try {
     returned = await importer.convert(data, context);
@@ -949,6 +1059,7 @@ export function setAddMapOpen(open: boolean): void {
   if (!open) {
     resetImport();
     setDraft('');
+    setMeasureFromPage(false);
   }
 }
 

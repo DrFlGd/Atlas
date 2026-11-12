@@ -70,7 +70,11 @@ pub const MAX_REQUESTS: usize = 256;
 pub const MAX_ZOOM: u8 = 30;
 /// The cache's folder in the app's data folder.
 pub const CACHE_DIR: &str = "measured";
+/// The most tiles kept of what pages showed, for one template and zoom.
+pub const MAX_PAGE_TILES: usize = 65536;
 const SOURCE_FILE: &str = "source.json";
+const PAGE_FILE: &str = "page.json";
+const PAGE_FORMAT: &str = "atlas-picture-page";
 const TILES_DIR: &str = "tiles";
 const SOURCE_FORMAT: &str = "atlas-picture";
 const SOURCE_VERSION: u32 = 1;
@@ -87,6 +91,30 @@ pub struct MeasureRequest {
     pub start: [u64; 2],
     #[serde(default)]
     pub cached_only: bool,
+    /// Tiles the import's page showed, to keep (see the module documentation).
+    #[serde(default)]
+    pub page: Option<PageTiles>,
+}
+
+/// Tiles a page showed: see `PageTiles` in `packages/importer-api`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PageTiles {
+    pub present: Vec<[u64; 2]>,
+    pub absent: Vec<[u64; 2]>,
+}
+
+impl PageTiles {
+    /// Each tile once, inside a world `size` tiles a side, at most
+    /// [`MAX_PAGE_TILES`] in all.
+    fn is_usable(&self, size: u64) -> bool {
+        let mut seen = HashSet::new();
+        self.present.len() + self.absent.len() <= MAX_PAGE_TILES
+            && self
+                .present
+                .iter()
+                .chain(&self.absent)
+                .all(|&[x, y]| x < size && y < size && seen.insert((x, y)))
+    }
 }
 
 /// What a measurement found: see `PictureTiles` in `packages/importer-api`.
@@ -100,6 +128,13 @@ pub struct Measured {
     pub absent: Vec<[u64; 2]>,
     /// Every neighbour of every tile that exists is known.
     pub complete: bool,
+    /// How many of `present` are known only from what a page showed.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub from_page: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Whether the app may ask about an image set at this template: what the
@@ -149,25 +184,57 @@ pub struct PictureCache {
     root: PathBuf,
 }
 
+/// What pages showed of one template and zoom, as kept in `page.json`.
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+struct PageFile {
+    format: String,
+    version: u32,
+    present: BTreeSet<(u64, u64)>,
+    absent: BTreeSet<(u64, u64)>,
+}
+
 /// The cache of one template and zoom.
 struct Entry {
     store: TileStore,
+    /// What pages showed (see the module documentation).
+    page: PageFile,
 }
 
 impl Entry {
+    fn new(dir: &Path) -> Self {
+        let page = fs::read_to_string(dir.join(PAGE_FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str::<PageFile>(&text).ok())
+            .filter(|page| {
+                page.format == PAGE_FORMAT
+                    && page.version == SOURCE_VERSION
+                    && page.present.len() + page.absent.len() <= MAX_PAGE_TILES
+            })
+            .unwrap_or_default();
+        Self {
+            store: TileStore::new(dir.join(TILES_DIR), None),
+            page,
+        }
+    }
+
     fn path(x: u64, y: u64) -> PathBuf {
         PathBuf::from(x.to_string()).join(y.to_string())
     }
 
     fn state(&self, x: u64, y: u64) -> Known {
         let path = Self::path(x, y);
-        if self.store.has_overlay_image(&path) {
+        if self.store.has_overlay_image(&path) || self.page.present.contains(&(x, y)) {
             Known::Present
-        } else if self.store.is_missing(&path) {
+        } else if self.store.is_missing(&path) || self.page.absent.contains(&(x, y)) {
             Known::Absent
         } else {
             Known::Unknown
         }
+    }
+
+    /// Whether a tile is known to be there only from what a page showed.
+    fn only_from_page(&self, x: u64, y: u64) -> bool {
+        self.page.present.contains(&(x, y)) && !self.store.has_overlay_image(&Self::path(x, y))
     }
 
     /// Every tile the cache knows, as (column, row, exists).
@@ -235,9 +302,7 @@ impl PictureCache {
         let dir = self.dir(template, zoom);
         let text = fs::read_to_string(dir.join(SOURCE_FILE)).ok()?;
         let source: Source = serde_json::from_str(&text).ok()?;
-        (source == Self::source(template, zoom)).then(|| Entry {
-            store: TileStore::new(dir.join(TILES_DIR), None),
-        })
+        (source == Self::source(template, zoom)).then(|| Entry::new(&dir))
     }
 
     /// The cache of a template and zoom, made when there is none. Errs when
@@ -259,9 +324,42 @@ impl PictureCache {
         let part = dir.join(format!("{SOURCE_FILE}.part"));
         fs::write(&part, format!("{json}\n"))?;
         fs::rename(&part, dir.join(SOURCE_FILE))?;
-        Ok(Entry {
-            store: TileStore::new(dir.join(TILES_DIR), None),
-        })
+        Ok(Entry::new(&dir))
+    }
+
+    /// Keeps what a page showed of a template and zoom with what was learnt
+    /// before: tiles shown as there stay there, tiles shown as not there are
+    /// kept unless a page showed them as there. Returns the cache of that
+    /// template and zoom with it.
+    fn remember_page(&self, template: &str, zoom: u8, page: &PageTiles) -> io::Result<Entry> {
+        let mut entry = self.open(template, zoom)?;
+        let mut known = PageFile {
+            format: PAGE_FORMAT.to_owned(),
+            version: SOURCE_VERSION,
+            present: entry.page.present.clone(),
+            absent: entry.page.absent.clone(),
+        };
+        for &[x, y] in &page.present {
+            known.absent.remove(&(x, y));
+            known.present.insert((x, y));
+        }
+        for &[x, y] in &page.absent {
+            if !known.present.contains(&(x, y)) {
+                known.absent.insert((x, y));
+            }
+        }
+        if known.present.len() + known.absent.len() > MAX_PAGE_TILES {
+            return Err(io::Error::other(format!(
+                "pages showed more than {MAX_PAGE_TILES} tiles of it"
+            )));
+        }
+        let dir = self.dir(template, zoom);
+        let json = serde_json::to_string(&known).expect("the tiles serialise");
+        let part = dir.join(format!("{PAGE_FILE}.part"));
+        fs::write(&part, format!("{json}\n"))?;
+        fs::rename(&part, dir.join(PAGE_FILE))?;
+        entry.page = known;
+        Ok(entry)
     }
 }
 
@@ -339,6 +437,10 @@ impl Pictures {
             || !is_allowed_template(&request.url_template)
             || x >= size
             || y >= size
+            || request
+                .page
+                .as_ref()
+                .is_some_and(|page| !page.is_usable(size))
         {
             log.warn(
                 Area::Download,
@@ -350,6 +452,27 @@ impl Pictures {
             return None;
         }
         let _busy = self.busy.lock().await;
+        if let Some(page) = &request.page {
+            match cache.remember_page(&request.url_template, request.zoom, page) {
+                Ok(_) => log.info(
+                    Area::Download,
+                    format!(
+                        "Kept what the import's page showed of the picture at {} at zoom {}: {} tiles there, {} not there. They count as known from now on, without a request; no image of them is kept",
+                        request.url_template,
+                        request.zoom,
+                        page.present.len(),
+                        page.absent.len()
+                    ),
+                ),
+                Err(error) => log.warn(
+                    Area::Download,
+                    format!(
+                        "Could not keep what the import's page showed of the picture at {} at zoom {}: {error}",
+                        request.url_template, request.zoom
+                    ),
+                ),
+            }
+        }
         if request.cached_only {
             let Some(entry) = cache.entry(&request.url_template, request.zoom) else {
                 log.info(
@@ -454,12 +577,17 @@ fn summary(measured: &Measured) -> String {
     let columns = measured.present.iter().map(|[x, _]| *x);
     let rows = measured.present.iter().map(|[_, y]| *y);
     format!(
-        "{} tiles exist (columns {}-{}, rows {}-{}), {} next to them are not on the server{}",
+        "{} tiles exist (columns {}-{}, rows {}-{}{}), {} next to them are not on the server{}",
         measured.present.len(),
         columns.clone().min().unwrap_or(0),
         columns.max().unwrap_or(0),
         rows.clone().min().unwrap_or(0),
         rows.max().unwrap_or(0),
+        if measured.from_page > 0 {
+            format!("; {} of them known only from a page", measured.from_page)
+        } else {
+            String::new()
+        },
         measured.absent.len(),
         if measured.complete {
             ""
@@ -478,14 +606,25 @@ async fn flood(
 ) -> Result<Measured, Failed> {
     let size = 1u64 << request.zoom;
     let start = (request.start[0], request.start[1]);
+    // Every tile a page showed as there is a starting point too.
+    let seeds: Vec<(u64, u64)> = entry
+        .page
+        .present
+        .iter()
+        .copied()
+        .filter(|&(x, y)| x < size && y < size)
+        .collect();
     let mut asked_start = false;
+    let mut start_there = false;
     match entry.state(start.0, start.1) {
-        Known::Present => {}
+        Known::Present => start_there = true,
+        Known::Absent if !seeds.is_empty() => {}
         Known::Absent => {
             return Err(Failed(
                 "the start tile is not on the server, as was learnt before".to_owned(),
             ))
         }
+        Known::Unknown if fetch.is_none() && !seeds.is_empty() => {}
         Known::Unknown => {
             let Some((downloader, control)) = fetch else {
                 return Err(Failed("the start tile was never asked for".to_owned()));
@@ -520,19 +659,27 @@ async fn flood(
                         "the start tile is not an image on the server".to_owned(),
                     ))
                 }
-                Ok(_) => {}
+                Ok(_) => start_there = true,
             }
         }
     }
 
-    let mut present = BTreeSet::from([(start.1, start.0)]);
+    let mut present = BTreeSet::new();
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    let mut first = Vec::new();
+    for tile in start_there.then_some(start).into_iter().chain(seeds) {
+        if seen.insert(tile) {
+            present.insert((tile.1, tile.0));
+            first.push(tile);
+        }
+    }
     let mut absent = BTreeSet::new();
-    let mut seen: HashSet<(u64, u64)> = HashSet::from([start]);
     let mut complete = true;
     let mut requests = usize::from(asked_start);
-    let mut round: Vec<(u64, u64)> = neighbours(start.0, start.1, size)
-        .filter(|tile| seen.insert(*tile))
-        .collect();
+    let mut round: Vec<(u64, u64)> = Vec::new();
+    for (x, y) in first {
+        round.extend(neighbours(x, y, size).filter(|tile| seen.insert(*tile)));
+    }
     while !round.is_empty() {
         let mut found = Vec::new();
         let mut unknown = Vec::new();
@@ -593,11 +740,16 @@ async fn flood(
             .commit_pending()
             .map_err(|stop| Failed(stop_reason(&stop)))?;
     }
+    let from_page = present
+        .iter()
+        .filter(|&&(y, x)| entry.only_from_page(x, y))
+        .count();
     Ok(Measured {
         zoom: request.zoom,
         present: present.into_iter().map(|(y, x)| [x, y]).collect(),
         absent: absent.into_iter().map(|(y, x)| [x, y]).collect(),
         complete,
+        from_page,
     })
 }
 
@@ -879,6 +1031,7 @@ mod tests {
             zoom,
             start,
             cached_only: false,
+            page: None,
         }
     }
 
@@ -1253,6 +1406,237 @@ mod tests {
         assert_eq!(running.await.unwrap(), None);
         assert!(server.seen().len() < 9);
         assert!(setup.logged().contains("it was stopped"));
+    }
+
+    /// The tiles of the box `x0..=x1` x `y0..=y1`.
+    fn square(x0: u64, x1: u64, y0: u64, y1: u64) -> BTreeSet<(u64, u64)> {
+        (x0..=x1)
+            .flat_map(|x| (y0..=y1).map(move |y| (x, y)))
+            .collect()
+    }
+
+    fn listed(tiles: &BTreeSet<(u64, u64)>) -> Vec<[u64; 2]> {
+        tiles.iter().map(|&(x, y)| [x, y]).collect()
+    }
+
+    fn with_page(
+        request: &MeasureRequest,
+        present: &BTreeSet<(u64, u64)>,
+        absent: &BTreeSet<(u64, u64)>,
+    ) -> MeasureRequest {
+        MeasureRequest {
+            cached_only: true,
+            page: Some(PageTiles {
+                present: listed(present),
+                absent: listed(absent),
+            }),
+            ..request.clone()
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn keeps_what_a_page_showed_and_answers_from_it_without_a_request() {
+        ensure_crypto();
+        let setup = Setup::new("page");
+        // A store that refuses every request of the app's own.
+        let server = MockServer::start(Arc::new(|_, _| Reply::status(403))).await;
+        let fresh = request(&server, 4, [5, 5]);
+        let picture = square(3, 7, 3, 7);
+        let around = around(&picture, 16);
+
+        // The page showed the whole picture and everything around it.
+        let answer = setup
+            .pictures
+            .measure(
+                &setup.cache,
+                &with_page(&fresh, &picture, &around),
+                &setup.log,
+                None,
+            )
+            .await
+            .expect("an answer from what the page showed");
+        assert_eq!(pairs(&answer.present), picture);
+        assert_eq!(pairs(&answer.absent), around);
+        assert!(answer.complete);
+        assert_eq!(answer.from_page, picture.len());
+        assert!(server.seen().is_empty(), "no request at all");
+        let json = serde_json::to_value(&answer).unwrap();
+        assert_eq!(json["fromPage"], picture.len());
+        assert!(setup
+            .logged()
+            .contains("Kept what the import's page showed of the picture at"));
+        assert!(setup.logged().contains("25 of them known only from a page"));
+
+        // Later answers know it too, without the page: from the cache, from a
+        // start tile nothing is known about, and when the server is asked.
+        assert_eq!(setup.cached_answer(&fresh).await, Some(answer.clone()));
+        let elsewhere = MeasureRequest {
+            start: [12, 12],
+            ..fresh.clone()
+        };
+        assert_eq!(setup.cached_answer(&elsewhere).await, Some(answer.clone()));
+        let outside = MeasureRequest {
+            start: [2, 2],
+            ..fresh.clone()
+        };
+        assert_eq!(setup.cached_answer(&outside).await, Some(answer.clone()));
+        assert_eq!(setup.measure(&fresh).await, Some(answer.clone()));
+        assert!(server.seen().is_empty(), "every tile around it is known");
+
+        // Nothing of it goes into a pack: no image of it is kept.
+        assert!(setup.cached(&fresh).is_empty());
+        let file = setup.cache.dir(&fresh.url_template, 4).join(PAGE_FILE);
+        assert!(file.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_page_that_did_not_show_everything_gives_an_answer_that_is_not_complete() {
+        ensure_crypto();
+        let setup = Setup::new("page-part");
+        let server = MockServer::start(Arc::new(|_, _| Reply::status(403))).await;
+        let fresh = request(&server, 4, [5, 5]);
+        // The page's window showed columns 3-7, rows 3-5 of a taller picture,
+        // and only what lies above and beside that.
+        let seen = square(3, 7, 3, 5);
+        let above: BTreeSet<(u64, u64)> = around(&seen, 16)
+            .into_iter()
+            .filter(|&(_, y)| y <= 5)
+            .collect();
+        let answer = setup
+            .pictures
+            .measure(
+                &setup.cache,
+                &with_page(&fresh, &seen, &above),
+                &setup.log,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(pairs(&answer.present), seen);
+        assert!(!answer.complete);
+
+        // A later page shows the rest: the two are joined, and a tile once
+        // shown as there stays so even when a page says otherwise.
+        let rest = square(3, 7, 6, 7);
+        let mut below = around(&square(3, 7, 3, 7), 16);
+        below.insert((5, 5));
+        let answer = setup
+            .pictures
+            .measure(
+                &setup.cache,
+                &with_page(&fresh, &rest, &below),
+                &setup.log,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(pairs(&answer.present), square(3, 7, 3, 7));
+        assert!(answer.complete);
+        assert!(!pairs(&answer.absent).contains(&(5, 5)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_server_is_asked_only_about_what_no_page_showed() {
+        ensure_crypto();
+        let setup = Setup::new("page-and-server");
+        // The server has the picture 3-8 x 3-7, and answers.
+        let picture = square(3, 8, 3, 7);
+        let server = picture_server(4, picture.clone(), not_found, nothing_special).await;
+        let fresh = request(&server, 4, [5, 5]);
+        // The page showed columns 3-7 and what is around them, but not column 8.
+        let shown = square(3, 7, 3, 7);
+        let around_shown: BTreeSet<(u64, u64)> = around(&shown, 16)
+            .into_iter()
+            .filter(|&(x, _)| x < 8)
+            .collect();
+        setup
+            .pictures
+            .measure(
+                &setup.cache,
+                &with_page(&fresh, &shown, &around_shown),
+                &setup.log,
+                None,
+            )
+            .await
+            .unwrap();
+        let measured = setup.measure(&fresh).await.unwrap();
+        assert_eq!(pairs(&measured.present), picture);
+        assert!(measured.complete);
+        assert_eq!(measured.from_page, shown.len());
+        let asked = asked(&server);
+        assert!(
+            asked
+                .iter()
+                .all(|tile| !shown.contains(tile) && !around_shown.contains(tile)),
+            "{asked:?}"
+        );
+        assert!(asked.contains(&(8, 5)));
+        // Images found by asking are kept as before; the page's are not.
+        assert!(setup.cached(&fresh).contains(&"8/5".to_owned()));
+        assert!(!setup.cached(&fresh).contains(&"5/5".to_owned()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refuses_page_tiles_it_cannot_use() {
+        ensure_crypto();
+        let setup = Setup::new("page-bad");
+        let server = MockServer::start(Arc::new(|_, _| Reply::status(404))).await;
+        let fresh = request(&server, 2, [1, 1]);
+        for (present, absent) in [
+            (vec![[4, 1]], vec![]),
+            (vec![[1, 1]], vec![[1, 1]]),
+            (vec![[1, 1], [1, 1]], vec![]),
+        ] {
+            let bad = MeasureRequest {
+                cached_only: true,
+                page: Some(PageTiles { present, absent }),
+                ..fresh.clone()
+            };
+            assert_eq!(
+                setup
+                    .pictures
+                    .measure(&setup.cache, &bad, &setup.log, None)
+                    .await,
+                None
+            );
+        }
+        assert!(!setup.cache.dir(&fresh.url_template, 2).exists());
+        assert!(setup.logged().contains("Did not measure a picture at"));
+    }
+
+    #[test]
+    fn an_image_on_disk_wins_over_a_page() {
+        let dir = TempDir::new("measure-page-disk");
+        let cache = PictureCache::new(&dir.0.join("data"));
+        let template = "https://tiles.example/{z}/{x}/{y}.png";
+        let entry = cache.open(template, 3).unwrap();
+        entry.store.write(&Entry::path(2, 2), b"cached").unwrap();
+        let entry = cache
+            .remember_page(
+                template,
+                3,
+                &PageTiles {
+                    present: vec![[1, 1]],
+                    absent: vec![[2, 2], [3, 3]],
+                },
+            )
+            .unwrap();
+        assert_eq!(entry.state(2, 2), Known::Present);
+        assert!(!entry.only_from_page(2, 2));
+        assert_eq!(entry.state(1, 1), Known::Present);
+        assert!(entry.only_from_page(1, 1));
+        assert_eq!(entry.state(3, 3), Known::Absent);
+        assert_eq!(entry.state(4, 4), Known::Unknown);
+        // Read back from disk the same.
+        let again = cache.entry(template, 3).unwrap();
+        assert_eq!(again.page, entry.page);
+        // A page file that is not one is ignored.
+        fs::write(
+            cache.dir(template, 3).join(PAGE_FILE),
+            "{\"format\":\"other\"}",
+        )
+        .unwrap();
+        assert_eq!(cache.entry(template, 3).unwrap().page, PageFile::default());
     }
 
     #[test]

@@ -2215,6 +2215,14 @@ label.tree-row:hover,
   font-weight: 600;
 }
 
+.add-map-measure {
+  margin-top: 8px;
+}
+
+.add-map-measure p {
+  margin: 4px 0 0;
+}
+
 .add-map-browse {
   margin-top: 12px;
   border-top: 1px solid var(--atlas-border);

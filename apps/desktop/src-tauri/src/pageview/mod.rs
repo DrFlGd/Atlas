@@ -45,7 +45,7 @@
 //! paused. One map page window at a time; opening another closes the first.
 
 pub mod capture;
-mod script;
+pub(crate) mod script;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},

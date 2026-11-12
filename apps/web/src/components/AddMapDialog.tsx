@@ -29,6 +29,7 @@ import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { UiIcon } from './icons';
+import { MeasureFromPage } from './MeasureFromPage';
 
 /**
  * "Add a map", in desktop builds that include importers: paste the address
@@ -111,7 +112,8 @@ function AddressForm({ failure }: { failure: string | null }) {
   const address = useImport((s) => s.draft);
   const inputId = useId();
   const hintId = useId();
-  const count = parseAddresses(address).addresses.length;
+  const { addresses } = parseAddresses(address);
+  const count = addresses.length;
   const submit = () => {
     if (count > 0) void submitAddresses(address);
   };
@@ -171,6 +173,7 @@ function AddressForm({ failure }: { failure: string | null }) {
           {count > 1 ? `Add ${count} maps` : 'Add'}
         </button>
       </div>
+      {__ATLAS_DOWNLOADS__ ? <MeasureFromPage urls={addresses} /> : null}
       {failure ? (
         <p className="download-error" role="alert" data-testid="add-map-error">
           {failure}
@@ -329,11 +332,23 @@ function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | '
   return (
     <section className="dialog-section" aria-busy="true" data-testid="add-map-progress">
       <p role="status">
-        <strong>{phase.loading ? 'Opening the page…' : 'Waiting for the map data…'}</strong>{' '}
+        <strong>
+          {phase.measuring
+            ? 'Measuring the map picture from the page…'
+            : phase.loading
+              ? 'Opening the page…'
+              : 'Waiting for the map data…'}
+        </strong>{' '}
         <span className="muted">{formatDuration(elapsed)} so far</span>
       </p>
       <p className="muted small add-map-url">{phase.url}</p>
-      {elapsed >= STILL_WAITING_SECONDS ? (
+      {phase.measuring ? (
+        <p className="download-note" data-testid="add-map-measuring">
+          The map data has been read. This app is now zooming the page out with the page’s own
+          zoom-out button and noting which map images it loads. Leave the page window as it is; it
+          closes by itself, in two minutes at most.
+        </p>
+      ) : elapsed >= STILL_WAITING_SECONDS ? (
         <p className="download-note" data-testid="add-map-still-waiting">
           Still waiting. Look at the page window: if it asks you to sign in, to confirm you are a
           person or to wait, deal with it there, or cancel. This app waits{' '}
@@ -478,11 +493,15 @@ function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> })
     <>
       <span className="small">
         <strong>
-          {state.loading ? 'Open: the page is loading…' : 'Open: waiting for the map data…'}
+          {state.measuring
+            ? 'Open: measuring the map picture from the page…'
+            : state.loading
+              ? 'Open: the page is loading…'
+              : 'Open: waiting for the map data…'}
         </strong>{' '}
         <span className="muted">{formatDuration(elapsed)} so far</span>
       </span>
-      {elapsed >= STILL_WAITING_SECONDS ? (
+      {state.measuring ? null : elapsed >= STILL_WAITING_SECONDS ? (
         <span className="download-note small" data-testid="add-map-still-waiting">
           Look at the page window: if it asks you to sign in, to confirm you are a person or to
           wait, deal with it there, or close the window to stop. This app waits{' '}
@@ -520,9 +539,11 @@ function PageState({ state }: { state: RunPageState }) {
                 }`
               : ''}
             {state.picture
-              ? state.picture.measured
-                ? `; map picture measured${state.picture.tiles === undefined ? '' : ` (${state.picture.tiles} map images)`}`
-                : '; map picture not measured, sized from the places'
+              ? state.picture.page?.used
+                ? `; map picture measured from the page (${state.picture.page.images} map images)`
+                : state.picture.measured
+                  ? `; map picture measured${state.picture.tiles === undefined ? '' : ` (${state.picture.tiles} map images)`}`
+                  : '; map picture not measured, sized from the places'
               : ''}
           </span>
         </span>

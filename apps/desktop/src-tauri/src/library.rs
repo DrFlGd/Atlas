@@ -2669,6 +2669,7 @@ mod tests {
                 zoom: 12,
                 start: [20, 40],
                 cached_only: false,
+                page: None,
             })
             .await
             .unwrap();
