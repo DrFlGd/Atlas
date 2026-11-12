@@ -12,6 +12,8 @@ frozendict==2.5.1
 markdown-it-py==4.3.0
 mdurl==0.1.2
 numpy==2.5.4
+# Drawing the maps and writing their tiles (HPND licence).
+Pillow==12.3.0
 pydantic==2.14.3
 pydantic_core==2.50.4
 Pygments==2.21.0

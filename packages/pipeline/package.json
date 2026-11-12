@@ -9,6 +9,7 @@
   "scripts": {
     "demo:build": "tsx src/cli/build-demo-pack.ts --force",
     "demo:ensure": "tsx src/cli/build-demo-pack.ts",
+    "validate-pack": "tsx src/cli/validate-pack.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },

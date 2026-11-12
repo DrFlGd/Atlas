@@ -3,6 +3,8 @@
     atlas-gamefiles check <game folder> --out <output folder> [--stdin-cancel] [--areas ...]
                     [--collision-sample N] [--navmesh-sample N] [--map-piece-sample N]
                     [--source-budget S] [--source-time-limit S] [--heartbeat S]
+    atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
+                    [--config <file>]
     atlas-gamefiles --version
 
 The sample sizes and time limits have defaults for Phase 0; the options are there for testing (the app does not
@@ -18,6 +20,7 @@ import argparse
 import sys
 import threading
 import traceback
+import typing as tp
 from pathlib import Path
 
 from . import TOOL_NAME, __version__
@@ -81,6 +84,24 @@ def parser() -> argparse.ArgumentParser:
         default=worker.HEARTBEAT,
         help=f"seconds of silence before a 'still reading' progress line (default {worker.HEARTBEAT:g})",
     )
+    make = commands.add_parser("make", help="make an Atlas map pack from the game files, and a report")
+    make.add_argument("folder", type=Path, help="the game folder (Dark Souls Remastered install)")
+    make.add_argument("--out", type=Path, required=True, help="where to write report.json, previews/ and the zip")
+    make.add_argument(
+        "--maps-folder",
+        type=Path,
+        default=None,
+        help="the Atlas maps folder to put the pack in (without it, the pack goes into <out>/pack/)",
+    )
+    make.add_argument("--stdin-cancel", action="store_true", help="as for check")
+    make.add_argument("--areas", default="", help="only these areas, comma-separated (m10_01_00_00 or m10_01)")
+    make.add_argument("--config", type=Path, default=None, help="another config file (for tuning by hand)")
+    make.add_argument(
+        "--source-time-limit",
+        type=float,
+        default=None,
+        help="seconds after which an area's geometry still being read is stopped (default 300)",
+    )
     return root
 
 
@@ -120,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.stdin_cancel:
         watch_stdin(token)
     areas = [a.strip() for a in args.areas.split(",") if a.strip()]
+    if args.command == "make":
+        return run_make(args, events, token, areas)
     try:
         checker = Checker(
             args.folder,
@@ -138,6 +161,34 @@ def main(argv: list[str] | None = None) -> int:
         events.emit("cancelled", message="Stopped before the end; no report was written.")
         return EXIT_CANCELLED
     except UnsafeOutputError as error:
+        events.emit("error", message=str(error))
+        return EXIT_USAGE
+    except Exception as error:
+        traceback.print_exc()
+        events.emit("error", message=f"{type(error).__name__}: {error}")
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas: list[str]) -> int:
+    from .make import TIME_LIMIT, MakeError, MapMaker
+
+    limit = TIME_LIMIT if args.source_time_limit is None else args.source_time_limit
+    try:
+        MapMaker(
+            args.folder,
+            args.out,
+            events,
+            token=token,
+            maps_folder=args.maps_folder,
+            only_areas=areas,
+            runner=worker.ProcessRunner(time_limit=limit),
+            config_file=args.config,
+        ).run()
+    except Cancelled:
+        events.emit("cancelled", message="Stopped before the end; no map pack was written.")
+        return EXIT_CANCELLED
+    except (UnsafeOutputError, MakeError) as error:
         events.emit("error", message=str(error))
         return EXIT_USAGE
     except Exception as error:

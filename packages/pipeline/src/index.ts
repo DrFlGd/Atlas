@@ -4,6 +4,7 @@ export * from './geometry/voronoi';
 export * from './tiles/cutPyramid';
 export * from './tiles/pmtiles';
 export * from './pack/writePack';
+export * from './pack/validateFolder';
 export * from './demo/terrain';
 export * from './demo/content';
 export * from './demo/buildDemoPack';

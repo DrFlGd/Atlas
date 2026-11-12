@@ -37,7 +37,7 @@ def lines(stdout: str) -> list[dict]:
 def test_version() -> None:
     result = helper("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "atlas-gamefiles 0.1.2"
+    assert result.stdout.strip() == "atlas-gamefiles 0.2.0"
 
 
 def test_check_prints_only_json_lines(dsr_folder: Path, tmp_path: Path) -> None:
