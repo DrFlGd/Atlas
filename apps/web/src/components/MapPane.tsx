@@ -11,19 +11,28 @@ import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
 
-/** What the touch layout asks of the map. */
+/** What the standard layout (`src/touch/`) asks of the map. */
 export interface TouchMapOptions {
-  /** Press and hold on a marker. */
+  /**
+   * What the layout is made for: fingers (the Android app, a touch screen)
+   * or a mouse (a computer). Default fingers.
+   */
+  input?: 'touch' | 'mouse';
+  /** Press and hold on a marker, with a finger. */
   onLongPress: (locationId: string) => void;
+  /** A right click on a marker, with a mouse. */
+  onMarkerMenu?: (locationId: string) => void;
   /** A tap picked a marker (or empty map: null), after it was selected. */
   onPick: (locationId: string | null) => void;
 }
 
 /**
  * Hosts the map view and keeps it in sync with the store. With `touch`, the
- * map is for fingers: wider targets, no zoom buttons, no layer buttons (the
- * touch layout lists the levels) and no names on hover; pressing and
- * holding a marker is passed on.
+ * map is shown in the standard layout, which lists the levels itself, so
+ * there are no layer buttons. Made for fingers, it has wider targets, no
+ * zoom buttons and no names on hover, and pressing and holding a marker is
+ * passed on; made for a mouse, it keeps the zoom buttons and the names on
+ * hover, and a right click on a marker is passed on.
  */
 export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,6 +50,7 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     touchRef.current = touch;
   });
   const touchMode = touch !== undefined;
+  const fingers = touchMode && touch.input !== 'mouse';
 
   // One map view for the life of the pane; packs and layers are swapped into it.
   useEffect(() => {
@@ -48,7 +58,7 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     if (!container) return;
     const view = createMapView(
       container,
-      touchMode ? { clustering, hitSlop: 14, zoomControl: false } : { clustering },
+      fingers ? { clustering, hitSlop: 14, zoomControl: false } : { clustering },
     );
     const unsubscribe = [
       view.onViewChange((state) => {
@@ -58,8 +68,13 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
         select(id);
         touchRef.current?.onPick(id);
       }),
+      // Listened to in every layout, so the page's menu never opens over
+      // the map; only fingers mark a place by holding it.
       view.onLongPress((id) => {
-        touchRef.current?.onLongPress(id);
+        if (fingers) touchRef.current?.onLongPress(id);
+      }),
+      view.onMarkerMenu((id) => {
+        if (!fingers) touchRef.current?.onMarkerMenu?.(id);
       }),
       view.onHover((hover) => {
         useAtlas.setState({ hover });
@@ -80,7 +95,7 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
       setMap(null);
       useAtlas.setState({ hover: null, view: null });
     };
-  }, [clustering, touchMode]);
+  }, [clustering, touchMode, fingers]);
 
   // Theme colours live in CSS variables, which the marker canvas reads when drawing sprites.
   useEffect(() => {
@@ -165,7 +180,7 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     <div className="map-area">
       <div ref={containerRef} className="map-pane" data-testid="map" />
       {touchMode ? null : <LayerSwitcher />}
-      {touchMode ? null : <MarkerTooltip />}
+      {fingers ? null : <MarkerTooltip />}
       <TileNotice />
       <PlayerControls />
       <DownloadControls />

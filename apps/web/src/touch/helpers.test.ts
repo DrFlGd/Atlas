@@ -4,7 +4,8 @@ import { backStep, type BackState } from './backStack';
 import { arrangementFor, panelWidthFor } from './layout';
 import { nextOnList, orderHits, revealShift, type Placed } from './ordering';
 import { parseRecent, withRecent } from './recent';
-import { touchRequested, uiFromSearch } from './uiMode';
+import { keyList, withKey } from './keys';
+import { forgetRequestedUi, parseLayout, requestedUi, shownUi, uiFromSearch } from './uiMode';
 
 describe('arrangement', () => {
   it('is wide from 840 px, or on its side from 600 px', () => {
@@ -15,6 +16,16 @@ describe('arrangement', () => {
     expect(arrangementFor(640, 360)).toBe('wide');
     expect(arrangementFor(599, 360)).toBe('compact');
     expect(arrangementFor(840, 1000)).toBe('wide');
+  });
+
+  it('is wide from 840 px in a window on a computer, whatever its height', () => {
+    expect(arrangementFor(1920, 1080, 'mouse')).toBe('wide');
+    expect(arrangementFor(1024, 700, 'mouse')).toBe('wide');
+    expect(arrangementFor(840, 400, 'mouse')).toBe('wide');
+    expect(arrangementFor(839, 1000, 'mouse')).toBe('compact');
+    // Not a phone on its side: a short window stays compact.
+    expect(arrangementFor(700, 500, 'mouse')).toBe('compact');
+    expect(arrangementFor(700, 500, 'touch')).toBe('wide');
   });
 
   it('gives a phone on its side a narrower panel', () => {
@@ -201,7 +212,7 @@ describe('recent results', () => {
   });
 });
 
-describe('asking a browser for the touch layout', () => {
+describe('choosing the layout', () => {
   const storage = () => {
     const values = new Map<string, string>();
     return {
@@ -213,19 +224,29 @@ describe('asking a browser for the touch layout', () => {
 
   it('reads the address', () => {
     expect(uiFromSearch('?ui=touch')).toBe('touch');
-    expect(uiFromSearch('?pack=demo&ui=desktop')).toBe('desktop');
+    expect(uiFromSearch('?ui=standard')).toBe('standard');
+    expect(uiFromSearch('?ui=classic')).toBe('classic');
+    // The older name of the classic layout.
+    expect(uiFromSearch('?pack=demo&ui=desktop')).toBe('classic');
     expect(uiFromSearch('?ui=other')).toBeNull();
+    expect(uiFromSearch('?ui=constructor')).toBeNull();
     expect(uiFromSearch('')).toBeNull();
   });
 
   it('keeps the choice for the session until the address says otherwise', () => {
     const session = storage();
-    expect(touchRequested('', session)).toBe(false);
-    expect(touchRequested('?ui=touch', session)).toBe(true);
-    expect(touchRequested('', session)).toBe(true);
-    expect(touchRequested('?ui=desktop', session)).toBe(false);
-    expect(touchRequested('', session)).toBe(false);
-    expect(touchRequested('?ui=touch', null)).toBe(true);
+    expect(requestedUi('', session)).toBeNull();
+    expect(requestedUi('?ui=touch', session)).toBe('touch');
+    expect(requestedUi('', session)).toBe('touch');
+    expect(requestedUi('?ui=desktop', session)).toBe('classic');
+    expect(requestedUi('', session)).toBe('classic');
+    expect(requestedUi('?ui=standard', session)).toBe('standard');
+    expect(requestedUi('', session)).toBe('standard');
+    forgetRequestedUi(session);
+    expect(requestedUi('', session)).toBeNull();
+    expect(requestedUi('?ui=touch', null)).toBe('touch');
+    session.setItem('atlas-ui', 'something else');
+    expect(requestedUi('', session)).toBeNull();
     const refusing = {
       getItem: () => {
         throw new Error('no');
@@ -233,9 +254,61 @@ describe('asking a browser for the touch layout', () => {
       setItem: () => {
         throw new Error('no');
       },
-      removeItem: () => undefined,
+      removeItem: () => {
+        throw new Error('no');
+      },
     };
-    expect(touchRequested('?ui=touch', refusing)).toBe(true);
-    expect(touchRequested('', refusing)).toBe(false);
+    expect(requestedUi('?ui=touch', refusing)).toBe('touch');
+    expect(requestedUi('', refusing)).toBeNull();
+    expect(() => {
+      forgetRequestedUi(refusing);
+    }).not.toThrow();
+  });
+
+  it('shows the standard layout unless the classic one is chosen or asked for', () => {
+    const base = { android: false, requested: null, saved: 'standard', coarse: false } as const;
+    expect(shownUi(base)).toEqual({ layout: 'standard', input: 'mouse' });
+    expect(shownUi({ ...base, coarse: true })).toEqual({ layout: 'standard', input: 'touch' });
+    expect(shownUi({ ...base, saved: 'classic' })).toEqual({ layout: 'classic', input: 'mouse' });
+    // The address wins over the setting, both ways.
+    expect(shownUi({ ...base, requested: 'classic' }).layout).toBe('classic');
+    expect(shownUi({ ...base, saved: 'classic', requested: 'standard' })).toEqual({
+      layout: 'standard',
+      input: 'mouse',
+    });
+    expect(shownUi({ ...base, saved: 'classic', requested: 'touch' })).toEqual({
+      layout: 'standard',
+      input: 'touch',
+    });
+  });
+
+  it('always shows the standard layout for fingers in the Android app', () => {
+    const android = { android: true, requested: null, saved: 'standard', coarse: false } as const;
+    expect(shownUi(android)).toEqual({ layout: 'standard', input: 'touch' });
+    expect(shownUi({ ...android, saved: 'classic', requested: 'classic' })).toEqual({
+      layout: 'standard',
+      input: 'touch',
+    });
+  });
+
+  it('reads the saved setting', () => {
+    expect(parseLayout('classic')).toBe('classic');
+    expect(parseLayout('standard')).toBe('standard');
+    expect(parseLayout(undefined)).toBe('standard');
+    expect(parseLayout(42)).toBe('standard');
+  });
+});
+
+describe('keys', () => {
+  it('lists the classic keys, with C only where there are lists', () => {
+    const keys = keyList('Checklists and guides').flatMap((k) => k.keys);
+    expect(keys).toEqual(['/', 'N', 'F', 'Z', 'C', 'Esc', '?']);
+    expect(keyList(null).flatMap((k) => k.keys)).not.toContain('C');
+    expect(keyList('Lists').find((k) => k.keys[0] === 'C')?.what).toBe('Lists, or back to the map');
+  });
+
+  it('adds the key to a tooltip where keys are shown', () => {
+    expect(withKey('Lists', 'C', true)).toBe('Lists (C)');
+    expect(withKey('Lists', 'C', false)).toBe('Lists');
   });
 });

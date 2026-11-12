@@ -8,8 +8,17 @@
  */
 export type Arrangement = 'compact' | 'wide';
 
-/** Wide from 840 px across, or on its side from 600 px across. */
-export function arrangementFor(width: number, height: number): Arrangement {
+/**
+ * Wide from 840 px across, or on its side from 600 px across. A window on
+ * a computer (`mouse`) is wide from 840 px only: a short window there is
+ * not a phone on its side, and the map would be left too narrow.
+ */
+export function arrangementFor(
+  width: number,
+  height: number,
+  input: 'touch' | 'mouse' = 'touch',
+): Arrangement {
+  if (input === 'mouse') return width >= 840 ? 'wide' : 'compact';
   return width >= 840 || (width > height && width >= 600) ? 'wide' : 'compact';
 }
 

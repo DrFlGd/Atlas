@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { undo } from '../state/actions';
 import { useAtlas } from '../state/store';
+import { KeyHint } from './widgets';
+import { useKeyHints } from './state';
 
 /**
  * The latest notice, at the bottom over the map, announced to screen
@@ -10,6 +12,7 @@ import { useAtlas } from '../state/store';
 export function TouchToast({ wide }: { wide: boolean }) {
   const notice = useAtlas((s) => s.notice);
   const [dismissed, setDismissed] = useState(0);
+  const hints = useKeyHints();
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(
@@ -41,6 +44,8 @@ export function TouchToast({ wide }: { wide: boolean }) {
               type="button"
               className="touch-toast-action"
               data-testid="toast-undo"
+              title={hints ? 'Undo (Z)' : undefined}
+              aria-keyshortcuts={hints ? 'Z' : undefined}
               onClick={() => {
                 setDismissed(shown.seq);
                 undo();
@@ -48,6 +53,7 @@ export function TouchToast({ wide }: { wide: boolean }) {
             >
               <UiIcon name="undo" size={18} strokeWidth={1.9} />
               Undo
+              <KeyHint k="Z" />
             </button>
           ) : null}
         </div>

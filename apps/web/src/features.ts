@@ -73,10 +73,20 @@ export function keyboardHintsOffered(state: Pick<AtlasState, 'app'>): boolean {
 }
 
 /**
- * Whether the app shows its touch layout (`src/touch/`), made for a phone
- * or tablet beside the game: in the Android app. A browser can ask for it
- * too, for a preview (see `touch/uiMode.ts`).
+ * Whether the app always shows its standard layout (`src/touch/`) made for
+ * fingers, for a phone or tablet beside the game: in the Android app. Other
+ * apps show it made for a mouse unless the screen is a touch screen, or the
+ * classic layout where the person chose it (see `touch/uiMode.ts`).
  */
 export function touchUiOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.platform === 'android';
+}
+
+/**
+ * Whether the settings offer the choice between the standard and the
+ * classic layout: everywhere but the Android app, which has only the
+ * standard one.
+ */
+export function layoutChoiceOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.platform !== 'android';
 }

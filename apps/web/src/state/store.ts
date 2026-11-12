@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import type { LogArea } from '../activityLog';
 import type { RuntimeConfig } from '../config';
 import type { GameTableState, SaveState } from './saves';
+import type { Layout, UiRequest } from '../touch/uiMode';
 import type {
   DesktopInfo,
   DownloadPlan,
@@ -136,6 +137,13 @@ export interface AtlasState {
   undo: UndoEntry[];
 
   theme: Theme;
+  /**
+   * The layout chosen in the settings (see `touch/uiMode.ts`): the standard
+   * one unless the person switched back to the classic one.
+   */
+  layout: Layout;
+  /** The layout the address asked for in this session, which wins over the setting; null when none. */
+  uiRequest: UiRequest | null;
   /** Whether each side pane is open. */
   panes: Record<PaneName, boolean>;
   leftTab: LeftTab;
@@ -228,6 +236,8 @@ export const useAtlas = create<AtlasState>()(() => ({
   undo: [],
 
   theme: 'dark',
+  layout: 'standard',
+  uiRequest: null,
   panes: { filters: true, details: true },
   leftTab: 'filters',
   checklistPages: [],

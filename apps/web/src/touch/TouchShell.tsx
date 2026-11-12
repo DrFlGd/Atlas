@@ -1,39 +1,58 @@
 import { percent } from '@atlas/core';
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { keepScreenOn } from '../androidBars';
 import { ActivityLogDialog } from '../components/ActivityLogDialog';
+import { AddMapDialog } from '../components/AddMapDialog';
 import { UiIcon, type UiIconName } from '../components/icons';
+import { MapPageStatus } from '../components/MapPageStatus';
 import { MapPane, type TouchMapOptions } from '../components/MapPane';
 import { MapsDialog } from '../components/MapsDialog';
 import { ProfileDialog } from '../components/ProfileDialog';
+import { downloadsOffered, keyboardHintsOffered } from '../features';
+import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
+import { checklistScreenTitle } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
 import type { Section } from './backStack';
 import { FiltersSheet, FiltersPanel, ChipRow } from './FiltersView';
 import { GamesScreen } from './GamesScreen';
+import { withKey } from './keys';
+import { KeysDialog } from './KeysDialog';
 import { arrangementFor, panelWidthFor, type Arrangement } from './layout';
 import { ListsScreen } from './ListsScreen';
 import { PlaceSheet } from './PlaceSheet';
 import { ProgressScreen } from './ProgressScreen';
 import { SearchField, SearchScreen, SearchResults } from './SearchView';
 import {
+  focusSearchField,
   loadKeepScreenOn,
   loadRecent,
   markFromHold,
+  markFromMenu,
   openSearch,
   setFiltersOpen,
+  setKeysOpen,
   setMapsMenuOpen,
   setPlaceExpanded,
   showSection,
+  toggleLists,
+  useKeyHints,
   useTouch,
 } from './state';
+import { KeysButton, SaveButton } from './DesktopTools';
 import { TouchToast } from './TouchToast';
-import { ProgressRing } from './widgets';
+import { KeyHint, ProgressRing } from './widgets';
 import '../styles/touch.css';
 
 const PackFileDialog = lazy(() =>
   import('../components/PackFileDialog').then((module) => ({ default: module.PackFileDialog })),
+);
+
+// Opened rarely, so loaded when first opened, as in the classic layout.
+const SaveDialog = lazy(() =>
+  import('../components/SaveDialog').then((module) => ({ default: module.SaveDialog })),
 );
 
 declare global {
@@ -48,15 +67,17 @@ declare global {
 }
 
 /**
- * The touch layout: the Android app's interface, made for a phone or a
- * tablet beside the game. Compact (a phone, or a tablet held upright): the
- * map fills the screen, sections are in a bar at the bottom, and sheets
- * rise over the map. Wide (a tablet or phone on its side): a rail of
- * sections, a panel and the map. Everything it does goes through the app's
- * store and actions, as the desktop layout does.
+ * The standard layout: the Android app's interface, made for a phone or a
+ * tablet beside the game, and the desktop app's and a browser's, made for
+ * a mouse and keyboard (`input`). Compact (a phone, a tablet held upright,
+ * a narrow window): the map fills the screen, sections are in a bar at the
+ * bottom, and sheets rise over the map. Wide (a tablet or phone on its
+ * side, a computer's window): a rail of sections, a panel and the map.
+ * Everything it does goes through the app's store and actions, as the
+ * classic layout does, and the desktop app's dialogs are the same ones.
  */
-export function TouchShell() {
-  const arrangement = useArrangement();
+export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
+  const arrangement = useArrangement(input);
   const wide = arrangement.kind === 'wide';
   const section = useTouch((s) => s.section);
   const search = useTouch((s) => s.search);
@@ -65,6 +86,8 @@ export function TouchShell() {
   const selected = useAtlas((s) => s.selectedId !== null);
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
+  const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
+  const pageViews = useAtlas(downloadsOffered);
   useTouchEffects(wide);
 
   useEffect(() => {
@@ -72,7 +95,9 @@ export function TouchShell() {
   }, [hasLists, section]);
 
   const [mapOptions] = useState<TouchMapOptions>(() => ({
+    input,
     onLongPress: markFromHold,
+    onMarkerMenu: markFromMenu,
     onPick: (id) => {
       if (id) revealSelection();
     },
@@ -83,12 +108,14 @@ export function TouchShell() {
     <main className="touch-map" aria-label="Map">
       <MapPane touch={mapOptions} />
       {wide ? <WideMapControls /> : section === 'map' ? <CompactMapControls /> : null}
+      {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
     </main>
   );
 
   return (
     <div
       className="touch"
+      data-input={input}
       data-arrangement={arrangement.kind}
       data-section={section}
       data-place={placeShown ? 'shown' : 'none'}
@@ -120,13 +147,20 @@ export function TouchShell() {
       <MapsMenu wide={wide} />
       <TouchToast wide={wide} />
       <ProfileDialog />
+      {saveDialogOpen ? (
+        <Suspense fallback={null}>
+          <SaveDialog />
+        </Suspense>
+      ) : null}
       <MapsDialog />
+      <AddMapDialog />
       <ActivityLogDialog />
       {packFileOpen ? (
         <Suspense fallback={null}>
           <PackFileDialog />
         </Suspense>
       ) : null}
+      <KeysDialog />
     </div>
   );
 }
@@ -166,18 +200,18 @@ function MapPanel() {
 // ---------------------------------------------------------------------------
 // Arrangement
 
-function measure() {
+function measure(input: 'touch' | 'mouse') {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  return { kind: arrangementFor(width, height), panel: panelWidthFor(width, height) };
+  return { kind: arrangementFor(width, height, input), panel: panelWidthFor(width, height) };
 }
 
 /** The arrangement for the window, following rotation and resizing. */
-function useArrangement(): { kind: Arrangement; panel: number } {
-  const [arrangement, setArrangement] = useState(measure);
+function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: number } {
+  const [arrangement, setArrangement] = useState(() => measure(input));
   useEffect(() => {
     const onResize = () => {
-      const next = measure();
+      const next = measure(input);
       setArrangement((prev) =>
         prev.kind === next.kind && prev.panel === next.panel ? prev : next,
       );
@@ -186,10 +220,12 @@ function useArrangement(): { kind: Arrangement; panel: number } {
     return () => {
       window.removeEventListener('resize', onResize);
     };
-  }, []);
+  }, [input]);
   useEffect(() => {
     useTouch.setState({ arrangement: arrangement.kind });
   }, [arrangement.kind]);
+  // Set before the children render, so they know what they are made for.
+  if (useTouch.getState().input !== input) useTouch.setState({ input });
   return arrangement;
 }
 
@@ -201,6 +237,10 @@ function useTouchEffects(wide: boolean) {
 
   useEffect(() => {
     void loadKeepScreenOn();
+    // Switching to the classic layout lets the screen turn off as usual.
+    return () => {
+      keepScreenOn(false);
+    };
   }, []);
 
   useEffect(() => {
@@ -248,6 +288,25 @@ function useTouchEffects(wide: boolean) {
     };
   }, []);
 
+  // The keys this layout handles its own way: Esc closes what is on top,
+  // as Back does; `/` goes to search; C opens the lists; `?` lists the keys.
+  useEffect(() => {
+    setShortcutOverrides({
+      search: focusSearchField,
+      checklists: toggleLists,
+      escape: () => {
+        handleBack();
+      },
+      keys: () => {
+        if (keyboardHintsOffered(useAtlas.getState())) setKeysOpen(true);
+      },
+    });
+    return () => {
+      setShortcutOverrides(null);
+      setKeysOpen(false);
+    };
+  }, []);
+
   // Closing a section's sheet when the arrangement changes keeps one thing open.
   useEffect(() => {
     if (wide) setFiltersOpen(false);
@@ -266,12 +325,16 @@ const SECTIONS: { id: Section; label: string; icon: UiIconName }[] = [
 
 function SectionButtons({ hasLists, className }: { hasLists: boolean; className: string }) {
   const section = useTouch((s) => s.section);
+  const hints = useKeyHints();
+  const listsName = useAtlas((s) => (s.game ? checklistScreenTitle(s.game) : 'Lists'));
   return SECTIONS.filter((s) => s.id !== 'lists' || hasLists).map((s) => (
     <button
       key={s.id}
       type="button"
       className={className}
       aria-current={s.id === section ? 'page' : undefined}
+      title={hints ? (s.id === 'lists' ? withKey(listsName, 'C', true) : s.label) : undefined}
+      aria-keyshortcuts={hints && s.id === 'lists' ? 'C' : undefined}
       data-testid={`section-${s.id}`}
       onClick={() => {
         if (s.id === section && s.id === 'lists') {
@@ -303,10 +366,13 @@ function Rail({ hasLists }: { hasLists: boolean }) {
     <nav className="touch-rail" aria-label="Sections">
       <SectionButtons hasLists={hasLists} className="touch-rail-button" />
       <span className="touch-rail-space" />
+      <KeysButton />
+      <SaveButton />
       <button
         type="button"
         className="touch-round-button touch-rail-profile"
         aria-label={`Profile: ${profileName}`}
+        title={`Profile: ${profileName}. Profiles, export and import`}
         aria-haspopup="dialog"
         onClick={() => {
           setProfileDialogOpen(true);
@@ -420,15 +486,19 @@ function ProgressPill() {
 }
 
 function NearestButton() {
+  const hints = useKeyHints();
   return (
     <button
       type="button"
       className="touch-fab"
       data-testid="nearest-unfound"
+      title={hints ? 'The nearest place not yet found (N)' : undefined}
+      aria-keyshortcuts={hints ? 'N' : undefined}
       onClick={jumpToNearestUnfound}
     >
       <UiIcon name="target" size={22} strokeWidth={1.8} />
       Nearest unfound
+      <KeyHint k="N" />
     </button>
   );
 }
