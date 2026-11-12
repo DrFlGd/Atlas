@@ -278,6 +278,23 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # The same helper, started the way the app starts it (no console window,
+      # all three standard streams piped, --stdin-cancel, the output folder as
+      # working folder): also from a folder and on a game folder with spaces
+      # and parentheses in their names, and once cancelled while it reads.
+      - name: Try the helper the way the app starts it
+        run: |
+          helper=tools/gamefiles/dist/atlas-gamefiles
+          if [ "$RUNNER_OS" = Windows ]; then helper=tools/gamefiles/dist/atlas-gamefiles.exe; fi
+          node apps/mapmaker/e2e/helper.js "$helper" "$RUNNER_TEMP/made-up-dsr" "$RUNNER_TEMP/like-app"
+          spaced="$RUNNER_TEMP/Program Files (x86)/Atlas Map Maker"
+          mkdir -p "$spaced"
+          cp "$helper" "$spaced/"
+          game="$RUNNER_TEMP/Steam Library (test)/steamapps/common/DARK SOULS REMASTERED"
+          python tools/gamefiles/tests/fixtures.py dsr "$game"
+          node apps/mapmaker/e2e/helper.js "$spaced/$(basename "$helper")" "$game" "$RUNNER_TEMP/like app (spaces)"
+          node apps/mapmaker/e2e/helper.js "$helper" "$RUNNER_TEMP/made-up-dsr" "$RUNNER_TEMP/like-app-cancel" --cancel
+
       - name: Install Linux system libraries
         if: runner.os == 'Linux'
         run: |
