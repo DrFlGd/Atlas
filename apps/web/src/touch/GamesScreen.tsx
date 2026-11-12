@@ -4,12 +4,13 @@ import { UiIcon } from '../components/icons';
 import { PackSummary } from '../components/MapsDialog';
 import { PackDetailsView } from '../components/PackFacts';
 import { desktop, type PackDetails } from '../desktop';
-import { copiesPickedFiles, foldersOffered } from '../features';
-import { setTheme, switchGame } from '../state/actions';
+import { copiesPickedFiles, foldersOffered, layoutChoiceOffered } from '../features';
+import { setLayout, setTheme, switchGame } from '../state/actions';
 import { openActivityLog } from '../state/activityLog';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
-import { setKeepScreenOn, useTouch } from './state';
+import { LibraryTools, ProgressTools } from './DesktopTools';
+import { setKeepScreenOn, setKeysOpen, useKeyHints, useTouch } from './state';
 import { GroupTitle, SwitchTrack } from './widgets';
 
 /**
@@ -29,6 +30,7 @@ export function GamesScreen() {
         <h1 className="touch-page-title">Games</h1>
       </header>
       <div className="touch-scroll touch-page-body" data-scroll-root>
+        <LibraryTools />
         <section aria-labelledby="games-heading">
           <GroupTitle id="games-heading">Games on this device</GroupTitle>
           <ul className="touch-plain-list" data-testid="game-list">
@@ -70,6 +72,7 @@ export function GamesScreen() {
             </>
           ) : null}
         </section>
+        <ProgressTools />
         <Settings />
       </div>
     </div>
@@ -198,6 +201,8 @@ function Settings() {
   const app = useAtlas((s) => s.app);
   const keepOn = useTouch((s) => s.keepScreenOn);
   const offered = useTouch((s) => s.screenOnOffered);
+  const layoutOffered = useAtlas(layoutChoiceOffered);
+  const hints = useKeyHints();
   return (
     <section aria-labelledby="settings-heading" className="touch-settings">
       <GroupTitle id="settings-heading">Settings</GroupTitle>
@@ -221,6 +226,37 @@ function Settings() {
           ))}
         </div>
       </div>
+      {layoutOffered ? (
+        <div className="touch-setting-row touch-setting-row-noted" data-testid="layout-setting">
+          <span className="touch-setting-label" id="layout-label">
+            Layout
+          </span>
+          <div
+            className="touch-segmented"
+            role="group"
+            aria-labelledby="layout-label"
+            aria-describedby="layout-note"
+          >
+            {(['standard', 'classic'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className="touch-segment"
+                aria-pressed={value === 'standard'}
+                data-testid={`layout-${value}`}
+                onClick={() => {
+                  setLayout(value);
+                }}
+              >
+                {value === 'standard' ? 'Standard' : 'Classic'}
+              </button>
+            ))}
+          </div>
+          <span className="touch-switch-note touch-setting-note" id="layout-note">
+            Classic is the earlier layout: a bar at the top and panes on both sides of the map.
+          </span>
+        </div>
+      ) : null}
       {offered ? (
         <button
           type="button"
@@ -237,6 +273,27 @@ function Settings() {
             <span className="touch-switch-note">While Atlas is shown</span>
           </span>
           <SwitchTrack on={keepOn} />
+        </button>
+      ) : null}
+      {hints ? (
+        <button
+          type="button"
+          className="touch-row touch-row-button"
+          aria-haspopup="dialog"
+          data-testid="open-keys"
+          onClick={() => {
+            setKeysOpen(true);
+          }}
+        >
+          <span className="touch-row-text">
+            <span className="touch-row-title">Keys and mouse</span>
+            <span className="touch-row-detail">
+              The keyboard shortcuts, and what the mouse does
+            </span>
+          </span>
+          <span className="touch-row-end">
+            <UiIcon name="chevron" size={18} strokeWidth={1.8} />
+          </span>
         </button>
       ) : null}
       {desktop ? (

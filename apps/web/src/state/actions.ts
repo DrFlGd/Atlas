@@ -30,6 +30,7 @@ import {
 } from '@atlas/core';
 import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
 import { desktop } from '../desktop';
+import { forgetRequestedUi, parseLayout, sessionStore, type Layout } from '../touch/uiMode';
 import type { HashView } from '../viewHash';
 import { catalogFrom } from './library';
 import { loadMapImages } from './mapImages';
@@ -76,6 +77,7 @@ export async function boot(initialView: HashView | null): Promise<void> {
     const savedTheme = await store.getSetting(SETTINGS.theme);
     const theme: Theme =
       savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : config.theme;
+    const layout = parseLayout(await store.getSetting(SETTINGS.layout));
     const savedPanes = (await store.getSetting(SETTINGS.panes)) as
       Partial<Record<PaneName, boolean>> | undefined;
     const narrow = isNarrow();
@@ -83,6 +85,7 @@ export async function boot(initialView: HashView | null): Promise<void> {
     set({
       config,
       theme,
+      layout,
       persistent,
       panes: {
         filters: !narrow && (savedPanes?.filters ?? true),
@@ -602,6 +605,22 @@ export function setTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
   set({ theme });
   saveSetting(SETTINGS.theme, theme);
+}
+
+/**
+ * Switches between the standard and the classic layout and remembers the
+ * choice, as the theme is. A layout the address asked for in this session
+ * gives way to the choice.
+ */
+export function setLayout(layout: Layout): void {
+  forgetRequestedUi(sessionStore());
+  const url = new URL(window.location.href);
+  if (url.searchParams.has('ui')) {
+    url.searchParams.delete('ui');
+    window.history.replaceState(window.history.state, '', url);
+  }
+  set({ layout, uiRequest: null });
+  saveSetting(SETTINGS.layout, layout);
 }
 
 /** Opens or closes a side pane. On narrow screens only one sheet is open at a time. */

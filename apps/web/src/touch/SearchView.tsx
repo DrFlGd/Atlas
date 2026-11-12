@@ -17,8 +17,9 @@ import {
   setScope,
   showOnlyKind,
   showSection,
-  useTouch,
   type SearchScope,
+  useKeyHints,
+  useTouch,
 } from './state';
 import { TickMark } from './widgets';
 
@@ -35,6 +36,9 @@ const SCOPES: { id: SearchScope; label: string }[] = [
 
 const PLACE_KINDS: readonly SearchKind[] = ['location', 'entity'];
 const LIST_KINDS: readonly SearchKind[] = ['checklist', 'checkitem', 'guide'];
+
+/** The last `/` key press that moved focus to a search field. */
+let focusedRequest = 0;
 
 /** Search on a phone: the whole screen, over the map. */
 export function SearchScreen() {
@@ -55,6 +59,8 @@ export function SearchField({ inPanel = false }: { inPanel?: boolean }) {
   const query = useTouch((s) => s.query);
   const open = useTouch((s) => s.search);
   const hasLists = useAtlas((s) => !(s.game?.checklists.isEmpty ?? true));
+  const focusRequest = useTouch((s) => s.searchFocus);
+  const hints = useKeyHints();
   const inputRef = useRef<HTMLInputElement>(null);
   const id = useId();
   const label = hasLists ? 'Search places, lists and guides' : 'Search places';
@@ -63,6 +69,14 @@ export function SearchField({ inPanel = false }: { inPanel?: boolean }) {
   useEffect(() => {
     if (!inPanel) inputRef.current?.focus();
   }, [inPanel]);
+
+  // The `/` key, once per press, also when it brought the field.
+  useEffect(() => {
+    if (focusRequest === focusedRequest) return;
+    focusedRequest = focusRequest;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusRequest]);
 
   const close = () => {
     closeSearch();
@@ -92,7 +106,8 @@ export function SearchField({ inPanel = false }: { inPanel?: boolean }) {
           id={id}
           className="touch-search-input"
           type="search"
-          placeholder={label}
+          placeholder={hints ? `${label}  ( / )` : label}
+          aria-keyshortcuts={hints ? '/' : undefined}
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"

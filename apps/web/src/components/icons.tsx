@@ -66,6 +66,9 @@ const UI_PATHS = {
   chevronUp: 'M5 12l5-5l5 5',
   pin: 'M10 18c-3.6-4-5.5-7-5.5-9.5a5.5 5.5 0 0 1 11 0c0 2.5-1.9 5.5-5.5 9.5zM10 6.5a2 2 0 1 1 0 4a2 2 0 1 1 0-4z',
   foundCircle: 'M10 3a7 7 0 1 1 0 14a7 7 0 1 1 0-14zM6.8 10.2l2.2 2.2l4.2-4.6',
+  layout: 'M2.5 4h15v12h-15zM5.5 4v12M10 4v12',
+  keyboard:
+    'M2.5 5.5h15v9h-15zM5.5 8.5h0M8.5 8.5h0M11.5 8.5h0M14.5 8.5h0M5.5 11.5h0M7.5 11.5h5M14.5 11.5h0',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

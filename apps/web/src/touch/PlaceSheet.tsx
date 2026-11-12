@@ -7,7 +7,8 @@ import { openChecklistItem, openGuide, showItemPlace } from '../state/checklists
 import { numberFormat, useSummary } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { nextOnList } from './ordering';
-import { markFound, setPlaceExpanded, useTouch } from './state';
+import { markFound, setPlaceExpanded, useKeyHints, useTouch } from './state';
+import { KeyHint } from './widgets';
 
 /** How far a finger moves the sheet's head before it counts as a swipe. */
 const SWIPE = 40;
@@ -51,6 +52,7 @@ function Place({
     : undefined;
   const where = region?.name ?? pack.maps.get(location.mapId)?.name ?? '';
   const swipe = useRef<{ id: number; y: number } | null>(null);
+  const hints = useKeyHints();
   const sheet = useRef<HTMLElement>(null);
   // The toast sits above the sheet, so the sheet says how tall it is.
   useEffect(() => {
@@ -121,6 +123,8 @@ function Place({
             type="button"
             className="touch-round-button"
             aria-label="Close"
+            title={hints ? 'Close (Esc)' : undefined}
+            aria-keyshortcuts={hints ? 'Escape' : undefined}
             data-testid="close-place"
             onClick={close}
           >
@@ -167,6 +171,7 @@ function PlaceActions({
   const page = useAtlas((s) => s.checklistPages.at(-1));
   const list = page?.kind === 'checklist' ? game.checklists.checklist(page.id) : undefined;
   const listItem = list?.items.find((i) => i.places.includes(locationId));
+  const hints = useKeyHints();
   // The next button leads once there is nothing to mark here.
   const nextLeads = !trackable || found;
   const next = listItem ? (
@@ -189,9 +194,11 @@ function PlaceActions({
       type="button"
       className={nextLeads ? 'place-action place-action-primary' : 'place-action'}
       data-testid="next-nearest"
+      aria-keyshortcuts={hints ? 'N' : undefined}
       onClick={jumpToNearestUnfound}
     >
       Next nearest
+      <KeyHint k="N" />
       <UiIcon name="chevron" size={18} strokeWidth={1.8} />
     </button>
   );
@@ -204,6 +211,7 @@ function PlaceActions({
             found ? 'place-action place-action-found' : 'place-action place-action-primary'
           }
           aria-pressed={found}
+          aria-keyshortcuts={hints ? 'F' : undefined}
           data-testid="mark-found"
           onClick={() => {
             markFound(locationId, !found);
@@ -211,6 +219,7 @@ function PlaceActions({
         >
           <UiIcon name="check" size={22} strokeWidth={2.2} />
           {found ? 'Found' : 'Mark found'}
+          <KeyHint k="F" />
         </button>
       ) : null}
       {next}

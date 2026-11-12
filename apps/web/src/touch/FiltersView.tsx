@@ -4,6 +4,7 @@ import { GlyphBadge, UiIcon } from '../components/icons';
 import {
   applyPreset,
   deleteUserPreset,
+  resetFilters,
   saveUserPreset,
   setCategoriesVisible,
   setHideFound,
@@ -158,7 +159,15 @@ export function FiltersPanel() {
   const groups = useKindGroups(game, mapId);
   return (
     <div className="touch-scroll" data-scroll-root data-testid="filters-panel">
-      <FilterBody groups={groups} showAll={<ShowAll groups={groups} />} />
+      <FilterBody
+        groups={groups}
+        showAll={
+          <span className="touch-kinds-actions">
+            <ShowAll groups={groups} />
+            <HideAll groups={groups} />
+          </span>
+        }
+      />
     </div>
   );
 }
@@ -177,6 +186,23 @@ function ShowAll({ groups }: { groups: KindGroups }) {
       }}
     >
       Show all
+    </button>
+  );
+}
+
+/** "Hide all", beside "Show all" in the wide panel, as the classic filters have it. */
+function HideAll({ groups }: { groups: KindGroups }) {
+  const ids = groups.flatMap((g) => g.categories.map((c) => c.id));
+  return (
+    <button
+      type="button"
+      className="touch-text-button"
+      data-testid="hide-all-kinds"
+      onClick={() => {
+        setCategoriesVisible(ids, false);
+      }}
+    >
+      Hide all
     </button>
   );
 }
@@ -320,15 +346,25 @@ function Presets() {
           </button>
         </form>
       ) : (
-        <button
-          type="button"
-          className="touch-text-button"
-          onClick={() => {
-            setNaming(true);
-          }}
-        >
-          Save current as preset…
-        </button>
+        <div className="touch-presets-actions">
+          <button
+            type="button"
+            className="touch-text-button"
+            onClick={() => {
+              setNaming(true);
+            }}
+          >
+            Save current as preset…
+          </button>
+          <button
+            type="button"
+            className="touch-text-button"
+            data-testid="reset-filters"
+            onClick={resetFilters}
+          >
+            Reset filters
+          </button>
+        </div>
       )}
     </section>
   );

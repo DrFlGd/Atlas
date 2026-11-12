@@ -1,4 +1,5 @@
 import { UiIcon } from '../components/icons';
+import { useKeyHints } from './state';
 
 /** A ring that fills with progress, from the top clockwise. Decorative; the control carries the label. */
 export function ProgressRing({
@@ -92,4 +93,13 @@ export function GroupTitle({
       {figure !== undefined ? <span className="touch-figure">{figure}</span> : null}
     </div>
   );
+}
+
+/** A key shown on a button, where keys are shown (see {@link useKeyHints}). Hidden from screen readers; the button says it with `aria-keyshortcuts`. */
+export function KeyHint({ k }: { k: string }) {
+  return useKeyHints() ? (
+    <kbd className="touch-kbd" aria-hidden="true">
+      {k}
+    </kbd>
+  ) : null;
 }

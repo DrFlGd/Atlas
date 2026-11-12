@@ -1,10 +1,12 @@
 /*
- * The touch layout (src/touch/): the Android app's interface, and a
- * browser's with ?ui=touch. Colours come from the theme tokens in
+ * The standard layout (src/touch/): the Android app's interface, and the
+ * desktop app's and a browser's. Colours come from the theme tokens in
  * theme.css, so both themes work; the few values of its own are mixed from
- * them. Targets are at least 48 px, text at least 13 px (14 px for body
- * text), and the map runs under the system bars while everything else
- * keeps clear of them (--atlas-inset-*).
+ * them. Made for fingers (data-input="touch"), targets are at least 48 px,
+ * text at least 13 px (14 px for body text), and the map runs under the
+ * system bars while everything else keeps clear of them (--atlas-inset-*).
+ * Made for a mouse (data-input="mouse"), the end of this file makes it
+ * denser, with hover states, zoom buttons and keys on buttons.
  */
 
 :root,
@@ -1901,7 +1903,7 @@
   font-size: 14px;
 }
 
-.touch .button {
+.touch[data-input='touch'] .button {
   min-height: 48px;
   padding: 0 16px;
   border-radius: 12px;
@@ -1971,42 +1973,43 @@
 
 /* ------------------------------------------------------------------ */
 /* Dialogs that remain (profiles, pack files, the activity log): the width
-   of a phone between the bars, with targets for fingers. */
+   of a phone between the bars, with targets for fingers. With a mouse they
+   are as in the classic layout. */
 
-.touch .dialog {
+.touch[data-input='touch'] .dialog {
   width: min(560px, calc(100% - 16px - var(--atlas-inset-left) - var(--atlas-inset-right)));
   max-height: calc(100% - 16px - var(--atlas-inset-top) - var(--atlas-inset-bottom));
   font-size: 15px;
 }
 
-.touch .dialog-body {
+.touch[data-input='touch'] .dialog-body {
   padding: 12px 16px 16px;
 }
 
-.touch .dialog .icon-button {
+.touch[data-input='touch'] .dialog .icon-button {
   width: 48px;
   height: 48px;
 }
 
-.touch .dialog .link-button {
+.touch[data-input='touch'] .dialog .link-button {
   min-height: 44px;
   font-size: 14px;
 }
 
-.touch .dialog .text-input,
-.touch .dialog .select {
+.touch[data-input='touch'] .dialog .text-input,
+.touch[data-input='touch'] .dialog .select {
   height: 48px;
   font-size: 16px;
 }
 
-.touch .dialog input[type='checkbox'],
-.touch .dialog input[type='radio'] {
+.touch[data-input='touch'] .dialog input[type='checkbox'],
+.touch[data-input='touch'] .dialog input[type='radio'] {
   width: 22px;
   height: 22px;
 }
 
-.touch .dialog .small,
-.touch .dialog .muted.small {
+.touch[data-input='touch'] .dialog .small,
+.touch[data-input='touch'] .dialog .muted.small {
   font-size: 13px;
 }
 
@@ -2050,4 +2053,509 @@
   .touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region {
     max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Parts added for the desktop app and a computer's browser (in both
+   kinds of input where they can show) */
+
+.touch-presets-actions,
+.touch-kinds-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+}
+
+.touch-presets-actions {
+  margin-left: -12px;
+}
+
+.touch-presets .touch-presets-actions .touch-text-button {
+  margin-left: 0;
+}
+
+.touch-list-tools {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 0 12px 8px;
+}
+
+.touch-list-search {
+  display: flex;
+  flex: 1 1 200px;
+}
+
+.touch-list-facets {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px 8px;
+  border-top: 1px solid var(--atlas-surface-raised);
+  font-size: 14px;
+}
+
+.touch-list-facets .facet-group {
+  margin: 8px 0 0;
+}
+
+.touch-entry {
+  flex-wrap: wrap;
+}
+
+.touch-entry-more {
+  color: var(--atlas-muted);
+}
+
+.touch-entry-more-body {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0 12px 10px 54px;
+  font-size: 14px;
+}
+
+.touch-entry-more-body .check-item-note {
+  align-self: stretch;
+}
+
+.touch-entry-places .touch-text-button {
+  min-height: 36px;
+  padding: 0 8px;
+  font-size: 14px;
+}
+
+.touch-tools {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
+.touch-tools .touch-row {
+  min-height: 60px;
+  padding-left: 4px;
+}
+
+.touch-setting-row-noted {
+  flex-wrap: wrap;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.touch-setting-note {
+  flex-basis: 100%;
+}
+
+.touch-rail-tool {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--atlas-border);
+}
+
+.touch-rail-tool-on {
+  border-color: var(--atlas-accent);
+  color: var(--atlas-accent);
+}
+
+/* A key on a button: the classic layout's keys, quieter on a coloured button. */
+.touch-kbd {
+  flex: none;
+  min-width: 1.5em;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font-family: var(--atlas-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.keys-dialog {
+  width: min(480px, calc(100% - 24px));
+}
+
+.keys-dialog .section-title {
+  margin: 16px 0 8px;
+}
+
+.keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.keys-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.keys-row dt {
+  flex: none;
+  width: 9.5em;
+  margin: 0;
+}
+
+.keys-list:not(.keys-list-mouse) .keys-row dt {
+  width: 3.5em;
+}
+
+.keys-row dd {
+  margin: 0;
+}
+
+/* The map's own buttons in this layout: map images, "Show me", a map page. */
+.touch[data-arrangement='wide'] .map-images-button,
+.touch[data-arrangement='wide'] .download-panel {
+  left: 16px;
+  bottom: calc(88px + var(--atlas-inset-bottom));
+}
+
+.touch[data-arrangement='wide'][data-section='lists'] .map-images-button,
+.touch[data-arrangement='wide'][data-section='lists'] .download-panel,
+.touch[data-arrangement='wide'][data-section='progress'] .map-images-button,
+.touch[data-arrangement='wide'][data-section='progress'] .download-panel,
+.touch[data-arrangement='wide'][data-section='games'] .map-images-button,
+.touch[data-arrangement='wide'][data-section='games'] .download-panel {
+  bottom: calc(16px + var(--atlas-inset-bottom));
+}
+
+.touch[data-arrangement='compact'] .map-images-button,
+.touch[data-arrangement='compact'] .download-panel {
+  left: calc(12px + var(--atlas-inset-left));
+  top: calc(var(--atlas-inset-top) + 132px);
+  bottom: auto;
+}
+
+.touch[data-arrangement='compact'] .download-panel {
+  max-height: calc(100% - var(--atlas-inset-top) - var(--touch-bar) - 148px);
+}
+
+.touch .download-panel {
+  z-index: 1150;
+}
+
+.touch .show-me-button {
+  top: auto;
+  left: auto;
+  right: 16px;
+  bottom: calc(16px + var(--atlas-inset-bottom));
+}
+
+.touch[data-place='shown'] .show-me-button {
+  display: none;
+}
+
+.touch[data-arrangement='compact'] .show-me-button {
+  bottom: calc(var(--touch-bar) + 92px);
+}
+
+.touch .placing-notice {
+  top: calc(var(--atlas-inset-top) + 84px);
+}
+
+.touch[data-arrangement='compact'] .placing-notice {
+  top: calc(var(--atlas-inset-top) + 132px);
+}
+
+.touch .map-page-status {
+  top: calc(var(--atlas-inset-top) + 80px);
+  right: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Made for a mouse and keyboard: denser, with hover states, zoom buttons
+   and the names of places on hover (MapPane). The look stays the same. */
+
+.touch[data-input='mouse'] {
+  font-size: 14px;
+}
+
+.touch[data-input='mouse'] .touch-map .leaflet-control-zoom {
+  display: block;
+}
+
+.touch[data-input='mouse'] .touch-map .leaflet-top.leaflet-left {
+  top: calc(var(--atlas-inset-top) + 76px);
+  left: auto;
+  right: 6px;
+}
+
+.touch[data-input='mouse'][data-arrangement='compact'] .touch-map .leaflet-top.leaflet-left {
+  top: calc(var(--atlas-inset-top) + 124px);
+}
+
+.touch[data-input='mouse'] .leaflet-control-zoom {
+  margin: 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--touch-float-shadow);
+}
+
+.touch[data-input='mouse'] .leaflet-control-zoom a {
+  width: 38px;
+  height: 38px;
+  border-color: var(--atlas-border);
+  background: var(--touch-float);
+  color: var(--atlas-text);
+  font-size: 20px;
+  line-height: 36px;
+}
+
+.touch[data-input='mouse'] .leaflet-control-zoom a:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.touch[data-input='mouse'] .marker-tooltip {
+  z-index: 1050;
+}
+
+/* Rows, chips and buttons: a little smaller, and they answer the pointer. */
+
+.touch[data-input='mouse'] .touch-chip {
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13.5px;
+}
+
+.touch[data-input='mouse'] .touch-chip-remove {
+  width: 36px;
+  padding: 0;
+}
+
+.touch[data-input='mouse'] .touch-chip-kind {
+  padding-left: 6px;
+}
+
+.touch[data-input='mouse'] .touch-text-button {
+  min-height: 36px;
+  font-size: 14px;
+}
+
+.touch[data-input='mouse'] .touch-text-input {
+  height: 38px;
+  font-size: 14px;
+}
+
+.touch[data-input='mouse'] .touch-button {
+  min-height: 38px;
+  font-size: 14px;
+}
+
+.touch[data-input='mouse'] .touch-button-block {
+  min-height: 44px;
+}
+
+.touch[data-input='mouse'] .touch-row,
+.touch[data-input='mouse'] .touch-row-main {
+  min-height: 54px;
+}
+
+.touch[data-input='mouse'] .touch-row-title {
+  font-size: 15px;
+}
+
+.touch[data-input='mouse'] .touch-row-end {
+  width: 36px;
+  height: 36px;
+}
+
+.touch[data-input='mouse'] .touch-tick-button {
+  width: 40px;
+  height: 40px;
+}
+
+.touch[data-input='mouse'] .touch-entry,
+.touch[data-input='mouse'] .touch-panel .touch-entry {
+  min-height: 52px;
+}
+
+.touch[data-input='mouse'] .touch-entry-name,
+.touch[data-input='mouse'] .touch-panel .touch-entry-name {
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .touch-entry-more-body {
+  padding-left: 46px;
+}
+
+.touch[data-input='mouse'] .touch-kind-row,
+.touch[data-input='mouse'] .touch-panel .touch-kind-row {
+  min-height: 40px;
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .touch-group-switch {
+  width: 56px;
+  height: 36px;
+}
+
+.touch[data-input='mouse'] .touch-switch-card,
+.touch[data-input='mouse'] .touch-map-panel .touch-switch-card {
+  min-height: 46px;
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .touch-setting-row {
+  min-height: 48px;
+}
+
+.touch[data-input='mouse'] .touch-setting-label {
+  font-size: 15px;
+}
+
+.touch[data-input='mouse'] .touch-segment {
+  height: 34px;
+  font-size: 14px;
+}
+
+.touch[data-input='mouse'] .touch-menu-row {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.touch[data-input='mouse'] .touch-search-head-panel .touch-search-box {
+  height: 44px;
+}
+
+.touch[data-input='mouse'] .touch-pill {
+  height: 42px;
+}
+
+.touch[data-input='mouse'] .touch-fab {
+  height: 48px;
+  font-size: 15px;
+}
+
+.touch[data-input='mouse'] .place-action {
+  height: 46px;
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .place-action-primary {
+  font-size: 15.5px;
+}
+
+.touch[data-input='mouse'] .place-list-row {
+  min-height: 44px;
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .place-details-row {
+  min-height: 42px;
+}
+
+.touch[data-input='mouse'] .touch-round-button {
+  width: 38px;
+  height: 38px;
+}
+
+.touch[data-input='mouse'] .touch-rail-profile,
+.touch[data-input='mouse'] .touch-rail-tool {
+  width: 42px;
+  height: 42px;
+}
+
+.touch[data-input='mouse'] .touch-icon-button {
+  width: 40px;
+  height: 40px;
+}
+
+.touch[data-input='mouse'] .touch-toast {
+  min-height: 48px;
+  font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .touch-toast-action {
+  height: 38px;
+}
+
+.touch[data-input='mouse'] .touch-bar-button {
+  min-height: 44px;
+}
+
+/* Hover: what the pointer is on answers it, as in the classic layout. */
+@media (hover: hover) {
+  .touch[data-input='mouse']
+    :is(
+      .touch-row-button,
+      .touch-row-main,
+      .touch-menu-row,
+      .touch-kind-row,
+      .touch-entry-body,
+      .touch-game-main,
+      .place-list-row,
+      .place-details-row,
+      .touch-search-pill-button
+    ):hover {
+    background: var(--atlas-surface-hover);
+  }
+
+  .touch[data-input='mouse'] :is(.touch-chip, .touch-pill, .touch-round-button):hover {
+    border-color: var(--atlas-border-strong);
+    background: var(--atlas-surface-hover);
+  }
+
+  .touch[data-input='mouse'] .touch-chip[aria-pressed='true']:hover {
+    border-color: var(--atlas-accent);
+    background: color-mix(in srgb, var(--atlas-accent) 26%, var(--atlas-surface));
+  }
+
+  .touch[data-input='mouse'] :is(.touch-text-button, .touch-icon-button, .touch-tick-button):hover {
+    background: var(--atlas-accent-soft);
+  }
+
+  .touch[data-input='mouse'] :is(.touch-rail-button, .touch-bar-button):hover:not([aria-current]) {
+    color: var(--atlas-text);
+  }
+
+  .touch[data-input='mouse']
+    :is(.touch-rail-button, .touch-bar-button):hover:not([aria-current])
+    .touch-section-icon {
+    background: var(--atlas-surface-hover);
+  }
+
+  .touch[data-input='mouse'] :is(.touch-fab, .place-action-primary, .touch-button-primary):hover {
+    filter: brightness(1.08);
+  }
+
+  .touch[data-input='mouse'] :is(.place-action:not(.place-action-primary), .touch-button):hover {
+    border-color: var(--atlas-accent);
+  }
+
+  .touch[data-input='mouse'] .touch-segment:not([aria-pressed='true']):hover {
+    background: var(--atlas-surface-hover);
+  }
+
+  .touch[data-input='mouse'] .touch-switch-card:hover {
+    border-color: var(--atlas-border-strong);
+  }
+
+  .touch[data-input='mouse'] .touch-toast-action:hover {
+    background: color-mix(in srgb, var(--touch-toast-action) 18%, transparent);
+  }
+}
+
+.touch[data-input='mouse'] :focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 1px;
+}
+
+/* Tool and settings rows on Games say what they do in full. */
+.touch-tool-row .touch-row-detail,
+.touch-settings .touch-row-detail {
+  white-space: normal;
 }

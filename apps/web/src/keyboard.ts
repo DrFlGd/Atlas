@@ -24,10 +24,33 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /**
+ * What a layout does for some keys in its own way. The classic layout sets
+ * none; the standard layout (`src/touch/`) sets them while it is shown.
+ */
+export interface ShortcutOverrides {
+  /** `/`: go to search. */
+  search: () => void;
+  /** `C`: open or close the checklists and guides. */
+  checklists: () => void;
+  /** `Escape`: close what is on top. */
+  escape: () => void;
+  /** `?`: show the list of keys. */
+  keys: () => void;
+}
+
+let overrides: ShortcutOverrides | null = null;
+
+/** Lets a layout handle some keys itself (see {@link ShortcutOverrides}); null gives them back. */
+export function setShortcutOverrides(next: ShortcutOverrides | null): void {
+  overrides = next;
+}
+
+/**
  * Global shortcuts: `F` marks the selection found (or not), `Z` undoes,
  * `/` focuses search, `N` jumps to the nearest unfound visible marker, `C`
  * opens or closes the checklists and guides, and `Escape` clears the
- * selection. None fire while typing or inside a dialog.
+ * selection. None fire while typing or inside a dialog. A layout can do
+ * some of them its own way (see {@link setShortcutOverrides}).
  */
 export function useShortcuts(): void {
   useEffect(() => {
@@ -55,7 +78,13 @@ export function useShortcuts(): void {
           break;
         case '/':
           event.preventDefault();
-          focusSearch();
+          if (overrides) overrides.search();
+          else focusSearch();
+          break;
+        case '?':
+          if (!overrides) break;
+          event.preventDefault();
+          overrides.keys();
           break;
         case 'n':
           event.preventDefault();
@@ -63,10 +92,13 @@ export function useShortcuts(): void {
           break;
         case 'c':
           event.preventDefault();
-          toggleLeftTab('checklists');
+          if (overrides) overrides.checklists();
+          else toggleLeftTab('checklists');
           break;
         case 'escape':
-          if (useAtlas.getState().selectedId) {
+          if (overrides) {
+            overrides.escape();
+          } else if (useAtlas.getState().selectedId) {
             select(null);
             if (window.matchMedia('(max-width: 899px)').matches) setPane('details', false);
           }

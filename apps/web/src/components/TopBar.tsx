@@ -1,8 +1,21 @@
 import { percent, type Tally } from '@atlas/core';
 import { useId } from 'react';
 import { desktop } from '../desktop';
-import { foldersOffered, importsOffered, keyboardHintsOffered, mapsOffered } from '../features';
-import { setProfileDialogOpen, setTheme, showMap, switchGame, togglePane } from '../state/actions';
+import {
+  foldersOffered,
+  importsOffered,
+  keyboardHintsOffered,
+  layoutChoiceOffered,
+  mapsOffered,
+} from '../features';
+import {
+  setLayout,
+  setProfileDialogOpen,
+  setTheme,
+  showMap,
+  switchGame,
+  togglePane,
+} from '../state/actions';
 import { checklistScreenTitle, toggleLeftTab } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
 import { setAddMapOpen } from '../state/importing';
@@ -25,6 +38,7 @@ export function TopBar({ search }: { search: React.ReactNode }) {
   const appName = useAtlas((s) => s.app?.name ?? 'Atlas');
   const appVersion = useAtlas((s) => s.app?.version ?? '');
   const keyHints = useAtlas(keyboardHintsOffered);
+  const layoutChoice = useAtlas(layoutChoiceOffered);
 
   return (
     <header className="topbar">
@@ -99,6 +113,20 @@ export function TopBar({ search }: { search: React.ReactNode }) {
       >
         <UiIcon name={theme === 'dark' ? 'sun' : 'moon'} />
       </button>
+      {layoutChoice ? (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Use the standard layout"
+          title="Standard layout: a rail of sections, one panel and the map"
+          data-testid="use-standard-layout"
+          onClick={() => {
+            setLayout('standard');
+          }}
+        >
+          <UiIcon name="layout" />
+        </button>
+      ) : null}
       <button
         type="button"
         className="icon-button topbar-details"

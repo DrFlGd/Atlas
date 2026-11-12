@@ -1,6 +1,7 @@
 import { mulberry32 } from '@atlas/saves/match';
 import { areaMapPinsFile, entityMapPinsFile, typicalSave, WORLD_PATHS } from '@atlas/saves/testing';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './layout';
 import { collectErrors, expectOverallFound, mapStatus, selectByName } from './helpers';
 
 /**
@@ -671,4 +672,42 @@ test('in the desktop app, the game’s map places line the map up and place what
   const logged = JSON.stringify(reports);
   expect(logged).not.toMatch(/sign_|nest_/);
   for (const p of [...signs, ...nests]) expect(logged).not.toContain(`"x":${p.x}`);
+});
+
+test.describe('in the standard layout', () => {
+  test.use({ layout: 'standard' });
+
+  test('reads a save from the rail, and shows where the player stood', async ({ page }) => {
+    const errors = collectErrors(page);
+    await servePack(page);
+    await page.goto('./');
+    await expect(page.getByTestId('marker-count')).toHaveText('4');
+    const found = page.getByTestId('progress-ring').first();
+    await expect(found).toHaveAttribute('data-found', '0');
+
+    // "Game save" is in the rail, beside the profile.
+    const button = page.locator('.touch-rail').getByTestId('save-button');
+    await expect(button).toHaveAttribute('title', 'Game save: read your progress from a save');
+    await openSave(page, 'ManualSave_1.sav', VELEN_SAVE);
+    await expect(page.getByTestId('toast')).toHaveText(
+      'Read ManualSave_1.sav: 2 places marked found.',
+    );
+    await expect(found).toHaveAttribute('data-found', '2');
+    await expect(button).toHaveAttribute('title', 'Game save: linked');
+
+    const dialog = page.getByTestId('save-dialog');
+    await dialog.getByTestId('save-show-me').click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('img', { name: 'Where you last saved' })).toBeVisible();
+    await expect(page.getByTestId('show-me')).toBeVisible();
+
+    // Esc closes the dialog, and only the dialog.
+    await page.getByTestId('section-games').click();
+    await page.getByTestId('save-row').click();
+    await expect(dialog.getByTestId('save-link')).toContainText('ManualSave_1.sav');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('.touch')).toHaveAttribute('data-section', 'games');
+    expect(errors.filter((error) => !error.includes('Failed to load resource'))).toEqual([]);
+  });
 });

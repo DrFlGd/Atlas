@@ -1,6 +1,7 @@
 import { overridesShowingOnly, type SearchEntry, type VisibilityOverrides } from '@atlas/core';
 import { create } from 'zustand';
 import { canKeepScreenOn, keepScreenOn } from '../androidBars';
+import { keyboardHintsOffered } from '../features';
 import { notify, saveSetting, setFound, setOverrides } from '../state/actions';
 import { SETTINGS, progressStore } from '../state/services';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -26,6 +27,8 @@ export interface Solo {
 }
 
 export interface TouchState {
+  /** What the layout is made for: fingers, or a mouse and keyboard (see `uiMode.ts`). */
+  input: 'touch' | 'mouse';
   /** How the layout is arranged for the window (see `layout.ts`). */
   arrangement: Arrangement;
   section: Section;
@@ -45,9 +48,14 @@ export interface TouchState {
   keepScreenOn: boolean;
   /** Whether this device can keep the screen on at all. */
   screenOnOffered: boolean;
+  /** The list of keys is open. */
+  keysOpen: boolean;
+  /** Increases when the search field should take focus (the `/` key). */
+  searchFocus: number;
 }
 
 export const useTouch = create<TouchState>()(() => ({
+  input: 'touch',
   arrangement: 'compact',
   section: 'map',
   search: false,
@@ -60,6 +68,8 @@ export const useTouch = create<TouchState>()(() => ({
   recent: [],
   keepScreenOn: true,
   screenOnOffered: false,
+  keysOpen: false,
+  searchFocus: 0,
 }));
 
 const get = useTouch.getState;
@@ -98,6 +108,27 @@ export function setPlaceExpanded(expanded: boolean): void {
   set({ placeExpanded: expanded });
 }
 
+export function setKeysOpen(open: boolean): void {
+  set({ keysOpen: open });
+}
+
+/**
+ * The `/` key: search, with the field focused. On a wide screen search is
+ * in the map section's panel, so that section is shown.
+ */
+export function focusSearchField(): void {
+  const { arrangement, section, searchFocus } = get();
+  if (arrangement === 'wide' && section !== 'map') showSection('map');
+  set({ search: true, filters: false, mapsMenu: false, searchFocus: searchFocus + 1 });
+}
+
+/** The `C` key: the lists, or back to the map from them. */
+export function toggleLists(): void {
+  const { game } = useAtlas.getState();
+  if (get().section === 'lists') showSection('map');
+  else if (game && !game.checklists.isEmpty) showSection('lists');
+}
+
 // ---------------------------------------------------------------------------
 // Marking places
 
@@ -129,6 +160,12 @@ export function markFromHold(locationId: string): void {
       // Some browsers refuse; the notice still says what happened.
     }
   }
+}
+
+/** A right click on a marker: flips it at once, as pressing and holding does with a finger. */
+export function markFromMenu(locationId: string): void {
+  const found = useAtlas.getState().found.has(locationId);
+  markFound(locationId, !found);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +231,17 @@ export function rememberResult(entry: Pick<SearchEntry, 'kind' | 'id'>): void {
 // ---------------------------------------------------------------------------
 // Keeping the screen on
 
-/** Reads the setting (on unless turned off) and applies it. */
+/**
+ * Reads the setting and applies it: on unless turned off where the layout
+ * is made for fingers (a phone or tablet beside the game), off unless
+ * turned on on a computer, which should sleep as it always did.
+ */
 export async function loadKeepScreenOn(): Promise<void> {
-  let on = true;
+  const byDefault = get().input === 'touch';
+  let on = byDefault;
   try {
-    on = (await progressStore().getSetting(SETTINGS.keepScreenOn)) !== false;
+    const saved: unknown = await progressStore().getSetting(SETTINGS.keepScreenOn);
+    on = typeof saved === 'boolean' ? saved : byDefault;
   } catch {
     // The default stands.
   }
@@ -210,4 +253,18 @@ export function setKeepScreenOn(on: boolean): void {
   set({ keepScreenOn: on });
   keepScreenOn(on);
   saveSetting(SETTINGS.keepScreenOn, on);
+}
+
+// ---------------------------------------------------------------------------
+// Keys
+
+/**
+ * Whether to show keys on buttons: on a computer, where there is a
+ * keyboard (not in the Android app, nor where the layout is made for
+ * fingers).
+ */
+export function useKeyHints(): boolean {
+  const offered = useAtlas(keyboardHintsOffered);
+  const mouse = useTouch((s) => s.input === 'mouse');
+  return offered && mouse;
 }

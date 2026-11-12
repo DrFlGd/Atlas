@@ -1,12 +1,16 @@
 import {
   checklistTally,
+  countFacets,
+  filterChecklist,
+  itemFacets,
   itemState,
   type ChecklistEntry,
   type ChecklistItemEntry,
   type ItemState,
 } from '@atlas/core';
-import { memo, useMemo, useState } from 'react';
-import { GuideView } from '../components/ChecklistsPane';
+import { memo, useDeferredValue, useId, useMemo, useState } from 'react';
+import { FacetGroup, GuideView, NoteText } from '../components/ChecklistsPane';
+import { useFacetNames } from '../components/facetNames';
 import { UiIcon } from '../components/icons';
 import { VirtualList } from '../components/VirtualList';
 import {
@@ -154,44 +158,14 @@ type Row =
 
 const rowKey = (row: Row) => row.key;
 
+/** From this many entries a checklist gets a search field, as in the classic layout. */
+const SEARCH_FROM = 15;
+const NO_KEYS: ReadonlySet<string> = new Set();
+
 /** One checklist: how far it is, All / To do / Done, and its entries with their ticks. */
 function ChecklistScreen({ game, id }: { game: LoadedGame; id: string }) {
   const entry = game.checklists.checklist(id);
   const previous = useAtlas((s) => s.checklistPages.at(-2) ?? INDEX);
-  const found = useAtlas((s) => s.found);
-  const focus = useAtlas((s) => s.itemFocus);
-  const [filter, setFilter] = useState<Filter>('all');
-  const states = useMemo(() => {
-    const isDone = (target: string) => found.has(target);
-    return entry?.items.map((item) => itemState(item, isDone)) ?? [];
-  }, [entry, found]);
-  const done = states.filter((s) => s.done).length;
-
-  // Which entries a filter shows is read when the filter changes, so an
-  // entry ticked under "To do" stays under the finger until then.
-  const rows = useMemo(() => {
-    if (!entry) return [];
-    const isDone = (target: string) => useAtlas.getState().found.has(target);
-    const list: Row[] = [];
-    let section: string | undefined;
-    for (const item of entry.items) {
-      const state = itemState(item, isDone);
-      if ((filter === 'todo' && state.done) || (filter === 'done' && !state.done)) continue;
-      if (item.item.section !== section) {
-        section = item.item.section;
-        if (section) list.push({ kind: 'section', key: `section|${item.index}`, title: section });
-      }
-      list.push({ kind: 'item', key: item.item.id, entry: item });
-    }
-    return list;
-  }, [entry, filter]);
-
-  const reveal = useMemo(() => {
-    if (!focus) return null;
-    const index = rows.findIndex((r) => r.key === focus.itemId);
-    return index < 0 ? null : { index, seq: focus.seq };
-  }, [focus, rows]);
-
   if (!entry) {
     return (
       <div className="touch-page">
@@ -202,8 +176,89 @@ function ChecklistScreen({ game, id }: { game: LoadedGame; id: string }) {
       </div>
     );
   }
+  return <ChecklistBody game={game} entry={entry} previous={previous} />;
+}
+
+function ChecklistBody({
+  game,
+  entry,
+  previous,
+}: {
+  game: LoadedGame;
+  entry: ChecklistEntry;
+  previous: ChecklistPage;
+}) {
+  const found = useAtlas((s) => s.found);
+  const focus = useAtlas((s) => s.itemFocus);
+  const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const [hiddenRegions, setHiddenRegions] = useState(NO_KEYS);
+  const [hiddenCategories, setHiddenCategories] = useState(NO_KEYS);
+  const [facetsOpen, setFacetsOpen] = useState(false);
+  const names = useFacetNames(game, entry);
+  const facetsId = useId();
+  const searchId = useId();
+  const facets = useMemo(
+    () => entry.items.map((item) => itemFacets(item, game.pack)),
+    [entry, game],
+  );
+  const states = useMemo(() => {
+    const isDone = (target: string) => found.has(target);
+    return entry.items.map((item) => itemState(item, isDone));
+  }, [entry, found]);
+  const done = states.filter((s) => s.done).length;
+  const regionCounts = useMemo(
+    () => countFacets(facets, states, 'regions').sort((a, b) => names.compareRegions(a.key, b.key)),
+    [facets, states, names],
+  );
+  const categoryCounts = useMemo(
+    () =>
+      countFacets(facets, states, 'categories').sort((a, b) =>
+        names.compareCategories(a.key, b.key),
+      ),
+    [facets, states, names],
+  );
+
+  // Which entries a filter shows is read when the filter changes, so an
+  // entry ticked under "To do" stays under the finger until then.
+  const rows = useMemo(() => {
+    const isDone = (target: string) => useAtlas.getState().found.has(target);
+    const now = entry.items.map((item) => itemState(item, isDone));
+    const shown = filterChecklist(facets, now, {
+      query: deferredQuery,
+      hideFound: false,
+      hiddenRegions,
+      hiddenCategories,
+    });
+    const list: Row[] = [];
+    let section: string | undefined;
+    for (const index of shown) {
+      const item = entry.items[index]!;
+      const state = now[index]!;
+      if ((filter === 'todo' && state.done) || (filter === 'done' && !state.done)) continue;
+      if (item.item.section !== section) {
+        section = item.item.section;
+        if (section) list.push({ kind: 'section', key: `section|${item.index}`, title: section });
+      }
+      list.push({ kind: 'item', key: item.item.id, entry: item });
+    }
+    return list;
+  }, [entry, facets, filter, deferredQuery, hiddenRegions, hiddenCategories]);
+
+  const reveal = useMemo(() => {
+    if (!focus) return null;
+    const index = rows.findIndex((r) => r.key === focus.itemId);
+    return index < 0 ? null : { index, seq: focus.seq };
+  }, [focus, rows]);
+
   const total = entry.items.length;
   const value = total === 0 ? 0 : Math.floor((done / total) * 100);
+  const searchable = total >= SEARCH_FROM;
+  const showRegions = regionCounts.length > 1;
+  const showCategories = categoryCounts.length > 1;
+  const hiddenCount = hiddenRegions.size + hiddenCategories.size;
+  const narrowed = deferredQuery.trim() !== '' || hiddenCount > 0;
   const chips: { id: Filter; label: string }[] = [
     { id: 'all', label: 'All' },
     { id: 'todo', label: `To do · ${numberFormat.format(total - done)}` },
@@ -255,14 +310,84 @@ function ChecklistScreen({ game, id }: { game: LoadedGame; id: string }) {
           </button>
         ))}
       </div>
+      {searchable || showRegions || showCategories ? (
+        <div className="touch-list-tools">
+          {searchable ? (
+            <div className="touch-list-search">
+              <label htmlFor={searchId} className="visually-hidden">
+                Search this list
+              </label>
+              <input
+                id={searchId}
+                className="touch-text-input"
+                type="search"
+                placeholder="Search this list"
+                autoComplete="off"
+                spellCheck={false}
+                data-testid="list-search"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && query) {
+                    event.preventDefault();
+                    setQuery('');
+                  }
+                }}
+              />
+            </div>
+          ) : null}
+          {showRegions || showCategories ? (
+            <button
+              type="button"
+              className="touch-text-button"
+              aria-expanded={facetsOpen}
+              aria-controls={facetsId}
+              data-testid="list-facets-toggle"
+              onClick={() => {
+                setFacetsOpen(!facetsOpen);
+              }}
+            >
+              {facetsOpen ? 'Hide filters' : 'Filter by region and category'}
+              {hiddenCount > 0 ? ` (${hiddenCount} off)` : ''}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {facetsOpen ? (
+        <div className="touch-list-facets" id={facetsId} data-testid="checklist-facets">
+          {showRegions ? (
+            <FacetGroup
+              legend="Regions"
+              counts={regionCounts}
+              hidden={hiddenRegions}
+              name={names.region}
+              group={names.severalMaps ? (key) => names.mapName(names.mapOf(key)) : undefined}
+              onChange={setHiddenRegions}
+            />
+          ) : null}
+          {showCategories ? (
+            <FacetGroup
+              legend="Categories"
+              counts={categoryCounts}
+              hidden={hiddenCategories}
+              name={names.category}
+              onChange={setHiddenCategories}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <div className="touch-scroll touch-check-list" data-scroll-root>
         {rows.length === 0 ? (
           <p className="touch-empty">
             {total === 0
               ? 'This list has no entries.'
-              : filter === 'todo'
-                ? 'Every entry is done.'
-                : 'Nothing is done yet.'}
+              : narrowed
+                ? 'No entries match the filters.'
+                : filter === 'todo'
+                  ? 'Every entry is done.'
+                  : 'Nothing is done yet.'}
           </p>
         ) : (
           <VirtualList
@@ -287,7 +412,11 @@ function ChecklistScreen({ game, id }: { game: LoadedGame; id: string }) {
   );
 }
 
-/** One entry: its tick, its name and where it is, and a way to show it on the map. */
+/**
+ * One entry: its tick, its name and where it is, and a way to show it on
+ * the map. Where it has more (a note, a guide, several places), a button
+ * opens that under it.
+ */
 const EntryRow = memo(
   function EntryRow({
     game,
@@ -301,6 +430,8 @@ const EntryRow = memo(
     const { pack } = game;
     const { item } = entry;
     const wide = useTouch((s) => s.arrangement === 'wide');
+    const [more, setMore] = useState(false);
+    const moreId = useId();
     const shown = useAtlas((s) => s.selectedId !== null && entry.places.includes(s.selectedId));
     const placeId = useAtlas((s) => entry.places.find((id) => !s.found.has(id)) ?? entry.places[0]);
     const place = placeId ? pack.locations.get(placeId) : undefined;
@@ -315,6 +446,18 @@ const EntryRow = memo(
     ]
       .filter(Boolean)
       .join(' · ');
+    // What the classic list shows under an entry: the first place's own
+    // note (a guide shared by many places is linked instead), the entry's
+    // note, and each of its places.
+    const first = entry.places.length > 0 ? pack.locations.get(entry.places[0]!) : undefined;
+    const guide = first?.guideId ? game.checklists.guide(first.guideId) : undefined;
+    const ownNote = guide && !game.checklists.isListed(guide.id) ? guide : undefined;
+    const sharedGuide = guide && game.checklists.isListed(guide.id) ? guide : undefined;
+    const hasMore =
+      ownNote !== undefined ||
+      Boolean(item.note) ||
+      sharedGuide !== undefined ||
+      entry.places.length > 1;
     const show = () => {
       if (placeId) showItemPlace(item.id, placeId);
     };
@@ -330,6 +473,7 @@ const EntryRow = memo(
           'touch-entry',
           state.done ? 'touch-entry-done' : '',
           shown ? 'touch-entry-shown' : '',
+          more ? 'touch-entry-open' : '',
         ].join(' ')}
         data-testid="check-item"
         data-item-id={item.id}
@@ -361,6 +505,21 @@ const EntryRow = memo(
         ) : (
           <div className="touch-entry-body">{text}</div>
         )}
+        {hasMore ? (
+          <button
+            type="button"
+            className="touch-tick-button touch-entry-more"
+            aria-label={more ? `Less about ${item.name}` : `More about ${item.name}`}
+            aria-expanded={more}
+            aria-controls={moreId}
+            data-testid="entry-more"
+            onClick={() => {
+              setMore(!more);
+            }}
+          >
+            <UiIcon name={more ? 'chevronUp' : 'chevronDown'} size={20} strokeWidth={1.8} />
+          </button>
+        ) : null}
         {placeId && !wide ? (
           <button
             type="button"
@@ -370,6 +529,48 @@ const EntryRow = memo(
           >
             <UiIcon name="pin" size={22} />
           </button>
+        ) : null}
+        {more ? (
+          <div className="touch-entry-more-body" id={moreId} data-testid="entry-more-body">
+            {ownNote ? <NoteText source={ownNote.body} /> : null}
+            {item.note ? <NoteText source={item.note} /> : null}
+            {sharedGuide ? (
+              <button
+                type="button"
+                className="touch-text-button"
+                onClick={() => {
+                  openGuide(sharedGuide.id);
+                }}
+              >
+                Guide: {sharedGuide.title}
+              </button>
+            ) : null}
+            {entry.places.length > 1 ? (
+              <ul className="touch-plain-list touch-entry-places">
+                {entry.places.map((locationId) => {
+                  const location = pack.locations.get(locationId);
+                  const map = location ? pack.maps.get(location.mapId) : undefined;
+                  return (
+                    <li key={locationId}>
+                      <button
+                        type="button"
+                        className="touch-text-button"
+                        onClick={() => {
+                          showItemPlace(item.id, locationId);
+                        }}
+                      >
+                        <UiIcon name="pin" size={16} />
+                        {location?.name ?? locationId}
+                        {map && pack.data.maps.length > 1 ? (
+                          <span className="muted"> · {map.name}</span>
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </div>
         ) : null}
       </div>
     );

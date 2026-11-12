@@ -17,12 +17,12 @@ import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { initSaves } from './state/saves';
-import { useAtlas, type LeftTab, type PaneName } from './state/store';
-import { sessionStore, touchRequested } from './touch/uiMode';
+import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
+import { coarsePointer, requestedUi, sessionStore, shownUi } from './touch/uiMode';
 import { formatViewHash, parseViewHash } from './viewHash';
 
-// The touch layout, for the Android app (and a browser that asks for it):
-// loaded only where it is shown.
+// The standard layout (src/touch/): loaded only where it is shown, so the
+// classic layout's bundle stays as it was.
 const TouchShell = lazy(() =>
   import('./touch/TouchShell').then((module) => ({ default: module.TouchShell })),
 );
@@ -40,16 +40,26 @@ const PackFileDialog = lazy(() =>
 );
 
 /**
- * Loads the configuration and the first pack, then shows the three-pane
- * layout, or the touch layout in the Android app.
+ * Loads the configuration and the first pack, then shows the standard
+ * layout (a rail, a panel and the map), or the classic three-pane layout
+ * where the person chose it (see `touch/uiMode.ts`).
  */
 export function App() {
   const status = useAtlas((s) => s.status);
   const game = useAtlas((s) => s.game);
-  const [requested] = useState(() => touchRequested(window.location.search, sessionStore()));
-  const touch = useAtlas((s) => requested || touchUiOffered(s));
+  const [coarse] = useState(coarsePointer);
+  const shown = (s: AtlasState) =>
+    shownUi({
+      android: touchUiOffered(s),
+      requested: s.uiRequest,
+      saved: s.layout,
+      coarse,
+    });
+  const touch = useAtlas((s) => shown(s).layout === 'standard');
+  const input = useAtlas((s) => shown(s).input);
 
   useEffect(() => {
+    useAtlas.setState({ uiRequest: requestedUi(window.location.search, sessionStore()) });
     const stopSaves = initSaves();
     void boot(parseViewHash(window.location.hash));
     return stopSaves;
@@ -87,7 +97,7 @@ export function App() {
           </main>
         }
       >
-        <TouchShell />
+        <TouchShell key={input} input={input} />
       </Suspense>
     );
   }

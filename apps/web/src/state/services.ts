@@ -34,6 +34,8 @@ export function progressStore(): ProgressStore {
 export const SETTINGS = {
   activePack: 'activePack',
   theme: 'theme',
+  /** The layout: the standard one, or the classic one (see `touch/uiMode.ts`). */
+  layout: 'layout',
   panes: 'panes',
   profile: (gameId: string) => `profile:${gameId}`,
   filters: (gameId: string) => `filters:${gameId}`,
