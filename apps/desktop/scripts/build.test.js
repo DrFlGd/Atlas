@@ -121,6 +121,9 @@ test("the Android project gets the app's activity with the generated package", a
   assert.match(written, /^package dev\.atlas\.android$/m);
   assert.match(written, /addJavascriptInterface\(Bars\(\), "AtlasAndroid"\)/);
   assert.match(written, /enableEdgeToEdge\(\)/);
+  assert.match(written, /fun keepScreenOn\(on: Boolean\)/);
+  assert.match(written, /onBackPressedDispatcher\.addCallback\(this, back\)/);
+  assert.match(written, /window\.atlasBack\(\)/);
   const other = mainActivitySource('package org.example.`in`.app\n', ours);
   assert.match(other, /^package org\.example\.`in`\.app$/m);
   assert.equal(other.match(/^package /gm)?.length, 1);

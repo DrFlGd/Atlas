@@ -71,3 +71,12 @@ export function importsOffered(state: Pick<AtlasState, 'app'>): boolean {
 export function keyboardHintsOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.platform !== 'android';
 }
+
+/**
+ * Whether the app shows its touch layout (`src/touch/`), made for a phone
+ * or tablet beside the game: in the Android app. A browser can ask for it
+ * too, for a preview (see `touch/uiMode.ts`).
+ */
+export function touchUiOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return state.app?.platform === 'android';
+}

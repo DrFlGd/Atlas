@@ -73,6 +73,11 @@ export interface Notice {
   text: string;
   tone: 'info' | 'error';
   seq: number;
+  /**
+   * The notice reports a change that undo takes back: the desktop layout
+   * says to press Z, the touch layout shows an Undo button.
+   */
+  undo?: boolean;
 }
 
 /** Map image downloads of the current pack, in the desktop app. */

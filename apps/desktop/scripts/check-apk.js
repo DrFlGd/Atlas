@@ -16,8 +16,10 @@
  * - the app's code (`classes*.dex`) holds what the Android app needs at
  *   run time besides the web build: the fs plugin, which reads and writes
  *   the `content://` files of the system's picker and save screen, and the
- *   app's own activity, which tells the page the system bar sizes
- *   (`window.AtlasAndroid`, from `android/MainActivity.kt`);
+ *   app's own activity (`android/MainActivity.kt`), which tells the page the
+ *   system bar sizes and keeps the screen on (`window.AtlasAndroid`), and
+ *   lets the page close what it shows before Back leaves the app
+ *   (`window.atlasBack`);
  * - no file in the APK, and no file of the prepared frontend, contains any
  *   `--forbid` text, ignoring case. The frontend is searched as well because
  *   the library holds it compressed.
@@ -57,6 +59,8 @@ export function embeddedPacks(bytes) {
 export const REQUIRED_CODE = [
   { text: 'Lcom/plugin/fs/FsPlugin;', what: 'the fs plugin (picked and saved files)' },
   { text: 'AtlasAndroid', what: "the app's activity (system bar sizes for the page)" },
+  { text: 'keepScreenOn', what: "the app's activity keeping the screen on" },
+  { text: 'atlasBack', what: "the app's activity asking the page about Back" },
 ];
 
 /**

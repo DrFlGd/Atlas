@@ -183,12 +183,16 @@ jobs:
 
           ## What works in this version
 
-          - The map with its markers, filters, search, checklists, profiles, and marking places found. Found marks are saved on the phone.
-          - **Maps**, then **Import map pack file…**: pick an .atlaspack file from the phone or a cloud drive. Maps lists the games on the phone, with their detail and size, and deletes them.
-          - Exporting and importing progress files from the profile button.
+          - A layout made for touch screens. On a phone the map fills the screen, with Map, Lists, Progress and Games at the bottom; on a tablet, or a phone on its side, a side panel stands beside the map.
+          - Tap a marker for the place: **Mark found**, the next place (the next entry of the open checklist, or the nearest), and, pulled up, its guide and lists. Press and hold a marker to mark it found at once. **Undo** on the notice takes a change back.
+          - Search places, lists and guides, nearest to the middle of the map first, and tick places off from the results. Filters, a chip per kind to show that kind alone, and **Nearest unfound**.
+          - Checklists and guides under **Lists**; figures for the game, each map, region and kind under **Progress**.
+          - **Games**, then **Import map pack file…**: pick an .atlaspack file from the phone or a cloud drive. Games lists the games on the phone, with their detail and size, and deletes them. The theme and **Keep the screen on** are there too.
+          - The Back button closes what is open (a dialog, the place, search, the filters) before it leaves the app.
+          - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
-          Not in this version: adding maps from web pages, downloading map images, reading game saves, and separate layouts for phones and tablets.
+          Not in this version: adding maps from web pages, downloading map images, and reading game saves.
 
           ---
 

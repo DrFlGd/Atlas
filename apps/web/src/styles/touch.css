@@ -1,0 +1,2053 @@
+/*
+ * The touch layout (src/touch/): the Android app's interface, and a
+ * browser's with ?ui=touch. Colours come from the theme tokens in
+ * theme.css, so both themes work; the few values of its own are mixed from
+ * them. Targets are at least 48 px, text at least 13 px (14 px for body
+ * text), and the map runs under the system bars while everything else
+ * keeps clear of them (--atlas-inset-*).
+ */
+
+:root,
+:root[data-theme='dark'] {
+  --touch-toast-action: #075e51;
+}
+
+:root[data-theme='light'] {
+  --touch-toast-action: #8fe0d0;
+}
+
+:root[data-ui='touch'] {
+  --touch-float: var(--atlas-surface);
+  --touch-tick-border: color-mix(in srgb, var(--atlas-muted) 65%, var(--atlas-border-strong));
+  --touch-text-soft: color-mix(in srgb, var(--atlas-text) 82%, var(--atlas-muted));
+  --touch-float-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-ui='touch'][data-theme='light'] {
+  --touch-float-shadow: 0 4px 16px rgba(20, 24, 32, 0.18);
+}
+
+/* The map runs edge to edge, under the bars; the layout keeps clear of them itself. */
+:root[data-ui='touch'] #root {
+  padding: 0;
+}
+
+:root[data-ui='touch'] body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Under the status bar over the map: a soft shade so its icons stay readable. */
+:root[data-ui='touch'] body::before {
+  height: calc(var(--atlas-inset-top) + 8px);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--atlas-bg) 72%, transparent),
+    transparent
+  );
+}
+
+.touch {
+  --touch-bar: calc(64px + var(--atlas-inset-bottom));
+  --touch-rail: calc(80px + var(--atlas-inset-left));
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--atlas-map-backdrop);
+  color: var(--atlas-text);
+  font-size: 15px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.touch button:disabled {
+  cursor: default;
+}
+
+.touch-plain-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.touch-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.touch-figure {
+  flex: none;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.touch-pill-light {
+  font-weight: 400;
+}
+
+.touch-note {
+  margin: 8px 4px 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.touch-empty {
+  margin: 0;
+  padding: 32px 16px;
+  color: var(--atlas-muted);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/* Arrangement: the map, the bar or rail, the panel */
+
+.touch-map {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+}
+
+.touch[data-arrangement='wide'] .touch-map {
+  left: calc(var(--touch-rail) + var(--touch-panel));
+}
+
+.touch-map .leaflet-control-zoom {
+  display: none;
+}
+
+.touch-map .leaflet-right {
+  right: var(--atlas-inset-right);
+}
+
+.touch[data-arrangement='compact'] .touch-map .leaflet-bottom {
+  bottom: var(--touch-bar);
+}
+
+.touch[data-arrangement='wide'] .touch-map .leaflet-bottom {
+  bottom: var(--atlas-inset-bottom);
+}
+
+.touch .tile-notice {
+  top: calc(var(--atlas-inset-top) + 132px);
+  bottom: auto;
+  max-width: calc(100% - 24px);
+}
+
+.touch[data-arrangement='wide'] .tile-notice {
+  top: calc(var(--atlas-inset-top) + 84px);
+}
+
+.touch-bar {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  height: var(--touch-bar);
+  padding: 0 calc(4px + var(--atlas-inset-right)) var(--atlas-inset-bottom)
+    calc(4px + var(--atlas-inset-left));
+  background: var(--atlas-surface);
+  border-top: 1px solid var(--atlas-border);
+}
+
+.touch-bar-button,
+.touch-rail-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.touch-bar-button {
+  flex: 1;
+  min-height: 48px;
+}
+
+.touch-section-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 30px;
+  border-radius: 15px;
+}
+
+.touch-bar-button[aria-current='page'],
+.touch-rail-button[aria-current='page'] {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.touch-bar-button[aria-current='page'] .touch-section-icon,
+.touch-rail-button[aria-current='page'] .touch-section-icon {
+  background: var(--atlas-accent-soft);
+}
+
+.touch-rail {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: var(--touch-rail);
+  padding: calc(var(--atlas-inset-top) + 16px) 0 calc(var(--atlas-inset-bottom) + 16px)
+    var(--atlas-inset-left);
+  background: var(--atlas-surface);
+  border-right: 1px solid var(--atlas-border);
+  overflow-y: auto;
+}
+
+.touch-rail-button {
+  flex: none;
+  width: 72px;
+  height: 64px;
+}
+
+.touch-rail-button .touch-section-icon {
+  height: 32px;
+  border-radius: 16px;
+}
+
+.touch-rail-space {
+  flex: 1;
+}
+
+.touch-round-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 22px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+}
+
+.touch-rail-profile {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  border: 1px solid var(--atlas-border);
+}
+
+.touch-icon-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 24px;
+  background: none;
+  color: var(--atlas-text);
+}
+
+.touch-icon-button-small {
+  width: 44px;
+  height: 44px;
+  color: var(--atlas-muted);
+}
+
+.touch-panel {
+  position: absolute;
+  z-index: 10;
+  left: var(--touch-rail);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  width: var(--touch-panel);
+  padding: calc(var(--atlas-inset-top) + 16px) 0 var(--atlas-inset-bottom);
+  background: var(--atlas-surface);
+  border-right: 1px solid var(--atlas-border);
+  overflow: hidden;
+}
+
+.touch-map-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* A section on a phone covers the map, above the bar. */
+.touch-screen {
+  position: absolute;
+  z-index: 10;
+  inset: 0 0 var(--touch-bar);
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--atlas-inset-top) + 4px) var(--atlas-inset-right) 0 var(--atlas-inset-left);
+  background: var(--atlas-bg);
+}
+
+/* ------------------------------------------------------------------ */
+/* Controls over the map */
+
+.touch-map-top {
+  position: absolute;
+  z-index: 1100;
+  left: var(--atlas-inset-left);
+  right: var(--atlas-inset-right);
+  top: calc(var(--atlas-inset-top) + 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.touch-map-top > *,
+.touch-map-bottom > * {
+  pointer-events: auto;
+}
+
+.touch[data-arrangement='wide'] .touch-map-top {
+  top: calc(var(--atlas-inset-top) + 16px);
+  left: 16px;
+  right: calc(16px + var(--atlas-inset-right));
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.touch-map-bottom {
+  position: absolute;
+  z-index: 1100;
+  left: calc(12px + var(--atlas-inset-left));
+  right: calc(12px + var(--atlas-inset-right));
+  bottom: calc(var(--touch-bar) + 22px);
+  display: flex;
+  /* A map name too long to sit beside the button goes on a row above it. */
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  pointer-events: none;
+}
+
+.touch-map-bottom .touch-map-chip {
+  max-width: 100%;
+}
+
+.touch-map-bottom .touch-fab {
+  margin-left: auto;
+}
+
+.touch[data-arrangement='wide'] .touch-map-bottom {
+  left: 16px;
+  right: auto;
+  bottom: calc(16px + var(--atlas-inset-bottom));
+}
+
+.touch-map-bottom-space {
+  flex: 1;
+}
+
+.touch-search-pill {
+  display: flex;
+  align-self: center;
+  width: calc(100% - 24px);
+  max-width: 600px;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  margin: 0 12px;
+  padding: 0 6px 0 4px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 26px;
+  background: var(--touch-float);
+  box-shadow: var(--touch-float-shadow);
+}
+
+.touch-search-pill-button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 50px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 25px;
+  background: none;
+  color: var(--atlas-muted);
+  font-size: 16px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.touch-search-pill-button .ui-icon {
+  flex: none;
+}
+
+.touch-ring-button {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 22px;
+  background: none;
+  color: var(--atlas-text);
+}
+
+.touch-ring-button .touch-ring {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+}
+
+.touch-ring-text {
+  position: relative;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.touch-ring-track {
+  stroke: var(--atlas-border);
+}
+
+.touch-ring-fill {
+  stroke: var(--atlas-accent);
+}
+
+.touch-chip-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.touch-chip-row::-webkit-scrollbar {
+  display: none;
+}
+
+.touch-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 22px;
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.touch-chip[aria-pressed='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent-strong);
+  font-weight: 600;
+}
+
+.touch-chip-float {
+  padding: 0 14px;
+  background: var(--touch-float);
+}
+
+.touch-chip-float[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--atlas-accent) 22%, var(--atlas-surface));
+}
+
+.touch-chip-kind {
+  padding-left: 8px;
+}
+
+.touch-chip-count {
+  color: var(--atlas-accent-strong);
+  font-size: 13px;
+}
+
+.touch-chip-text {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.touch-chip-pair {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.touch-chip-remove {
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  color: var(--atlas-muted);
+}
+
+.touch-chips {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  padding: 0 12px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.touch-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 24px;
+  background: var(--touch-float);
+  box-shadow: var(--touch-float-shadow);
+  color: var(--atlas-text);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.touch-pill .ui-icon {
+  flex: none;
+}
+
+.touch[data-arrangement='wide'] .touch-pill {
+  padding: 0 16px;
+  font-size: 15px;
+}
+
+.touch-map-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.touch-map-chip .ui-icon:last-child {
+  color: var(--atlas-muted);
+}
+
+.touch[data-arrangement='wide'] .touch-progress-pill {
+  gap: 10px;
+  padding: 0 16px 0 6px;
+}
+
+.touch-fab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 20px 0 16px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.touch[data-arrangement='wide'] .touch-fab {
+  padding: 0 22px 0 18px;
+  font-size: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sheets, scrims and the list of maps */
+
+.touch-scrim {
+  position: absolute;
+  z-index: 40;
+  inset: 0;
+  background: rgba(9, 11, 15, 0.55);
+}
+
+.touch-scrim-light {
+  background: rgba(9, 11, 15, 0.3);
+}
+
+.touch-sheet {
+  position: absolute;
+  z-index: 41;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 var(--atlas-inset-right) var(--atlas-inset-bottom) var(--atlas-inset-left);
+  border-top: 1px solid var(--atlas-border);
+  border-radius: 20px 20px 0 0;
+  background: var(--atlas-surface);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.touch-filters-sheet {
+  top: calc(var(--atlas-inset-top) + 52px);
+}
+
+.touch-sheet-grip {
+  flex: none;
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--atlas-border-strong);
+}
+
+.touch-sheet-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 16px;
+}
+
+.touch-sheet-title {
+  flex: 1;
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.touch-menu {
+  max-height: 72%;
+  overflow-y: auto;
+  padding-bottom: calc(8px + var(--atlas-inset-bottom));
+}
+
+.touch-menu.touch-sheet {
+  padding-top: 8px;
+}
+
+.touch-menu-wide {
+  position: absolute;
+  z-index: 41;
+  top: calc(var(--atlas-inset-top) + 72px);
+  left: calc(var(--touch-rail) + var(--touch-panel) + 16px);
+  width: min(360px, calc(100% - var(--touch-rail) - var(--touch-panel) - 32px));
+  max-height: calc(100% - var(--atlas-inset-top) - var(--atlas-inset-bottom) - 88px);
+  padding: 8px 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-surface);
+  box-shadow: var(--atlas-shadow);
+}
+
+.touch-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 12px 0 16px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font-size: 16px;
+  text-align: left;
+}
+
+.touch-menu-row-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.touch-menu-row[aria-current='true'] .touch-menu-row-name {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.touch-menu-row-check {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  width: 24px;
+  color: var(--atlas-accent);
+}
+
+.touch-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 14px 4px 6px;
+}
+
+.touch-group-title {
+  flex: 1;
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.touch-group-title-row,
+.touch-menu .touch-group-title {
+  padding: 14px 16px 6px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .touch-sheet,
+  .place-sheet:not(.place-card) {
+    animation: touch-rise 160ms ease-out;
+  }
+
+  .touch-search-screen {
+    animation: touch-fade 120ms ease-out;
+  }
+}
+
+@keyframes touch-rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+@keyframes touch-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* The selected place */
+
+.place-sheet {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  bottom: var(--touch-bar);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 560px;
+  max-height: calc(100% - var(--touch-bar) - var(--atlas-inset-top) - 72px);
+  margin: 0 auto;
+  padding: 8px calc(16px + var(--atlas-inset-right)) 16px calc(16px + var(--atlas-inset-left));
+  border-top: 1px solid var(--atlas-border);
+  border-radius: 20px 20px 0 0;
+  background: var(--atlas-surface);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.place-card {
+  left: auto;
+  right: calc(16px + var(--atlas-inset-right));
+  bottom: calc(16px + var(--atlas-inset-bottom));
+  width: 380px;
+  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
+  max-height: calc(100% - var(--atlas-inset-top) - var(--atlas-inset-bottom) - 96px);
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 20px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.place-grip-area {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 14px;
+  touch-action: none;
+}
+
+.place-grip {
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--atlas-border-strong);
+}
+
+.place-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.place-head .glyph-badge {
+  flex: none;
+}
+
+.place-title-block {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.place-kind {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.place-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.place-card .place-title {
+  font-size: 20px;
+}
+
+.place-where {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 14px;
+}
+
+.place-actions {
+  display: flex;
+  flex: none;
+  gap: 10px;
+}
+
+.place-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 16px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 14px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.place-action-primary {
+  flex: 1;
+  gap: 10px;
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.place-action-found {
+  gap: 10px;
+  padding: 0 18px;
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent-strong);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.place-details-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 4px;
+  border: 0;
+  border-top: 1px solid var(--atlas-border);
+  background: none;
+  color: var(--atlas-text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.place-details-row .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.place-details-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.place-details {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.place-card .place-details {
+  padding-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.place-guide-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.place-guide .guide-body {
+  color: var(--touch-text-soft);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.place-guide .guide-body > :last-child {
+  margin-bottom: 0;
+}
+
+.place-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 4px;
+  border: 0;
+  border-top: 1px solid var(--atlas-border);
+  background: none;
+  color: var(--atlas-text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.place-list-row > .ui-icon:first-child {
+  flex: none;
+  color: var(--atlas-accent);
+}
+
+.place-list-row > .ui-icon:last-child {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.place-list-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.small-text {
+  font-size: 13px;
+}
+
+.place-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.place-facts dt {
+  color: var(--atlas-muted);
+}
+
+.place-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.touch-note:empty {
+  display: none;
+}
+
+.touch-text-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 22px;
+  background: none;
+  color: var(--atlas-accent);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.touch-text-button-danger {
+  color: var(--atlas-danger);
+}
+
+/* ------------------------------------------------------------------ */
+/* Toast */
+
+.touch-toast-region {
+  position: absolute;
+  z-index: 50;
+  left: calc(12px + var(--atlas-inset-left));
+  right: calc(12px + var(--atlas-inset-right));
+  bottom: calc(var(--touch-bar) + 16px);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.touch[data-arrangement='compact'][data-section='map'] .touch-toast-region {
+  bottom: calc(var(--touch-bar) + 92px);
+}
+
+.touch[data-arrangement='compact'][data-place='shown'] .touch-toast-region {
+  bottom: calc(var(--touch-bar) + var(--touch-sheet-h, 220px) + 12px);
+}
+
+.touch-toast-region-wide {
+  left: calc(var(--touch-rail) + var(--touch-panel) + 16px);
+  right: auto;
+  bottom: calc(16px + var(--atlas-inset-bottom));
+  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
+}
+
+.touch[data-arrangement='wide'][data-section='map'] .touch-toast-region {
+  bottom: calc(84px + var(--atlas-inset-bottom));
+}
+
+.touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region {
+  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 380px - 56px);
+}
+
+.touch-toast {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 56px;
+  max-width: 560px;
+  padding: 0 18px;
+  border-radius: 14px;
+  background: var(--atlas-text);
+  color: var(--atlas-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 15px;
+  font-weight: 500;
+  pointer-events: auto;
+}
+
+.touch-toast:has(.touch-toast-action) {
+  padding-right: 6px;
+}
+
+.touch-toast-text {
+  flex: 1;
+  padding: 8px 0;
+}
+
+.touch-toast-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--touch-toast-action);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.touch-toast-error {
+  background: var(--atlas-danger);
+  color: #ffffff;
+}
+
+/* ------------------------------------------------------------------ */
+/* Search */
+
+.touch-search-screen {
+  position: absolute;
+  z-index: 45;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--atlas-inset-top) + 4px) var(--atlas-inset-right) var(--atlas-inset-bottom)
+    var(--atlas-inset-left);
+  background: var(--atlas-bg);
+}
+
+.touch-search-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px 0 4px;
+}
+
+.touch-search-head-panel {
+  padding: 0 12px;
+}
+
+.touch-search-box {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 52px;
+  padding: 0 4px 0 18px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 26px;
+  background: var(--atlas-surface-raised);
+}
+
+.touch-search-head-panel .touch-search-box {
+  padding-left: 16px;
+}
+
+.touch-search-head-panel .touch-search-box > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.touch-search-box-active {
+  border-color: var(--atlas-accent);
+}
+
+.touch-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--atlas-text);
+  font-size: 17px;
+}
+
+.touch-search-head-panel .touch-search-input {
+  font-size: 16px;
+}
+
+.touch-search-input::placeholder {
+  color: var(--atlas-muted);
+}
+
+.touch-search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* The field is the thing being typed into; its accent edge says so. */
+.touch-search-box:focus-within {
+  border-color: var(--atlas-accent);
+}
+
+.touch-search-screen .touch-chips,
+.touch-map-panel .touch-chips {
+  padding: 12px 12px 0;
+}
+
+.touch-search-summary {
+  flex: none;
+  margin: 0;
+  padding: 14px 16px 6px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.touch-result-list,
+.touch-entry-list {
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
+  list-style: none;
+}
+
+.touch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 0 8px 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--atlas-surface-raised);
+  background: none;
+  color: var(--atlas-text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.touch-page-body .touch-row {
+  padding-left: 4px;
+}
+
+.touch-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+
+.touch-row-main:disabled {
+  opacity: 0.6;
+}
+
+.touch-row .glyph-badge {
+  flex: none;
+}
+
+.touch-row-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-accent);
+}
+
+.touch-panel .touch-row-icon {
+  background: var(--atlas-bg);
+}
+
+.touch-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.touch-row-title {
+  font-size: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.touch-row-detail {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.touch-row-found .touch-row-title {
+  color: var(--atlas-muted);
+}
+
+.touch-row-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--atlas-muted);
+}
+
+.touch-tick-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 24px;
+  background: none;
+  color: var(--atlas-text);
+}
+
+.touch-tick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--touch-tick-border);
+  border-radius: 8px;
+}
+
+.touch-tick-round {
+  border-radius: 14px;
+}
+
+.touch-tick-done {
+  border: 0;
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+}
+
+/* ------------------------------------------------------------------ */
+/* Filters */
+
+.touch-filters {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+}
+
+.touch-switch-card {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  margin: 0 12px;
+  padding: 0 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.touch-map-panel .touch-switch-card {
+  min-height: 52px;
+  margin: 12px 12px 4px;
+  font-size: 15px;
+}
+
+.touch-switch-label {
+  flex: 1;
+}
+
+.touch-switch-note {
+  display: block;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.touch-switch {
+  display: flex;
+  flex: none;
+  width: 48px;
+  height: 28px;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--atlas-border-strong);
+}
+
+.touch-switch-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--atlas-text);
+}
+
+.touch-switch-on {
+  justify-content: flex-end;
+  background: var(--atlas-accent);
+}
+
+.touch-switch-on .touch-switch-thumb {
+  background: var(--atlas-accent-text);
+}
+
+.touch[data-arrangement='wide'] .touch-panel .touch-switch {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+}
+
+.touch[data-arrangement='wide'] .touch-panel .touch-switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+}
+
+.touch-presets {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 12px 4px;
+}
+
+.touch-presets-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.touch-presets-label {
+  margin: 0 4px 0 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.touch-presets .touch-chip:not([aria-pressed='true']) {
+  border-color: var(--atlas-border-strong);
+}
+
+.touch-presets .touch-text-button {
+  margin-left: -12px;
+}
+
+.touch-inline-form {
+  display: flex;
+  align-self: stretch;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.touch-text-input {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 12px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 16px;
+}
+
+.touch-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 12px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.touch-button:disabled {
+  opacity: 0.5;
+}
+
+.touch-button-primary {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-weight: 600;
+}
+
+.touch-button-block {
+  width: 100%;
+  min-height: 56px;
+  margin-top: 12px;
+  font-size: 16px;
+}
+
+.touch-kinds-head {
+  align-items: center;
+  padding: 8px 4px 0 16px;
+}
+
+.touch-kind-group .touch-group-head {
+  align-items: center;
+  padding: 8px 8px 0 16px;
+}
+
+.touch-kind-group + .touch-kind-group .touch-group-head {
+  margin-top: 6px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.touch-group-switch {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.touch-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font-size: 16px;
+  text-align: left;
+}
+
+.touch-panel .touch-kind-row {
+  min-height: 48px;
+  font-size: 15px;
+}
+
+.touch-kind-row .glyph-badge {
+  flex: none;
+}
+
+.touch-kind-row-off {
+  color: var(--atlas-muted);
+}
+
+.touch-kind-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Section pages: Lists, Progress, Games */
+
+.touch-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.touch-page-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 12px 12px 16px;
+}
+
+.touch-page-head-row {
+  justify-content: space-between;
+}
+
+.touch-page-head-back {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 0 16px 12px 4px;
+}
+
+.touch-page-head-back .touch-page-head-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.touch-page-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.touch-page-title {
+  flex: 1;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.touch-page-subtitle {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.touch-page-figure,
+.touch-page-kicker {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 14px;
+}
+
+.touch-page-kicker {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.touch-progressbar {
+  height: 6px;
+  margin-left: 12px;
+  border-radius: 3px;
+  background: var(--atlas-border);
+  overflow: hidden;
+}
+
+.touch-meter {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--atlas-border);
+  overflow: hidden;
+}
+
+.touch-meter-fill {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--atlas-accent);
+}
+
+.touch-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0 12px 24px;
+}
+
+.touch-progress-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--atlas-text);
+  text-align: left;
+}
+
+.touch-progress-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.touch-progress-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.touch-progress-row-name.strong {
+  font-weight: 500;
+}
+
+.touch-overall {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-surface);
+}
+
+.touch-panel .touch-overall {
+  background: var(--atlas-surface-raised);
+}
+
+.touch-overall-ring {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+
+.touch-overall-ring .touch-ring-track,
+.touch-overall-ring .touch-ring-fill {
+  stroke-width: 3.9;
+}
+
+.touch-overall-percent {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.touch-overall-figure {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.touch-overall-note {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 14px;
+}
+
+/* A checklist's entries */
+
+.touch-check-list {
+  border-top: 1px solid var(--atlas-surface-raised);
+}
+
+.touch-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 64px;
+  padding: 0 8px 0 6px;
+  border-bottom: 1px solid var(--atlas-surface-raised);
+}
+
+.touch-panel .touch-entry {
+  min-height: 60px;
+}
+
+.touch-entry-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  text-align: left;
+}
+
+.touch-entry-name {
+  display: -webkit-box;
+  font-size: 16px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.touch-panel .touch-entry-name {
+  font-size: 15px;
+}
+
+.touch-entry-where {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.touch-entry-done .touch-entry-body {
+  color: var(--atlas-muted);
+}
+
+.touch-entry-done .touch-entry-name {
+  text-decoration: line-through;
+}
+
+.touch-entry-pin {
+  color: var(--atlas-accent);
+}
+
+.touch-entry-done .touch-entry-pin {
+  color: var(--atlas-muted);
+}
+
+.touch-entry-shown {
+  background: var(--atlas-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--atlas-accent);
+}
+
+.touch-entry-shown .touch-entry-body {
+  color: var(--atlas-text);
+}
+
+.touch-entry-shown .touch-entry-name {
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.touch-entry-shown .touch-entry-where {
+  color: var(--touch-text-soft);
+}
+
+/* A guide page, as the guide pages draw it, with targets for fingers */
+
+.touch-guide {
+  padding: 0 16px 24px;
+  display: block;
+}
+
+.touch-guide .checklist-title {
+  font-size: 21px;
+}
+
+.touch-guide .guide-body {
+  font-size: 15px;
+}
+
+.touch-guide .place-button {
+  min-height: 44px;
+  padding: 8px 6px;
+  font-size: 15px;
+}
+
+.touch-guide .link-button,
+.touch-game .link-button {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+/* Games and settings */
+
+.touch-game {
+  border-bottom: 1px solid var(--atlas-surface-raised);
+}
+
+.touch-game-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 4px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  text-align: left;
+}
+
+.touch-game-main[aria-current='true'] .touch-row-end {
+  color: var(--atlas-accent);
+}
+
+.touch-game-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.touch-game-text .touch-row-title {
+  white-space: normal;
+}
+
+.touch-game-text .small {
+  font-size: 13px;
+}
+
+.touch-game-actions {
+  display: flex;
+  gap: 4px;
+  margin: -6px 0 6px -8px;
+}
+
+.touch-game-details,
+.touch-game-confirm {
+  padding: 0 4px 12px;
+  font-size: 14px;
+}
+
+.touch .button {
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+
+.touch-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.touch-settings .touch-switch-card {
+  margin: 0;
+}
+
+.touch-settings .touch-row {
+  border-bottom: 0;
+}
+
+.touch-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 4px;
+}
+
+.touch-setting-label {
+  flex: 1;
+  font-size: 16px;
+}
+
+.touch-segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  background: var(--atlas-surface-raised);
+}
+
+.touch-segment {
+  min-width: 72px;
+  height: 42px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--atlas-text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.touch-segment[aria-pressed='true'] {
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-weight: 600;
+}
+
+.touch-app-version {
+  margin: 16px 0 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/* Dialogs that remain (profiles, pack files, the activity log): the width
+   of a phone between the bars, with targets for fingers. */
+
+.touch .dialog {
+  width: min(560px, calc(100% - 16px - var(--atlas-inset-left) - var(--atlas-inset-right)));
+  max-height: calc(100% - 16px - var(--atlas-inset-top) - var(--atlas-inset-bottom));
+  font-size: 15px;
+}
+
+.touch .dialog-body {
+  padding: 12px 16px 16px;
+}
+
+.touch .dialog .icon-button {
+  width: 48px;
+  height: 48px;
+}
+
+.touch .dialog .link-button {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.touch .dialog .text-input,
+.touch .dialog .select {
+  height: 48px;
+  font-size: 16px;
+}
+
+.touch .dialog input[type='checkbox'],
+.touch .dialog input[type='radio'] {
+  width: 22px;
+  height: 22px;
+}
+
+.touch .dialog .small,
+.touch .dialog .muted.small {
+  font-size: 13px;
+}
+
+/*
+ * A short wide screen (a phone on its side) has no room for a card over the
+ * map: the selected place takes the panel's place instead, and the map
+ * stays clear.
+ */
+@media (max-height: 519px) {
+  .touch[data-arrangement='wide'] .place-card {
+    left: var(--touch-rail);
+    right: auto;
+    top: 0;
+    bottom: 0;
+    width: var(--touch-panel);
+    max-width: none;
+    max-height: none;
+    padding: calc(var(--atlas-inset-top) + 16px) 16px calc(var(--atlas-inset-bottom) + 16px);
+    border: 0;
+    border-right: 1px solid var(--atlas-border);
+    border-radius: 0;
+    box-shadow: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .touch[data-arrangement='wide'] .place-card .place-details {
+    flex: none;
+    overflow: visible;
+  }
+
+  /* The two buttons share the panel's width. */
+  .touch[data-arrangement='wide'] .place-card .place-action {
+    flex: 1 1 0;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 15px;
+  }
+
+  .touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region {
+    max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
+  }
+}

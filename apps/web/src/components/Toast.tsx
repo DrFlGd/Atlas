@@ -25,7 +25,7 @@ export function Toast() {
           key={notice.seq}
           data-testid="toast"
         >
-          {notice.text}
+          {notice.undo ? `${notice.text} Press Z to undo.` : notice.text}
         </div>
       ) : null}
     </div>

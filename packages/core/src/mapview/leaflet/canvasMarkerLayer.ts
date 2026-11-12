@@ -9,6 +9,7 @@ const PADDING = 0.25;
 const MARKER_RADIUS = 9;
 /** Edge length of the glyph drawn on a badge. */
 const GLYPH_SIZE = 12;
+/** How far outside a badge a click still picks it, unless the view asks for more. */
 const HIT_SLOP = 3;
 /** Opacity of found (muted) markers. */
 const MUTED_ALPHA = 0.7;
@@ -96,6 +97,8 @@ export interface CanvasMarkerLayerOptions {
   maxZoom: number;
   tileSize: number;
   clustering: boolean;
+  /** How far outside a badge a click still picks it, in CSS pixels. */
+  hitSlop?: number;
   /** Called when the user clicks a marker, a cluster or empty map. */
   onPick: (hit: IndexHit<MapMarker> | null) => void;
   /** Called when the pointer moves onto a marker or off it. */
@@ -219,12 +222,13 @@ export class CanvasMarkerLayer extends L.Layer {
     const map = this._map as L.Map | undefined;
     if (!map) return null;
     const p = map.containerPointToLayerPoint(containerPoint).subtract(this.topLeft);
+    const slop = this.settings.hitSlop ?? HIT_SLOP;
     let best: DrawnItem | null = null;
     let bestDistance = Infinity;
     for (let i = this.drawn.length - 1; i >= 0; i--) {
       const item = this.drawn[i]!;
       const distance = Math.hypot(item.x - p.x, item.y - p.y);
-      if (distance <= item.r + HIT_SLOP && distance < bestDistance) {
+      if (distance <= item.r + slop && distance < bestDistance) {
         best = item;
         bestDistance = distance;
       }

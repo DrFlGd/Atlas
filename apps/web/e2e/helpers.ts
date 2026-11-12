@@ -20,6 +20,36 @@ export function collectErrors(page: Page): string[] {
   return errors;
 }
 
+/**
+ * A setting of this device as it is stored now. The app saves settings
+ * without waiting, so a test that restarts the app waits for this first: a
+ * reload while the page is busy would drop a save that has not finished.
+ */
+export function storedSetting(page: Page, key: string): Promise<unknown> {
+  return page.evaluate(
+    (settingKey) =>
+      new Promise<unknown>((resolve, reject) => {
+        const open = indexedDB.open('atlas');
+        open.onerror = () => {
+          reject(open.error ?? new Error('The settings could not be opened'));
+        };
+        open.onsuccess = () => {
+          const db = open.result;
+          const get = db.transaction('settings').objectStore('settings').get(settingKey);
+          get.onsuccess = () => {
+            db.close();
+            resolve((get.result as { value?: unknown } | undefined)?.value);
+          };
+          get.onerror = () => {
+            db.close();
+            reject(get.error ?? new Error('The setting could not be read'));
+          };
+        };
+      }),
+    key,
+  );
+}
+
 /** Opens the app and waits until the demo pack is loaded and the surface map has drawn. */
 export async function openMap(page: Page, path = './', markers = '5,000'): Promise<void> {
   await page.goto(path);

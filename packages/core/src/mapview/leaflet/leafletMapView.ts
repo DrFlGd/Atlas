@@ -18,6 +18,10 @@ import { createTileLayer, firstViewBounds, imageBounds } from './tileLayer';
 
 const MARKER_PANE = 'atlasMarkers';
 const PLAYER_PANE = 'atlasPlayer';
+/** How long a press must last to count as press and hold, in milliseconds. */
+const LONG_PRESS_MS = 500;
+/** How far a finger may wander during a press and hold, in CSS pixels. */
+const LONG_PRESS_TOLERANCE = 10;
 
 /** The player's marker: an arrow pointing up (turned by its heading), or a dot. */
 function playerIcon(player: PlayerMarker): L.DivIcon {
@@ -63,7 +67,7 @@ export function createLeafletMapView(
     wheelPxPerZoomLevel: 100,
     maxBoundsViscosity: 0.9,
     attributionControl: true,
-    zoomControl: true,
+    zoomControl: options.zoomControl ?? true,
   });
   map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
   const pane = map.createPane(MARKER_PANE);
@@ -77,6 +81,9 @@ export function createLeafletMapView(
   let selectedId: string | null = null;
   const selectListeners = new Set<(id: string | null) => void>();
   const clickListeners = new Set<(point: { x: number; y: number }) => void>();
+  const longPressListeners = new Set<(id: string) => void>();
+  /** Until when a click is the end of a press and hold, not a click. */
+  let swallowClickUntil = 0;
   let player: PlayerMarker | null = null;
   let playerMarker: L.Marker | null = null;
   const viewListeners = new Set<(state: MapViewState) => void>();
@@ -151,12 +158,63 @@ export function createLeafletMapView(
   };
   map.on('move zoom resize', emitView);
   map.on('click', (event: L.LeafletMouseEvent) => {
-    if (!layer) return;
+    if (!layer || performance.now() <= swallowClickUntil) return;
     const point = toPixel(event.latlng);
     clickListeners.forEach((listener) => {
       listener(point);
     });
   });
+
+  // Press and hold on a marker. One pointer only: a second finger (a
+  // pinch), moving, the map moving or zooming, or letting go early cancels
+  // it. The click that may follow a press that fired is not a pick.
+  let press: { id: number; x: number; y: number; timer: number } | null = null;
+  const cancelPress = () => {
+    if (press) window.clearTimeout(press.timer);
+    press = null;
+  };
+  const onPointerDown = (event: PointerEvent) => {
+    if (press) {
+      // Another finger: a pinch, not a press.
+      cancelPress();
+      return;
+    }
+    if (longPressListeners.size === 0 || !event.isPrimary || event.button > 0) return;
+    const rect = container.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const timer = window.setTimeout(() => {
+      press = null;
+      const hit = markerLayer?.hitTest(L.point(x, y));
+      if (hit?.kind !== 'point') return;
+      swallowClickUntil = performance.now() + 800;
+      longPressListeners.forEach((listener) => {
+        listener(hit.point.id);
+      });
+    }, LONG_PRESS_MS);
+    press = { id: event.pointerId, x: event.clientX, y: event.clientY, timer };
+  };
+  const onPointerMove = (event: PointerEvent) => {
+    if (press?.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > LONG_PRESS_TOLERANCE) {
+      cancelPress();
+    }
+  };
+  const onContextMenu = (event: Event) => {
+    // A held finger opens no menu over the map while presses are wanted.
+    if (longPressListeners.size > 0) event.preventDefault();
+  };
+  container.addEventListener('pointerdown', onPointerDown);
+  container.addEventListener('pointermove', onPointerMove);
+  container.addEventListener('pointerup', cancelPress);
+  container.addEventListener('pointercancel', cancelPress);
+  container.addEventListener('contextmenu', onContextMenu);
+  map.on('zoomstart', cancelPress);
+  const swallowClick = () => {
+    if (performance.now() > swallowClickUntil) return false;
+    swallowClickUntil = 0;
+    return true;
+  };
 
   const showPlayer = () => {
     playerMarker?.remove();
@@ -242,7 +300,9 @@ export function createLeafletMapView(
         maxZoom: spec.maxZoom,
         tileSize: spec.tileSize,
         clustering,
+        ...(options.hitSlop === undefined ? {} : { hitSlop: options.hitSlop }),
         onPick: (hit) => {
+          if (swallowClick()) return;
           if (!hit) {
             if (selectedId !== null) select(null);
           } else if (hit.kind === 'point') {
@@ -332,6 +392,11 @@ export function createLeafletMapView(
       return () => selectListeners.delete(listener);
     },
 
+    onLongPress(listener): Unsubscribe {
+      longPressListeners.add(listener);
+      return () => longPressListeners.delete(listener);
+    },
+
     onMapClick(listener): Unsubscribe {
       clickListeners.add(listener);
       return () => clickListeners.delete(listener);
@@ -361,8 +426,15 @@ export function createLeafletMapView(
       cancelAnimationFrame(viewFrame);
       cancelAnimationFrame(resizeFrame);
       resizeObserver.disconnect();
+      cancelPress();
+      container.removeEventListener('pointerdown', onPointerDown);
+      container.removeEventListener('pointermove', onPointerMove);
+      container.removeEventListener('pointerup', cancelPress);
+      container.removeEventListener('pointercancel', cancelPress);
+      container.removeEventListener('contextmenu', onContextMenu);
       selectListeners.clear();
       clickListeners.clear();
+      longPressListeners.clear();
       viewListeners.clear();
       hoverListeners.clear();
       tileListeners.clear();

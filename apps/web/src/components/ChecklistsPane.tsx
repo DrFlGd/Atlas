@@ -796,7 +796,16 @@ function PlaceButton({
 // ---------------------------------------------------------------------------
 // One guide
 
-function GuideView({ game, id }: { game: LoadedGame; id: string }) {
+/** One guide page. The touch layout shows it with a header of its own, so without the back button. */
+export function GuideView({
+  game,
+  id,
+  back = true,
+}: {
+  game: LoadedGame;
+  id: string;
+  back?: boolean;
+}) {
   const guide = game.checklists.guide(id);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [allPlaces, setAllPlaces] = useState(false);
@@ -808,7 +817,7 @@ function GuideView({ game, id }: { game: LoadedGame; id: string }) {
   if (!guide) {
     return (
       <>
-        <BackButton game={game} />
+        {back ? <BackButton game={game} /> : null}
         <p className="muted">This guide is not in the pack.</p>
       </>
     );
@@ -816,7 +825,7 @@ function GuideView({ game, id }: { game: LoadedGame; id: string }) {
   const shown = allPlaces ? places : places.slice(0, PLACES_SHOWN);
   return (
     <>
-      <BackButton game={game} />
+      {back ? <BackButton game={game} /> : null}
       <article className="guide-page" aria-labelledby="guide-page-title" data-testid="guide-page">
         <h2 className="checklist-title" id="guide-page-title" tabIndex={-1} ref={headingRef}>
           {guide.title}

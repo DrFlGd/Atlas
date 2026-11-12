@@ -74,6 +74,14 @@ export interface MapViewOptions {
   clustering?: boolean;
   /** Levels the user may zoom past the pyramid's 1:1 level. Defaults to 2. */
   overZoom?: number;
+  /**
+   * How far outside a marker's badge a click or tap still picks it, in CSS
+   * pixels. Defaults to 3; a touch screen wants more, since a finger covers
+   * the badge.
+   */
+  hitSlop?: number;
+  /** Show the + and − zoom buttons. Defaults to true. */
+  zoomControl?: boolean;
 }
 
 export interface FlyToTarget {
@@ -129,6 +137,13 @@ export interface MapView {
   flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
   /** Called with the marker id when the user clicks a marker, or null when they click empty map. */
   onSelect(listener: (markerId: string | null) => void): Unsubscribe;
+  /**
+   * Called with the marker id when the user presses and holds a marker
+   * (about half a second, without moving and with one finger or button).
+   * The click that may follow the press does not select the marker. While
+   * nobody listens, pressing and holding does nothing special.
+   */
+  onLongPress(listener: (markerId: string) => void): Unsubscribe;
   /** Called with the image pixel of every click on the map, on a marker or not. */
   onMapClick(listener: (point: PixelPoint) => void): Unsubscribe;
   /** Called when the pointer moves onto a marker, or off it (null). */

@@ -1,5 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+/** The scroll container a list is in. */
+const SCROLL_ROOT = '.pane-body, [data-scroll-root]';
+
 /** How far beyond the visible part of the list rows are rendered, in pixels. */
 const OVERSCAN = 600;
 
@@ -28,7 +31,7 @@ interface Viewport {
 
 /**
  * A list that renders only the rows near the visible part of its scroll
- * container (the nearest `.pane-body`), so a checklist of thousands of
+ * container (the nearest `.pane-body` or `[data-scroll-root]`), so a checklist of thousands of
  * items opens and scrolls at once. Rows may differ in height: each is
  * measured once rendered, and rows not measured yet count as `estimate`.
  * Spacers above and below stand in for the rows that are not rendered, so
@@ -57,7 +60,7 @@ export function VirtualList<T>({
   // Follows the scroll container: scrolling, resizing, and being shown.
   useEffect(() => {
     const list = listRef.current;
-    const parent = list?.closest<HTMLElement>('.pane-body');
+    const parent = list?.closest<HTMLElement>(SCROLL_ROOT);
     if (!list || !parent) return;
     let frame = 0;
     const read = () => {
@@ -149,7 +152,7 @@ export function VirtualList<T>({
   }, [visible]);
   useLayoutEffect(() => {
     const list = listRef.current;
-    const parent = list?.closest<HTMLElement>('.pane-body');
+    const parent = list?.closest<HTMLElement>(SCROLL_ROOT);
     if (!reveal || !visible || !list || !parent || revealed.current === reveal.seq) return;
     if (reveal.index < 0 || reveal.index >= keys.length) return;
     const row = list.querySelector<HTMLElement>(`:scope > [data-index="${reveal.index}"]`);

@@ -59,11 +59,26 @@ const UI_PATHS = {
   checklist: 'M9 5.5h8M9 10h8M9 14.5h8M2.8 5.5l1.4 1.4l2.6-2.6M2.8 10l1.4 1.4l2.6-2.6M3 14.5h3',
   save: 'M4 3.5h9.5L16.5 6.5v10h-13zM7 3.5v4h6v-4M6.5 16.5v-5h7v5',
   mapPlus: 'M2.5 5l5-2l5 2l5-2v7M2.5 5v12l5-2l4 1.6M7.5 3v12M12.5 5v6M15.5 12.5v5M13 15h5',
+  map: 'M2.5 5l5-2l5 2l5-2v12l-5 2l-5-2l-5 2zM7.5 3v12M12.5 5v12',
+  bars: 'M4 16.5v-6M10 16.5v-13M16 16.5v-9',
+  back: 'M9 4l-6 6l6 6M3 10h14',
+  chevronDown: 'M5 7l5 5l5-5',
+  chevronUp: 'M5 12l5-5l5 5',
+  pin: 'M10 18c-3.6-4-5.5-7-5.5-9.5a5.5 5.5 0 0 1 11 0c0 2.5-1.9 5.5-5.5 9.5zM10 6.5a2 2 0 1 1 0 4a2 2 0 1 1 0-4z',
+  foundCircle: 'M10 3a7 7 0 1 1 0 14a7 7 0 1 1 0-14zM6.8 10.2l2.2 2.2l4.2-4.6',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;
 
-export function UiIcon({ name, size = 18 }: { name: UiIconName; size?: number }) {
+export function UiIcon({
+  name,
+  size = 18,
+  strokeWidth = 1.7,
+}: {
+  name: UiIconName;
+  size?: number;
+  strokeWidth?: number;
+}) {
   return (
     <svg
       className="ui-icon"
@@ -72,7 +87,7 @@ export function UiIcon({ name, size = 18 }: { name: UiIconName; size?: number })
       viewBox="0 0 20 20"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.7"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

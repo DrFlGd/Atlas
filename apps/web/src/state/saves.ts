@@ -556,7 +556,9 @@ export function removeSaveMarks(): void {
     'save',
   );
   notify(
-    `Removed ${targets.length === 1 ? 'the mark' : `${targets.length} marks`} made from saves. Marks you made by hand are as they were. Press Z to undo.`,
+    `Removed ${targets.length === 1 ? 'the mark' : `${targets.length} marks`} made from saves. Marks you made by hand are as they were.`,
+    'info',
+    { undo: true },
   );
 }
 

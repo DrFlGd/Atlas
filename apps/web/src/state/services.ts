@@ -38,6 +38,10 @@ export const SETTINGS = {
   profile: (gameId: string) => `profile:${gameId}`,
   filters: (gameId: string) => `filters:${gameId}`,
   place: (gameId: string) => `place:${gameId}`,
+  /** Search results chosen in the touch layout, latest first. */
+  recentSearches: (gameId: string) => `recentSearches:${gameId}`,
+  /** Whether the Android app keeps the screen on while it is shown. */
+  keepScreenOn: 'keepScreenOn',
   /** The game save linked to a profile (see `state/saves.ts`). */
   saveLink: (profileId: string) => `saveLink:${profileId}`,
   /** Which map shows which game world, as the person chose. */

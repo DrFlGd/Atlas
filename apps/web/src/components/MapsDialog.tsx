@@ -418,7 +418,7 @@ const DETAIL_WORDS: Record<Detail, string> = {
  * row is shown. The size is that of the map pack file it was imported
  * from, unpacked.
  */
-function PackSummary({ id }: { id: string }) {
+export function PackSummary({ id }: { id: string }) {
   const library = useAtlas((s) => s.library);
   const [details, setDetails] = useState<PackDetails | null>(null);
   useEffect(() => {
