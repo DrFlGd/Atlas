@@ -11,6 +11,16 @@ export function imageBounds(spec: MapLayerSpec): L.LatLngBounds {
   );
 }
 
+/** The part of the image the map shows first, as CRS.Simple bounds: `spec.focus`, or all of it. */
+export function firstViewBounds(spec: MapLayerSpec): L.LatLngBounds {
+  const focus = spec.focus;
+  if (!focus) return imageBounds(spec);
+  return L.latLngBounds(
+    pixelToSimpleLatLng({ x: focus.minX, y: focus.minY }, spec.maxZoom),
+    pixelToSimpleLatLng({ x: focus.maxX, y: focus.maxY }, spec.maxZoom),
+  );
+}
+
 /**
  * Creates the raster layer for a tile pyramid. Native levels run from
  * `spec.minZoom` to `spec.maxZoom`, or over `spec.nativeZoom` when only part

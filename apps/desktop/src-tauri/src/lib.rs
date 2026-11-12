@@ -239,6 +239,10 @@ pub fn run() {
                         left.display()
                     );
                 }
+                // Map images an import or update was renumbering when the
+                // app stopped are put in order first (see `tiles::renumber`).
+                #[cfg(feature = "downloads")]
+                library.settle_images_at_start();
                 let moved = library.migrate_legacy();
                 if !moved.is_empty() {
                     activity::info(

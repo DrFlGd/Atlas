@@ -36,6 +36,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "downloads")]
+use crate::manifest::{update_images, ImagesUpdate};
 use crate::{
     activity::{self, Area},
     manifest::{read_head, version_key, write_atomic, ManifestHead, SourcePage, MANIFEST_FILE},
@@ -447,8 +449,18 @@ impl Library {
                     return Ok(());
                 }
                 let _lock = PackLock::acquire(&existing)?;
-                copy_bundled_files(&pack.path, &existing)
-                    .map_err(|error| format!("Could not update {}: {error}", pack.id))?;
+                // Map images of layers whose edges the new version moves are
+                // set aside now and renumbered once its files are there.
+                #[cfg(feature = "downloads")]
+                let image_roots = {
+                    let after = crate::tiles::pyramid::read_pack_plan(&pack.path).ok();
+                    self.stage_images(&pack.id, &existing, after.as_ref(), Area::Library)?
+                };
+                let copied = copy_bundled_files(&pack.path, &existing)
+                    .map_err(|error| format!("Could not update {}: {error}", pack.id));
+                #[cfg(feature = "downloads")]
+                self.settle_images(&pack.id, &existing, &image_roots, Area::Library);
+                copied?;
                 activity::info(
                     Area::Library,
                     if newer {
@@ -1039,7 +1051,7 @@ impl Library {
         let _lock = PackLock::acquire(&dir)?;
         // Where the pack kept its map images until now; see the end.
         #[cfg(feature = "downloads")]
-        let tiles_before = crate::tiles::downscale::tile_addresses(&dir);
+        let mut tiles_before = crate::tiles::downscale::tile_addresses(&dir);
         if let Some(pack) = bundled {
             // A refresh of a pack that comes with the app lives in the maps
             // folder. One served from the app's resources is copied there
@@ -1049,6 +1061,51 @@ impl Library {
                 format!("Could not copy {} into the maps folder: {error}", pack.id)
             })?;
         }
+        // Map images of layers whose edges the new files move (another size
+        // or other remote levels) are set aside under their old numbers now,
+        // and renumbered once the new files are written; see
+        // `tiles::renumber`.
+        #[cfg(feature = "downloads")]
+        let image_roots = {
+            let after = plan_of_files(&dir, &request.files);
+            self.stage_images(&request.pack_id, &dir, after.as_ref(), Area::Import)?
+        };
+        let written = Self::write_import_files(&dir, request, manifest);
+        #[cfg(feature = "downloads")]
+        for layer in self.settle_images(&request.pack_id, &dir, &image_roots, Area::Import) {
+            // Its shrunk levels were built again with its new numbers.
+            tiles_before.remove(&layer);
+        }
+        written?;
+
+        // An import that moves a layer's images (another address template)
+        // leaves the levels Atlas made by shrinking them in the old
+        // arrangement, and no download would build them again.
+        #[cfg(feature = "downloads")]
+        match crate::tiles::downscale::rebuild_moved_layers(&dir, &tiles_before) {
+            Ok(layers) if layers.is_empty() => {}
+            Ok(layers) => activity::info(
+                Area::Import,
+                format!(
+                    "The import changed where {} keeps its map images, so the zoomed-out levels were built again from the downloaded images: {}",
+                    request.pack_id,
+                    layers.join(", ")
+                ),
+            ),
+            Err(error) => activity::warn(
+                Area::Import,
+                format!(
+                    "Could not build the zoomed-out map images of {} again: {error}",
+                    request.pack_id
+                ),
+            ),
+        }
+        Ok(dir)
+    }
+
+    /// Writes an import's page data and pack files into its pack folder, the
+    /// manifest last.
+    fn write_import_files(dir: &Path, request: &SaveImport, manifest: &str) -> Result<(), String> {
         let write = |path: &Path, text: &str| {
             write_atomic(path, text.as_bytes())
                 .map_err(|error| format!("Could not write {}: {error}", path.display()))
@@ -1060,7 +1117,7 @@ impl Library {
             .map_err(|error| format!("Could not write to {}: {error}", dir.display()))?;
         let file = format!("{}.json", request.source_key);
         write(&import_dir.join(&file), &request.page_data)?;
-        let mut index = read_import_index(&dir).unwrap_or(ImportIndex {
+        let mut index = read_import_index(dir).unwrap_or(ImportIndex {
             format: IMPORT_FORMAT.to_owned(),
             version: 1,
             importer: request.importer.clone(),
@@ -1093,31 +1150,197 @@ impl Library {
                 write(&dir.join(name), text)?;
             }
         }
-        write(&dir.join(MANIFEST_FILE), manifest)?;
+        write(&dir.join(MANIFEST_FILE), manifest)
+    }
 
-        // An import that moves a layer's images (another address template)
-        // leaves the levels Atlas made by shrinking them in the old
-        // arrangement, and no download would build them again.
-        #[cfg(feature = "downloads")]
-        match crate::tiles::downscale::rebuild_moved_layers(&dir, &tiles_before) {
-            Ok(layers) if layers.is_empty() => {}
-            Ok(layers) => activity::info(
-                Area::Import,
-                format!(
-                    "The import changed where {} keeps its map images, so the zoomed-out levels were built again from the downloaded images: {}",
-                    request.pack_id,
-                    layers.join(", ")
-                ),
-            ),
-            Err(error) => activity::warn(
-                Area::Import,
-                format!(
-                    "Could not build the zoomed-out map images of {} again: {error}",
-                    request.pack_id
-                ),
-            ),
+    // -----------------------------------------------------------------------
+    // Map images of layers whose edges move
+
+    /// The folders that hold a pack's downloaded map images: its pack folder
+    /// `dir`, and the overlays of the pack when it came with the app or was
+    /// downloaded by an older version (`<app data>/packs/<id>/`), which move
+    /// into the pack folder at the next start (see [`Library::migrate_legacy`]).
+    #[cfg(feature = "downloads")]
+    fn image_roots(&self, id: &str, dir: &Path) -> Vec<PathBuf> {
+        let mut roots = vec![dir.to_path_buf()];
+        let overlays = self.registry.overlay_folder(id).into_iter().chain(
+            self.legacy_dirs
+                .iter()
+                .map(|legacy| legacy.join("packs").join(id)),
+        );
+        for overlay in overlays {
+            if is_real_dir(&overlay) && !roots.iter().any(|root| same_dir(root, &overlay)) {
+                roots.push(overlay);
+            }
         }
-        Ok(dir)
+        roots
+    }
+
+    /// Before the files of the pack in `dir` are replaced by a version whose
+    /// layers are `after`: finishes what an earlier run left half done, then
+    /// sets aside the map images of every layer whose edges move, in each of
+    /// the pack's image folders (see `tiles::renumber`). Returns those
+    /// folders, for [`Library::settle_images`] once the files are written.
+    /// When an image cannot be moved, everything is put back and the update
+    /// is refused, so no image is left at a wrong place.
+    #[cfg(feature = "downloads")]
+    fn stage_images(
+        &self,
+        id: &str,
+        dir: &Path,
+        after: Option<&crate::tiles::pyramid::PackPlan>,
+        area: Area,
+    ) -> Result<Vec<PathBuf>, String> {
+        use crate::tiles::{pyramid::read_pack_plan, renumber};
+        let roots = self.image_roots(id, dir);
+        self.settle_images(id, dir, &roots, area);
+        let (Some(after), Ok(before)) = (after, read_pack_plan(dir)) else {
+            return Ok(roots);
+        };
+        for (from, to) in renumber::moved_layers(&before, after) {
+            for root in &roots {
+                if !renumber::has_files(root, &from) {
+                    continue;
+                }
+                activity::info(
+                    area,
+                    format!(
+                        "The new version of {id} changes the size or edges of layer {}: setting its downloaded map images in {} aside to renumber them",
+                        from.layer_id,
+                        root.display()
+                    ),
+                );
+                if let Err(error) = renumber::stage(root, &from, &to) {
+                    activity::warn(
+                        area,
+                        format!(
+                            "Could not set the map images of layer {} in {} aside: {error}; putting them back",
+                            from.layer_id,
+                            root.display()
+                        ),
+                    );
+                    self.settle_images(id, dir, &roots, area);
+                    return Err(format!(
+                        "The map images already downloaded for {} could not be moved to fit its new size ({error}), so nothing was changed.",
+                        from.map_name
+                    ));
+                }
+            }
+        }
+        Ok(roots)
+    }
+
+    /// Renumbers the map images set aside in `roots` to the layers the pack
+    /// in `dir` has now, builds their shrunk levels again, rewrites their
+    /// status files and, in the pack folder, the manifest's image summary.
+    /// Also finishes what a run that stopped on the way left. Returns the
+    /// ids of the layers renumbered.
+    #[cfg(feature = "downloads")]
+    fn settle_images(&self, id: &str, dir: &Path, roots: &[PathBuf], area: Area) -> Vec<String> {
+        use crate::tiles::{
+            manager::count_images,
+            pyramid::{read_pack_plan, PackPlan},
+            renumber,
+        };
+        if !roots.iter().any(|root| renumber::has_unsettled(root)) {
+            return Vec::new();
+        }
+        let current = read_pack_plan(dir).unwrap_or_else(|error| {
+            activity::warn(
+                area,
+                format!("The layers of {id} cannot be read ({error}), so map images set aside to renumber are removed; a download fetches them again"),
+            );
+            PackPlan {
+                layers: Vec::new(),
+                maps: Vec::new(),
+            }
+        });
+        let mut settled = Vec::new();
+        let mut summaries = Vec::new();
+        for root in roots {
+            if !renumber::has_unsettled(root) {
+                continue;
+            }
+            let in_pack = same_dir(root, dir);
+            for result in renumber::settle(root, in_pack.then_some(dir), &current) {
+                let done = match result {
+                    Ok(done) => done,
+                    Err(error) => {
+                        activity::warn(
+                            area,
+                            format!(
+                                "Could not renumber the map images of {id} in {}: {error}",
+                                root.display()
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                activity::info(area, renumbered_text(id, root, &done));
+                if done.dropped {
+                    continue;
+                }
+                if in_pack {
+                    if let Some(layer) = current.layers.iter().find(|l| l.layer_id == done.layer_id)
+                    {
+                        summaries.push((layer.clone(), done.levels.clone(), done.complete));
+                    }
+                }
+                settled.push(done.layer_id);
+            }
+        }
+        let updates: Vec<ImagesUpdate<'_>> = summaries
+            .iter()
+            .map(|(layer, levels, complete)| ImagesUpdate {
+                layer_id: &layer.layer_id,
+                levels: levels.iter().copied().collect(),
+                complete: *complete,
+                counts: Some(count_images(dir, layer)),
+            })
+            .collect();
+        if !updates.is_empty() {
+            if let Err(error) = update_images(dir, &updates) {
+                activity::warn(
+                    area,
+                    format!(
+                        "Could not update the image summary in {}: {error}",
+                        dir.display()
+                    ),
+                );
+            }
+        }
+        settled.sort();
+        settled.dedup();
+        settled
+    }
+
+    /// Finishes renumbering map images that an import or an update left
+    /// half done when the app stopped on the way (see `tiles::renumber`).
+    /// Run at start-up, before the images of older versions move.
+    #[cfg(feature = "downloads")]
+    pub fn settle_images_at_start(&self) {
+        use crate::tiles::renumber::has_unsettled;
+        for kind in [PackKind::Folder, PackKind::Bundled] {
+            for id in self.registry.ids(kind) {
+                let Some(dir) = self.registry.root(&id) else {
+                    continue;
+                };
+                let roots = self.image_roots(&id, &dir);
+                if !roots.iter().any(|root| has_unsettled(root)) {
+                    continue;
+                }
+                // A pack that comes with the app is read only; its overlay is
+                // this app's own.
+                let _lock = match kind {
+                    PackKind::Folder => match PackLock::acquire(&dir) {
+                        Ok(lock) => Some(lock),
+                        Err(_) => continue,
+                    },
+                    PackKind::Bundled => None,
+                };
+                self.settle_images(&id, &dir, &roots, Area::Library);
+            }
+        }
     }
 
     /// Whether a pack id is listed (registered to be served).
@@ -1303,6 +1526,65 @@ fn is_slug(text: &str) -> bool {
 /// A directory, and not a symbolic link to one.
 fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+}
+
+/// Whether two paths name the same existing folder.
+#[cfg(feature = "downloads")]
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (a.canonicalize(), b.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        )
+}
+
+/// The layers a pack will have once an import's files are written: its new
+/// `maps.json` and `layers.json`, or the ones in `dir` that it leaves as they are.
+#[cfg(feature = "downloads")]
+fn plan_of_files(
+    dir: &Path,
+    files: &BTreeMap<String, String>,
+) -> Option<crate::tiles::pyramid::PackPlan> {
+    let text = |name: &str| {
+        files
+            .get(name)
+            .cloned()
+            .or_else(|| fs::read_to_string(dir.join(name)).ok())
+    };
+    crate::tiles::pyramid::parse_pack_plan(&text("maps.json")?, &text("layers.json")?).ok()
+}
+
+/// The activity log line for one layer's renumbered images.
+#[cfg(feature = "downloads")]
+fn renumbered_text(id: &str, root: &Path, done: &crate::tiles::renumber::Renumbered) -> String {
+    let layer = &done.layer_id;
+    let place = root.display();
+    if done.dropped {
+        return format!(
+            "The map images of layer {layer} of {id} set aside in {place} were removed: the pack no longer has that layer with the same image source; a download fetches what is needed"
+        );
+    }
+    let levels: Vec<String> = done.levels.iter().map(u8::to_string).collect();
+    let state = if done.complete {
+        "every level is complete".to_owned()
+    } else if levels.is_empty() {
+        "no level is complete, so \"Download map images\" fetches the rest".to_owned()
+    } else {
+        format!(
+            "complete levels: {}; \"Download map images\" fetches the rest",
+            levels.join(", ")
+        )
+    };
+    if done.put_back {
+        return format!(
+            "The files of {id} were not replaced, so the map images of layer {layer} set aside in {place} went back under their old numbers ({} images, {} \"not on the server\" markers); the zoomed-out levels were built again; {state}",
+            done.moved, done.markers
+        );
+    }
+    format!(
+        "Renumbered the downloaded map images of layer {layer} of {id} in {place} for its new size and edges: {} images and {} \"not on the server\" markers kept under their new numbers, {} outside the new image removed, {} zoomed-out images removed and those levels built again; {state}",
+        done.moved, done.markers, done.removed, done.shrunk
+    )
 }
 
 /// The pack folders directly inside `dir`, with the folders that are not packs.
@@ -2055,6 +2337,383 @@ mod tests {
         // The images themselves and their record are untouched.
         assert_eq!(fs::read(tiles.join("1/0/1.png")).unwrap(), tile(RED));
         assert!(dir.join("offline-tiles/a.json").exists());
+    }
+
+    /// A 64 px tile whose colour says which remote tile it is.
+    #[cfg(feature = "downloads")]
+    fn remote_tile(z: u64, x: u64, y: u64) -> Vec<u8> {
+        use image::{Rgb, RgbImage};
+        let mut out = io::Cursor::new(Vec::new());
+        RgbImage::from_pixel(
+            64,
+            64,
+            Rgb([(z * 10) as u8, (x % 25 * 10) as u8, (y % 25 * 10) as u8]),
+        )
+        .write_to(&mut out, image::ImageFormat::Png)
+        .unwrap();
+        out.into_inner()
+    }
+
+    /// The `layers.json` of a layer `id` of 64 px tiles, at `url` in the
+    /// pack, whose levels 2 and 3 are remote zooms 12 and 13 of `template`,
+    /// level 3 at `offset`.
+    #[cfg(feature = "downloads")]
+    fn remote_layer(id: &str, map: &str, url: &str, template: &str, offset: (u64, u64)) -> String {
+        let (x, y) = offset;
+        format!(
+            r#"{{"id":"{id}","mapId":"{map}","name":"Surface","minZoom":0,"maxZoom":3,"tileSize":64,
+              "tiles":{{"type":"xyz","url":"{url}","remote":{{"urlTemplate":"{template}",
+                "levels":[{{"z":2,"sourceZ":12,"offsetX":{},"offsetY":{}}},{{"z":3,"sourceZ":13,"offsetX":{x},"offsetY":{y}}}]}}}}}}"#,
+            x / 2,
+            y / 2
+        )
+    }
+
+    /// An import of `valley` with two maps of `size` px: `a`, whose layer
+    /// comes from `template` (see [`remote_layer`]), and `b`, whose layer has
+    /// no remote source.
+    #[cfg(feature = "downloads")]
+    fn valley(template: &str, size: (u32, u32), offset: (u64, u64)) -> SaveImport {
+        let (width, height) = size;
+        let mut request = import("valley", "east");
+        request.files.insert(
+            "maps.json".into(),
+            format!(
+                r#"[{{"id":"valley:map:a","name":"Valley","width":{width},"height":{height}}},
+                    {{"id":"valley:map:b","name":"Caves","width":{width},"height":{height}}}]"#
+            ),
+        );
+        let a = remote_layer(
+            "valley:layer:a",
+            "valley:map:a",
+            "tiles/a/{z}/{x}/{y}.png",
+            template,
+            offset,
+        );
+        request.files.insert(
+            "layers.json".into(),
+            format!(
+                r#"[{a},{{"id":"valley:layer:b","mapId":"valley:map:b","name":"Caves","minZoom":0,"maxZoom":3,"tileSize":64,
+                    "tiles":{{"type":"xyz","url":"tiles/b/{{z}}/{{x}}/{{y}}.png"}}}}]"#
+            ),
+        );
+        request
+    }
+
+    #[cfg(feature = "downloads")]
+    async fn finished(manager: &crate::tiles::DownloadManager) -> crate::tiles::manager::Snapshot {
+        use crate::tiles::manager::JobState;
+        for _ in 0..800 {
+            let snapshot = manager.snapshot("valley").unwrap();
+            if !matches!(
+                snapshot.state,
+                JobState::Running | JobState::Paused | JobState::Queued | JobState::Waiting
+            ) {
+                return snapshot;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("the download did not finish");
+    }
+
+    /// An update that enlarges a layer east and south keeps every image
+    /// downloaded, says that the layer is no longer complete, and the next
+    /// download fetches only the new images.
+    #[cfg(feature = "downloads")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn keeps_the_downloaded_images_when_an_update_enlarges_a_layer() {
+        use crate::tiles::{
+            download::{
+                tests::{ensure_crypto, MockServer, Reply},
+                Settings,
+            },
+            manager::JobState,
+            pyramid::Detail,
+            DownloadManager,
+        };
+        use std::{collections::HashSet, sync::Arc, time::Duration};
+        ensure_crypto();
+        let server = MockServer::start(Arc::new(|path, _| {
+            let numbers: Vec<u64> = path
+                .trim_end_matches(".png")
+                .rsplit('/')
+                .take(3)
+                .map(|n| n.parse().unwrap())
+                .collect();
+            Reply::image(remote_tile(numbers[2], numbers[1], numbers[0]))
+        }))
+        .await;
+        let template = server.url("/r/{z}/{x}/{y}.png");
+        let s = setup("library-renumber-grow", Vec::new());
+        // 320 x 320 px: level 3 is 5 x 5 tiles, level 2 is 3 x 3.
+        let dir = s
+            .library
+            .save_import(&valley(&template, (320, 320), (40, 80)))
+            .unwrap();
+        s.library.scan();
+        fs::create_dir_all(dir.join("tiles/b/3/4")).unwrap();
+        fs::write(dir.join("tiles/b/3/4/4.png"), b"the caves' own image").unwrap();
+        let manager = Arc::new(DownloadManager::with_settings(
+            s.dir.0.join("data"),
+            s.registry.clone(),
+            Settings {
+                delay: Duration::from_millis(1),
+                ..Settings::default()
+            },
+        ));
+        manager.start("valley", Detail::Full).unwrap();
+        let done = finished(&manager).await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        assert_eq!(server.seen().len(), 25 + 9);
+        let first: HashSet<String> = server.seen().into_iter().map(|seen| seen.path).collect();
+        let status = || -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(dir.join("offline-tiles/a.json")).unwrap())
+                .unwrap()
+        };
+        assert_eq!(status()["complete"], true);
+
+        // Two more columns on the east and two more rows on the south at
+        // level 3, one more at level 2: 448 x 448 px, the same offsets.
+        s.library
+            .save_import(&valley(&template, (448, 448), (40, 80)))
+            .unwrap();
+        assert!(!dir.join(".atlas/renumber").exists());
+        for (z, x, y, remote) in [
+            (3, 0, 0, (13, 40, 80)),
+            (3, 4, 4, (13, 44, 84)),
+            (2, 2, 1, (12, 22, 41)),
+        ] {
+            assert_eq!(
+                fs::read(dir.join(format!("tiles/a/{z}/{x}/{y}.png"))).unwrap(),
+                remote_tile(remote.0, remote.1, remote.2),
+                "{z}/{x}/{y}"
+            );
+        }
+        assert!(dir.join("tiles/a/0/0/0.png").exists(), "built again");
+        assert!(!dir.join("tiles/a/3/5/0.png").exists());
+        assert_eq!(status()["levels"], serde_json::json!([]));
+        assert_eq!(status()["complete"], false);
+        // The layer without a remote source is left alone.
+        assert_eq!(
+            fs::read(dir.join("tiles/b/3/4/4.png")).unwrap(),
+            b"the caves' own image"
+        );
+        // The download offers exactly the new images.
+        let info = manager.plan_info("valley").unwrap();
+        let full = info
+            .options
+            .iter()
+            .find(|option| option.detail == Detail::Full)
+            .unwrap();
+        assert_eq!((full.tiles, full.remaining), (49 + 16, 24 + 7));
+        assert!(!full.installed);
+
+        manager.start("valley", Detail::Full).unwrap();
+        let done = finished(&manager).await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let again: Vec<String> = server.seen()[34..]
+            .iter()
+            .map(|seen| seen.path.clone())
+            .collect();
+        assert_eq!(again.len(), 24 + 7);
+        assert!(
+            again.iter().all(|path| !first.contains(path)),
+            "nothing twice"
+        );
+        assert_eq!(status()["levels"], serde_json::json!([0, 1, 2, 3]));
+        assert_eq!(status()["complete"], true);
+        assert!(manager
+            .plan_info("valley")
+            .unwrap()
+            .options
+            .iter()
+            .all(|o| o.installed));
+
+        // A new image source: nothing can be mapped, so nothing is moved
+        // (the zoomed-out levels are not built again either, as before).
+        let other = server.url("/v2/{z}/{x}/{y}.png");
+        let before = fs::read(dir.join("tiles/a/3/6/6.png")).unwrap();
+        s.library
+            .save_import(&valley(&other, (320, 320), (38, 78)))
+            .unwrap();
+        assert_eq!(fs::read(dir.join("tiles/a/3/6/6.png")).unwrap(), before);
+        assert_eq!(status()["complete"], true);
+        assert!(!dir.join(".atlas/renumber").exists());
+    }
+
+    /// A game that comes with the app and is served from its resources keeps
+    /// its downloaded images in the app's overlay folder; a refresh that moves
+    /// a layer's edges renumbers them there.
+    #[cfg(feature = "downloads")]
+    #[test]
+    fn renumbers_the_images_of_a_game_that_comes_with_the_app_in_its_overlay() {
+        let src = TempDir::new("library-renumber-overlay-src");
+        let resource = src.0.join("isles");
+        write_pack(&resource, "isles", "Isles", "1.0.0");
+        let template = "https://tiles.invalid/{z}/{x}/{y}.png";
+        let north = |size: u32, offset: (u64, u64)| {
+            (
+                format!(
+                    r#"[{{"id":"isles:map:north","name":"North","width":{size},"height":{size}}}]"#
+                ),
+                format!(
+                    "[{}]",
+                    remote_layer(
+                        "isles:layer:north",
+                        "isles:map:north",
+                        "tiles/north/{z}/{x}/{y}.png",
+                        template,
+                        offset
+                    )
+                ),
+            )
+        };
+        let (maps, layers) = north(320, (40, 80));
+        fs::write(resource.join("maps.json"), maps).unwrap();
+        fs::write(resource.join("layers.json"), layers).unwrap();
+        let s = setup(
+            "library-renumber-overlay",
+            vec![BundledPack {
+                id: "isles".into(),
+                path: resource.clone(),
+                downloadable: false,
+            }],
+        );
+        let overlays = s.dir.0.join("data/packs");
+        s.registry.set_overlay_root(overlays.clone());
+        s.library.start();
+        assert_eq!(s.registry.kind("isles"), Some(PackKind::Bundled));
+        // Images downloaded into the overlay: level 3 (remote zoom 13, from
+        // 40, 80) and level 2 (remote zoom 12, from 20, 40), one of them not
+        // on the server, and a status file.
+        let overlay = overlays.join("isles");
+        let tile = |z: u8, x: u64, y: u64| overlay.join(format!("tiles/north/{z}/{x}/{y}.png"));
+        for (z, columns, (dx, dy)) in [(3u8, 5u64, (40u64, 80u64)), (2, 3, (20, 40))] {
+            for y in 0..columns {
+                for x in 0..columns {
+                    fs::create_dir_all(tile(z, x, y).parent().unwrap()).unwrap();
+                    if (z, x, y) == (3, 1, 1) {
+                        fs::write(format!("{}.404", tile(z, x, y).display()), b"").unwrap();
+                    } else {
+                        fs::write(tile(z, x, y), remote_tile(z as u64 + 10, x + dx, y + dy))
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        fs::create_dir_all(overlay.join("offline-tiles")).unwrap();
+        fs::write(
+            overlay.join("offline-tiles/north.json"),
+            r#"{"format":"atlas-tile-status","version":1,"layerId":"isles:layer:north","levels":[0,1,2,3],
+                "nativeMinZoom":0,"nativeMaxZoom":3,"complete":true,"updatedAt":0}"#,
+        )
+        .unwrap();
+
+        // The refresh moves the image's corner two tiles up and left at level 3.
+        let mut request = refresh("1.1.0", &["north"]);
+        let (maps, layers) = north(448, (38, 78));
+        request.files.insert("maps.json".into(), maps);
+        request.files.insert("layers.json".into(), layers);
+        let dir = s.library.save_import(&request).unwrap();
+        assert_eq!(dir, s.library.maps_folder().join("isles"));
+        assert!(!overlay.join(".atlas/renumber").exists());
+        // The old tile (0, 0) of level 3 is (2, 2) now, its marker (1, 1) is
+        // at (3, 3), and the old (2, 2) is at (4, 4).
+        assert_eq!(fs::read(tile(3, 2, 2)).unwrap(), remote_tile(13, 40, 80));
+        assert_eq!(fs::read(tile(3, 4, 4)).unwrap(), remote_tile(13, 42, 82));
+        assert!(!tile(3, 0, 0).exists());
+        assert!(Path::new(&format!("{}.404", tile(3, 3, 3).display())).exists());
+        assert!(!Path::new(&format!("{}.404", tile(3, 1, 1).display())).exists());
+        assert_eq!(fs::read(tile(2, 1, 1)).unwrap(), remote_tile(12, 20, 40));
+        assert!(tile(0, 0, 0).exists(), "built again in the overlay");
+        let status: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(overlay.join("offline-tiles/north.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status["levels"], serde_json::json!([]));
+        assert_eq!(status["complete"], false);
+        // Nothing was written into the app's own copy or the new pack folder.
+        assert!(!resource.join("tiles").exists());
+        assert!(!dir.join("tiles").exists());
+    }
+
+    /// A newer version of a game that comes with the app replaces the pack
+    /// files of its copy in the maps folder; images of a layer whose edges it
+    /// moves are renumbered there.
+    #[cfg(feature = "downloads")]
+    #[test]
+    fn renumbers_the_images_when_a_newer_bundled_version_moves_a_layer() {
+        let src = TempDir::new("library-renumber-bundled-src");
+        let resource = src.0.join("isles");
+        let write_version = |version: &str, size: u32, offset: (u64, u64)| {
+            write_pack(&resource, "isles", "Isles", version);
+            fs::write(
+                resource.join("maps.json"),
+                format!(
+                    r#"[{{"id":"isles:map:north","name":"North","width":{size},"height":{size}}}]"#
+                ),
+            )
+            .unwrap();
+            fs::write(
+                resource.join("layers.json"),
+                format!(
+                    "[{}]",
+                    remote_layer(
+                        "isles:layer:north",
+                        "isles:map:north",
+                        "tiles/north/{z}/{x}/{y}.png",
+                        "https://tiles.invalid/{z}/{x}/{y}.png",
+                        offset
+                    )
+                ),
+            )
+            .unwrap();
+        };
+        write_version("1.0.0", 320, (40, 80));
+        let bundled = vec![BundledPack {
+            id: "isles".into(),
+            path: resource.clone(),
+            downloadable: true,
+        }];
+        let s = setup("library-renumber-bundled", bundled.clone());
+        s.library.start();
+        let copy = s.library.maps_folder().join("isles");
+        let tile = |x: u64, y: u64| copy.join(format!("tiles/north/3/{x}/{y}.png"));
+        for y in 0..5 {
+            for x in 0..5 {
+                fs::create_dir_all(tile(x, y).parent().unwrap()).unwrap();
+                fs::write(tile(x, y), remote_tile(13, x + 40, y + 80)).unwrap();
+            }
+        }
+        // The same version again changes nothing.
+        Library::new(
+            SettingsFile::new(s.dir.0.join("shared")),
+            s.registry.clone(),
+            bundled.clone(),
+            Vec::new(),
+        )
+        .start();
+        assert_eq!(fs::read(tile(0, 0)).unwrap(), remote_tile(13, 40, 80));
+
+        // Version 2.0.0 moves the corner two tiles up and left.
+        write_version("2.0.0", 448, (38, 78));
+        let listing = Library::new(
+            SettingsFile::new(s.dir.0.join("shared")),
+            s.registry.clone(),
+            bundled,
+            Vec::new(),
+        )
+        .start();
+        assert_eq!(listing.packs[0].pack_version, "2.0.0");
+        assert!(!copy.join(".atlas/renumber").exists());
+        assert_eq!(fs::read(tile(2, 2)).unwrap(), remote_tile(13, 40, 80));
+        assert_eq!(fs::read(tile(6, 6)).unwrap(), remote_tile(13, 44, 84));
+        assert!(!tile(0, 0).exists());
+        let status: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(copy.join("offline-tiles/north.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status["complete"], false);
     }
 
     #[test]
