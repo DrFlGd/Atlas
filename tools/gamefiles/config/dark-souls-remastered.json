@@ -46,7 +46,7 @@
     "tileSize": 256,
     "tileFormat": "webp",
     "tileQuality": 85,
-    "lowerFloorOpacity": 0.3
+    "lowerFloorOpacity": 0.4
   },
   "bosses": [
     { "name": "Asylum Demon", "models": [2232], "areas": ["m18_01"], "flag": 16 },
@@ -73,7 +73,12 @@
     { "name": "Gwyn, Lord of Cinder", "models": [5370], "areas": ["m18_00"], "flag": 15 },
     { "name": "Sanctuary Guardian", "models": [3471], "areas": ["m12_01"], "flag": 11210000 },
     { "name": "Knight Artorias", "models": [4100], "areas": ["m12_01"], "flag": 11210001 },
-    { "name": "Manus, Father of the Abyss", "models": [4500], "areas": ["m12_01"], "flag": 11210002 },
+    {
+      "name": "Manus, Father of the Abyss",
+      "models": [4500],
+      "areas": ["m12_01"],
+      "flag": 11210002
+    },
     { "name": "Black Dragon Kalameet", "models": [4510], "areas": ["m12_01"], "flag": 11210004 }
   ],
   "bonfireNames": {

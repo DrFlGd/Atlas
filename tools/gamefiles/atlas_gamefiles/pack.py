@@ -286,8 +286,8 @@ def build_pack(
         "packVersion": PACK_VERSION,
         "gamePatch": game_patch or "unknown",
         "attribution": [
-            {"name": "Made by Atlas Map Maker from this player's own game files. Private: not for sharing."},
-            {"name": "Method after Hunter's Atlas (maps from a player's own game files)", "url": HUNTERS_ATLAS, "license": "GPL-2.0"},
+            {"name": "Made with Atlas Map Maker from your own game files (private, not for sharing)"},
+            {"name": "Method after Hunter's Atlas", "url": HUNTERS_ATLAS, "license": "GPL-2.0"},
         ],
         "idMigrations": {},
         "created": created or stamp,

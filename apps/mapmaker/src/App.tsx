@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  CATEGORY_LABELS,
   SOURCE_LABELS,
+  areaNotes,
   boundsText,
+  categoryCounts,
   count,
+  floorPreviewFile,
   gameHeadline,
+  isMakeReport,
+  makeSuggestedFileName,
+  makeSummaryLine,
   plural,
   previewFile,
   sourceDetails,
@@ -13,6 +20,9 @@ import {
   summaryLine,
   type AreaReport,
   type GeometrySourceName,
+  type MadeArea,
+  type MakeReport,
+  type MarkerCategory,
   type Report,
 } from './report';
 import { errorText, shell, type AppInfo, type CheckStatus, type SavedReport } from './shell';
@@ -87,16 +97,19 @@ function MapMaker() {
     }
   }, [api]);
 
-  const start = useCallback(async () => {
-    if (!folder) return;
-    setProblem(null);
-    setSaved(null);
-    try {
-      setStatus(await api.checkStart(folder));
-    } catch (error) {
-      setProblem(errorText(error));
-    }
-  }, [api, folder]);
+  const start = useCallback(
+    async (kind: 'check' | 'make') => {
+      if (!folder) return;
+      setProblem(null);
+      setSaved(null);
+      try {
+        setStatus(await (kind === 'make' ? api.makeStart(folder) : api.checkStart(folder)));
+      } catch (error) {
+        setProblem(errorText(error));
+      }
+    },
+    [api, folder],
+  );
 
   const cancel = useCallback(async () => {
     try {
@@ -110,7 +123,11 @@ function MapMaker() {
   const save = useCallback(async () => {
     setProblem(null);
     try {
-      const result = await api.saveReport(suggestedFileName(status?.report ?? null, new Date()));
+      const report = status?.report ?? null;
+      const now = new Date();
+      const result = await api.saveReport(
+        isMakeReport(report) ? makeSuggestedFileName(report, now) : suggestedFileName(report, now),
+      );
       if (result) setSaved(result);
     } catch (error) {
       setProblem(errorText(error));
@@ -118,6 +135,7 @@ function MapMaker() {
   }, [api, status]);
 
   const report = status?.state === 'done' ? status.report : null;
+  const what = status?.kind === 'make' ? 'making of the map' : 'check';
 
   return (
     <main className="mm-page">
@@ -126,8 +144,9 @@ function MapMaker() {
         {info && <span className="muted small">version {info.version}</span>}
       </header>
       <p className="mm-intro">
-        Checks your own game files and reports what map data can be read. It only reads the game
-        folder: nothing there is changed, and nothing is sent anywhere.
+        Makes an Atlas map pack from your own game files, or checks what map data can be read from
+        them. It only reads the game folder: nothing there is changed, and nothing is sent anywhere.
+        The map pack stays on this computer, in the folder Atlas reads its maps from.
       </p>
       {info && !info.helperFound && (
         <p className="mm-alert mm-bad" role="alert">
@@ -164,13 +183,22 @@ function MapMaker() {
       </section>
 
       <section className="mm-card" aria-labelledby="step-check">
-        <h2 id="step-check">2. Check</h2>
+        <h2 id="step-check">2. Make the map</h2>
         <div className="mm-row">
+          <button
+            id="make-start"
+            type="button"
+            className="button button-primary"
+            onClick={() => void start('make')}
+            disabled={!folder || running || info?.helperFound === false}
+          >
+            Make map
+          </button>
           <button
             id="check-start"
             type="button"
-            className="button button-primary"
-            onClick={() => void start()}
+            className="button"
+            onClick={() => void start('check')}
             disabled={!folder || running || info?.helperFound === false}
           >
             Check game files
@@ -187,6 +215,11 @@ function MapMaker() {
             </button>
           )}
         </div>
+        <p className="muted small">
+          Make map reads every area (a few minutes for Dark Souls Remastered) and puts the map pack
+          in <span className="mono">{info?.mapsFolder ?? 'the Atlas maps folder'}</span>, replacing
+          one it made before. Check game files only reports what can be read.
+        </p>
         {status && status.state !== 'idle' && <Progress status={status} />}
       </section>
 
@@ -198,7 +231,40 @@ function MapMaker() {
 
       {status?.state === 'failed' && <Failure status={status} />}
       {status?.state === 'cancelled' && (
-        <p className="mm-alert">The check was stopped. Click Check game files to start again.</p>
+        <p className="mm-alert">
+          The {what} was stopped. Nothing was changed in the maps folder. Click a button above to
+          start again.
+        </p>
+      )}
+
+      {isMakeReport(report) && status?.pack && (
+        <section className="mm-card" aria-labelledby="pack-title">
+          <h2 id="pack-title">Your map pack is ready</h2>
+          <p>
+            Open Atlas (or click Refresh in its Maps dialog): <strong>{report.pack?.id}</strong> is
+            in its list of maps.
+          </p>
+          <div className="mm-row">
+            <span className="mm-path" title={status.pack.folder}>
+              {status.pack.folder}
+            </span>
+            <button
+              id="reveal-pack"
+              type="button"
+              className="button"
+              onClick={() => {
+                api.revealPack().catch((error: unknown) => {
+                  setProblem(errorText(error));
+                });
+              }}
+            >
+              Show in folder
+            </button>
+          </div>
+          <p className="muted small">
+            It is made from your game files, so keep it to yourself: do not share or upload it.
+          </p>
+        </section>
       )}
 
       {report && (
@@ -230,12 +296,14 @@ function MapMaker() {
                   Saved as <span className="mono">{saved.name}</span>. Upload that file to the
                   thread.
                 </>
+              ) : isMakeReport(report) ? (
+                'Saves one .zip file with the report and small preview pictures of each floor (not the map pack). Upload it to the thread.'
               ) : (
                 'Saves one .zip file with the report and the preview pictures. It holds no game files. Upload it to the thread.'
               )}
             </p>
           </section>
-          <Results report={report} />
+          {isMakeReport(report) ? <MakeResults report={report} /> : <Results report={report} />}
         </>
       )}
     </main>
@@ -253,7 +321,7 @@ function Progress({ status }: { status: CheckStatus }) {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={done ? 100 : percent}
-        aria-label="Check progress"
+        aria-label="Progress"
       >
         <div className="mm-progress-fill" style={{ width: `${done ? 100 : percent}%` }} />
       </div>
@@ -269,7 +337,7 @@ function Progress({ status }: { status: CheckStatus }) {
 function Failure({ status }: { status: CheckStatus }) {
   return (
     <section className="mm-card mm-bad-card" role="alert">
-      <h2>The check stopped with an error</h2>
+      <h2>{status.kind === 'make' ? 'Making the map' : 'The check'} stopped with an error</h2>
       <p>{status.error ?? 'The file reader stopped unexpectedly.'}</p>
       {status.helperOutput.length > 0 && (
         <details>
@@ -478,6 +546,170 @@ function Previews({ areas }: { areas: AreaReport[] }) {
             </figure>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+/** The dot colours of the floor previews (tools/gamefiles/atlas_gamefiles/render.py). */
+const PREVIEW_LEGEND: [MarkerCategory, string][] = [
+  ['bonfire', 'var(--mm-dot-bonfire-made)'],
+  ['boss', 'var(--mm-dot-boss)'],
+  ['npc', 'var(--mm-dot-npc)'],
+  ['drop', 'var(--mm-dot-drop)'],
+  ['consumable', 'var(--mm-dot-consumable)'],
+  ['souls', 'var(--mm-dot-souls)'],
+];
+
+function MakeResults({ report }: { report: MakeReport }) {
+  const summary = report.summary;
+  const made = report.areas.filter((area) => !area.skipped);
+  return (
+    <>
+      <section className="mm-card" aria-labelledby="result-title">
+        <h2 id="result-title">{gameHeadline(report.game)}</h2>
+        <p>{makeSummaryLine(report)}</p>
+        {summary && <p className="small">{categoryCounts(summary.markersByCategory)}.</p>}
+        {report.warnings.length > 0 && (
+          <>
+            <h3>Warnings</h3>
+            <ul className="mm-list">
+              {report.warnings.map((warning, index) => (
+                <li key={index}>{warning}</li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+      <section className="mm-card" aria-labelledby="areas-title">
+        <h2 id="areas-title">Areas</h2>
+        <div className="mm-table-wrap">
+          <table className="mm-table">
+            <thead>
+              <tr>
+                <th scope="col">Area</th>
+                <th scope="col">Floors</th>
+                <th scope="col">Markers</th>
+                <th scope="col">To look at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.areas.map((area) => (
+                <MadeAreaRow key={area.id} area={area} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {made.length > 0 && <FloorPreviews areas={made} />}
+    </>
+  );
+}
+
+function MadeAreaRow({ area }: { area: MadeArea }) {
+  const notes = areaNotes(area);
+  const floors = area.floors ?? [];
+  return (
+    <tr>
+      <th scope="row">
+        <div>{area.name}</div>
+        <div className="muted small mono">{area.id}</div>
+      </th>
+      <td>
+        {floors.length === 0
+          ? '–'
+          : floors.map((floor) => (
+              <div key={floor.index} className="small">
+                {floor.name}
+                <span className="muted"> · {count(floor.areaSquareMetres)} m²</span>
+              </div>
+            ))}
+      </td>
+      <td className="small">
+        {area.markers ? (
+          <>
+            <div>{count(area.markers.total)}</div>
+            <div className="muted">{categoryCounts(area.markers.byCategory)}</div>
+          </>
+        ) : (
+          '–'
+        )}
+      </td>
+      <td className="small">
+        {notes.length === 0 ? (
+          <span className="mm-tone-good">Nothing</span>
+        ) : (
+          <ul className="mm-list">
+            {notes.map((note, index) => (
+              <li key={index}>{note}</li>
+            ))}
+          </ul>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function FloorPreviews({ areas }: { areas: MadeArea[] }) {
+  const api = shell!;
+  const [images, setImages] = useState<Record<string, string>>({});
+  const loading = useRef(new Set<string>());
+
+  useEffect(() => {
+    for (const area of areas) {
+      for (const floor of area.floors ?? []) {
+        const file = floorPreviewFile(floor);
+        if (!file || loading.current.has(file)) continue;
+        loading.current.add(file);
+        void api.previewImage(file).then(
+          (url) => {
+            setImages((current) => ({ ...current, [file]: url }));
+          },
+          () => undefined,
+        );
+      }
+    }
+  }, [api, areas]);
+
+  return (
+    <section className="mm-card" aria-labelledby="previews-title">
+      <h2 id="previews-title">Floors</h2>
+      <p className="muted small">
+        Small copies of the map pictures, north (+z) up: lighter where higher, walls in dark lines,
+        the floors below faded. Dots are markers on that floor.
+      </p>
+      <ul className="mm-legend small">
+        {PREVIEW_LEGEND.map(([category, colour]) => (
+          <li key={category}>
+            <span className="mm-swatch" style={{ background: colour }} />
+            {CATEGORY_LABELS[category]}
+          </li>
+        ))}
+        <li>
+          <span className="mm-swatch" style={{ background: 'var(--mm-dot-item)' }} />
+          Other items
+        </li>
+      </ul>
+      <div className="mm-previews">
+        {areas.flatMap((area) =>
+          (area.floors ?? []).map((floor) => {
+            const file = floorPreviewFile(floor);
+            if (!file) return null;
+            return (
+              <figure key={file} className="mm-preview">
+                {images[file] ? (
+                  <img src={images[file]} alt={`${area.name}, ${floor.name}, from above`} />
+                ) : (
+                  <div className="mm-preview-empty muted small">Loading…</div>
+                )}
+                <figcaption className="small">
+                  {area.name}
+                  <span className="muted"> · {floor.name}</span>
+                </figcaption>
+              </figure>
+            );
+          }),
+        )}
       </div>
     </section>
   );

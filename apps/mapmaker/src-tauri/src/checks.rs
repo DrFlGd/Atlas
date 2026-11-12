@@ -1,8 +1,9 @@
 //! Running the helper (`atlas-gamefiles`, from tools/gamefiles) and following it.
 //!
-//! The helper is a separate program, installed next to the app. The app starts it with the chosen folder and an
-//! output folder in the app's own data, reads its JSON lines from standard output as they come, keeps the last
-//! lines of its standard error for a failed check, and reads `report.json` when it says `done`. Cancel writes
+//! The helper is a separate program, installed next to the app. The app starts it (`check`, or `make` to make a
+//! map pack) with the chosen folder and an output folder in the app's own data, reads its JSON lines from standard
+//! output as they come, keeps the last lines of its standard error for a failed run, and reads `report.json` when
+//! it says `done`. Cancel writes
 //! `cancel` to its standard input, which it checks between files; if it has not stopped a few seconds later, the
 //! app ends it (on Windows with its child processes, as the single-file helper runs as two processes).
 
@@ -25,6 +26,7 @@ pub const HELPER_NAME: &str = "atlas-gamefiles";
 /// What the helper writes in its output folder.
 pub const REPORT_FILE: &str = "report.json";
 pub const ZIP_FILE: &str = "atlas-check-report.zip";
+pub const MAKE_ZIP_FILE: &str = "atlas-make-report.zip";
 /// Check folders kept in the app's data, newest first; older ones are deleted when a check starts.
 const KEEP_RUNS: usize = 3;
 const MAX_LINES: usize = 500;
@@ -43,6 +45,39 @@ pub enum State {
     Cancelled,
 }
 
+/// What the helper is asked to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Job {
+    /// Report what map data can be read.
+    Check,
+    /// Make a map pack and install it in `maps_folder` (the folder the Atlas viewer reads packs from).
+    Make { maps_folder: PathBuf },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Kind {
+    Check,
+    Make,
+}
+
+impl Job {
+    pub fn kind(&self) -> Kind {
+        match self {
+            Job::Check => Kind::Check,
+            Job::Make { .. } => Kind::Make,
+        }
+    }
+
+    /// The zip of the report this job writes.
+    pub fn zip_file(&self) -> &'static str {
+        match self {
+            Job::Check => ZIP_FILE,
+            Job::Make { .. } => MAKE_ZIP_FILE,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Line {
     pub kind: &'static str,
@@ -54,12 +89,15 @@ pub struct Line {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub state: State,
+    pub kind: Kind,
     pub run_id: u64,
     pub folder: Option<String>,
     pub fraction: f64,
     pub message: String,
     pub lines: Vec<Line>,
     pub report: Option<Value>,
+    /// The map pack a make installed (the helper's `pack` line): its folder, id and counts.
+    pub pack: Option<Value>,
     pub error: Option<String>,
     pub helper_output: Vec<String>,
     pub elapsed_seconds: f64,
@@ -69,12 +107,14 @@ impl Status {
     fn idle() -> Self {
         Status {
             state: State::Idle,
+            kind: Kind::Check,
             run_id: 0,
             folder: None,
             fraction: 0.0,
             message: String::new(),
             lines: Vec::new(),
             report: None,
+            pack: None,
             error: None,
             helper_output: Vec::new(),
             elapsed_seconds: 0.0,
@@ -91,6 +131,7 @@ pub struct Progress {
     pub lines: Vec<Line>,
     pub error: Option<String>,
     pub helper_output: VecDeque<String>,
+    pub pack: Option<Value>,
     saw_done: bool,
     saw_cancelled: bool,
 }
@@ -104,6 +145,7 @@ impl Default for Progress {
             lines: Vec::new(),
             error: None,
             helper_output: VecDeque::new(),
+            pack: None,
             saw_done: false,
             saw_cancelled: false,
         }
@@ -115,6 +157,14 @@ fn text(value: &Value, key: &str) -> String {
         Some(Value::String(text)) => text.clone(),
         Some(Value::Null) | None => String::new(),
         Some(other) => other.to_string(),
+    }
+}
+
+fn plural(count: u64) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
     }
 }
 
@@ -164,6 +214,29 @@ impl Progress {
                 let count = event.get("count").and_then(Value::as_u64).unwrap_or(0);
                 self.push_line("info", format!("{count} areas to read"));
             }
+            "area" if event.get("floors").is_some() => {
+                // A make's area: what was drawn from it.
+                let name = text(&event, "name");
+                let line = match event.get("skipped") {
+                    Some(Value::String(reason)) => format!("{name}: skipped ({reason})"),
+                    _ => {
+                        let floors = event.get("floors").and_then(Value::as_u64).unwrap_or(0);
+                        let markers = event.get("markers").and_then(Value::as_u64).unwrap_or(0);
+                        let used = text(&event, "used");
+                        let from = if used.is_empty() {
+                            " (no floor plan could be read: markers only)".to_owned()
+                        } else {
+                            format!(" (from {used})")
+                        };
+                        format!(
+                            "{name}: {floors} floor{}, {markers} marker{}{from}",
+                            plural(floors),
+                            plural(markers)
+                        )
+                    }
+                };
+                self.push_line("area", line);
+            }
             "area" => {
                 let statuses = event
                     .get("geometry")
@@ -183,6 +256,11 @@ impl Progress {
                     })
                     .unwrap_or_default();
                 self.push_line("area", format!("{}: {statuses}", text(&event, "name")));
+            }
+            "pack" => {
+                let folder = text(&event, "folder");
+                self.push_line("pack", format!("Map pack installed in {folder}"));
+                self.pack = Some(event);
             }
             "warning" => self.push_line("warning", text(&event, "message")),
             "error" => self.error = Some(text(&event, "message")),
@@ -232,6 +310,7 @@ impl Progress {
 
 struct Run {
     id: u64,
+    job: Job,
     folder: PathBuf,
     out_dir: PathBuf,
     started: Instant,
@@ -374,23 +453,40 @@ fn kill_tree(child: &mut Child) {
 }
 
 impl Checks {
-    /// Starts the helper on `folder`, writing into `out_dir`.
-    pub fn start(&self, helper: &Path, folder: &Path, out_dir: &Path) -> Result<Status, String> {
+    /// Starts the helper on `folder` for `job`, writing its report into `out_dir`.
+    pub fn start(
+        &self,
+        helper: &Path,
+        job: Job,
+        folder: &Path,
+        out_dir: &Path,
+    ) -> Result<Status, String> {
         let mut inner = lock(&self.inner);
         if let Some(run) = &inner.run {
             if matches!(run.progress.state, State::Running | State::Cancelling) {
-                return Err("A check is already running.".to_owned());
+                return Err("The Map Maker is already reading the game files.".to_owned());
             }
         }
         if is_inside(out_dir, folder) {
             return Err("The report would be written inside the game folder, which the Map Maker never does.".to_owned());
         }
         let mut command = Command::new(helper);
+        match &job {
+            Job::Check => {
+                command.arg("check");
+            }
+            Job::Make { maps_folder } => {
+                if is_inside(maps_folder, folder) || is_inside(folder, maps_folder) {
+                    return Err("The maps folder and the game folder overlap; the Map Maker never writes into the game folder.".to_owned());
+                }
+                command.arg("make");
+            }
+        }
+        command.arg(folder).arg("--out").arg(out_dir);
+        if let Job::Make { maps_folder } = &job {
+            command.arg("--maps-folder").arg(maps_folder);
+        }
         command
-            .arg("check")
-            .arg(folder)
-            .arg("--out")
-            .arg(out_dir)
             .arg("--stdin-cancel")
             .current_dir(out_dir)
             .stdin(Stdio::piped())
@@ -411,6 +507,7 @@ impl Checks {
         let child = Arc::new(Mutex::new(child));
         inner.run = Some(Run {
             id,
+            job,
             folder: folder.to_path_buf(),
             out_dir: out_dir.to_path_buf(),
             started: Instant::now(),
@@ -503,12 +600,14 @@ impl Checks {
         let progress = &run.progress;
         Status {
             state: progress.state,
+            kind: run.job.kind(),
             run_id: run.id,
             folder: Some(run.folder.display().to_string()),
             fraction: progress.fraction,
             message: progress.message.clone(),
             lines: progress.lines.clone(),
             report: run.report.clone(),
+            pack: progress.pack.clone(),
             error: progress.error.clone(),
             helper_output: progress.helper_output.iter().cloned().collect(),
             elapsed_seconds: run
@@ -565,7 +664,7 @@ impl Checks {
         }
     }
 
-    /// A file of the finished check's output folder, by its name in the report (`previews/<area>.png`) or the
+    /// A file of the finished run's output folder, by its name in the report (`previews/<area>.png`) or the
     /// zip, refusing any other path.
     pub fn output_file(&self, name: &str) -> Result<PathBuf, String> {
         if !is_output_name(name) {
@@ -576,14 +675,41 @@ impl Checks {
             .run
             .as_ref()
             .filter(|run| run.progress.state == State::Done)
-            .ok_or("No finished check.")?;
+            .ok_or("Nothing finished yet.")?;
         Ok(run.out_dir.join(name))
+    }
+
+    /// The report zip of the finished run.
+    pub fn report_zip(&self) -> Result<PathBuf, String> {
+        let name = {
+            let inner = lock(&self.inner);
+            inner
+                .run
+                .as_ref()
+                .map(|run| run.job.zip_file())
+                .ok_or("Nothing finished yet.")?
+        };
+        self.output_file(name)
+    }
+
+    /// The folder of the map pack the finished make installed.
+    pub fn pack_folder(&self) -> Result<PathBuf, String> {
+        let inner = lock(&self.inner);
+        inner
+            .run
+            .as_ref()
+            .filter(|run| run.progress.state == State::Done)
+            .and_then(|run| run.progress.pack.as_ref())
+            .and_then(|pack| pack.get("folder"))
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .ok_or_else(|| "No map pack was made.".to_owned())
     }
 }
 
-/// `atlas-check-report.zip`, or `previews/` and a name of letters, digits and underscores, then `.png`.
+/// A report zip, or `previews/` and a name of letters, digits and underscores, then `.png`.
 pub fn is_output_name(name: &str) -> bool {
-    if name == ZIP_FILE {
+    if name == ZIP_FILE || name == MAKE_ZIP_FILE {
         return true;
     }
     let Some(stem) = name
@@ -727,6 +853,8 @@ mod tests {
     fn only_report_files_are_served() {
         assert!(is_output_name("previews/m10_01_00_00.png"));
         assert!(is_output_name(ZIP_FILE));
+        assert!(is_output_name(MAKE_ZIP_FILE));
+        assert!(is_output_name("previews/m15_01_f1.png"));
         for bad in [
             "report.json",
             "previews/../x.png",
@@ -779,9 +907,24 @@ mod tests {
         fs::create_dir_all(&out).unwrap();
         let checks = Checks::default();
         let error = checks
-            .start(Path::new("missing-helper"), &base, &out)
+            .start(Path::new("missing-helper"), Job::Check, &base, &out)
             .unwrap_err();
         assert!(error.contains("inside the game folder"));
+        let outside =
+            std::env::temp_dir().join(format!("atlas-mapmaker-outside-{}", std::process::id()));
+        fs::create_dir_all(&outside).unwrap();
+        let error = checks
+            .start(
+                Path::new("missing-helper"),
+                Job::Make {
+                    maps_folder: base.join("Maps"),
+                },
+                &base,
+                &outside,
+            )
+            .unwrap_err();
+        assert!(error.contains("overlap"), "{error}");
+        let _ = fs::remove_dir_all(&outside);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -810,7 +953,7 @@ mod tests {
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
 
         let checks = Checks::default();
-        checks.start(&script, &game, &out).unwrap();
+        checks.start(&script, Job::Check, &game, &out).unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
         let status = loop {
             let status = checks.status();
@@ -824,7 +967,99 @@ mod tests {
         assert_eq!(status.state, State::Done, "{status:?}");
         assert_eq!(status.report.unwrap()["game"]["id"], "unknown");
         assert_eq!(status.helper_output, vec!["some noise".to_owned()]);
-        assert!(checks.output_file(ZIP_FILE).unwrap().starts_with(&out));
+        assert!(checks.report_zip().unwrap().ends_with(ZIP_FILE));
+        assert!(checks.pack_folder().is_err(), "a check makes no pack");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn make_lines_say_what_was_drawn() {
+        let mut progress = Progress::default();
+        progress.apply_line(
+            r#"{"event":"area","name":"Anor Londo","geometry":{"collision":"ok"},"used":"collision","floors":2,"markers":9}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"area","name":"Firelink Shrine","geometry":{"collision":"missing"},"used":null,"floors":1,"markers":1}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"area","name":"Test","geometry":{},"floors":0,"markers":0,"skipped":"a debug map"}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"pack","folder":"/maps/dark-souls-remastered","id":"dark-souls-remastered","installed":true}"#,
+        );
+        let texts: Vec<_> = progress
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Anor Londo: 2 floors, 9 markers (from collision)",
+                "Firelink Shrine: 1 floor, 1 marker (no floor plan could be read: markers only)",
+                "Test: skipped (a debug map)",
+                "Map pack installed in /maps/dark-souls-remastered",
+            ]
+        );
+        assert_eq!(
+            progress.pack.as_ref().unwrap()["id"],
+            "dark-souls-remastered"
+        );
+    }
+
+    /// The helper is started with `make` and the maps folder, and the pack it reports can be revealed.
+    #[cfg(unix)]
+    #[test]
+    fn runs_a_make_and_keeps_its_pack() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("atlas-mapmaker-make-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let game = base.join("game");
+        let out = base.join("out");
+        let maps = base.join("maps");
+        fs::create_dir_all(&game).unwrap();
+        fs::create_dir_all(&out).unwrap();
+        let script = base.join("helper.sh");
+        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+[ "$1" = make ] && [ "$5" = --maps-folder ] || exit 9
+mkdir -p "$6/p"
+echo "{\"event\":\"pack\",\"folder\":\"$6/p\"}"
+echo '{"kind":"make"}' > "$4/report.json"
+echo '{"event":"done"}'
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let checks = Checks::default();
+        checks
+            .start(
+                &script,
+                Job::Make {
+                    maps_folder: maps.clone(),
+                },
+                &game,
+                &out,
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let status = loop {
+            let status = checks.status();
+            if !matches!(status.state, State::Running | State::Cancelling)
+                || Instant::now() > deadline
+            {
+                break status;
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(status.state, State::Done, "{status:?}");
+        assert_eq!(status.kind, Kind::Make);
+        assert_eq!(checks.pack_folder().unwrap(), maps.join("p"));
+        assert!(checks.report_zip().unwrap().ends_with(MAKE_ZIP_FILE));
         let _ = fs::remove_dir_all(&base);
     }
 }

@@ -280,3 +280,189 @@ export function previewFile(area: AreaReport): string | null {
   const file = area.preview?.file;
   return file && /^previews\/[A-Za-z0-9_]+\.png$/.test(file) ? file : null;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Make map: the report `atlas-gamefiles make` writes (kind "make").
+
+export type MarkerCategory =
+  | 'bonfire'
+  | 'boss'
+  | 'npc'
+  | 'drop'
+  | 'weapon'
+  | 'armour'
+  | 'ring'
+  | 'spell'
+  | 'key'
+  | 'upgrade'
+  | 'other'
+  | 'consumable'
+  | 'souls';
+
+/** In the order the report lists them, with the words the window uses. */
+export const CATEGORY_LABELS: Record<MarkerCategory, string> = {
+  bonfire: 'Bonfires',
+  boss: 'Bosses',
+  npc: 'NPCs',
+  drop: 'Guaranteed drops',
+  weapon: 'Weapons',
+  armour: 'Armour',
+  ring: 'Rings',
+  spell: 'Spells',
+  key: 'Key items',
+  upgrade: 'Upgrade materials',
+  other: 'Other items',
+  consumable: 'Consumables',
+  souls: 'Souls',
+};
+
+export interface MadeFloor {
+  index: number;
+  name: string;
+  heights: [number, number];
+  areaSquareMetres: number;
+  triangles: number;
+  wallLines: number;
+  markers: Partial<Record<MarkerCategory, number>>;
+  tiles: { minZoom: number; maxZoom: number; tileSize: number; files: number; bytes: number };
+  preview: string;
+}
+
+export interface MadeArea {
+  id: string;
+  key: string;
+  name: string;
+  /** Why the area was left out (a debug map, or one the config skips). */
+  skipped?: string;
+  geometry?: { used: GeometrySourceName | null } & Partial<
+    Record<GeometrySourceName, SourceResult>
+  >;
+  bonfires?: { method: string; registered?: number; placed?: number; objectsNotFound?: unknown[] };
+  treasure?: {
+    events: number;
+    lotsReferenced: number;
+    lotsFound: number;
+    lotsEmpty?: number;
+    lotsMissing?: { count: number; examples?: number[]; tableEmpty?: boolean };
+  };
+  characters?: {
+    total: number;
+    bosses: number;
+    bossesExpected?: number;
+    bossesNotFound?: string[];
+    npc?: number;
+    guaranteedDrop?: number;
+  };
+  placement?: { verdict: string; markersChecked: number } & Record<string, unknown>;
+  frame?: { width: number; height: number; pixelsPerMetre: number; cropped: boolean };
+  mainFloor?: number;
+  floors?: MadeFloor[];
+  markers?: {
+    total: number;
+    byCategory: Partial<Record<MarkerCategory, number>>;
+    notOnFloor: number;
+    notOnFloorList?: { key: string; category: MarkerCategory; height: number }[];
+    withFlag: number;
+    placeNames: number;
+  };
+  seconds?: number;
+}
+
+export interface MakeReport {
+  tool: string;
+  toolVersion: string;
+  reportVersion: number;
+  kind: 'make';
+  createdAt: string;
+  folder: string;
+  game: GameInfo;
+  areas: MadeArea[];
+  pack: {
+    id: string;
+    folder: string;
+    installed: boolean;
+    mapsFolder: string;
+    counts: Record<string, number>;
+    tiles: number;
+    tileBytes: number;
+  } | null;
+  summary: {
+    areas: number;
+    areasMade: number;
+    areasSkipped: string[];
+    floors: number;
+    markers: number;
+    markersByCategory: Partial<Record<MarkerCategory, number>>;
+    notOnFloor: number;
+  } | null;
+  warnings: string[];
+  elapsedSeconds: number;
+  diagnostics?: ReportDiagnostics;
+}
+
+export type AnyReport = Report | MakeReport;
+
+export function isMakeReport(report: AnyReport | null | undefined): report is MakeReport {
+  return (report as MakeReport | null | undefined)?.kind === 'make';
+}
+
+/** "Bonfires 4, Bosses 1, Rings 1": a count per category, in the usual order, leaving out the empty ones. */
+export function categoryCounts(counts: Partial<Record<MarkerCategory, number>>): string {
+  return (Object.keys(CATEGORY_LABELS) as MarkerCategory[])
+    .filter((category) => (counts[category] ?? 0) > 0)
+    .map((category) => `${CATEGORY_LABELS[category]} ${count(counts[category] ?? 0)}`)
+    .join(', ');
+}
+
+/** One sentence on what was made, for the top of the results. */
+export function makeSummaryLine(report: MakeReport): string {
+  const summary = report.summary;
+  if (!summary) return report.game.reason ?? 'No map could be made from this folder.';
+  const parts = [
+    `${plural(summary.areasMade, 'area')} drawn`,
+    plural(summary.floors, 'floor'),
+    plural(summary.markers, 'marker'),
+    summary.areasSkipped.length > 0
+      ? `${plural(summary.areasSkipped.length, 'area')} left out`
+      : null,
+  ];
+  return `${parts.filter(Boolean).join(', ')}.`;
+}
+
+/** What to look at in an area of a made map, in plain words; empty when all went as expected. */
+export function areaNotes(area: MadeArea): string[] {
+  if (area.skipped) return [`Left out: ${area.skipped}`];
+  const notes: string[] = [];
+  if (area.geometry && !area.geometry.used)
+    notes.push('No collision or navmesh could be read: markers only, on an empty picture');
+  else if (area.geometry?.used === 'navmesh')
+    notes.push('Drawn from the navmesh (collision could not be read)');
+  const notOnFloor = area.markers?.notOnFloor ?? 0;
+  if (notOnFloor > 0 && area.geometry?.used)
+    notes.push(`${plural(notOnFloor, 'marker')} not over any floor (put on the main floor)`);
+  const missingBosses = area.characters?.bossesNotFound ?? [];
+  if (missingBosses.length > 0) notes.push(`Bosses not found: ${missingBosses.join(', ')}`);
+  const missingLots = area.treasure?.lotsMissing?.count ?? 0;
+  if (missingLots > 0)
+    notes.push(`${plural(missingLots, 'item lot')} not in the item table (left off the map)`);
+  const lostBonfires = area.bonfires?.objectsNotFound?.length ?? 0;
+  if (lostBonfires > 0)
+    notes.push(`${plural(lostBonfires, 'bonfire')} registered by the event script but not placed`);
+  if (area.frame?.cropped)
+    notes.push(
+      `Too large for one picture: drawn at ${area.frame.pixelsPerMetre} pixels per metre and cropped`,
+    );
+  if (area.placement && !area.placement.verdict.startsWith('placed by part'))
+    notes.push(`Collision placement: ${area.placement.verdict}`);
+  return notes;
+}
+
+/** A file name to suggest when saving a make's report: atlas-make-dark-souls-remastered-2026-11-12.zip. */
+export function makeSuggestedFileName(report: MakeReport | null, now: Date): string {
+  return suggestedFileName(report as Report | null, now).replace(/^atlas-check-/, 'atlas-make-');
+}
+
+/** Preview file name of one floor, as the shell accepts it. */
+export function floorPreviewFile(floor: MadeFloor): string | null {
+  return /^previews\/[A-Za-z0-9_]+\.png$/.test(floor.preview) ? floor.preview : null;
+}

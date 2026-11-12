@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from atlas_gamefiles.check import CancelToken
 from atlas_gamefiles.events import Events
+from atlas_gamefiles.geometry import Cancelled
 from atlas_gamefiles.make import MakeError, MapMaker
 from atlas_gamefiles.safety import UnsafeOutputError
 from atlas_gamefiles.worker import InlineRunner
@@ -198,3 +200,22 @@ def test_never_writes_into_the_game_folder(dsr_map_folder: Path, tmp_path: Path)
 def test_bloodborne_is_refused_for_now(bloodborne_folder: Path, tmp_path: Path) -> None:
     with pytest.raises(MakeError, match="later version"):
         make(bloodborne_folder, tmp_path / "out", tmp_path / "Maps")
+
+
+def test_cancel_leaves_the_installed_pack_as_it_was(dsr_map_folder: Path, tmp_path: Path) -> None:
+    maps = tmp_path / "Maps"
+    make(dsr_map_folder, tmp_path / "out1", maps, only_areas=["m15_01"])
+    before = snapshot(maps)
+    token = CancelToken()
+
+    class CancelWhileDrawing(Events):
+        def progress(self, fraction: float, message: str, **extra) -> None:
+            super().progress(fraction, message, **extra)
+            if "tiles" in message:
+                token.cancel()
+
+    stream = io.StringIO()
+    maker = MapMaker(dsr_map_folder, tmp_path / "out2", CancelWhileDrawing(stream), token=token, maps_folder=maps, runner=InlineRunner())
+    with pytest.raises(Cancelled):
+        maker.run()
+    assert snapshot(maps) == before, "a cancelled make changes nothing in the maps folder"

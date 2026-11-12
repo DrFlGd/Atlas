@@ -319,6 +319,18 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Make map with the built helper on a made-up game folder (invented
+      # layouts, meshes and names; no game data), started the way the app
+      # starts it, then validate the pack it installed against @atlas/schema:
+      # manifest, every data file, the tile pyramids and every tile.
+      - name: Make a map pack from a made-up folder and validate it
+        run: |
+          helper=tools/gamefiles/dist/atlas-gamefiles
+          if [ "$RUNNER_OS" = Windows ]; then helper=tools/gamefiles/dist/atlas-gamefiles.exe; fi
+          python tools/gamefiles/tests/fixtures.py dsr-map "$RUNNER_TEMP/made-up-dsr-map"
+          node apps/mapmaker/e2e/helper.js "$helper" "$RUNNER_TEMP/made-up-dsr-map" "$RUNNER_TEMP/make" --make "$RUNNER_TEMP/Maps"
+          pnpm --filter @atlas/pipeline validate-pack "$RUNNER_TEMP/Maps/dark-souls-remastered"
+
       - name: Rust format, lint and unit tests
         working-directory: apps/mapmaker/src-tauri
         run: |

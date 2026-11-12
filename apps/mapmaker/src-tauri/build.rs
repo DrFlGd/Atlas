@@ -5,6 +5,8 @@ const COMMANDS: &[&str] = &[
     "check_start",
     "check_status",
     "check_cancel",
+    "make_start",
+    "reveal_pack",
     "preview_image",
     "save_report",
     "reveal_saved_report",

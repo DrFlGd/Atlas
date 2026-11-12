@@ -382,7 +382,7 @@ class MapMaker:
         low, high = (np.percentile(heights, [2, 98]) if len(heights) else (0.0, 1.0))
         tile_size = int(render_settings.get("tileSize", 256))
         quality = int(render_settings.get("tileQuality", 85))
-        opacity = float(render_settings.get("lowerFloorOpacity", 0.3))
+        opacity = float(render_settings.get("lowerFloorOpacity", 0.4))
         layers_out: list[LayerOut] = []
         floor_entries = []
         assert self.staging is not None
@@ -456,6 +456,7 @@ class MapMaker:
             index=index,
             count=count,
             geometry={k: v.get("status") for k, v in geometry.items() if isinstance(v, dict)},
+            used=geometry.get("used"),
             floors=len(entry.get("floors", [])),
             markers=entry.get("markers", {}).get("total", 0),
             skipped=entry.get("skipped"),

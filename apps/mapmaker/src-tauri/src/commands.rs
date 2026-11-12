@@ -13,7 +13,8 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
 use crate::{
-    checks::{self, Checks, Status},
+    checks::{self, Checks, Job, Status},
+    maps,
     settings::{self, Settings},
 };
 
@@ -28,6 +29,8 @@ pub struct AppInfo {
     helper_found: bool,
     last_folder: Option<String>,
     typical_folder: Option<String>,
+    /// Where Make map installs the pack: the Atlas viewer's maps folder.
+    maps_folder: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -67,7 +70,17 @@ pub fn app_info<R: Runtime>(app: AppHandle<R>) -> Result<AppInfo, String> {
         helper_found: checks::find_helper().is_some(),
         last_folder: settings.last_folder,
         typical_folder: settings::typical_folder(),
+        maps_folder: viewer_maps_folder(&app)
+            .ok()
+            .map(|folder| folder.display().to_string()),
     })
+}
+
+fn viewer_maps_folder<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .local_data_dir()
+        .map(|local| maps::maps_folder(&local))
+        .map_err(|error| error.to_string())
 }
 
 /// Asks for the game folder, starting in the last one, or where Steam puts Dark Souls Remastered.
@@ -109,6 +122,28 @@ pub fn check_start<R: Runtime>(
     checks: State<'_, Checks>,
     folder: String,
 ) -> Result<Status, String> {
+    start(&app, &checks, folder, Job::Check, "checks")
+}
+
+/// Starts making the map pack of `folder`, installed in the Atlas viewer's maps folder. Its report goes to a new
+/// folder in the app's own data.
+#[tauri::command]
+pub fn make_start<R: Runtime>(
+    app: AppHandle<R>,
+    checks: State<'_, Checks>,
+    folder: String,
+) -> Result<Status, String> {
+    let maps_folder = viewer_maps_folder(&app)?;
+    start(&app, &checks, folder, Job::Make { maps_folder }, "makes")
+}
+
+fn start<R: Runtime>(
+    app: &AppHandle<R>,
+    checks: &Checks,
+    folder: String,
+    job: Job,
+    runs: &str,
+) -> Result<Status, String> {
     let helper = checks::find_helper().ok_or(
         "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
     )?;
@@ -122,10 +157,10 @@ pub fn check_start<R: Runtime>(
         .path()
         .app_local_data_dir()
         .map_err(|error| error.to_string())?
-        .join("checks");
+        .join(runs);
     let out_dir = checks::new_run_folder(&base)?;
-    let status = checks.start(&helper, &folder_path, &out_dir)?;
-    let file = settings_file(&app)?;
+    let status = checks.start(&helper, job, &folder_path, &out_dir)?;
+    let file = settings_file(app)?;
     let mut settings = settings::read(&file);
     if settings.last_folder.as_deref() != Some(folder.as_str()) {
         settings = Settings {
@@ -149,7 +184,7 @@ pub fn check_cancel(checks: State<'_, Checks>) {
 /// A preview picture of the finished check, as a `data:` URL.
 #[tauri::command]
 pub fn preview_image(checks: State<'_, Checks>, file: String) -> Result<String, String> {
-    if file == checks::ZIP_FILE {
+    if !file.ends_with(".png") {
         return Err("Not a picture.".to_owned());
     }
     let path = checks.output_file(&file)?;
@@ -165,9 +200,9 @@ pub async fn save_report<R: Runtime>(
     last_saved: State<'_, LastSaved>,
     suggested_name: String,
 ) -> Result<Option<SavedReport>, String> {
-    let zip = checks.output_file(checks::ZIP_FILE)?;
+    let zip = checks.report_zip()?;
     if !zip.is_file() {
-        return Err("The check wrote no report to save.".to_owned());
+        return Err("No report was written to save.".to_owned());
     }
     let mut dialog = window
         .dialog()
@@ -213,6 +248,15 @@ pub fn reveal_saved_report<R: Runtime>(
         .ok_or("No report saved yet.")?;
     app.opener()
         .reveal_item_in_dir(&path)
+        .map_err(|error| error.to_string())
+}
+
+/// Shows the map pack the last make installed in the system's file manager.
+#[tauri::command]
+pub fn reveal_pack<R: Runtime>(app: AppHandle<R>, checks: State<'_, Checks>) -> Result<(), String> {
+    let folder = checks.pack_folder()?;
+    app.opener()
+        .reveal_item_in_dir(&folder)
         .map_err(|error| error.to_string())
 }
 

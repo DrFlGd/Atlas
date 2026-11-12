@@ -7,6 +7,14 @@
   --mm-dot-character: #ff7b72;
   --mm-dot-object: #6cb6ff;
   --mm-dot-start: #9ad87a;
+  /* Floor previews of Make map (render.py MARKER_COLOURS). */
+  --mm-dot-bonfire-made: #ff9a3c;
+  --mm-dot-boss: #ff7b72;
+  --mm-dot-npc: #8fb8ff;
+  --mm-dot-drop: #c792ea;
+  --mm-dot-consumable: #8a919c;
+  --mm-dot-souls: #c9b37e;
+  --mm-dot-item: #e6b450;
 }
 
 *,
