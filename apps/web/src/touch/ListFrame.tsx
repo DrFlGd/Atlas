@@ -1,8 +1,9 @@
 import { stageOf, type ChecklistEntry, type ItemState } from '@atlas/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { AreasView } from './ListAreas';
 import { KindList, ShowChoice, type Show } from './ListGroups';
+import { useListTools } from './ListTools';
 import { OrderView } from './ListOrder';
 import { PageBack } from './ListRows';
 import { ofText, percentOf } from './listText';
@@ -16,6 +17,7 @@ import {
   useListView,
   useLists,
   useNextStep,
+  viewsOf,
   type ListView,
 } from './listViews';
 import { SwitchTrack } from './widgets';
@@ -27,29 +29,32 @@ const VIEWS: { id: ListView; label: string }[] = [
 ];
 
 /**
- * One list: its name and how far it is, the choice of view (by area, by
- * kind, in order), whether it is alone on the map, and the view. Every view
- * reads the same items and found marks.
+ * One list: its name and how far it is, the choice among the views it
+ * offers (see `viewsOf`), whether it is alone on the map, and the view.
+ * Every view reads the same items and found marks.
  */
 export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistEntry }) {
   const chosen = useListView(entry);
   const focus = useAtlas((s) => s.itemFocus);
   const states = useItemStates(entry);
   const next = useNextStep(entry, states);
-  // An item asked for from search, a place or a link is shown in order, this time.
+  const views = viewsOf(entry);
+  // An item asked for from search, a place or a link is shown, this time,
+  // in a view that has every entry: in order, or by kind with none left out.
   const asked = (f: typeof focus) =>
-    f?.open === true && entry.items.some((i) => i.item.id === f.itemId);
-  const [ordered, setOrdered] = useState(() => asked(focus));
+    f?.open === true && entry.items.some((i) => i.item.id === f.itemId) ? f.seq : null;
+  const [askedSeq, setAskedSeq] = useState(() => asked(focus));
   const [seen, setSeen] = useState(focus?.seq);
   if (focus?.seq !== seen) {
     setSeen(focus?.seq);
-    if (asked(focus)) setOrdered(true);
+    const seq = asked(focus);
+    if (seq !== null) setAskedSeq(seq);
   }
   // Once shown, the request is answered: coming back to the list later keeps its view.
   useEffect(() => {
     if (focus?.open) useAtlas.setState({ itemFocus: { itemId: focus.itemId, seq: focus.seq } });
   }, [focus]);
-  const view = ordered ? 'order' : chosen;
+  const view = askedSeq === null ? chosen : views.includes('order') ? 'order' : 'kind';
   useEffect(() => {
     useLists.setState({ frameView: { listId: entry.checklist.id, view } });
     return () => {
@@ -97,32 +102,40 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
           />
         </div>
       </header>
-      <div
-        className="touch-segmented touch-view-switch"
-        role="group"
-        aria-label="How to show this list"
-      >
-        {VIEWS.map((v) => (
-          <button
-            key={v.id}
-            type="button"
-            className="touch-segment"
-            aria-pressed={v.id === view}
-            data-testid={`view-${v.id}`}
-            onClick={() => {
-              setOrdered(false);
-              chooseView(entry.checklist.id, v.id);
-            }}
-          >
-            {v.label}
-          </button>
-        ))}
-      </div>
+      {views.length > 1 ? (
+        <div
+          className="touch-segmented touch-view-switch"
+          role="group"
+          aria-label="How to show this list"
+        >
+          {VIEWS.filter((v) => views.includes(v.id)).map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              className="touch-segment"
+              aria-pressed={v.id === view}
+              data-testid={`view-${v.id}`}
+              onClick={() => {
+                setAskedSeq(null);
+                chooseView(entry.checklist.id, v.id);
+              }}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <OnlySwitch entry={entry} />
       {view === 'area' ? (
         <AreasView game={game} entry={entry} states={states} />
       ) : view === 'kind' ? (
-        <KindView game={game} entry={entry} states={states} left={total - done} />
+        <KindView
+          key={askedSeq ?? 'chosen'}
+          game={game}
+          entry={entry}
+          states={states}
+          all={askedSeq !== null}
+        />
       ) : (
         <OrderView game={game} entry={entry} states={states} next={next} />
       )}
@@ -151,23 +164,46 @@ export function OnlySwitch({ entry }: { entry: ChecklistEntry }) {
   );
 }
 
-/** The whole list by kind. */
+/**
+ * The whole list by kind, with the search field and the filters of a long
+ * list: the view of a collection that has every entry.
+ */
 function KindView({
   game,
   entry,
   states,
-  left,
+  all,
 }: {
   game: LoadedGame;
   entry: ChecklistEntry;
   states: readonly ItemState[];
-  left: number;
+  /** Start with nothing left out (an entry was asked for, and may be found already). */
+  all: boolean;
 }) {
-  const [show, setShow] = useState<Show>('todo');
+  const [show, setShow] = useState<Show>(all ? 'all' : 'todo');
+  const tools = useListTools(game, entry, states);
+  const left = useMemo(() => {
+    let count = 0;
+    if (tools.only) {
+      for (const i of tools.only) if (!states[i]!.done) count++;
+    } else {
+      for (const state of states) if (!state.done) count++;
+    }
+    return count;
+  }, [tools.only, states]);
   return (
     <>
+      {tools.element}
       <ShowChoice left={left} show={show} onChange={setShow} />
-      <KindList key={show} game={game} entry={entry} states={states} show={show} />
+      <KindList
+        key={show}
+        game={game}
+        entry={entry}
+        states={states}
+        show={show}
+        scope={tools.only}
+        more
+      />
     </>
   );
 }

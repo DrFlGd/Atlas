@@ -158,13 +158,25 @@ function ListLink({ entry, tally }: { entry: ChecklistEntry; tally: ChecklistTal
   );
 }
 
-/** The list opened last: how far it is, what is next, and a way back into it. */
+/**
+ * The list opened last: how far it is, a way back into it, and what is
+ * next (a route's next step; for any other list, how much is left).
+ */
 function ContinueCard({ entry }: { entry: ChecklistEntry }) {
   const states = useItemStates(entry);
   const next = useNextStep(entry, states);
   const done = states.filter((s) => s.done).length;
   const total = states.length;
-  const nextName = next === null ? null : entry.items[next]!.item.name;
+  const left = total - done;
+  const [label, value] =
+    left === 0
+      ? ['All done', null]
+      : next !== null
+        ? ['Next up', entry.items[next]!.item.name]
+        : [
+            doneWord(entry) === 'found' ? 'Left to find' : 'Left to do',
+            left === 1 ? 'One entry' : `${numberFormat.format(left)} entries`,
+          ];
   return (
     <section className="touch-continue" aria-labelledby="continue-heading" data-testid="continue">
       <h2 className="touch-continue-kicker" id="continue-heading">
@@ -179,8 +191,8 @@ function ContinueCard({ entry }: { entry: ChecklistEntry }) {
       <Meter found={done} total={total} />
       <div className="touch-continue-row">
         <p className="touch-continue-next">
-          <span className="touch-continue-label">{nextName ? 'Next up' : 'All done'}</span>
-          {nextName ? <span className="touch-continue-step">{nextName}</span> : null}
+          <span className="touch-continue-label">{label}</span>
+          {value ? <span className="touch-continue-step">{value}</span> : null}
         </p>
         <button
           type="button"

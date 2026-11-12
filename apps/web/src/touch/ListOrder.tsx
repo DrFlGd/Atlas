@@ -26,6 +26,7 @@ import {
   areasOf,
   centreOn,
   everythingOf,
+  isRoute,
   openArea,
   setOrderKeys,
   skipStep,
@@ -53,6 +54,9 @@ const rowKey = (row: OrderRow) => {
  * do next highlighted, the done steps before it folded into one row, and a
  * way to the rest of the area of that step. On a phone, "Next up" is pinned
  * at the bottom; on a wide screen it is a card on the map (`NextUpCard`).
+ *
+ * A list that is not a route has no next step (`next` is null): this is
+ * then the list as it is written, its sections open and not numbered.
  */
 export function OrderView({
   game,
@@ -68,7 +72,13 @@ export function OrderView({
   const wide = useTouch((s) => s.arrangement === 'wide');
   const focus = useAtlas((s) => s.itemFocus);
   const stages = stagesOf(entry);
-  const [stageOpen, setStageOpen] = useState<ReadonlyMap<number, boolean>>(new Map());
+  const steps = isRoute(entry);
+  const [toggled, setStageOpen] = useState<ReadonlyMap<number, boolean>>(new Map());
+  // Without steps to follow, no section is the current one: all start open.
+  const stageOpen = useMemo(
+    () => (steps ? toggled : new Map(stages.map((_, s) => [s, toggled.get(s) ?? true]))),
+    [steps, toggled, stages],
+  );
   // "Show" opens the folded steps until the next step changes.
   const [runShownFor, setRunShownFor] = useState<number | null>(null);
   const tools = useListTools(game, entry, states);
@@ -129,11 +139,11 @@ export function OrderView({
                       badge={
                         finished ? (
                           <TickMark done round />
-                        ) : (
+                        ) : steps ? (
                           <span className="touch-stage-number" aria-hidden="true">
                             {stage.number}
                           </span>
-                        )
+                        ) : undefined
                       }
                       onToggle={() => {
                         setStageOpen(new Map(stageOpen).set(row.stage, !row.open));
@@ -169,7 +179,9 @@ export function OrderView({
                       game={game}
                       entry={item}
                       state={states[row.index]!}
-                      detail={stepDetail(game, item, states[row.index]!, row.index)}
+                      detail={
+                        steps ? stepDetail(game, item, states[row.index]!, row.index) : undefined
+                      }
                       more
                       next={isNext}
                       note={isNext && item.item.note ? plainNote(item.item.note) : undefined}
