@@ -7,6 +7,39 @@ export const clock = createClock();
 let store: ProgressStore | null = null;
 let persistent = true;
 
+/** Saves that have started and not finished. */
+let saving = 0;
+
+/**
+ * Says on the page whether a save is under way (`data-saving` on the root
+ * element). The app saves without waiting, so whatever is about to reload
+ * the page, the browser tests above all, can wait for "false" first: a
+ * reload drops a save that has not finished.
+ */
+function showSaving(): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.dataset.saving = saving > 0 ? 'true' : 'false';
+}
+
+/** `inner`, with its saves counted while they run (see {@link showSaving}). */
+function counted(inner: ProgressStore): ProgressStore {
+  const track = async <T>(work: Promise<T>): Promise<T> => {
+    saving += 1;
+    showSaving();
+    try {
+      return await work;
+    } finally {
+      saving -= 1;
+      showSaving();
+    }
+  };
+  return {
+    ...inner,
+    putSetting: (key, value) => track(inner.putSetting(key, value)),
+    write: (batch) => track(inner.write(batch)),
+  };
+}
+
 /**
  * Opens the progress store: IndexedDB when the browser allows it, otherwise
  * an in-memory store (progress then lasts until the page closes).
@@ -16,11 +49,12 @@ export async function openProgressStore(): Promise<{ store: ProgressStore; persi
   try {
     const dexie = createDexieStore();
     await dexie.listProfiles();
-    store = dexie;
+    store = counted(dexie);
   } catch {
-    store = createMemoryStore();
+    store = counted(createMemoryStore());
     persistent = false;
   }
+  showSaving();
   return { store, persistent };
 }
 

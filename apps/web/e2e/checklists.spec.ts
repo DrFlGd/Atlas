@@ -7,6 +7,7 @@ import {
   expectOverallFound,
   mapStatus,
   openMap,
+  reloadSaved,
   selectByName,
 } from './helpers';
 
@@ -183,7 +184,7 @@ test('a step without a place keeps its own tick across a reload, outside the fou
   await expect(page.getByTestId('checklist-done')).toHaveText('1 of 10 found or done');
   await expectOverallFound(page, 0);
 
-  await page.reload();
+  await reloadSaved(page);
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
   await openList(page, 'The Sundered Isle story');
   await expect(itemBox(page, step!.id)).toBeChecked();
