@@ -1,6 +1,6 @@
 import { devices, expect, test, type Page } from '@playwright/test';
 import { collectErrors, openMap, reloadSaved, storedSetting } from './helpers';
-import { back } from './touch';
+import { back, choosePlace } from './touch';
 
 /**
  * Lists in the standard layout: the lists of a game, one list by area, by
@@ -301,6 +301,26 @@ test.describe('on a computer', () => {
     await expect(card).toHaveCount(0);
     await page.keyboard.press('n');
     await expect(page.getByTestId('place-sheet')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('an entry asked for from a place opens its list in order, this time', async ({ page }) => {
+    const errors = collectErrors(page);
+    await openMap(page, './?ui=standard');
+    await choosePlace(page, 'Lore tablet 15');
+    await page
+      .getByTestId('place-lists')
+      .getByRole('button', { name: /On the checklist Lore of the isle/ })
+      .click();
+    const screen = page.getByTestId('checklist-screen');
+    await expect(screen).toHaveAttribute('data-view', 'order');
+    await expect(screen.locator('[data-item-id="demo:checkitem:lore-001"]')).toBeVisible();
+    // Not kept: the list opens by area again.
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('lists-home')).toBeVisible();
+    await list(page, 'Lore of the isle').click();
+    await expect(screen).toHaveAttribute('data-view', 'area');
     expect(errors).toEqual([]);
   });
 });

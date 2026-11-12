@@ -3091,6 +3091,24 @@
   }
 }
 
+/* Made for fingers: every control of a list is at least 48 px. */
+.touch[data-input='touch'] .touch-view-switch .touch-segment,
+.touch[data-input='touch'] .touch-show-choice .touch-chip,
+.touch[data-input='touch'] .touch-list-only-chip {
+  height: 48px;
+  border-radius: 24px;
+}
+
+.touch[data-input='touch'] .touch-view-switch .touch-segment {
+  border-radius: 9px;
+}
+
+.touch[data-input='touch'] .touch-next-card .touch-round-button {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+}
+
 /* With a mouse: a little denser, as the rest of this layout. */
 .touch[data-input='mouse'] .touch-list-card {
   min-height: 52px;
