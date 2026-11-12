@@ -125,7 +125,7 @@ jobs:
           commit="$(git rev-parse --short HEAD)"
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas Map Maker $VERSION for Windows. It checks the game files on your own PC (Dark Souls Remastered, then Bloodborne) and reports what map data can be read from them, with a top-down preview of each area. This version only checks and reports: it makes no maps yet. It only reads the game folder, never changes or copies anything in it, and makes no network requests.
+          Atlas Map Maker $VERSION for Windows. It makes Atlas map packs from the game files on your own PC: **Make map** builds a Dark Souls Remastered pack (height-shaded floors, bonfires, items, bosses and checklists) and puts it in the Atlas maps folder; **Check game files** reports what map data can be read (Dark Souls Remastered and Bloodborne). It only reads the game folder, never changes or copies anything in it, and makes no network requests.
 
           ## How to install and test
 
@@ -133,7 +133,7 @@ jobs:
           2. Open the downloaded file. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**. Accept the licence (GNU GPL, see below) and install.
           3. Start **Atlas Map Maker** from the Start menu.
           4. Click **Choose folder…** and pick your Dark Souls Remastered folder, usually C:\\Program Files (x86)\\Steam\\steamapps\\common\\DARK SOULS REMASTERED (in Steam: right-click the game, **Manage**, **Browse local files**).
-          5. Click **Check game files** and wait for the report (a few minutes).
+          5. Click **Make map** and wait (a few minutes). The map pack goes into the Atlas maps folder, so open Atlas to see it.
           6. Click **Save report…**, save the .zip file, and send it back.
 
           ## Licence
