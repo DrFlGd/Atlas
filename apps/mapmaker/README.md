@@ -8,7 +8,7 @@ It only reads the game folder. It never changes, copies or uploads anything from
 
 No command line needed, ever.
 
-1. **Install.** Open the repository's Releases page, find **Atlas Map Maker 0.1.1** (tag `mapmaker-v0.1.1`) and download **Atlas-Map-Maker-0.1.1-setup.exe**. Run it. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**. The installer shows the GNU GPL licence (see below): click **I Agree**, then install. It installs next to Atlas and changes nothing in it.
+1. **Install.** Open the repository's Releases page, find **Atlas Map Maker 0.1.2** (tag `mapmaker-v0.1.2`) and download **Atlas-Map-Maker-0.1.2-setup.exe**. Run it. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**. The installer shows the GNU GPL licence (see below): click **I Agree**, then install. It installs next to Atlas and changes nothing in it.
 2. **Start** Atlas Map Maker from the Start menu.
 3. **Choose your Dark Souls Remastered folder.** Click **Choose folder…** and pick the game's folder, the one that holds `DarkSoulsRemastered.exe`. With Steam it is usually:
 

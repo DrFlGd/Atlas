@@ -1,10 +1,12 @@
-import multiprocessing
 import sys
 
 if __name__ == "__main__":
-    # The file readers run in a child process (worker.py), started with `spawn`: in the single-file executable the
-    # child is this same program, and this call turns it into the reader before the command line is looked at.
-    multiprocessing.freeze_support()
+    if sys.argv[1:2] == ["reader"]:
+        # The file reader process (reader.py), which the helper starts itself: only the standard library is imported
+        # before it says it has begun.
+        from atlas_gamefiles.reader import main as reader_main
+
+        sys.exit(reader_main(sys.argv[2:]))
 
     from atlas_gamefiles.cli import main
 

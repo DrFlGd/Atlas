@@ -3,7 +3,7 @@
 Licensed GPL-3.0-or-later (see LICENSE in this folder), because it uses Soulstruct.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 TOOL_NAME = "atlas-gamefiles"
 REPORT_VERSION = 1

@@ -10,6 +10,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import sys
+import tempfile
 import threading
 import time
 import typing as tp
@@ -27,9 +29,10 @@ from .geometry import Cancelled, SourceResult
 from .msb import load_msb, summarize
 from .preview import LEGEND, render
 from .safety import check_output_folder, prepare_soulstruct
-from .worker import PREVIEW_LIMIT, ProcessRunner, Runner, SourceJob
+from .worker import PREVIEW_LIMIT, READER_LOG, ProcessRunner, Runner, SourceJob, clean_text
 
 ZIP_NAME = "atlas-check-report.zip"
+LOG_LIMIT = 200_000  # bytes of the reader's log put in the zip (the end of it)
 GEOMETRY_SOURCES = ("collision", "navmesh", "mapPieces")
 SOURCE_NAMES = {"collision": "collision", "navmesh": "navmesh", "mapPieces": "map piece models"}
 
@@ -112,11 +115,13 @@ class Checker:
         self.token = token or CancelToken()
         self.samples = {"collision": collision_sample, "navmesh": navmesh_sample, "mapPieces": map_piece_sample}
         self.source_budget = source_budget
-        # Geometry is read in a child process with a time limit, unless a test passes another runner.
+        # Geometry is read in a file reader process with a time limit, unless a test passes another runner.
         self.runner: Runner = runner if runner is not None else ProcessRunner()
         self.only_areas = {a.lower() for a in only_areas}
         self.warnings: list[str] = []
         self.started = time.monotonic()
+        self.import_seconds: float | None = None
+        self.reader_warned: set[str] = set()
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
@@ -149,6 +154,7 @@ class Checker:
         if detection.supported and detection.root is not None:
             check_output_folder(self.out, detection.root)
         self.out.mkdir(parents=True, exist_ok=True)
+        self.runner.use_folder(self.out)
 
         report: dict[str, tp.Any] = {
             "tool": TOOL_NAME,
@@ -168,7 +174,9 @@ class Checker:
             return self.finish(report)
 
         events.progress(0.01, "Loading the file readers")
+        importing = time.monotonic()
         prepare_soulstruct()
+        self.import_seconds = time.monotonic() - importing
         profile = PROFILES[detection.game]
         root = detection.root
         areas = list_areas(profile, root)
@@ -283,6 +291,7 @@ class Checker:
                 result.add_error(error)
             if mesh is not None and len(mesh):
                 result.mesh = [mesh]
+            self.warn_reader()
             if result.status == "timed-out":
                 self.warn(
                     f"{area.name}: reading {SOURCE_NAMES[source]} was stopped after {result.time_limit:g} s "
@@ -331,6 +340,19 @@ class Checker:
             preview=entry["preview"]["file"] if entry["preview"] else None,
         )
         return entry, lots
+
+    def warn_reader(self) -> None:
+        """One warning when the file reader process cannot start, or cannot load the Havok reader."""
+        runner = self.runner
+        if not isinstance(runner, ProcessRunner):
+            return
+        for key, problem, what in (
+            ("broken", runner.broken, "The file reader process could not start"),
+            ("havok", runner.havok_broken, "The file reader process could not load the Havok reader"),
+        ):
+            if problem and key not in self.reader_warned:
+                self.reader_warned.add(key)
+                self.warn(f"{what}: {problem}. The report's diagnostics section and {READER_LOG} say more.")
 
     def summary(
         self, detection: Detection, areas: list[dict[str, tp.Any]], lots: set[int], item_lots: ItemLots
@@ -404,8 +426,27 @@ class Checker:
                 )
         return None, "No geometry source was read in most areas; see each area's errors."
 
+    def diagnostics(self) -> dict[str, tp.Any]:
+        """How the helper ran, for a report from a PC where something stalled. No user name: paths under the home
+        folder start with `~`."""
+        system = sys.platform
+        if sys.platform == "win32":
+            version = sys.getwindowsversion()
+            system = f"Windows {version.major}.{version.minor} build {version.build}"
+        return {
+            "frozen": bool(getattr(sys, "frozen", False)),
+            "python": sys.version.split()[0],
+            "helperVersion": __version__,
+            "system": system,
+            "tempDir": display_path(Path(tempfile.gettempdir())),
+            "soulstructImportSeconds": round(self.import_seconds, 2) if self.import_seconds is not None else None,
+            "reader": self.runner.diagnostics(),
+        }
+
     def finish(self, report: dict[str, tp.Any]) -> dict[str, tp.Any]:
         report["elapsedSeconds"] = round(time.monotonic() - self.started, 1)
+        self.runner.close()  # the reader's log is complete once it has ended
+        report["diagnostics"] = self.diagnostics()
         self.events.progress(0.99, "Writing the report")
         report_path = self.out / "report.json"
         report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -415,6 +456,12 @@ class Checker:
             for area in report["areas"]:
                 if area.get("preview"):
                     archive.write(self.out / area["preview"]["file"], area["preview"]["file"])
+            log = self.out / READER_LOG
+            if log.is_file():
+                data = log.read_bytes()
+                if len(data) > LOG_LIMIT:
+                    data = b"(earlier lines left out)\n" + data[-LOG_LIMIT:]
+                archive.writestr(READER_LOG, clean_text(data.decode("utf-8", "replace")))
             archive.writestr("README.txt", README_TEXT)
         self.events.emit(
             "done",
@@ -433,6 +480,8 @@ report.json lists what {TOOL_NAME} could read from the game folder: the game and
 parts, treasure and item lot counts, and which geometry source (collision, navmesh, map piece models) worked.
 previews/ holds one top-down picture per area: shaded triangles where geometry was read, and dots for
 parts ({", ".join(LEGEND.values())}).
+{READER_LOG} is the log of the file reader process: when it started, each step of its start-up, each
+source it read and how long it took, and where it was if it was stopped.
 
 It holds no game files: only counts, file names, coordinate ranges and error messages.
 """

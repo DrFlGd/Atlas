@@ -96,8 +96,30 @@ def test_dark_souls_remastered_report(dsr_folder: Path, tmp_path: Path) -> None:
             "README.txt",
             "previews/m10_01_00_00.png",
             "previews/m10_02_00_00.png",
+            "reader-log.txt",
             "report.json",
         ]
+        log = archive.read("reader-log.txt").decode("utf-8")
+    assert "--- reader start 1 ---" in log
+    assert "collision m10_01_00_00: ok in" in log
+    assert not list(out.glob("reader-mesh-*")), "the temporary mesh files are deleted"
+
+    diagnostics = report["diagnostics"]
+    assert diagnostics["helperVersion"] == report["toolVersion"]
+    assert diagnostics["frozen"] is False
+    assert diagnostics["python"].count(".") == 2
+    assert diagnostics["soulstructImportSeconds"] >= 0
+    reader = diagnostics["reader"]
+    assert reader["startedWith"].startswith("python -m atlas_gamefiles reader: a child process with its own pipes")
+    assert reader["lastStage"] == "ready"
+    assert list(reader["starts"][0]["stages"]) == ["booted", "numpy", "soulstruct core", "soulstruct.havok", "ready"]
+    assert 0 < reader["startSeconds"] < 60
+    assert reader["sources"] == 6
+    assert "logTail" not in reader, "the log's end is only shown when something went wrong"
+    assert collision["openSeconds"] >= 0
+    assert any(
+        e["event"] == "progress" and "opened h10_01_00_00.hkxbhd in " in e["message"] for e in events
+    ), "the time to open each binder is shown"
 
 
 def test_only_some_areas(dsr_folder: Path, tmp_path: Path) -> None:
