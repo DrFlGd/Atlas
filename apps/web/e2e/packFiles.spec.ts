@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './layout';
 import { collectErrors } from './helpers';
 
 /**
@@ -509,4 +510,52 @@ test('imports a map pack file, saying which is newer and asking before using old
   await expect(details.locator('time[title="2026-11-11T10:00:00Z"]')).toBeVisible();
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
   expect(errors).toEqual([]);
+});
+
+test.describe('in the standard layout', () => {
+  test.use({ layout: 'standard' });
+
+  test('exports from Maps and imports from Games', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.getByTestId('section-games').click();
+    const games = page.getByTestId('games-screen');
+
+    // Export…, in the Maps dialog opened from Games.
+    await games.getByTestId('maps-button').click();
+    await page
+      .locator('[data-testid="pack-row"][data-pack="demo"]')
+      .getByTestId('export-pack')
+      .click();
+    const dialog = page.getByTestId('pack-file-dialog');
+    await expect(dialog.getByRole('heading')).toHaveText('Export Atlas demo world');
+    await dialog.getByTestId('export-start').click();
+    await expect(dialog.getByTestId('export-result')).toContainText(
+      'Saved demo-standard.atlaspack',
+    );
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(dialog).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('maps-dialog')).toBeHidden();
+    expect((await packShell(page)).exports.map((e) => e.detail)).toEqual(['standard']);
+
+    // Import map pack file…, on the Games screen itself.
+    await setShell(page, { pick: pickedFile('2026-11-08T10:00:00.000Z') });
+    await games.getByTestId('import-pack-file').click();
+    await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
+    await expect(dialog.getByTestId('import-verdict')).toHaveAttribute(
+      'data-verdict',
+      'file-newer',
+    );
+    await dialog.getByTestId('import-start').click();
+    await expect(dialog.getByTestId('import-result')).toHaveText(
+      'Imported Atlas demo world. It is in the maps folder and shown now.',
+    );
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(dialog).toBeHidden();
+    expect((await packShell(page)).imports).toEqual([
+      { path: '/home/test/Downloads/demo-standard.atlaspack', replace: false },
+    ]);
+    await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+    expect(errors).toEqual([]);
+  });
 });

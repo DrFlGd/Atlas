@@ -134,12 +134,17 @@ export async function startDriver({ env } = {}) {
   }
 
   return {
-    /** Starts the app and returns a session on its window. */
+    /**
+     * Starts the app and returns a session on its window, in the classic
+     * layout these tests were written for (see `Session.useClassicLayout`).
+     */
     async session(application = appPath) {
       const { sessionId } = await wd('POST', '/session', {
         capabilities: { alwaysMatch: { 'tauri:options': { application } } },
       });
-      return new Session(wd, sessionId);
+      const session = new Session(wd, sessionId);
+      await session.useClassicLayout();
+      return session;
     },
     stop() {
       child.kill();
@@ -159,6 +164,40 @@ export class Session {
   constructor(wd, id) {
     this.wd = wd;
     this.id = id;
+  }
+
+  /**
+   * Shows the app's classic layout (a bar at the top, panes on both sides of
+   * the map), which these tests were written for, as `?ui=classic` does in
+   * a browser: the app keeps the choice in the page's session storage (see
+   * `apps/web/src/touch/uiMode.ts`) and reads it when the page loads, so the
+   * page is loaded again once it is set. The app shows its standard layout
+   * otherwise; the web tests cover that one.
+   */
+  async useClassicLayout() {
+    // Scripts may fail to run while the page is (re)loading; that is waited out.
+    const settle = async (/** @type {string} */ script, /** @type {string} */ what) => {
+      for (let start = Date.now(); ; await sleep(250)) {
+        if (await this.run(script).catch(() => false)) return;
+        if (Date.now() - start > 30_000) throw new Error(`Timed out waiting for ${what}`);
+      }
+    };
+    await settle(
+      `return document.readyState === 'complete' && location.href !== 'about:blank' &&
+        document.getElementById('root') !== null;`,
+      'the app page',
+    );
+    await this.run(`
+      window.sessionStorage.setItem('atlas-ui', 'classic');
+      window.__atlasReloading = true;
+      setTimeout(() => window.location.reload(), 0);
+      return true;
+    `);
+    await settle(
+      `return !window.__atlasReloading && document.readyState === 'complete' &&
+        window.sessionStorage.getItem('atlas-ui') === 'classic';`,
+      'the app page in the classic layout',
+    );
   }
 
   /** Runs a script in the page and returns its result. @param {string} script @param {unknown[]} [args] */

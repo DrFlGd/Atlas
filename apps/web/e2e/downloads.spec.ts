@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { deflateSync } from 'node:zlib';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './layout';
 import { downloadsEnabled } from '../tooling/buildFlags.ts';
 import { collectErrors } from './helpers';
 
@@ -626,4 +627,75 @@ test('a build without downloads offers none, even in a shell that has them', asy
   await page.goto('./');
   await expectNoDownloads(page);
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+});
+
+test.describe('in the standard layout', () => {
+  test.use({ layout: 'standard' });
+
+  test('downloads map images, and saves them from a map page opened from Games', async ({
+    page,
+  }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads map images');
+    const errors = collectErrors(page);
+    await page.addInitScript(() => {
+      (window as unknown as { __listRemote: boolean }).__listRemote = true;
+    });
+    await page.addInitScript(installFakeShell, true);
+    await servePack(page, () => null);
+    await page.goto('./');
+    await expect(page.locator('.touch')).toHaveAttribute('data-input', 'mouse');
+
+    // The notice over the map offers the download; the panel is the classic one.
+    await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
+    await page.getByTestId('download-map-images').click();
+    const panel = page.getByTestId('download-panel');
+    await expect(panel).toHaveAttribute('data-state', 'choose');
+    await panel.getByTestId('start-download').click();
+    await expect(panel).toHaveAttribute('data-state', 'running');
+    await panel.getByRole('button', { name: 'Close' }).click();
+    const chip = page.getByTestId('map-images-button');
+    await expect(chip).toBeVisible();
+    // Clear of the button beside it.
+    const a = (await chip.boundingBox())!;
+    const b = (await page.getByTestId('nearest-unfound').boundingBox())!;
+    expect(a.y + a.height <= b.y || b.y + b.height <= a.y).toBe(true);
+    await chip.click();
+    await expect(panel).toBeVisible();
+    await panel.getByRole('button', { name: 'Close' }).click();
+
+    // "View map page and save images as I browse", in the Maps dialog from Games.
+    await page.getByTestId('section-games').click();
+    await page.getByTestId('maps-button').click();
+    const row = page.locator('[data-testid="pack-row"][data-pack="remote"]');
+    await row.getByText('Map page…').click();
+    await row.getByTestId('map-page-save').click();
+    await expect(page.getByTestId('maps-dialog')).toBeHidden();
+    await expect(page.getByTestId('map-page-status')).toBeVisible();
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+
+  test('a shell without downloads offers none', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.addInitScript(installFakeShell, false);
+    await servePack(page, () => null);
+    await page.goto('./');
+    await expect(page.locator('.touch')).toBeVisible();
+    await expectNoDownloads(page);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+
+  test('a build without downloads offers none, even in a shell that has them', async ({ page }) => {
+    test.skip(DOWNLOADS_BUILD, 'checks a build without ATLAS_ENABLE_DOWNLOADS');
+    const errors = collectErrors(page);
+    await page.addInitScript(installFakeShell, true);
+    await servePack(page, () => null);
+    await page.goto('./');
+    await expect(page.locator('.touch')).toBeVisible();
+    await expectNoDownloads(page);
+    await page.getByTestId('section-games').click();
+    await page.getByTestId('maps-button').click();
+    await expect(page.getByTestId('maps-dialog')).toBeVisible();
+    await expect(page.getByTestId('map-page')).toHaveCount(0);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
 });
