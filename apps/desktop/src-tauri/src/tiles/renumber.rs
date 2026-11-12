@@ -13,7 +13,10 @@
 //! removed and made again from the moved images, and the status file is
 //! written again from what is on disk: a level counts as complete only when
 //! every one of its tiles is an image or a `.404` marker, so "Download map
-//! images" offers the rest and fetches nothing that was kept.
+//! images" offers the rest and fetches nothing that was kept. Until then
+//! the status file tells the map to show the levels that have images (see
+//! `status`): a new layout can list remote levels below the old lowest one,
+//! of which nothing is downloaded yet.
 //!
 //! Only layers with a remote source before and after, with the same
 //! `urlTemplate` and tile size, are renumbered (see [`moved_layers`]);
@@ -52,7 +55,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     downscale::build_lower_levels,
     pyramid::{check_layer, LayerPlan, PackPlan, RemoteLevel, TileRef},
-    status::{remove_status, status_path, write_levels},
+    status::{remove_status, status_path, write_levels_showing},
     store::{TileStore, MISSING_SUFFIX, PART_SUFFIX},
 };
 use crate::library::META_DIR;
@@ -164,6 +167,9 @@ pub struct Renumbered {
     /// The complete levels recorded now.
     pub levels: BTreeSet<u8>,
     pub complete: bool,
+    /// The levels that have images, lowest and highest of an unbroken run:
+    /// what the map shows while the lowest level is not complete.
+    pub shown: Option<(u8, u8)>,
 }
 
 /// The layers whose images move between two versions of a pack, as (old,
@@ -543,18 +549,43 @@ fn finish(
     if levels.contains(&layer.first_remote_z()) {
         levels.extend(layer.built_levels());
     }
-    write_levels(root, layer, &levels)
+    // While the lowest level is not complete, the map shows the levels that
+    // have images: the new layout's lowest levels can be ones the old layout
+    // did not have, with nothing downloaded yet.
+    report.shown = shown_levels(root, bundled, layer);
+    write_levels_showing(root, layer, &levels, report.shown)
         .map_err(|error| format!("could not write the status file: {error}"))?;
     report.complete = (layer.min_zoom..=layer.max_zoom).all(|z| levels.contains(&z));
     report.levels = levels;
     Ok(())
 }
 
+/// The unbroken run of `layer`'s levels that have at least one image, as
+/// (lowest, highest), starting at the lowest level that has one.
+fn shown_levels(root: &Path, bundled: Option<&Path>, layer: &LayerPlan) -> Option<(u8, u8)> {
+    let has_image = |z: u8| {
+        layer.tiles_of(z).any(|tile| {
+            let relative = layer.tile_path(tile.z, tile.x, tile.y);
+            root.join(&relative).is_file()
+                || bundled.is_some_and(|pack| pack.join(&relative).is_file())
+        })
+    };
+    let lowest = (layer.min_zoom..=layer.max_zoom).find(|&z| has_image(z))?;
+    let highest = (lowest + 1..=layer.max_zoom)
+        .take_while(|&z| has_image(z))
+        .last()
+        .unwrap_or(lowest);
+    Some((lowest, highest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tiles::{
-        downscale::BACKGROUND, pyramid::read_pack_plan, status::read_levels, store::tests::TempDir,
+        downscale::BACKGROUND,
+        pyramid::read_pack_plan,
+        status::{read_levels, write_levels},
+        store::tests::TempDir,
     };
     use image::{Rgb, RgbImage};
 
@@ -738,7 +769,11 @@ mod tests {
         let status: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(status_path(root, &to)).unwrap()).unwrap();
         assert_eq!(status["complete"], false);
-        assert_eq!(status["nativeMaxZoom"], serde_json::Value::Null);
+        // Every level has images, so the map goes on showing them all.
+        assert_eq!(done.shown, Some((0, 3)));
+        assert_eq!(status["nativeMinZoom"], 0);
+        assert_eq!(status["nativeMaxZoom"], 3);
+        assert_eq!(status["levels"], serde_json::json!([]));
     }
 
     #[test]
@@ -796,6 +831,16 @@ mod tests {
         assert!(!path(root, &to, 2, 0, 0).exists());
         assert!(!path(root, &to, 1, 0, 0).exists());
         assert!(done.levels.is_empty());
+        // Nothing is complete and levels 0 to 2 have no image yet: the map
+        // is told to show levels 3 and 4, scaling level 3 for those below.
+        assert_eq!(done.shown, Some((3, 4)));
+        let status: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(status_path(root, &to)).unwrap()).unwrap();
+        assert_eq!(status["nativeMinZoom"], 3);
+        assert_eq!(status["nativeMaxZoom"], 4);
+        assert_eq!(status["complete"], false);
+        assert_eq!(status["levels"], serde_json::json!([]));
+        assert!(read_levels(root, &to).is_empty());
     }
 
     #[test]

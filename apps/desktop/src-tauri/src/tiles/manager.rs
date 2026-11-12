@@ -2467,4 +2467,146 @@ mod tests {
         assert!(missing_marker(&dir, 2, 2, 2));
         assert!(logged(&dir).contains("images of this layer from it are on disk"));
     }
+
+    /// The pack of [`a_layer_that_grows_keeps_its_images_and_fetches_only_the_new_ones`]:
+    /// one layer of `tiles` x `tiles` tiles at the top level, with the
+    /// remote levels given as (z, sourceZ, offset).
+    fn write_grown_pack(dir: &Path, server: &MockServer, tiles: u32, levels: &[(u8, u8, u64)]) {
+        fs::create_dir_all(dir).unwrap();
+        let size = tiles * 256;
+        fs::write(
+            dir.join("maps.json"),
+            format!(r#"[{{"id":"t:map:a","name":"Island","width":{size},"height":{size}}}]"#),
+        )
+        .unwrap();
+        let template = server.url("/remote/{z}/{x}/{y}.png");
+        let max_zoom = levels.last().unwrap().0;
+        let levels: Vec<String> = levels
+            .iter()
+            .map(|(z, source, offset)| {
+                format!(r#"{{"z":{z},"sourceZ":{source},"offsetX":{offset},"offsetY":{offset}}}"#)
+            })
+            .collect();
+        fs::write(
+            dir.join("layers.json"),
+            format!(
+                r#"[{{"id":"t:layer:a","mapId":"t:map:a","name":"Surface","minZoom":0,"maxZoom":{max_zoom},"tileSize":256,
+                  "tiles":{{"type":"xyz","url":"tiles/a/{{z}}/{{x}}/{{y}}.png","remote":{{
+                    "urlTemplate":"{template}","levels":[{}]}}}}}}]"#,
+                levels.join(",")
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_layer_that_grows_keeps_its_images_and_fetches_only_the_new_ones() {
+        use crate::tiles::renumber;
+        ensure_crypto();
+        let dir = TempDir::new("manager-grown");
+        // The server's picture is the remote zoom 5 tiles 8-11 x 8-10 (so
+        // zoom 4 tiles 4-5 x 4-5 and the one zoom 3 tile 2, 2); everything
+        // else it answers like a store without the image.
+        let server = MockServer::start(Arc::new(|path, _| {
+            let parts: Vec<u64> = path
+                .trim_end_matches(".png")
+                .rsplit('/')
+                .take(3)
+                .map(|n| n.parse().unwrap())
+                .collect();
+            let (z, x, y) = (parts[2], parts[1], parts[0]);
+            let shift = 5 - z;
+            if (8 >> shift..=11 >> shift).contains(&x) && (8 >> shift..=10 >> shift).contains(&y) {
+                Reply::image(coloured_tile(z as u8, x as u8, y as u8))
+            } else {
+                no_such_object()
+            }
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        let root = dir.0.join("data/packs/test");
+        let tile = |z: u8, x: u8, y: u8| root.join(format!("tiles/a/{z}/{x}/{y}.png"));
+
+        // The first version of the pack ends its image around the places:
+        // zoom 5 tiles 8-10 x 8-10, without the last column of the picture.
+        write_grown_pack(&pack, &server, 3, &[(1, 4, 4), (2, 5, 8)]);
+        let before = read_pack_plan(&pack).unwrap();
+        let first = logged_manager(&dir, &pack);
+        first.start("test", Detail::Full).unwrap();
+        let done = wait_for(&first, "test").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        assert_eq!((done.saved, done.missing), (4 + 9, 0));
+        assert_eq!(server.seen().len(), 13);
+        assert_eq!(fs::read(tile(2, 2, 1)).unwrap(), coloured_tile(5, 10, 9));
+
+        // The next version grows the image to whole coarse tiles: the zoom 3
+        // tiles 1-2 x 1-2, of which only 2, 2 has picture, and its levels
+        // start at zoom 3. An update renumbers the images in between.
+        write_grown_pack(&pack, &server, 8, &[(1, 3, 1), (2, 4, 2), (3, 5, 4)]);
+        let after = read_pack_plan(&pack).unwrap();
+        let moved = renumber::moved_layers(&before, &after);
+        assert_eq!(moved.len(), 1);
+        renumber::stage(&root, &moved[0].0, &moved[0].1).unwrap();
+        let settled = renumber::settle(&root, None, &after)
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert_eq!((settled.moved, settled.removed), (13, 0));
+        assert_eq!(fs::read(tile(3, 6, 5)).unwrap(), coloured_tile(5, 10, 9));
+        assert_eq!(fs::read(tile(2, 2, 2)).unwrap(), coloured_tile(4, 4, 4));
+        // Nothing is complete, and the new lowest levels have no image yet:
+        // the map shows the two levels that were kept.
+        assert_eq!(settled.shown, Some((2, 3)));
+        let status = read_status(&dir);
+        assert_eq!(
+            (&status["nativeMinZoom"], &status["nativeMaxZoom"]),
+            (&serde_json::json!(2), &serde_json::json!(3))
+        );
+        assert_eq!(status["complete"], false);
+
+        // The next download asks for the four coarse tiles, three of them
+        // empty, and above them only for what is new inside the one that
+        // exists: the picture's last column (three images) and the row
+        // below it (four tiles that do not exist). The first answer is a
+        // denial; the images on disk prove the host.
+        let second = logged_manager(&dir, &pack);
+        second.start("test", Detail::Full).unwrap();
+        let done = wait_for(&second, "test").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
+        let mut new: Vec<&str> = asked[13..].iter().map(String::as_str).collect();
+        new.sort_unstable();
+        assert_eq!(
+            new,
+            [
+                "/remote/3/1/1.png",
+                "/remote/3/1/2.png",
+                "/remote/3/2/1.png",
+                "/remote/3/2/2.png",
+                "/remote/5/10/11.png",
+                "/remote/5/11/10.png",
+                "/remote/5/11/11.png",
+                "/remote/5/11/8.png",
+                "/remote/5/11/9.png",
+                "/remote/5/8/11.png",
+                "/remote/5/9/11.png",
+            ]
+        );
+        let mut distinct = asked.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), asked.len(), "nothing asked for twice");
+        assert_eq!(
+            (done.saved, done.missing, done.not_asked, done.failed),
+            (4, 7, 12 + 48, 0)
+        );
+        assert_eq!((done.done, done.total), (84, 84));
+        // The picture's last column is there now, and every level is complete.
+        assert_eq!(fs::read(tile(3, 7, 4)).unwrap(), coloured_tile(5, 11, 8));
+        assert!(tile(0, 0, 0).is_file());
+        let status = read_status(&dir);
+        assert_eq!(status["levels"], serde_json::json!([0, 1, 2, 3]));
+        assert_eq!(status["complete"], true);
+        assert_eq!(status["nativeMinZoom"], 0);
+    }
 }

@@ -17,6 +17,14 @@
 //! the map shows natively (Leaflet scales the top one beyond it); both are
 //! null while the lowest level is not ready. `complete` is true once every
 //! level of the layer is there.
+//!
+//! One case differs: after a pack update moved a layer's edges and its
+//! images were renumbered (see `renumber`), most images are there while no
+//! level may be complete, and the lowest levels can be new ones with nothing
+//! downloaded yet. The range is then the unbroken run of levels that have
+//! images, from the lowest such level up, so that the map goes on showing
+//! them (Leaflet scales the lowest one for the levels below) until the next
+//! download records complete levels again.
 
 use std::{
     collections::BTreeSet,
@@ -108,12 +116,34 @@ pub fn write_levels(
     layer: &LayerPlan,
     levels: &BTreeSet<u8>,
 ) -> std::io::Result<()> {
+    write_status(overlay, layer, &status_for(layer, levels))
+}
+
+/// Like [`write_levels`] for a layer whose images were renumbered: when the
+/// lowest level is not complete, the map is told to show `shown`, the
+/// unbroken run of levels (lowest, highest) that have images.
+pub fn write_levels_showing(
+    overlay: &Path,
+    layer: &LayerPlan,
+    levels: &BTreeSet<u8>,
+    shown: Option<(u8, u8)>,
+) -> std::io::Result<()> {
+    let mut status = status_for(layer, levels);
+    if let (None, Some((lowest, highest))) = (status.native_max_zoom, shown) {
+        if layer.min_zoom <= lowest && lowest <= highest && highest <= layer.max_zoom {
+            status.native_min_zoom = Some(lowest);
+            status.native_max_zoom = Some(highest);
+        }
+    }
+    write_status(overlay, layer, &status)
+}
+
+fn write_status(overlay: &Path, layer: &LayerPlan, status: &LayerStatus) -> std::io::Result<()> {
     let path = status_path(overlay, layer);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let json =
-        serde_json::to_string_pretty(&status_for(layer, levels)).expect("the status serialises");
+    let json = serde_json::to_string_pretty(status).expect("the status serialises");
     let part = path.with_extension("json.part");
     fs::write(&part, format!("{json}\n"))?;
     fs::rename(&part, &path)
