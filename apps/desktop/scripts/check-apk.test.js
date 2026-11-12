@@ -28,10 +28,21 @@ test('packs other than those expected, or missing ones, are problems', () => {
 
 test("the app's code must hold the fs plugin and the app's activity", () => {
   const plugin = Buffer.from('\0Lcom/plugin/fs/FsPlugin;\0');
-  const activity = Buffer.from('\0AtlasAndroid\0Ldev/atlas/android/MainActivity$Bars;\0');
+  const activity = Buffer.from(
+    '\0AtlasAndroid\0Ldev/atlas/android/MainActivity$Bars;\0keepScreenOn\0' +
+      'window.atlasBack ? window.atlasBack() === true : false\0',
+  );
   assert.deepEqual(missingCode([plugin, activity]), []);
-  const [problem, ...rest] = missingCode([plugin]);
-  assert.match(problem ?? '', /activity/);
-  assert.deepEqual(rest, []);
-  assert.equal(missingCode([]).length, 2);
+  const problems = missingCode([plugin]);
+  assert.equal(problems.length, 3);
+  for (const problem of problems) assert.match(problem, /activity/);
+  const older = Buffer.from('\0AtlasAndroid\0Ldev/atlas/android/MainActivity$Bars;\0');
+  assert.deepEqual(
+    missingCode([plugin, older]).map((p) => p.split(':')[0]),
+    [
+      "The APK's code lacks the app's activity keeping the screen on",
+      "The APK's code lacks the app's activity asking the page about Back",
+    ],
+  );
+  assert.equal(missingCode([]).length, 4);
 });

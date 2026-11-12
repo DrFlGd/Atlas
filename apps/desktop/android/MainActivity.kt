@@ -11,11 +11,19 @@ package dev.atlas.android
 // activity reads the window insets itself and hands them over as
 // `window.AtlasAndroid.insets()` and an `atlas-insets` event, in CSS pixels
 // (see apps/web/src/androidBars.ts). The page also says which theme it
-// shows, so the bar icons stay readable.
+// shows, so the bar icons stay readable, and whether to keep the screen on.
+//
+// Back: the page first closes what it shows on top (a dialog, a sheet,
+// search, a section other than the map) through `window.atlasBack()`,
+// which says whether it closed something; only when it did not does Back
+// leave the app. Tauri's own back callback goes back through the WebView's
+// history, which the page does not use.
 
 import android.os.Bundle
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -26,12 +34,43 @@ class MainActivity : TauriActivity() {
   /** The insets as "top,right,bottom,left" in CSS pixels. */
   @Volatile private var insets = "0,0,0,0"
 
+  private var page: WebView? = null
+
+  /** Asks the page to close what it shows on top; leaves the app when it has nothing to close. */
+  private val back = object : OnBackPressedCallback(true) {
+    override fun handleOnBackPressed() {
+      val view = page
+      if (view == null) {
+        leave()
+        return
+      }
+      view.evaluateJavascript("window.atlasBack ? window.atlasBack() === true : false") { result ->
+        if (result != "true") leave()
+      }
+    }
+
+    private fun leave() {
+      // The next callback, or the activity's own Back, which closes the app.
+      isEnabled = false
+      onBackPressedDispatcher.onBackPressed()
+      isEnabled = true
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
   }
 
+  override fun onResume() {
+    super.onResume()
+    // Added again so it comes before callbacks added since (Tauri's own).
+    back.remove()
+    onBackPressedDispatcher.addCallback(this, back)
+  }
+
   override fun onWebViewCreate(webView: WebView) {
+    page = webView
     // Before the page loads, so the page finds it when it starts.
     webView.addJavascriptInterface(Bars(), "AtlasAndroid")
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
@@ -66,6 +105,18 @@ class MainActivity : TauriActivity() {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.isAppearanceLightStatusBars = dark
         controller.isAppearanceLightNavigationBars = dark
+      }
+    }
+
+    /** Keeps the screen on while the app is shown, or lets it turn off as usual. */
+    @JavascriptInterface
+    fun keepScreenOn(on: Boolean) {
+      runOnUiThread {
+        if (on) {
+          window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+          window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
       }
     }
   }
