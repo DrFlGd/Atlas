@@ -134,6 +134,16 @@ export async function overall(page: Page): Promise<{ found: number; total: numbe
   };
 }
 
+/**
+ * Reloads the page once nothing is being saved. The app saves without
+ * waiting and says so on its root element (`data-saving`); a reload while a
+ * save is under way would drop it.
+ */
+export async function reloadSaved(page: Page): Promise<void> {
+  await expect(page.locator('html')).toHaveAttribute('data-saving', 'false');
+  await page.reload();
+}
+
 export async function expectOverallFound(page: Page, found: number): Promise<void> {
   await expect(page.getByTestId('overall-progress')).toHaveAttribute('data-found', String(found));
 }

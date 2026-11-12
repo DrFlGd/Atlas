@@ -2,7 +2,7 @@ import { mulberry32 } from '@atlas/saves/match';
 import { areaMapPinsFile, entityMapPinsFile, typicalSave, WORLD_PATHS } from '@atlas/saves/testing';
 import type { Page } from '@playwright/test';
 import { expect, test } from './layout';
-import { collectErrors, expectOverallFound, mapStatus, selectByName } from './helpers';
+import { collectErrors, expectOverallFound, mapStatus, reloadSaved, selectByName } from './helpers';
 
 /**
  * Reading a game save in the browser: a small Witcher 3 pack served by the
@@ -201,7 +201,7 @@ test('a save marks places found, shows where the player stood, and never overrid
   await expectOverallFound(page, 1);
 
   // The link, the last read and the player's position stay after a reload.
-  await page.reload();
+  await reloadSaved(page);
   await expect(page.getByTestId('marker-count')).toHaveText('4');
   await expectOverallFound(page, 1);
   await expect(page.locator('.atlas-player')).toBeVisible();
