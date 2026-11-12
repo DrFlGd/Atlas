@@ -14,7 +14,7 @@ import type {
   Unsubscribe,
 } from '../types';
 import { CanvasMarkerLayer } from './canvasMarkerLayer';
-import { createTileLayer, imageBounds } from './tileLayer';
+import { createTileLayer, firstViewBounds, imageBounds } from './tileLayer';
 
 const MARKER_PANE = 'atlasMarkers';
 const PLAYER_PANE = 'atlasPlayer';
@@ -233,7 +233,7 @@ export function createLeafletMapView(
       map.setMinZoom(spec.minZoom);
       map.setMaxZoom(maxMapZoom);
       map.setMaxBounds(bounds.pad(0.25));
-      map.fitBounds(bounds, { animate: false });
+      map.fitBounds(firstViewBounds(spec), { animate: false });
 
       tileLayer = null;
       showTiles();

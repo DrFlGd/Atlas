@@ -26,6 +26,11 @@ export interface MapLayerSpec {
    * means the tiles exist, so they are not probed.
    */
   nativeZoom?: { min: number; max: number };
+  /**
+   * The part of the image the map shows first, in image pixels; the whole
+   * image when absent. For an image that reaches well beyond what is on it.
+   */
+  focus?: PixelBounds;
   /** HTML attribution shown in the map corner. */
   attribution?: string;
 }

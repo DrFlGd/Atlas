@@ -1,7 +1,7 @@
 import type { PackData } from '@atlas/schema';
 import { makeFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
-import { layerMarkers, layerViewSpec } from './viewSpec';
+import { layerMarkers, layerViewSpec, placesFocus } from './viewSpec';
 import { PackLoadError, loadPack } from './loadPack';
 
 const BASE = 'https://packs.example.test/games/demo/';
@@ -149,6 +149,55 @@ describe('view helpers', () => {
     expect(spec.tiles).toEqual({ type: 'xyz', url: `${BASE}tiles/surface/{z}/{x}/{y}.webp` });
     expect(spec).toMatchObject({ width: 1000, height: 600, maxZoom: 2, tileSize: 256 });
     expect(spec.attribution).toBe('Atlas test suite');
+    // The fixture's places reach across the image: the map shows all of it.
+    expect(spec.focus).toBeUndefined();
+  });
+
+  it('names the part of the image the places take up when that is much less than all of it', () => {
+    // Places in the lower right quarter of a 4000 x 4000 image, as when the
+    // image is sized by its source's tiles and most of them are empty.
+    const places = [
+      { x: 2100, y: 2200 },
+      { x: 3500, y: 2300 },
+      { x: 2800, y: 3600 },
+    ];
+    // The margin is a tenth of the longer side (1400), but at least a
+    // twentieth of the image (200); the image's edge cuts it off.
+    expect(placesFocus(places, 4000, 4000)).toEqual({
+      minX: 1900,
+      minY: 2000,
+      maxX: 3700,
+      maxY: 3800,
+    });
+    expect(placesFocus([{ x: 3950, y: 3900 }], 4000, 4000)).toEqual({
+      minX: 3750,
+      minY: 3700,
+      maxX: 4000,
+      maxY: 4000,
+    });
+    // Places across the image, or across most of it both ways: all of it.
+    expect(
+      placesFocus(
+        [
+          { x: 300, y: 400 },
+          { x: 3500, y: 3300 },
+        ],
+        4000,
+        4000,
+      ),
+    ).toBeUndefined();
+    // Across the width but only part of the height: that band.
+    expect(
+      placesFocus(
+        [
+          { x: 100, y: 1500 },
+          { x: 3900, y: 2300 },
+        ],
+        4000,
+        4000,
+      ),
+    ).toEqual({ minX: 0, minY: 1120, maxX: 4000, maxY: 2680 });
+    expect(placesFocus([], 4000, 4000)).toBeUndefined();
   });
 
   it('builds markers with colour and glyph, filtered and muted by progress', async () => {
