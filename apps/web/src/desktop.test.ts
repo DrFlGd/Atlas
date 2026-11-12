@@ -21,6 +21,25 @@ describe('desktop bridge', () => {
     expect(packFolderOf('atlas-pack://localhost/../')).toBeNull();
   });
 
+  it('measures a picture with the shell commands of a build with downloads', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    const request = {
+      urlTemplate: 'https://tiles.example/{z}/{x}/{y}.png',
+      zoom: 9,
+      start: [3, 4],
+    };
+    await bridge.tiles.pictureTiles({ ...request, start: [3, 4], cachedOnly: true });
+    await bridge.tiles.cancelPicture();
+    expect(calls).toEqual([
+      ['picture_tiles', { request: { ...request, cachedOnly: true } }],
+      ['picture_cancel', undefined],
+    ]);
+  });
+
   it('calls the shell commands with their arguments', async () => {
     const calls: [string, unknown][] = [];
     const bridge = createBridge((command, args) => {
