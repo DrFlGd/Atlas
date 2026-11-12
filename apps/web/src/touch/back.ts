@@ -65,6 +65,36 @@ export function handleBack(): boolean {
   }
 }
 
+/** How long the map has to stay still before it counts as stopped. */
+const SETTLE_MS = 250;
+let settle: number | undefined;
+/** The map is being moved by `revealSelection` itself. */
+let revealing = false;
+
+/**
+ * After the map was sent to the selected place: once the map has stopped,
+ * moves it if the place ended up under the sheet or card.
+ */
+export function revealWhenSettled(): void {
+  if (revealing) {
+    revealing = false;
+    return;
+  }
+  window.clearTimeout(settle);
+  settle = window.setTimeout(() => {
+    settle = undefined;
+    // Only when the map went to the selected place, not to a region or a point.
+    const { game, selectedId, fly } = useAtlas.getState();
+    const location = selectedId ? game?.pack.locations.get(selectedId) : undefined;
+    if (location && fly && Math.abs(fly.x - location.x) < 1) revealSelection();
+  }, SETTLE_MS);
+}
+
+/** The map moved: a wait for it to stop starts again. */
+export function mapMoved(): void {
+  if (settle !== undefined) revealWhenSettled();
+}
+
 /**
  * After a tap picked a marker: once the sheet or card is drawn, moves the
  * map if the marker is under it or under the controls at the top.
@@ -94,6 +124,7 @@ export function revealSelection() {
       const covered = [sheet, bar].filter((r): r is DOMRect => r !== undefined);
       const shift = revealShift(point, free, covered, 28);
       if (!shift) return;
+      revealing = true;
       moveMap(view.center.x + shift.x * scale, view.center.y + shift.y * scale);
     });
   });

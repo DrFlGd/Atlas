@@ -8,7 +8,7 @@ import { ProfileDialog } from '../components/ProfileDialog';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
 import { numberFormat, useSummary } from '../state/derived';
 import { useAtlas } from '../state/store';
-import { handleBack, revealSelection } from './back';
+import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
 import type { Section } from './backStack';
 import { FiltersSheet, FiltersPanel, ChipRow } from './FiltersView';
 import { GamesScreen } from './GamesScreen';
@@ -231,6 +231,11 @@ function useTouchEffects(wide: boolean) {
         if (state.selectedId !== previous.selectedId && touch.placeExpanded) {
           setPlaceExpanded(false);
         }
+        // The map was sent to the selected place (from search, a list, the
+        // next nearest): once it has stopped, it moves again if the place
+        // ended up under the sheet or card.
+        if (state.fly !== previous.fly && state.fly) revealWhenSettled();
+        else if (state.view !== previous.view) mapMoved();
       }),
     [],
   );

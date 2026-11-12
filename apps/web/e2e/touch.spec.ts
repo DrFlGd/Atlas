@@ -42,6 +42,9 @@ test.describe('on a phone', () => {
     const errors = collectErrors(page);
     await openTouch(page);
     await expect(page.locator('.touch')).toHaveAttribute('data-arrangement', 'compact');
+    // The map's name is shown whole, on a row of its own when it has to be.
+    const mapName = page.locator('.touch-map-chip-name');
+    expect(await mapName.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     const place = await surfacePlace(page);
     await search(page, place.name);
     await expect(page.getByTestId('search-summary')).toContainText(
@@ -267,6 +270,17 @@ test.describe('on a phone', () => {
     await expect(page.locator('.touch-rail')).toBeVisible();
     await expect(page.locator('.touch-panel')).toBeVisible();
     await expect(page.locator('.touch-bar')).toHaveCount(0);
+
+    // Too short for a card over the map: the place is shown where the panel is.
+    const place = await surfacePlace(page);
+    await choosePlace(page, place.name);
+    const sheet = (await page.getByTestId('place-sheet').boundingBox())!;
+    const map = (await page.getByTestId('map').boundingBox())!;
+    expect(sheet.x + sheet.width).toBeLessThanOrEqual(map.x + 1);
+    const next = (await page.getByTestId('next-nearest').boundingBox())!;
+    expect(next.x + next.width).toBeLessThanOrEqual(sheet.x + sheet.width);
+    await expect(page.getByTestId('nearest-unfound')).toBeVisible();
+
     await page.setViewportSize({ width: 412, height: 915 });
     await expect(root).toHaveAttribute('data-arrangement', 'compact');
     await expect(page.locator('.touch-bar')).toBeVisible();
@@ -287,6 +301,14 @@ test.describe('on a tablet', () => {
     const place = await surfacePlace(page);
     await choosePlace(page, place.name);
     const card = page.getByTestId('place-sheet');
+    // The map stops with the place beside the card, not under it.
+    await expect
+      .poll(async () => {
+        const point = await screenPoint(page, place);
+        const box = (await card.boundingBox())!;
+        return point.x > box.x - 20 && point.y > box.y - 20;
+      })
+      .toBe(false);
     // A wide screen shows the details at once.
     await expect(card.getByTestId('place-details')).toBeVisible();
     await expect(card.getByTestId('place-details-row')).toHaveCount(0);

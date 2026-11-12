@@ -342,9 +342,19 @@
   right: calc(12px + var(--atlas-inset-right));
   bottom: calc(var(--touch-bar) + 22px);
   display: flex;
+  /* A map name too long to sit beside the button goes on a row above it. */
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px;
+  gap: 10px 12px;
   pointer-events: none;
+}
+
+.touch-map-bottom .touch-map-chip {
+  max-width: 100%;
+}
+
+.touch-map-bottom .touch-fab {
+  margin-left: auto;
 }
 
 .touch[data-arrangement='wide'] .touch-map-bottom {
@@ -2000,9 +2010,44 @@
   font-size: 13px;
 }
 
-/* A short wide screen (a phone on its side) has no room for both the place card and the button. */
+/*
+ * A short wide screen (a phone on its side) has no room for a card over the
+ * map: the selected place takes the panel's place instead, and the map
+ * stays clear.
+ */
 @media (max-height: 519px) {
-  .touch[data-arrangement='wide'][data-place='shown'] .touch-fab {
-    display: none;
+  .touch[data-arrangement='wide'] .place-card {
+    left: var(--touch-rail);
+    right: auto;
+    top: 0;
+    bottom: 0;
+    width: var(--touch-panel);
+    max-width: none;
+    max-height: none;
+    padding: calc(var(--atlas-inset-top) + 16px) 16px calc(var(--atlas-inset-bottom) + 16px);
+    border: 0;
+    border-right: 1px solid var(--atlas-border);
+    border-radius: 0;
+    box-shadow: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .touch[data-arrangement='wide'] .place-card .place-details {
+    flex: none;
+    overflow: visible;
+  }
+
+  /* The two buttons share the panel's width. */
+  .touch[data-arrangement='wide'] .place-card .place-action {
+    flex: 1 1 0;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 15px;
+  }
+
+  .touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region {
+    max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
   }
 }
