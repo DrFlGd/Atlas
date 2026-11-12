@@ -173,7 +173,8 @@ export interface PictureTilesRequest {
   /**
    * Tiles of this image set and zoom that the page of this import showed,
    * worked out by the importer from {@link ImportContext.pageObservations}:
-   * `present`, tiles the page loaded as images; `absent`, tiles the page
+   * `present`, tiles the page loaded as images, or loaded an image inside
+   * of at a finer zoom; `absent`, tiles the page
    * was told are not there (404 or 410, or a store's "access denied" after
    * the page had loaded an image of this image set from that host). Only
    * with page observations of the same import: the app checks every tile
@@ -548,8 +549,11 @@ export function tileAddressReader(
 /**
  * Checks the tiles an importer says a page showed ({@link PictureTilesRequest.page})
  * against what the page loaded: each present tile's address answered with an
- * image, each absent one's with `missing`, or with `denied` when the page
- * loaded an image of the same image set (any zoom, so from the same host).
+ * image, or the address of a tile inside it at a finer zoom did (a page may
+ * stop zooming out before it shows the coarsest tiles, and a tile with an
+ * image below it exists); each absent one's with `missing`, or with `denied`
+ * when the page loaded an image of the same image set (any zoom, so from the
+ * same host).
  */
 export function pageTilesFit(
   page: PageTiles,
@@ -559,15 +563,25 @@ export function pageTilesFit(
   const read = tileAddressReader(request.urlTemplate);
   if (!read) return false;
   const answers = new Map<string, PageAnswerKind>();
+  // Tiles of the asked zoom that hold an image the page loaded at a finer zoom.
+  const below = new Set<string>();
   let proven = false;
   for (const { url, answer } of observations.answers) {
     const tile = read(url);
     if (!tile) continue;
-    if (answer === 'image') proven = true;
+    if (answer === 'image') {
+      proven = true;
+      if (tile.z > request.zoom) {
+        const span = 2 ** (tile.z - request.zoom);
+        below.add(`${Math.floor(tile.x / span)},${Math.floor(tile.y / span)}`);
+      }
+    }
     if (tile.z === request.zoom) answers.set(`${tile.x},${tile.y}`, answer);
   }
   return (
-    page.present.every(([x, y]) => answers.get(`${x},${y}`) === 'image') &&
+    page.present.every(
+      ([x, y]) => answers.get(`${x},${y}`) === 'image' || below.has(`${x},${y}`),
+    ) &&
     page.absent.every(([x, y]) => {
       const answer = answers.get(`${x},${y}`);
       return answer === 'missing' || (answer === 'denied' && proven);

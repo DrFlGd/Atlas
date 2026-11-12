@@ -584,6 +584,7 @@ describe('measuring a picture from its page', () => {
       { url: at(3, 3, 2), answer: 'denied', status: 403 },
       { url: at(3, 3, 3), answer: 'error', status: 500 },
       { url: at(4, 8, 4), answer: 'image', status: 200 },
+      { url: at(5, 24, 12), answer: 'image', status: 200 },
     ]);
     const fits = (tiles: PageTiles, observations = page) =>
       pageTilesFit(tiles, request, observations);
@@ -599,6 +600,10 @@ describe('measuring a picture from its page', () => {
     expect(fits({ present: [], absent: [] })).toBe(true);
     expect(fits({ present: [[5, 2]], absent: [] })).toBe(false);
     expect(fits({ present: [[8, 4]], absent: [] })).toBe(false);
+    // A tile with an image inside it at a finer zoom is there (zoom 5 tile 24, 12 lies in 6, 3).
+    expect(fits({ present: [[6, 3]], absent: [] })).toBe(true);
+    expect(fits({ present: [[6, 2]], absent: [] })).toBe(false);
+    expect(fits({ present: [], absent: [[6, 3]] })).toBe(false);
     expect(fits({ present: [], absent: [[3, 3]] })).toBe(false);
     expect(fits({ present: [], absent: [[1, 1]] })).toBe(false);
     // "Access denied" is "not there" only after an image of the set from that host.
