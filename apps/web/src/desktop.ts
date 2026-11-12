@@ -1,3 +1,4 @@
+import type { PictureTilesRequest } from '@atlas/importer-api';
 import type { PinTableStats, TableFit } from '@atlas/saves';
 
 /**
@@ -248,6 +249,8 @@ export interface ImportReport {
   alreadyAdded?: number;
   /** Games in a list of games, or to update. */
   games?: number;
+  /** How the map's picture was sized, when the importer could measure it. */
+  picture?: { measured: boolean; tiles?: number; note?: string };
   /** A run's figures. */
   run?: {
     added?: number;
@@ -645,6 +648,14 @@ export interface DesktopBridge {
     snapshot(packId: string): Promise<DownloadSnapshot | null>;
     settings(): Promise<DownloadSettingsInfo>;
     setSettings(settings: DownloadSettings): Promise<DownloadSettingsInfo>;
+    /**
+     * Which map images of one zoom exist around a start tile, for an
+     * importer (`ImportContext.pictureTiles`). Null when the picture cannot
+     * be measured; the activity log says why.
+     */
+    pictureTiles(request: PictureTilesRequest): Promise<unknown>;
+    /** Stops a measurement that is running, when an import is cancelled. */
+    cancelPicture(): Promise<void>;
   };
   library: {
     list(): Promise<Listing>;
@@ -754,6 +765,8 @@ function noDownloads(): DesktopBridge['tiles'] {
     snapshot: missing,
     settings: missing,
     setSettings: missing,
+    pictureTiles: missing,
+    cancelPicture: missing,
   };
 }
 
@@ -779,6 +792,8 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           snapshot: (packId) => call('tiles_snapshot', { packId }),
           settings: () => call('download_settings_get'),
           setSettings: (settings) => call('download_settings_set', { settings }),
+          pictureTiles: (request) => call('picture_tiles', { request }),
+          cancelPicture: () => call('picture_cancel'),
         }
       : noDownloads(),
     library: {

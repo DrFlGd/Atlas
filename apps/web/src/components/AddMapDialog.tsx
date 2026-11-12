@@ -8,6 +8,7 @@ import {
   cancelImport,
   catalogueImporters,
   confirmChecked,
+  pictureText,
   resetImport,
   setAddMapOpen,
   setDraft,
@@ -309,10 +310,17 @@ function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | '
   if (phase.kind === 'converting') {
     return (
       <section className="dialog-section" aria-busy="true" data-testid="add-map-progress">
-        <p role="status">
-          <strong>Building the map…</strong> {phase.importer} is turning the page data into a map
-          pack.
-        </p>
+        {phase.measuring ? (
+          <p role="status">
+            <strong>Measuring the map picture…</strong> Atlas is asking the image server which map
+            images exist, so that the map is as large as its picture. This can take a minute.
+          </p>
+        ) : (
+          <p role="status">
+            <strong>Building the map…</strong> {phase.importer} is turning the page data into a map
+            pack.
+          </p>
+        )}
       </section>
     );
   }
@@ -434,6 +442,11 @@ function MapFigures({
         <dt>Categories</dt>
         <dd>{numberFormat.format(summary.categories)}</dd>
       </dl>
+      {summary.picture ? (
+        <p className="small" data-testid="add-map-picture">
+          {pictureText(summary.picture)}
+        </p>
+      ) : null}
       <p className="muted small">
         {__ATLAS_DOWNLOADS__ && downloadable
           ? 'Its map images are not downloaded yet, so the markers show on a blank map until you download them.'
@@ -490,7 +503,7 @@ function PageState({ state }: { state: RunPageState }) {
     case 'converting':
       return (
         <span className="small">
-          <strong>Building the map…</strong>
+          <strong>{state.measuring ? 'Measuring the map picture…' : 'Building the map…'}</strong>
         </span>
       );
     case 'added':
@@ -505,6 +518,11 @@ function PageState({ state }: { state: RunPageState }) {
                     ? ` (${state.checklist.leftOut} left out until their maps are added)`
                     : ''
                 }`
+              : ''}
+            {state.picture
+              ? state.picture.measured
+                ? `; map picture measured${state.picture.tiles === undefined ? '' : ` (${state.picture.tiles} map images)`}`
+                : '; map picture not measured, sized from the places'
               : ''}
           </span>
         </span>

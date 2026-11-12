@@ -37,7 +37,7 @@ def lines(stdout: str) -> list[dict]:
 def test_version() -> None:
     result = helper("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "atlas-gamefiles 0.1.1"
+    assert result.stdout.strip() == "atlas-gamefiles 0.1.2"
 
 
 def test_check_prints_only_json_lines(dsr_folder: Path, tmp_path: Path) -> None:
@@ -95,6 +95,61 @@ def test_closing_stdin_cancels(dsr_folder: Path, tmp_path: Path) -> None:
     result = helper("check", str(dsr_folder), "--out", str(tmp_path / "out"), "--stdin-cancel")
     assert result.returncode == 3, result.stderr
     assert lines(result.stdout)[-1]["event"] == "cancelled"
+    assert not (tmp_path / "out" / "report.json").exists()
+
+
+def start_like_the_app(*args: str) -> subprocess.Popen[str]:
+    """The helper as the Map Maker app starts it: all three streams piped, standard input kept open, no console
+    window on Windows."""
+    env = {**os.environ, "PYTHONPATH": str(PACKAGE_ROOT), "PYTHONIOENCODING": "utf-8"}
+    return subprocess.Popen(
+        [sys.executable, "-m", "atlas_gamefiles", *args, "--stdin-cancel"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        creationflags=0x08000000 if sys.platform == "win32" else 0,  # CREATE_NO_WINDOW
+    )
+
+
+def test_check_started_like_the_app(dsr_folder: Path, tmp_path: Path) -> None:
+    """Standard input stays open while the helper waits on it for `cancel`: the file reader process must still
+    start (on Windows, Map Maker 0.1.1's did not)."""
+    process = start_like_the_app("check", str(dsr_folder), "--out", str(tmp_path / "out"), "--heartbeat", "1")
+    try:
+        assert process.stdout is not None
+        events = [json.loads(line) for line in process.stdout]
+        assert process.wait(60) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        assert process.stdin is not None
+        process.stdin.close()
+    assert events[-1]["event"] == "done", events[-3:]
+    geometry = events[-1]["summary"]["geometry"]
+    assert geometry["collision"]["ok"] == 1 and geometry["navmesh"]["ok"] == 1
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    assert report["diagnostics"]["reader"]["lastStage"] == "ready"
+
+
+def test_cancel_line_while_reading(dsr_folder: Path, tmp_path: Path) -> None:
+    process = start_like_the_app("check", str(dsr_folder), "--out", str(tmp_path / "out"))
+    assert process.stdin is not None and process.stdout is not None
+    events = []
+    try:
+        for line in process.stdout:
+            events.append(json.loads(line))
+            if events[-1].get("message", "").endswith("reading collision"):
+                process.stdin.write("cancel\n")
+                process.stdin.flush()
+        assert process.wait(60) == 3
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.stdin.close()
+    assert events[-1]["event"] == "cancelled"
     assert not (tmp_path / "out" / "report.json").exists()
 
 

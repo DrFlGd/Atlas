@@ -21,12 +21,17 @@
  *    the maps folder with a description in its manifest, and keeps the page
  *    data in the pack folder so the pack can be rebuilt later without
  *    visiting the page again.
+ *
+ * An app that downloads map images may also measure a map's picture for
+ * `convert` (see {@link ImportContext.pictureTiles}): which tiles of one zoom
+ * of an image set exist on its server. Importers must work without it.
  */
 
 import {
   GAME_ID_PATTERN,
   checkPackIntegrity,
   idOf,
+  isAllowedRemoteUrl,
   packDataSchema,
   type PackData,
 } from '@atlas/schema';
@@ -80,6 +85,165 @@ export interface ImportContext {
   existingPack(packId: string): Promise<PackData | null>;
   /** Whether a pack with that id comes with the app; the app does not replace those. */
   isBundled(packId: string): boolean;
+  /**
+   * Optional: which tiles of one zoom of an image set exist on its server,
+   * for an importer whose site does not say how large a map's picture is.
+   * Only an app that downloads map images offers it; an importer must check
+   * that it is there and work without it, and an app works the same with
+   * importers that never call it.
+   *
+   * The app asks the image server for the start tile first, then for the
+   * eight neighbours of every tile that exists, and never for the
+   * neighbours of one that does not, staying inside the world of that zoom
+   * and asking at most {@link PICTURE_MAX_REQUESTS} times. It uses its own
+   * downloader for this, with its request headers, pace and rules: an
+   * answer it cannot take for an image or for "not on the server" ends the
+   * measurement, and nothing is tried again or around it. It keeps what it
+   * learnt, so no tile is asked for twice, and once the pack is saved it
+   * puts the tiles it found into each layer whose remote source has the
+   * same `urlTemplate` and a level at that zoom, so "Download map images"
+   * does not ask for them again.
+   *
+   * The answer is `null` when the app cannot measure: in a build without
+   * downloads, for an address it does not allow (see
+   * {@link isAllowedPictureTemplate}), when the start tile is not an image,
+   * when the server refused or answered in a way it did not expect, or with
+   * `cachedOnly` when it has learnt nothing about that image set. Call it
+   * from `convert` only; it may take a while (a few hundred requests at the
+   * app's pace at most), and it never rejects.
+   */
+  pictureTiles?(request: PictureTilesRequest): Promise<PictureTiles | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Measuring a map's picture (optional)
+
+/** The most tiles one measurement asks the image server for. The desktop shell enforces the same. */
+export const PICTURE_MAX_REQUESTS = 256;
+/** The highest zoom a measurement may ask about. */
+export const PICTURE_MAX_ZOOM = 30;
+/**
+ * The most tiles an answer may list, present and absent together. What the
+ * app learnt in several measurements adds up, so this is well above what
+ * one measurement finds.
+ */
+export const PICTURE_MAX_TILES = 65536;
+
+/** What an importer asks {@link ImportContext.pictureTiles}. */
+export interface PictureTilesRequest {
+  /**
+   * The image set's address template, in the form of a pack layer's
+   * `tiles.remote.urlTemplate`: `https` (plain `http` only on this computer,
+   * for tests), with `{z}`, `{x}` (column) and `{y}` (row) in whatever order
+   * the server uses. The tiles found are put into the layers whose remote
+   * source has exactly this template.
+   */
+  urlTemplate: string;
+  /** The zoom whose tiles are asked about, usually the coarsest one the server has. */
+  zoom: number;
+  /**
+   * The tile to start from, as [column, row] at `zoom`: one that is part of
+   * the picture, such as the tile the site's own page opens on.
+   */
+  start: [x: number, y: number];
+  /**
+   * Answer only from what the app learnt in earlier measurements, without
+   * any request: for pages that are only built again with a new one.
+   */
+  cachedOnly?: boolean;
+}
+
+/** What {@link ImportContext.pictureTiles} found. */
+export interface PictureTiles {
+  zoom: number;
+  /** The tiles that exist, the start tile among them, as [column, row]. */
+  present: [x: number, y: number][];
+  /** Neighbours of those that the server does not have, as [column, row]. */
+  absent: [x: number, y: number][];
+  /**
+   * Every neighbour of every tile that exists was asked about (inside the
+   * world), so the picture lies within `present`. False when the app
+   * stopped at {@link PICTURE_MAX_REQUESTS}, or, with `cachedOnly`, when it
+   * had not learnt them all.
+   */
+  complete: boolean;
+}
+
+/**
+ * Whether the app may measure the image set at this address template:
+ * `https`, or `http` on this computer (tests), with no user name or
+ * password, and `{z}`, `{x}` and `{y}` in it.
+ */
+export function isAllowedPictureTemplate(template: string): boolean {
+  if (!isAllowedRemoteUrl(template)) return false;
+  if (!['{z}', '{x}', '{y}'].every((part) => template.includes(part))) return false;
+  const authority = template.replace(/^https?:\/\//, '').split(/[/?#]/)[0] ?? '';
+  return authority.length > 0 && !authority.includes('@');
+}
+
+const tileSchema = z.tuple([z.int().nonnegative(), z.int().nonnegative()]);
+
+const pictureTilesSchema = z.strictObject({
+  zoom: z.int().min(0).max(PICTURE_MAX_ZOOM),
+  present: z.array(tileSchema).min(1).max(PICTURE_MAX_TILES),
+  absent: z.array(tileSchema).max(PICTURE_MAX_TILES),
+  complete: z.boolean(),
+});
+
+/** Whether `request` is one the app can measure: an allowed template, and a start tile inside the world. */
+export function isPictureRequest(request: unknown): request is PictureTilesRequest {
+  if (!request || typeof request !== 'object') return false;
+  const { urlTemplate, zoom, start, cachedOnly } = request as Record<string, unknown>;
+  if (typeof urlTemplate !== 'string' || urlTemplate.length > MAX_ADDRESS_CHARS) return false;
+  if (!isAllowedPictureTemplate(urlTemplate)) return false;
+  if (!Number.isInteger(zoom) || (zoom as number) < 0 || (zoom as number) > PICTURE_MAX_ZOOM) {
+    return false;
+  }
+  if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') return false;
+  const size = 2 ** (zoom as number);
+  return (
+    Array.isArray(start) &&
+    start.length === 2 &&
+    start.every((n) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < size)
+  );
+}
+
+/**
+ * Checks what the app's measurement answered for `request`: the shape, the
+ * zoom asked about, every tile inside the world and listed once, the start
+ * tile among those that exist, and no tile both present and absent.
+ * Anything else is `null`, as is `null` itself.
+ */
+export function checkPictureTiles(
+  value: unknown,
+  request: PictureTilesRequest,
+): PictureTiles | null {
+  const parsed = pictureTilesSchema.safeParse(value);
+  if (!parsed.success || parsed.data.zoom !== request.zoom) return null;
+  if (parsed.data.present.length + parsed.data.absent.length > PICTURE_MAX_TILES) return null;
+  const size = 2 ** request.zoom;
+  const seen = new Set<string>();
+  for (const [x, y] of [...parsed.data.present, ...parsed.data.absent]) {
+    const key = `${x},${y}`;
+    if (x >= size || y >= size || seen.has(key)) return null;
+    seen.add(key);
+  }
+  const [startX, startY] = request.start;
+  if (!parsed.data.present.some(([x, y]) => x === startX && y === startY)) return null;
+  return parsed.data;
+}
+
+/** How the size of an imported map's picture was found, for the summary. */
+export interface PictureSummary {
+  /** The picture was measured with {@link ImportContext.pictureTiles}. */
+  measured: boolean;
+  /** When it was measured: how many tiles of the measured zoom exist. */
+  tiles?: number;
+  /**
+   * A plain sentence for the person, for example why it could not be
+   * measured and what the importer did instead.
+   */
+  note?: string;
 }
 
 /** Figures shown to the person after an import. */
@@ -98,6 +262,13 @@ export interface ImportSummary {
   refreshed: boolean;
   /** For a page that became a checklist: its items, and rows left out (see {@link ImportSuccess.checklistId}). */
   checklist?: { items: number; leftOut: number };
+  /**
+   * For a map whose picture the importer measured, or tried to: how its
+   * size was found. Set it only when the context has
+   * {@link ImportContext.pictureTiles}: apps without it do not know this
+   * field and refuse a summary that has it.
+   */
+  picture?: PictureSummary;
 }
 
 export interface ImportSuccess {
@@ -371,6 +542,13 @@ const summarySchema = z.strictObject({
   refreshed: z.boolean(),
   checklist: z
     .strictObject({ items: z.int().nonnegative(), leftOut: z.int().nonnegative() })
+    .optional(),
+  picture: z
+    .strictObject({
+      measured: z.boolean(),
+      tiles: z.int().nonnegative().optional(),
+      note: z.string().trim().min(1).max(500).optional(),
+    })
     .optional(),
 });
 

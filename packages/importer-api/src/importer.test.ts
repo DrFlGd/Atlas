@@ -3,20 +3,26 @@ import demo from '../demo/demo-importer.js';
 import {
   MAX_CATALOGUE_GAMES,
   MAX_LISTED_PAGES,
+  PICTURE_MAX_REQUESTS,
+  PICTURE_MAX_ZOOM,
   asImporter,
   canAddPage,
   checkCatalogue,
   checkGameListing,
   checkOutcome,
+  checkPictureTiles,
   findCatalogueImporter,
   findGameImporter,
   findImporter,
   gameAddressOf,
   isAllowedPageUrl,
+  isAllowedPictureTemplate,
+  isPictureRequest,
   pageKey,
   sameSite,
   type AtlasImporter,
   type ImportContext,
+  type PictureTilesRequest,
   type SavedSource,
 } from './index';
 
@@ -288,6 +294,133 @@ describe('outcome checks', () => {
       context(),
     );
     expect(checkOutcome(outcome).ok).toBe(false);
+  });
+
+  it('takes a summary that says how the picture was sized, and nothing else new', async () => {
+    const good = await demo.convert(page('east'), context());
+    if (!good.ok) throw new Error('expected a pack');
+    const measured = {
+      ...good,
+      summary: { ...good.summary, picture: { measured: true, tiles: 6 } },
+    };
+    expect(checkOutcome(measured)).toMatchObject({
+      ok: true,
+      summary: { picture: { measured: true, tiles: 6 } },
+    });
+    const estimated = {
+      ...good,
+      summary: {
+        ...good.summary,
+        picture: { measured: false, note: 'The picture could not be measured.' },
+      },
+    };
+    expect(checkOutcome(estimated).ok).toBe(true);
+    for (const picture of [
+      { measured: 'yes' },
+      { measured: true, tiles: -1 },
+      { measured: false, note: '' },
+      { measured: true, size: 3 },
+    ]) {
+      expect(checkOutcome({ ...good, summary: { ...good.summary, picture } }).ok).toBe(false);
+    }
+    expect(checkOutcome({ ...good, summary: { ...good.summary, other: 1 } }).ok).toBe(false);
+  });
+});
+
+describe('measuring a picture', () => {
+  const template = 'https://tiles.example.com/set/{z}/{x}/{y}.jpg';
+  const request: PictureTilesRequest = { urlTemplate: template, zoom: 3, start: [4, 2] };
+
+  it('allows https and loopback http image addresses without user names', () => {
+    expect(isAllowedPictureTemplate(template)).toBe(true);
+    expect(isAllowedPictureTemplate('https://tiles.example.com/{z}/{y}/{x}.webp')).toBe(true);
+    expect(isAllowedPictureTemplate('http://127.0.0.1:4492/t/{z}/{x}/{y}.png')).toBe(true);
+    for (const bad of [
+      'http://tiles.example.com/{z}/{x}/{y}.png',
+      'https://user:secret@tiles.example.com/{z}/{x}/{y}.png',
+      'http://localhost:80@tiles.example.com/{z}/{x}/{y}.png',
+      'https://tiles.example.com/{z}/{x}.png',
+      'ftp://localhost/{z}/{x}/{y}.png',
+      '',
+    ]) {
+      expect(isAllowedPictureTemplate(bad), bad).toBe(false);
+    }
+  });
+
+  it('checks a request: the address, the zoom and a start tile inside the world', () => {
+    expect(isPictureRequest(request)).toBe(true);
+    expect(isPictureRequest({ ...request, cachedOnly: true })).toBe(true);
+    expect(isPictureRequest({ ...request, zoom: 0, start: [0, 0] })).toBe(true);
+    for (const bad of [
+      null,
+      'text',
+      { ...request, urlTemplate: 'http://example.com/{z}/{x}/{y}' },
+      { ...request, zoom: -1 },
+      { ...request, zoom: PICTURE_MAX_ZOOM + 1 },
+      { ...request, zoom: 1.5 },
+      { ...request, start: [8, 0] },
+      { ...request, start: [0, -1] },
+      { ...request, start: [0] },
+      { ...request, cachedOnly: 'yes' },
+    ]) {
+      expect(isPictureRequest(bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('checks an answer against the request', () => {
+    const answer = {
+      zoom: 3,
+      present: [
+        [4, 2],
+        [5, 2],
+      ],
+      absent: [[3, 2]],
+      complete: true,
+    };
+    expect(checkPictureTiles(answer, request)).toEqual(answer);
+    expect(checkPictureTiles(null, request)).toBeNull();
+    for (const bad of [
+      { ...answer, zoom: 4 },
+      { ...answer, present: [[5, 2]] },
+      {
+        ...answer,
+        present: [
+          [4, 2],
+          [8, 2],
+        ],
+      },
+      {
+        ...answer,
+        present: [
+          [4, 2],
+          [4, 2],
+        ],
+      },
+      { ...answer, absent: [[4, 2]] },
+      { ...answer, complete: 'yes' },
+      { ...answer, extra: true },
+      { ...answer, present: [] },
+    ]) {
+      expect(checkPictureTiles(bad, request), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('is optional: an importer is handed a context with or without it', async () => {
+    const asked: PictureTilesRequest[] = [];
+    const withPicture: ImportContext = {
+      ...context(),
+      pictureTiles: (r) => {
+        asked.push(r);
+        return Promise.resolve(null);
+      },
+    };
+    // The demo importer never measures; it works the same either way.
+    const without = await demo.convert(page('east'), context());
+    const withIt = await demo.convert(page('east'), withPicture);
+    expect(withIt).toEqual(without);
+    expect(asked).toEqual([]);
+    expect('pictureTiles' in context()).toBe(false);
+    expect(PICTURE_MAX_REQUESTS).toBe(256);
   });
 });
 

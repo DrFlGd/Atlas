@@ -105,6 +105,25 @@ export interface ReportSummary {
   mainAreas?: { expected: number; found: number; missing: string[] };
 }
 
+/** How the helper ran (from version 0.1.2): for a report from a PC where the check stalled. */
+export interface ReportDiagnostics {
+  frozen: boolean;
+  python: string;
+  helperVersion: string;
+  system: string;
+  tempDir: string | null;
+  soulstructImportSeconds: number | null;
+  reader: {
+    startedWith: string;
+    startSeconds?: number | null;
+    lastStage?: string | null;
+    broken?: string;
+    havokBroken?: string;
+    logTail?: string[];
+    [key: string]: unknown;
+  };
+}
+
 export interface Report {
   tool: string;
   toolVersion: string;
@@ -120,6 +139,8 @@ export interface Report {
   summary: ReportSummary | null;
   warnings: string[];
   elapsedSeconds: number;
+  /** Missing from reports made before version 0.1.2. */
+  diagnostics?: ReportDiagnostics;
 }
 
 export const SOURCE_LABELS: Record<GeometrySourceName, string> = {

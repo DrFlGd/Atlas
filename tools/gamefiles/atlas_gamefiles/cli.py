@@ -23,7 +23,7 @@ from pathlib import Path
 from . import TOOL_NAME, __version__
 from . import worker
 from .check import COLLISION_SAMPLE, MAP_PIECE_SAMPLE, NAVMESH_SAMPLE, SOURCE_BUDGET, CancelToken, Checker
-from .events import claim_stdout
+from .events import claim_stdin, claim_stdout, stdin_lines
 from .geometry import Cancelled
 from .safety import UnsafeOutputError, block_network
 
@@ -85,9 +85,15 @@ def parser() -> argparse.ArgumentParser:
 
 
 def watch_stdin(token: CancelToken) -> None:
+    """Cancel on a `cancel` line, or when standard input ends. Standard input is claimed first (see events.py): no
+    library, and no program started from here, ever sees the app's pipe, and on Windows no read waits on it."""
+    fd = claim_stdin()
+
     def run() -> None:
+        if fd is None:
+            return
         try:
-            for line in sys.stdin:
+            for line in stdin_lines(fd):
                 if line.strip().lower() == "cancel":
                     break
         except (OSError, ValueError):
@@ -102,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(errors="replace")  # type: ignore[union-attr]
     except AttributeError:
         pass
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["reader"]:  # the file reader process, which the helper starts itself (reader.py)
+        from .reader import main as reader_main
+
+        return reader_main(argv[1:])
     args = parser().parse_args(argv)
     block_network()
     events = claim_stdout()

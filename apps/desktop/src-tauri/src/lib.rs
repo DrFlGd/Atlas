@@ -130,6 +130,8 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::tiles_resume,
         commands::tiles_cancel,
         commands::tiles_snapshot,
+        commands::picture_tiles,
+        commands::picture_cancel,
         commands::download_settings_get,
         commands::download_settings_set,
         pageview::view_pages,
@@ -206,12 +208,16 @@ pub fn run() {
             let legacy = legacy_dirs(app, &app_data)?;
             let bundled = bundled_packs(app);
             log_start(app, &shared, &bundled);
-            let library = Arc::new(Library::new(
+            let library = Library::new(
                 SettingsFile::new(shared.clone()),
                 registry.clone(),
                 bundled,
                 legacy,
-            ));
+            );
+            // Imports are seeded with what measuring their picture learnt.
+            #[cfg(feature = "downloads")]
+            let library = library.with_picture_cache(tiles::measure::PictureCache::new(&app_data));
+            let library = Arc::new(library);
             library.start();
             #[cfg(feature = "downloads")]
             let downloads = {

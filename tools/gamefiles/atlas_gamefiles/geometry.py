@@ -14,8 +14,8 @@ Local mesh coordinates are moved into the area's frame with the transform of eac
 
 Phase 0 is a check, not the full map, so each reader can take an evenly spaced sample of the files (`sample`) and
 stop early at a time budget (`budget` seconds): either way the result says `sampled`. Each file's reading time is
-recorded, so the report shows how fast real files parse. The readers run in a child process (see worker.py), which
-the check can stop if a file takes far too long.
+recorded, so the report shows how fast real files parse. The readers run in a separate file reader process (see
+worker.py), which the check can stop if a file takes far too long.
 """
 
 from __future__ import annotations
@@ -42,6 +42,9 @@ class Feedback:
 
     def opening(self, name: str) -> None:
         """Before a binder (or other container) is opened: `name` is its file name."""
+
+    def opened(self, name: str, seconds: float) -> None:
+        """The binder `name` was opened, in `seconds`."""
 
     def planned(self, entries: int, chosen: int) -> None:
         """The binder holds `entries` files, of which `chosen` will be read."""
@@ -183,6 +186,7 @@ def _open_binder(result: SourceResult, path: Path, feedback: Feedback) -> tp.Any
     opened = time.monotonic()
     binder = Binder.from_path(path)
     result.open_seconds = time.monotonic() - opened
+    feedback.opened(path.name, result.open_seconds)
     return binder
 
 

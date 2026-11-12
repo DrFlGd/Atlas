@@ -315,6 +315,10 @@ pub struct Library {
     logged_scan: Mutex<String>,
     /// How files are removed; tests act out files that are in use.
     file_ops: FileOps,
+    /// What measuring imported maps' pictures learnt, seeded into a pack's
+    /// layers when an import is saved (see `tiles::measure`).
+    #[cfg(feature = "downloads")]
+    picture_cache: Option<crate::tiles::measure::PictureCache>,
 }
 
 impl Library {
@@ -333,7 +337,18 @@ impl Library {
             pending_folder: Mutex::new(None),
             logged_scan: Mutex::new(String::new()),
             file_ops: FileOps::default(),
+            #[cfg(feature = "downloads")]
+            picture_cache: None,
         }
+    }
+
+    /// Seeds the layers of every saved import from this cache of measured
+    /// pictures.
+    #[cfg(feature = "downloads")]
+    #[must_use]
+    pub fn with_picture_cache(mut self, cache: crate::tiles::measure::PictureCache) -> Self {
+        self.picture_cache = Some(cache);
+        self
     }
 
     #[cfg(test)]
@@ -1100,6 +1115,10 @@ impl Library {
                 ),
             ),
         }
+        #[cfg(feature = "downloads")]
+        if let Some(cache) = &self.picture_cache {
+            seed_measured_pictures(&request.pack_id, &dir, cache);
+        }
         Ok(dir)
     }
 
@@ -1555,6 +1574,62 @@ fn plan_of_files(
 }
 
 /// The activity log line for one layer's renumbered images.
+/// Puts what measuring the picture learnt into the layers of the pack in
+/// `dir` that were just saved: the images found, and "not on the server"
+/// markers for the tiles around them, where nothing is yet, so "Download map
+/// images" does not ask for them again. Status files are left as they are,
+/// so no level counts as complete before a download has recorded it; the
+/// manifest's image summary of each seeded layer counts the new files.
+#[cfg(feature = "downloads")]
+fn seed_measured_pictures(id: &str, dir: &Path, cache: &crate::tiles::measure::PictureCache) {
+    use crate::tiles::{
+        manager::count_images, measure::seed_layers, pyramid::read_pack_plan, status::read_levels,
+    };
+    let Ok(plan) = read_pack_plan(dir) else {
+        return;
+    };
+    let seeded = match seed_layers(cache, dir, Some(dir), &plan) {
+        Ok(seeded) => seeded,
+        Err(error) => {
+            activity::warn(
+                Area::Import,
+                format!("Could not put the measured map picture into {id}: {error}; a download fetches those images"),
+            );
+            return;
+        }
+    };
+    let mut updates = Vec::new();
+    for done in &seeded {
+        activity::info(
+            Area::Import,
+            format!(
+                "Put what measuring the map picture found into {} of {id}: {} map images, and {} tiles marked as not on the server; a download does not ask for them again",
+                done.layer_id, done.images, done.markers
+            ),
+        );
+        if let Some(layer) = plan.layers.iter().find(|l| l.layer_id == done.layer_id) {
+            let levels = read_levels(dir, layer);
+            updates.push(ImagesUpdate {
+                layer_id: &layer.layer_id,
+                complete: (layer.min_zoom..=layer.max_zoom).all(|z| levels.contains(&z)),
+                levels: levels.into_iter().collect(),
+                counts: Some(count_images(dir, layer)),
+            });
+        }
+    }
+    if !updates.is_empty() {
+        if let Err(error) = update_images(dir, &updates) {
+            activity::warn(
+                Area::Import,
+                format!(
+                    "Could not update the image summary in {}: {error}",
+                    dir.display()
+                ),
+            );
+        }
+    }
+}
+
 #[cfg(feature = "downloads")]
 fn renumbered_text(id: &str, root: &Path, done: &crate::tiles::renumber::Renumbered) -> String {
     let layer = &done.layer_id;
@@ -2539,6 +2614,93 @@ mod tests {
         assert_eq!(fs::read(dir.join("tiles/a/3/6/6.png")).unwrap(), before);
         assert_eq!(status()["complete"], true);
         assert!(!dir.join(".atlas/renumber").exists());
+    }
+
+    /// An import whose picture was measured is saved with what the
+    /// measurement found, and the first download asks for none of it.
+    #[cfg(feature = "downloads")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_import_is_seeded_with_its_measured_picture() {
+        use crate::tiles::{
+            download::{
+                tests::{ensure_crypto, MockServer, Reply},
+                Settings,
+            },
+            manager::JobState,
+            measure::{MeasureRequest, PictureCache},
+            pyramid::Detail,
+            DownloadManager,
+        };
+        use std::{sync::Arc, time::Duration};
+        ensure_crypto();
+        // The picture is the remote zoom 12 tiles 20-21 x 40-41, and the zoom
+        // 13 tiles under them; nothing else is on the server.
+        let server = MockServer::start(Arc::new(|path, _| {
+            let numbers: Vec<u64> = path
+                .trim_end_matches(".png")
+                .rsplit('/')
+                .take(3)
+                .map(|n| n.parse().unwrap())
+                .collect();
+            let (z, x, y) = (numbers[2], numbers[1], numbers[0]);
+            let shift = 13 - z;
+            if (40 >> shift..=43 >> shift).contains(&x) && (80 >> shift..=83 >> shift).contains(&y)
+            {
+                Reply::image(remote_tile(z, x, y))
+            } else {
+                Reply::status(404)
+            }
+        }))
+        .await;
+        let template = server.url("/r/{z}/{x}/{y}.png");
+        let s = setup("library-seed-measured", Vec::new());
+        let data = s.dir.0.join("data");
+        let manager = Arc::new(DownloadManager::with_settings(
+            data.clone(),
+            s.registry.clone(),
+            Settings {
+                delay: Duration::from_millis(1),
+                ..Settings::default()
+            },
+        ));
+        let measured = manager
+            .measure_picture(&MeasureRequest {
+                url_template: template.clone(),
+                zoom: 12,
+                start: [20, 40],
+                cached_only: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!((measured.present.len(), measured.absent.len()), (4, 12));
+        assert_eq!(server.seen().len(), 16);
+
+        // Level 2 of the pack (3 x 3 tiles) copies zoom 12 from 20, 40.
+        let library = s.library.with_picture_cache(PictureCache::new(&data));
+        let dir = library
+            .save_import(&valley(&template, (320, 320), (40, 80)))
+            .unwrap();
+        library.scan();
+        assert_eq!(
+            fs::read(dir.join("tiles/a/2/1/1.png")).unwrap(),
+            remote_tile(12, 21, 41)
+        );
+        for (x, y) in [(2, 0), (2, 1), (0, 2), (1, 2), (2, 2)] {
+            assert!(dir.join(format!("tiles/a/2/{x}/{y}.png.404")).is_file());
+        }
+        // No level counts as complete before a download has recorded it.
+        assert!(!dir.join("offline-tiles/a.json").exists());
+        // The download asks only for the zoom 13 tiles under the picture.
+        manager.start("valley", Detail::Full).unwrap();
+        let done = finished(&manager).await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let asked: Vec<String> = server.seen()[16..]
+            .iter()
+            .map(|seen| seen.path.clone())
+            .collect();
+        assert_eq!(asked.len(), 16, "{asked:?}");
+        assert!(asked.iter().all(|path| path.starts_with("/r/13/")));
+        assert_eq!((done.saved, done.not_asked, done.failed), (16, 9, 0));
     }
 
     /// A game that comes with the app and is served from its resources keeps

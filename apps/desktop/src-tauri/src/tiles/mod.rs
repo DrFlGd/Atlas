@@ -5,7 +5,8 @@
 //! earlier version or another Atlas app downloaded are shown, counted and
 //! deleted. Only a build with the `downloads` feature fetches them: "Download
 //! map images" copies a pack's tiles from its remote source, politely and
-//! resumably (`download`, `downscale`, `manager`).
+//! resumably (`download`, `downscale`, `manager`), and measures how large
+//! an imported map's picture is (`measure`).
 
 #[cfg(feature = "downloads")]
 pub mod download;
@@ -14,6 +15,8 @@ pub mod downscale;
 pub mod images;
 #[cfg(feature = "downloads")]
 pub mod manager;
+#[cfg(feature = "downloads")]
+pub mod measure;
 pub mod pyramid;
 #[cfg(feature = "downloads")]
 pub mod renumber;
