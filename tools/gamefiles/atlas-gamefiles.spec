@@ -6,7 +6,8 @@
 # imported: its instruction and field definitions (JSON), type stubs (.pyi) and Havok type lists (XML). Everything else Soulstruct
 # carries stays out, and must: the Oodle DLL, the .exe and .dll tools, soulstruct-havok's Havok templates, and the
 # paramdef and material binders. `check_bundle` below fails the build if any of them got in.
-# Plotting and GUI libraries that some Soulstruct modules import only when present are left out.
+# Pillow draws the Map Maker's floor pictures and tiles. Plotting and GUI libraries that some Soulstruct modules import
+# only when present are left out.
 
 import re
 
@@ -15,6 +16,8 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 datas = collect_data_files(
     "soulstruct", includes=["**/*.emedf.json", "**/paramdef_info.json", "**/*.pyi", "havok/types/*.xml"]
 )
+# The per-game Map Maker configs (names and numbers only, no game data).
+datas += [("config/*.json", "config")]
 
 hidden = [
     *collect_submodules("soulstruct.darksouls1r.maps"),
@@ -26,12 +29,23 @@ hidden = [
     *collect_submodules("soulstruct.havok.types.hk2015"),
     "soulstruct.havok.fromsoft.shared.map_collision",
     "soulstruct.flver",
+    "soulstruct.darksouls1r.events",
+    "scipy.ndimage",
+    "scipy.sparse",
+    "scipy.sparse.csgraph",
+    "PIL.Image",
+    "PIL.ImageDraw",
+    "PIL.ImageChops",
+    "PIL.ImageFilter",
+    "PIL.WebPImagePlugin",
+    "PIL.PngImagePlugin",
 ]
 
 excluded = [
     "tkinter",
     "matplotlib",
-    "PIL",
+    "PIL.ImageTk",
+    "PIL.ImageQt",
     "vispy",
     "pydub",
     "psutil",

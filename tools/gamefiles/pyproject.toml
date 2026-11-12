@@ -1,7 +1,7 @@
 [project]
 name = "atlas-gamefiles"
-version = "0.1.2"
-description = "Atlas Map Maker helper: checks a player's own game files and reports what map data can be read."
+version = "0.2.0"
+description = "Atlas Map Maker helper: reads a player's own game files, reports what map data they hold, and makes Atlas map packs from them."
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -12,6 +12,8 @@ dependencies = [
   "soulstruct-havok==1.5.0",
   "colorama==0.4.6",
   "numpy",
+  "scipy",
+  "Pillow==12.3.0",
 ]
 
 [project.scripts]

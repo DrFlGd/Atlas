@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window only: the Map Maker's own commands (app information, the folder and save dialogs, starting, following and cancelling a check, reading its preview pictures, saving the report and showing it in its folder). No plugin commands are granted; the dialog and opener plugins are only used from Rust.",
+  "description": "The main window only: the Map Maker's own commands (app information, the folder and save dialogs, starting, following and cancelling a check or a make, reading its preview pictures, saving the report and showing it or the made map pack in its folder). No plugin commands are granted; the dialog and opener plugins are only used from Rust.",
   "windows": ["main"],
   "permissions": [
     "allow-app-info",
@@ -9,6 +9,8 @@
     "allow-check-start",
     "allow-check-status",
     "allow-check-cancel",
+    "allow-make-start",
+    "allow-reveal-pack",
     "allow-preview-image",
     "allow-save-report",
     "allow-reveal-saved-report"

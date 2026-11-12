@@ -1,0 +1,102 @@
+{
+  "$comment": "Names and numbers for making Dark Souls Remastered maps. No game data: area and boss names, ids, flags and tuning numbers only. Tune it from the make-map report.",
+  "packId": "dark-souls-remastered",
+  "title": "Dark Souls Remastered",
+  "skipAreas": ["m99"],
+  "areas": {
+    "m10_00": { "name": "The Depths" },
+    "m10_01": { "name": "Undead Burg and Undead Parish" },
+    "m10_02": { "name": "Firelink Shrine" },
+    "m11_00": { "name": "Painted World of Ariamis" },
+    "m12_00": { "name": "Darkroot Garden and Darkroot Basin" },
+    "m12_01": { "name": "Oolacile" },
+    "m13_00": { "name": "The Catacombs" },
+    "m13_01": { "name": "Tomb of the Giants" },
+    "m13_02": { "name": "The Great Hollow and Ash Lake" },
+    "m14_00": { "name": "Blighttown and Quelaag's Domain" },
+    "m14_01": { "name": "Demon Ruins and Lost Izalith" },
+    "m15_00": { "name": "Sen's Fortress" },
+    "m15_01": { "name": "Anor Londo" },
+    "m16_00": { "name": "New Londo Ruins and the Valley of Drakes" },
+    "m17_00": { "name": "Duke's Archives and Crystal Cave" },
+    "m18_00": { "name": "Kiln of the First Flame" },
+    "m18_01": { "name": "Northern Undead Asylum" }
+  },
+  "floors": {
+    "$comment": "How floors are found. cell: metres per grid cell; clearance: smallest gap between two floors stacked one above the other; minStackedArea: square metres of stacked floor needed for a split; maxFloors per area; minFloorHeight: smallest height of one floor; walkableSlope: steepest walkable slope in degrees; wallSlope: steeper than this is a wall; wallCutHeight: metres above the floor where walls are cut.",
+    "cell": 1.0,
+    "clearance": 3.0,
+    "minStackedArea": 150,
+    "maxFloors": 5,
+    "minFloorHeight": 4.0,
+    "walkableSlope": 50,
+    "wallSlope": 70,
+    "wallCutHeight": 1.3
+  },
+  "floorOverrides": {
+    "$comment": "Per area (mAA_BB): names (lowest first), splitAt (extra cut heights in metres), mergeAt (cut heights within 2 m to drop), or cuts (all cut heights, replacing the automatic ones).",
+    "m14_00": { "names": ["Swamp", "Upper Blighttown"] },
+    "m15_01": { "names": ["Ground", "Rooftops"] }
+  },
+  "render": {
+    "pixelsPerMetre": 8,
+    "minPixelsPerMetre": 2,
+    "maxImageSize": 6144,
+    "marginMetres": 12,
+    "tileSize": 256,
+    "tileFormat": "webp",
+    "tileQuality": 85,
+    "lowerFloorOpacity": 0.4
+  },
+  "bosses": [
+    { "name": "Asylum Demon", "models": [2232], "areas": ["m18_01"], "flag": 16 },
+    { "name": "Stray Demon", "models": [2230], "areas": ["m18_01"], "flag": 11810900 },
+    { "name": "Taurus Demon", "models": [2250], "areas": ["m10_01"], "flag": 11010901 },
+    { "name": "Bell Gargoyles", "models": [5350], "areas": ["m10_01"], "flag": 3 },
+    { "name": "Capra Demon", "models": [2240], "areas": ["m10_01"], "flag": 11010902 },
+    { "name": "Gaping Dragon", "models": [5260], "areas": ["m10_00"], "flag": 2 },
+    { "name": "Moonlight Butterfly", "models": [3230], "areas": ["m12_00"], "flag": 11200900 },
+    { "name": "Great Grey Wolf Sif", "models": [5210], "areas": ["m12_00"], "flag": 5 },
+    { "name": "Chaos Witch Quelaag", "models": [5280], "areas": ["m14_00"], "flag": 9 },
+    { "name": "Iron Golem", "models": [2320], "areas": ["m15_00"], "flag": 11 },
+    { "name": "Ornstein and Smough", "models": [5270, 2360], "areas": ["m15_01"], "flag": 12 },
+    { "name": "Dark Sun Gwyndolin", "models": [5320], "areas": ["m15_01"], "flag": 11510900 },
+    { "name": "Crossbreed Priscilla", "models": [2730], "areas": ["m11_00"], "flag": 4 },
+    { "name": "Pinwheel", "models": [3320], "areas": ["m13_00"], "flag": 6 },
+    { "name": "Gravelord Nito", "models": [5220], "areas": ["m13_01"], "flag": 7 },
+    { "name": "Ceaseless Discharge", "models": [5250], "areas": ["m14_01"], "flag": 11410900 },
+    { "name": "Demon Firesage", "models": [2231], "areas": ["m14_01"], "flag": 11410410 },
+    { "name": "Centipede Demon", "models": [5200], "areas": ["m14_01"], "flag": 11410901 },
+    { "name": "Bed of Chaos", "models": [5230], "areas": ["m14_01"], "flag": 10 },
+    { "name": "Four Kings", "models": [5390], "areas": ["m16_00"], "flag": 13 },
+    { "name": "Seath the Scaleless", "models": [5290], "areas": ["m17_00"], "flag": 14 },
+    { "name": "Gwyn, Lord of Cinder", "models": [5370], "areas": ["m18_00"], "flag": 15 },
+    { "name": "Sanctuary Guardian", "models": [3471], "areas": ["m12_01"], "flag": 11210000 },
+    { "name": "Knight Artorias", "models": [4100], "areas": ["m12_01"], "flag": 11210001 },
+    {
+      "name": "Manus, Father of the Abyss",
+      "models": [4500],
+      "areas": ["m12_01"],
+      "flag": 11210002
+    },
+    { "name": "Black Dragon Kalameet", "models": [4510], "areas": ["m12_01"], "flag": 11210004 }
+  ],
+  "bonfireNames": {
+    "$comment": "Names for bonfires, by the bonfire's object entity id or its flag, when the game's place names do not give a good one."
+  },
+  "characters": {
+    "$comment": "Character models (cNNNN as numbers) that are never markers: the bonfire stand-ins.",
+    "ignoreModels": [1000]
+  },
+  "items": {
+    "$comment": "How items get their category. goodsRanges and weaponRanges ([first id, last id, category]) are checked first, then the goods row's type (goodsTypes: 0 basic, 1 key, 2 titanite, 5 spell), then fallbackGoodsRanges when the goods table could not be read. Categories: weapon, armour, ring, spell, key, upgrade, consumable, souls, other.",
+    "goodsRanges": [[400, 409, "souls"]],
+    "goodsTypes": { "0": "consumable", "1": "key", "2": "upgrade", "5": "spell" },
+    "fallbackGoodsRanges": [
+      [1000, 1099, "upgrade"],
+      [2000, 2999, "key"],
+      [3000, 5999, "spell"]
+    ],
+    "weaponRanges": [[2000000, 2199999, "consumable"]]
+  }
+}

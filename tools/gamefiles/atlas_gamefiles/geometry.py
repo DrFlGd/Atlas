@@ -64,6 +64,8 @@ def even_sample(items: tp.Sequence[tp.Any], count: int) -> list[tp.Any]:
 
 
 Instances = dict[str, list[tuple[tuple[float, float, float], tuple[float, float, float]]]]
+# Model -> the names of the parts that place it, in the order of its instances (for maps).
+PartNames = dict[str, list[str]]
 
 
 @dataclass
@@ -90,8 +92,12 @@ class SourceResult:
     stopped_on: str | None = None
     files_done: int | None = None
     time_limit: float | None = None
-    # World-space triangles (n, 3, 3), for previews; not part of the report.
+    # World-space triangles (n, 3, 3), for previews and maps; not part of the report.
     mesh: list[np.ndarray] = field(default_factory=list, repr=False)
+    # When part names are given (for maps): for each triangle, the index in `owner_names` of the part that
+    # placed it.
+    owners: list[np.ndarray] = field(default_factory=list, repr=False)
+    owner_names: list[str] = field(default_factory=list)
 
     def add_error(self, error: BaseException | str) -> None:
         message = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
@@ -115,6 +121,11 @@ class SourceResult:
         if not self.mesh:
             return np.zeros((0, 3, 3), dtype=np.float32)
         return np.concatenate(self.mesh, axis=0)
+
+    def owners_array(self) -> np.ndarray:
+        if not self.owners:
+            return np.zeros(0, dtype=np.int32)
+        return np.concatenate(self.owners, axis=0)
 
     def to_dict(self) -> dict[str, tp.Any]:
         data: dict[str, tp.Any] = {
@@ -221,13 +232,20 @@ def _relative(path: Path, root: Path) -> str:
         return path.name
 
 
-def _place_instances(result: SourceResult, local: np.ndarray, instances: Instances, model: str) -> None:
+def _place_instances(
+    result: SourceResult, local: np.ndarray, instances: Instances, model: str, names: PartNames | None = None
+) -> None:
     placed = instances.get(model, [])
     if not placed:
         result.unplaced += 1
         return
-    for position, rotation in placed:
+    labels = (names or {}).get(model)
+    for index, (position, rotation) in enumerate(placed):
         result.mesh.append(place(local, position, rotation))
+        if names is not None:
+            label = labels[index] if labels and index < len(labels) else model
+            result.owners.append(np.full(len(local), len(result.owner_names), dtype=np.int32))
+            result.owner_names.append(label)
 
 
 def _havok_classes(hkx: tp.Any) -> list[str]:
@@ -246,6 +264,7 @@ def read_collision(
     feedback: Feedback,
     sample: int = 0,
     budget: float = 0.0,
+    names: PartNames | None = None,
 ) -> SourceResult:
     started = time.monotonic()
     result = SourceResult("collision")
@@ -308,7 +327,7 @@ def read_collision(
             if len(faces):
                 pieces.append(vertices[faces])
         if pieces:
-            _place_instances(result, np.concatenate(pieces), instances, model_stem(name))
+            _place_instances(result, np.concatenate(pieces), instances, model_stem(name), names)
     result.finish()
     if profile.collision_kind == "bloodborne" and result.read == 0 and parsed_only:
         result.status = "not-decoded"
@@ -329,6 +348,7 @@ def read_navmesh(
     feedback: Feedback,
     sample: int = 0,
     budget: float = 0.0,
+    names: PartNames | None = None,
 ) -> SourceResult:
     started = time.monotonic()
     result = SourceResult("navmesh")
@@ -377,7 +397,7 @@ def read_navmesh(
             result.vertices += len(vertices)
             result.triangles += len(faces)
             if len(faces):
-                _place_instances(result, vertices[faces], instances, model_stem(name))
+                _place_instances(result, vertices[faces], instances, model_stem(name), names)
         result.finish()
     else:
         from soulstruct.havok.core import HKX

@@ -2,7 +2,7 @@
  * The commands of the Map Maker's desktop shell (`src-tauri`). Like the Atlas viewer, the page has no dependency on
  * Tauri: inside the shell, Tauri injects an `invoke` function. In a plain browser `shell` is null.
  */
-import type { Report } from './report';
+import type { AnyReport } from './report';
 
 export interface AppInfo {
   version: string;
@@ -10,23 +10,36 @@ export interface AppInfo {
   lastFolder: string | null;
   /** Where Steam usually installs Dark Souls Remastered, when that folder exists on this computer. */
   typicalFolder: string | null;
+  /** Where Make map installs the pack: the Atlas viewer's maps folder. */
+  mapsFolder: string | null;
 }
 
 export type CheckState = 'idle' | 'running' | 'cancelling' | 'done' | 'failed' | 'cancelled';
 
 export interface CheckLine {
-  kind: 'warning' | 'area' | 'game' | 'info';
+  kind: 'warning' | 'area' | 'game' | 'info' | 'pack';
   text: string;
+}
+
+export interface MadePack {
+  folder: string;
+  id: string;
+  installed: boolean;
+  counts?: Record<string, number>;
 }
 
 export interface CheckStatus {
   state: CheckState;
+  /** A check, or a make (Make map). */
+  kind: 'check' | 'make';
   runId: number;
   folder: string | null;
   fraction: number;
   message: string;
   lines: CheckLine[];
-  report: Report | null;
+  report: AnyReport | null;
+  /** The map pack a make installed. */
+  pack: MadePack | null;
   error: string | null;
   /** The last lines the helper wrote to standard error, for a failed check. */
   helperOutput: string[];
@@ -46,6 +59,8 @@ export interface Shell {
   checkStart(folder: string): Promise<CheckStatus>;
   checkStatus(): Promise<CheckStatus>;
   checkCancel(): Promise<void>;
+  makeStart(folder: string): Promise<CheckStatus>;
+  revealPack(): Promise<void>;
   previewImage(file: string): Promise<string>;
   saveReport(suggestedName: string): Promise<SavedReport | null>;
   revealSavedReport(): Promise<void>;
@@ -59,6 +74,10 @@ export function createShell(invoke: Invoke): Shell {
     checkStatus: () => invoke('check_status') as Promise<CheckStatus>,
     checkCancel: async () => {
       await invoke('check_cancel');
+    },
+    makeStart: (folder) => invoke('make_start', { folder }) as Promise<CheckStatus>,
+    revealPack: async () => {
+      await invoke('reveal_pack');
     },
     previewImage: (file) => invoke('preview_image', { file }) as Promise<string>,
     saveReport: (suggestedName) =>

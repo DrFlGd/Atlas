@@ -5,10 +5,12 @@
  * output folder as the working folder. Standard input stays open until the check ends, as in the app.
  *
  *   node apps/mapmaker/e2e/helper.js <helper> <made-up game folder> <output folder> [--cancel]
+ *   node apps/mapmaker/e2e/helper.js <helper> <made-up game folder> <output folder> --make <maps folder>
  *
  * Without `--cancel`: the check must end with `done`, and collision and navmesh must have been read in at least one
  * area. With `--cancel`: writes `cancel` once the geometry reading starts, and the check must end with `cancelled`
- * (exit code 3) within 30 seconds.
+ * (exit code 3) within 30 seconds. With `--make`: runs Make map instead (`make … --maps-folder`), which must end with
+ * `done` after a `pack` line, with the pack's manifest in the maps folder and floors drawn from collision.
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
@@ -17,6 +19,12 @@ import { createInterface } from 'node:readline';
 
 const [helperArg, folderArg, outArg] = process.argv.slice(2, 5);
 const cancel = process.argv.includes('--cancel');
+const makeAt = process.argv.indexOf('--make');
+const mapsArg = makeAt > 0 ? process.argv[makeAt + 1] : undefined;
+if (makeAt > 0 && !mapsArg) {
+  console.error('--make needs the maps folder');
+  process.exit(2);
+}
 if (!helperArg || !folderArg || !outArg) {
   console.error('Usage: node e2e/helper.js <helper> <game folder> <output folder> [--cancel]');
   process.exit(2);
@@ -34,7 +42,11 @@ function check(ok, what) {
 await mkdir(out, { recursive: true });
 const started = Date.now();
 const seconds = () => ((Date.now() - started) / 1000).toFixed(1);
-const child = spawn(helper, ['check', folder, '--out', out, '--stdin-cancel'], {
+const maps = mapsArg ? resolve(mapsArg) : null;
+const args = maps
+  ? ['make', folder, '--out', out, '--maps-folder', maps, '--stdin-cancel']
+  : ['check', folder, '--out', out, '--stdin-cancel'];
+const child = spawn(helper, args, {
   cwd: out,
   stdio: ['pipe', 'pipe', 'pipe'],
   windowsHide: true,
@@ -81,6 +93,17 @@ if (cancel) {
     'the check ended with "cancelled" (exit code 3)',
   );
   check(Date.now() - cancelSentAt < 30_000, 'it stopped within 30 s of the cancel');
+} else if (maps) {
+  check(last?.event === 'done' && code === 0, 'the make ended with "done" (exit code 0)');
+  const pack = events.find((event) => event.event === 'pack');
+  check(Boolean(pack?.installed), `a pack was installed (${pack?.folder})`);
+  check(resolve(pack.folder).startsWith(maps), 'the pack is in the maps folder');
+  const manifest = JSON.parse(await readFile(join(pack.folder, 'manifest.json'), 'utf8'));
+  check(manifest.writtenBy?.name === 'Atlas Map Maker', 'the manifest says the Map Maker wrote it');
+  const report = JSON.parse(await readFile(join(out, 'report.json'), 'utf8'));
+  check(report.kind === 'make', 'the report is a make report');
+  check(report.summary.floors > 0 && report.summary.markers > 0, 'floors and markers were made');
+  check((report.summary.geometry.collision ?? 0) > 0, 'floors were drawn from collision');
 } else {
   check(last?.event === 'done' && code === 0, 'the check ended with "done" (exit code 0)');
   const report = JSON.parse(await readFile(join(out, 'report.json'), 'utf8'));

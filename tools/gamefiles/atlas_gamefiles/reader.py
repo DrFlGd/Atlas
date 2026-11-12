@@ -200,9 +200,16 @@ def main(argv: list[str]) -> int:
         finally:
             if dump_after > 0:
                 faulthandler.cancel_dump_traceback_later()
-        mesh = cap_triangles(np.asarray(mesh, dtype=np.float32).reshape(-1, 3, 3), job.preview_limit)
+        mesh = np.asarray(mesh, dtype=np.float32).reshape(-1, 3, 3)
+        owners = result.owners_array()
+        if len(owners) != len(mesh):
+            mesh = cap_triangles(mesh, job.preview_limit)
+            owners = owners[:0]
         mesh_file = data.get("meshFile") if len(mesh) else None
         if mesh_file:
             np.save(mesh_file, mesh, allow_pickle=False)
+        owners_file = data.get("ownersFile") if len(owners) else None
+        if owners_file:
+            np.save(owners_file, owners.astype(np.int32), allow_pickle=False)
         log(f"{what}: {result.status} in {time.monotonic() - job_started:.2f} s")
-        out.send("result", result_to_dict(result), mesh_file)
+        out.send("result", result_to_dict(result), mesh_file, owners_file)

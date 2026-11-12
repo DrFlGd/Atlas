@@ -46,7 +46,16 @@ from pathlib import Path
 import numpy as np
 
 from .games import PROFILES, Area
-from .geometry import Cancelled, Feedback, Instances, SourceResult, read_collision, read_map_pieces, read_navmesh
+from .geometry import (
+    Cancelled,
+    Feedback,
+    Instances,
+    PartNames,
+    SourceResult,
+    read_collision,
+    read_map_pieces,
+    read_navmesh,
+)
 from .reader import STAGES
 
 # Defaults, overridable on the command line (see cli.py).
@@ -78,7 +87,9 @@ class SourceJob:
     instances: Instances
     sample: int = 0  # files to read, evenly spaced (0: all)
     budget: float = 0.0  # seconds after which no new file is started (0: no budget)
-    preview_limit: int = PREVIEW_LIMIT
+    preview_limit: int = PREVIEW_LIMIT  # triangles sent back at most (0: all of them)
+    # For maps: the names of the parts that place each model, so each triangle can say which part it came from.
+    part_names: PartNames = dataclasses.field(default_factory=dict)
 
 
 def cap_triangles(mesh: np.ndarray, limit: int) -> np.ndarray:
@@ -91,16 +102,23 @@ def cap_triangles(mesh: np.ndarray, limit: int) -> np.ndarray:
 def execute(job: SourceJob, feedback: Feedback) -> tuple[SourceResult, np.ndarray]:
     """Read one source; return its result (without the mesh) and its triangles for the preview."""
     profile = PROFILES[job.game]
+    names = job.part_names or None
     if job.source == "collision":
-        result = read_collision(profile, job.area, job.root, job.instances, feedback, job.sample, job.budget)
+        result = read_collision(profile, job.area, job.root, job.instances, feedback, job.sample, job.budget, names)
     elif job.source == "navmesh":
-        result = read_navmesh(profile, job.area, job.root, job.instances, feedback, job.sample, job.budget)
+        result = read_navmesh(profile, job.area, job.root, job.instances, feedback, job.sample, job.budget, names)
     elif job.source == "mapPieces":
         result = read_map_pieces(profile, job.area, job.root, feedback, job.sample, job.budget)
     else:
         raise ValueError(f"unknown geometry source {job.source!r}")
-    mesh = cap_triangles(result.triangles_array(), job.preview_limit)
+    mesh = result.triangles_array()
+    owners = result.owners_array()
+    if job.preview_limit > 0 and len(mesh) > job.preview_limit:
+        chosen = np.linspace(0, len(mesh) - 1, job.preview_limit).astype(np.int64)
+        mesh = mesh[chosen]
+        owners = owners[chosen] if len(owners) else owners
     result.mesh = []
+    result.owners = [owners] if len(owners) else []
     return result, mesh
 
 
@@ -130,6 +148,7 @@ def job_to_dict(job: SourceJob) -> dict[str, tp.Any]:
         "sample": job.sample,
         "budget": job.budget,
         "previewLimit": job.preview_limit,
+        "partNames": job.part_names,
     }
 
 
@@ -152,17 +171,18 @@ def job_from_dict(data: dict[str, tp.Any]) -> SourceJob:
         sample=int(data["sample"]),
         budget=float(data["budget"]),
         preview_limit=int(data["previewLimit"]),
+        part_names={model: [str(n) for n in names] for model, names in (data.get("partNames") or {}).items()},
     )
 
 
 def result_to_dict(result: SourceResult) -> dict[str, tp.Any]:
-    data = dataclasses.asdict(dataclasses.replace(result, mesh=[]))
-    del data["mesh"]
+    data = dataclasses.asdict(dataclasses.replace(result, mesh=[], owners=[]))
+    del data["mesh"], data["owners"]
     return data
 
 
 def result_from_dict(data: dict[str, tp.Any]) -> SourceResult:
-    fields = {field.name for field in dataclasses.fields(SourceResult)} - {"mesh"}
+    fields = {field.name for field in dataclasses.fields(SourceResult)} - {"mesh", "owners"}
     result = SourceResult(**{key: value for key, value in data.items() if key in fields})
     result.file_seconds = [(str(name), float(seconds)) for name, seconds in result.file_seconds]
     return result
@@ -536,6 +556,7 @@ class ProcessRunner:
             result.add_error(f"The file reader process could not load the Havok reader: {self.havok_broken}")
             return result, empty
         mesh_file = self.work_folder() / f"{MESH_PREFIX}{os.getpid()}-{self.jobs}.npy"
+        owners_file = self.work_folder() / f"{MESH_PREFIX}{os.getpid()}-{self.jobs}-owners.npy"
         try:
             if self.broken:
                 raise WorkerUnavailable(self.broken)
@@ -546,6 +567,7 @@ class ProcessRunner:
                 raise WorkerUnavailable(f"it could not load the Havok reader: {self.havok_broken}")
             data = job_to_dict(job)
             data["meshFile"] = str(mesh_file)
+            data["ownersFile"] = str(owners_file)
             if self.time_limit >= 2:  # the log gets the reader's stack shortly before the time limit
                 data["dumpAfter"] = max(self.time_limit - 10, self.time_limit * 0.75)
             assert self.process is not None and self.process.stdin is not None
@@ -585,6 +607,8 @@ class ProcessRunner:
                     mesh = empty
                     if message[2]:
                         mesh = np.load(message[2], allow_pickle=False)
+                    if len(message) > 3 and message[3]:
+                        result.owners = [np.load(message[3], allow_pickle=False)]
                     return result, mesh
                 if message[0] == "error":
                     result = SourceResult(job.source, status="failed")
@@ -594,6 +618,7 @@ class ProcessRunner:
                 watch.handle(message)
         finally:
             mesh_file.unlink(missing_ok=True)
+            owners_file.unlink(missing_ok=True)
 
     def kill(self) -> None:
         """End the reader at once."""
