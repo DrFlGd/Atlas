@@ -6,7 +6,7 @@ import {
   shellCalls,
   useAndroidShell,
 } from './androidShell';
-import { collectErrors, demoLocations, openMap } from './helpers';
+import { collectErrors, demoLocations, openMap, storedSetting } from './helpers';
 import { back, choosePlace, expectFound } from './touch';
 
 /**
@@ -304,6 +304,8 @@ test.describe('on a phone', () => {
     await keep.tap();
     await expect(keep).toHaveAttribute('aria-checked', 'false');
     expect((await screenOn()).at(-1)).toBe(false);
+    // The setting is saved without waiting; restart once it is stored.
+    await expect.poll(() => storedSetting(page, 'keepScreenOn')).toBe(false);
     await page.reload();
     await expect(page.getByTestId('marker-count')).toHaveText('5,000');
     await expect.poll(async () => (await screenOn()).at(-1)).toBe(false);
