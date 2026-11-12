@@ -12,13 +12,20 @@ import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
 import { TopBar } from './components/TopBar';
-import { downloadsOffered } from './features';
+import { downloadsOffered, touchUiOffered } from './features';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { initSaves } from './state/saves';
 import { useAtlas, type LeftTab, type PaneName } from './state/store';
+import { sessionStore, touchRequested } from './touch/uiMode';
 import { formatViewHash, parseViewHash } from './viewHash';
+
+// The touch layout, for the Android app (and a browser that asks for it):
+// loaded only where it is shown.
+const TouchShell = lazy(() =>
+  import('./touch/TouchShell').then((module) => ({ default: module.TouchShell })),
+);
 
 // Opened rarely, so loaded when first opened.
 const SaveDialog = lazy(() =>
@@ -32,10 +39,15 @@ const PackFileDialog = lazy(() =>
   import('./components/PackFileDialog').then((module) => ({ default: module.PackFileDialog })),
 );
 
-/** Loads the configuration and the first pack, then shows the three-pane layout. */
+/**
+ * Loads the configuration and the first pack, then shows the three-pane
+ * layout, or the touch layout in the Android app.
+ */
 export function App() {
   const status = useAtlas((s) => s.status);
   const game = useAtlas((s) => s.game);
+  const [requested] = useState(() => touchRequested(window.location.search, sessionStore()));
+  const touch = useAtlas((s) => requested || touchUiOffered(s));
 
   useEffect(() => {
     const stopSaves = initSaves();
@@ -46,6 +58,10 @@ export function App() {
   useViewHashSync();
   useWidthClass();
   useShortcuts();
+  useEffect(() => {
+    if (touch) document.documentElement.dataset.ui = 'touch';
+    else delete document.documentElement.dataset.ui;
+  }, [touch]);
 
   if (status.kind === 'error') {
     return (
@@ -60,6 +76,19 @@ export function App() {
       <main className="status" aria-busy="true">
         Loading…
       </main>
+    );
+  }
+  if (touch) {
+    return (
+      <Suspense
+        fallback={
+          <main className="status" aria-busy="true">
+            Loading…
+          </main>
+        }
+      >
+        <TouchShell />
+      </Suspense>
     );
   }
   return <Shell />;

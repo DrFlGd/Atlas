@@ -90,3 +90,70 @@ export function installAndroidBars(win: Window = window): () => void {
     observer.disconnect();
   };
 }
+
+/** The Android activity's bridge, where the page runs in the Android app. */
+function bridgeOf(win: Window): Partial<AndroidBridge> | null {
+  return (win as unknown as { AtlasAndroid?: Partial<AndroidBridge> }).AtlasAndroid ?? null;
+}
+
+/** What the Android activity offers the page besides the system bars. */
+export interface AndroidBridge extends AndroidBarsBridge {
+  /** Keeps the screen on while the app is shown, or lets it turn off as usual. */
+  keepScreenOn(on: boolean): void;
+}
+
+let wakeLock: { release(): Promise<void> } | null = null;
+let wantAwake = false;
+let watchingVisibility = false;
+
+/**
+ * Keeps the screen on while the app is shown, or stops doing so. The
+ * Android app does it through its activity; a browser that has the screen
+ * wake lock uses that, taking it again when the page is shown again.
+ * Returns whether this device can do it at all.
+ */
+export function keepScreenOn(on: boolean, win: Window = window): boolean {
+  const bridge = bridgeOf(win);
+  if (bridge?.keepScreenOn) {
+    try {
+      bridge.keepScreenOn(on);
+    } catch (error) {
+      console.error(error);
+    }
+    return true;
+  }
+  const api = 'wakeLock' in win.navigator ? win.navigator.wakeLock : undefined;
+  if (!api) return false;
+  wantAwake = on;
+  const take = () => {
+    if (!wantAwake || wakeLock || win.document.visibilityState !== 'visible') return;
+    api.request('screen').then(
+      (lock) => {
+        wakeLock = lock;
+        if (!wantAwake) void release();
+      },
+      () => undefined,
+    );
+  };
+  const release = async () => {
+    const lock = wakeLock;
+    wakeLock = null;
+    await lock?.release().catch(() => undefined);
+  };
+  if (!watchingVisibility) {
+    watchingVisibility = true;
+    win.document.addEventListener('visibilitychange', () => {
+      // The browser lets go of the lock when the page is hidden.
+      wakeLock = null;
+      take();
+    });
+  }
+  if (on) take();
+  else void release();
+  return true;
+}
+
+/** Whether this device can keep the screen on for the app (see {@link keepScreenOn}). */
+export function canKeepScreenOn(win: Window = window): boolean {
+  return Boolean(bridgeOf(win)?.keepScreenOn) || 'wakeLock' in win.navigator;
+}

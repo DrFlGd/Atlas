@@ -83,7 +83,7 @@ export function setItemDone(itemId: string, done: boolean): void {
   const places = entry.ownMark
     ? ''
     : ` ${changes.length === 1 ? 'One place' : `${changes.length} places`} marked ${done ? 'found' : 'not found'}.`;
-  notify(`“${name}”: ${done ? 'done' : 'not done'}.${places} Press Z to undo.`);
+  notify(`“${name}”: ${done ? 'done' : 'not done'}.${places}`, 'info', { undo: true });
 }
 
 /** Shows a location of a checklist item on the map, remembering the item for when the screen is shown again. */

@@ -11,8 +11,21 @@ import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
 
-/** Hosts the map view and keeps it in sync with the store. */
-export function MapPane() {
+/** What the touch layout asks of the map. */
+export interface TouchMapOptions {
+  /** Press and hold on a marker. */
+  onLongPress: (locationId: string) => void;
+  /** A tap picked a marker (or empty map: null), after it was selected. */
+  onPick: (locationId: string | null) => void;
+}
+
+/**
+ * Hosts the map view and keeps it in sync with the store. With `touch`, the
+ * map is for fingers: wider targets, no zoom buttons, no layer buttons (the
+ * touch layout lists the levels) and no names on hover; pressing and
+ * holding a marker is passed on.
+ */
+export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<MapView | null>(null);
   const game = useAtlas((s) => s.game);
@@ -23,18 +36,30 @@ export function MapPane() {
   const theme = useAtlas((s) => s.theme);
   const markers = useLayerMarkers();
   const pack = game?.pack;
+  const touchRef = useRef(touch);
+  useEffect(() => {
+    touchRef.current = touch;
+  });
+  const touchMode = touch !== undefined;
 
   // One map view for the life of the pane; packs and layers are swapped into it.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const view = createMapView(container, { clustering });
+    const view = createMapView(
+      container,
+      touchMode ? { clustering, hitSlop: 14, zoomControl: false } : { clustering },
+    );
     const unsubscribe = [
       view.onViewChange((state) => {
         useAtlas.setState({ view: state });
       }),
       view.onSelect((id) => {
         select(id);
+        touchRef.current?.onPick(id);
+      }),
+      view.onLongPress((id) => {
+        touchRef.current?.onLongPress(id);
       }),
       view.onHover((hover) => {
         useAtlas.setState({ hover });
@@ -55,7 +80,7 @@ export function MapPane() {
       setMap(null);
       useAtlas.setState({ hover: null, view: null });
     };
-  }, [clustering]);
+  }, [clustering, touchMode]);
 
   // Theme colours live in CSS variables, which the marker canvas reads when drawing sprites.
   useEffect(() => {
@@ -139,8 +164,8 @@ export function MapPane() {
   return (
     <div className="map-area">
       <div ref={containerRef} className="map-pane" data-testid="map" />
-      <LayerSwitcher />
-      <MarkerTooltip />
+      {touchMode ? null : <LayerSwitcher />}
+      {touchMode ? null : <MarkerTooltip />}
       <TileNotice />
       <PlayerControls />
       <DownloadControls />

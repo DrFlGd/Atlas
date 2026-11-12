@@ -46,8 +46,13 @@ export const isNarrow = () => window.matchMedia(NARROW_QUERY).matches;
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 let noticeSeq = 0;
-export function notify(text: string, tone: 'info' | 'error' = 'info'): void {
-  set({ notice: { text, tone, seq: ++noticeSeq } });
+/** Shows a notice. With `undo`, it reports a change that undo takes back (see `Notice`). */
+export function notify(
+  text: string,
+  tone: 'info' | 'error' = 'info',
+  options: { undo?: boolean } = {},
+): void {
+  set({ notice: { text, tone, seq: ++noticeSeq, ...(options.undo ? { undo: true } : {}) } });
 }
 
 export function saveSetting(key: string, value: unknown): void {
@@ -269,6 +274,12 @@ export function goToLocation(locationId: string): void {
   select(locationId);
 }
 
+/** Moves the map to a point on the layer shown, at the zoom given or the current one. */
+export function moveMap(x: number, y: number, options: { zoom?: number; animate?: boolean } = {}) {
+  const { zoom, animate = true } = options;
+  set({ fly: { x, y, ...(zoom === undefined ? {} : { zoom }), animate, seq: ++flySeq } });
+}
+
 /** Shows a map (keeping the layer shown, if it is on that map) and moves to a point on it. */
 export function goToPoint(mapId: string, x: number, y: number): void {
   const { game } = get();
@@ -409,7 +420,7 @@ export function toggleFound(locationId = get().selectedId): void {
   }
   const next = !found.has(locationId);
   setFound(locationId, next);
-  notify(`${location.name}: ${next ? 'found' : 'not found'}. Press Z to undo.`);
+  notify(`${location.name}: ${next ? 'found' : 'not found'}.`, 'info', { undo: true });
 }
 
 /** Takes back the last found change, or checklist tick, in the active profile. */
@@ -462,6 +473,12 @@ export function applyPreset(categoryIds: readonly string[]): void {
   const { game } = get();
   if (!game) return;
   set({ overrides: overridesShowingOnly(game.pack.data.categories, categoryIds) });
+  saveFilters();
+}
+
+/** Puts back category choices as they were, such as before one kind was shown alone. */
+export function setOverrides(overrides: VisibilityOverrides): void {
+  set({ overrides });
   saveFilters();
 }
 
