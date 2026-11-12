@@ -14,8 +14,18 @@ export interface KeyHelp {
 export function keyList(lists: string | null): KeyHelp[] {
   return [
     { keys: ['/'], what: 'Search' },
-    { keys: ['N'], what: 'Nearest place not yet found' },
-    { keys: ['F'], what: 'Mark the selected place found, or not found' },
+    {
+      keys: ['N'],
+      what: lists
+        ? 'Nearest place not yet found; in a list shown in order, the next step'
+        : 'Nearest place not yet found',
+    },
+    {
+      keys: ['F'],
+      what: lists
+        ? 'Mark the selected place found, or not found; in a list shown in order, the next step done'
+        : 'Mark the selected place found, or not found',
+    },
     { keys: ['Z'], what: 'Undo' },
     ...(lists ? [{ keys: ['C'], what: `${lists}, or back to the map` }] : []),
     { keys: ['Esc'], what: 'Close what is on top: a menu, search, the place, a list' },

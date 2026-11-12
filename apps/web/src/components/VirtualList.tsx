@@ -158,7 +158,11 @@ export function VirtualList<T>({
     const row = list.querySelector<HTMLElement>(`:scope > [data-index="${reveal.index}"]`);
     if (row) {
       revealed.current = reveal.seq;
-      row.scrollIntoView({ block: 'center' });
+      // Centred in the scroll container only: scrolling the page or a panel
+      // around it (as scrollIntoView would) could hide what is above the list.
+      const top =
+        row.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop;
+      parent.scrollTop = top - (parent.clientHeight - row.offsetHeight) / 2;
       onRevealed?.(row, reveal.seq);
       return;
     }

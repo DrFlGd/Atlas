@@ -67,6 +67,17 @@ describe('visibility', () => {
     expect(passesFilter(location, { ...filter, visibleCategories: new Set() })).toBe(false);
   });
 
+  it('shows only the places of one list, whatever kinds are shown, when asked', () => {
+    const location = pack.locations.get('demo:loc:0001')!;
+    const filter = { visibleCategories: new Set<string>(), hideFound: false, isFound: () => true };
+    expect(passesFilter(location, { ...filter, only: new Set(['demo:loc:0001']) })).toBe(true);
+    expect(passesFilter(location, { ...filter, only: new Set(['demo:loc:0002']) })).toBe(false);
+    // "Hide found" still applies.
+    const only = new Set(['demo:loc:0001']);
+    expect(passesFilter(location, { ...filter, only, hideFound: true })).toBe(false);
+    expect(passesFilter(location, { ...filter, only: null })).toBe(false);
+  });
+
   it('finds the nearest visible, trackable, unfound location on a layer', () => {
     const all = new Set(categories.map((c) => c.id));
     const filter = {

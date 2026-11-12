@@ -33,11 +33,21 @@ export interface MarkerFilter {
   visibleCategories: ReadonlySet<string>;
   hideFound: boolean;
   isFound: (locationId: string) => boolean;
+  /**
+   * Only these locations, whatever kinds are shown (the places of one list,
+   * shown alone for a while). The category choices stay as they are, so
+   * they are back as soon as this goes.
+   */
+  only?: ReadonlySet<string> | null;
 }
 
-/** Whether a location passes the category filter and the "hide found" toggle. */
+/** Whether a location passes the category filter (or the `only` set) and the "hide found" toggle. */
 export function passesFilter(location: Location, filter: MarkerFilter): boolean {
-  if (!filter.visibleCategories.has(location.categoryId)) return false;
+  if (filter.only) {
+    if (!filter.only.has(location.id)) return false;
+  } else if (!filter.visibleCategories.has(location.categoryId)) {
+    return false;
+  }
   return !(filter.hideFound && filter.isFound(location.id));
 }
 

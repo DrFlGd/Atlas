@@ -1,4 +1,4 @@
-import type { ChecklistEntry, IsDone, SearchHit } from '@atlas/core';
+import { compareDistance, type ChecklistEntry, type IsDone, type SearchHit } from '@atlas/core';
 
 export interface Point {
   x: number;
@@ -38,9 +38,6 @@ export function orderHits(
     )
     .map(({ hit }) => hit);
 }
-
-const compareDistance = (a: number, b: number) =>
-  a === b ? 0 : a === Infinity ? 1 : b === Infinity ? -1 : a - b;
 
 /** An entry of a checklist to show next, and the place to show it at. */
 export interface NextEntry {

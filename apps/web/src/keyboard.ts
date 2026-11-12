@@ -36,6 +36,10 @@ export interface ShortcutOverrides {
   escape: () => void;
   /** `?`: show the list of keys. */
   keys: () => void;
+  /** `F`, before it marks the selection: returns true when the layout used the key itself. */
+  found?: () => boolean;
+  /** `N`, before it goes to the nearest place: returns true when the layout used the key itself. */
+  nearest?: () => boolean;
 }
 
 let overrides: ShortcutOverrides | null = null;
@@ -70,7 +74,7 @@ export function useShortcuts(): void {
       switch (key) {
         case 'f':
           event.preventDefault();
-          toggleFound();
+          if (!overrides?.found?.()) toggleFound();
           break;
         case 'z':
           event.preventDefault();
@@ -88,7 +92,7 @@ export function useShortcuts(): void {
           break;
         case 'n':
           event.preventDefault();
-          jumpToNearestUnfound();
+          if (!overrides?.nearest?.()) jumpToNearestUnfound();
           break;
         case 'c':
           event.preventDefault();

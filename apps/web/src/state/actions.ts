@@ -335,7 +335,7 @@ export function jumpToNearestUnfound(): void {
 }
 
 export function markerFilter(
-  state: Pick<AtlasState, 'game' | 'overrides' | 'hideFound' | 'found'>,
+  state: Pick<AtlasState, 'game' | 'overrides' | 'hideFound' | 'found' | 'listOnly'>,
 ) {
   const categories = state.game?.pack.data.categories ?? [];
   const found = state.found;
@@ -343,6 +343,7 @@ export function markerFilter(
     visibleCategories: visibleCategoryIds(categories, state.overrides),
     hideFound: state.hideFound,
     isFound: (id: string) => found.has(id),
+    only: state.listOnly,
   };
 }
 
