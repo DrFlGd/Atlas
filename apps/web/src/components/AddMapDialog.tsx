@@ -322,6 +322,9 @@ function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | '
           <p role="status">
             <strong>Building the map…</strong> {phase.importer} is turning the page data into a map
             pack.
+            {__ATLAS_DOWNLOADS__
+              ? ' When a map’s size changes, the map images you already downloaded are fitted to it, which can take a minute.'
+              : null}
           </p>
         )}
       </section>

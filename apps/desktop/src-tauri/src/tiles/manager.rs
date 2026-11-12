@@ -628,30 +628,30 @@ impl DownloadManager {
     }
 
     /// The detail options of a pack with their sizes, and any job.
-    /// Blocking: it looks at every tile on disk.
+    /// Blocking: it lists every folder of tiles on disk.
     pub fn plan_info(&self, pack_id: &str) -> Result<PlanInfo, String> {
         let (plan, store) = self.plan(pack_id)?;
         let pace = self.current_pace();
         let details = plan.details();
+        // Each level is looked at once, whatever the number of details.
+        let counted: Vec<Vec<LevelCount>> = plan
+            .layers
+            .iter()
+            .map(|layer| count_levels(layer, &store))
+            .collect();
         let mut options = Vec::new();
         for &detail in &details {
             let (mut tiles, mut remaining, mut bytes) = (0u64, 0u64, 0u64);
             let mut installed = true;
-            for layer in &plan.layers {
+            for (layer, levels) in plan.layers.iter().zip(&counted) {
                 let top = layer.top_for(detail);
                 let (mut samples, mut sampled_bytes) = (0u64, 0u64);
                 let mut layer_remaining = 0u64;
-                for level in layer.remote_levels(top) {
-                    for tile in layer.tiles_of(level.z) {
-                        tiles += 1;
-                        let path = layer.tile_path(tile.z, tile.x, tile.y);
-                        if let Some(len) = store.overlay_len(&path) {
-                            samples += 1;
-                            sampled_bytes += len;
-                        } else if !store.is_done(&path) {
-                            layer_remaining += 1;
-                        }
-                    }
+                for level in levels.iter().filter(|level| level.z <= top) {
+                    tiles += level.tiles;
+                    samples += level.images;
+                    sampled_bytes += level.image_bytes;
+                    layer_remaining += level.remaining;
                 }
                 let per_tile = if samples >= 10 {
                     sampled_bytes / samples
@@ -1362,16 +1362,60 @@ impl DownloadManager {
     }
 }
 
+/// What is on disk of one remote level of a layer.
+struct LevelCount {
+    z: u8,
+    tiles: u64,
+    /// Downloaded images, and their bytes.
+    images: u64,
+    image_bytes: u64,
+    /// Tiles a download would still ask for.
+    remaining: u64,
+}
+
+/// Counts every remote level of `layer` from folder listings (see
+/// [`TileStore::listed`]): a tile at a time, a large layer took minutes on
+/// a disk where each question about a file that is not there is slow.
+fn count_levels(layer: &LayerPlan, store: &TileStore) -> Vec<LevelCount> {
+    let mut listed = store.listed();
+    layer
+        .levels
+        .iter()
+        .map(|level| {
+            let mut count = LevelCount {
+                z: level.z,
+                tiles: 0,
+                images: 0,
+                image_bytes: 0,
+                remaining: 0,
+            };
+            for tile in layer.tiles_of(level.z) {
+                count.tiles += 1;
+                let path = layer.tile_path(tile.z, tile.x, tile.y);
+                if let Some(len) = listed.overlay_len(&path) {
+                    count.images += 1;
+                    count.image_bytes += len;
+                } else if !listed.is_done(&path) {
+                    count.remaining += 1;
+                }
+            }
+            listed.forget();
+            count
+        })
+        .collect()
+}
+
 /// How many of a job's remote tiles are already on disk or known missing.
 fn count_present(plan: &PackPlan, detail: Detail, store: &TileStore) -> u64 {
     plan.layers
         .iter()
         .map(|layer| {
-            layer
-                .remote_levels(layer.top_for(detail))
-                .flat_map(|level| layer.tiles_of(level.z))
-                .filter(|tile| store.is_done(&layer.tile_path(tile.z, tile.x, tile.y)))
-                .count() as u64
+            let top = layer.top_for(detail);
+            count_levels(layer, store)
+                .iter()
+                .filter(|level| level.z <= top)
+                .map(|level| level.tiles - level.remaining)
+                .sum::<u64>()
         })
         .sum()
 }
@@ -1384,13 +1428,16 @@ fn layer_host(layer: &LayerPlan) -> String {
 /// For each layer, whether any of its remote tiles is an image on disk (not
 /// a marker): proof that its host has sent images of it before.
 fn layers_with_images(plan: &PackPlan, store: &TileStore) -> Vec<bool> {
+    let mut listed = store.listed();
     plan.layers
         .iter()
         .map(|layer| {
             layer.levels.iter().any(|level| {
-                layer
+                let found = layer
                     .tiles_of(level.z)
-                    .any(|tile| store.has_overlay_image(&layer.tile_path(tile.z, tile.x, tile.y)))
+                    .any(|tile| listed.has_overlay_image(&layer.tile_path(tile.z, tile.x, tile.y)));
+                listed.forget();
+                found
             })
         })
         .collect()
