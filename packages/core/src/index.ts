@@ -12,6 +12,7 @@ export * from './filters/visibility';
 export * from './search/searchIndex';
 export * from './checklists/checklists';
 export * from './checklists/facets';
+export * from './checklists/views';
 export * from './progress/records';
 export * from './progress/store';
 export * from './progress/memoryStore';
