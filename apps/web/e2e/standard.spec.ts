@@ -1,5 +1,12 @@
 import type { Page } from '@playwright/test';
-import { collectErrors, demoLocations, mapStatus, openMap, type PackLocation } from './helpers';
+import {
+  collectErrors,
+  demoLocations,
+  mapStatus,
+  openMap,
+  reloadSaved,
+  type PackLocation,
+} from './helpers';
 import { expect, test } from './layout';
 import { choosePlace, expectFound, mapSettled, screenPoint } from './touch';
 
@@ -43,14 +50,14 @@ test('opens in the standard layout, and the classic one is a setting away', asyn
   await setting.getByTestId('layout-classic').click();
   await expect(page.locator('.topbar')).toBeVisible();
   await expect(page.locator('html')).not.toHaveAttribute('data-ui', 'touch');
-  await page.reload();
+  await reloadSaved(page);
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
   await expect(page.locator('.topbar')).toBeVisible();
 
   // And back, from the classic top bar.
   await page.getByTestId('use-standard-layout').click();
   await expect(root(page)).toBeVisible();
-  await page.reload();
+  await reloadSaved(page);
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
   await expect(root(page)).toBeVisible();
 

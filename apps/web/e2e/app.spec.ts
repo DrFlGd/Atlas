@@ -10,9 +10,10 @@ import {
   mapStatus,
   openMap,
   overall,
+  type PackRegion,
+  reloadSaved,
   searchAndChoose,
   selectByName,
-  type PackRegion,
 } from './helpers';
 
 const HERB = 'demo:cat:herb';
@@ -381,7 +382,7 @@ test('reload keeps progress, filters and the profile', async ({ page, request })
   await expectOverallFound(page, 1);
   await page.getByTestId(`category-${HERB}`).getByRole('checkbox').uncheck();
 
-  await page.reload();
+  await reloadSaved(page);
   await expect(page.getByTestId('overall-progress')).toHaveAttribute('data-found', '1');
   await expect(page.getByTestId(`category-${HERB}`).getByRole('checkbox')).not.toBeChecked();
   await selectByName(page, relic.name);
