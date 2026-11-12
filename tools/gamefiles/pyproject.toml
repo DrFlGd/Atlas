@@ -1,6 +1,6 @@
 [project]
 name = "atlas-gamefiles"
-version = "0.1.1"
+version = "0.1.2"
 description = "Atlas Map Maker helper: checks a player's own game files and reports what map data can be read."
 readme = "README.md"
 license = "GPL-3.0-or-later"

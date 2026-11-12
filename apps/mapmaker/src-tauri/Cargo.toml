@@ -1,6 +1,6 @@
 [package]
 name = "atlas-mapmaker"
-version = "0.1.1"
+version = "0.1.2"
 description = "Atlas Map Maker: checks a player's own game files for map data"
 edition = "2021"
 # This crate is MIT like the rest of the repository. The installer it builds also carries the GPL-3.0 helper

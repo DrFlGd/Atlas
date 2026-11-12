@@ -1,5 +1,5 @@
-"""Made-up readers for the child process tests (test_worker.py). The child imports this module by name, so it lives
-in its own file. Each behaves by the made-up area's id."""
+"""Made-up readers for the file reader process tests (test_worker.py). The reader imports this module by name
+(`--run fake_readers:scripted`), so it lives in its own file. Each behaves by the made-up area's id."""
 
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ def scripted(job: SourceJob, feedback: Feedback) -> tuple[SourceResult, np.ndarr
         feedback.opening("h99_00_00_00.hkxbhd")
         time.sleep(600)
     if behaviour == "crash":
+        feedback.opening("made-up.bnd")
+        feedback.file(0, 1, "made-up.hkx")
         os._exit(5)
     if behaviour == "error":
         raise ValueError("made-up bad data")
