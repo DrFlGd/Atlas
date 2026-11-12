@@ -127,6 +127,19 @@ def list_areas(profile: GameProfile, root: Path) -> list[Area]:
     return areas
 
 
+def newest_versions(areas: list[Area]) -> tuple[list[Area], list[str]]:
+    """One area per `mAA_BB`: when the game ships several versions (Dark Souls Remastered has
+    m12_00_00_00 and m12_00_00_01 for Darkroot, the second with the Oolacile entrance), the game loads
+    the last one. Returns the areas kept, in their order, and the ids of the older versions left out."""
+    newest: dict[str, Area] = {}
+    for area in areas:
+        key = area.id[:6].lower()
+        if key not in newest or area.id.lower() > newest[key].id.lower():
+            newest[key] = area
+    kept = [a for a in areas if newest[a.id[:6].lower()] is a]
+    return kept, [a.id for a in areas if newest[a.id[:6].lower()] is not a]
+
+
 def entry_basename(path: str) -> str:
     """The file name of a binder entry path, which uses backslashes."""
     return re.split(r"[\\/]", path)[-1]
