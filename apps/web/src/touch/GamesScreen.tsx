@@ -230,9 +230,6 @@ function Settings() {
         <div className="touch-setting-row touch-setting-row-noted" data-testid="layout-setting">
           <span className="touch-setting-label" id="layout-label">
             Layout
-            <span className="touch-switch-note" id="layout-note">
-              Classic: a bar at the top and panes on both sides of the map
-            </span>
           </span>
           <div
             className="touch-segmented"
@@ -255,6 +252,9 @@ function Settings() {
               </button>
             ))}
           </div>
+          <span className="touch-switch-note touch-setting-note" id="layout-note">
+            Classic is the earlier layout: a bar at the top and panes on both sides of the map.
+          </span>
         </div>
       ) : null}
       {offered ? (

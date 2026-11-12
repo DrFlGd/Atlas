@@ -2143,8 +2143,13 @@
 }
 
 .touch-setting-row-noted {
+  flex-wrap: wrap;
   padding-top: 6px;
   padding-bottom: 6px;
+}
+
+.touch-setting-note {
+  flex-basis: 100%;
 }
 
 .touch-rail-tool {
@@ -2547,4 +2552,10 @@
 .touch[data-input='mouse'] :focus-visible {
   outline: 2px solid var(--atlas-focus);
   outline-offset: 1px;
+}
+
+/* Tool and settings rows on Games say what they do in full. */
+.touch-tool-row .touch-row-detail,
+.touch-settings .touch-row-detail {
+  white-space: normal;
 }
