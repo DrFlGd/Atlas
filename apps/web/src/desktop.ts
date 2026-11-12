@@ -1,4 +1,4 @@
-import type { PictureTilesRequest } from '@atlas/importer-api';
+import type { PictureSummary, PictureTilesRequest } from '@atlas/importer-api';
 import type { PinTableStats, TableFit } from '@atlas/saves';
 
 /**
@@ -250,7 +250,7 @@ export interface ImportReport {
   /** Games in a list of games, or to update. */
   games?: number;
   /** How the map's picture was sized, when the importer could measure it. */
-  picture?: { measured: boolean; tiles?: number; note?: string };
+  picture?: PictureSummary;
   /** A run's figures. */
   run?: {
     added?: number;
@@ -386,7 +386,14 @@ export interface SaveImportRequest {
 /** What the shell found when it looked at the import window. */
 export type PollResult =
   | { state: 'waiting'; loading: boolean; note: string | null }
-  | { state: 'ready'; data: string }
+  /**
+   * The page data has been read and the map picture is being measured from
+   * the page: the importer's step has run `steps` times, `presses` of which
+   * pressed the page's zoom control.
+   */
+  | { state: 'measuring'; steps: number; presses: number }
+  /** The page data, and when the page was measured, what it loaded (`PageObservations`, unchecked). */
+  | { state: 'ready'; data: string; page?: unknown }
   | { state: 'closed' }
   | { state: 'failed'; message: string };
 
@@ -685,6 +692,12 @@ export interface DesktopBridge {
       importer?: { id: string; waitSeconds: number },
       /** What is read, for the activity log: a map page (default), a game page, or a list of games. */
       purpose?: 'map' | 'game' | 'catalogue',
+      /**
+       * The importer's page measuring step (`PageMeasure.step`), when the
+       * person asked for the map picture to be measured from the page. Only
+       * a shell with downloads takes it.
+       */
+      measure?: string,
     ): Promise<void>;
     poll(): Promise<PollResult>;
     close(): Promise<void>;
@@ -811,12 +824,13 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       saveImport: (request) => call('library_save_import', { request }),
     },
     importWindow: {
-      open: (url, reader, importer, purpose) =>
+      open: (url, reader, importer, purpose, measure) =>
         call('import_open', {
           url,
           reader,
           ...(importer ? { importerId: importer.id, waitSeconds: importer.waitSeconds } : {}),
           ...(purpose && purpose !== 'map' ? { purpose } : {}),
+          ...(measure ? { measure } : {}),
         }),
       poll: () => call('import_poll'),
       close: () => call('import_close'),

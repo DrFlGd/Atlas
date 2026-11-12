@@ -23,6 +23,13 @@
 //! page shows a check or a sign-in, the person can deal with it in the
 //! window, or close it.
 //!
+//! In a build with downloads, the person can also have the map's picture
+//! measured from the page (see `pagemeasure.rs`): the window is then opened
+//! as large as the screen allows, with a watching script added before the
+//! page's own scripts, and once the page data has been read, the importer's
+//! page measuring step runs a bounded number of times before the data and
+//! what the page loaded are handed over.
+//!
 //! There is no import window on Android, where a second window would
 //! replace the app's screen and a private session is not available.
 
@@ -103,13 +110,31 @@ pub enum PollResult {
         /// The reader's last complaint, if it threw.
         note: Option<String>,
     },
-    /// The page data, as JSON text.
-    Ready { data: String },
+    /// The page data has been read, and the map's picture is being measured
+    /// from the page: the importer's step has run `steps` times, `presses`
+    /// of which pressed the page's zoom control.
+    #[cfg_attr(not(feature = "downloads"), allow(dead_code))]
+    Measuring { steps: u32, presses: u32 },
+    /// The page data, as JSON text, and what the page loaded while it was
+    /// measured, when it was.
+    Ready {
+        data: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        page: Option<PageObservations>,
+    },
     /// The person closed the window.
     Closed,
     /// The data cannot be used.
     Failed { message: String },
 }
+
+/// What the page loaded while it was measured (`pagemeasure::Observations`).
+#[cfg(feature = "downloads")]
+pub type PageObservations = crate::pagemeasure::Observations;
+/// Nothing: a build without downloads does not measure pages.
+#[cfg(not(feature = "downloads"))]
+#[derive(Clone, Debug, Serialize)]
+pub enum PageObservations {}
 
 #[derive(Default)]
 struct Session {
@@ -117,6 +142,21 @@ struct Session {
     loading: bool,
     /// A unique name for the page data while it is pulled out in slices.
     key: String,
+    /// Measuring the map's picture from the page, when asked for.
+    #[cfg(feature = "downloads")]
+    measure: Option<Measure>,
+    /// Which import this is, so that a poll that overlaps the next import
+    /// does not put its measuring into that one.
+    #[cfg(feature = "downloads")]
+    id: u64,
+}
+
+/// Measuring the map's picture from the page: the page data, once read, waits here.
+#[cfg(feature = "downloads")]
+struct Measure {
+    measuring: crate::pagemeasure::Measuring,
+    data: Option<String>,
+    id: u64,
 }
 
 /// The current import, if any. Lives in Tauri's managed state.
@@ -132,7 +172,10 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Evaluates a script in the window and returns its result as JSON text,
 /// or `None` when it did not answer in time (for example while a page is
 /// loading, when WebKitGTK keeps scripts until the page is ready).
-async fn evaluate<R: Runtime>(window: &WebviewWindow<R>, script: String) -> Option<String> {
+pub(crate) async fn evaluate<R: Runtime>(
+    window: &WebviewWindow<R>,
+    script: String,
+) -> Option<String> {
     let (send, receive) = oneshot::channel();
     let send = Mutex::new(Some(send));
     window
@@ -194,6 +237,21 @@ struct Slice {
     text: String,
 }
 
+/// The import window as the page measuring sees it.
+#[cfg(feature = "downloads")]
+impl<R: Runtime> crate::pagemeasure::Page for WebviewWindow<R> {
+    fn run(
+        &self,
+        script: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + '_>> {
+        Box::pin(async move {
+            evaluate(self, script)
+                .await
+                .and_then(|result| decode_string(&result))
+        })
+    }
+}
+
 /// Decodes what `eval_with_callback` passed back for a script that returns
 /// a string: the string as JSON. Anything else is `None`.
 fn decode_string(result: &str) -> Option<String> {
@@ -208,29 +266,63 @@ impl Imports {
         _app: &AppHandle<R>,
         _url: &str,
         _reader: String,
+        _measure: Option<String>,
     ) -> Result<(), String> {
         Err("Maps cannot be added from web pages on this device.".to_owned())
     }
 
-    /// Opens the import window on `url`, replacing an earlier import.
+    /// Opens the import window on `url`, replacing an earlier import. With
+    /// `measure`, the importer's page measuring step, the map's picture is
+    /// measured from the page once its data has been read.
     #[cfg(desktop)]
     pub fn open<R: Runtime>(
         &self,
         app: &AppHandle<R>,
         url: &str,
         reader: String,
+        measure: Option<String>,
     ) -> Result<(), String> {
         let start = allowed_page_url(url)
             .ok_or_else(|| "Only https web addresses can be imported from.".to_owned())?;
         if reader.is_empty() || reader.len() > MAX_READER_CHARS {
             return Err("The importer's page reader is not usable.".to_owned());
         }
+        #[cfg(not(feature = "downloads"))]
+        if measure.is_some() {
+            return Err("This app does not measure map pictures from pages.".to_owned());
+        }
+        #[cfg(feature = "downloads")]
+        let measure = measure
+            .map(|step| {
+                crate::pagemeasure::Measuring::new(
+                    step,
+                    format!("__atlasMeasure{:016x}", rand_u64()),
+                    crate::activity::ActivityLog::global(),
+                )
+            })
+            .transpose()?;
         self.close(app);
         let key = format!("__atlasImport{:016x}", rand_u64());
+        #[cfg(feature = "downloads")]
+        let watch = measure.as_ref().map(|measuring| measuring.watch_script());
+        #[cfg(feature = "downloads")]
+        let id = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(1);
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        };
         *lock(&self.session) = Some(Session {
             reader,
             loading: true,
             key,
+            #[cfg(feature = "downloads")]
+            measure: measure.map(|measuring| Measure {
+                measuring,
+                data: None,
+                id,
+            }),
+            #[cfg(feature = "downloads")]
+            id,
         });
 
         let navigation_start = start.clone();
@@ -239,7 +331,7 @@ impl Imports {
             "Add a map \u{2013} {}",
             start.host_str().unwrap_or_default()
         );
-        WebviewWindowBuilder::new(app, IMPORT_WINDOW, WebviewUrl::External(start))
+        let builder = WebviewWindowBuilder::new(app, IMPORT_WINDOW, WebviewUrl::External(start))
             .title(title)
             .inner_size(1100.0, 760.0)
             .center()
@@ -265,14 +357,31 @@ impl Imports {
                 if let Some(session) = lock(&session).as_mut() {
                     session.loading = matches!(payload.event(), PageLoadEvent::Started);
                 }
-            })
-            .build()
-            .map_err(|error| format!("Could not open the page window: {error}"))?;
+            });
+        // A page's map only loads the images in its view: as large as the
+        // screen allows while it is measured.
+        #[cfg(feature = "downloads")]
+        let builder = match &watch {
+            Some(script) => builder
+                .inner_size(1600.0, 1000.0)
+                .maximized(true)
+                .initialization_script(script),
+            None => builder,
+        };
+        if let Err(error) = builder.build() {
+            lock(&self.session).take();
+            return Err(format!("Could not open the page window: {error}"));
+        }
         Ok(())
     }
 
-    /// Asks the page for its data once.
+    /// Asks the page for its data once; once it has been read, measures the
+    /// map's picture from the page one step at a time when that was asked for.
     pub async fn poll<R: Runtime>(&self, app: &AppHandle<R>) -> PollResult {
+        #[cfg(feature = "downloads")]
+        if let Some(result) = self.poll_measuring(app).await {
+            return result;
+        }
         let Some(window) = app.get_webview_window(IMPORT_WINDOW) else {
             return if lock(&self.session).take().is_some() {
                 PollResult::Closed
@@ -341,7 +450,69 @@ impl Imports {
                 message: "The page's data could not be read as JSON.".to_owned(),
             };
         }
-        PollResult::Ready { data }
+        #[cfg(feature = "downloads")]
+        {
+            let mut session = lock(&self.session);
+            if let Some(measure) = session
+                .as_mut()
+                .and_then(|session| session.measure.as_mut())
+            {
+                measure.data = Some(data);
+                return PollResult::Measuring {
+                    steps: 0,
+                    presses: 0,
+                };
+            }
+        }
+        PollResult::Ready { data, page: None }
+    }
+
+    /// One poll of a page whose data has been read and whose map picture is
+    /// being measured; None when that is not the case.
+    #[cfg(feature = "downloads")]
+    async fn poll_measuring<R: Runtime>(&self, app: &AppHandle<R>) -> Option<PollResult> {
+        use crate::pagemeasure::Progress;
+        let (mut measure, data) = {
+            let mut session = lock(&self.session);
+            let slot = &mut session.as_mut()?.measure;
+            slot.as_ref()?.data.as_ref()?;
+            let mut measure = slot.take()?;
+            let data = measure.data.take()?;
+            (measure, data)
+        };
+        let now = std::time::Instant::now();
+        let Some(window) = app.get_webview_window(IMPORT_WINDOW) else {
+            // Closed while it was measured: the data, and what was seen.
+            lock(&self.session).take();
+            return Some(PollResult::Ready {
+                data,
+                page: Some(measure.measuring.closed(now)),
+            });
+        };
+        let size = window.inner_size().ok().map(|size| {
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+            (
+                (f64::from(size.width) / scale).round() as u32,
+                (f64::from(size.height) / scale).round() as u32,
+            )
+        });
+        match measure.measuring.advance(&window, now, size).await {
+            // The session goes on, with the data handed over.
+            Progress::Finished(observations) => Some(PollResult::Ready {
+                data,
+                page: Some(observations),
+            }),
+            Progress::Measuring { steps, presses } => {
+                if let Some(current) = lock(&self.session)
+                    .as_mut()
+                    .filter(|current| current.measure.is_none() && current.id == measure.id)
+                {
+                    measure.data = Some(data);
+                    current.measure = Some(measure);
+                }
+                Some(PollResult::Measuring { steps, presses })
+            }
+        }
     }
 
     /// Closes the import window, if it is open.

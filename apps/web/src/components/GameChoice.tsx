@@ -26,6 +26,7 @@ import {
   type ListingPurpose,
 } from '../state/importing';
 import { MAX_RUN_ADDRESSES, stopReasonText, type RunState } from '../state/importRun';
+import { MeasureFromPage } from './MeasureFromPage';
 import { localDate } from './packFileText';
 
 /**
@@ -432,6 +433,7 @@ export function ChoosePages({ choice }: { choice: Choice }) {
           {over}
         </p>
       ) : null}
+      {__ATLAS_DOWNLOADS__ ? <MeasureFromPage urls={chosen.map((page) => page.url)} /> : null}
       <div className="row-actions wrap">
         <button
           type="button"

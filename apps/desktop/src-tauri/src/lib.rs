@@ -29,6 +29,8 @@ pub mod manifest;
 pub mod packfile;
 mod packs;
 #[cfg(feature = "downloads")]
+mod pagemeasure;
+#[cfg(feature = "downloads")]
 mod pageview;
 pub mod picked;
 mod removal;
