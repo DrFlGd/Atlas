@@ -58,6 +58,7 @@ use super::{
         Settings, SharedPace, Stop, StopDetail, Task,
     },
     downscale::build_lower_levels,
+    measure::{Fetching, MeasureRequest, Measured, PictureCache, Pictures},
     pyramid::{read_pack_plan, relative_path, Detail, LayerPlan, PackPlan},
     status::{add_levels, read_levels},
     store::TileStore,
@@ -395,6 +396,9 @@ pub struct DownloadManager {
     lock_path: PathBuf,
     lock_retry: Duration,
     log: ActivityLog,
+    /// Measuring pictures for imports (see `measure`).
+    pictures: Pictures,
+    picture_cache: PictureCache,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -420,6 +424,8 @@ impl DownloadManager {
         }));
         Self {
             lock_path: app_data.join(DOWNLOAD_LOCK_FILE),
+            picture_cache: PictureCache::new(&app_data),
+            pictures: Pictures::default(),
             app_data,
             registry,
             settings,
@@ -1025,6 +1031,79 @@ impl DownloadManager {
                 self.current_pace().describe()
             ),
         );
+    }
+
+    /// The cache of measured pictures, which an import's layers are seeded from.
+    pub fn picture_cache(&self) -> &PictureCache {
+        &self.picture_cache
+    }
+
+    /// Measures the picture of an import (see `measure`), or answers from
+    /// what was learnt before when the request says `cachedOnly`. A
+    /// measurement asks the server, so it only goes ahead while no download
+    /// of this app or of another Atlas app on this computer is under way:
+    /// the pace settings are meant for everything the computer downloads.
+    /// It holds the computer-wide download lock while it runs, so a download
+    /// started meanwhile waits for it. None when it cannot be measured.
+    pub async fn measure_picture(&self, request: &MeasureRequest) -> Option<Measured> {
+        if request.cached_only {
+            // No request is made: no client or lock is needed.
+            return self
+                .pictures
+                .measure(&self.picture_cache, request, &self.log, None)
+                .await;
+        }
+        let client = match http_client() {
+            Ok(client) => client,
+            Err(error) => {
+                self.log.warn(
+                    Area::Download,
+                    format!("Could not measure the picture of an import: {error}"),
+                );
+                return None;
+            }
+        };
+        let held = {
+            let schedule = lock(&self.schedule);
+            match &schedule.holder {
+                Some(holder) => Err(schedule
+                    .jobs
+                    .get(holder)
+                    .map_or_else(|| holder.clone(), |job| job.title.clone())),
+                None if schedule.computer.is_some() => Err("another download".to_owned()),
+                None => Ok(self.try_computer_lock()),
+            }
+        };
+        let _computer = match held {
+            Ok(Some(computer)) => computer,
+            Ok(None) => {
+                self.log.info(
+                    Area::Download,
+                    "Did not measure the picture of an import: another Atlas app on this computer is downloading map images, and the computer downloads one thing at a time. The importer sizes the map without it",
+                );
+                return None;
+            }
+            Err(title) => {
+                self.log.info(
+                    Area::Download,
+                    format!("Did not measure the picture of an import: the download of {title} is under way, and the computer downloads one thing at a time. The importer sizes the map without it"),
+                );
+                return None;
+            }
+        };
+        let fetching = Fetching {
+            client,
+            settings: self.settings.clone(),
+            pace: Arc::clone(&self.pace),
+        };
+        self.pictures
+            .measure(&self.picture_cache, request, &self.log, Some(fetching))
+            .await
+    }
+
+    /// Stops a measurement that is running; it ends without an answer.
+    pub fn cancel_measuring(&self) {
+        self.pictures.cancel();
     }
 
     /// The computer-wide download lock, if no other app holds it.
@@ -2410,6 +2489,38 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_picture_is_not_measured_while_a_download_is_under_way() {
+        use crate::tiles::measure::MeasureRequest;
+        ensure_crypto();
+        let dir = TempDir::new("manager-measure-busy");
+        let base = tile_server();
+        let server = MockServer::start(Arc::new(move |path, count| {
+            base(path, count).delayed(Duration::from_millis(100))
+        }))
+        .await;
+        let pack = dir.0.join("pack");
+        write_square_pack(&pack, &server);
+        let manager = logged_manager(&dir, &pack);
+        let request = MeasureRequest {
+            url_template: server.url("/remote/{z}/{x}/{y}.png"),
+            zoom: 4,
+            start: [2, 3],
+            cached_only: false,
+        };
+        manager.start("test", Detail::Full).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let asked = server.seen().len();
+        assert_eq!(manager.measure_picture(&request).await, None);
+        assert!(
+            logged(&dir).contains("is under way, and the computer downloads one thing at a time")
+        );
+        manager.cancel("test").unwrap();
+        // No request of the measurement reached the server.
+        assert!(server.seen().len() <= asked + 2);
+        assert!(!dir.0.join("data/measured").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_store_denial_first_still_stops_the_job() {
         ensure_crypto();
         let dir = TempDir::new("manager-store-first");
@@ -2501,7 +2612,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_layer_that_grows_keeps_its_images_and_fetches_only_the_new_ones() {
-        use crate::tiles::renumber;
+        use crate::tiles::{
+            measure::{seed_layers, MeasureRequest},
+            renumber,
+        };
         ensure_crypto();
         let dir = TempDir::new("manager-grown");
         // The server's picture is the remote zoom 5 tiles 8-11 x 8-10 (so
@@ -2564,25 +2678,52 @@ mod tests {
         );
         assert_eq!(status["complete"], false);
 
-        // The next download asks for the four coarse tiles, three of them
-        // empty, and above them only for what is new inside the one that
-        // exists: the picture's last column (three images) and the row
-        // below it (four tiles that do not exist). The first answer is a
-        // denial; the images on disk prove the host.
+        // The import that made this version measured the picture at zoom 3
+        // from the tile the page opens on: 2, 2 exists, the eight around it
+        // do not (the first of them the store denies after an image). Once
+        // the import was saved, the layer was seeded from that: the image
+        // and three of the markers fall inside its new zoom 3 level.
         let second = logged_manager(&dir, &pack);
+        let measured = second
+            .measure_picture(&MeasureRequest {
+                url_template: server.url("/remote/{z}/{x}/{y}.png"),
+                zoom: 3,
+                start: [2, 2],
+                cached_only: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(measured.present, [[2, 2]]);
+        assert_eq!(measured.absent.len(), 8);
+        assert!(measured.complete);
+        assert_eq!(server.seen().len(), 13 + 9);
+        let seeded = seed_layers(second.picture_cache(), &root, Some(&pack), &after).unwrap();
+        assert_eq!(
+            seeded
+                .iter()
+                .map(|s| (s.images, s.markers))
+                .collect::<Vec<_>>(),
+            [(1, 3)]
+        );
+        assert_eq!(fs::read(tile(1, 1, 1)).unwrap(), coloured_tile(3, 2, 2));
+        assert!(root.join("tiles/a/1/0/0.png.404").is_file());
+        // Seeding records no level as complete.
+        assert_eq!(read_status(&dir), status);
+
+        // The next download asks for none of the measured tiles: above them
+        // only for what is new inside the one that exists, the picture's
+        // last column (three images) and the row below it (four tiles that
+        // do not exist). The first answer is a denial; the images on disk
+        // prove the host.
         second.start("test", Detail::Full).unwrap();
         let done = wait_for(&second, "test").await;
         assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
         let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
-        let mut new: Vec<&str> = asked[13..].iter().map(String::as_str).collect();
+        let mut new: Vec<&str> = asked[13 + 9..].iter().map(String::as_str).collect();
         new.sort_unstable();
         assert_eq!(
             new,
             [
-                "/remote/3/1/1.png",
-                "/remote/3/1/2.png",
-                "/remote/3/2/1.png",
-                "/remote/3/2/2.png",
                 "/remote/5/10/11.png",
                 "/remote/5/11/10.png",
                 "/remote/5/11/11.png",
@@ -2598,7 +2739,7 @@ mod tests {
         assert_eq!(distinct.len(), asked.len(), "nothing asked for twice");
         assert_eq!(
             (done.saved, done.missing, done.not_asked, done.failed),
-            (4, 7, 12 + 48, 0)
+            (3, 4, 12 + 48, 0)
         );
         assert_eq!((done.done, done.total), (84, 84));
         // The picture's last column is there now, and every level is complete.

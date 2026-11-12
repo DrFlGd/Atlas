@@ -39,6 +39,7 @@ use crate::{
     settings::DownloadSettings,
     tiles::{
         manager::{PlanInfo, Snapshot},
+        measure::{MeasureRequest, Measured},
         DownloadManager,
     },
 };
@@ -421,6 +422,39 @@ pub async fn tiles_resume(manager: Manager<'_>, pack_id: String) -> Result<Snaps
 #[tauri::command]
 pub async fn tiles_cancel(manager: Manager<'_>, pack_id: String) -> Result<(), String> {
     manager.cancel(&pack_id)
+}
+
+/// Which map images of one zoom exist around a start tile, for an importer
+/// that sizes a map's picture by them (`ImportContext.pictureTiles`), or
+/// what was learnt about them before. Only the app's own window may ask;
+/// the capability grants it to no other window either. None when the
+/// picture cannot be measured; the activity log says why.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn picture_tiles<R: Runtime>(
+    window: WebviewWindow<R>,
+    manager: Manager<'_>,
+    request: MeasureRequest,
+) -> Result<Option<Measured>, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can measure a map picture.".to_owned());
+    }
+    let manager = Arc::clone(&manager);
+    Ok(manager.measure_picture(&request).await)
+}
+
+/// Stops a measurement of a map picture, when an import is cancelled.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn picture_cancel<R: Runtime>(
+    window: WebviewWindow<R>,
+    manager: Manager<'_>,
+) -> Result<(), String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can stop measuring a map picture.".to_owned());
+    }
+    manager.cancel_measuring();
+    Ok(())
 }
 
 #[cfg(feature = "downloads")]
@@ -1797,6 +1831,19 @@ pub struct ImportReport {
     already_added: Option<u64>,
     /// Games: in a list of games, or to update.
     games: Option<u64>,
+    /// How the map's picture was sized, when the importer could measure it.
+    picture: Option<PictureReport>,
+}
+
+/// Whether an import measured the map's picture (see `tiles::measure`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PictureReport {
+    measured: bool,
+    /// The map images found, when it was measured.
+    tiles: Option<u64>,
+    /// The importer's words: why it was not measured, or what was done.
+    note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2034,6 +2081,18 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
             counts.map_locations, counts.maps, counts.locations, counts.categories
         ));
     }
+    if let Some(picture) = &report.picture {
+        line.push_str(&match (picture.measured, picture.tiles) {
+            (true, Some(tiles)) => format!(" | map picture: measured, {tiles} map images found"),
+            (true, None) => " | map picture: measured".to_owned(),
+            (false, _) => {
+                " | map picture: not measured, sized from where the places are".to_owned()
+            }
+        });
+        if let Some(note) = &picture.note {
+            line.push_str(&format!(" ({})", short(note)));
+        }
+    }
     if let Some(message) = &report.message {
         line.push_str(&format!(" | {}", short(message)));
     }
@@ -2109,6 +2168,22 @@ mod tests {
             line,
             "Import with importer demo-maps added: pack test-valley, map test-valley:map:east | locations on this map: 4 | in the game: maps 1, locations 4, categories 3"
         );
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"updated","packId":"test-valley",
+                "picture":{"measured":true,"tiles":40}}"#,
+        )
+        .unwrap();
+        assert!(import_report_line(&report)
+            .1
+            .ends_with("updated: pack test-valley | map picture: measured, 40 map images found"));
+        let report: ImportReport = serde_json::from_str(
+            r#"{"importerId":"demo-maps","outcome":"added","packId":"test-valley",
+                "picture":{"measured":false,"note":"the image server could\nnot be asked"}}"#,
+        )
+        .unwrap();
+        assert!(import_report_line(&report).1.ends_with(
+            "| map picture: not measured, sized from where the places are (the image server could not be asked)"
+        ));
         let report: ImportReport = serde_json::from_str(
             r#"{"outcome":"timed-out","message":"The page did not provide\nthe map data"}"#,
         )

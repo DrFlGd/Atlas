@@ -7,11 +7,13 @@ import {
   checkCatalogue,
   checkGameListing,
   checkOutcome,
+  checkPictureTiles,
   findCatalogueImporter,
   findGameImporter,
   findImporter,
   gameAddressOf,
   isAllowedPageUrl,
+  isPictureRequest,
   pageKey,
   type AtlasImporter,
   type Catalogue,
@@ -20,6 +22,9 @@ import {
   type ImportFailure,
   type ImportSummary,
   type ListingContext,
+  type PictureSummary,
+  type PictureTiles,
+  type PictureTilesRequest,
   type SavedSource,
 } from '@atlas/importer-api';
 import {
@@ -34,6 +39,7 @@ import {
 import { create } from 'zustand';
 import type { ImporterEntry } from '../config';
 import { desktop, type ImportReport, type Listing, type StoredSource } from '../desktop';
+import { downloadsOffered } from '../features';
 import { loadGame, notify } from './actions';
 import {
   ImportRun,
@@ -101,7 +107,13 @@ export type ImportPhase =
       loading: boolean;
       note: string | null;
     }
-  | { kind: 'converting'; url: string; importer: string }
+  | {
+      kind: 'converting';
+      url: string;
+      importer: string;
+      /** The importer is measuring the map's picture (see {@link measurePicture}). */
+      measuring?: boolean;
+    }
   | {
       kind: 'done';
       packId: string;
@@ -237,8 +249,26 @@ function reportPhase(importerId: string, phase: ImportPhase): void {
         locations: summary.locations,
         categories: summary.categories,
       },
+      ...(summary.picture ? { picture: summary.picture } : {}),
     });
   }
+}
+
+/**
+ * How the size of an imported map's picture was found, in a sentence for
+ * the person: measured on the image server, or estimated from where the
+ * places are, with the importer's note.
+ */
+export function pictureText(picture: PictureSummary): string {
+  const tiles = picture.tiles;
+  const text = picture.measured
+    ? tiles === undefined
+      ? 'The map picture was measured on the image server.'
+      : `The map picture was measured: ${tiles === 1 ? '1 map image of it was' : `${tiles} map images of it were`} found on the image server.`
+    : 'The map picture could not be measured, so its size was estimated from where the places are.';
+  const note = picture.note?.trim();
+  if (!note) return text;
+  return `${text} ${note.endsWith('.') ? note : `${note}.`}`;
 }
 
 /** The importer of the import in progress, for the log. */
@@ -383,11 +413,17 @@ export async function startImport(text: string): Promise<void> {
     return;
   }
   setPhase({ kind: 'converting', url, importer: importer.title });
-  const outcome = await convertAndSave(importer, {
-    url,
-    pageData: read.data,
-    importedAt: new Date().toISOString(),
-  });
+  const outcome = await convertAndSave(
+    importer,
+    { url, pageData: read.data, importedAt: new Date().toISOString() },
+    false,
+    true,
+    () => {
+      if (id === session) {
+        setPhase({ kind: 'converting', url, importer: importer.title, measuring: true });
+      }
+    },
+  );
   reportPhase(importer.id, outcome);
   if (id === session) setPhase(outcome);
 }
@@ -400,6 +436,10 @@ export async function cancelImport(): Promise<void> {
   currentRun?.cancel();
   session++;
   setPhase({ kind: 'idle' });
+  if (__ATLAS_DOWNLOADS__ && desktop && downloadsOffered(useAtlas.getState())) {
+    // A page of a run may be measuring its map's picture.
+    await desktop.tiles.cancelPicture().catch(() => undefined);
+  }
   if (desktop) await closeWindow(desktop);
 }
 
@@ -560,6 +600,9 @@ async function startRun(
           { url, pageData: read.data, importedAt: new Date().toISOString() },
           false,
           false,
+          () => {
+            update({ kind: 'converting', measuring: true });
+          },
         );
         reportPhase(importer.id, outcome);
         if (outcome.kind === 'done') {
@@ -571,6 +614,7 @@ async function startRun(
             ...(outcome.mapId ? { mapId: outcome.mapId } : {}),
             refreshed: outcome.summary.refreshed,
             ...(outcome.summary.checklist ? { checklist: outcome.summary.checklist } : {}),
+            ...(outcome.summary.picture ? { picture: outcome.summary.picture } : {}),
           };
         }
         return {
@@ -635,8 +679,45 @@ const parse = (text: string): unknown => {
   }
 };
 
-/** The context an importer gets: earlier imports and the pack it would replace. */
-function importContext(url: string, importedAt: string, importerId: string): ImportContext {
+/**
+ * Measures a map's picture for an importer (`ImportContext.pictureTiles`),
+ * through the shell's own downloader. A rebuild never asks the image
+ * server: it only gets what the app learnt in earlier imports. Anything
+ * unexpected is `null`, and the importer sizes the map without it.
+ */
+async function measurePicture(
+  request: unknown,
+  rebuilt: boolean,
+  onMeasuring?: () => void,
+): Promise<PictureTiles | null> {
+  const shell = desktop;
+  if (!__ATLAS_DOWNLOADS__ || !shell || !isPictureRequest(request)) return null;
+  const asked: PictureTilesRequest = {
+    urlTemplate: request.urlTemplate,
+    zoom: request.zoom,
+    start: [request.start[0], request.start[1]],
+    cachedOnly: rebuilt || request.cachedOnly === true,
+  };
+  if (!asked.cachedOnly) onMeasuring?.();
+  try {
+    return checkPictureTiles(await shell.tiles.pictureTiles(asked), asked);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The context an importer gets: earlier imports and the pack it would
+ * replace, and in an app that downloads map images, a way to measure the
+ * map's picture. Exported for tests.
+ */
+export function importContext(
+  url: string,
+  importedAt: string,
+  importerId: string,
+  rebuilt = false,
+  onMeasuring?: () => void,
+): ImportContext {
   const state = useAtlas.getState();
   const listing = state.library;
   const bundled = new Set([
@@ -670,6 +751,12 @@ function importContext(url: string, importedAt: string, importerId: string): Imp
       }
     },
     isBundled: (packId) => bundled.has(packId),
+    ...(__ATLAS_DOWNLOADS__ && downloadsOffered(state)
+      ? {
+          pictureTiles: (request: PictureTilesRequest) =>
+            measurePicture(request, rebuilt, onMeasuring),
+        }
+      : {}),
   };
 }
 
@@ -714,6 +801,7 @@ async function convertAndSave(
   page: { url: string; pageData: string; importedAt: string },
   rebuilt = false,
   show = true,
+  onMeasuring?: () => void,
 ): Promise<ImportPhase> {
   const shell = desktop;
   if (!shell) return { kind: 'idle' };
@@ -724,7 +812,7 @@ async function convertAndSave(
   if (data === undefined) {
     return { kind: 'failed', message: 'The page data was not in the expected shape.' };
   }
-  const context = importContext(page.url, page.importedAt, importer.id);
+  const context = importContext(page.url, page.importedAt, importer.id, rebuilt, onMeasuring);
   let returned: unknown;
   try {
     returned = await importer.convert(data, context);

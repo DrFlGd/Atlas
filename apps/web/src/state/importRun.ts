@@ -1,4 +1,4 @@
-import { findImporter, isAllowedPageUrl } from '@atlas/importer-api';
+import { findImporter, isAllowedPageUrl, type PictureSummary } from '@atlas/importer-api';
 
 /**
  * "Add a map" with several addresses at once: reading the pasted text, and
@@ -103,8 +103,8 @@ export type RunPageState =
   | { kind: 'waiting' }
   /** The page is open in the import window. */
   | { kind: 'open'; startedAt: number; now: number; waitSeconds: number; loading: boolean }
-  /** The page data is being turned into a map. */
-  | { kind: 'converting' }
+  /** The page data is being turned into a map; `measuring` while its picture is measured. */
+  | { kind: 'converting'; measuring?: boolean }
   | {
       kind: 'added';
       game: string;
@@ -114,6 +114,8 @@ export type RunPageState =
       refreshed: boolean;
       /** The page became a checklist: its items, and rows left out. */
       checklist?: { items: number; leftOut: number };
+      /** How the map's picture was sized, when the importer measured it or tried to. */
+      picture?: PictureSummary;
     }
   /** A page that lists pages (a game page) or games was read. */
   | { kind: 'listed'; game: string; count: number; other: number }
@@ -159,6 +161,8 @@ export type PageOutcome =
       refreshed: boolean;
       /** The page became a checklist: its items, and rows left out. */
       checklist?: { items: number; leftOut: number };
+      /** How the map's picture was sized, when the importer measured it or tried to. */
+      picture?: PictureSummary;
     }
   /** A list was read: `count` pages (or games) the app can add, `other` it cannot yet. */
   | { kind: 'listed'; game: string; count: number; other: number }
