@@ -373,6 +373,8 @@ function SearchPill() {
         className="touch-ring-button"
         aria-label={`Progress: ${value} percent found`}
         data-testid="progress-ring"
+        data-found={summary?.pack.found ?? 0}
+        data-total={summary?.pack.total ?? 0}
         onClick={() => {
           showSection('progress');
         }}
@@ -395,6 +397,8 @@ function ProgressPill() {
       className="touch-pill touch-progress-pill"
       aria-label={`Progress: ${numberFormat.format(tally.found)} of ${numberFormat.format(tally.total)} found, ${value} percent`}
       data-testid="progress-ring"
+      data-found={tally.found}
+      data-total={tally.total}
       onClick={() => {
         showSection('progress');
       }}
