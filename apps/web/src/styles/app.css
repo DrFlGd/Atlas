@@ -2673,3 +2673,21 @@ label.tree-row:hover,
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
+
+/* The classic layout: a game with no map shows its guides where the map would be. */
+.no-map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--atlas-muted);
+  text-align: center;
+}
+
+.no-map h2 {
+  margin: 0 0 8px;
+  color: var(--atlas-text);
+  font-size: 18px;
+}

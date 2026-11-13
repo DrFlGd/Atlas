@@ -11,13 +11,15 @@ import { ProfileDialog } from '../components/ProfileDialog';
 import { downloadsOffered, keyboardHintsOffered } from '../features';
 import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
-import { checklistScreenTitle } from '../state/checklists';
+import { checklistScreenTitle, setGuideReader } from '../state/checklists';
+import { guidesOf, hasGuidePages, hasListsSection, hasMap } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
 import type { Section } from './backStack';
 import { FiltersSheet, FiltersPanel, ChipRow } from './FiltersView';
 import { GamesScreen } from './GamesScreen';
+import { GuidesScreen } from './GuidesScreen';
 import { withKey } from './keys';
 import { KeysDialog } from './KeysDialog';
 import { arrangementFor, panelWidthFor, type Arrangement } from './layout';
@@ -27,6 +29,7 @@ import { ListsScreen } from './ListsScreen';
 import { followOpenList, loadListPrefs, orderKeyDone, orderKeyNext, useLists } from './listViews';
 import { PlaceSheet } from './PlaceSheet';
 import { ProgressScreen } from './ProgressScreen';
+import { openPlace, resetReader } from './reader';
 import { SearchField, SearchScreen, SearchResults } from './SearchView';
 import {
   focusSearchField,
@@ -85,7 +88,10 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const section = useTouch((s) => s.section);
   const search = useTouch((s) => s.search);
   const filters = useTouch((s) => s.filters);
-  const hasLists = useAtlas((s) => !(s.game?.checklists.isEmpty ?? true));
+  const hasLists = useAtlas((s) => hasListsSection(s.game));
+  // Guides read as pages, and a game with no map (guides and lists only).
+  const pages = useAtlas((s) => hasGuidePages(s.game));
+  const mapShown = useAtlas((s) => hasMap(s.game));
   const selected = useAtlas((s) => s.selectedId !== null);
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
@@ -94,8 +100,11 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   useTouchEffects(wide);
 
   useEffect(() => {
-    if (!hasLists && section === 'lists') showSection('map');
-  }, [hasLists, section]);
+    if (!hasLists && section === 'lists') showSection(mapShown ? 'map' : 'guides');
+    if (!mapShown && section === 'map') showSection('guides');
+    if (!pages && section === 'guides') showSection('map');
+  }, [hasLists, section, mapShown, pages]);
+  const sections: Shown = { lists: hasLists, map: mapShown, guides: pages };
 
   const [mapOptions] = useState<TouchMapOptions>(() => ({
     input,
@@ -107,13 +116,13 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   }));
 
   const placeShown = selected && (wide || (section === 'map' && !search && !filters));
-  const map = (
+  const map = mapShown ? (
     <main className="touch-map" aria-label="Map">
       <MapPane touch={mapOptions} />
       {wide ? <WideMapControls /> : section === 'map' ? <CompactMapControls /> : null}
       {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
     </main>
-  );
+  ) : null;
 
   return (
     <div
@@ -121,16 +130,21 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
       data-input={input}
       data-arrangement={arrangement.kind}
       data-section={section}
+      data-map={mapShown ? undefined : 'none'}
       data-place={placeShown ? 'shown' : 'none'}
       aria-busy={loading}
       style={{ '--touch-panel': `${arrangement.panel}px` } as React.CSSProperties}
     >
       {wide ? (
         <>
-          <Rail hasLists={hasLists} />
-          <aside className="touch-panel" aria-label={PANEL_LABEL[search ? 'search' : section]}>
-            {section === 'map' ? <MapPanel /> : <SectionContent section={section} />}
-          </aside>
+          <Rail shown={sections} />
+          {section === 'guides' ? (
+            <GuidesScreen wide />
+          ) : (
+            <aside className="touch-panel" aria-label={PANEL_LABEL[search ? 'search' : section]}>
+              {section === 'map' ? <MapPanel /> : <SectionContent section={section} />}
+            </aside>
+          )}
           {map}
         </>
       ) : (
@@ -141,7 +155,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
               <SectionContent section={section} />
             </div>
           ) : null}
-          <BottomBar hasLists={hasLists} />
+          <BottomBar shown={sections} />
           {search ? <SearchScreen /> : null}
           {filters ? <FiltersSheet /> : null}
         </>
@@ -175,6 +189,7 @@ const PANEL_LABEL: Record<Section | 'search', string> = {
   lists: 'Lists',
   progress: 'Progress',
   games: 'Games',
+  guides: 'Guides',
 };
 
 function SectionContent({ section }: { section: Section }) {
@@ -185,6 +200,8 @@ function SectionContent({ section }: { section: Section }) {
       return <ProgressScreen />;
     case 'games':
       return <GamesScreen />;
+    case 'guides':
+      return <GuidesScreen wide={false} />;
     case 'map':
       return null;
   }
@@ -254,6 +271,26 @@ function useTouchEffects(wide: boolean) {
     void loadListPrefs(game);
   }, [game]);
 
+  // Guides: each game's reader starts at its contents; a game with no map
+  // opens on them; a link to a page opens it there.
+  useEffect(() => {
+    resetReader();
+    if (game && !hasMap(game)) showSection('guides');
+  }, [game]);
+  useEffect(() => {
+    setGuideReader((id) => {
+      const shown = useAtlas.getState().game;
+      const contents = shown ? guidesOf(shown).contents : null;
+      if (!contents?.browsable || !contents.isPage(id)) return false;
+      openPlace({ kind: 'page', guideId: id });
+      showSection('guides');
+      return true;
+    });
+    return () => {
+      setGuideReader(null);
+    };
+  }, []);
+
   // The open list: remembered, and alone on the map while that is on.
   useEffect(() => {
     followOpenList();
@@ -285,7 +322,11 @@ function useTouchEffects(wide: boolean) {
         const touch = useTouch.getState();
         // The map moves to show something (a place from a list, a region):
         // on a phone, the map is shown.
-        if (state.fly !== previous.fly && state.fly && touch.arrangement === 'compact') {
+        if (
+          state.fly !== previous.fly &&
+          state.fly &&
+          (touch.arrangement === 'compact' || touch.section === 'guides')
+        ) {
           if (touch.section !== 'map' || touch.search || touch.filters) showSection('map');
         }
         // A checklist or guide was opened (from search, a place, a link).
@@ -351,16 +392,20 @@ function useTouchEffects(wide: boolean) {
 
 const SECTIONS: { id: Section; label: string; icon: UiIconName }[] = [
   { id: 'map', label: 'Map', icon: 'map' },
+  { id: 'guides', label: 'Guides', icon: 'book' },
   { id: 'lists', label: 'Lists', icon: 'checklist' },
   { id: 'progress', label: 'Progress', icon: 'bars' },
   { id: 'games', label: 'Games', icon: 'folder' },
 ];
 
-function SectionButtons({ hasLists, className }: { hasLists: boolean; className: string }) {
+/** The sections a game may not have, and whether it has them. */
+type Shown = Record<'lists' | 'map' | 'guides', boolean>;
+
+function SectionButtons({ shown, className }: { shown: Shown; className: string }) {
   const section = useTouch((s) => s.section);
   const hints = useKeyHints();
   const listsName = useAtlas((s) => (s.game ? checklistScreenTitle(s.game) : 'Lists'));
-  return SECTIONS.filter((s) => s.id !== 'lists' || hasLists).map((s) => (
+  return SECTIONS.filter((s) => !(s.id in shown) || shown[s.id as keyof Shown]).map((s) => (
     <button
       key={s.id}
       type="button"
@@ -385,19 +430,19 @@ function SectionButtons({ hasLists, className }: { hasLists: boolean; className:
   ));
 }
 
-function BottomBar({ hasLists }: { hasLists: boolean }) {
+function BottomBar({ shown }: { shown: Shown }) {
   return (
     <nav className="touch-bar" aria-label="Sections">
-      <SectionButtons hasLists={hasLists} className="touch-bar-button" />
+      <SectionButtons shown={shown} className="touch-bar-button" />
     </nav>
   );
 }
 
-function Rail({ hasLists }: { hasLists: boolean }) {
+function Rail({ shown }: { shown: Shown }) {
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   return (
     <nav className="touch-rail" aria-label="Sections">
-      <SectionButtons hasLists={hasLists} className="touch-rail-button" />
+      <SectionButtons shown={shown} className="touch-rail-button" />
       <span className="touch-rail-space" />
       <KeysButton />
       <SaveButton />

@@ -2,12 +2,13 @@
  * What the Android Back button closes next in the touch layout. Each press
  * closes one thing, the one on top: an open dialog, then a place sheet that
  * was pulled up, then the map chooser, search, the filters or the place
- * sheet, then a checklist or guide page (back to the list of lists), then a
- * section other than the map (back to the map). Only when nothing is left
- * does Back leave the app.
+ * sheet, then a checklist or guide page (back to the list of lists), then
+ * the page read before in Guides, then a section other than the map (back
+ * to the map, or to Guides in a game with no map). Only when nothing is
+ * left does Back leave the app.
  */
 
-export type Section = 'map' | 'lists' | 'progress' | 'games';
+export type Section = 'map' | 'lists' | 'progress' | 'games' | 'guides';
 
 /** What can be open, as the person sees it now. */
 export interface BackState {
@@ -25,6 +26,10 @@ export interface BackState {
   section: Section;
   /** Lists shows a checklist or a guide rather than the list of them. */
   listsPage: boolean;
+  /** Guides can go back to a place read before. */
+  guidesBack?: boolean;
+  /** The section Back ends on: the map, or Guides in a game with no map. */
+  home?: Section;
 }
 
 export type BackStep =
@@ -35,6 +40,7 @@ export type BackStep =
   | 'filters'
   | 'place'
   | 'lists-page'
+  | 'guides-back'
   | 'to-map';
 
 /** The thing Back closes, or null when Back should leave the app. */
@@ -46,6 +52,7 @@ export function backStep(state: BackState): BackStep | null {
   if (state.filters) return 'filters';
   if (state.place) return 'place';
   if (state.section === 'lists' && state.listsPage) return 'lists-page';
-  if (state.section !== 'map') return 'to-map';
+  if (state.section === 'guides' && state.guidesBack) return 'guides-back';
+  if (state.section !== (state.home ?? 'map')) return 'to-map';
   return null;
 }

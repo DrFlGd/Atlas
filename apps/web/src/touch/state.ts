@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { canKeepScreenOn, keepScreenOn } from '../androidBars';
 import { keyboardHintsOffered } from '../features';
 import { notify, saveSetting, setFound, setOverrides } from '../state/actions';
+import { hasListsSection, hasMap } from '../state/guides';
 import { SETTINGS, progressStore } from '../state/services';
 import { useAtlas, type LoadedGame } from '../state/store';
 import type { Section } from './backStack';
@@ -79,6 +80,11 @@ export function showSection(section: Section): void {
   set({ section, search: false, filters: false, mapsMenu: false });
 }
 
+/** The first section, where Back ends: the map, or Guides in a game with no map. */
+export function homeSection(): Section {
+  return hasMap(useAtlas.getState().game) ? 'map' : 'guides';
+}
+
 export function openSearch(): void {
   set({ search: true, filters: false, mapsMenu: false });
 }
@@ -118,6 +124,12 @@ export function setKeysOpen(open: boolean): void {
  */
 export function focusSearchField(): void {
   const { arrangement, section, searchFocus } = get();
+  if (homeSection() === 'guides') {
+    // A game with no map: its pages are what there is to search.
+    if (section !== 'guides') showSection('guides');
+    set({ searchFocus: searchFocus + 1 });
+    return;
+  }
   if (arrangement === 'wide' && section !== 'map') showSection('map');
   set({ search: true, filters: false, mapsMenu: false, searchFocus: searchFocus + 1 });
 }
@@ -125,8 +137,8 @@ export function focusSearchField(): void {
 /** The `C` key: the lists, or back to the map from them. */
 export function toggleLists(): void {
   const { game } = useAtlas.getState();
-  if (get().section === 'lists') showSection('map');
-  else if (game && !game.checklists.isEmpty) showSection('lists');
+  if (get().section === 'lists') showSection(homeSection());
+  else if (hasListsSection(game)) showSection('lists');
 }
 
 // ---------------------------------------------------------------------------

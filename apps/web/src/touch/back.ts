@@ -2,9 +2,11 @@ import { moveMap, select } from '../state/actions';
 import { checklistBack } from '../state/checklists';
 import { useAtlas } from '../state/store';
 import { backStep } from './backStack';
+import { canGoBack, readerBack, useReader } from './reader';
 import { revealShift, type Rect } from './ordering';
 import {
   closeSearch,
+  homeSection,
   setFiltersOpen,
   setMapsMenuOpen,
   setPlaceExpanded,
@@ -30,6 +32,8 @@ export function handleBack(): boolean {
       (wide || (touch.section === 'map' && !touch.search && !touch.filters)),
     section: touch.section,
     listsPage: page !== undefined && page.kind !== 'index',
+    guidesBack: canGoBack(useReader.getState()),
+    home: homeSection(),
   });
   switch (step) {
     case 'dialog': {
@@ -57,8 +61,11 @@ export function handleBack(): boolean {
     case 'lists-page':
       checklistBack();
       return true;
+    case 'guides-back':
+      readerBack();
+      return true;
     case 'to-map':
-      showSection('map');
+      showSection(homeSection());
       return true;
     case null:
       return false;

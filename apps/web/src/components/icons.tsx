@@ -62,6 +62,10 @@ const UI_PATHS = {
   map: 'M2.5 5l5-2l5 2l5-2v12l-5 2l-5-2l-5 2zM7.5 3v12M12.5 5v12',
   bars: 'M4 16.5v-6M10 16.5v-13M16 16.5v-9',
   back: 'M9 4l-6 6l6 6M3 10h14',
+  // Guides read as pages.
+  forward: 'M11 4l6 6l-6 6M17 10H3',
+  book: 'M10 5.5C8.5 4 6 3.5 3 3.5v12c3 0 5.5.5 7 2c1.5-1.5 4-2 7-2v-12c-3 0-5.5.5-7 2zM10 5.5v12',
+  external: 'M11 3.5h5.5V9M16.5 3.5L9 11M14 12v4.5H3.5V6H8',
   chevronDown: 'M5 7l5 5l5-5',
   chevronUp: 'M5 12l5-5l5 5',
   pin: 'M10 18c-3.6-4-5.5-7-5.5-9.5a5.5 5.5 0 0 1 11 0c0 2.5-1.9 5.5-5.5 9.5zM10 6.5a2 2 0 1 1 0 4a2 2 0 1 1 0-4z',
