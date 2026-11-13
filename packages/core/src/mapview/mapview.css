@@ -43,3 +43,46 @@
   stroke: var(--atlas-player, #4fc3f7);
   stroke-width: 1;
 }
+
+/* A list's points over the markers (the list editor's): numbered steps,
+   joined in order, the open one larger, optional ones dashed. */
+.atlas-map .atlas-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--atlas-accent, #63cdb9);
+  border: 2px solid var(--atlas-marker-outline, rgba(9, 11, 15, 0.92));
+  color: var(--atlas-accent-text, #07201c);
+  font:
+    700 12px/1 system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.atlas-map .atlas-step-current {
+  border: 3px solid var(--atlas-selection, #ffffff);
+  box-shadow: 0 0 0 3px var(--atlas-marker-outline, rgba(9, 11, 15, 0.92));
+  font-size: 14px;
+}
+
+.atlas-map .atlas-step-optional {
+  background: var(--atlas-surface, #161a20);
+  border: 2px dashed var(--atlas-accent, #63cdb9);
+  color: var(--atlas-accent, #63cdb9);
+}
+
+.atlas-map .atlas-step-pick {
+  background: var(--atlas-surface, #161a20);
+  border: 2px solid var(--atlas-accent, #63cdb9);
+  color: var(--atlas-accent, #63cdb9);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.atlas-map .atlas-step-line {
+  stroke: var(--atlas-text, #e8ebef);
+  stroke-opacity: 0.9;
+}

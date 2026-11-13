@@ -102,6 +102,26 @@ export interface PlayerMarker {
   label: string;
 }
 
+/**
+ * A point of a list drawn over the markers, with its number: a step of the
+ * list being edited (`step`), the step open in the editor (`current`), an
+ * optional step (`optional`), or a location picked to be added (`pick`).
+ */
+export interface OverlayPoint {
+  /** Image pixel, origin top-left. */
+  x: number;
+  y: number;
+  /** The step's number; empty for a picked location. */
+  label: string;
+  style: 'step' | 'current' | 'optional' | 'pick';
+}
+
+/** The points of a list over the map; the steps joined in order by a line when `joined`. */
+export interface MapOverlay {
+  points: readonly OverlayPoint[];
+  joined: boolean;
+}
+
 export type Unsubscribe = () => void;
 
 /**
@@ -122,6 +142,11 @@ export interface MapView {
   setMarkers(markers: readonly MapMarker[]): void;
   /** Shows the player's position from a game save, or hides it (null). */
   setPlayer(player: PlayerMarker | null): void;
+  /**
+   * Draws a list's points over the markers (the list editor's), or nothing
+   * (null). They are drawn only: a click on one goes to the marker under it.
+   */
+  setOverlay(overlay: MapOverlay | null): void;
   /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
   setSelected(markerId: string | null): void;
   /** Re-reads theme colours from CSS custom properties and redraws. */
