@@ -899,6 +899,23 @@ impl Library {
                 return Err(failure.unwrap_or_default());
             }
         }
+        // A person's own lists, beside the pack folders, go with them: moved
+        // when the packs moved, copied when the old folder stays listed.
+        let lists = crate::ownlists::carry_over(&current, &target, move_packs && failure.is_none());
+        if !lists.is_empty() {
+            activity::info(
+                Area::Library,
+                format!(
+                    "{} the person's own lists to the new maps folder: {}",
+                    if move_packs && failure.is_none() {
+                        "Moved"
+                    } else {
+                        "Copied"
+                    },
+                    lists.join(", ")
+                ),
+            );
+        }
         // Once anything has moved, the new folder is used, and the old one is
         // listed while it still holds packs, so no pack drops out of sight.
         let target_text = target.display().to_string();
@@ -3018,6 +3035,35 @@ mod tests {
         assert!(
             s.library.apply_maps_folder(false, &[]).is_err(),
             "needs a new choice"
+        );
+    }
+
+    #[test]
+    fn takes_the_persons_own_lists_along_when_the_maps_folder_changes() {
+        let s = setup("library-move-lists", Vec::new());
+        let old = s.library.maps_folder();
+        write_pack(&old.join("valley"), "valley", "Valley", "1.0.0");
+        let lists = r#"{"format":"atlas-own-lists","version":1,"gameId":"valley","lists":[]}"#;
+        crate::ownlists::write(&old, "valley", lists, None).unwrap();
+
+        // Moved with the packs.
+        let target = s.dir.0.join("new maps");
+        s.library.propose_maps_folder(&target).unwrap();
+        s.library.apply_maps_folder(true, &[]).unwrap();
+        assert!(!old.join("valley.my-lists.json").exists());
+        assert_eq!(
+            crate::ownlists::read(&target, "valley").unwrap().as_deref(),
+            Some(lists)
+        );
+
+        // Copied when the old folder stays listed with its packs.
+        let third = s.dir.0.join("third");
+        s.library.propose_maps_folder(&third).unwrap();
+        s.library.apply_maps_folder(false, &[]).unwrap();
+        assert!(target.join("valley.my-lists.json").exists());
+        assert_eq!(
+            crate::ownlists::read(&third, "valley").unwrap().as_deref(),
+            Some(lists)
         );
     }
 

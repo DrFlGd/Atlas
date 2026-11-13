@@ -5,6 +5,7 @@ import { downloadsOffered } from '../features';
 import { select, showMap } from '../state/actions';
 import { numberFormat, useLayerMarkers, useSummary } from '../state/derived';
 import { setDownloadPanelOpen } from '../state/downloads';
+import { useMapOverlay } from '../state/mapOverlay';
 import { cancelPlacing, placePlayerAt, showPlayer, shownPlayer } from '../state/saves';
 import { useAtlas } from '../state/store';
 import { DownloadPanel, MapImagesButton } from './DownloadPanel';
@@ -65,6 +66,13 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
         useAtlas.setState({ view: state });
       }),
       view.onSelect((id) => {
+        // The list editor takes taps on markers for itself while it is open.
+        const pick = useMapOverlay.getState().pick;
+        if (pick) {
+          view.setSelected(useAtlas.getState().selectedId);
+          if (id) pick(id);
+          return;
+        }
         select(id);
         touchRef.current?.onPick(id);
       }),
@@ -167,6 +175,15 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
         : null,
     );
   }, [map, player, shownMapId, layerShown]);
+
+  // The list editor's points of the list, on the layer shown.
+  const overlayPoints = useMapOverlay((s) => s.points);
+  const overlayJoined = useMapOverlay((s) => s.joined);
+  useEffect(() => {
+    if (!layerShown) return;
+    const points = overlayPoints?.filter((point) => point.layerId === layerId) ?? null;
+    map.setOverlay(points ? { points, joined: overlayJoined } : null);
+  }, [map, overlayPoints, overlayJoined, layerId, layerShown]);
 
   // Fly requests run after the layer is set, so a jump to another layer lands on the right map.
   const handledFly = useRef(0);

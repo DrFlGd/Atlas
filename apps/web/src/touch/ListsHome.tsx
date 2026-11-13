@@ -1,9 +1,10 @@
-import { checklistTally, type ChecklistEntry, type ChecklistTally } from '@atlas/core';
+import { checklistTally, tallyStates, type ChecklistEntry, type ChecklistTally } from '@atlas/core';
 import { useMemo } from 'react';
 import { UiIcon } from '../components/icons';
 import { checklistScreenTitle, openChecklist, openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
 import { listedGuides } from '../state/guides';
+import { useOwnLists } from '../state/ownLists';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { ofText, percentOf } from './listText';
 import {
@@ -15,6 +16,7 @@ import {
   useLists,
   useNextStep,
 } from './listViews';
+import { OwnListsSection } from './OwnLists';
 import { focusSearchField, setScope } from './state';
 import { Meter } from './widgets';
 
@@ -43,6 +45,8 @@ export function ListsHome({ game }: { game: LoadedGame }) {
     const isDone = (id: string) => found.has(id);
     return new Map([...collections, ...routes].map((e) => [e, checklistTally(e, isDone)]));
   }, [collections, routes, found]);
+  // Own lists change as they are edited; the one to continue may be one.
+  useOwnLists((s) => s.lists);
   const last = lastId ? listById(game, lastId) : undefined;
 
   const listRow = (entry: ChecklistEntry) => (
@@ -75,6 +79,10 @@ export function ListsHome({ game }: { game: LoadedGame }) {
       </header>
       <div className="touch-scroll touch-page-body touch-lists-home" data-scroll-root>
         {last ? <ContinueCard entry={last} /> : null}
+        <OwnListsSection
+          game={game}
+          row={(entry, template) => <OwnListLink entry={entry} template={template} found={found} />}
+        />
         {collections.length > 0 ? (
           <section aria-labelledby="collections-heading">
             <h2 className="touch-group-title touch-lists-heading" id="collections-heading">
@@ -134,8 +142,31 @@ export function ListsHome({ game }: { game: LoadedGame }) {
   );
 }
 
+/** One of the person's own lists, as the game's are listed, with its template. */
+function OwnListLink({
+  entry,
+  template,
+  found,
+}: {
+  entry: ChecklistEntry;
+  template: string;
+  found: ReturnType<typeof useAtlas.getState>['found'];
+}) {
+  const tally = useMemo(() => checklistTally(entry, (id) => found.has(id)), [entry, found]);
+  return <ListLink entry={entry} tally={tally} template={template} />;
+}
+
 /** One list: its name, how far it is, and a bar. */
-function ListLink({ entry, tally }: { entry: ChecklistEntry; tally: ChecklistTally }) {
+function ListLink({
+  entry,
+  tally,
+  template,
+}: {
+  entry: ChecklistEntry;
+  tally: ChecklistTally;
+  /** An own list's template, said before the figures. */
+  template?: string;
+}) {
   const finished = tally.total > 0 && tally.done === tally.total;
   return (
     <button
@@ -151,6 +182,7 @@ function ListLink({ entry, tally }: { entry: ChecklistEntry; tally: ChecklistTal
         <span className="touch-list-card-head">
           <span className="touch-list-card-name">{entry.checklist.name}</span>
           <span className="touch-figure" data-done={tally.done} data-total={tally.total}>
+            {template ? `${template} · ` : ''}
             {finished
               ? `All ${numberFormat.format(tally.total)} ${doneWord(entry)}`
               : `${ofText(tally.done, tally.total)} · ${percentOf(tally.done, tally.total)}%`}
@@ -170,8 +202,7 @@ function ListLink({ entry, tally }: { entry: ChecklistEntry; tally: ChecklistTal
 function ContinueCard({ entry }: { entry: ChecklistEntry }) {
   const states = useItemStates(entry);
   const next = useNextStep(entry, states);
-  const done = states.filter((s) => s.done).length;
-  const total = states.length;
+  const { done, total } = tallyStates(states);
   const left = total - done;
   const [label, value] =
     left === 0

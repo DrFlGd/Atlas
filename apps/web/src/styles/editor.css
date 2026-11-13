@@ -1,0 +1,1328 @@
+/*
+ * The person's own lists: "Your own" on Lists, the New list or guide
+ * dialog, and the list editor (its outline in the panel, the list on the
+ * map, the open step beside the map). Colours come from the theme, so the
+ * light theme follows; every target is at least 44px.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Shared pieces */
+
+.own-pill-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 24px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.own-pill-button:hover:not(:disabled) {
+  background: var(--atlas-surface-hover);
+}
+
+.own-pill-button:disabled {
+  opacity: 0.45;
+}
+
+.own-pill-primary {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-weight: 600;
+}
+
+.own-pill-primary:hover:not(:disabled) {
+  background: var(--atlas-accent-strong);
+}
+
+.own-pill-danger {
+  border-color: var(--atlas-danger);
+  background: var(--atlas-danger);
+  color: var(--atlas-bg);
+  font-weight: 600;
+}
+
+.own-pill-danger:hover:not(:disabled) {
+  background: var(--atlas-danger);
+  filter: brightness(1.08);
+}
+
+.own-text-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.own-text-button:hover:not(:disabled) {
+  background: var(--atlas-accent-soft);
+}
+
+.own-text-button:disabled {
+  color: var(--atlas-muted);
+}
+
+.own-space {
+  flex: 1;
+}
+
+.own-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.own-label {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.own-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.own-input:focus {
+  border-color: var(--atlas-accent);
+}
+
+.own-problem {
+  margin: 0;
+  color: var(--atlas-danger);
+  font-size: 14px;
+}
+
+.own-chip,
+.editor-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 13px;
+  color: var(--atlas-muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * Your own, on Lists */
+
+.own-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 20px;
+}
+
+.own-lists-section .touch-list-cards {
+  margin-bottom: 8px;
+}
+
+.own-new-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  border: 1.5px dashed var(--atlas-border-strong);
+  border-radius: 14px;
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.own-new-button:hover {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.own-import-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--atlas-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.own-import-button:hover {
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-text);
+}
+
+.own-note,
+.own-phone-note {
+  margin: 4px 4px 16px;
+}
+
+.own-frame-note {
+  margin: 0 16px 8px;
+}
+
+.own-edit-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 22px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.own-edit-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+/* ---------------------------------------------------------------------------
+ * Dialogs: New list or guide, Change template, Delete list */
+
+.own-dialog {
+  box-sizing: border-box;
+  width: min(780px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 20px;
+  background: var(--atlas-surface);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  color: var(--atlas-text);
+  overflow: auto;
+}
+
+.own-dialog-small {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.own-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.own-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px 20px;
+}
+
+.own-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px -8px -4px 0;
+}
+
+.own-dialog-title {
+  flex: 1;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.own-dialog-line {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+
+.own-group-label {
+  margin-bottom: -6px;
+}
+
+.own-templates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .own-templates {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.own-template {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 116px;
+  padding: 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.own-template:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.own-template[aria-checked='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.own-template-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 4px;
+  border-radius: 10px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-accent);
+}
+
+.own-template-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.own-template-line {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.own-template-offers {
+  margin-top: auto;
+  color: var(--atlas-text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.own-template[aria-checked='true'] .own-template-offers {
+  color: var(--atlas-accent);
+}
+
+.own-template-check {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--atlas-accent-text);
+}
+
+[aria-checked='true'] > .own-template-check {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+}
+
+.own-starts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--atlas-surface-raised);
+}
+
+.own-starts-title {
+  color: var(--atlas-accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.own-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.own-dialog-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.own-copy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.own-copy-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 48px 8px 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.own-copy-row[aria-checked='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.own-copy-row .own-template-icon {
+  margin: 0;
+}
+
+.own-copy-row .own-template-check {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.own-copy-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.own-copy-name {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.own-copy-detail {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------------------
+ * The editor's outline, in the panel */
+
+.touch-panel-editor {
+  padding-top: calc(var(--atlas-inset-top) + 8px);
+}
+
+.editor-outline {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 4px 4px;
+}
+
+.editor-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.editor-name-button {
+  display: block;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-name-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.editor-name-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--atlas-accent);
+  border-radius: 8px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.editor-head-figure {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-save-failed {
+  color: var(--atlas-danger);
+  font-weight: 600;
+}
+
+.editor-badge {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.editor-save-problem {
+  margin: 0 12px 8px;
+  color: var(--atlas-danger);
+  font-size: 13.5px;
+}
+
+.editor-head-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 6px 12px 12px;
+}
+
+.editor-head-actions .own-pill-button {
+  min-height: 46px;
+}
+
+.editor-menu {
+  position: absolute;
+  z-index: 40;
+  top: 52px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: var(--atlas-surface-raised);
+  box-shadow: var(--touch-float-shadow);
+}
+
+.editor-menu-item {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+
+.editor-menu-item:hover,
+.editor-menu-item:focus-visible {
+  background: var(--atlas-surface-hover);
+}
+
+.editor-menu-danger {
+  color: var(--atlas-danger);
+}
+
+.editor-rows {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--atlas-border);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.editor-empty {
+  padding: 24px 20px;
+  color: var(--atlas-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.editor-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.editor-row-open {
+  background: var(--atlas-accent-soft);
+  box-shadow: inset 3px 0 0 var(--atlas-accent);
+}
+
+.editor-row-dragging {
+  opacity: 0.5;
+}
+
+.editor-drop-before::before,
+.editor-drop-after::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--atlas-accent);
+}
+
+.editor-drop-before::before {
+  top: -2px;
+}
+
+.editor-drop-after::after {
+  bottom: -2px;
+}
+
+.editor-handle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.editor-handle:active {
+  cursor: grabbing;
+}
+
+.editor-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 6px 12px 6px 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.editor-row-heading .editor-row-main {
+  min-height: 44px;
+}
+
+.editor-heading-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-heading-count {
+  flex: none;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.editor-number {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  border: 1.5px solid var(--atlas-border-strong);
+  border-radius: 50%;
+  color: var(--atlas-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-number-place {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+}
+
+.editor-number-optional {
+  border: 1.5px dashed var(--atlas-accent);
+  background: none;
+  color: var(--atlas-accent);
+}
+
+.editor-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-row-name,
+.editor-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-row-name {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.editor-row-detail {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.editor-mark {
+  display: flex;
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.editor-foot {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.editor-foot {
+  gap: 6px;
+}
+
+.editor-foot .own-pill-button {
+  padding: 0 14px;
+}
+
+.editor-suggest {
+  margin-left: auto;
+  color: var(--atlas-accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Over the map */
+
+.touch-map {
+  /* The open step's panel: narrower where the map is. */
+  --editor-side: clamp(280px, 40%, 340px);
+}
+
+.editor-map-top {
+  right: calc(32px + var(--editor-side) + var(--atlas-inset-right)) !important;
+}
+
+.editor-map-hint {
+  flex: 0 0 auto;
+  max-width: calc(100% - 120px);
+}
+
+.editor-map-top .touch-map-chip {
+  flex-shrink: 4;
+}
+
+.editor-map-hint-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-hint-cancel {
+  min-height: 36px;
+  margin-right: -8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+  font: inherit;
+  font-weight: 600;
+}
+
+/* The open step, or Add, beside the map. */
+.editor-side {
+  position: absolute;
+  z-index: 1150;
+  top: calc(var(--atlas-inset-top) + 16px);
+  right: calc(16px + var(--atlas-inset-right));
+  bottom: calc(16px + var(--atlas-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  width: var(--editor-side);
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-surface);
+  box-shadow: var(--touch-float-shadow);
+  overflow: hidden;
+}
+
+.editor-side-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0;
+  padding: 6px 4px 6px 16px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.editor-side-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-side-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.editor-side-icon:disabled {
+  color: var(--atlas-muted);
+  opacity: 0.4;
+}
+
+.editor-side-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.editor-side-tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-side-line {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.editor-side-lead {
+  color: var(--atlas-text);
+  font-size: 15px;
+}
+
+.editor-side-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.editor-side-foot-add {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+
+.editor-danger {
+  color: var(--atlas-danger);
+}
+
+.editor-danger:hover:not(:disabled) {
+  background: var(--atlas-danger-soft);
+}
+
+.editor-move {
+  display: flex;
+}
+
+.editor-add-button {
+  width: 100%;
+  min-height: 50px;
+}
+
+.editor-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin: 12px 14px 0;
+  padding: 4px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 24px;
+}
+
+.editor-tab {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 20px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.editor-tab[aria-selected='true'] {
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+/* The location of a step */
+.editor-location {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  color: var(--atlas-muted);
+}
+
+.editor-location .editor-location-name {
+  white-space: normal;
+}
+
+.editor-location-text,
+.editor-hit-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-location-name {
+  color: var(--atlas-text);
+  font-size: 15px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-location-detail {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-finder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.editor-finder-hits {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-finder-hit {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+
+.editor-finder-hit:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.editor-hit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.editor-hit-add {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+/* The note */
+.editor-note {
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.editor-note:focus-within {
+  border-color: var(--atlas-accent);
+}
+
+.editor-note .editor-finder {
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.editor-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.editor-tool:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.editor-tool[aria-pressed='true'] {
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+}
+
+.editor-tool-bold {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.editor-note-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 116px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.editor-note-text:focus-visible {
+  outline: none;
+}
+
+.editor-note-shown {
+  margin-top: 4px;
+  padding: 8px 12px 4px;
+  border: 1px dashed var(--atlas-border-strong);
+  border-radius: 12px;
+}
+
+.editor-note-shown-label {
+  color: var(--atlas-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.editor-note-body {
+  font-size: 14.5px;
+}
+
+/* The Optional step switch */
+.editor-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-switch-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.editor-switch-label {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.editor-switch-line {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.editor-switch {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 32px;
+  margin: 6px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: var(--atlas-border-strong);
+}
+
+.editor-switch::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
+.editor-switch-knob {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--atlas-text);
+  transition: left 120ms ease-out;
+}
+
+.editor-switch[aria-checked='true'] {
+  background: var(--atlas-accent);
+}
+
+.editor-switch[aria-checked='true'] .editor-switch-knob {
+  left: 24px;
+  background: var(--atlas-accent-text);
+}
+
+/* A type, and A list */
+.editor-select-wrap {
+  position: relative;
+  color: var(--atlas-muted);
+}
+
+.editor-select {
+  appearance: none;
+  padding-right: 40px;
+}
+
+.editor-select-wrap > svg {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.editor-types {
+  display: flex;
+  flex-direction: column;
+  margin: -8px -16px 0;
+}
+
+.editor-type {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--atlas-border);
+  cursor: pointer;
+}
+
+.editor-type-on {
+  background: var(--atlas-accent-soft);
+}
+
+.editor-type:has(input:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.editor-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--atlas-accent);
+}
+
+.editor-type-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.editor-type-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-type-name {
+  font-size: 15px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-type-line {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.editor-type-count {
+  flex: none;
+  color: var(--atlas-muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-blank-heading {
+  padding-top: 16px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+/* ---------------------------------------------------------------------------
+ * Preview */
+
+.editor-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-preview > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-preview-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 10px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 14px;
+  background: var(--atlas-accent-soft);
+}
+
+.editor-preview-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--atlas-accent);
+  font-size: 13.5px;
+  font-weight: 600;
+}

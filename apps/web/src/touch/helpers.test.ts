@@ -1,7 +1,7 @@
 import type { ChecklistEntry, ChecklistItemEntry, SearchEntry, SearchHit } from '@atlas/core';
 import { describe, expect, it } from 'vitest';
 import { backStep, type BackState } from './backStack';
-import { arrangementFor, panelWidthFor } from './layout';
+import { arrangementFor, editorFits, panelWidthFor } from './layout';
 import { nextOnList, orderHits, revealShift, type Placed } from './ordering';
 import { parseRecent, withRecent } from './recent';
 import { keyList, withKey } from './keys';
@@ -32,6 +32,17 @@ describe('arrangement', () => {
     expect(panelWidthFor(1280, 800)).toBe(360);
     expect(panelWidthFor(844, 390)).toBe(320);
     expect(panelWidthFor(800, 1280)).toBe(360);
+  });
+
+  it('offers the list editor on a tablet on its side and a computer, not on a phone', () => {
+    expect(editorFits(1280, 800, 'mouse')).toBe(true);
+    expect(editorFits(960, 600)).toBe(true);
+    // A phone on its side is wide, but too short for the editor.
+    expect(editorFits(844, 390)).toBe(false);
+    expect(editorFits(390, 844)).toBe(false);
+    // A tablet held upright is compact.
+    expect(editorFits(800, 1280)).toBe(false);
+    expect(editorFits(839, 800, 'mouse')).toBe(false);
   });
 });
 
@@ -77,10 +88,50 @@ describe('Back', () => {
           'lists-page': { listsPage: false },
           'guides-back': { guidesBack: false },
           'to-map': { section: 'map' as const },
+          'editor-picking': { editor: 'panel' as const },
+          'editor-panel': { editor: 'open' as const },
+          'editor-preview': { editor: 'open' as const },
+          'editor-leave': { editor: null },
         }[step],
       };
     }
     expect(steps).toEqual(['dialog', 'collapse-place', 'filters', 'place', 'lists-page', 'to-map']);
+  });
+
+  it('closes what is open in the list editor, then the editor, before the list', () => {
+    let state: BackState = {
+      ...nothing,
+      section: 'lists',
+      listsPage: true,
+      editor: 'picking',
+    };
+    const steps = [];
+    for (let step = backStep(state); step; step = backStep(state)) {
+      steps.push(step);
+      const next: Partial<BackState> =
+        step === 'editor-picking'
+          ? { editor: 'panel' }
+          : step === 'editor-panel'
+            ? { editor: 'open' }
+            : step === 'editor-leave'
+              ? { editor: null }
+              : step === 'lists-page'
+                ? { listsPage: false }
+                : { section: 'map' };
+      state = { ...state, ...next };
+    }
+    expect(steps).toEqual([
+      'editor-picking',
+      'editor-panel',
+      'editor-leave',
+      'lists-page',
+      'to-map',
+    ]);
+    expect(backStep({ ...nothing, section: 'lists', listsPage: true, editor: 'preview' })).toBe(
+      'editor-preview',
+    );
+    // A dialog over the editor closes first.
+    expect(backStep({ ...nothing, dialog: true, editor: 'panel' })).toBe('dialog');
   });
 
   it('closes search and the map chooser before the place', () => {

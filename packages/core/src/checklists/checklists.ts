@@ -53,6 +53,11 @@ export interface ItemState {
   done: boolean;
   found: number;
   total: number;
+  /**
+   * An optional step (the item's `optional`): "Next up" passes over it, and
+   * it does not count against the list being done (see {@link tallyStates}).
+   */
+  optional?: boolean;
 }
 
 /** Done items of a checklist, or of several. */
@@ -62,19 +67,35 @@ export interface ChecklistTally {
 }
 
 export function itemState(entry: ChecklistItemEntry, isDone: IsDone): ItemState {
+  const optional = entry.item.optional === true ? { optional: true } : {};
   if (entry.ownMark) {
     const done = isDone(entry.item.id);
-    return { done, found: done ? 1 : 0, total: 1 };
+    return { done, found: done ? 1 : 0, total: 1, ...optional };
   }
   let found = 0;
   for (const id of entry.targets) if (isDone(id)) found++;
-  return { done: found === entry.targets.length, found, total: entry.targets.length };
+  return { done: found === entry.targets.length, found, total: entry.targets.length, ...optional };
+}
+
+/**
+ * Done and all entries, of the ones that count: an optional step does not
+ * count against the list being done, so it is left out of both.
+ */
+export function tallyStates(
+  states: readonly Pick<ItemState, 'done' | 'optional'>[],
+): ChecklistTally {
+  let done = 0;
+  let total = 0;
+  for (const state of states) {
+    if (state.optional) continue;
+    total++;
+    if (state.done) done++;
+  }
+  return { done, total };
 }
 
 export function checklistTally(entry: ChecklistEntry, isDone: IsDone): ChecklistTally {
-  let done = 0;
-  for (const item of entry.items) if (itemState(item, isDone).done) done++;
-  return { done, total: entry.items.length };
+  return tallyStates(entry.items.map((item) => itemState(item, isDone)));
 }
 
 /**

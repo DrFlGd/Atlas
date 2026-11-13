@@ -68,3 +68,19 @@ export function parseId(id: string): ParsedId | null {
 export function makeId(gameId: string, kind: IdKind, localId: string): string {
   return `${gameId}:${kind}:${localId}`;
 }
+
+// ---------------------------------------------------------------------------
+// Ids of lists a person makes
+
+/**
+ * The start of the local id of every list, entry and heading a person makes
+ * in the app (see `ownLists.ts`), such as `demo:checklist:own.k3f9a2c1`.
+ * Packs may not use it for their lists and entries (the strict schemas
+ * refuse it), so a person's ids never collide with a pack's.
+ */
+export const OWN_ID_PREFIX = 'own.';
+
+/** Whether an id is one of a person's own (see {@link OWN_ID_PREFIX}). */
+export function isOwnId(id: string): boolean {
+  return parseId(id)?.localId.startsWith(OWN_ID_PREFIX) ?? false;
+}

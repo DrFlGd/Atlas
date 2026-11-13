@@ -26,6 +26,7 @@ pub mod gamefiles;
 mod imports;
 pub mod library;
 pub mod manifest;
+pub mod ownlists;
 pub mod packfile;
 mod packs;
 #[cfg(feature = "downloads")]
@@ -117,6 +118,11 @@ macro_rules! viewer_commands {
             commands::packfile_pick_copy,
             commands::packfile_copy_picked,
             commands::packfile_discard_copy,
+            commands::own_lists_read,
+            commands::own_lists_write,
+            commands::own_lists_delete,
+            commands::list_file_save,
+            commands::list_file_open,
             $($more)*
         ]
     };

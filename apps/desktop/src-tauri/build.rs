@@ -50,6 +50,11 @@ const COMMANDS: &[&str] = &[
     "packfile_pick_copy",
     "packfile_copy_picked",
     "packfile_discard_copy",
+    "own_lists_read",
+    "own_lists_write",
+    "own_lists_delete",
+    "list_file_save",
+    "list_file_open",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

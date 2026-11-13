@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { anyIdSchema, gameIdSchema, idOf } from './ids';
+import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
 
 /**
  * The pack schema version this package writes. Version 2 adds the optional
@@ -99,7 +99,7 @@ export const checklistTypeSchema = z.enum([
  */
 export type SchemaMode = 'write' | 'read';
 
-function packSchemas(mode: SchemaMode) {
+function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } = {}) {
   const reading = mode === 'read';
 
   /** A pack record: strict when writing; unknown keys are dropped when reading. */
@@ -440,8 +440,21 @@ function packSchemas(mode: SchemaMode) {
    * whose checklists have `kind`, and 0.4.4 and earlier one whose checklists
    * have `type`. Later apps read packs tolerantly (see {@link SchemaMode}).
    */
+  /**
+   * The id of a pack's list or entry. A pack being written may not use the
+   * ids kept for a person's own lists (see `OWN_ID_PREFIX`); reading takes
+   * any.
+   */
+  const packListId = (kind: 'checklist' | 'checkitem') =>
+    reading || ownIds
+      ? idOf(kind)
+      : idOf(kind).refine(
+          (id) => !isOwnId(id),
+          `must not start with ${OWN_ID_PREFIX}, which is kept for lists people make`,
+        );
+
   const checklistSchema = record({
-    id: idOf('checklist'),
+    id: packListId('checklist'),
     name: nonEmpty,
     description: z.string().optional(),
     order: z.int(),
@@ -469,7 +482,7 @@ function packSchemas(mode: SchemaMode) {
    * change; Atlas 0.3.3 and earlier refuse a pack whose items have them.
    */
   const checklistItemSchema = record({
-    id: idOf('checkitem'),
+    id: packListId('checkitem'),
     checklistId: idOf('checklist'),
     name: nonEmpty,
     order: z.int(),
@@ -482,6 +495,13 @@ function packSchemas(mode: SchemaMode) {
     section: nonEmpty.max(200).optional(),
     /** A short note in Markdown, shown under the item's name. */
     note: z.string().optional(),
+    /**
+     * A step that may be left out: "Next up" passes over it without
+     * waiting for it, and it does not count against the list being done.
+     * Added without a schema version change; Atlas 0.4.4 and earlier
+     * refuse a pack whose items have it.
+     */
+    optional: z.boolean().optional(),
   });
 
   // ---------------------------------------------------------------------------
@@ -657,6 +677,15 @@ export const {
  * types are those of the written schemas.
  */
 export const packReadSchemas = packSchemas('read');
+
+/**
+ * The strict list and entry schemas for a person's own lists, which are
+ * kept apart from packs and use the ids packs may not (see `ownLists.ts`).
+ */
+export const ownEntryWriteSchemas = (({ checklistSchema, checklistItemSchema }) => ({
+  checklistSchema,
+  checklistItemSchema,
+}))(packSchemas('write', { ownIds: true }));
 
 export type Attribution = z.infer<typeof attributionSchema>;
 export type PackManifest = z.infer<typeof manifestSchema>;

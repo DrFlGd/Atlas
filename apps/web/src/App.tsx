@@ -17,6 +17,7 @@ import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
+import { loadOwnLists } from './state/ownLists';
 import { initSaves } from './state/saves';
 import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
 import { coarsePointer, requestedUi, sessionStore, shownUi } from './touch/uiMode';
@@ -65,6 +66,11 @@ export function App() {
     void boot(parseViewHash(window.location.hash));
     return stopSaves;
   }, []);
+
+  // The person's own lists of the game, read when the game opens.
+  useEffect(() => {
+    if (game) void loadOwnLists(game);
+  }, [game]);
 
   useViewHashSync();
   useWidthClass();

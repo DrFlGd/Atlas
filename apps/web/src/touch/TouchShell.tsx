@@ -14,6 +14,7 @@ import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/ac
 import { checklistScreenTitle, setGuideReader } from '../state/checklists';
 import { guidesOf, hasGuidePages, hasListsSection, hasMap } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
+import { useOwnLists } from '../state/ownLists';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
 import type { Section } from './backStack';
@@ -22,7 +23,9 @@ import { GamesScreen } from './GamesScreen';
 import { GuidesScreen } from './GuidesScreen';
 import { withKey } from './keys';
 import { KeysDialog } from './KeysDialog';
-import { arrangementFor, panelWidthFor, type Arrangement } from './layout';
+import { EditorMapHint, EditorOutline, EditorSide, PreviewBar } from './editor/ListEditor';
+import { setPreview, stopEditing, useEditor } from './editor/editorState';
+import { arrangementFor, editorFits, panelWidthFor, type Arrangement } from './layout';
 import { ListOnlyChip } from './ListMapChips';
 import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
@@ -88,16 +91,23 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const section = useTouch((s) => s.section);
   const search = useTouch((s) => s.search);
   const filters = useTouch((s) => s.filters);
-  const hasLists = useAtlas((s) => hasListsSection(s.game));
   // Guides read as pages, and a game with no map (guides and lists only).
   const pages = useAtlas((s) => hasGuidePages(s.game));
   const mapShown = useAtlas((s) => hasMap(s.game));
-  const selected = useAtlas((s) => s.selectedId !== null);
+  // The list editor picks from the map, so a game with no map has none.
+  const room = arrangement.editor && mapShown;
+  const ownLists = useOwnLists((s) => s.lists.length > 0);
+  // Lists is there from a tablet's width up, where lists can be made.
+  const hasLists =
+    useAtlas((s) => hasListsSection(s.game) || (s.game !== null && room)) || ownLists;
+  const editorMode = useEditor((s) => (s.listId === null || !room ? null : s.mode));
+  const game = useAtlas((s) => s.game);
+  const selected = useAtlas((s) => s.selectedId !== null && editorMode !== 'edit');
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
   const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
   const pageViews = useAtlas(downloadsOffered);
-  useTouchEffects(wide);
+  useTouchEffects(wide, room);
 
   useEffect(() => {
     if (!hasLists && section === 'lists') showSection(mapShown ? 'map' : 'guides');
@@ -119,7 +129,12 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const map = mapShown ? (
     <main className="touch-map" aria-label="Map">
       <MapPane touch={mapOptions} />
-      {wide ? <WideMapControls /> : section === 'map' ? <CompactMapControls /> : null}
+      {wide ? (
+        <WideMapControls editing={editorMode === 'edit'} />
+      ) : section === 'map' ? (
+        <CompactMapControls />
+      ) : null}
+      {editorMode === 'edit' && game ? <EditorSide game={game} /> : null}
       {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
     </main>
   ) : null;
@@ -138,11 +153,27 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
       {wide ? (
         <>
           <Rail shown={sections} />
-          {section === 'guides' ? (
+          {section === 'guides' && editorMode === null ? (
             <GuidesScreen wide />
           ) : (
-            <aside className="touch-panel" aria-label={PANEL_LABEL[search ? 'search' : section]}>
-              {section === 'map' ? <MapPanel /> : <SectionContent section={section} />}
+            <aside
+              className={editorMode === 'edit' ? 'touch-panel touch-panel-editor' : 'touch-panel'}
+              aria-label={
+                editorMode === 'edit' ? 'List editor' : PANEL_LABEL[search ? 'search' : section]
+              }
+            >
+              {editorMode === 'edit' && game ? (
+                <EditorOutline game={game} />
+              ) : editorMode === 'preview' ? (
+                <div className="editor-preview">
+                  <PreviewBar />
+                  <SectionContent section={section} />
+                </div>
+              ) : section === 'map' ? (
+                <MapPanel />
+              ) : (
+                <SectionContent section={section} />
+              )}
             </aside>
           )}
           {map}
@@ -161,7 +192,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
         </>
       )}
       {placeShown ? <PlaceSheet wide={wide} /> : null}
-      {wide ? <NextUpCard /> : null}
+      {wide && editorMode !== 'edit' ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
       <TouchToast wide={wide} />
       <ProfileDialog />
@@ -224,17 +255,27 @@ function MapPanel() {
 function measure(input: 'touch' | 'mouse') {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  return { kind: arrangementFor(width, height, input), panel: panelWidthFor(width, height) };
+  return {
+    kind: arrangementFor(width, height, input),
+    panel: panelWidthFor(width, height),
+    editor: editorFits(width, height, input),
+  };
 }
 
 /** The arrangement for the window, following rotation and resizing. */
-function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: number } {
+function useArrangement(input: 'touch' | 'mouse'): {
+  kind: Arrangement;
+  panel: number;
+  editor: boolean;
+} {
   const [arrangement, setArrangement] = useState(() => measure(input));
   useEffect(() => {
     const onResize = () => {
       const next = measure(input);
       setArrangement((prev) =>
-        prev.kind === next.kind && prev.panel === next.panel ? prev : next,
+        prev.kind === next.kind && prev.panel === next.panel && prev.editor === next.editor
+          ? prev
+          : next,
       );
     };
     window.addEventListener('resize', onResize);
@@ -243,8 +284,8 @@ function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: n
     };
   }, [input]);
   useEffect(() => {
-    useTouch.setState({ arrangement: arrangement.kind });
-  }, [arrangement.kind]);
+    useTouch.setState({ arrangement: arrangement.kind, editorRoom: arrangement.editor });
+  }, [arrangement.kind, arrangement.editor]);
   // Set before the children render, so they know what they are made for.
   if (useTouch.getState().input !== input) useTouch.setState({ input });
   return arrangement;
@@ -253,7 +294,7 @@ function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: n
 // ---------------------------------------------------------------------------
 // What follows the app's store
 
-function useTouchEffects(wide: boolean) {
+function useTouchEffects(wide: boolean, room: boolean) {
   const game = useAtlas((s) => s.game);
 
   useEffect(() => {
@@ -297,6 +338,13 @@ function useTouchEffects(wide: boolean) {
     const stopLists = useLists.subscribe((state, previous) => {
       if (state.onlyOnMap !== previous.onlyOnMap) followOpenList();
     });
+    // An own list changes as it is edited; the editor shows the whole map.
+    const stopOwn = useOwnLists.subscribe((state, previous) => {
+      if (state.lists !== previous.lists) followOpenList();
+    });
+    const stopEditor = useEditor.subscribe((state, previous) => {
+      if (state.listId !== previous.listId || state.mode !== previous.mode) followOpenList();
+    });
     const stopAtlas = useAtlas.subscribe((state, previous) => {
       if (state.checklistPages !== previous.checklistPages || state.game !== previous.game) {
         followOpenList();
@@ -304,6 +352,8 @@ function useTouchEffects(wide: boolean) {
     });
     return () => {
       stopLists();
+      stopOwn();
+      stopEditor();
       stopAtlas();
       // The classic layout shows every place again, and only the pages it knows.
       const { game, checklistPages } = useAtlas.getState();
@@ -385,6 +435,36 @@ function useTouchEffects(wide: boolean) {
   useEffect(() => {
     if (wide) setFiltersOpen(false);
   }, [wide]);
+
+  // The editor is for a tablet's width and up, and for the list it opened
+  // with: narrower, another section or another page closes it (what changed
+  // is saved at once).
+  useEffect(() => {
+    if (!room) stopEditing();
+  }, [room]);
+  useEffect(() => {
+    const check = () => {
+      const { listId, mode } = useEditor.getState();
+      if (listId === null) return;
+      const page = useAtlas.getState().checklistPages.at(-1);
+      const onList = page?.kind === 'checklist' && page.id === listId && page.area === undefined;
+      if (useTouch.getState().section !== 'lists' || !onList) {
+        if (mode === 'preview') setPreview(false);
+        stopEditing();
+      }
+    };
+    const stopTouch = useTouch.subscribe((state, previous) => {
+      if (state.section !== previous.section) check();
+    });
+    const stopAtlas = useAtlas.subscribe((state, previous) => {
+      if (state.checklistPages !== previous.checklistPages) check();
+    });
+    return () => {
+      stopTouch();
+      stopAtlas();
+      stopEditing();
+    };
+  }, []);
 }
 
 // ---------------------------------------------------------------------------
@@ -484,8 +564,16 @@ function CompactMapControls() {
   );
 }
 
-function WideMapControls() {
+function WideMapControls({ editing }: { editing: boolean }) {
   const section = useTouch((s) => s.section);
+  if (editing) {
+    return (
+      <div className="touch-map-top editor-map-top">
+        <EditorMapHint />
+        <MapChip />
+      </div>
+    );
+  }
   return (
     <>
       <div className="touch-map-top">

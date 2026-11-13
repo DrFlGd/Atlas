@@ -22,6 +22,18 @@ export function arrangementFor(
   return width >= 840 || (width > height && width >= 600) ? 'wide' : 'compact';
 }
 
+/**
+ * Whether the list editor fits: wide, and not a phone on its side (too
+ * short for the outline, the map and the open step side by side).
+ */
+export function editorFits(
+  width: number,
+  height: number,
+  input: 'touch' | 'mouse' = 'touch',
+): boolean {
+  return arrangementFor(width, height, input) === 'wide' && width >= 840 && height >= 560;
+}
+
 /** A phone on its side: little height, so the panel is narrower. */
 export function panelWidthFor(width: number, height: number): number {
   return width > height && height < 520 ? 320 : 360;

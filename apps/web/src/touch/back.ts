@@ -3,6 +3,7 @@ import { checklistBack } from '../state/checklists';
 import { useAtlas } from '../state/store';
 import { backStep } from './backStack';
 import { canGoBack, readerBack, useReader } from './reader';
+import { closePanel, setPicking, setPreview, stopEditing, useEditor } from './editor/editorState';
 import { revealShift, type Rect } from './ordering';
 import {
   closeSearch,
@@ -21,6 +22,7 @@ export function handleBack(): boolean {
   const dialogs = [...document.querySelectorAll<HTMLDialogElement>('dialog[open]')];
   const wide = touch.arrangement === 'wide';
   const page = atlas.checklistPages.at(-1);
+  const editor = useEditor.getState();
   const step = backStep({
     dialog: dialogs.length > 0,
     placeExpanded: touch.placeExpanded,
@@ -34,6 +36,16 @@ export function handleBack(): boolean {
     listsPage: page !== undefined && page.kind !== 'index',
     guidesBack: canGoBack(useReader.getState()),
     home: homeSection(),
+    editor:
+      editor.listId === null
+        ? null
+        : editor.mode === 'preview'
+          ? 'preview'
+          : editor.picking
+            ? 'picking'
+            : editor.panel
+              ? 'panel'
+              : 'open',
   });
   switch (step) {
     case 'dialog': {
@@ -66,6 +78,18 @@ export function handleBack(): boolean {
       return true;
     case 'to-map':
       showSection(homeSection());
+      return true;
+    case 'editor-picking':
+      setPicking(null);
+      return true;
+    case 'editor-panel':
+      closePanel();
+      return true;
+    case 'editor-preview':
+      setPreview(false);
+      return true;
+    case 'editor-leave':
+      stopEditing();
       return true;
     case null:
       return false;

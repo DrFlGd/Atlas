@@ -73,6 +73,24 @@ const UI_PATHS = {
   layout: 'M2.5 4h15v12h-15zM5.5 4v12M10 4v12',
   keyboard:
     'M2.5 5.5h15v9h-15zM5.5 8.5h0M8.5 8.5h0M11.5 8.5h0M14.5 8.5h0M5.5 11.5h0M7.5 11.5h5M14.5 11.5h0',
+  // The list editor's (src/touch/editor/) and its templates'.
+  grid: 'M3.5 3.5h5.5v5.5h-5.5zM11 3.5h5.5v5.5h-5.5zM3.5 11h5.5v5.5h-5.5zM11 11h5.5v5.5h-5.5z',
+  eye: 'M2 10s3-5.5 8-5.5s8 5.5 8 5.5s-3 5.5-8 5.5s-8-5.5-8-5.5zM10 7.6a2.4 2.4 0 1 1 0 4.8a2.4 2.4 0 1 1 0-4.8z',
+  eyeOff:
+    'M2 10s3-5.5 8-5.5s8 5.5 8 5.5s-3 5.5-8 5.5s-8-5.5-8-5.5zM4 16L16 4M10 7.6a2.4 2.4 0 1 1 0 4.8a2.4 2.4 0 1 1 0-4.8z',
+  image:
+    'M3 4.5h14v11h-14zM3 13l4-3.5l3.5 3l2.5-2l4 3.5M13 6.9a1.1 1.1 0 1 1 0 2.2a1.1 1.1 0 1 1 0-2.2z',
+  route:
+    'M6 15.5h4.5a3 3 0 0 0 0-6h-1a3 3 0 0 1 0-6h4.5M4.5 14a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zM15.5 2a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z',
+  numbered: 'M3 4.5h1.3v4M3 12h2.2l-2.2 3.5h2.4M9 5.5h8M9 10h8M9 14.5h8',
+  bullets: 'M8 5.5h9M8 10h9M8 14.5h9M3.5 5.5h.01M3.5 10h.01M3.5 14.5h.01',
+  link: 'M8.5 11.5l3-3M7 9l-1.5 1.5a2.5 2.5 0 0 0 3.5 3.5L10.5 12.5M13 11l1.5-1.5a2.5 2.5 0 0 0-3.5-3.5L9.5 7.5',
+  more: 'M4.5 10h.01M10 10h.01M15.5 10h.01',
+  grip: 'M4 7h12M4 10h12M4 13h12',
+  arrowUp: 'M10 16V4M5 9l5-5l5 5',
+  arrowDown: 'M10 4v12M5 11l5 5l5-5',
+  heading: 'M5 4v12M15 4v12M5 10h10',
+  sparkle: 'M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6z',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;
