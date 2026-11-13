@@ -5,11 +5,19 @@ import {
   chosenToRead,
   newChoice,
   overCap,
+  goRoom,
   splitChosen,
   tickFrom,
   toggleGroup,
 } from './gameChoice';
-import { MAX_RUN_ADDRESSES, checkAddresses, newRun, settlePage, stopReasonText } from './importRun';
+import {
+  MAX_FETCHED_RUN_PAGES,
+  MAX_RUN_ADDRESSES,
+  checkAddresses,
+  newRun,
+  settlePage,
+  stopReasonText,
+} from './importRun';
 
 /**
  * Reading a made-up wiki's pages: an importer that fetches pages keeps
@@ -61,14 +69,14 @@ describe('choosing the pages of a wiki', () => {
     expect(chosenToRead(chosen)).toHaveLength(35);
   });
 
-  it('reads one go now and keeps the rest for later', () => {
+  it('reads every page ticked in one go, since the app fetches them with no window', () => {
     const chosen = tickFrom(choice(), `${SITE}/wiki/Contents`, pages[0]!.url);
     expect(overCap(chosen)).toBeNull();
+    expect(pages.length).toBeGreaterThan(MAX_RUN_ADDRESSES);
+    expect(goRoom(chosen)).toBe(MAX_FETCHED_RUN_PAGES);
     const { now, later } = splitChosen(chosen);
-    // The list of pages counts as a page of the go.
-    expect(now).toHaveLength(MAX_RUN_ADDRESSES - 1);
-    expect(later).toHaveLength(40 - (MAX_RUN_ADDRESSES - 1));
-    expect(later[0]!.url).toBe(pages[MAX_RUN_ADDRESSES - 1]!.url);
+    expect(now.map((p) => p.url)).toEqual(pages.map((p) => p.url));
+    expect(later).toEqual([]);
   });
 });
 

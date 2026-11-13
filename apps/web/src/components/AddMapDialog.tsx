@@ -23,6 +23,7 @@ import {
   type QueuedGame,
 } from '../state/importing';
 import {
+  MAX_FETCHED_RUN_PAGES,
   MAX_RUN_ADDRESSES,
   parseAddresses,
   runSummary,
@@ -264,8 +265,8 @@ function QueuedPages() {
   return (
     <div className="add-map-browse" data-testid="add-map-queued">
       <p className="muted small">
-        Pages you chose earlier that did not fit in one go. This app reads at most{' '}
-        {MAX_RUN_ADDRESSES} at a time.
+        Pages you chose earlier that were not read: the go was stopped, or the site asked this app
+        to wait.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
@@ -283,7 +284,7 @@ function QueuedPages() {
                 data-testid="add-map-queued-continue"
                 onClick={() => void continueQueue(game.importerId, game.key)}
               >
-                Read the next {Math.min(MAX_RUN_ADDRESSES, game.pages.length)}
+                Read the next {Math.min(MAX_FETCHED_RUN_PAGES, game.pages.length)}
               </button>
               <button
                 type="button"

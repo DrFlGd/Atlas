@@ -20,8 +20,16 @@ import {
  * opening the rest.
  */
 
-/** Addresses one run takes at most. */
+/** Addresses one run takes at most, of pages opened in the import window. */
 export const MAX_RUN_ADDRESSES = 25;
+/**
+ * Pages one run reads at most when the app fetches them itself, with no
+ * window (an importer with `fetch`: a wiki's pages, say): a whole section,
+ * or a small wiki, in one go. They are still read one at a time with the
+ * pause between requests, never against the site's `robots.txt`, and the
+ * run stops at once on a refusal; what is left is kept for later.
+ */
+export const MAX_FETCHED_RUN_PAGES = 2000;
 /** The pause after one page's window closes and before the next page opens. */
 export const RUN_PAUSE_MS = 3000;
 /** Pages in a row that end without their map data before the run stops. */

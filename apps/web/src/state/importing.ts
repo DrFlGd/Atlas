@@ -86,7 +86,7 @@ import {
   type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
-import { MAX_RUN_ADDRESSES, RUN_PAUSE_MS } from './importRun';
+import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
@@ -1888,7 +1888,7 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
   const games = await readQueue(importerId);
   const game = games.find((g) => g.key === key);
   if (!importer || !game || game.pages.length === 0) return;
-  const now = game.pages.slice(0, MAX_RUN_ADDRESSES);
+  const now = game.pages.slice(0, MAX_FETCHED_RUN_PAGES);
   await writeQueue(importerId, [
     ...games.filter((g) => g.key !== key),
     { ...game, pages: game.pages.slice(now.length) },
