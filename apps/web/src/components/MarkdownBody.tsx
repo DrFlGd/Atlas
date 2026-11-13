@@ -29,9 +29,13 @@ export function MarkdownBody({ source, className }: { source: string; className:
       frame.setAttribute('data-missing', '');
       const words = document.createElement('span');
       words.className = 'picture-alt';
-      words.textContent = img.alt
-        ? `${img.alt} (picture not downloaded)`
-        : 'Picture not downloaded';
+      // A small picture in the line of text is only its words when it is not here.
+      const inLine = frame.classList.contains('inline');
+      words.textContent = inLine
+        ? img.alt
+        : img.alt
+          ? `${img.alt} (picture not downloaded)`
+          : 'Picture not downloaded';
       img.replaceWith(words);
       setMissingAt(revision);
     };

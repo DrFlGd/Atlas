@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guideSearchText, renderGuideMarkdown } from './markdown';
+import { guideSearchText, isInlinePicture, renderGuideMarkdown, shownSize } from './markdown';
 
 describe('renderGuideMarkdown', () => {
   it('renders ordinary Markdown', () => {
@@ -190,6 +190,34 @@ describe('pictures', () => {
       '<img src="https://app.test/packs/demo/pictures/gate.png" alt="the old gate" loading="lazy" decoding="async">',
     );
     expect(html).toContain('<span class="guide-picture-note">The gate · Ann</span>');
+  });
+
+  it('shows a picture at the size its title gives, a small one in the line of text', () => {
+    const small = renderGuideMarkdown(
+      'Found in ![the gate](demo:picture:gate "=28x13") only.',
+      options,
+    );
+    expect(small).toContain(
+      '<span class="guide-picture inline"><img src="https://app.test/packs/demo/pictures/gate.png" alt="the gate" width="28" height="13" title="The gate" loading="lazy" decoding="async"></span>',
+    );
+    // No line under a picture in the line of text.
+    expect(small).not.toContain('guide-picture-note');
+    const large = renderGuideMarkdown('![the gate](demo:picture:gate "=300")', options);
+    expect(large).toContain('<span class="guide-picture sized"><img');
+    expect(large).toContain('alt="the gate" width="300" loading="lazy"');
+    expect(large).toContain('<span class="guide-picture-note">The gate · Ann</span>');
+    // Any other title is not a size.
+    for (const title of ['28x13', '=0x5', '=28x', '=12345', 'The gate', '= 28']) {
+      const html = renderGuideMarkdown(`![the gate](demo:picture:gate "${title}")`, options);
+      expect(html).toContain('<span class="guide-picture"><img');
+      expect(html).not.toMatch(/ width=/);
+    }
+    expect(shownSize('=28x13')).toEqual({ width: 28, height: 13 });
+    expect(shownSize('=28')).toEqual({ width: 28 });
+    expect(isInlinePicture({ width: 200, height: 48 })).toBe(true);
+    expect(isInlinePicture({ width: 200, height: 49 })).toBe(false);
+    expect(isInlinePicture({ width: 40 })).toBe(true);
+    expect(isInlinePicture(null)).toBe(false);
   });
 
   it('never loads any other picture: it shows what it shows in words', () => {
