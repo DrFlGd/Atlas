@@ -445,7 +445,9 @@ useOwnLists.subscribe((state, previous) => {
 });
 useAtlas.subscribe((state, previous) => {
   if (state.game !== previous.game) {
-    if (get().listId) set(INITIAL);
+    // Another game closes the editor; the same game made again with the
+    // person's own locations changed keeps it open.
+    if (get().listId && state.game?.entry !== previous.game?.entry) set(INITIAL);
     followMap();
   }
 });

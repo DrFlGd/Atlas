@@ -86,3 +86,39 @@
   stroke: var(--atlas-text, #e8ebef);
   stroke-opacity: 0.9;
 }
+
+/* A location being moved: a ring that can be dragged, or moved with the
+   arrow keys once it has focus. */
+.atlas-map .atlas-handle {
+  background: none;
+  border: none;
+  cursor: grab;
+}
+
+.atlas-map .atlas-handle span {
+  display: block;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid var(--atlas-handle, var(--atlas-accent, #e6b450));
+  background: rgb(0 0 0 / 18%);
+  box-shadow:
+    0 0 0 2px var(--atlas-map-backdrop, #0b0d12),
+    0 2px 8px rgb(0 0 0 / 45%);
+}
+
+.atlas-map .atlas-handle:focus-visible {
+  outline: none;
+}
+
+.atlas-map .atlas-handle:focus-visible span {
+  box-shadow:
+    0 0 0 2px var(--atlas-map-backdrop, #0b0d12),
+    0 0 0 5px var(--atlas-focus, var(--atlas-accent, #e6b450));
+}
+
+.atlas-map .atlas-handle.leaflet-drag-target,
+.atlas-map .atlas-handle:active {
+  cursor: grabbing;
+}

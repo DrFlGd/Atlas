@@ -10,6 +10,8 @@ import {
 } from '../desktop';
 import { exportProgress, loadGame, notify } from './actions';
 import { applyListing } from './library';
+import { addImportedOwnLists, flushOwnLists } from './ownLists';
+import { addImportedOwnLocations, flushOwnLocations } from './ownLocations';
 import { useAtlas } from './store';
 
 /**
@@ -125,11 +127,53 @@ export async function exportPackFile(
   packId: string,
   detail: Detail,
   withProgress: boolean,
+  /** The person's own lists, locations and types of the game go in the file. */
+  withMine = false,
 ): Promise<PackFileExported | null> {
   const progress = withProgress
     ? `${JSON.stringify(await exportProgress({ scope: 'all' }), null, 2)}\n`
     : undefined;
-  return desktop!.packFiles.export(packId, detail, progress);
+  // The shell reads them from their files: what was changed last is saved first.
+  if (withMine) await Promise.all([flushOwnLists(), flushOwnLocations()]);
+  return desktop!.packFiles.export(packId, detail, progress, withMine);
+}
+
+/** What adding the person's own records from a map pack file did. */
+export interface MineRestored {
+  lists: number;
+  locations: number;
+  types: number;
+  areas: number;
+  /** Why some could not be added, in plain words. */
+  problem: string | null;
+}
+
+/** Adds the own lists, locations and types a file carried to the person's, where they keep them. */
+async function restoreMine(imported: PackFileImported): Promise<MineRestored | null> {
+  if (!imported.ownLists && !imported.ownLocations) return null;
+  const restored: MineRestored = { lists: 0, locations: 0, types: 0, areas: 0, problem: null };
+  const problems: string[] = [];
+  if (imported.ownLists) {
+    try {
+      restored.lists = await addImportedOwnLists(imported.packId, imported.ownLists);
+    } catch (error) {
+      problems.push(`Your lists from the file could not be added: ${errorText(error)}`);
+    }
+  }
+  if (imported.ownLocations) {
+    try {
+      const added = await addImportedOwnLocations(imported.packId, imported.ownLocations);
+      restored.locations = added.locations;
+      restored.types = added.types;
+      restored.areas = added.areas;
+    } catch (error) {
+      problems.push(
+        `Your locations and types from the file could not be added: ${errorText(error)}`,
+      );
+    }
+  }
+  restored.problem = problems.length > 0 ? problems.join(' ') : null;
+  return restored;
 }
 
 /**
@@ -139,17 +183,19 @@ export async function exportPackFile(
 export async function importPackFile(
   file: PackFileInfo,
   replace: boolean,
-): Promise<PackFileImported> {
+): Promise<PackFileImported & { mine: MineRestored | null }> {
   const imported = await desktop!.packFiles.import(file.path, replace);
   // The game is in the maps folder: Android's copy of the file is not needed.
   if (pickedCopy === file.path) discardPickedCopy();
+  // Kept where the person keeps them before the game opens, so it opens with them.
+  const mine = await restoreMine(imported);
   applyListing(imported.listing);
   const entry = get().catalog.find((pack) => pack.id === imported.packId);
   if (entry) {
     set({ tileRevision: get().tileRevision + 1 });
     await loadGame(entry);
   }
-  return imported;
+  return { ...imported, mine };
 }
 
 export function packFileProgress(): Promise<PackFileProgress | null> {

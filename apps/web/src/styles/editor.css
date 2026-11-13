@@ -1326,3 +1326,304 @@
   font-size: 13.5px;
   font-weight: 600;
 }
+
+/* ---------------------------------------------------------------------------
+ * Edit locations: the person's own locations, types and areas (see
+ * touch/locations/). The outline in the panel, and the open one beside the
+ * map, use the editor's pieces above. */
+
+.locations-enter {
+  flex: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.locations-enter:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.locations-map-top {
+  right: calc(16px + var(--atlas-inset-right)) !important;
+}
+
+.locations-title {
+  padding: 2px 4px;
+}
+
+.locations-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 0 12px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.locations-lead {
+  margin: 0 4px 12px;
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.locations-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.locations-heading {
+  margin: 0 4px 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.locations-empty {
+  margin: 0 4px;
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+}
+
+.locations-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.locations-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.locations-row:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.locations-row[aria-current='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.locations-row .glyph-badge {
+  flex: none;
+}
+
+.locations-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.locations-row-name,
+.locations-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locations-row-name {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.locations-row-detail {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.locations-new {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.locations-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.locations-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.locations-pick .glyph-badge {
+  flex: none;
+}
+
+.locations-select {
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.locations-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: -10px;
+}
+
+.locations-note {
+  min-height: 96px;
+  padding: 10px 14px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.locations-move {
+  align-self: flex-start;
+}
+
+.locations-move[aria-pressed='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+}
+
+.locations-fieldset {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.locations-fieldset legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.locations-swatches,
+.locations-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 4px;
+}
+
+.locations-swatch,
+.locations-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.locations-swatch:hover,
+.locations-icon:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.locations-swatch:has(input:checked),
+.locations-icon:has(input:checked) {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.locations-swatch:has(input:focus-visible),
+.locations-icon:has(input:focus-visible) {
+  outline: 2px solid var(--atlas-focus, var(--atlas-accent));
+  outline-offset: 2px;
+}
+
+.locations-swatch-dot {
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--atlas-bg);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--atlas-border-strong);
+}
+
+/* ---------------------------------------------------------------------------
+ * Games made in the app: New game, Add map and Add level (a name and a
+ * picture, then how far the cut is), Rename and Delete map on the Games
+ * screen (touch/OwnGames.tsx). */
+
+.own-game-dialog {
+  width: min(540px, calc(100vw - 32px));
+}
+
+.own-game-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.own-game-picture {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px 8px 8px 14px;
+  border: 1px dashed var(--atlas-border-strong);
+  border-radius: 12px;
+}
+
+.own-game-picture-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.own-game-picture-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.own-game-picture-detail,
+.own-game-picture-none {
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.own-game-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.own-game-actions {
+  flex-wrap: wrap;
+}
+
+.own-game-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.own-game-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.own-game-form-row .own-input {
+  flex: 1 1 220px;
+  width: auto;
+}

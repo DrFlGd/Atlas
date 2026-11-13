@@ -39,6 +39,8 @@ export interface AndroidShell {
   saved: { suggestedName: string; contents: string }[];
   /** What the next progress import opens; null closes the picker. */
   open: { name: string; contents: string } | null;
+  /** One's own files the next map pack file import gives back. */
+  importMine: { ownLists?: string; ownLocations?: string } | null;
 }
 
 /** Commands only the desktop shell has, or that need folders: never called on Android. */
@@ -54,6 +56,17 @@ export const DESKTOP_ONLY = [
   'packfile_options',
   'packfile_export',
   'packfile_pick',
+  'map_picture_pick',
+  'own_game_create',
+  'own_game_add_map',
+  'own_game_add_level',
+  'own_game_progress',
+  'own_game_cancel',
+  'own_game_rename',
+  'own_game_delete_map',
+  'own_locations_read',
+  'own_locations_write',
+  'own_locations_delete',
 ];
 
 export function installAndroidShell(desktopOnly: string[]) {
@@ -67,6 +80,7 @@ export function installAndroidShell(desktopOnly: string[]) {
     imported: false,
     saved: [],
     open: null,
+    importMine: null,
   };
   (window as unknown as { __androidShell: AndroidShell }).__androidShell = shell;
   const demoUrl = new URL('packs/demo/', window.location.href).href;
@@ -260,6 +274,7 @@ export function installAndroidShell(desktopOnly: string[]) {
               replaced: args.replace as boolean,
               header,
               listing: listing(),
+              ...(shell.importMine ?? {}),
             };
           },
           'Cancelled. Nothing was written.',

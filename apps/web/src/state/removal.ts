@@ -4,6 +4,7 @@ import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
 import { applyListing } from './library';
 import { deleteOwnListsOf } from './ownLists';
+import { deleteOwnLocationsOf } from './ownLocations';
 import { loadMapImages } from './mapImages';
 import { clock, progressStore } from './services';
 import { useAtlas } from './store';
@@ -51,6 +52,8 @@ export async function deletePack(
   deleteProgress: boolean,
   /** Also the person's own lists of the game, kept beside the pack (see `ownLists.ts`). */
   deleteLists = false,
+  /** Also the person's own locations, types and areas of the game (see `ownLocations.ts`). */
+  deleteLocations = false,
 ): Promise<RemovalOutcome> {
   if (!desktop) return { ok: false, error: 'Maps can only be deleted in the desktop app.' };
   const title = titleOf(id);
@@ -66,6 +69,17 @@ export async function deletePack(
       await deleteOwnListsOf(id);
     } catch {
       notify(`Deleted ${title}, but your lists and guides for it could not be deleted.`, 'error');
+      return { ok: true };
+    }
+  }
+  if (deleteLocations) {
+    try {
+      await deleteOwnLocationsOf(id);
+    } catch {
+      notify(
+        `Deleted ${title}, but your locations and types for it could not be deleted.`,
+        'error',
+      );
       return { ok: true };
     }
   }

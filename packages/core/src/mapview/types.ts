@@ -122,6 +122,20 @@ export interface MapOverlay {
   joined: boolean;
 }
 
+/**
+ * A location being placed or moved: a handle drawn over the markers that
+ * can be dragged, or moved with the arrow keys once it has focus.
+ */
+export interface MapHandle {
+  /** Image pixel, origin top-left. */
+  x: number;
+  y: number;
+  /** The handle's accessible name. */
+  label: string;
+  /** Its colour (a CSS colour); the theme's accent when omitted. */
+  color?: string;
+}
+
 export type Unsubscribe = () => void;
 
 /**
@@ -149,6 +163,10 @@ export interface MapView {
   setOverlay(overlay: MapOverlay | null): void;
   /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
   setSelected(markerId: string | null): void;
+  /** Shows a handle that can be dragged to move a location, or none (null). */
+  setHandle(handle: MapHandle | null): void;
+  /** Called with the image pixel where the handle was dragged or moved with a key to. */
+  onHandleMove(listener: (point: PixelPoint) => void): Unsubscribe;
   /** Re-reads theme colours from CSS custom properties and redraws. */
   refreshStyle(): void;
   /**
@@ -177,8 +195,11 @@ export interface MapView {
    * plain map it still does.
    */
   onMarkerMenu(listener: (markerId: string) => void): Unsubscribe;
-  /** Called with the image pixel of every click on the map, on a marker or not. */
-  onMapClick(listener: (point: PixelPoint) => void): Unsubscribe;
+  /**
+   * Called with the image pixel of every click on the map, on a marker or
+   * not, and whether it was on a marker or a cluster.
+   */
+  onMapClick(listener: (point: PixelPoint, onMarker: boolean) => void): Unsubscribe;
   /** Called when the pointer moves onto a marker, or off it (null). */
   onHover(listener: (hover: MarkerHover | null) => void): Unsubscribe;
   /** Called when the tile status of the current layer changes. */
