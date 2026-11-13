@@ -72,7 +72,7 @@ export function mergeOwnLocations(data: PackData, own: OwnLocations): MergedOwnL
   ]) {
     taken.add(record.id);
   }
-  const keep = <T extends { id: string }>(record: T, ok: boolean): boolean => {
+  const keep = (record: { id: string }, ok: boolean): boolean => {
     if (!ok || taken.has(record.id)) {
       skipped++;
       return false;
@@ -202,14 +202,16 @@ export function changeOwnLocation(
   const locations = own.locations.map((location) => {
     if (location.id !== id) return location;
     const next: OwnLocation = { ...location };
+    let touched = false;
     for (const [key, value] of Object.entries(changes) as [keyof OwnLocationChanges, unknown][]) {
       if (value === undefined && key !== 'note') continue;
       if (next[key] === value) continue;
-      changed = true;
+      touched = true;
       if (key === 'note' && (value === undefined || value === '')) delete next.note;
       else (next as Record<string, unknown>)[key] = value;
     }
-    if (!changed) return location;
+    if (!touched) return location;
+    changed = true;
     next.updatedAt = now.toISOString();
     return next;
   });

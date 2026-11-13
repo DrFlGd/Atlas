@@ -95,7 +95,7 @@ describe('own locations file', () => {
     );
     (file.categories as unknown[]).push({ nope: true });
     file.newerField = { anything: 1 };
-    (locations[1] as Record<string, unknown>).newerKey = 'x';
+    locations[1]!.newerKey = 'x';
     const read = readOwnLocationsFile(file);
     expect(read.ok).toBe(true);
     if (!read.ok) return;

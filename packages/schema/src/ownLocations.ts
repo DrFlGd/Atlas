@@ -67,8 +67,8 @@ function ownLocationSchemas(mode: SchemaMode) {
     mapId: idOf('map'),
     layerId: idOf('layer'),
     /** Map image pixel, origin top-left. */
-    x: z.number().finite(),
-    y: z.number().finite(),
+    x: z.number(),
+    y: z.number(),
     /** The pack's type or an own one. */
     categoryId: idOf('cat'),
     /** The pack's area or an own one, or none. */

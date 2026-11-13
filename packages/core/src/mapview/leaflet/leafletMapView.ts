@@ -1,8 +1,9 @@
 import L from 'leaflet';
-import { pixelToSimpleLatLng, simpleLatLngToPixel } from '../../geometry/coords';
+import { pixelToSimpleLatLng, simpleLatLngToPixel, type PixelPoint } from '../../geometry/coords';
 import { probeTiles } from '../../pack/tileProbe';
 import type {
   FlyToTarget,
+  MapHandle,
   MapLayerSpec,
   MapOverlay,
   MapMarker,
@@ -20,6 +21,9 @@ import { createTileLayer, firstViewBounds, imageBounds } from './tileLayer';
 const MARKER_PANE = 'atlasMarkers';
 const PLAYER_PANE = 'atlasPlayer';
 const OVERLAY_PANE = 'atlasOverlay';
+const HANDLE_PANE = 'atlasHandle';
+/** How far an arrow key moves a handle, in screen pixels; with Shift, five times as far. */
+const HANDLE_STEP = 8;
 /** How long a press must last to count as press and hold, in milliseconds. */
 const LONG_PRESS_MS = 500;
 /** How far a finger may wander during a press and hold, in CSS pixels. */
@@ -89,6 +93,7 @@ export function createLeafletMapView(
   pane.style.zIndex = '450';
   map.createPane(PLAYER_PANE).style.zIndex = '460';
   map.createPane(OVERLAY_PANE).style.zIndex = '455';
+  map.createPane(HANDLE_PANE).style.zIndex = '470';
 
   let layer: MapLayerSpec | null = null;
   let tileLayer: L.GridLayer | null = null;
@@ -96,7 +101,7 @@ export function createLeafletMapView(
   let markers: readonly MapMarker[] = [];
   let selectedId: string | null = null;
   const selectListeners = new Set<(id: string | null) => void>();
-  const clickListeners = new Set<(point: { x: number; y: number }) => void>();
+  const clickListeners = new Set<(point: PixelPoint, onMarker: boolean) => void>();
   const longPressListeners = new Set<(id: string) => void>();
   const markerMenuListeners = new Set<(id: string) => void>();
   /** Until when a click is the end of a press and hold, not a click. */
@@ -105,6 +110,9 @@ export function createLeafletMapView(
   let playerMarker: L.Marker | null = null;
   let overlay: MapOverlay | null = null;
   let overlayLayer: L.LayerGroup | null = null;
+  let handle: MapHandle | null = null;
+  let handleMarker: L.Marker | null = null;
+  const handleListeners = new Set<(point: PixelPoint) => void>();
   const viewListeners = new Set<(state: MapViewState) => void>();
   const hoverListeners = new Set<(hover: MarkerHover | null) => void>();
   const tileListeners = new Set<(status: TileStatus) => void>();
@@ -179,8 +187,9 @@ export function createLeafletMapView(
   map.on('click', (event: L.LeafletMouseEvent) => {
     if (!layer || performance.now() <= swallowClickUntil) return;
     const point = toPixel(event.latlng);
+    const onMarker = markerLayer?.hitTest(event.containerPoint) != null;
     clickListeners.forEach((listener) => {
-      listener(point);
+      listener(point, onMarker);
     });
   });
 
@@ -243,6 +252,66 @@ export function createLeafletMapView(
     if (performance.now() > swallowClickUntil) return false;
     swallowClickUntil = 0;
     return true;
+  };
+
+  /** The image pixel a handle stands for, kept on the image. */
+  const onImage = (point: PixelPoint): PixelPoint =>
+    layer
+      ? {
+          x: Math.round(Math.min(Math.max(point.x, 0), layer.width)),
+          y: Math.round(Math.min(Math.max(point.y, 0), layer.height)),
+        }
+      : point;
+  const moveHandleTo = (point: PixelPoint) => {
+    const at = onImage(point);
+    handleListeners.forEach((listener) => {
+      listener(at);
+    });
+  };
+  const showHandle = () => {
+    handleMarker?.remove();
+    handleMarker = null;
+    if (!handle || !layer) return;
+    const marker = L.marker(toLatLng(handle.x, handle.y), {
+      icon: L.divIcon({
+        className: 'atlas-handle',
+        html: '<span aria-hidden="true"></span>',
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      }),
+      pane: HANDLE_PANE,
+      draggable: true,
+      keyboard: true,
+      title: handle.label,
+      alt: handle.label,
+      autoPan: true,
+    });
+    marker.on('dragend', () => {
+      moveHandleTo(toPixel(marker.getLatLng()));
+    });
+    marker.addTo(map);
+    const element = marker.getElement();
+    if (element) {
+      element.setAttribute('role', 'button');
+      element.setAttribute('aria-label', handle.label);
+      if (handle.color) element.style.setProperty('--atlas-handle', handle.color);
+      L.DomEvent.on(element, 'keydown', (event) => {
+        const key = (event as KeyboardEvent).key;
+        const step = HANDLE_STEP * ((event as KeyboardEvent).shiftKey ? 5 : 1);
+        const moves: Record<string, [number, number]> = {
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+        };
+        const move = moves[key];
+        if (!move) return;
+        L.DomEvent.stop(event);
+        const at = map.latLngToContainerPoint(marker.getLatLng()).add(L.point(move[0], move[1]));
+        moveHandleTo(toPixel(map.containerPointToLatLng(at)));
+      });
+    }
+    handleMarker = marker;
   };
 
   const showPlayer = () => {
@@ -350,10 +419,13 @@ export function createLeafletMapView(
       player = null;
       playerMarker?.remove();
       playerMarker = null;
-      // So does an overlay.
+      // So does an overlay, and a handle.
       overlay = null;
       overlayLayer?.remove();
       overlayLayer = null;
+      handle = null;
+      handleMarker?.remove();
+      handleMarker = null;
 
       const bounds = imageBounds(spec);
       map.setMinZoom(spec.minZoom);
@@ -417,6 +489,27 @@ export function createLeafletMapView(
       if (destroyed || (next === null && overlay === null)) return;
       overlay = next;
       showOverlay();
+    },
+
+    setHandle(next) {
+      if (destroyed) return;
+      const same =
+        next !== null &&
+        handle !== null &&
+        next.x === handle.x &&
+        next.y === handle.y &&
+        next.label === handle.label &&
+        next.color === handle.color;
+      if (same || (next === null && handle === null)) return;
+      const hadFocus = handleMarker?.getElement()?.contains(document.activeElement) === true;
+      handle = next;
+      showHandle();
+      if (hadFocus) handleMarker?.getElement()?.focus();
+    },
+
+    onHandleMove(listener): Unsubscribe {
+      handleListeners.add(listener);
+      return () => handleListeners.delete(listener);
     },
 
     setSelected(id) {
@@ -513,6 +606,7 @@ export function createLeafletMapView(
       container.removeEventListener('contextmenu', onContextMenu);
       selectListeners.clear();
       clickListeners.clear();
+      handleListeners.clear();
       longPressListeners.clear();
       markerMenuListeners.clear();
       viewListeners.clear();
