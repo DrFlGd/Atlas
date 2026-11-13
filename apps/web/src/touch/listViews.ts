@@ -19,12 +19,15 @@ import {
 import { isOwnId } from '@atlas/schema';
 import { useMemo } from 'react';
 import { create } from 'zustand';
-import { moveMap, saveSetting, showMap } from '../state/actions';
+import { moveMap, notify, saveSetting, showMap } from '../state/actions';
 import { openChecklistPage } from '../state/checklists';
+import { linkedLocations } from '../state/guideMatches';
 import { ownEntryById } from '../state/ownLists';
 import { SETTINGS, progressStore } from '../state/services';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { useEditor } from './editor/editorState';
+import { pagePlacesShown, useGuideOnMap } from './guideMap';
+import { showSection } from './state';
 
 /**
  * What the standard layout's Lists keeps about lists: the view each was
@@ -271,8 +274,46 @@ export function followOpenList(): void {
   const places = entry ? placesOf(entry) : null;
   // While a list is being edited every location is shown, to add from.
   const editing = useEditor.getState().listId !== null && useEditor.getState().mode === 'edit';
-  const only = !editing && lists.onlyOnMap && places && places.size > 0 ? places : null;
+  const listShown = !editing && lists.onlyOnMap && places && places.size > 0 ? places : null;
+  // With no list open: a guide page's locations, shown from Guides (see `showPageOnMap`).
+  const pageShown = entry || editing ? null : pagePlacesShown(atlas.game?.pack.manifest.gameId);
+  const only = listShown ?? pageShown;
   if (atlas.listOnly !== only) useAtlas.setState({ listOnly: only });
+}
+
+// ---------------------------------------------------------------------------
+// A guide page's locations on the map
+
+/**
+ * "Show on the map" on a guide page: the locations it is linked to are the
+ * only ones on the map, all in view (see `guideMap.ts`).
+ */
+export function showPageOnMap(game: LoadedGame, guideId: string, title: string): void {
+  const ids = linkedLocations(game, guideId);
+  if (ids.length === 0) {
+    notify('This page is not linked to any location on the map.');
+    return;
+  }
+  // A list shown alone gives way: the page is what was asked for.
+  if (useAtlas.getState().checklistPages.at(-1)?.kind === 'checklist') {
+    useAtlas.setState({ checklistPages: [] });
+  }
+  useGuideOnMap.setState({
+    gameId: game.pack.manifest.gameId,
+    guideId,
+    title,
+    places: new Set(ids),
+  });
+  followOpenList();
+  showSection('map');
+  fitPlaces(game, ids);
+}
+
+/** Shows every location again, after a guide page's alone. */
+export function clearPageOnMap(): void {
+  if (useGuideOnMap.getState().places === null) return;
+  useGuideOnMap.setState({ gameId: null, guideId: null, title: '', places: null });
+  followOpenList();
 }
 
 /** Opens one area of a list; `replace` swaps the area shown for it, so Back still leads to the list. */

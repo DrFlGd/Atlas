@@ -12,7 +12,7 @@ import { downloadsOffered, keyboardHintsOffered } from '../features';
 import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
 import { checklistScreenTitle, setGuideReader } from '../state/checklists';
-import { guidesOf, hasGuidePages, hasListsSection, hasMap } from '../state/guides';
+import { guidesOf, hasListsSection, hasMap, useGuidesSection } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
 import { useOwnLists } from '../state/ownLists';
 import { useAtlas } from '../state/store';
@@ -89,10 +89,12 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const arrangement = useArrangement(input);
   const wide = arrangement.kind === 'wide';
   const section = useTouch((s) => s.section);
+  const game = useAtlas((s) => s.game);
   const search = useTouch((s) => s.search);
   const filters = useTouch((s) => s.filters);
   // Guides read as pages, and a game with no map (guides and lists only).
-  const pages = useAtlas((s) => hasGuidePages(s.game));
+  // With a map, Guides is also where pages of other games are added (see `useGuidesSection`).
+  const pages = useGuidesSection(game);
   const mapShown = useAtlas((s) => hasMap(s.game));
   // The list editor picks from the map, so a game with no map has none.
   const room = arrangement.editor && mapShown;
@@ -101,7 +103,6 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const hasLists =
     useAtlas((s) => hasListsSection(s.game) || (s.game !== null && room)) || ownLists;
   const editorMode = useEditor((s) => (s.listId === null || !room ? null : s.mode));
-  const game = useAtlas((s) => s.game);
   const selected = useAtlas((s) => s.selectedId !== null && editorMode !== 'edit');
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
@@ -125,7 +126,9 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
     },
   }));
 
-  const placeShown = selected && (wide || (section === 'map' && !search && !filters));
+  // The card stays off the Guides screen, which covers the map when wide.
+  const placeShown =
+    selected && ((wide && section !== 'guides') || (section === 'map' && !search && !filters));
   const map = mapShown ? (
     <main className="touch-map" aria-label="Map">
       <MapPane touch={mapOptions} />
