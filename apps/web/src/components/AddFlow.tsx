@@ -721,6 +721,11 @@ function Run({
   const done = run.pages.filter(
     ({ state }) => state.kind === 'added' || state.kind === 'failed',
   ).length;
+  // The game Open opens: the one shown, else the last one a page was added to.
+  const lastAdded = run.pages.findLast(({ state }) => state.kind === 'added')?.state;
+  const openId = shownPackId ?? (lastAdded?.kind === 'added' ? lastAdded.packId : null);
+  const openTitle = openId ? games.get(openId) : undefined;
+  const guides = run.pages.some(({ state }) => state.kind === 'added' && state.guide);
   return (
     <section
       className="dialog-section"
@@ -792,7 +797,13 @@ function Run({
       <p className="muted small">
         {running
           ? 'Stop ends the run after the page that is open now; the pages done stay added.'
-          : 'Add more empties the address box. Open shows the game here in the Library.'}
+          : `Add more empties the address box.${
+              openTitle
+                ? guides
+                  ? ` Open ${openTitle} shows its pages here in the Library, to tick and read more of them.`
+                  : ` Open ${openTitle} shows the game here in the Library.`
+                : ' Done goes back to the Library.'
+            }`}
       </p>
       <div className="row-actions wrap">
         {running ? (
@@ -840,12 +851,10 @@ function Run({
               data-testid="add-map-done"
               onClick={() => {
                 closeAdding();
-                const last = run.pages.findLast(({ state }) => state.kind === 'added')?.state;
-                if (shownPackId) openLibraryGame(shownPackId);
-                else if (last?.kind === 'added') openLibraryGame(last.packId);
+                if (openId) openLibraryGame(openId);
               }}
             >
-              {shownPackId && games.get(shownPackId) ? `Open ${games.get(shownPackId)}` : 'Done'}
+              {openTitle ? `Open ${openTitle}` : 'Done'}
             </button>
           </>
         )}

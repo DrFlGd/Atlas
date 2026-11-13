@@ -375,7 +375,8 @@ export function ChoosePages({ choice }: { choice: Choice }) {
             A section’s name ticks or unticks every page under it; “From here on” ticks a page and
             every page after it. This app reads the pages you tick in one go, one at a time with a
             pause. If you stop it or the site asks it to wait, it keeps the rest, and the Library
-            offers to continue with them another time.
+            offers to continue with them another time. Once pages are read, the wiki’s screen in the
+            Library lists all of its pages, to tick and read more.
           </>
         ) : (
           <>
