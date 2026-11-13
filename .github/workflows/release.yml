@@ -139,6 +139,11 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.6.1
+
+          - **A caption no longer stretches a picture.** In Guides, a picture with a long line of words under it was stretched to the width of that line; it keeps its own size now.
+          - **Links to pages not there yet.** On a guide page of a game read from a site, a link to a page the game does not hold yet has a dotted underline and says "This page has not been read yet". It becomes a working link when the game gets that page.
+
           ## New in 0.6.0
 
           - **The Library.** The games on this computer now have a screen of their own, **Library**, the first section in the strip at the side. Pick a game on the left to see what it holds, with **Show the map** or **Read the guides** at the top. **More** holds what is used less often (export to a file, import a map pack file, open its folder, delete), each with a sentence on what it does. **New game…** is under the list of games. In the Classic layout the folder icon opens the same screen.
