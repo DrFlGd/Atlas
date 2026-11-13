@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { canKeepScreenOn, keepScreenOn } from '../androidBars';
 import { keyboardHintsOffered } from '../features';
 import { notify, saveSetting, setFound, setOverrides } from '../state/actions';
+import { useOwnLists } from '../state/ownLists';
 import { SETTINGS, progressStore } from '../state/services';
 import { useAtlas, type LoadedGame } from '../state/store';
 import type { Section } from './backStack';
@@ -126,7 +127,14 @@ export function focusSearchField(): void {
 export function toggleLists(): void {
   const { game } = useAtlas.getState();
   if (get().section === 'lists') showSection('map');
-  else if (game && !game.checklists.isEmpty) showSection('lists');
+  else if (
+    game &&
+    (!game.checklists.isEmpty ||
+      get().arrangement === 'wide' ||
+      useOwnLists.getState().lists.length > 0)
+  ) {
+    showSection('lists');
+  }
 }
 
 // ---------------------------------------------------------------------------

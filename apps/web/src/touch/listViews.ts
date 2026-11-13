@@ -16,12 +16,15 @@ import {
   type ListView,
   type Stage,
 } from '@atlas/core';
+import { isOwnId } from '@atlas/schema';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { moveMap, saveSetting, showMap } from '../state/actions';
 import { openChecklistPage } from '../state/checklists';
+import { ownEntryById } from '../state/ownLists';
 import { SETTINGS, progressStore } from '../state/services';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { useEditor } from './editor/editorState';
 
 /**
  * What the standard layout's Lists keeps about lists: the view each was
@@ -74,9 +77,10 @@ export function everythingOf(game: LoadedGame): ChecklistEntry {
   return entry;
 }
 
-/** A list by id: one of the pack's, or Everything. */
+/** A list by id: one of the pack's, Everything, or one of the person's own. */
 export function listById(game: LoadedGame, id: string): ChecklistEntry | undefined {
-  return id === EVERYTHING_ID ? everythingOf(game) : game.checklists.checklist(id);
+  if (id === EVERYTHING_ID) return everythingOf(game);
+  return game.checklists.checklist(id) ?? ownEntryById(game, id);
 }
 
 /** The name of an area of a list: its top-level region, or "No area". */
@@ -215,7 +219,8 @@ export async function loadListPrefs(game: LoadedGame): Promise<void> {
     if (loadedGame !== game) return;
     useLists.setState({
       views: parseViews(views),
-      lastListId: typeof last === 'string' && listById(game, last) ? last : null,
+      // An own list may not be read yet; Lists checks it is there before offering it.
+      lastListId: typeof last === 'string' && (listById(game, last) || isOwnId(last)) ? last : null,
       onlyOnMap: typeof only === 'boolean' ? only : true,
     });
   } catch {
@@ -264,7 +269,9 @@ export function followOpenList(): void {
     useLists.setState({ orderFrom: null });
   }
   const places = entry ? placesOf(entry) : null;
-  const only = lists.onlyOnMap && places && places.size > 0 ? places : null;
+  // While a list is being edited every location is shown, to add from.
+  const editing = useEditor.getState().listId !== null && useEditor.getState().mode === 'edit';
+  const only = !editing && lists.onlyOnMap && places && places.size > 0 ? places : null;
   if (atlas.listOnly !== only) useAtlas.setState({ listOnly: only });
 }
 

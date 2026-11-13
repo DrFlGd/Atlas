@@ -76,10 +76,50 @@ describe('Back', () => {
           place: { place: false },
           'lists-page': { listsPage: false },
           'to-map': { section: 'map' as const },
+          'editor-picking': { editor: 'panel' as const },
+          'editor-panel': { editor: 'open' as const },
+          'editor-preview': { editor: 'open' as const },
+          'editor-leave': { editor: null },
         }[step],
       };
     }
     expect(steps).toEqual(['dialog', 'collapse-place', 'filters', 'place', 'lists-page', 'to-map']);
+  });
+
+  it('closes what is open in the list editor, then the editor, before the list', () => {
+    let state: BackState = {
+      ...nothing,
+      section: 'lists',
+      listsPage: true,
+      editor: 'picking',
+    };
+    const steps = [];
+    for (let step = backStep(state); step; step = backStep(state)) {
+      steps.push(step);
+      const next: Partial<BackState> =
+        step === 'editor-picking'
+          ? { editor: 'panel' }
+          : step === 'editor-panel'
+            ? { editor: 'open' }
+            : step === 'editor-leave'
+              ? { editor: null }
+              : step === 'lists-page'
+                ? { listsPage: false }
+                : { section: 'map' };
+      state = { ...state, ...next };
+    }
+    expect(steps).toEqual([
+      'editor-picking',
+      'editor-panel',
+      'editor-leave',
+      'lists-page',
+      'to-map',
+    ]);
+    expect(backStep({ ...nothing, section: 'lists', listsPage: true, editor: 'preview' })).toBe(
+      'editor-preview',
+    );
+    // A dialog over the editor closes first.
+    expect(backStep({ ...nothing, dialog: true, editor: 'panel' })).toBe('dialog');
   });
 
   it('closes search and the map chooser before the place', () => {
