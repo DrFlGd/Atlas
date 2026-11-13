@@ -139,6 +139,19 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New since 0.4.4
+
+          - **Lists and guides of your own.** Under **Lists**, **New list or guide** starts one from a template: Collection, Secrets guide, Photo guide, 100% route, Build guide or Plain list. Add locations from the map, a whole type in an area, by search or from another list. Notes take bold, bullets, links to locations and guides, and text that stays hidden until tapped. Drag steps to reorder them, or use **Suggest an order**. A list exports as one file (.atlaslist). The game's own lists are never changed.
+          - **Games of your own.** **Games**, then **New game…**: give it a name and one large picture (PNG, JPEG or WebP, up to 16,384 × 16,384 pixels), and Atlas cuts it into a map. More maps and levels can be added later.
+          - **Edit locations.** Put your own locations, types and areas on any map, your own or an imported one. The game's own locations stay as they are.
+          - **Photos.** A location and a list entry can show photos, and a Photo guide shows each entry as a card with its photo. Add your own screenshots with **Add a photo**. A photo marked as a spoiler stays blurred until tapped.
+          - **Guides.** A new **Guides** section reads guides as pages, with a contents, tables, pictures, links between pages and search. A game can hold guides and no map.
+          - **Pages linked to the map.** In Guides, **Link pages to the map** compares page names with the map's locations, types and regions. Nothing is linked until you confirm it. A linked page then shows on its locations' cards.
+          - **Export.** A map pack file (.atlaspack) can carry your own lists, locations, types and photos: tick **Include my lists, locations, types and photos**.
+          - The menus now say **location** and **type**.
+
+          Your own lists, locations and photos are kept beside each game in the maps folder, never inside it, so updating a map does not undo them. Lists, locations and photos are made in a window of a tablet's width or more.
+
           ---
 
           Built from commit $commit.
