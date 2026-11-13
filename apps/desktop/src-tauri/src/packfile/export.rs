@@ -13,8 +13,8 @@ use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 use super::{
     analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal,
     shared_pictures, unavailable, AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts,
-    LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE, PICTURES_FILE, VERSION,
-    VERSION_WITHOUT_MINE,
+    LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE, MINE_PICTURES_DIR,
+    PICTURES_FILE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
 };
 use crate::{
     library::PackLock,
@@ -109,7 +109,7 @@ pub fn export_with_mine(
 
     // The pack's JSON files, the manifest's image summaries rewritten, and
     // its pictures that may be passed on (the list cut down to them).
-    let pictures = shared_pictures(&source.root)?;
+    let pictures = shared_pictures(&source.root, &source.images)?;
     let mut entries: Vec<Entry> = Vec::new();
     for entry in pack_file_entries(&source.root)? {
         if entry.name == PICTURES_FILE {
@@ -165,11 +165,20 @@ pub fn export_with_mine(
             data: EntryData::Bytes(text.as_bytes().to_vec()),
         });
     }
+    for (file, bytes) in &mine.pictures {
+        entries.push(Entry {
+            name: format!("{MINE_PICTURES_DIR}{file}"),
+            size: bytes.len() as u64,
+            data: EntryData::Bytes(bytes.clone()),
+        });
+    }
 
     let header = Header {
         format: FORMAT.to_owned(),
-        version: if mine_facts.is_some() {
+        version: if mine.needs_version_3() {
             VERSION
+        } else if mine_facts.is_some() {
+            VERSION_WITH_MINE
         } else {
             VERSION_WITHOUT_MINE
         },

@@ -9,9 +9,11 @@ import {
   type PackFileProgress,
 } from '../desktop';
 import { exportProgress, loadGame, notify } from './actions';
+import { addImportedGuideLinks, flushGuideLinks } from './guideLinks';
 import { applyListing } from './library';
 import { addImportedOwnLists, flushOwnLists } from './ownLists';
 import { addImportedOwnLocations, flushOwnLocations } from './ownLocations';
+import { keepPictureFiles } from './ownPictures';
 import { useAtlas } from './store';
 
 /**
@@ -134,7 +136,7 @@ export async function exportPackFile(
     ? `${JSON.stringify(await exportProgress({ scope: 'all' }), null, 2)}\n`
     : undefined;
   // The shell reads them from their files: what was changed last is saved first.
-  if (withMine) await Promise.all([flushOwnLists(), flushOwnLocations()]);
+  if (withMine) await Promise.all([flushOwnLists(), flushOwnLocations(), flushGuideLinks()]);
   return desktop!.packFiles.export(packId, detail, progress, withMine);
 }
 
@@ -144,15 +146,45 @@ export interface MineRestored {
   locations: number;
   types: number;
   areas: number;
+  photos: number;
+  /** Whether links between guide pages and the map were added. */
+  guideLinks: boolean;
   /** Why some could not be added, in plain words. */
   problem: string | null;
 }
 
-/** Adds the own lists, locations and types a file carried to the person's, where they keep them. */
+/** Adds the own lists, locations, types, photos and guide links a file carried to the person's, where they keep them. */
 async function restoreMine(imported: PackFileImported): Promise<MineRestored | null> {
-  if (!imported.ownLists && !imported.ownLocations) return null;
-  const restored: MineRestored = { lists: 0, locations: 0, types: 0, areas: 0, problem: null };
+  const pictures = imported.ownPictures ?? [];
+  if (
+    !imported.ownLists &&
+    !imported.ownLocations &&
+    !imported.guideLinks &&
+    pictures.length === 0
+  ) {
+    return null;
+  }
+  const restored: MineRestored = {
+    lists: 0,
+    locations: 0,
+    types: 0,
+    areas: 0,
+    photos: 0,
+    guideLinks: false,
+    problem: null,
+  };
   const problems: string[] = [];
+  // The photos first, so the lists and locations that show them never name a file not there.
+  if (pictures.length > 0) {
+    try {
+      restored.photos = await keepPictureFiles(
+        imported.packId,
+        pictures.map(({ file, data }) => ({ file: `pictures/${file}`, data })),
+      );
+    } catch (error) {
+      problems.push(`Your photos from the file could not be added: ${errorText(error)}`);
+    }
+  }
   if (imported.ownLists) {
     try {
       restored.lists = await addImportedOwnLists(imported.packId, imported.ownLists);
@@ -169,6 +201,16 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     } catch (error) {
       problems.push(
         `Your locations and types from the file could not be added: ${errorText(error)}`,
+      );
+    }
+  }
+  if (imported.guideLinks) {
+    try {
+      await addImportedGuideLinks(imported.packId, imported.guideLinks);
+      restored.guideLinks = true;
+    } catch (error) {
+      problems.push(
+        `Your links between guide pages and the map could not be added: ${errorText(error)}`,
       );
     }
   }

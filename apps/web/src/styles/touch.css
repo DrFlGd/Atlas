@@ -3183,3 +3183,110 @@
   padding: 0.15em 0.8em;
   line-height: 1.9;
 }
+
+/* Photos of an entry, under its row. */
+.touch-entry-photos {
+  flex-basis: 100%;
+  padding: 0 12px 10px 54px;
+}
+
+.touch-entry-photos > .photo {
+  width: min(220px, 70%);
+}
+
+.touch-entry-photos > .photo:only-child {
+  width: min(320px, 100%);
+}
+
+.touch-entry-more-body > .photo-strip {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+/* The Photo guide's cards: the photo first, then the name, where, and the note. */
+.photo-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 10px 12px 16px;
+}
+
+.photo-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+}
+
+.photo-card[data-done='true'] {
+  border-color: var(--atlas-complete);
+}
+
+.photo-card-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+  color: var(--atlas-muted);
+  background: var(--atlas-surface-raised);
+}
+
+.photo-card-body {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 2px 8px;
+  padding: 8px 10px 12px 4px;
+}
+
+.photo-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.photo-card-text {
+  cursor: pointer;
+}
+
+.photo-card-name {
+  font-weight: 600;
+}
+
+.photo-card[data-done='true'] .photo-card-name {
+  color: var(--atlas-muted);
+  text-decoration: line-through;
+}
+
+.photo-card-where {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.photo-card-note {
+  grid-column: 2;
+  margin: 4px 0 0;
+  color: var(--touch-text-soft, var(--atlas-muted));
+  font-size: 14px;
+}
+
+.photo-cards-group {
+  margin: 0;
+  padding: 12px 12px 0;
+  font-size: 15px;
+}
+
+.photo-cards-map {
+  margin: 0;
+  padding: 16px 12px 0;
+  font-size: 17px;
+}

@@ -31,6 +31,7 @@ pub mod manifest;
 pub mod owngame;
 mod owngame_commands;
 pub mod ownlists;
+pub mod ownpictures;
 pub mod packfile;
 mod packs;
 #[cfg(feature = "downloads")]
@@ -140,6 +141,13 @@ macro_rules! viewer_commands {
             commands::list_file_open,
             guidelinks::guide_links_read,
             guidelinks::guide_links_write,
+            guidelinks::guide_links_delete,
+            ownpictures::own_pictures_read,
+            ownpictures::own_pictures_write,
+            ownpictures::own_pictures_list,
+            ownpictures::own_pictures_delete,
+            ownpictures::own_pictures_delete_all,
+            ownpictures::own_picture_pick,
             $($more)*
         ]
     };
@@ -157,6 +165,12 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::tiles_resume,
         commands::tiles_cancel,
         commands::tiles_snapshot,
+        commands::photos_plan,
+        commands::photos_start,
+        commands::photos_pause,
+        commands::photos_resume,
+        commands::photos_cancel,
+        commands::photos_snapshot,
         commands::picture_tiles,
         commands::picture_cancel,
         commands::import_fetch,

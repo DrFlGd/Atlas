@@ -99,6 +99,21 @@ export interface DownloadSnapshot {
   statusRevision: number;
 }
 
+/** What "Download location photos" offers for a pack. */
+export interface PhotoPlan {
+  packId: string;
+  /** Pictures the pack lists to be fetched later. */
+  total: number;
+  /** Of those, not on this device yet. */
+  remaining: number;
+  /** The servers they come from. */
+  hosts: string[];
+  /** The current or last photo job of this pack in this session. */
+  job: DownloadSnapshot | null;
+  /** The title of another download that runs now; a new one waits for it. */
+  busyWith: string | null;
+}
+
 export interface DownloadPlan {
   packId: string;
   options: DetailOption[];
@@ -539,7 +554,14 @@ export interface PackFileHeader {
   files: number;
   bytes: number;
   /** The person's own lists, locations, types and areas the file carries (version 2). */
-  mine?: { lists: number; locations: number; types: number; areas: number };
+  mine?: {
+    lists: number;
+    locations: number;
+    types: number;
+    areas: number;
+    photos?: number;
+    guideLinks?: boolean;
+  };
 }
 
 /** What is known about an installed pack, as a map pack file would say. */
@@ -635,6 +657,10 @@ export interface PackFileImported {
   ownLists?: string | null;
   /** The text of the own locations file the file carried, to add to the person's. */
   ownLocations?: string | null;
+  /** The text of the guide links file the file carried, to add to the person's. */
+  guideLinks?: string | null;
+  /** The person's own photos the file carried: their file names and bytes in base64. */
+  ownPictures?: { file: string; data: string }[] | null;
 }
 
 /** A picture chosen for a map, and whether it can be one. */
@@ -739,6 +765,13 @@ export interface DesktopBridge {
      * whatever its status. Rejects when the site could not be reached.
      */
     fetchPage(url: string): Promise<ShellFetchedPage>;
+    /** "Download location photos": the pictures a pack lists to be fetched later. */
+    photosPlan(packId: string): Promise<PhotoPlan>;
+    photosStart(packId: string): Promise<DownloadSnapshot>;
+    photosPause(packId: string): Promise<DownloadSnapshot>;
+    photosResume(packId: string): Promise<DownloadSnapshot>;
+    photosCancel(packId: string): Promise<void>;
+    photosSnapshot(packId: string): Promise<DownloadSnapshot | null>;
   };
   library: {
     list(): Promise<Listing>;
@@ -825,6 +858,8 @@ export interface DesktopBridge {
     read(gameId: string): Promise<string | null>;
     /** Writes the file whole; with `keepCopy` (a time), keeps the old one beside it first. */
     write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    /** Deletes the file; whether there was one. */
+    delete(gameId: string): Promise<boolean>;
   };
   /**
    * A person's own locations, types and areas of a game, in their file in
@@ -834,6 +869,25 @@ export interface DesktopBridge {
     read(gameId: string): Promise<string | null>;
     write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
     delete(gameId: string): Promise<boolean>;
+  };
+  /**
+   * A person's own photos of a game, in the folder of their own beside the
+   * game's folder in the maps folder (`<game id>.my-pictures/`). Kept with
+   * the own lists (see `ownListFiles`).
+   */
+  ownPictures: {
+    /** A photo's bytes; empty when it is not there. */
+    read(gameId: string, file: string): Promise<Uint8Array>;
+    /** Writes a photo (its bytes in base64). */
+    write(gameId: string, file: string, data: string): Promise<void>;
+    /** The photos kept, by file name. */
+    list(gameId: string): Promise<string[]>;
+    /** Deletes photos; how many there were. */
+    delete(gameId: string, files: string[]): Promise<number>;
+    /** Deletes every photo of a game; whether there were any. */
+    deleteAll(gameId: string): Promise<boolean>;
+    /** Asks for a picture (PNG, JPEG or WebP) and reads it; empty when the dialog was closed. */
+    pick(): Promise<Uint8Array>;
   };
   /** Games made in the app from pictures (see `ownGames`). */
   ownGames: {
@@ -919,6 +973,12 @@ function noDownloads(): DesktopBridge['tiles'] {
     pictureTiles: missing,
     cancelPicture: missing,
     fetchPage: missing,
+    photosPlan: missing,
+    photosStart: missing,
+    photosPause: missing,
+    photosResume: missing,
+    photosCancel: missing,
+    photosSnapshot: missing,
   };
 }
 
@@ -947,6 +1007,12 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           pictureTiles: (request) => call('picture_tiles', { request }),
           cancelPicture: () => call('picture_cancel'),
           fetchPage: (url) => call('import_fetch', { url }),
+          photosPlan: (packId) => call('photos_plan', { packId }),
+          photosStart: (packId) => call('photos_start', { packId }),
+          photosPause: (packId) => call('photos_pause', { packId }),
+          photosResume: (packId) => call('photos_resume', { packId }),
+          photosCancel: (packId) => call('photos_cancel', { packId }),
+          photosSnapshot: (packId) => call('photos_snapshot', { packId }),
         }
       : noDownloads(),
     library: {
@@ -1009,12 +1075,21 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       read: (gameId) => call('guide_links_read', { gameId }),
       write: (gameId, contents, keepCopy) =>
         call('guide_links_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('guide_links_delete', { gameId }),
     },
     ownLocations: {
       read: (gameId) => call('own_locations_read', { gameId }),
       write: (gameId, contents, keepCopy) =>
         call('own_locations_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_locations_delete', { gameId }),
+    },
+    ownPictures: {
+      read: (gameId, file) => call<unknown>('own_pictures_read', { gameId, file }).then(bytesOf),
+      write: (gameId, file, data) => call('own_pictures_write', { gameId, file, data }),
+      list: (gameId) => call('own_pictures_list', { gameId }),
+      delete: (gameId, files) => call('own_pictures_delete', { gameId, files }),
+      deleteAll: (gameId) => call('own_pictures_delete_all', { gameId }),
+      pick: () => call<unknown>('own_picture_pick').then(bytesOf),
     },
     ownGames: {
       pickPicture: () => call('map_picture_pick'),

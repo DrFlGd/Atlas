@@ -36,8 +36,16 @@ export interface LoadPackOptions {
 /** Highest number of issues listed in a {@link PackLoadError}. */
 const MAX_LISTED_ISSUES = 20;
 
-/** Files read only for a pack that has guides. */
-const GUIDE_FILES: readonly CollectionName[] = ['sections', 'pictures'];
+/** Whether a raw list of records (locations, entries) names any photo. */
+function namesPhotos(raw: unknown): boolean {
+  return (
+    Array.isArray(raw) &&
+    raw.some((record: unknown) => {
+      const photos = (record as { photos?: unknown } | null)?.photos;
+      return Array.isArray(photos) && photos.length > 0;
+    })
+  );
+}
 
 /**
  * Loads, validates and indexes the data pack at `packUrl`. The URL must be
@@ -98,14 +106,25 @@ export async function loadPack(
     const spec = PACK_COLLECTIONS[name];
     return readJson(spec.file, spec.required && !mapFiles.includes(name));
   };
-  // The contents and the pictures belong to the guides: a pack without
-  // guides is not asked for them, so older packs cause no extra requests.
+  // The contents belong to the guides, and the pictures to the guides and
+  // to the photos of locations and entries: a pack without them is not
+  // asked for those files, so older packs cause no extra requests.
   const guides = read('guides');
+  const locations = read('locations');
+  const items = read('checklistItems');
+  const hasGuides = guides.then((raw) => Array.isArray(raw) && raw.length > 0);
   const raws = await Promise.all(
     COLLECTION_NAMES.map((name) => {
       if (name === 'guides') return guides;
-      if (!GUIDE_FILES.includes(name)) return read(name);
-      return guides.then((raw) => (Array.isArray(raw) && raw.length > 0 ? read(name) : undefined));
+      if (name === 'locations') return locations;
+      if (name === 'checklistItems') return items;
+      if (name === 'sections') return hasGuides.then((yes) => (yes ? read(name) : undefined));
+      if (name === 'pictures') {
+        return Promise.all([hasGuides, locations, items]).then(([yes, l, i]) =>
+          yes || namesPhotos(l) || namesPhotos(i) ? read(name) : undefined,
+        );
+      }
+      return read(name);
     }),
   );
   const noMap = COLLECTION_NAMES.every(

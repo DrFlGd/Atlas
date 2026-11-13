@@ -1,4 +1,4 @@
-import { isOwnId, type OwnLocations } from '@atlas/schema';
+import { isOwnId, ownPicture, type OwnLocations } from '@atlas/schema';
 import { makeFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
 import { ChecklistIndex } from '../checklists/checklists';
@@ -7,6 +7,7 @@ import { SearchIndex } from '../search/searchIndex';
 import { indexPack } from './loadedPack';
 import {
   addOwnLocation,
+  addOwnLocationPhoto,
   changeOwnLocation,
   mergeOwnFiles,
   mergeOwnLocations,
@@ -18,8 +19,10 @@ import {
   putOwnType,
   removeOwnArea,
   removeOwnLocation,
+  removeOwnLocationPhoto,
   removeOwnOfMap,
   removeOwnType,
+  setOwnLocationPhotoSpoiler,
 } from './ownLocations';
 
 const NOW = new Date('2026-11-13T10:00:00.000Z');
@@ -234,5 +237,29 @@ describe('changing own locations, types and areas', () => {
       'demo:loc:own.l1 Renamed',
       'demo:loc:own.l2 Renamed',
     ]);
+  });
+});
+
+describe('photos of own locations', () => {
+  const shot = ownPicture('demo:picture:own.p1', 'image/png', 800, 600);
+
+  it('adds, marks and removes a photo, and shows it on the merged location', () => {
+    let next = addOwnLocationPhoto(own(), 'demo:loc:own.l1', shot, NOW);
+    expect(next.pictures).toEqual([shot]);
+    next = setOwnLocationPhotoSpoiler(next, 'demo:loc:own.l1', shot.id, true, NOW);
+    expect(next.locations[0]!.photos).toEqual([{ picture: shot.id, spoiler: true }]);
+    const merged = mergeOwnLocations(makeFixturePack(), next).data;
+    expect(merged.locations.find((l) => l.id === 'demo:loc:own.l1')?.photos).toEqual([
+      { picture: shot.id, spoiler: true },
+    ]);
+    const removed = removeOwnLocationPhoto(next, 'demo:loc:own.l1', shot.id, NOW);
+    expect(removed.locations[0]!.photos).toBeUndefined();
+    expect(removed.pictures).toBeUndefined();
+  });
+
+  it('lets the pictures of a deleted location go, and merges pictures from a file', () => {
+    const next = addOwnLocationPhoto(own(), 'demo:loc:own.l1', shot, NOW);
+    expect(removeOwnLocation(next, 'demo:loc:own.l1').pictures).toBeUndefined();
+    expect(mergeOwnFiles(own(), next).pictures).toEqual([shot]);
   });
 });

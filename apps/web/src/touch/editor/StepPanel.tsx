@@ -1,5 +1,5 @@
 import { isOrdered, outlineOf, rowId } from '@atlas/core';
-import type { ChecklistItem, OwnHeading, OwnList } from '@atlas/schema';
+import { MAX_PHOTOS, type ChecklistItem, type OwnHeading, type OwnList } from '@atlas/schema';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../../components/icons';
 import { MarkdownBody } from '../../components/MarkdownBody';
@@ -7,6 +7,7 @@ import { numberFormat } from '../../state/derived';
 import { guidesOf, hasGuidePages } from '../../state/guides';
 import type { LoadedGame } from '../../state/store';
 import {
+  addPhotoToStep,
   changeOpenStep,
   closePanel,
   deleteRow,
@@ -14,11 +15,15 @@ import {
   moveBy,
   onLinkPicked,
   openRow,
+  removePhotoFromStep,
   renameOpenHeading,
   setPicking,
+  setStepPhotoSpoilerOf,
   useEditor,
 } from './editorState';
 import { locationDetail, useLocationHits } from './locations';
+import { PhotosField } from './PhotosField';
+import { useAddPhoto } from './useAddPhoto';
 
 /**
  * The open step, in the panel on the right of the map: its name, its
@@ -49,6 +54,9 @@ export function StepPanel({
     const next = steps[at + by];
     if (next) openRow(rowId(next));
   };
+  const photo = useAddPhoto(game, (picture) => {
+    addPhotoToStep(item.id, picture);
+  });
 
   return (
     <aside className="editor-side" aria-labelledby={`${nameId}-title`} data-testid="step-panel">
@@ -100,7 +108,26 @@ export function StepPanel({
           }}
         />
         <LocationField game={game} item={item} />
-        <NoteEditor game={game} item={item} />
+        <NoteEditor
+          game={game}
+          item={item}
+          addPhoto={photo.add}
+          addingPhoto={photo.busy}
+          photosFull={(item.photos?.length ?? 0) >= MAX_PHOTOS}
+        />
+        {photo.fileInput}
+        <PhotosField
+          game={game}
+          photos={item.photos}
+          name={item.name}
+          busy={photo.busy}
+          onRemove={(pictureId) => {
+            removePhotoFromStep(item.id, pictureId);
+          }}
+          onSpoiler={(pictureId, spoiler) => {
+            setStepPhotoSpoilerOf(item.id, pictureId, spoiler);
+          }}
+        />
         {ordered ? (
           <div className="editor-switch-row">
             <span className="editor-switch-text">
@@ -558,10 +585,23 @@ function linkText(text: string): string {
 
 /**
  * The note, in Markdown: a toolbar for bold, a bulleted list, a link to a
- * location or to a guide page, and hidden text (`||like this||`), the text
- * itself, and the note as it will be shown.
+ * location or to a guide page, a photo (shown under the note, see
+ * `PhotosField`) and hidden text (`||like this||`), the text itself, and
+ * the note as it will be shown.
  */
-function NoteEditor({ game, item }: { game: LoadedGame; item: ChecklistItem }) {
+function NoteEditor({
+  game,
+  item,
+  addPhoto,
+  addingPhoto,
+  photosFull,
+}: {
+  game: LoadedGame;
+  item: ChecklistItem;
+  addPhoto: () => Promise<void>;
+  addingPhoto: boolean;
+  photosFull: boolean;
+}) {
   const area = useRef<HTMLTextAreaElement>(null);
   const picking = useEditor((s) => s.picking);
   const linking = picking?.purpose === 'link' && picking.stepId === item.id;
@@ -725,6 +765,18 @@ function NoteEditor({ game, item }: { game: LoadedGame; item: ChecklistItem }) {
               Link a guide
             </button>
           ) : null}
+          <button
+            type="button"
+            className="editor-tool editor-tool-wide"
+            data-testid="add-photo"
+            disabled={addingPhoto || photosFull}
+            onClick={() => {
+              void addPhoto();
+            }}
+          >
+            <UiIcon name="image" size={16} strokeWidth={1.8} />
+            Add a photo
+          </button>
           <button
             type="button"
             className="editor-tool editor-tool-wide"

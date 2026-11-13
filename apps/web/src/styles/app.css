@@ -1613,6 +1613,14 @@ label.tree-row:hover,
   line-height: 1.45;
 }
 
+.photo-download p {
+  margin: 0;
+}
+
+.photo-download > p {
+  margin-top: 8px;
+}
+
 .download-body .download-error {
   margin: 0;
 }
@@ -2690,4 +2698,164 @@ label.tree-row:hover,
   margin: 0 0 8px;
   color: var(--atlas-text);
   font-size: 18px;
+}
+
+/* Photos of locations and list entries (see Photos.tsx). */
+.photo-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.photo {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0;
+  overflow: hidden;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.photo-strip > .photo {
+  width: min(260px, 78%);
+  aspect-ratio: 16 / 10;
+}
+
+.photo-strip > .photo:only-child {
+  width: 100%;
+  max-width: 420px;
+}
+
+.photo-size-cover {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: 0;
+}
+
+.photo-size-card {
+  width: 120px;
+  aspect-ratio: 16 / 10;
+}
+
+.photo-button {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.photo-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-button:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: -2px;
+}
+
+.photo[data-spoiler='hidden'] .photo-button {
+  cursor: pointer;
+}
+
+.photo[data-spoiler='hidden'] img {
+  filter: blur(22px) saturate(0.6);
+  transform: scale(1.15);
+}
+
+.photo-spoiler-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  background: rgba(10, 12, 16, 0.25);
+}
+
+.photo-missing,
+.photo-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--atlas-muted);
+  font-size: 0.85rem;
+  border: 1px dashed var(--atlas-border);
+}
+
+.photo-strip > .photo-missing {
+  aspect-ratio: auto;
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.photo-viewer {
+  width: auto;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #0b0d11;
+  color: #f2f4f7;
+  box-shadow: var(--atlas-shadow);
+}
+
+.photo-viewer::backdrop {
+  background: rgba(5, 7, 10, 0.82);
+}
+
+.photo-viewer-figure {
+  position: relative;
+  margin: 0;
+}
+
+.photo-viewer-figure img {
+  display: block;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 80px);
+  object-fit: contain;
+}
+
+.photo-viewer-figure figcaption {
+  padding: 8px 12px 10px;
+  font-size: 0.9rem;
+}
+
+.photo-viewer-credit {
+  color: #aab2bf;
+}
+
+.photo-viewer-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 16, 0.7);
+  color: #fff;
+  cursor: pointer;
+}
+
+.details-photos {
+  margin: 10px 0 12px;
+}
+
+.check-item-photos {
+  margin: 6px 0;
 }

@@ -35,7 +35,11 @@ interface PackShell {
   /** Whether each export was asked to include one's own lists, locations and types. */
   exportsMine: boolean[];
   /** One's own files the next import gives back, as the shell reads them from the file. */
-  importMine: { ownLists?: string; ownLocations?: string } | null;
+  importMine: {
+    ownLists?: string;
+    ownLocations?: string;
+    ownPictures?: { file: string; data: string }[];
+  } | null;
 }
 
 function installPackShell() {
@@ -536,7 +540,7 @@ test('carries one’s own lists, locations and types in a map pack file only whe
   // A game not made in the app: one's own things are left out unless asked for.
   await row.getByTestId('export-pack').click();
   const withMine = dialog.getByTestId('export-with-mine');
-  await expect(withMine).toHaveAccessibleName('Include my lists, locations and types');
+  await expect(withMine).toHaveAccessibleName('Include my lists, locations, types and photos');
   await expect(withMine).not.toBeChecked();
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
@@ -584,6 +588,62 @@ test('carries one’s own lists, locations and types in a map pack file only whe
   await expect(
     page.getByTestId('checklist-link').filter({ hasText: 'Wells to visit' }),
   ).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test('restores the photos of one’s own locations from a map pack file', async ({ page }) => {
+  const errors = collectErrors(page);
+  // The shell gives back the own locations file and the photo it names, in base64.
+  const png = await page.screenshot({ clip: { x: 0, y: 0, width: 160, height: 100 } });
+  const locations = JSON.parse(ownLocationsText) as {
+    locations: { id: string; photos?: unknown[] }[];
+    pictures?: unknown[];
+  };
+  locations.pictures = [
+    {
+      id: 'demo:picture:own.cove1',
+      file: 'pictures/own.cove1.png',
+      shareable: true,
+      width: 160,
+      height: 100,
+    },
+  ];
+  locations.locations[0]!.photos = [{ picture: 'demo:picture:own.cove1' }];
+  const picked = pickedFile('2026-11-08T10:00:00.000Z');
+  await setShell(page, {
+    pick: {
+      ...picked,
+      header: {
+        ...picked.header,
+        version: 3,
+        mine: { lists: 0, locations: 2, types: 1, areas: 0, photos: 1 },
+      },
+    },
+    importMine: {
+      ownLocations: JSON.stringify(locations),
+      ownPictures: [{ file: 'own.cove1.png', data: png.toString('base64') }],
+    },
+  });
+  await page.getByTestId('maps-button').click();
+  await page.getByTestId('import-pack-file').click();
+  const dialog = page.getByTestId('pack-file-dialog');
+  await expect(dialog.getByTestId('import-has-mine')).toContainText(
+    'It also holds someone’s own 2 locations, 1 type and 1 photo.',
+  );
+  await dialog.getByTestId('import-start').click();
+  await expect(dialog.getByTestId('import-mine')).toHaveText(
+    'Your own 2 locations, 1 type and 1 photo from the file were added to yours.',
+  );
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await page.keyboard.press('Escape');
+
+  // The location shows its photo.
+  await selectByName(page, 'Old well');
+  const img = page.getByTestId('photo-strip').getByTestId('photo').locator('img');
+  await expect(img).toBeVisible();
+  await expect
+    .poll(() => img.evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBe(160);
   expect(errors).toEqual([]);
 });
 

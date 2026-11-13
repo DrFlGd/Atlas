@@ -73,6 +73,10 @@ use crate::{
 
 // Stopping a pack's downloads for good, before its images or the pack are deleted.
 pub mod stop;
+// "Download location photos": the pictures a pack lists to be fetched later.
+pub mod photos;
+
+use photos::{pack_of_key, photos_key};
 
 /// Assumed server answer time, for estimates before a job has started.
 const ASSUMED_LATENCY: Duration = Duration::from_millis(200);
@@ -364,6 +368,8 @@ struct Job {
     paused: bool,
     /// Held from start to end, for a pack folder.
     lock: Option<PackLock>,
+    /// A job of a pack's photos (see `photos`), which keeps no job record.
+    photos: bool,
 }
 
 /// The computer-wide download lock, while held. Without a file (when the
@@ -471,22 +477,26 @@ impl DownloadManager {
         *lock(&self.pace)
     }
 
-    /// Whether a pack's job is running, paused, queued or waiting.
+    /// Whether a pack's job (of its map images or its photos) is running,
+    /// paused, queued or waiting.
     pub fn is_active(&self, pack_id: &str) -> bool {
-        lock(&self.schedule)
-            .jobs
-            .get(pack_id)
-            .is_some_and(|job| !job.finished)
+        let schedule = lock(&self.schedule);
+        [pack_id.to_owned(), photos_key(pack_id)]
+            .iter()
+            .any(|key| schedule.jobs.get(key).is_some_and(|job| !job.finished))
     }
 
     /// The packs with a job that is not over.
     pub fn active_packs(&self) -> Vec<String> {
-        lock(&self.schedule)
+        let mut packs: Vec<String> = lock(&self.schedule)
             .jobs
             .values()
             .filter(|job| !job.finished)
-            .map(|job| job.pack_id.clone())
-            .collect()
+            .map(|job| pack_of_key(&job.pack_id).to_owned())
+            .collect();
+        packs.sort();
+        packs.dedup();
+        packs
     }
 
     /// A pack folder the person keeps, written in place; none for bundled packs.
@@ -832,6 +842,7 @@ impl DownloadManager {
                 finished: false,
                 paused: false,
                 lock: pack_lock,
+                photos: false,
             },
         );
         schedule.queue.push_back(pack_id.to_owned());
@@ -1166,6 +1177,7 @@ impl DownloadManager {
             return;
         };
         let stop_detail = job.downloader.stop_detail();
+        let photos = job.photos;
         let mut progress = lock(&job.progress);
         let duration = progress.created.elapsed();
         let counts = progress.counts();
@@ -1178,11 +1190,14 @@ impl DownloadManager {
                 snapshot.state = JobState::Done;
                 if snapshot.failed > 0 {
                     snapshot.reason = Some(format!(
-                        "{} map images could not be downloaded. Download again to retry them.",
-                        snapshot.failed
+                        "{} {} could not be downloaded. Download again to retry them.",
+                        snapshot.failed,
+                        if photos { "photos" } else { "map images" }
                     ));
                 }
-                self.remove_record(pack_id);
+                if !photos {
+                    self.remove_record(pack_id);
+                }
                 format!(
                     "Download of {} finished after {}: {counts}",
                     job.title,
@@ -1191,7 +1206,9 @@ impl DownloadManager {
             }
             Err(Stop::Cancelled) => {
                 snapshot.state = JobState::Cancelled;
-                self.remove_record(pack_id);
+                if !photos {
+                    self.remove_record(pack_id);
+                }
                 format!(
                     "Download of {} cancelled after {}: {counts}",
                     job.title,
@@ -1208,12 +1225,14 @@ impl DownloadManager {
                     )
                 });
                 snapshot.stop_detail = stop_detail.clone();
-                self.write_record(&JobRecord {
-                    pack_id: pack_id.to_owned(),
-                    detail,
-                    stop_reason: Some(stop.message()),
-                    stop_detail,
-                });
+                if !photos {
+                    self.write_record(&JobRecord {
+                        pack_id: pack_id.to_owned(),
+                        detail,
+                        stop_reason: Some(stop.message()),
+                        stop_detail,
+                    });
+                }
                 format!(
                     "Download of {} stopped after {}: {} | {counts}",
                     job.title,

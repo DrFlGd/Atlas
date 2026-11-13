@@ -8,6 +8,7 @@ import {
   type OwnLocation,
   type OwnLocations,
   type PackData,
+  type Picture,
   type Region,
 } from '@atlas/schema';
 import { newOwnId, randomText, type RandomText } from '../checklists/ownLists';
@@ -48,6 +49,7 @@ export function locationOfOwn(own: OwnLocation): Location {
     entityIds: [],
     guideId: note === undefined ? null : ownNoteId(own.id),
     since: '0.0.0',
+    ...(own.photos && own.photos.length > 0 ? { photos: own.photos } : {}),
   };
 }
 
@@ -159,6 +161,7 @@ export function takenRecordIds(data: PackData, own: OwnLocations): Set<string> {
     ...own.categories,
     ...own.regions,
     ...own.locations,
+    ...(own.pictures ?? []),
   ]) {
     taken.add(record.id);
   }
@@ -217,10 +220,97 @@ export function changeOwnLocation(
   return { ...own, locations };
 }
 
-/** Removes an own location. */
+/** Removes an own location, and the own photos only it showed. */
 export function removeOwnLocation(own: OwnLocations, id: string): OwnLocations {
   const locations = own.locations.filter((location) => location.id !== id);
-  return locations.length === own.locations.length ? own : { ...own, locations };
+  return locations.length === own.locations.length
+    ? own
+    : keepOwnPicturesInUse({ ...own, locations });
+}
+
+/** The own records keeping only the own pictures their locations show. */
+export function keepOwnPicturesInUse(own: OwnLocations): OwnLocations {
+  if (!own.pictures) return own;
+  const used = new Set(own.locations.flatMap((l) => (l.photos ?? []).map((p) => p.picture)));
+  const pictures = own.pictures.filter((picture) => used.has(picture.id));
+  if (pictures.length === own.pictures.length) return own;
+  const { pictures: _pictures, ...rest } = own;
+  return pictures.length > 0 ? { ...rest, pictures } : rest;
+}
+
+/** Adds a photo to an own location; an own picture is kept with the locations. */
+export function addOwnLocationPhoto(
+  own: OwnLocations,
+  id: string,
+  picture: Picture,
+  now: Date,
+  spoiler = false,
+): OwnLocations {
+  if (!own.locations.some((location) => location.id === id)) return own;
+  return {
+    ...own,
+    locations: own.locations.map((location) =>
+      location.id === id
+        ? {
+            ...location,
+            photos: [
+              ...(location.photos ?? []).filter((photo) => photo.picture !== picture.id),
+              { picture: picture.id, ...(spoiler ? { spoiler: true } : {}) },
+            ],
+            updatedAt: now.toISOString(),
+          }
+        : location,
+    ),
+    ...(parseId(picture.id)?.localId.startsWith('own.')
+      ? { pictures: [...(own.pictures ?? []).filter((p) => p.id !== picture.id), picture] }
+      : {}),
+  };
+}
+
+/** Takes a photo off an own location; an own picture nothing else shows goes too. */
+export function removeOwnLocationPhoto(
+  own: OwnLocations,
+  id: string,
+  pictureId: string,
+  now: Date,
+): OwnLocations {
+  const locations = own.locations.map((location) => {
+    if (location.id !== id || !location.photos) return location;
+    const photos = location.photos.filter((photo) => photo.picture !== pictureId);
+    const { photos: _photos, ...rest } = location;
+    return {
+      ...rest,
+      ...(photos.length > 0 ? { photos } : {}),
+      updatedAt: now.toISOString(),
+    };
+  });
+  return keepOwnPicturesInUse({ ...own, locations });
+}
+
+/** Marks a photo of an own location as a spoiler, or not. */
+export function setOwnLocationPhotoSpoiler(
+  own: OwnLocations,
+  id: string,
+  pictureId: string,
+  spoiler: boolean,
+  now: Date,
+): OwnLocations {
+  return {
+    ...own,
+    locations: own.locations.map((location) =>
+      location.id !== id || !location.photos
+        ? location
+        : {
+            ...location,
+            photos: location.photos.map((photo) =>
+              photo.picture === pictureId
+                ? { picture: photo.picture, ...(spoiler ? { spoiler: true } : {}) }
+                : photo,
+            ),
+            updatedAt: now.toISOString(),
+          },
+    ),
+  };
 }
 
 /** A new own type group, ordered after every group there is. */
@@ -337,11 +427,11 @@ export function removeOwnArea(own: OwnLocations, id: string, now: Date): OwnLoca
 
 /** Removes every own record of a map (when the map is deleted). */
 export function removeOwnOfMap(own: OwnLocations, mapId: string): OwnLocations {
-  return {
+  return keepOwnPicturesInUse({
     ...own,
     regions: own.regions.filter((r) => r.mapId !== mapId),
     locations: own.locations.filter((l) => l.mapId !== mapId),
-  };
+  });
 }
 
 /** Adds what one game's file has to what is there: a record of the same id is replaced. */
@@ -350,10 +440,12 @@ export function mergeOwnFiles(here: OwnLocations, incoming: OwnLocations): OwnLo
     const ids = new Set(b.map((r) => r.id));
     return [...a.filter((r) => !ids.has(r.id)), ...b];
   };
-  return {
+  const pictures = merge(here.pictures ?? [], incoming.pictures ?? []);
+  return keepOwnPicturesInUse({
     categoryGroups: merge(here.categoryGroups, incoming.categoryGroups),
     categories: merge(here.categories, incoming.categories),
     regions: merge(here.regions, incoming.regions),
     locations: merge(here.locations, incoming.locations),
-  };
+    ...(pictures.length > 0 ? { pictures } : {}),
+  });
 }

@@ -297,5 +297,23 @@ describe('loadPack: a game with no map', () => {
     const pack = await loadPack(BASE, { fetch: noGuides.fetchFn });
     expect(asked(noGuides.requested)).toEqual([]);
     expect(pack.data.sections).toEqual([]);
+
+    // Photos of locations need the pictures, not the contents.
+    const photos: PackData = {
+      ...plain,
+      locations: plain.locations.map((location, i) =>
+        i === 0
+          ? { ...location, photos: [{ picture: 'demo:picture:gate', spoiler: true }] }
+          : location,
+      ),
+      pictures: [{ id: 'demo:picture:gate', file: 'pictures/gate.png', shareable: true }],
+    };
+    const withPhotos = servePack({ ...packFiles(photos), 'pictures.json': photos.pictures });
+    const shown = await loadPack(BASE, { fetch: withPhotos.fetchFn });
+    expect(asked(withPhotos.requested)).toEqual([`${BASE}pictures.json`]);
+    expect(shown.locations.get(photos.locations[0]!.id)?.photos).toEqual([
+      { picture: 'demo:picture:gate', spoiler: true },
+    ]);
+    expect(shown.data.pictures).toHaveLength(1);
   });
 });

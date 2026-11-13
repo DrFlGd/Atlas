@@ -2,9 +2,11 @@ import { deletedProfile } from '@atlas/core';
 import { deleteImagesResult, deletePackResult, plainError } from '../components/removalText';
 import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
+import { deleteGuideLinksOf } from './guideLinks';
 import { applyListing } from './library';
-import { deleteOwnListsOf } from './ownLists';
-import { deleteOwnLocationsOf } from './ownLocations';
+import { deleteOwnListsOf, ownListsBackend } from './ownLists';
+import { deleteOwnLocationsOf, ownLocationsBackend } from './ownLocations';
+import { deleteOwnPictures, deleteOwnPicturesOf, picturesInFile } from './ownPictures';
 import { loadMapImages } from './mapImages';
 import { clock, progressStore } from './services';
 import { useAtlas } from './store';
@@ -50,7 +52,10 @@ function titleOf(id: string): string {
 export async function deletePack(
   id: string,
   deleteProgress: boolean,
-  /** Also the person's own lists of the game, kept beside the pack (see `ownLists.ts`). */
+  /**
+   * Also the person's own lists of the game, kept beside the pack (see
+   * `ownLists.ts`), and their links between its guide pages and the map.
+   */
   deleteLists = false,
   /** Also the person's own locations, types and areas of the game (see `ownLocations.ts`). */
   deleteLocations = false,
@@ -64,9 +69,26 @@ export async function deletePack(
     return { ok: false, error: plainError(error, `delete ${title}`) };
   }
   await refreshWithout(id);
+  // Their photos go with them: all of them when both go, else those the one deleted names.
+  if (deleteLists || deleteLocations) {
+    try {
+      if (deleteLists && deleteLocations) {
+        await deleteOwnPicturesOf(id);
+      } else {
+        const text = deleteLists
+          ? await ownListsBackend().read(id)
+          : await ownLocationsBackend().read(id);
+        await deleteOwnPictures(id, picturesInFile(text, deleteLists ? 'lists' : 'locations'));
+      }
+    } catch {
+      notify(`Deleted ${title}, but your photos for it could not be deleted.`, 'error');
+    }
+  }
   if (deleteLists) {
     try {
       await deleteOwnListsOf(id);
+      // The links between its guide pages and the map go with the lists and guides.
+      await deleteGuideLinksOf(id);
     } catch {
       notify(`Deleted ${title}, but your lists and guides for it could not be deleted.`, 'error');
       return { ok: true };

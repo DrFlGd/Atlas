@@ -7,3 +7,4 @@ export * from './describe';
 export * from './ownLists';
 export * from './guideLinks';
 export * from './ownLocations';
+export * from './ownPictures';

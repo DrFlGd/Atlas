@@ -163,6 +163,7 @@ describe('the list file', () => {
       gameId: 'demo',
       gameTitle: 'Demo',
       list: list(),
+      pictureFiles: [],
     });
     expect(listFileSchema.safeParse({ ...JSON.parse(text), marks: [] }).success).toBe(false);
   });

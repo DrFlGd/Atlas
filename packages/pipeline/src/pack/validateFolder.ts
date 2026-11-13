@@ -111,6 +111,8 @@ export async function validatePackFolder(dir: string): Promise<FolderReport> {
     try {
       await access(join(dir, picture.file));
     } catch {
+      // A picture fetched later may be missing until someone downloads it.
+      if (picture.remote) continue;
       problems.push(`${picture.id}: ${picture.file} is missing`);
     }
   }

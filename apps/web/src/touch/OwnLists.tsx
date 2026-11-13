@@ -126,12 +126,16 @@ async function importFromFile(game: LoadedGame): Promise<void> {
     return;
   }
   if (text === null) return;
-  const result = importOwnListText(game, text);
+  const result = await importOwnListText(game, text);
   if (!result.ok) {
     notify(result.error, 'error');
     return;
   }
-  notify(`Imported “${result.list.checklist.name}”.`);
+  notify(
+    result.photos > 0
+      ? `Imported “${result.list.checklist.name}” with ${result.photos === 1 ? 'its photo' : `${result.photos} photos`}.`
+      : `Imported “${result.list.checklist.name}”.`,
+  );
 }
 
 // ---------------------------------------------------------------------------

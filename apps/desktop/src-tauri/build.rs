@@ -68,6 +68,13 @@ const COMMANDS: &[&str] = &[
     "list_file_open",
     "guide_links_read",
     "guide_links_write",
+    "guide_links_delete",
+    "own_pictures_read",
+    "own_pictures_write",
+    "own_pictures_list",
+    "own_pictures_delete",
+    "own_pictures_delete_all",
+    "own_picture_pick",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map
@@ -80,6 +87,12 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "tiles_resume",
     "tiles_cancel",
     "tiles_snapshot",
+    "photos_plan",
+    "photos_start",
+    "photos_pause",
+    "photos_resume",
+    "photos_cancel",
+    "photos_snapshot",
     "picture_tiles",
     "picture_cancel",
     "import_fetch",

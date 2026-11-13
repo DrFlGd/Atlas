@@ -9,6 +9,7 @@ import { addChecklists } from './checklists';
 import { generateDemoContent, layoutRegions, regionBorderStrength } from './content';
 import { createTerrain, renderTerrain } from './terrain';
 import { addUnderground, tintAsCave } from './underground';
+import { addPhotos, photoFiles } from './photos';
 import { addWiki, wikiPictureFiles } from './wiki';
 
 export type TileFormat = 'pmtiles' | 'xyz';
@@ -100,15 +101,17 @@ export async function buildDemoPack(
     tiles,
   });
   const data = assertValidPack(
-    addWiki(
-      addChecklists(
-        addUnderground(surface, {
-          seed: options.seed,
-          size: UNDERGROUND_SIZE,
-          tileSize: options.tileSize,
-          locationsPerLayer: options.undergroundLocations,
-          layers: underground,
-        }),
+    addPhotos(
+      addWiki(
+        addChecklists(
+          addUnderground(surface, {
+            seed: options.seed,
+            size: UNDERGROUND_SIZE,
+            tileSize: options.tileSize,
+            locationsPerLayer: options.undergroundLocations,
+            layers: underground,
+          }),
+        ),
       ),
     ),
   );
@@ -140,7 +143,7 @@ export async function buildDemoPack(
   await rm(staging, { recursive: true, force: true });
   await mkdir(join(staging, 'tiles'), { recursive: true });
   await writePackJson(staging, data);
-  const pictures = await wikiPictureFiles();
+  const pictures = new Map([...(await wikiPictureFiles()), ...(await photoFiles())]);
   if (pictures.size > 0) await mkdir(join(staging, 'pictures'), { recursive: true });
   for (const [path, png] of pictures) await writeFile(join(staging, path), png);
   const layerPyramids = [

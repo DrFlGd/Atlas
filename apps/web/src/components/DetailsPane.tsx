@@ -6,6 +6,7 @@ import { numberFormat, useSummary } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { GlyphBadge, UiIcon } from './icons';
 import { MarkdownBody } from './MarkdownBody';
+import { PhotoStrip } from './Photos';
 
 /** Right pane: the selected location, its found toggle and its guide entry. */
 export function DetailsPane() {
@@ -108,6 +109,13 @@ function LocationDetails({ locationId }: { locationId: string }) {
           </h2>
         </div>
       </header>
+
+      <PhotoStrip
+        game={game}
+        photos={location.photos}
+        name={location.name}
+        className="details-photos"
+      />
 
       {trackable ? (
         <button

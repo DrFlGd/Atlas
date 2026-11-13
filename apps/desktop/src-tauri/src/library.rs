@@ -931,6 +931,18 @@ impl Library {
                 ),
             );
         }
+        // And the person's own photos, in a folder of each game's own.
+        let photos =
+            crate::ownpictures::carry_over(&current, &target, move_packs && failure.is_none());
+        if !photos.is_empty() {
+            activity::info(
+                Area::Library,
+                format!(
+                    "Carried the person's own photos to the new maps folder: {}",
+                    photos.join(", ")
+                ),
+            );
+        }
         // Once anything has moved, the new folder is used, and the old one is
         // listed while it still holds packs, so no pack drops out of sight.
         let target_text = target.display().to_string();

@@ -27,6 +27,7 @@ import { entryOfOwn, ownEntryById, useOwnLists } from '../state/ownLists';
 import { useAtlas, type ChecklistPage, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
 import { useFacetNames } from './facetNames';
+import { PhotoStrip } from './Photos';
 import { MarkdownBody } from './MarkdownBody';
 import { VirtualList } from './VirtualList';
 
@@ -674,6 +675,12 @@ const ItemRow = memo(
               {meta.join(' · ')}
             </p>
           ) : null}
+          <PhotoStrip
+            game={game}
+            photos={item.photos}
+            name={item.name}
+            className="check-item-photos"
+          />
           {ownNote ? <NoteText source={ownNote.body} /> : null}
           {item.note ? <NoteText source={item.note} /> : null}
           {sharedGuide ? (

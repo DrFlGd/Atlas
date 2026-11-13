@@ -69,9 +69,9 @@ test('opens from the top bar and with C, and lists checklists and guides with pr
   const pane = page.getByTestId('filters-pane');
   await expect(pane.getByRole('heading', { name: 'Checklists' })).toBeVisible();
   await expect(pane.getByRole('heading', { name: 'Guides' })).toBeVisible();
-  await expect(page.getByTestId('checklist-link')).toHaveCount(5);
+  await expect(page.getByTestId('checklist-link')).toHaveCount(6);
   await expect(page.getByTestId('checklist-link').first()).toContainText('Waystones0/120');
-  await expect(page.getByTestId('checklists-total')).toContainText('0 of 2,479 items');
+  await expect(page.getByTestId('checklists-total')).toContainText('0 of 2,485 items');
   // Lists of places that are guides, and guides that are text, are under Guides.
   await expect(
     pane.getByTestId('guide-link').filter({ hasText: 'Into the Hollow Deep' }),

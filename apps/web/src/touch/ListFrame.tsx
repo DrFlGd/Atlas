@@ -6,6 +6,7 @@ import { useAtlas, type LoadedGame } from '../state/store';
 import { useCanEdit } from './editor/canEdit';
 import { startEditing, useEditor } from './editor/editorState';
 import { AreasView } from './ListAreas';
+import { CardsView } from './ListCards';
 import { KindList, ShowChoice, type Show } from './ListGroups';
 import { useListTools } from './ListTools';
 import { OrderView } from './ListOrder';
@@ -29,6 +30,7 @@ import { useTouch } from './state';
 import { SwitchTrack } from './widgets';
 
 const VIEWS: { id: ListView; label: string }[] = [
+  { id: 'cards', label: 'Cards' },
   { id: 'area', label: 'By area' },
   { id: 'kind', label: 'By type' },
   { id: 'order', label: 'In order' },
@@ -158,7 +160,9 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
         </div>
       ) : null}
       <OnlySwitch entry={entry} />
-      {view === 'area' ? (
+      {view === 'cards' ? (
+        <CardsView game={game} entry={entry} states={states} />
+      ) : view === 'area' ? (
         <AreasView game={game} entry={entry} states={states} />
       ) : view === 'kind' ? (
         <KindView

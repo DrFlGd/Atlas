@@ -32,12 +32,16 @@
 //! data kept by "Add a map" (`import/`), and found marks and other
 //! progress, which stay in the browser storage and its own export file.
 //!
-//! Only when the person ticks "Include my lists, locations and types": their
+//! Only when the person ticks "Include my lists, locations, types and
+//! photos": their
 //! own lists and their own locations, types and areas of the game (the files
 //! beside the game's folder, see `ownlists.rs`), as `mine/my-lists.json` and
-//! `mine/my-locations.json` ([`Mine`]). Such a file is version 2 of the
-//! format, so an older app says it needs a newer one instead of refusing an
-//! entry it does not know; a file without them stays version 1. An import
+//! `mine/my-locations.json`, their links between guide pages and the map as
+//! `mine/guide-links.json`, and the photos their lists and locations show as
+//! `mine/pictures/<file>` ([`Mine`]). Such a file is version 2 of the
+//! format (version 3 when it carries photos or guide links), so an older
+//! app says it needs a newer one instead of refusing an entry it does not
+//! know; a file without them stays version 1. An import
 //! never writes them into the pack's folder: it hands them to the web app,
 //! which adds them to what the person has (see `Imported::mine`).
 //!
@@ -64,6 +68,7 @@ use crate::{
     library::{read_import_sources, META_DIR, PACK_FILES},
     manifest::{rfc3339, MANIFEST_FILE, MAX_MANIFEST_BYTES},
     ownlists::{self, OwnFile},
+    ownpictures,
     removal::is_real_dir,
     tiles::{
         pyramid::{fill_template, is_safe_segment, level_grid, relative_path, Detail, LayerPlan},
@@ -74,8 +79,12 @@ use crate::{
 /// `format` of the header.
 pub const FORMAT: &str = "atlas-pack-file";
 /// The newest version of the format this app reads and writes. Version 2
-/// adds a person's own lists, locations and types ([`Mine`]).
-pub const VERSION: u32 = 2;
+/// adds a person's own lists, locations and types ([`Mine`]); version 3
+/// their photos and links between guide pages and the map.
+pub const VERSION: u32 = 3;
+/// The version of a file with a person's own lists, locations and types
+/// only, which an app from before version 3 reads too.
+pub const VERSION_WITH_MINE: u32 = 2;
 /// The version of a file without a person's own lists, locations and types,
 /// which every app with map pack files reads.
 pub const VERSION_WITHOUT_MINE: u32 = 1;
@@ -255,52 +264,104 @@ pub struct MineFacts {
     pub locations: u64,
     pub types: u64,
     pub areas: u64,
+    /// Their own photos (see `ownpictures`).
+    pub photos: u64,
+    /// Whether their links between guide pages and the map are in it.
+    pub guide_links: bool,
 }
 
 /// The entries of a person's own files, and which file each is.
-pub const MINE_ENTRIES: [(&str, OwnFile); 2] = [
+pub const MINE_ENTRIES: [(&str, OwnFile); 3] = [
     ("mine/my-lists.json", ownlists::LISTS),
     ("mine/my-locations.json", ownlists::LOCATIONS),
+    ("mine/guide-links.json", ownlists::GUIDE_LINKS),
 ];
 
-/// A person's own lists, and own locations, types and areas, of one game:
-/// the text of their files (see `ownlists.rs`), each when there is one.
+/// Where a person's own photos are in a file: `mine/pictures/<file>`.
+pub const MINE_PICTURES_DIR: &str = "mine/pictures/";
+/// The most bytes of own photos one file carries.
+pub const MAX_MINE_PICTURE_BYTES: u64 = 512 << 20;
+
+/// A person's own lists, own locations, types and areas, and links between
+/// guide pages and the map, of one game: the text of their files (see
+/// `ownlists.rs` and `guidelinks.rs`), each when there is one; and the
+/// photos the lists and locations show (see `ownpictures.rs`), by file name.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Mine {
     pub lists: Option<String>,
     pub locations: Option<String>,
+    pub guide_links: Option<String>,
+    pub pictures: Vec<(String, Vec<u8>)>,
 }
 
 impl Mine {
-    /// The person's files of a game in the maps folder.
+    /// The person's files of a game in the maps folder, and the photos their
+    /// lists and locations name.
     pub fn read(maps_folder: &Path, game_id: &str) -> Result<Self, String> {
+        let lists = ownlists::LISTS.read(maps_folder, game_id)?;
+        let locations = ownlists::LOCATIONS.read(maps_folder, game_id)?;
+        let guide_links = crate::guidelinks::read(maps_folder, game_id)?;
+        let mut pictures = Vec::new();
+        let mut total = 0u64;
+        let named = [&lists, &locations]
+            .into_iter()
+            .flatten()
+            .flat_map(|text| ownpictures::named_in(text))
+            .collect::<BTreeSet<_>>();
+        for file in named {
+            let Some(bytes) = ownpictures::read(maps_folder, game_id, &file)? else {
+                continue;
+            };
+            total += bytes.len() as u64;
+            if total > MAX_MINE_PICTURE_BYTES {
+                return Err(
+                    "Your photos of this game are too large to go in a map pack file together."
+                        .to_owned(),
+                );
+            }
+            pictures.push((file, bytes));
+        }
         Ok(Self {
-            lists: ownlists::LISTS.read(maps_folder, game_id)?,
-            locations: ownlists::LOCATIONS.read(maps_folder, game_id)?,
+            lists,
+            locations,
+            guide_links,
+            pictures,
         })
     }
 
+    /// Whether only an app that reads version 3 can take it: it has photos
+    /// or guide links.
+    pub fn needs_version_3(&self) -> bool {
+        self.guide_links.is_some() || !self.pictures.is_empty()
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.lists.is_none() && self.locations.is_none()
+        self.lists.is_none()
+            && self.locations.is_none()
+            && self.guide_links.is_none()
+            && self.pictures.is_empty()
     }
 
     /// Each file there is, with its entry's name and kind.
     pub fn files(&self) -> impl Iterator<Item = (&'static str, OwnFile, &str)> {
         MINE_ENTRIES
             .into_iter()
-            .zip([&self.lists, &self.locations])
+            .zip([&self.lists, &self.locations, &self.guide_links])
             .filter_map(|((name, kind), text)| text.as_deref().map(|text| (name, kind, text)))
     }
 
     fn slot(&mut self, kind: OwnFile) -> &mut Option<String> {
         if kind.suffix == ownlists::LISTS.suffix {
             &mut self.lists
-        } else {
+        } else if kind.suffix == ownlists::LOCATIONS.suffix {
             &mut self.locations
+        } else {
+            &mut self.guide_links
         }
     }
 
-    /// Checks that each file is the game's, and counts what is in them.
+    /// Checks that each file is the game's and each photo one, and counts
+    /// what is in them.
     pub fn check(&self, game_id: &str) -> Result<MineFacts, String> {
         let mut facts = MineFacts::default();
         for (_, kind, text) in self.files() {
@@ -310,12 +371,22 @@ impl Mine {
                 |key: &str| value.get(key).and_then(Value::as_array).map_or(0, Vec::len) as u64;
             if kind.suffix == ownlists::LISTS.suffix {
                 facts.lists = count("lists");
-            } else {
+            } else if kind.suffix == ownlists::LOCATIONS.suffix {
                 facts.locations = count("locations");
                 facts.types = count("categories");
                 facts.areas = count("regions");
+            } else {
+                facts.guide_links = true;
             }
         }
+        for (file, bytes) in &self.pictures {
+            if !ownpictures::is_own_picture_name(file)
+                || !ownpictures::bytes_match_name(file, bytes)
+            {
+                return Err("One of your photos is not a picture Atlas keeps.".to_owned());
+            }
+        }
+        facts.photos = self.pictures.len() as u64;
         Ok(facts)
     }
 }
@@ -663,14 +734,18 @@ pub fn is_picture_path(path: &str) -> bool {
 }
 
 /// The pictures a map pack file carries: only those the pack marks as
-/// shareable and whose file is there. `list` is the pack's `pictures.json`
-/// cut down to them; none when the pack has no pictures.
+/// shareable and whose file is there, in the pack folder or (downloaded for
+/// a pack that comes with the app) its overlay `images`. `list` is the
+/// pack's `pictures.json` cut down to them, and to the pictures fetched
+/// later (with a `remote` address) whose files are not carried, so another
+/// app with downloads can fetch them for itself; none when the pack has no
+/// pictures.
 pub struct SharedPictures {
     pub list: Vec<u8>,
     pub files: Vec<Entry>,
 }
 
-pub fn shared_pictures(root: &Path) -> Result<Option<SharedPictures>, String> {
+pub fn shared_pictures(root: &Path, images: &Path) -> Result<Option<SharedPictures>, String> {
     let path = root.join(PICTURES_FILE);
     if fs::symlink_metadata(&path).is_err() {
         return Ok(None);
@@ -684,26 +759,40 @@ pub fn shared_pictures(root: &Path) -> Result<Option<SharedPictures>, String> {
     let mut files = Vec::new();
     for picture in pictures {
         let shareable = picture.get("shareable").and_then(Value::as_bool) == Some(true);
+        let remote = picture.get("remote").and_then(Value::as_str).is_some();
         let Some(file) = picture.get("file").and_then(Value::as_str) else {
             continue;
         };
-        if !shareable || !is_picture_path(file) {
+        if !is_picture_path(file) {
             continue;
         }
         let Some(relative) = relative_path(file) else {
             continue;
         };
-        let on_disk = root.join(relative);
-        match fs::symlink_metadata(&on_disk) {
-            Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_PICTURE_BYTES => {
+        let found = if shareable {
+            [root.join(&relative), images.join(&relative)]
+                .into_iter()
+                .find_map(|on_disk| match fs::symlink_metadata(&on_disk) {
+                    Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_PICTURE_BYTES => {
+                        Some((on_disk, metadata.len()))
+                    }
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        match found {
+            Some((on_disk, size)) => {
                 files.push(Entry {
                     name: file.to_owned(),
                     data: EntryData::File(on_disk),
-                    size: metadata.len(),
+                    size,
                 });
                 kept.push(picture);
             }
-            _ => continue,
+            // Listed without its file: fetched later, where downloads are.
+            None if remote => kept.push(picture),
+            None => {}
         }
     }
     let mut list = serde_json::to_vec_pretty(&Value::Array(kept)).expect("JSON serialises");

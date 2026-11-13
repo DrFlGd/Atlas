@@ -56,8 +56,8 @@ describe('listShape', () => {
     return { type, views, defaultView, steps, doneWord };
   };
 
-  it('groups collections, secrets and photos by area or by kind', () => {
-    for (const type of ['collection', 'secrets', 'photos'] as const) {
+  it('groups collections and secrets by area or by kind', () => {
+    for (const type of ['collection', 'secrets'] as const) {
       expect(shape({ type })).toEqual({
         type,
         views: ['area', 'kind'],
@@ -66,6 +66,21 @@ describe('listShape', () => {
         doneWord: 'found',
       });
     }
+  });
+
+  it('shows a Photo guide as cards first, grouped too', () => {
+    expect(shape({ type: 'photos' })).toEqual({
+      type: 'photos',
+      views: ['cards', 'area', 'kind'],
+      defaultView: 'cards',
+      steps: false,
+      doneWord: 'found',
+    });
+    expect(shape({ type: 'photos' }, false)).toMatchObject({
+      views: ['cards', 'order'],
+      defaultView: 'cards',
+      doneWord: 'done',
+    });
   });
 
   it('shows a route in order first, with steps, and grouped too', () => {

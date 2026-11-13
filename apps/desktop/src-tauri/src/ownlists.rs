@@ -62,6 +62,15 @@ pub const LOCATIONS: OwnFile = OwnFile {
 /// Every kind of own file.
 pub const OWN_FILES: [OwnFile; 2] = [LISTS, LOCATIONS];
 
+/// The person's links between guide pages and the map (see `guidelinks`,
+/// which reads, writes and carries the file): described here too, so a map
+/// pack file can carry and check it as it does the own files.
+pub const GUIDE_LINKS: OwnFile = OwnFile {
+    suffix: crate::guidelinks::GUIDE_LINKS_SUFFIX,
+    format: "atlas-guide-links",
+    what: "guide links",
+};
+
 /// The end of an own lists file's name, after the game id.
 pub const OWN_LISTS_SUFFIX: &str = LISTS.suffix;
 /// An own file larger than this is refused, read or written.

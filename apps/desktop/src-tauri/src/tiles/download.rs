@@ -647,8 +647,14 @@ pub enum Proof {
 
 /// Downloads tiles into a store. One downloader can run several batches
 /// one after another; pausing, cancelling and the 429 pause apply to all.
+/// Turns a downloaded image into what is kept (a photo made smaller, say),
+/// off the async workers; an error makes the image count as failed.
+pub type Transform = Arc<dyn Fn(&Task, Vec<u8>) -> Result<Vec<u8>, String> + Send + Sync>;
+
 pub struct Downloader {
     client: Client,
+    /// What is done to each image before it is kept; none for map tiles.
+    transform: Option<Transform>,
     settings: Settings,
     pace: SharedPace,
     slots: Mutex<Slots>,
@@ -692,6 +698,7 @@ impl Downloader {
         }));
         Self {
             client,
+            transform: None,
             settings,
             pace,
             slots: Mutex::new(Slots::default()),
@@ -786,6 +793,13 @@ impl Downloader {
     #[must_use]
     pub fn with_log(mut self, log: ActivityLog) -> Self {
         self.log = log;
+        self
+    }
+
+    /// Does `transform` to each image before it is kept.
+    #[must_use]
+    pub fn with_transform(mut self, transform: Transform) -> Self {
+        self.transform = Some(transform);
         self
     }
 
@@ -1365,6 +1379,27 @@ impl Downloader {
             }
         }
         if looks_like_image(&body) {
+            let body = match &self.transform {
+                None => body,
+                Some(transform) => {
+                    let (transform, owned) = (Arc::clone(transform), task.clone());
+                    let done = tokio::task::spawn_blocking(move || transform(&owned, body)).await;
+                    match done {
+                        Ok(Ok(body)) => body,
+                        Ok(Err(problem)) => {
+                            self.log.warn(
+                                Area::Download,
+                                format!(
+                                    "The image from {} could not be kept: {problem}; it counts as failed",
+                                    task.url
+                                ),
+                            );
+                            return Ok(Ok(Outcome::Failed(problem)));
+                        }
+                        Err(error) => return Ok(Ok(Outcome::Failed(error.to_string()))),
+                    }
+                }
+            };
             self.store.write(&task.path, &body).map_err(|error| {
                 self.disk_error(task, &error);
                 Stop::Disk(error.to_string())

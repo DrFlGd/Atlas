@@ -24,8 +24,16 @@ impl DownloadManager {
             return true;
         }
         // Cancelling also takes the job out of the line of waiting downloads.
-        // An error only means the job ended in the meantime.
+        // An error only means the job ended in the meantime. Its photos stop too.
         let _ = self.cancel(pack_id);
+        let photos = super::photos_key(pack_id);
+        if lock(&self.schedule)
+            .jobs
+            .get(&photos)
+            .is_some_and(|job| !job.finished)
+        {
+            let _ = self.cancel(&photos);
+        }
         let deadline = Instant::now() + timeout;
         while self.is_active(pack_id) {
             if Instant::now() >= deadline {
@@ -46,8 +54,13 @@ impl DownloadManager {
         if schedule.jobs.get(pack_id).is_some_and(|job| !job.finished) {
             return;
         }
+        let photos = super::photos_key(pack_id);
+        if schedule.jobs.get(&photos).is_some_and(|job| !job.finished) {
+            return;
+        }
         schedule.jobs.remove(pack_id);
-        schedule.queue.retain(|id| id != pack_id);
+        schedule.jobs.remove(&photos);
+        schedule.queue.retain(|id| *id != pack_id && *id != photos);
         drop(schedule);
         self.remove_record(pack_id);
         let _ = fs::remove_file(

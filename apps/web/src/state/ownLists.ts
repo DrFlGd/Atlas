@@ -19,6 +19,7 @@ import {
 import { create } from 'zustand';
 import { desktop } from '../desktop';
 import { notify } from './actions';
+import { keepPictureFiles, pictureFilesOf, sweepOwnPicturesLater } from './ownPictures';
 import { progressStore } from './services';
 import { useAtlas, type LoadedGame } from './store';
 
@@ -384,6 +385,7 @@ export function deleteOwnList(id: string): OwnList | undefined {
   const list = ownListById(id);
   if (!list) return undefined;
   changed(get().lists.filter((l) => l !== list));
+  sweepOwnPicturesLater();
   return list;
 }
 
@@ -401,9 +403,12 @@ export function listFileName(list: OwnList): string {
 
 /** Exports one list to a file: the shell's save dialog, or a download in a browser. */
 export async function exportOwnList(game: LoadedGame, list: OwnList): Promise<void> {
-  const text = writeListFile(game.pack.manifest.gameId, game.pack.manifest.title, list, new Date());
   const name = listFileName(list);
   try {
+    const gameId = game.pack.manifest.gameId;
+    // The list's own photos go in the file with it.
+    const pictureFiles = await pictureFilesOf(gameId, list.pictures ?? []);
+    const text = writeListFile(gameId, game.pack.manifest.title, list, new Date(), pictureFiles);
     if (desktop) {
       const saved = await desktop.listFiles.save(name, text);
       if (saved) notify(`Exported “${list.checklist.name}” as ${saved.name}.`);
@@ -430,14 +435,15 @@ export async function exportOwnList(game: LoadedGame, list: OwnList): Promise<vo
 }
 
 /** What importing a list file did. */
-export type ImportOutcome = { ok: true; list: OwnList } | { ok: false; error: string };
+export type ImportOutcome =
+  { ok: true; list: OwnList; photos: number } | { ok: false; error: string };
 
 /**
  * Adds the list in a list file's text to the game's own lists: checked,
  * refused when it was made for another game, with new ids when any of its
- * ids is taken.
+ * ids is taken. The photos it carries are kept first.
  */
-export function importOwnListText(game: LoadedGame, text: string): ImportOutcome {
+export async function importOwnListText(game: LoadedGame, text: string): Promise<ImportOutcome> {
   if (!canChangeOwnLists()) {
     return { ok: false, error: get().readOnly ?? 'Your lists cannot be changed right now.' };
   }
@@ -453,9 +459,31 @@ export function importOwnListText(game: LoadedGame, text: string): ImportOutcome
     read.gameTitle,
   );
   if (!result.ok) return result;
+  let photos = 0;
+  if (read.pictureFiles.length > 0) {
+    try {
+      photos = await keepPictureFiles(
+        game.pack.manifest.gameId,
+        read.pictureFiles,
+        result.renamedFiles,
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        error: `The list’s photos could not be kept: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+  if (!canChangeOwnLists()) {
+    return { ok: false, error: get().readOnly ?? 'Your lists cannot be changed right now.' };
+  }
   addList(result.list);
-  return { ok: true, list: result.list };
+  sweepOwnPicturesLater();
+  return { ok: true, list: result.list, photos };
 }
+
+/** The largest list file read: the most the desktop app opens too. */
+export const MAX_LIST_FILE_BYTES = 64 << 20;
 
 /** Asks for a list file (the shell's open dialog, or a file picker) and imports it. */
 export async function pickListFile(): Promise<string | null> {
@@ -482,7 +510,8 @@ export async function pickListFile(): Promise<string | null> {
         done(null);
         return;
       }
-      if (file.size > 16 << 20) {
+      // A list with photos carries them, so its file can be as large as the shell opens.
+      if (file.size > MAX_LIST_FILE_BYTES) {
         done('');
         return;
       }

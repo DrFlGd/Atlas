@@ -57,6 +57,7 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
   const entities = new Set(pack.entities.map((e) => e.id));
   const checklists = new Set(pack.checklists.map((c) => c.id));
   const guides = new Set(pack.guides.map((g) => g.id));
+  const pictures = new Set((pack.pictures ?? []).map((p) => p.id));
 
   const expect = (ok: boolean, path: string, message: string) => {
     if (!ok) report(path, message);
@@ -157,6 +158,12 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
         );
     }
     refs(loc.entityIds, entities, `${path}.entityIds`, 'entity');
+    refs(
+      (loc.photos ?? []).map((photo) => photo.picture),
+      pictures,
+      `${path}.photos`,
+      'picture',
+    );
     if (loc.guideId !== null)
       expect(guides.has(loc.guideId), `${path}.guideId`, `unknown guide ${loc.guideId}`);
   });
@@ -170,6 +177,12 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
     );
     refs(item.locationIds, locations, `${path}.locationIds`, 'location');
     refs(item.entityIds, entities, `${path}.entityIds`, 'entity');
+    refs(
+      (item.photos ?? []).map((photo) => photo.picture),
+      pictures,
+      `${path}.photos`,
+      'picture',
+    );
   });
 
   pack.guides.forEach((guide, i) => {

@@ -4,10 +4,12 @@ import {
   MAX_HEADING_LENGTH,
   OWN_ID_PREFIX,
   parseId,
+  renamedPicture,
   type ChecklistItem,
   type ChecklistType,
   type OwnHeading,
   type OwnList,
+  type Picture,
 } from '@atlas/schema';
 import type { LoadedPack } from '../pack/loadedPack';
 import type { ChecklistEntry } from './checklists';
@@ -30,7 +32,8 @@ import { followsSteps, listType } from './listTypes';
 export type RandomText = () => string;
 
 /** The kinds of record a person makes, each with own ids (see `OWN_ID_PREFIX`). */
-export type OwnIdKind = 'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region';
+export type OwnIdKind =
+  'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region' | 'picture';
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -58,9 +61,14 @@ export function newOwnId(
   }
 }
 
-/** Every id a list uses: its own, its steps' and its headings'. */
+/** Every id a list uses: its own, its steps', its headings' and its own photos'. */
 export function idsOf(list: OwnList): string[] {
-  return [list.checklist.id, ...list.items.map((i) => i.id), ...list.headings.map((h) => h.id)];
+  return [
+    list.checklist.id,
+    ...list.items.map((i) => i.id),
+    ...list.headings.map((h) => h.id),
+    ...(list.pictures ?? []).map((p) => p.id),
+  ];
 }
 
 /** An id maker that remembers what it gave, so one change never gives an id twice. */
@@ -68,7 +76,7 @@ export function idMaker(
   gameId: string,
   taken: Iterable<string>,
   random: RandomText = randomText,
-): (kind: 'checklist' | 'checkitem') => string {
+): (kind: 'checklist' | 'checkitem' | 'picture') => string {
   const used = new Set(taken);
   return (kind) => {
     const id = newOwnId(gameId, kind, used, random);
@@ -108,12 +116,12 @@ export const TEMPLATES: readonly {
   {
     type: 'photos',
     name: 'Photo guide',
-    line: 'A picture of each spot, with a line on how to reach it.',
-    offers: 'By area · Photos',
+    line: 'A photo of each spot, with a line on how to reach it.',
+    offers: 'Cards with photos · By area',
     startsWith: [
-      'Grouped by area or by type',
-      'A note on every entry',
-      'Photos in a later version',
+      'A card for every entry, photo first',
+      'Grouped by map and area',
+      'A photo and a note on every entry',
     ],
   },
   {
@@ -216,6 +224,10 @@ export function copyList(
       ...(item.section !== undefined ? { section: item.section } : {}),
       ...(item.note !== undefined ? { note: item.note } : {}),
       ...(item.optional ? { optional: true } : {}),
+      // The game's photos are named, not copied: they stay the game's.
+      ...(item.photos && item.photos.length > 0
+        ? { photos: item.photos.map((photo) => ({ ...photo })) }
+        : {}),
     });
   }
   return {
@@ -412,6 +424,86 @@ export function duplicateStep(list: OwnList, id: string, newId: string): OwnList
   return withOutline(list, [...rows.slice(0, at + 1), copy, ...rows.slice(at + 1)]);
 }
 
+// ---------------------------------------------------------------------------
+// Photos of steps
+
+/** A list with a photo added to a step; an own picture is kept with the list. */
+export function addStepPhoto(
+  list: OwnList,
+  stepId: string,
+  picture: Picture,
+  spoiler = false,
+): OwnList {
+  if (!list.items.some((item) => item.id === stepId)) return list;
+  const own = isOwnId(picture.id);
+  return {
+    ...list,
+    items: list.items.map((item) =>
+      item.id === stepId
+        ? {
+            ...item,
+            photos: [
+              ...(item.photos ?? []).filter((photo) => photo.picture !== picture.id),
+              { picture: picture.id, ...(spoiler ? { spoiler: true } : {}) },
+            ],
+          }
+        : item,
+    ),
+    ...(own
+      ? { pictures: [...(list.pictures ?? []).filter((p) => p.id !== picture.id), picture] }
+      : {}),
+  };
+}
+
+/**
+ * A list with a photo taken off a step. An own picture no other step shows
+ * goes from the list too; its file is deleted later (see the app), so Undo
+ * can bring it back.
+ */
+export function removeStepPhoto(list: OwnList, stepId: string, pictureId: string): OwnList {
+  const items = list.items.map((item) => {
+    if (item.id !== stepId || !item.photos) return item;
+    const photos = item.photos.filter((photo) => photo.picture !== pictureId);
+    const { photos: _photos, ...rest } = item;
+    return photos.length > 0 ? { ...rest, photos } : rest;
+  });
+  return keepPicturesInUse({ ...list, items });
+}
+
+/** A list with a step's photo marked as a spoiler, or not. */
+export function setStepPhotoSpoiler(
+  list: OwnList,
+  stepId: string,
+  pictureId: string,
+  spoiler: boolean,
+): OwnList {
+  return {
+    ...list,
+    items: list.items.map((item) =>
+      item.id !== stepId || !item.photos
+        ? item
+        : {
+            ...item,
+            photos: item.photos.map((photo) =>
+              photo.picture === pictureId
+                ? { picture: photo.picture, ...(spoiler ? { spoiler: true } : {}) }
+                : photo,
+            ),
+          },
+    ),
+  };
+}
+
+/** The list keeping only the own pictures its steps show. */
+export function keepPicturesInUse(list: OwnList): OwnList {
+  if (!list.pictures) return list;
+  const used = new Set(list.items.flatMap((item) => (item.photos ?? []).map((p) => p.picture)));
+  const pictures = list.pictures.filter((picture) => used.has(picture.id));
+  if (pictures.length === list.pictures.length) return list;
+  const { pictures: _pictures, ...rest } = list;
+  return pictures.length > 0 ? { ...rest, pictures } : rest;
+}
+
 /** What can be changed of a step. */
 export interface StepChanges {
   name?: string;
@@ -601,7 +693,17 @@ export function locationsToAdd(
 
 /** Why a list file cannot be imported into a game, or the list to add. */
 export type ListImport =
-  { ok: true; list: OwnList; renamed: boolean } | { ok: false; error: string };
+  | {
+      ok: true;
+      list: OwnList;
+      renamed: boolean;
+      /**
+       * The files of the list's own photos whose names changed with their
+       * ids: the file name in the list file, and the one it has now.
+       */
+      renamedFiles: ReadonlyMap<string, string>;
+    }
+  | { ok: false; error: string };
 
 /**
  * A list read from a file, ready to add to a game's own lists: refused when
@@ -630,15 +732,43 @@ export function importList(
     (id) => taken.has(id) || !isOwnId(id) || parseId(id)?.gameId !== fileGameId,
   );
   const time = now.toISOString();
-  if (!clash) return { ok: true, list: { ...list, updatedAt: time }, renamed: false };
+  if (!clash) {
+    return {
+      ok: true,
+      list: { ...list, updatedAt: time },
+      renamed: false,
+      renamedFiles: new Map(),
+    };
+  }
   const next = idMaker(game.gameId, [...taken, ...ids], random);
   const listId = next('checklist');
+  const pictureIds = new Map<string, string>();
+  const renamedFiles = new Map<string, string>();
+  const pictures = list.pictures?.map((picture) => {
+    const renamedOne = renamedPicture(picture, next('picture'));
+    pictureIds.set(picture.id, renamedOne.id);
+    renamedFiles.set(picture.file, renamedOne.file);
+    return renamedOne;
+  });
   const renamed: OwnList = {
     ...list,
     checklist: { ...list.checklist, id: listId },
-    items: list.items.map((item) => ({ ...item, id: next('checkitem'), checklistId: listId })),
+    items: list.items.map((item) => ({
+      ...item,
+      id: next('checkitem'),
+      checklistId: listId,
+      ...(item.photos
+        ? {
+            photos: item.photos.map((photo) => ({
+              ...photo,
+              picture: pictureIds.get(photo.picture) ?? photo.picture,
+            })),
+          }
+        : {}),
+    })),
     headings: list.headings.map((heading) => ({ ...heading, id: next('checkitem') })),
+    ...(pictures ? { pictures } : {}),
     updatedAt: time,
   };
-  return { ok: true, list: renamed, renamed: true };
+  return { ok: true, list: renamed, renamed: true, renamedFiles };
 }
