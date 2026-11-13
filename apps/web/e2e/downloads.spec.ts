@@ -993,6 +993,10 @@ test.describe('the Library', () => {
       timeout: 30_000,
     });
     await expect(panel.getByTestId('downloads-needs-you')).toHaveCount(0);
+    // Esc closes the panel, and only it.
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(page.getByTestId('library')).toBeVisible();
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
 });

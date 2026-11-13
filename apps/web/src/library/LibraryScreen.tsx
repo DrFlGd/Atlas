@@ -15,6 +15,7 @@ import {
   closeLibraryWindow,
   openLibraryGame,
   openSettings,
+  setDownloadsOpen,
   setMoreOpen,
   showLibraryAdd,
   useLibrary,
@@ -59,15 +60,17 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
     return followDownloads();
   }, [downloads]);
 
-  // Esc closes the More menu first, then (over the whole window) the Library.
+  // Esc closes the More menu or the Downloads panel first, then (over the whole window) the Library.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       if (document.querySelector('dialog[open]')) return;
-      if (useLibrary.getState().more) {
+      const { more, downloads } = useLibrary.getState();
+      if (more || downloads) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        setMoreOpen(false);
+        if (more) setMoreOpen(false);
+        else setDownloadsOpen(false);
       } else if (mode === 'window') {
         closeLibraryWindow();
       }
