@@ -18,15 +18,15 @@ describe('GuideContents', () => {
     expect(contents.pathTo('pages:guide:bells').map((s) => s.title)).toEqual(['Basics', 'More']);
     expect(contents.pathTo('pages:section:more').map((s) => s.title)).toEqual(['Basics']);
     expect(contents.pages().map((g) => g.id)).toEqual(['pages:guide:start', 'pages:guide:bells']);
-    expect(contents.otherPages()).toEqual([]);
+    expect(contents.isPage('pages:guide:bells')).toBe(true);
   });
 
-  it('lists guides that no section lists as other pages', () => {
+  it('browses only the guides its contents lists', () => {
     const pack = makeGuidesFixturePack();
     pack.sections = [{ id: 'pages:section:more', title: 'More', items: ['pages:guide:bells'] }];
     const contents = new GuideContents(indexPack(pack, BASE));
-    expect(contents.otherPages().map((g) => g.id)).toEqual(['pages:guide:start']);
-    expect(contents.pages().map((g) => g.id)).toEqual(['pages:guide:bells', 'pages:guide:start']);
+    expect(contents.pages().map((g) => g.id)).toEqual(['pages:guide:bells']);
+    expect(contents.isPage('pages:guide:start')).toBe(false);
   });
 
   it('lists every guide of a game with no map and no contents', () => {
@@ -36,16 +36,19 @@ describe('GuideContents', () => {
     expect(contents.browsable).toBe(true);
     expect(contents.hasContents).toBe(false);
     expect(contents.top().map((e) => e.kind)).toEqual(['page', 'page']);
+    expect(contents.isPage('pages:guide:start')).toBe(true);
   });
 
-  it('has nothing to browse on a map without contents, and leaves out location notes', () => {
+  it('has nothing to browse on a map without contents, and keeps other guides out', () => {
     const pack = makeFixturePack();
     expect(new GuideContents(indexPack(pack, BASE)).browsable).toBe(false);
     pack.guides.push({ id: 'demo:guide:walk', title: 'Walk', body: 'x', locationIds: [] });
-    pack.sections = [{ id: 'demo:section:a', title: 'A', items: [] }];
+    pack.guides.push({ id: 'demo:guide:read', title: 'Read', body: 'x', locationIds: [] });
+    pack.sections = [{ id: 'demo:section:a', title: 'A', items: ['demo:guide:read'] }];
     const contents = new GuideContents(indexPack(pack, BASE));
     expect(contents.browsable).toBe(true);
-    expect(contents.otherPages().map((g) => g.id)).toEqual(['demo:guide:walk']);
+    expect(contents.pages().map((g) => g.id)).toEqual(['demo:guide:read']);
+    expect(contents.isPage('demo:guide:walk')).toBe(false);
   });
 
   it('sorts guides by order, then by title', () => {

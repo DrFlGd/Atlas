@@ -5,18 +5,14 @@ import type { LoadedPack } from '../pack/loadedPack';
  * A pack's guides as pages to browse: its contents (`sections.json`), the
  * sections that hold sections and guides in the source's own order.
  *
- * A pack with no contents but no map either (a game of guides and lists
- * only) is browsed as one list of its guides, in their order. Guides that
- * no section lists are listed under "Other pages" at the end of the top.
+ * With a contents, the pages are the guides it lists; the pack's other
+ * guides (walkthroughs of its lists, notes of its locations) stay where
+ * they were. A pack with no contents and no map either (a game of guides
+ * and lists only) is browsed as one list of all its guides, in order.
  */
 export type ContentsEntry =
   | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
   | { kind: 'page'; guide: GuideEntry };
-
-/** The id the top of the contents goes by, where a section's id would. */
-export const CONTENTS_TOP = 'top';
-/** The id of the "Other pages" part of the top. */
-export const CONTENTS_OTHER = 'other';
 
 export class GuideContents {
   /** Whether the pack has guides to browse as pages: a contents, or no map but guides. */
@@ -27,8 +23,10 @@ export class GuideContents {
   private readonly guides: ReadonlyMap<string, GuideEntry>;
   private readonly parent = new Map<string, string>();
   private readonly topIds: string[];
-  /** Guides in no section, in guide order. */
-  private readonly others: GuideEntry[];
+  /** With no contents, the guides listed at the top, in guide order. */
+  private readonly loose: GuideEntry[];
+  /** Every guide the contents lists, however deep. */
+  private readonly listed = new Set<string>();
   private readonly pageCounts = new Map<string, number>();
 
   constructor(pack: Pick<LoadedPack, 'data'>) {
@@ -40,22 +38,15 @@ export class GuideContents {
     const hasMap = pack.data.maps.length > 0;
     this.browsable = this.hasContents || (!hasMap && guides.length > 0);
 
-    const listed = new Set<string>();
     for (const section of sections) {
       for (const item of section.items) {
         if (this.sections.has(item)) {
           if (!this.parent.has(item)) this.parent.set(item, section.id);
-        } else listed.add(item);
+        } else if (this.guides.has(item)) this.listed.add(item);
       }
     }
     this.topIds = sections.filter((s) => !this.parent.has(s.id)).map((s) => s.id);
-    // On a map, a guide of one location is that location's note, not a page.
-    const notes = new Set(pack.data.locations.flatMap((l) => (l.guideId ? [l.guideId] : [])));
-    this.others = guides.filter(
-      (guide) =>
-        !listed.has(guide.id) &&
-        (!hasMap || (guide.locationIds.length !== 1 && !notes.has(guide.id))),
-    );
+    this.loose = this.browsable && !this.hasContents ? guides : [];
     // Only sections listed from the top count; a pack checked for integrity has no loops.
     for (const id of this.topIds) this.countPages(id, new Set());
   }
@@ -73,15 +64,15 @@ export class GuideContents {
     return pages;
   }
 
-  /** What the top of the contents lists: its sections, then "Other pages" (or every page). */
+  /** What the top of the contents lists: its sections (or, with no contents, every page). */
   top(): ContentsEntry[] {
-    if (!this.hasContents) return this.others.map((guide) => ({ kind: 'page', guide }));
+    if (!this.hasContents) return this.loose.map((guide) => ({ kind: 'page', guide }));
     return this.topIds.flatMap((id) => this.entry(id));
   }
 
-  /** Guides in no section (with a contents), shown as "Other pages". */
-  otherPages(): GuideEntry[] {
-    return this.hasContents ? this.others : [];
+  /** Whether a guide is one of the pages browsed here. */
+  isPage(guideId: string): boolean {
+    return this.hasContents ? this.listed.has(guideId) : this.loose.some((g) => g.id === guideId);
   }
 
   section(id: string): Section | undefined {
@@ -160,7 +151,7 @@ export class GuideContents {
     };
     const sections = new Set<string>();
     for (const id of this.topIds) visit(id, sections);
-    this.others.forEach(add);
+    this.loose.forEach(add);
     return out;
   }
 }
