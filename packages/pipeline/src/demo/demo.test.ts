@@ -7,6 +7,7 @@ import { generateDemoContent, layoutRegions } from './content';
 import { createTerrain, elevationAt, renderTerrain } from './terrain';
 import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
+import { WIKI_PAGES, WIKI_PICTURE, addWiki, wikiPictureFiles } from './wiki';
 
 const SIZE = 2048;
 const SEED = 7;
@@ -303,6 +304,47 @@ describe('demo checklists and guides', () => {
   it('uses no real game, site or brand names', () => {
     const text = JSON.stringify([pack.checklists, pack.checklistItems, pack.guides]);
     expect(text).not.toMatch(/https?:\/\/(?!github\.com\/DrFlGd\/atlas)/);
+  });
+});
+
+describe('demo wiki', () => {
+  const pack = addWiki(generate());
+  const pages = new Set<string>(Object.values(WIKI_PAGES));
+  const wiki = pack.guides.filter((g) => pages.has(g.id));
+
+  it('is valid, and its contents lists every page once', () => {
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+    const listed = (pack.sections ?? []).flatMap((s) => s.items).filter((id) => pages.has(id));
+    expect(listed.sort()).toEqual([...pages].sort());
+    expect(pack.sections).toHaveLength(3);
+  });
+
+  it('has a table, a picture, hidden text and links that all lead to its own pages', () => {
+    const bodies = wiki.map((g) => g.body).join('\n');
+    expect(bodies).toMatch(/^\| --- \|/m);
+    expect(bodies).toContain(`](${WIKI_PICTURE})`);
+    expect(bodies).toMatch(/\|\|[^|]+\|\|/);
+    const targets = [...bodies.matchAll(/\]\((demo:guide:[^)\s]+)\)/g)].map((m) => m[1]!);
+    expect(targets.length).toBeGreaterThan(10);
+    for (const target of targets) expect(pages.has(target), target).toBe(true);
+  });
+
+  it('credits a made-up wiki under an open licence on every page', () => {
+    for (const guide of wiki) {
+      expect(guide.source?.url).toMatch(/^https:\/\/wiki\.example\.org\//);
+      expect(guide.source?.license.name).toBe('CC BY-SA 4.0');
+    }
+    expect(pack.manifest.attribution.map((a) => a.name)).toContain('Example Wiki');
+  });
+
+  it('draws its picture at the size the pack gives', async () => {
+    const files = await wikiPictureFiles();
+    const picture = pack.pictures?.[0];
+    const png = picture ? files.get(picture.file) : undefined;
+    expect(png?.subarray(1, 4).toString('latin1')).toBe('PNG');
+    expect(png?.readUInt32BE(16)).toBe(picture?.width);
+    expect(png?.readUInt32BE(20)).toBe(picture?.height);
   });
 });
 
