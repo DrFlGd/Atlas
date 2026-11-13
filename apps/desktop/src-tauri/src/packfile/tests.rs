@@ -232,6 +232,7 @@ fn folder_source(dir: &Path) -> PackSource {
         images: dir.to_path_buf(),
         lock: true,
         comes_with_app: false,
+        own_use_pictures: false,
     }
 }
 
@@ -590,6 +591,7 @@ fn exports_images_from_the_overlay_of_a_pack_that_comes_with_the_app() {
         images: overlay,
         lock: false,
         comes_with_app: true,
+        own_use_pictures: false,
     };
     let options = export_options(&source).unwrap();
     assert!(options.exportable);
@@ -1521,6 +1523,7 @@ fn exports_the_own_files_beside_the_game() {
             Detail::Overview,
             &dir.0.join(name),
             include,
+            false,
             &mut |_| {},
             &|| false,
         )
@@ -1681,6 +1684,58 @@ fn exports_a_game_with_no_map_and_only_the_pictures_it_may_pass_on() {
     assert!(!files.contains_key("pictures/own.png"));
     assert!(files.contains_key("sections.json"));
     assert!(!files.contains_key("maps.json"));
+}
+
+#[test]
+fn carries_the_pictures_kept_for_own_use_only_when_asked() {
+    let dir = TempDir::new("packfile-own-use");
+    let pack = dir.0.join("pages");
+    write_pages_pack(&pack);
+    // Offered: the two pictures kept for the person's own use whose files are here.
+    let options = export_options(&folder_source(&pack)).unwrap();
+    assert_eq!(options.own_use_pictures, 2);
+    assert_eq!(
+        options.own_use_picture_bytes,
+        (b"my own picture".len() + b"downloaded picture".len()) as u64
+    );
+
+    let file = dir.0.join("pages.atlaspack");
+    let source = PackSource {
+        own_use_pictures: true,
+        ..folder_source(&pack)
+    };
+    run_export(&source, Detail::Overview, &file).unwrap();
+    let names = entry_names(&file);
+    for carried in ["pictures/gate.png", "pictures/own.png", "pictures/far.jpg"] {
+        assert!(names.contains_key(carried), "{carried}: {names:?}");
+    }
+    assert!(!names.contains_key("pictures/gone.png"));
+    // Still marked as kept for the person's own use, with where each came from.
+    let listed = json_entry(&file, "pictures.json");
+    let far = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["file"] == "pictures/far.jpg")
+        .unwrap();
+    assert_eq!(far["shareable"], false);
+    assert_eq!(far["remote"], "https://pictures.example.com/far.jpg");
+
+    // Opened on another device: the photos are there, nothing to download.
+    let imported = run_import(&file, &dir.0.join("maps")).unwrap();
+    let files = files_under(&imported.folder);
+    assert_eq!(files["pictures/far.jpg"], b"downloaded picture");
+    assert_eq!(files["pictures/own.png"], b"my own picture");
+
+    // A pack with no pictures offers none.
+    let plain = dir.0.join("plain");
+    write_pack(&plain, "1.0.0");
+    assert_eq!(
+        export_options(&folder_source(&plain))
+            .unwrap()
+            .own_use_pictures,
+        0
+    );
 }
 
 #[test]

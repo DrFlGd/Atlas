@@ -8,6 +8,7 @@ import {
   imagesDownloadedAt,
   imagesText,
   installedImagesText,
+  photosHint,
   sourceText,
 } from './packFileText';
 
@@ -205,6 +206,14 @@ describe('map pack file facts in words', () => {
     expect(sourceText(header().source)).toBe('Read from 1 web page with Demo map site.');
     expect(sourceText({ kind: 'app' })).toBe('Comes with the Atlas app.');
     expect(sourceText({ kind: 'unknown' })).toBe('Where its data came from is not recorded.');
+  });
+
+  it('says how many downloaded photos a file would carry, and to keep such a file', () => {
+    expect(photosHint(1, '80 KB')).toMatch(
+      /^The 1 photo downloaded for your own use \(.+, 80 KB\)/,
+    );
+    expect(photosHint(3081, '212 MB')).toContain('The 3,081 photos downloaded');
+    expect(photosHint(2, '1 MB')).toContain('Keep a file with them to yourself');
   });
 
   it('counts the contents and the map images', () => {

@@ -1321,7 +1321,10 @@ fn progress_file_beside(pack_file: &std::path::Path) -> PathBuf {
 /// With `progress` (the text of a progress export, as "Export all
 /// profiles" writes it), that is saved beside it too. With `include_mine`,
 /// the person's own lists, locations and types of the game go in the file
-/// (the web app saves them first). `None` when the person closes the
+/// (the web app saves them first). With `include_photos`, so do the
+/// pictures downloaded for the person's own use (location photos, the
+/// pictures of guide pages), for a file they keep to themselves. `None`
+/// when the person closes the
 /// dialog. `packfile_progress` reports how far it is and `packfile_cancel`
 /// stops it.
 #[allow(clippy::too_many_arguments)]
@@ -1336,6 +1339,7 @@ pub async fn packfile_export<R: Runtime>(
     detail: Detail,
     progress: Option<String>,
     include_mine: Option<bool>,
+    include_photos: Option<bool>,
 ) -> Result<Option<PackFileExported>, String> {
     desktop_only()?;
     listed(&library, &id)?;
@@ -1387,6 +1391,7 @@ pub async fn packfile_export<R: Runtime>(
             detail,
             &destination,
             include_mine.unwrap_or(false),
+            include_photos.unwrap_or(false),
             &mut |done| turn.update(done),
             &|| turn.cancelled(),
         );

@@ -34,6 +34,10 @@ interface PackShell {
   imported: boolean;
   /** Whether each export was asked to include one's own lists, locations and types. */
   exportsMine: boolean[];
+  /** The pictures downloaded for the person's own use that the game has: count and bytes. */
+  ownUse: { pictures: number; bytes: number } | null;
+  /** Whether each export was asked to include them. */
+  exportsPhotos: boolean[];
   /** One's own files the next import gives back, as the shell reads them from the file. */
   importMine: {
     ownLists?: string;
@@ -52,6 +56,8 @@ function installPackShell() {
     job: null,
     imported: false,
     exportsMine: [],
+    ownUse: null,
+    exportsPhotos: [],
     importMine: null,
   };
   (window as unknown as { __packShell: PackShell }).__packShell = shell;
@@ -212,6 +218,9 @@ function installPackShell() {
             full: 'demo-full.atlaspack',
           },
           downloading: false,
+          ...(shell.ownUse
+            ? { ownUsePictures: shell.ownUse.pictures, ownUsePictureBytes: shell.ownUse.bytes }
+            : {}),
         });
       case 'packfile_export': {
         const detail = args.detail as string;
@@ -219,6 +228,7 @@ function installPackShell() {
         shell.exports.push({ id: args.id as string, detail, progress });
         const withMine = args.includeMine === true;
         shell.exportsMine.push(withMine);
+        shell.exportsPhotos.push(args.includePhotos === true);
         const images = detail === 'overview' ? 18 : 340;
         const path = `/home/test/Exports/demo-${detail}.atlaspack`;
         return run('export', 20, () => ({
@@ -526,6 +536,42 @@ test('imports a map pack file, saying which is newer and asking before using old
   await expect(details).toContainText('Imported from demo-standard.atlaspack on');
   await expect(details.locator('time[title="2026-11-11T10:00:00Z"]')).toBeVisible();
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+  expect(errors).toEqual([]);
+});
+
+test('offers the photos downloaded for one’s own use in a map pack file, and only when there are any', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await page.getByTestId('maps-button').click();
+  const row = page.locator('[data-testid="pack-row"][data-pack="demo"]');
+  const dialog = page.getByTestId('pack-file-dialog');
+
+  // A game with no such photos: nothing to offer.
+  await row.getByTestId('export-pack').click();
+  await expect(dialog.getByTestId('export-start')).toBeEnabled();
+  await expect(dialog.getByTestId('export-with-photos')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  // With photos downloaded: offered, off until ticked, with how many and how large.
+  await setShell(page, { ownUse: { pictures: 1280, bytes: 96_000_000 } });
+  await row.getByTestId('export-pack').click();
+  const withPhotos = dialog.getByTestId('export-with-photos');
+  await expect(withPhotos).toHaveAccessibleName('Include downloaded photos');
+  await expect(withPhotos).toHaveAccessibleDescription(
+    /The 1,280 photos downloaded for your own use/,
+  );
+  await expect(withPhotos).toHaveAccessibleDescription(/Keep a file with them to yourself/);
+  await expect(withPhotos).not.toBeChecked();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  await row.getByTestId('export-pack').click();
+  await withPhotos.check();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  expect((await packShell(page)).exportsPhotos).toEqual([false, true]);
   expect(errors).toEqual([]);
 });
 

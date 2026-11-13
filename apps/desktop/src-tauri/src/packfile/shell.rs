@@ -42,6 +42,7 @@ pub fn source_for(
         pack_id: id.to_owned(),
         lock: kind == Some(PackKind::Folder),
         comes_with_app: library.is_bundled(id),
+        own_use_pictures: false,
         root,
         images,
     })
@@ -73,6 +74,7 @@ pub fn export_pack(
         detail,
         destination,
         false,
+        false,
         progress,
         cancelled,
     )
@@ -80,7 +82,9 @@ pub fn export_pack(
 
 /// [`export_pack`], with the person's own lists, locations and types of the
 /// game from beside its folder in the maps folder when `include_mine` is
-/// set and there are any.
+/// set and there are any, and with the pictures downloaded for the
+/// person's own use (location photos, pictures of guide pages) when
+/// `own_use_pictures` is set.
 #[allow(clippy::too_many_arguments)]
 pub fn export_pack_with_mine(
     library: &Library,
@@ -90,10 +94,14 @@ pub fn export_pack_with_mine(
     detail: Detail,
     destination: &Path,
     include_mine: bool,
+    own_use_pictures: bool,
     progress: &mut dyn FnMut(Progress),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Exported, Stop> {
-    let source = source_for(library, downloads, id)?;
+    let source = PackSource {
+        own_use_pictures,
+        ..source_for(library, downloads, id)?
+    };
     if downloads.is_active(id) {
         return Err(Stop::Failed(DOWNLOADING.to_owned()));
     }

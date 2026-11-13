@@ -19,7 +19,10 @@
 //!   (`offline-tiles/<layer>.json`) rewritten to the levels included;
 //! - the pictures its guides show (`pictures/`) that the pack marks as
 //!   shareable, with `pictures.json` cut down to them. A picture kept for
-//!   the person's own use (`shareable: false`) is never in the file.
+//!   the person's own use (`shareable: false`, such as a location photo
+//!   downloaded from a site) is in the file only when the person ticks
+//!   "Include downloaded photos", for a file they keep to themselves; it
+//!   stays marked `shareable: false` there.
 //!
 //! A game with no map has no `maps.json` or `layers.json`, and no images.
 //!
@@ -733,19 +736,38 @@ pub fn is_picture_path(path: &str) -> bool {
         && matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "gif")
 }
 
-/// The pictures a map pack file carries: only those the pack marks as
-/// shareable and whose file is there, in the pack folder or (downloaded for
-/// a pack that comes with the app) its overlay `images`. `list` is the
-/// pack's `pictures.json` cut down to them, and to the pictures fetched
-/// later (with a `remote` address) whose files are not carried, so another
-/// app with downloads can fetch them for itself; none when the pack has no
-/// pictures.
+/// The pictures a map pack file carries: those the pack marks as shareable
+/// and whose file is there, in the pack folder or (downloaded for a pack
+/// that comes with the app) its overlay `images`; with `own_use`, which the
+/// person asks for, those kept for their own use (`shareable: false`) too,
+/// still marked so. `list` is the pack's `pictures.json` cut down to them,
+/// and to the pictures fetched later (with a `remote` address) whose files
+/// are not carried, so another app with downloads can fetch them for
+/// itself; none when the pack has no pictures.
 pub struct SharedPictures {
     pub list: Vec<u8>,
     pub files: Vec<Entry>,
 }
 
-pub fn shared_pictures(root: &Path, images: &Path) -> Result<Option<SharedPictures>, String> {
+/// How many pictures kept for the person's own use have their file here,
+/// and their bytes: what "Include downloaded photos" would add to a file.
+pub fn own_use_pictures(root: &Path, images: &Path) -> Result<(u64, u64), String> {
+    let Some(all) = shared_pictures(root, images, true)? else {
+        return Ok((0, 0));
+    };
+    let shared = shared_pictures(root, images, false)?.map_or(Vec::new(), |shared| shared.files);
+    let bytes = |files: &[Entry]| files.iter().map(|entry| entry.size).sum::<u64>();
+    Ok((
+        (all.files.len() - shared.len()) as u64,
+        bytes(&all.files) - bytes(&shared),
+    ))
+}
+
+pub fn shared_pictures(
+    root: &Path,
+    images: &Path,
+    own_use: bool,
+) -> Result<Option<SharedPictures>, String> {
     let path = root.join(PICTURES_FILE);
     if fs::symlink_metadata(&path).is_err() {
         return Ok(None);
@@ -769,7 +791,7 @@ pub fn shared_pictures(root: &Path, images: &Path) -> Result<Option<SharedPictur
         let Some(relative) = relative_path(file) else {
             continue;
         };
-        let found = if shareable {
+        let found = if shareable || own_use {
             [root.join(&relative), images.join(&relative)]
                 .into_iter()
                 .find_map(|on_disk| match fs::symlink_metadata(&on_disk) {
@@ -1079,6 +1101,10 @@ pub struct PackSource {
     pub lock: bool,
     /// The pack comes with the app that exports it.
     pub comes_with_app: bool,
+    /// The person asked for the pictures downloaded for their own use
+    /// (`shareable: false`, such as location photos) to go in the file
+    /// too: it is then a file to keep, not to pass on.
+    pub own_use_pictures: bool,
 }
 
 /// One entry of the file.
@@ -1336,6 +1362,11 @@ pub struct ExportOptions {
     /// The file name the save dialog suggests for each detail is
     /// `<packId>-<detail>.atlaspack`.
     pub default_names: BTreeMap<String, String>,
+    /// The pictures downloaded for the person's own use (location photos,
+    /// pictures of guide pages) that "Include downloaded photos" would add,
+    /// and their bytes; 0 when there are none to offer.
+    pub own_use_pictures: u64,
+    pub own_use_picture_bytes: u64,
 }
 
 /// The default file name of an export.
@@ -1384,7 +1415,10 @@ pub fn export_options(source: &PackSource) -> Result<ExportOptions, String> {
                 + 512 * analysis.statuses.len() as u64,
         });
     }
+    let (own_use_pictures, own_use_picture_bytes) = own_use_pictures(&source.root, &source.images)?;
     Ok(ExportOptions {
+        own_use_pictures,
+        own_use_picture_bytes,
         pack_id: source.pack_id.clone(),
         title: pack.title,
         exportable: reason.is_none(),
