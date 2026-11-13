@@ -1,6 +1,7 @@
 import {
   COLLECTION_NAMES,
   MANIFEST_FILE,
+  MAP_COLLECTIONS,
   PACK_COLLECTIONS,
   SUPPORTED_SCHEMA_VERSIONS,
   checkPackIntegrity,
@@ -35,10 +36,16 @@ export interface LoadPackOptions {
 /** Highest number of issues listed in a {@link PackLoadError}. */
 const MAX_LISTED_ISSUES = 20;
 
+/** Files read only for a pack that has guides. */
+const GUIDE_FILES: readonly CollectionName[] = ['sections', 'pictures'];
+
 /**
  * Loads, validates and indexes the data pack at `packUrl`. The URL must be
  * absolute and point at the pack root folder (the one holding
  * `manifest.json`); relative paths inside the pack resolve against it.
+ *
+ * A game with no map may leave out every map file (`MAP_COLLECTIONS`); they
+ * then load as empty. Leaving out only some of them is an error.
  *
  * The pack is read tolerantly (`packReadSchemas`): fields this app does not
  * know, and values of optional enum fields it does not know, are skipped,
@@ -85,14 +92,37 @@ export async function loadPack(
     MANIFEST_FILE,
   );
 
-  const entries = await Promise.all(
-    COLLECTION_NAMES.map(async (name) => {
-      const spec = PACK_COLLECTIONS[name];
-      const raw = await readJson(spec.file, spec.required);
-      const parsed = raw === undefined ? [] : parseWith(spec.readSchema, raw, spec.file);
-      return [name, parsed] as const;
+  // A game with no map may leave out every map file, but not some of them.
+  const mapFiles: readonly CollectionName[] = MAP_COLLECTIONS;
+  const read = (name: CollectionName) => {
+    const spec = PACK_COLLECTIONS[name];
+    return readJson(spec.file, spec.required && !mapFiles.includes(name));
+  };
+  // The contents and the pictures belong to the guides: a pack without
+  // guides is not asked for them, so older packs cause no extra requests.
+  const guides = read('guides');
+  const raws = await Promise.all(
+    COLLECTION_NAMES.map((name) => {
+      if (name === 'guides') return guides;
+      if (!GUIDE_FILES.includes(name)) return read(name);
+      return guides.then((raw) => (Array.isArray(raw) && raw.length > 0 ? read(name) : undefined));
     }),
   );
+  const noMap = COLLECTION_NAMES.every(
+    (name, i) => !mapFiles.includes(name) || raws[i] === undefined,
+  );
+  const entries = COLLECTION_NAMES.map((name, i) => {
+    const spec = PACK_COLLECTIONS[name];
+    const raw = raws[i];
+    if (raw === undefined && spec.required && !noMap) {
+      throw new PackLoadError(
+        `Could not fetch ${new URL(spec.file, baseUrl).href}: HTTP 404`,
+        spec.file,
+      );
+    }
+    const parsed = raw === undefined ? [] : parseWith(spec.readSchema, raw, spec.file);
+    return [name, parsed] as const;
+  });
   const collections = Object.fromEntries(entries) as { [K in CollectionName]: PackData[K] };
   const data: PackData = { manifest, ...collections };
 

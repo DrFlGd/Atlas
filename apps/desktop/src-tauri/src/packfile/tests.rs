@@ -1532,3 +1532,142 @@ fn exports_the_own_files_beside_the_game() {
     assert_eq!(without.header.mine, None);
     assert_eq!(without.header.version, VERSION_WITHOUT_MINE);
 }
+
+// ---------------------------------------------------------------------------
+// A game with no map, and the pictures its guides show
+
+/// A game of guides only: no `maps.json` or `layers.json`, three pictures:
+/// one to pass on, one kept for the person's own use, and one to pass on
+/// whose file is not there.
+fn write_pages_pack(dir: &Path) {
+    put_json(
+        &dir.join(MANIFEST_FILE),
+        &json!({"schemaVersion": 2, "gameId": ID, "title": "Test Pages", "packVersion": "1.0.0",
+                "gamePatch": "1", "attribution": [{"name": "Example Wiki", "license": "CC BY-SA 4.0"}],
+                "idMigrations": {}}),
+    );
+    put_json(
+        &dir.join("guides.json"),
+        &json!([{"id": format!("{ID}:guide:start"), "title": "Start", "locationIds": [],
+                 "body": format!("![A gate]({ID}:picture:gate) ![Mine]({ID}:picture:own)")}]),
+    );
+    put_json(
+        &dir.join("sections.json"),
+        &json!([{"id": format!("{ID}:section:basics"), "title": "Basics", "items": [format!("{ID}:guide:start")]}]),
+    );
+    put_json(
+        &dir.join("pictures.json"),
+        &json!([
+            {"id": format!("{ID}:picture:gate"), "file": "pictures/gate.png", "shareable": true},
+            {"id": format!("{ID}:picture:own"), "file": "pictures/own.png", "shareable": false},
+            {"id": format!("{ID}:picture:gone"), "file": "pictures/gone.png", "shareable": true}
+        ]),
+    );
+    put(&dir.join("pictures/gate.png"), b"gate picture");
+    put(&dir.join("pictures/own.png"), b"my own picture");
+}
+
+#[test]
+fn exports_a_game_with_no_map_and_only_the_pictures_it_may_pass_on() {
+    let dir = TempDir::new("packfile-pages");
+    let pack = dir.0.join("pages");
+    write_pages_pack(&pack);
+    let options = export_options(&folder_source(&pack)).unwrap();
+    assert!(options.exportable, "{:?}", options.reason);
+    assert!(options.details.iter().all(|option| option.available));
+
+    let file = dir.0.join("pages.atlaspack");
+    run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+    let names = entry_names(&file);
+    assert!(names.contains_key("pictures/gate.png"), "{names:?}");
+    assert!(!names.keys().any(|name| name.contains("own")), "{names:?}");
+    assert!(!names.contains_key("maps.json") && !names.contains_key("layers.json"));
+    assert!(names.contains_key("sections.json"));
+    let listed = json_entry(&file, "pictures.json");
+    assert_eq!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["file"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["pictures/gate.png"]
+    );
+    let header = json_entry(&file, HEADER_FILE);
+    assert_eq!(header["contents"]["maps"], 0);
+    assert_eq!(header["contents"]["guides"], 1);
+
+    // Opened on another device: the game, its contents and its shared picture.
+    let maps = dir.0.join("maps");
+    let imported = run_import(&file, &maps).unwrap();
+    let files = files_under(&imported.folder);
+    assert_eq!(files["pictures/gate.png"], b"gate picture");
+    assert!(!files.contains_key("pictures/own.png"));
+    assert!(files.contains_key("sections.json"));
+    assert!(!files.contains_key("maps.json"));
+}
+
+#[test]
+fn refuses_pictures_the_pack_does_not_list() {
+    let dir = TempDir::new("packfile-pages-refusals");
+    let pack = dir.0.join("pages");
+    write_pages_pack(&pack);
+    let file = dir.0.join("pages.atlaspack");
+    run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+    let header = json_entry(&file, HEADER_FILE);
+    let mut archive = ZipArchive::new(fs::File::open(&file).unwrap()).unwrap();
+    let mut entries = Vec::new();
+    for i in 1..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+        entries.push((entry.name().unwrap().into_owned(), bytes));
+    }
+    for (name, extra) in [
+        ("unlisted", "pictures/own.png"),
+        ("not-a-picture", "pictures/notes.txt"),
+    ] {
+        let mut spoilt = entries.clone();
+        spoilt.push((extra.to_owned(), b"x".to_vec()));
+        let error = import_error(&dir.0, name, &header, &spoilt);
+        assert!(error.contains("not part of a map pack"), "{name}: {error}");
+    }
+    // A picture listed with a path outside the folder is not one either.
+    let mut spoilt = entries.clone();
+    for (name, bytes) in &mut spoilt {
+        if name == "pictures.json" {
+            *bytes =
+                br#"[{"id":"x","file":"pictures/../manifest.json","shareable":true}]"#.to_vec();
+        }
+    }
+    spoilt.push(("pictures/../evil.png".to_owned(), b"x".to_vec()));
+    let error = import_error(&dir.0, "outside", &header, &spoilt);
+    assert!(
+        error.contains("not part of a map pack") || error.contains("outside"),
+        "{error}"
+    );
+}
+
+#[test]
+fn tells_picture_paths_from_other_paths() {
+    for good in [
+        "pictures/a.png",
+        "pictures/gate-1.jpeg",
+        "pictures/x_y.z.webp",
+        "pictures/9.gif",
+    ] {
+        assert!(is_picture_path(good), "{good}");
+    }
+    for bad in [
+        "pictures/.png",
+        "pictures/.hidden.png",
+        "pictures/a.svg",
+        "pictures/sub/a.png",
+        "pictures/../a.png",
+        "tiles/a.png",
+        "pictures/a.PNG",
+        "pictures/a b.png",
+    ] {
+        assert!(!is_picture_path(bad), "{bad}");
+    }
+}

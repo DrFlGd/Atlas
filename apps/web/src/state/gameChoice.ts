@@ -48,6 +48,11 @@ export interface ChoiceGame {
   note: string | null;
   /** Maps first, then the other pages, each in the site's order. */
   pages: ChoicePage[];
+  /**
+   * The importer reads pages by fetching them: more pages may be ticked
+   * than one go opens, and those left are kept to continue later.
+   */
+  queues: boolean;
 }
 
 export interface Choice {
@@ -98,10 +103,14 @@ export function choiceGame(options: {
   listed: readonly ListedPage[] | null;
   recorded: readonly RecordedPage[];
   note?: string | null;
-  /** Tick the pages the importer can add (default), or leave all unticked. */
+  /** Tick the pages the importer can add (default, unless it queues), or leave all unticked. */
   tick?: boolean;
+  /** See {@link ChoiceGame.queues}. */
+  queues?: boolean;
 }): ChoiceGame {
-  const tick = options.tick ?? true;
+  const queues = options.queues ?? false;
+  // A game read page by page (a wiki, say) has many pages: the person picks.
+  const tick = options.tick ?? !queues;
   const recorded = new Set(options.recorded.map((page) => pageKey(page.url)));
   const seen = new Set<string>();
   const pages: ChoicePage[] = [];
@@ -142,6 +151,7 @@ export function choiceGame(options: {
     source: options.listed ? 'site' : 'recorded',
     note: options.note ?? null,
     pages: mapsFirst(pages),
+    queues,
   };
 }
 
@@ -160,7 +170,8 @@ export function newChoice(
 ): Choice {
   let room = pagesLeft(opened);
   let capped = 0;
-  const capGame = (game: ChoiceGame): ChoiceGame => ({
+  const capGame = (game: ChoiceGame): ChoiceGame => (game.queues ? game : capPages(game));
+  const capPages = (game: ChoiceGame): ChoiceGame => ({
     ...game,
     pages: game.pages.map((page) => {
       if (!page.checked) return page;
@@ -193,6 +204,51 @@ export function togglePage(choice: Choice, gameKey: string, url: string): Choice
   };
 }
 
+/** Ticks every page of one heading, or unticks them all when all are ticked. */
+export function toggleGroup(choice: Choice, gameKey: string, group: string | null): Choice {
+  return {
+    ...choice,
+    games: choice.games.map((game) => {
+      if (game.key !== gameKey) return game;
+      const inGroup = (page: ChoicePage) => page.supported && page.group === group;
+      const all = game.pages.filter(inGroup).every((page) => page.checked);
+      return {
+        ...game,
+        pages: game.pages.map((page) => (inGroup(page) ? { ...page, checked: !all } : page)),
+      };
+    }),
+  };
+}
+
+/** Ticks a page and every page after it in the list, and unticks those before. */
+export function tickFrom(choice: Choice, gameKey: string, url: string): Choice {
+  return {
+    ...choice,
+    games: choice.games.map((game) => {
+      if (game.key !== gameKey) return game;
+      const from = game.pages.findIndex((page) => page.url === url);
+      if (from < 0) return game;
+      return {
+        ...game,
+        pages: game.pages.map((page, i) => ({ ...page, checked: page.supported && i >= from })),
+      };
+    }),
+  };
+}
+
+/** A ticked page, as it is opened. */
+export interface ChosenPage {
+  url: string;
+  importerId: string;
+  game: string;
+  /** The key of its game in the choice. */
+  gameKey: string;
+  title: string;
+  group?: string;
+  /** Its game keeps pages beyond one go for later. */
+  queues: boolean;
+}
+
 /** The ticked pages in the order they are opened: game by game, maps first. */
 export function chosenPages(choice: Choice): { url: string; importerId: string; game: string }[] {
   return choice.games.flatMap((game) =>
@@ -202,9 +258,40 @@ export function chosenPages(choice: Choice): { url: string; importerId: string; 
   );
 }
 
+/** {@link chosenPages}, each with how it was listed and whether its game keeps pages for later. */
+export function chosenToRead(choice: Choice): ChosenPage[] {
+  return choice.games.flatMap((game) =>
+    game.pages
+      .filter((page) => page.checked && page.supported)
+      .map((page) => ({
+        url: page.url,
+        importerId: game.importerId,
+        game: game.title,
+        gameKey: game.key,
+        title: page.title,
+        ...(page.group ? { group: page.group } : {}),
+        queues: game.queues,
+      })),
+  );
+}
+
+/**
+ * The ticked pages split into those this go opens and those kept for
+ * later: only pages of games that queue are kept, so a choice that
+ * {@link overCap} lets through always fits.
+ */
+export function splitChosen(choice: Choice): { now: ChosenPage[]; later: ChosenPage[] } {
+  const chosen = chosenToRead(choice);
+  const left = pagesLeft(choice.opened);
+  return { now: chosen.slice(0, left), later: chosen.slice(left) };
+}
+
 /** Why the ticked pages cannot be opened in one go, or null when they can. */
 export function overCap(choice: Choice): string | null {
-  const chosen = chosenPages(choice).length;
+  const pages = chosenToRead(choice);
+  // Pages beyond one go are kept for later when every game ticked keeps them.
+  if (pages.length > 0 && pages.every((page) => page.queues)) return null;
+  const chosen = pages.length;
   const left = pagesLeft(choice.opened);
   if (chosen <= left) return null;
   return `That is ${chosen} pages, and this app opens at most ${MAX_RUN_ADDRESSES} pages at a time${

@@ -16,7 +16,12 @@
 //! - the map images of every folder layer, at the paths the layer's own
 //!   `url` gives, up to the chosen detail, with the "not on the server"
 //!   markers (`.404`) of those levels and the layers' status files
-//!   (`offline-tiles/<layer>.json`) rewritten to the levels included.
+//!   (`offline-tiles/<layer>.json`) rewritten to the levels included;
+//! - the pictures its guides show (`pictures/`) that the pack marks as
+//!   shareable, with `pictures.json` cut down to them. A picture kept for
+//!   the person's own use (`shareable: false`) is never in the file.
+//!
+//! A game with no map has no `maps.json` or `layers.json`, and no images.
 //!
 //! The manifest's image summaries are rewritten to the levels included too,
 //! so the pack opened from the file shows the top level it has enlarged when
@@ -632,6 +637,80 @@ fn count_array(path: &Path) -> u64 {
         .map_or(0, |items| items.len() as u64)
 }
 
+// ---------------------------------------------------------------------------
+// Pictures: the pack's `pictures/` folder, which guides show by id
+
+/// The list of a pack's pictures (see the pack format).
+pub const PICTURES_FILE: &str = "pictures.json";
+/// A picture larger than this is not one.
+pub const MAX_PICTURE_BYTES: u64 = 16 << 20;
+
+/// Whether `path` names a picture as the pack format allows:
+/// `pictures/<name>.<png|jpg|jpeg|webp|gif>`, the name plain letters,
+/// digits, `_`, `.` and `-`, starting with a letter or digit.
+pub fn is_picture_path(path: &str) -> bool {
+    let Some(name) = path.strip_prefix("pictures/") else {
+        return false;
+    };
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-');
+    name.len() <= 121 + extension.len()
+        && stem.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && stem.chars().all(plain)
+        && matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "gif")
+}
+
+/// The pictures a map pack file carries: only those the pack marks as
+/// shareable and whose file is there. `list` is the pack's `pictures.json`
+/// cut down to them; none when the pack has no pictures.
+pub struct SharedPictures {
+    pub list: Vec<u8>,
+    pub files: Vec<Entry>,
+}
+
+pub fn shared_pictures(root: &Path) -> Result<Option<SharedPictures>, String> {
+    let path = root.join(PICTURES_FILE);
+    if fs::symlink_metadata(&path).is_err() {
+        return Ok(None);
+    }
+    let Value::Array(pictures) =
+        read_json_capped(&path, crate::library::MAX_PACK_FILE_BYTES as u64)?
+    else {
+        return Err(format!("The pack's {PICTURES_FILE} is not a list."));
+    };
+    let mut kept = Vec::new();
+    let mut files = Vec::new();
+    for picture in pictures {
+        let shareable = picture.get("shareable").and_then(Value::as_bool) == Some(true);
+        let Some(file) = picture.get("file").and_then(Value::as_str) else {
+            continue;
+        };
+        if !shareable || !is_picture_path(file) {
+            continue;
+        }
+        let Some(relative) = relative_path(file) else {
+            continue;
+        };
+        let on_disk = root.join(relative);
+        match fs::symlink_metadata(&on_disk) {
+            Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_PICTURE_BYTES => {
+                files.push(Entry {
+                    name: file.to_owned(),
+                    data: EntryData::File(on_disk),
+                    size: metadata.len(),
+                });
+                kept.push(picture);
+            }
+            _ => continue,
+        }
+    }
+    let mut list = serde_json::to_vec_pretty(&Value::Array(kept)).expect("JSON serialises");
+    list.push(b'\n');
+    Ok(Some(SharedPictures { list, files }))
+}
+
 /// Reads a JSON file of at most `cap` bytes.
 fn read_json_capped(path: &Path, cap: u64) -> Result<Value, String> {
     let name = path
@@ -965,7 +1044,13 @@ pub fn analyse(source: &PackSource) -> Result<Analysis, String> {
             _ => Err(format!("The pack's {name} cannot be read.")),
         }
     };
-    let layers = parse_layers(&read("maps.json")?, &read("layers.json")?)?;
+    // A game with no map has neither file; one without the other is damaged.
+    let present = |name: &str| fs::symlink_metadata(source.root.join(name)).is_ok();
+    let layers = if !present("maps.json") && !present("layers.json") {
+        Vec::new()
+    } else {
+        parse_layers(&read("maps.json")?, &read("layers.json")?)?
+    };
     let mut plans = BTreeMap::new();
     if layers.iter().any(|layer| layer.remote) {
         let plan = crate::tiles::pyramid::read_pack_plan(&source.root)

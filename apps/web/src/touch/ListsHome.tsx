@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { UiIcon } from '../components/icons';
 import { checklistScreenTitle, openChecklist, openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
+import { listedGuides } from '../state/guides';
 import { useOwnLists } from '../state/ownLists';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { ofText, percentOf } from './listText';
@@ -29,7 +30,8 @@ export function ListsHome({ game }: { game: LoadedGame }) {
   const found = useAtlas((s) => s.found);
   const profile = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name);
   const lastId = useLists((s) => s.lastListId);
-  const { checklists, guides } = game.checklists;
+  const { checklists } = game.checklists;
+  const guides = listedGuides(game);
   const everything = everythingOf(game);
   const collections = useMemo(
     () => [

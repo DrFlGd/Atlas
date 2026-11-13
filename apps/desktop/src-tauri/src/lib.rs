@@ -32,6 +32,8 @@ pub mod ownlists;
 pub mod packfile;
 mod packs;
 #[cfg(feature = "downloads")]
+mod pagefetch;
+#[cfg(feature = "downloads")]
 mod pagemeasure;
 #[cfg(feature = "downloads")]
 mod pageview;
@@ -153,6 +155,7 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::tiles_snapshot,
         commands::picture_tiles,
         commands::picture_cancel,
+        commands::import_fetch,
         commands::download_settings_get,
         commands::download_settings_set,
         pageview::view_pages,

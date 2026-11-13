@@ -16,6 +16,7 @@ import { downloadsOffered, touchUiOffered } from './features';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
+import { hasMap } from './state/guides';
 import { loadOwnLists } from './state/ownLists';
 import { initSaves } from './state/saves';
 import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
@@ -162,7 +163,7 @@ function Shell() {
         </SidePane>
       )}
       <main className="map-main" aria-label="Map area">
-        <MapPane />
+        {hasMap(game) ? <MapPane /> : <NoMap hasPages={hasChecklists} />}
         {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
       </main>
       <SidePane name="details" title="Details">
@@ -182,6 +183,27 @@ function Shell() {
         <Suspense fallback={null}>
           <PackFileDialog />
         </Suspense>
+      ) : null}
+    </div>
+  );
+}
+
+/** Where the map would be, in a game with no map: guides and lists only. */
+function NoMap({ hasPages }: { hasPages: boolean }) {
+  return (
+    <div className="no-map" data-testid="no-map">
+      <h2>This game has no map</h2>
+      <p>Its guides and lists are on the left{hasPages ? '' : ', when it has some'}.</p>
+      {hasPages ? (
+        <button
+          type="button"
+          className="button"
+          onClick={() => {
+            showLeftTab('checklists');
+          }}
+        >
+          Show the guides
+        </button>
       ) : null}
     </div>
   );

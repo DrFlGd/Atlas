@@ -1,6 +1,7 @@
 import { loadPack, type PackEntry } from '@atlas/core';
 import {
   DEFAULT_WAIT_SECONDS,
+  FETCH_PAUSE_MS,
   MAP_KIND,
   MAX_PAGE_DATA_CHARS,
   asImporter,
@@ -9,6 +10,7 @@ import {
   checkOutcome,
   checkPageObservations,
   checkPictureTiles,
+  fetchAddresses,
   findCatalogueImporter,
   findGameImporter,
   findImporter,
@@ -18,7 +20,14 @@ import {
   pageKey,
   pageMeasureStep,
   pageTilesFit,
+  refusalFor,
+  refusalOf,
+  robotsAllows,
+  rulesFromAnswer,
   type AtlasImporter,
+  type FetchedPage,
+  type PageFetch,
+  type RobotsRules,
   type Catalogue,
   type GameListing,
   type ImportContext,
@@ -57,7 +66,6 @@ import {
   type RunState,
 } from './importRun';
 import {
-  chosenPages,
   choiceGame,
   keptCatalogue,
   newChoice,
@@ -65,15 +73,19 @@ import {
   overCap,
   pickOpened,
   planPick,
+  splitChosen,
+  tickFrom,
   toggleGame,
+  toggleGroup,
   togglePage,
   type Choice,
   type ChoiceGame,
+  type ChosenPage,
   type GamePick,
   type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
-import { RUN_PAUSE_MS } from './importRun';
+import { MAX_RUN_ADDRESSES, RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
@@ -123,13 +135,16 @@ export type ImportPhase =
   | {
       kind: 'done';
       packId: string;
-      /** The map the page became; null for a checklist. */
+      /** The map the page became; null for a checklist or a guide. */
       mapId: string | null;
+      /** The guide the page became, when it became one. */
+      guideId?: string;
       title: string;
       summary: ImportSummary;
       rebuilt: boolean;
     }
-  | { kind: 'failed'; message: string }
+  /** `refused`: the site refused or asked to confirm the reader is a person; a run stops. */
+  | { kind: 'failed'; message: string; refused?: boolean }
   /** Several addresses, some of which no importer recognises: shown before the run. */
   | {
       kind: 'check';
@@ -174,10 +189,13 @@ export const useImport = create<{
    * whenever the dialog closes, never remembered.
    */
   measureFromPage: boolean;
+  /** Changes whenever pages kept for later change, for the list of them to read again. */
+  queueVersion: number;
 }>()(() => ({
   phase: { kind: 'idle' },
   draft: '',
   measureFromPage: false,
+  queueVersion: 0,
 }));
 
 const setPhase = (phase: ImportPhase) => {
@@ -329,6 +347,8 @@ type PageRead =
   | { state: 'timed-out'; message: string }
   /** The window did not open. */
   | { state: 'open-failed'; message: string }
+  /** The site refused, asked to slow down, or robots.txt does not allow the page: stop. */
+  | { state: 'refused'; message: string }
   /** Another import or a cancel took over. */
   | { state: 'cancelled' };
 
@@ -340,7 +360,7 @@ function readerFor(importer: AtlasImporter, reading: Reading) {
   const part =
     reading === 'game' ? importer.games : reading === 'catalogue' ? importer.catalogue : null;
   return {
-    pageReader: part?.pageReader ?? importer.pageReader,
+    pageReader: part?.pageReader ?? importer.pageReader ?? '() => null',
     waitSeconds: part?.waitSeconds ?? importer.waitSeconds ?? DEFAULT_WAIT_SECONDS,
   };
 }
@@ -368,6 +388,8 @@ async function readPage(
   /** The importer's page measuring step, when the map picture is to be measured from the page. */
   measure: string | null = null,
 ): Promise<PageRead> {
+  const fetcher = fetcherFor(importer, reading);
+  if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
   const { pageReader, waitSeconds } = readerFor(importer, reading);
   const startedAt = Date.now();
   onWaiting({ startedAt, now: startedAt, waitSeconds, loading: true, note: null });
@@ -423,6 +445,91 @@ async function readPage(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reading a page by fetching it (see `fetching.ts` in the importer contract)
+
+/** How an importer has a page of this reading fetched, if it reads that way. */
+function fetcherFor(importer: AtlasImporter, reading: Reading): PageFetch | null {
+  if (reading === 'game') return importer.games?.fetch ?? null;
+  if (reading === 'catalogue') return null;
+  return importer.fetch ?? null;
+}
+
+/** When the app last asked a site for a page. */
+let lastFetchAt = 0;
+
+/** The robots.txt rules of each site, read once in a go (`session`). */
+const robotsOf = new Map<string, { session: number; rules: RobotsRules }>();
+
+/**
+ * Fetches the addresses an importer names for `url`, as the app, one at a
+ * time: robots.txt first (once per site in a go), then each address after
+ * the pause. An answer that refuses stops here, and so does an address
+ * robots.txt does not allow.
+ */
+async function fetchPage(
+  shell: NonNullable<typeof desktop>,
+  url: string,
+  fetcher: PageFetch,
+  importer: AtlasImporter,
+  id: number,
+  reading: Reading,
+): Promise<PageRead> {
+  const named = fetchAddresses(fetcher, url);
+  if (!named.ok) return { state: 'failed', message: named.message };
+  const fetched: FetchedPage[] = [];
+  const stop = (message: string): PageRead => {
+    report({ importerId: importer.id, outcome: 'failed', message });
+    return { state: 'refused', message };
+  };
+  const one = async (address: string) => {
+    // After the pause between pages, and at least the pause after the last request.
+    const wait = Math.max(pauseLeft(), lastFetchAt + FETCH_PAUSE_MS - Date.now());
+    if (wait > 0) await sleep(wait);
+    if (id !== session) return null;
+    try {
+      return await shell.tiles.fetchPage(address);
+    } finally {
+      lastFetchAt = Date.now();
+    }
+  };
+  try {
+    for (const address of named.addresses) {
+      const origin = new URL(address).origin;
+      let robots = robotsOf.get(origin);
+      if (robots?.session !== id) {
+        const answer = await one(`${origin}/robots.txt`);
+        if (!answer) return { state: 'cancelled' };
+        const refusal = refusalOf(answer.status, answer.retryAfter);
+        if (refusal) return stop(`${refusal} This app stopped and read no more pages.`);
+        robots = { session: id, rules: rulesFromAnswer(answer) };
+        robotsOf.set(origin, robots);
+      }
+      if (!robotsAllows(robots.rules, address)) {
+        return stop(
+          `The site's robots.txt does not allow this app to read ${address}, so it stopped and read no more pages.`,
+        );
+      }
+      const answer = await one(address);
+      if (!answer) return { state: 'cancelled' };
+      const refusal = refusalOf(answer.status, answer.retryAfter);
+      if (refusal) return stop(`${refusal} This app stopped and read no more pages.`);
+      const { retryAfter: _, ...page } = answer;
+      fetched.push(page);
+    }
+  } catch (error) {
+    if (id !== session) return { state: 'cancelled' };
+    const message = `The ${reading === 'map' ? 'page' : 'list of pages'} could not be read: ${errorText(error)}`;
+    return { state: 'failed', message };
+  }
+  if (id !== session) return { state: 'cancelled' };
+  const data = JSON.stringify({ fetched });
+  if (data.length > MAX_PAGE_DATA_CHARS) {
+    return { state: 'failed', message: 'The page provided more data than this app accepts.' };
+  }
+  return { state: 'ready', data };
+}
+
 /**
  * The importer's page measuring step for `url`, when the person ticked
  * "Measure the map picture from the page" and this app can do it.
@@ -460,7 +567,13 @@ export async function startImport(text: string): Promise<void> {
   const url = text.trim();
   const id = ++session;
   const importers = await loadImporters();
-  const importer = findImporter(importers, url);
+  const refusal = refusalFor(importers, url);
+  const importer = refusal ? null : findImporter(importers, url);
+  if (refusal) {
+    report({ importerId: null, outcome: 'failed', message: refusal });
+    setPhase({ kind: 'failed', message: refusal });
+    return;
+  }
   if (!importer) {
     const message = unrecognisedMessage(
       url,
@@ -560,6 +673,13 @@ export async function submitAddresses(text: string): Promise<void> {
           : null;
   if (addresses.length === 1) {
     const url = addresses[0]!;
+    // An address an importer refuses is never opened or fetched.
+    const refusal = refusalFor(importers, url);
+    if (refusal) {
+      report({ importerId: null, outcome: 'failed', message: refusal });
+      setPhase({ kind: 'failed', message: refusal });
+      return;
+    }
     const kind = listing(url);
     if (kind === 'game') await startGameAddress(url, findGameImporter(importers, url)!);
     else if (kind === 'catalogue')
@@ -633,6 +753,8 @@ const outcomeOf = (
       return { kind: 'no-data', message: read.message };
     case 'cancelled':
       return { kind: 'cancelled', message: 'Stopped before the page provided its data.' };
+    case 'refused':
+      return { kind: 'refused', message: read.message };
   }
 };
 
@@ -644,10 +766,12 @@ async function startRun(
   checked: readonly CheckedAddress<AtlasImporter>[],
   leftOut: number,
   { update = false, firstPauseMs = 0 }: { update?: boolean; firstPauseMs?: number } = {},
-): Promise<void> {
+): Promise<RunState | null> {
   const shell = desktop;
-  if (!shell) return;
-  const pages = checked.flatMap(({ url, importer }) => (importer ? [{ url, importer }] : []));
+  if (!shell) return null;
+  const pages = checked.flatMap(({ url, importer, listed }) =>
+    importer ? [{ url, importer, listed }] : [],
+  );
   const id = ++session;
   const run = new ImportRun(
     pages.map((page) => page.url),
@@ -658,7 +782,7 @@ async function startRun(
         if (id === session) setPhase({ kind: 'run', run: state, shownPackId: null, update });
       },
       async importPage(index, url, update) {
-        const importer = pages[index]!.importer;
+        const { importer, listed } = pages[index]!;
         currentImporter = importer.id;
         const read = await readPage(
           shell,
@@ -685,6 +809,7 @@ async function startRun(
             pageData: read.data,
             importedAt: new Date().toISOString(),
             observations: read.page,
+            listed,
           },
           false,
           false,
@@ -703,7 +828,11 @@ async function startRun(
             refreshed: outcome.summary.refreshed,
             ...(outcome.summary.checklist ? { checklist: outcome.summary.checklist } : {}),
             ...(outcome.summary.picture ? { picture: outcome.summary.picture } : {}),
+            ...(outcome.guideId ? { guide: true } : {}),
           };
+        }
+        if (outcome.kind === 'failed' && outcome.refused) {
+          return { kind: 'refused', message: outcome.message };
         }
         return {
           kind: 'failed',
@@ -740,7 +869,7 @@ async function startRun(
     run: { ...counts, leftOut },
     ...(update ? { update } : {}),
   });
-  if (id !== session) return;
+  if (id !== session) return final;
 
   // Show the game of the last map added, as after a single import.
   const last = final.pages.findLast(
@@ -752,6 +881,7 @@ async function startRun(
     if (entry && (await showMap(entry, last.mapId))) shownPackId = last.packId;
   }
   if (id === session) setPhase({ kind: 'run', run: final, shownPackId, update });
+  return final;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -819,6 +949,7 @@ export function importContext(
   rebuilt = false,
   onMeasuring?: () => void,
   observations?: PageObservations,
+  listed?: ImportContext['listed'],
 ): ImportContext {
   const state = useAtlas.getState();
   const listing = state.library;
@@ -853,6 +984,7 @@ export function importContext(
       }
     },
     isBundled: (packId) => bundled.has(packId),
+    ...(listed ? { listed } : {}),
     ...(__ATLAS_DOWNLOADS__ && downloadsOffered(state)
       ? {
           pictureTiles: (request: PictureTilesRequest) =>
@@ -889,8 +1021,9 @@ export function packFiles(pack: PackData): Record<string, string> {
   const files: Record<string, string> = {
     [MANIFEST_FILE]: `${JSON.stringify(pack.manifest, null, 2)}\n`,
   };
+  // Every file, an optional collection the pack leaves out as an empty one.
   for (const name of COLLECTION_NAMES) {
-    files[PACK_COLLECTIONS[name].file] = `${JSON.stringify(pack[name], null, 2)}\n`;
+    files[PACK_COLLECTIONS[name].file] = `${JSON.stringify(pack[name] ?? [], null, 2)}\n`;
   }
   return files;
 }
@@ -901,7 +1034,13 @@ export function packFiles(pack: PackData): Record<string, string> {
  */
 async function convertAndSave(
   importer: AtlasImporter,
-  page: { url: string; pageData: string; importedAt: string; observations?: PageObservations },
+  page: {
+    url: string;
+    pageData: string;
+    importedAt: string;
+    observations?: PageObservations;
+    listed?: ImportContext['listed'];
+  },
   rebuilt = false,
   show = true,
   onMeasuring?: () => void,
@@ -922,6 +1061,7 @@ async function convertAndSave(
     rebuilt,
     onMeasuring,
     page.observations,
+    page.listed,
   );
   let returned: unknown;
   try {
@@ -933,7 +1073,9 @@ async function convertAndSave(
     };
   }
   const outcome = checkOutcome(returned);
-  if (!outcome.ok) return { kind: 'failed', message: outcome.message };
+  if (!outcome.ok) {
+    return { kind: 'failed', message: outcome.message, ...(outcome.stop ? { refused: true } : {}) };
+  }
   const bundled = context.isBundled(outcome.packId);
   if (bundled && !importer.refreshesBundledGames) {
     return {
@@ -998,6 +1140,7 @@ async function convertAndSave(
     kind: 'done',
     packId: outcome.packId,
     mapId: outcome.mapId ?? null,
+    ...(outcome.guideId ? { guideId: outcome.guideId } : {}),
     title: outcome.summary.game,
     summary: outcome.summary,
     rebuilt,
@@ -1264,6 +1407,7 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
     packId,
     listed: result.pages,
     recorded: recordedPages(packId),
+    queues: importer.fetch !== undefined,
   });
   setPhase({ kind: 'choose', choice: newChoice('add', [game], openedIn(read.run)) });
 }
@@ -1585,20 +1729,179 @@ export function toggleChoice(gameKey: string, url: string): void {
     setPhase({ kind: 'choose', choice: togglePage(phase.choice, gameKey, url) });
 }
 
+/** Ticks every page under one heading, or unticks them all. */
+export function toggleChoiceGroup(gameKey: string, group: string | null): void {
+  const { phase } = useImport.getState();
+  if (phase.kind === 'choose')
+    setPhase({ kind: 'choose', choice: toggleGroup(phase.choice, gameKey, group) });
+}
+
+/** Ticks a page and every page after it ("From here on"). */
+export function tickChoiceFrom(gameKey: string, url: string): void {
+  const { phase } = useImport.getState();
+  if (phase.kind === 'choose')
+    setPhase({ kind: 'choose', choice: tickFrom(phase.choice, gameKey, url) });
+}
+
 /** "Add N maps" / "Update N maps": the ticked pages, as a run. */
 export async function confirmChoice(): Promise<void> {
   const { phase } = useImport.getState();
   if (phase.kind !== 'choose' || overCap(phase.choice)) return;
   const importers = await loadImporters();
-  const pages = chosenPages(phase.choice);
-  if (pages.length === 0) return;
-  await startRun(
-    pages.map(({ url, importerId }) => ({
-      url,
-      importer: importers.find((i) => i.id === importerId) ?? null,
+  const { now, later } = splitChosen(phase.choice);
+  if (now.length === 0) return;
+  // Pages that do not fit in this go are kept, to continue with later.
+  for (const page of later) await queuePages(page.importerId, page.gameKey, page.game, [page]);
+  const final = await startRun(
+    now.map((page) => ({
+      url: page.url,
+      importer: importers.find((i) => i.id === page.importerId) ?? null,
       problem: null,
+      listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
     })),
     0,
     { update: phase.choice.mode === 'update', firstPauseMs: pauseLeft() },
+  );
+  await requeueUnread(now, final);
+}
+
+// ---------------------------------------------------------------------------
+// Pages kept for later (importers that read pages by fetching them)
+
+/** A page kept to read in a later go. */
+export interface QueuedPage {
+  url: string;
+  title: string;
+  group?: string;
+}
+
+/** The pages of one game kept for later. */
+export interface QueuedGame {
+  /** The game's key: the address of its list of pages. */
+  key: string;
+  game: string;
+  importerId: string;
+  pages: QueuedPage[];
+}
+
+async function readQueue(importerId: string): Promise<QueuedGame[]> {
+  try {
+    const stored = await progressStore().getSetting(SETTINGS.pageQueue(importerId));
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(
+      (game): game is QueuedGame =>
+        typeof game === 'object' &&
+        game !== null &&
+        typeof (game as QueuedGame).key === 'string' &&
+        typeof (game as QueuedGame).game === 'string' &&
+        Array.isArray((game as QueuedGame).pages),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function writeQueue(importerId: string, games: QueuedGame[]): Promise<void> {
+  await progressStore()
+    .putSetting(
+      SETTINGS.pageQueue(importerId),
+      games.filter((game) => game.pages.length > 0),
+    )
+    .catch(() => undefined);
+  useImport.setState({ queueVersion: useImport.getState().queueVersion + 1 });
+}
+
+/** Adds pages to a game's queue, at its end (or its start), each once. */
+async function queuePages(
+  importerId: string,
+  key: string,
+  game: string,
+  pages: readonly (QueuedPage & { group?: string })[],
+  first = false,
+): Promise<void> {
+  const games = await readQueue(importerId);
+  const known = games.find((g) => g.key === key);
+  const kept = known?.pages ?? [];
+  const adding = pages
+    .filter((page) => !kept.some((k) => pageKey(k.url) === pageKey(page.url)))
+    .map((page) => ({
+      url: page.url,
+      title: page.title,
+      ...(page.group ? { group: page.group } : {}),
+    }));
+  const next: QueuedGame = {
+    key,
+    game,
+    importerId,
+    pages: first ? [...adding, ...kept] : [...kept, ...adding],
+  };
+  await writeQueue(importerId, [...games.filter((g) => g.key !== key), next]);
+}
+
+/** Pages of a go that were not read (the go stopped first) go back to the front of their queue. */
+async function requeueUnread(pages: readonly ChosenPage[], final: RunState | null): Promise<void> {
+  if (!final) return;
+  const unread = pages.filter((page, i) => {
+    const state = final.pages[i]?.state;
+    return (
+      page.queues &&
+      (state?.kind === 'not-started' || (state?.kind === 'failed' && state.cause === 'refused'))
+    );
+  });
+  for (const page of unread) {
+    await queuePages(page.importerId, page.gameKey, page.game, [page], true);
+  }
+}
+
+/** Every game with pages kept for later, of the importers of this app. */
+export async function queuedGames(): Promise<QueuedGame[]> {
+  const importers = await loadImporters().catch((): AtlasImporter[] => []);
+  const games: QueuedGame[] = [];
+  for (const importer of importers.filter((i) => i.fetch)) {
+    games.push(...(await readQueue(importer.id)));
+  }
+  return games;
+}
+
+/** Reads the next pages kept for a game: as many as one go opens. */
+export async function continueQueue(importerId: string, key: string): Promise<void> {
+  const importers = await loadImporters();
+  const importer = importers.find((i) => i.id === importerId);
+  const games = await readQueue(importerId);
+  const game = games.find((g) => g.key === key);
+  if (!importer || !game || game.pages.length === 0) return;
+  const now = game.pages.slice(0, MAX_RUN_ADDRESSES);
+  await writeQueue(importerId, [
+    ...games.filter((g) => g.key !== key),
+    { ...game, pages: game.pages.slice(now.length) },
+  ]);
+  const chosen: ChosenPage[] = now.map((page) => ({
+    url: page.url,
+    importerId,
+    game: game.game,
+    gameKey: key,
+    title: page.title,
+    ...(page.group ? { group: page.group } : {}),
+    queues: true,
+  }));
+  const final = await startRun(
+    chosen.map((page) => ({
+      url: page.url,
+      importer,
+      problem: null,
+      listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
+    })),
+    0,
+    { firstPauseMs: pauseLeft() },
+  );
+  await requeueUnread(chosen, final);
+}
+
+/** Forgets the pages kept for a game. */
+export async function forgetQueue(importerId: string, key: string): Promise<void> {
+  const games = await readQueue(importerId);
+  await writeQueue(
+    importerId,
+    games.filter((g) => g.key !== key),
   );
 }

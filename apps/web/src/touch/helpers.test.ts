@@ -86,6 +86,7 @@ describe('Back', () => {
           filters: { filters: false },
           place: { place: false },
           'lists-page': { listsPage: false },
+          'guides-back': { guidesBack: false },
           'to-map': { section: 'map' as const },
           'editor-picking': { editor: 'panel' as const },
           'editor-panel': { editor: 'open' as const },
@@ -140,6 +141,15 @@ describe('Back', () => {
     expect(backStep({ ...nothing, placeExpanded: true })).toBeNull();
     expect(backStep({ ...nothing, section: 'progress' })).toBe('to-map');
     expect(backStep({ ...nothing, section: 'games', listsPage: true })).toBe('to-map');
+  });
+
+  it('goes back through the pages read in Guides, then to the first section', () => {
+    expect(backStep({ ...nothing, section: 'guides', guidesBack: true })).toBe('guides-back');
+    expect(backStep({ ...nothing, section: 'guides' })).toBe('to-map');
+    expect(backStep({ ...nothing, section: 'lists', guidesBack: true })).toBe('to-map');
+    // A game with no map: Back ends on Guides.
+    expect(backStep({ ...nothing, section: 'guides', home: 'guides' })).toBeNull();
+    expect(backStep({ ...nothing, section: 'progress', home: 'guides' })).toBe('to-map');
   });
 });
 

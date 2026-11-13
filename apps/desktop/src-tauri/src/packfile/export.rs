@@ -11,9 +11,10 @@ use serde_json::{json, Value};
 use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 
 use super::{
-    analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal, unavailable,
-    AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts, LayerFacts, Mine, PackSource,
-    Progress, Stop, FORMAT, HEADER_FILE, VERSION, VERSION_WITHOUT_MINE,
+    analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal,
+    shared_pictures, unavailable, AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts,
+    LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE, PICTURES_FILE, VERSION,
+    VERSION_WITHOUT_MINE,
 };
 use crate::{
     library::PackLock,
@@ -106,10 +107,20 @@ pub fn export_with_mine(
         .map_or(0, |d| d.as_secs());
     let exported_at = rfc3339(exported_secs);
 
-    // The pack's JSON files, the manifest's image summaries rewritten.
+    // The pack's JSON files, the manifest's image summaries rewritten, and
+    // its pictures that may be passed on (the list cut down to them).
+    let pictures = shared_pictures(&source.root)?;
     let mut entries: Vec<Entry> = Vec::new();
     for entry in pack_file_entries(&source.root)? {
-        if entry.name == MANIFEST_FILE {
+        if entry.name == PICTURES_FILE {
+            if let Some(pictures) = &pictures {
+                entries.push(Entry {
+                    name: entry.name,
+                    size: pictures.list.len() as u64,
+                    data: EntryData::Bytes(pictures.list.clone()),
+                });
+            }
+        } else if entry.name == MANIFEST_FILE {
             let EntryData::File(path) = &entry.data else {
                 unreachable!("pack files are read from disk");
             };
@@ -146,6 +157,7 @@ pub fn export_with_mine(
         });
     }
     entries.extend(image_entries);
+    entries.extend(pictures.map(|pictures| pictures.files).unwrap_or_default());
     for (name, _, text) in mine.files() {
         entries.push(Entry {
             name: name.to_owned(),

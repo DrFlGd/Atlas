@@ -630,6 +630,20 @@ pub async fn picture_cancel<R: Runtime>(
     Ok(())
 }
 
+/// Reads one address for an importer that reads pages by fetching them
+/// (see `pagefetch.rs`). Only the app's own window may ask.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_fetch<R: Runtime>(
+    window: WebviewWindow<R>,
+    url: String,
+) -> Result<crate::pagefetch::FetchedPage, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    crate::pagefetch::fetch_page(&url).await
+}
+
 #[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_snapshot(

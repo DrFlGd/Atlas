@@ -1,0 +1,408 @@
+/*
+ * Guides read as pages (src/touch/GuidesScreen.tsx): the contents, a page
+ * with its credit, search. Colours come from the theme tokens. Wide, the
+ * contents stay beside the page, over the panel and the map; compact (a
+ * phone), the reader fills the screen above the bar of sections.
+ */
+
+.guides {
+  display: flex;
+  min-height: 0;
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+}
+
+.guides-compact {
+  flex: 1;
+  flex-direction: column;
+}
+
+/* Wide: beside the rail, over the panel and the map. */
+.guides-wide {
+  position: absolute;
+  z-index: 12;
+  inset: 0 0 0 var(--touch-rail);
+}
+
+.guides-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: clamp(240px, 26vw, 320px);
+  padding: calc(var(--atlas-inset-top) + 12px) 0 var(--atlas-inset-bottom);
+  background: var(--atlas-surface);
+  border-right: 1px solid var(--atlas-border);
+}
+
+.guides-tree {
+  padding: 4px 8px 16px;
+}
+
+.guides-tree-level {
+  margin: 0;
+}
+
+.guides-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--touch-text-soft, var(--atlas-text));
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.guides-tree-section {
+  color: var(--atlas-text);
+  font-weight: 600;
+}
+
+.guides-tree-row:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.guides-tree-row[aria-current='page'] {
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+}
+
+/* The reader: a bar with Back, Forward and where the place is, then the place. */
+.guides-reader {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.guides-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+}
+
+.guides-wide .guides-head {
+  padding-top: calc(var(--atlas-inset-top) + 4px);
+}
+
+.guides-head .touch-icon-button:disabled {
+  color: var(--atlas-border-strong);
+}
+
+.guides-crumbs {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.guides-crumb-part {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.guides-crumb {
+  flex: none;
+  min-width: 0;
+  max-width: 220px;
+  padding: 6px 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  font-size: 14px;
+  text-overflow: ellipsis;
+}
+
+button.guides-crumb:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.guides-crumb-here {
+  color: var(--atlas-muted);
+}
+
+.guides-crumb-sep {
+  color: var(--atlas-muted);
+}
+
+.guides-compact .guides-crumb-part:not(:last-child) {
+  display: none;
+}
+
+.guides-body {
+  padding: 0 16px 32px;
+}
+
+.guides-column {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.guides-title {
+  margin: 20px 0 6px;
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+.guides-compact .guides-title {
+  font-size: 22px;
+}
+
+.guides-lead {
+  margin: 0 0 12px;
+  color: var(--atlas-muted);
+  font-size: 14px;
+}
+
+.guides-group {
+  margin: 24px 0 8px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.guides-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guides-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.guides-entry:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.guides-entry > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.guides-entry-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.guides-entry-section .guides-entry-name {
+  font-weight: 600;
+}
+
+/* Search */
+.guides-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+  padding: 0 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 24px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-muted);
+}
+
+.guides-side .guides-search {
+  margin: 0 12px 8px;
+}
+
+.guides-search:focus-within {
+  border-color: var(--atlas-accent);
+}
+
+.guides-search-input:focus-visible,
+.touch[data-input] .guides-search-input:focus-visible {
+  /* The box around it shows the focus. */
+  outline: none;
+}
+
+.guides-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.guides-result {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.guides-result-title {
+  font-weight: 600;
+}
+
+.guides-result-line {
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.guides-result-line mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-text);
+}
+
+/* A page */
+.guides-page-body {
+  font-size: 15.5px;
+  line-height: 1.6;
+}
+
+.guides-page-body h1,
+.guides-page-body h2,
+.guides-page-body h3,
+.guides-page-body h4 {
+  margin: 24px 0 8px;
+  line-height: 1.3;
+}
+
+.guides-page-body h1 {
+  font-size: 22px;
+}
+
+.guides-page-body h2 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--atlas-border);
+  font-size: 19px;
+}
+
+.guides-page-body h3 {
+  font-size: 16.5px;
+}
+
+/* Wide tables scroll sideways inside the page, which stays put. */
+.guides-page-body table {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 14px;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.guides-page-body th,
+.guides-page-body td {
+  padding: 6px 10px;
+  border: 1px solid var(--atlas-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.guides-page-body th {
+  background: var(--atlas-surface-raised);
+}
+
+.guides-page-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.guide-picture {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
+  margin: 4px 0;
+  vertical-align: top;
+}
+
+.guide-picture img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.guide-picture-note {
+  margin-top: 4px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.picture-alt {
+  color: var(--atlas-muted);
+  font-style: italic;
+}
+
+.guides-credit {
+  margin: 32px 0 0;
+  padding: 12px 14px;
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.guides-credit p {
+  margin: 0;
+}
+
+.guides-credit p + p {
+  margin-top: 4px;
+}
+
+.guides-credit a {
+  color: var(--atlas-accent);
+}
+
+/* A game with no map, wide: a section other than Guides takes the room of the map too. */
+.touch[data-map='none'][data-arrangement='wide'] .touch-panel {
+  right: 0;
+  width: auto;
+}
+
+.touch[data-map='none'][data-arrangement='wide'] .touch-panel > * {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+/* Made for a mouse: denser rows. */
+.touch[data-input='mouse'] .guides-entry {
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.touch[data-input='mouse'] .guides-head .touch-icon-button {
+  width: 40px;
+  height: 40px;
+}

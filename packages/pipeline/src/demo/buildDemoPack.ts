@@ -9,6 +9,7 @@ import { addChecklists } from './checklists';
 import { generateDemoContent, layoutRegions, regionBorderStrength } from './content';
 import { createTerrain, renderTerrain } from './terrain';
 import { addUnderground, tintAsCave } from './underground';
+import { addWiki, wikiPictureFiles } from './wiki';
 
 export type TileFormat = 'pmtiles' | 'xyz';
 
@@ -99,14 +100,16 @@ export async function buildDemoPack(
     tiles,
   });
   const data = assertValidPack(
-    addChecklists(
-      addUnderground(surface, {
-        seed: options.seed,
-        size: UNDERGROUND_SIZE,
-        tileSize: options.tileSize,
-        locationsPerLayer: options.undergroundLocations,
-        layers: underground,
-      }),
+    addWiki(
+      addChecklists(
+        addUnderground(surface, {
+          seed: options.seed,
+          size: UNDERGROUND_SIZE,
+          tileSize: options.tileSize,
+          locationsPerLayer: options.undergroundLocations,
+          layers: underground,
+        }),
+      ),
     ),
   );
   const contentMs = lap();
@@ -137,6 +140,9 @@ export async function buildDemoPack(
   await rm(staging, { recursive: true, force: true });
   await mkdir(join(staging, 'tiles'), { recursive: true });
   await writePackJson(staging, data);
+  const pictures = await wikiPictureFiles();
+  if (pictures.size > 0) await mkdir(join(staging, 'pictures'), { recursive: true });
+  for (const [path, png] of pictures) await writeFile(join(staging, path), png);
   const layerPyramids = [
     { path: LAYER_TILE_PATH, pyramid, size: options.size },
     ...deepPyramids.map((deep) => ({ ...deep, size: UNDERGROUND_SIZE })),

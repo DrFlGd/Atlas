@@ -30,6 +30,9 @@ export function assertValidPack(data: PackData): PackData {
   return parsed.data;
 }
 
+/** Collections written only when a pack has some, so packs without them keep their files. */
+const OPTIONAL_COLLECTIONS: ReadonlySet<string> = new Set(['sections', 'pictures']);
+
 /** Formats an array as JSON with one element per line, which keeps diffs readable. */
 export function formatCollection(items: readonly unknown[]): string {
   if (items.length === 0) return '[]\n';
@@ -44,7 +47,10 @@ export async function writePackJson(dir: string, data: PackData): Promise<string
   const written = [MANIFEST_FILE];
   for (const name of COLLECTION_NAMES) {
     const { file } = PACK_COLLECTIONS[name];
-    await writeFile(join(dir, file), formatCollection(valid[name]));
+    const items = valid[name];
+    // Contents and pictures are written only when the pack has some.
+    if (items === undefined || (OPTIONAL_COLLECTIONS.has(name) && items.length === 0)) continue;
+    await writeFile(join(dir, file), formatCollection(items));
     written.push(file);
   }
   return written;
