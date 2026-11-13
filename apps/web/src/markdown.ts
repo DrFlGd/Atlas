@@ -12,7 +12,11 @@ import MarkdownIt, { type Token } from 'markdown-it';
  *   pack (`![the gate](demo:picture:gate)`, see
  *   {@link MarkdownOptions.picture}), from the pack's own folder. Any other
  *   image is shown as its alternative text, so a guide cannot make the app
- *   fetch remote content.
+ *   fetch remote content. A title of the form `"=28x13"` (or `"=28"`, the
+ *   width alone) is the size the picture is shown at where it stands, in
+ *   CSS pixels (see {@link shownSize}); one at most
+ *   {@link INLINE_PICTURE_HEIGHT} pixels tall stands in the line of text,
+ *   as a badge or an icon does.
  * - Links open in a new tab with `rel="noopener noreferrer"`.
  * - A link whose target is a content id, such as `[the old well](demo:loc:0412)`,
  *   is an in-app link (see {@link MarkdownOptions.isAppTarget}): it becomes a
@@ -90,7 +94,33 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
 interface PictureMeta {
   alt: string;
   picture: GuidePicture | null;
+  /** The size it is shown at where it stands, when the guide gives one. */
+  shown: ShownSize | null;
 }
+
+/** The size a guide gives a picture where it stands, in CSS pixels. */
+export interface ShownSize {
+  width: number;
+  height?: number;
+}
+
+/** A picture this tall or less is shown in the line of text, like a letter. */
+export const INLINE_PICTURE_HEIGHT = 48;
+
+/**
+ * The size a picture's title gives: `"=28x13"` or `"=28"` (width only), as
+ * in `![a badge](demo:picture:badge "=28x13")`. Any other title is none.
+ */
+export function shownSize(title: string | null | undefined): ShownSize | null {
+  const match = /^=([1-9]\d{0,3})(?:x([1-9]\d{0,3}))?$/u.exec(title?.trim() ?? '');
+  if (!match) return null;
+  const width = Number(match[1]);
+  return match[2] ? { width, height: Number(match[2]) } : { width };
+}
+
+/** Whether a picture of that size stands in the line of text. */
+export const isInlinePicture = (size: ShownSize | null): boolean =>
+  size !== null && (size.height ?? size.width) <= INLINE_PICTURE_HEIGHT;
 
 markdown.core.ruler.push('atlas_pictures', (state) => {
   const pictureOf = (state.env as MarkdownOptions | undefined)?.picture;
@@ -102,7 +132,8 @@ markdown.core.ruler.push('atlas_pictures', (state) => {
       const alt = token.children ? altText(token.children) : token.content;
       const picture = parseId(src)?.kind === 'picture' ? (pictureOf?.(src) ?? null) : null;
       token.type = 'atlas_picture';
-      token.meta = { alt, picture } satisfies PictureMeta;
+      const shown = shownSize(String(token.attrGet('title') ?? ''));
+      token.meta = { alt, picture, shown } satisfies PictureMeta;
       token.children = null;
     }
   }
@@ -113,15 +144,28 @@ function altText(tokens: readonly Token[]): string {
 }
 
 markdown.renderer.rules.atlas_picture = (tokens, index) => {
-  const { alt, picture } = tokens[index]!.meta as unknown as PictureMeta;
+  const { alt, picture, shown } = tokens[index]!.meta as unknown as PictureMeta;
   const escape = markdown.utils.escapeHtml;
   if (!picture) {
     // Never fetched: what the picture shows, in words.
     return alt ? `<span class="picture-alt">${escape(alt)}</span>` : '';
   }
+  const note = [picture.caption, picture.credit].filter(Boolean).join(' · ');
+  if (shown) {
+    // The size the guide gives it where it stands; a small one stands in
+    // the line of text, with what it shows as its tooltip and no line under it.
+    const inline = isInlinePicture(shown);
+    const size = ` width="${shown.width}"${shown.height ? ` height="${shown.height}"` : ''}`;
+    const tip =
+      inline && (picture.caption ?? alt) ? ` title="${escape(picture.caption ?? alt)}"` : '';
+    return (
+      `<span class="guide-picture ${inline ? 'inline' : 'sized'}"><img src="${escape(picture.url)}" alt="${escape(alt)}"${size}${tip} loading="lazy" decoding="async">` +
+      (note && !inline ? `<span class="guide-picture-note">${escape(note)}</span>` : '') +
+      '</span>'
+    );
+  }
   const size =
     picture.width && picture.height ? ` width="${picture.width}" height="${picture.height}"` : '';
-  const note = [picture.caption, picture.credit].filter(Boolean).join(' · ');
   return (
     `<span class="guide-picture"><img src="${escape(picture.url)}" alt="${escape(alt)}"${size} loading="lazy" decoding="async">` +
     (note ? `<span class="guide-picture-note">${escape(note)}</span>` : '') +

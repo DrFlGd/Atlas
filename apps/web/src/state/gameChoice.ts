@@ -55,8 +55,8 @@ export interface ChoiceGame {
   queues: boolean;
   /**
    * Its pages are opened in a window though the importer fetches others
-   * (their site shows them only to a person): a go reads as many as the
-   * app opens at a time, and keeps the rest for later.
+   * (their site shows them only to a person). A go reads as many of them
+   * as of fetched pages.
    */
   inWindow?: boolean;
 }
@@ -301,13 +301,13 @@ export function splitChosen(choice: Choice): { now: ChosenPage[]; later: ChosenP
 /**
  * How many of the ticked pages one go reads: pages the app fetches itself
  * (their games keep the rest for later) have a go of their own size, since
- * no window is opened for them; any other choice, also one with pages of
- * such a game that are opened in a window, has what is left of the cap of
+ * no window is opened for them, or one at a time when their site shows
+ * them only to a person; any other choice has what is left of the cap of
  * pages opened.
  */
 export function goRoom(choice: Choice): number {
   const chosen = chosenToRead(choice);
-  return chosen.length > 0 && chosen.every((page) => page.queues && !page.inWindow)
+  return chosen.length > 0 && chosen.every((page) => page.queues)
     ? MAX_FETCHED_RUN_PAGES
     : pagesLeft(choice.opened);
 }

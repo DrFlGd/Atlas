@@ -99,16 +99,15 @@ describe('pages their site shows only to a person', () => {
       1,
     );
 
-  it('open in a window, as many as one go opens, and the rest are kept for later', () => {
+  it('open in a window, every ticked page in one go like fetched pages', () => {
     const chosen = tickFrom(windowed(), `${SITE}/wiki/Contents`, pages[0]!.url);
-    // More may be ticked than one go opens: nothing has to be unticked.
     expect(overCap(chosen)).toBeNull();
-    // The list of pages was opened in a window too, and counts.
-    expect(goRoom(chosen)).toBe(MAX_RUN_ADDRESSES - 1);
+    // The windows open one at a time, so the cap of pages opened does not hold.
+    expect(goRoom(chosen)).toBe(MAX_FETCHED_RUN_PAGES);
     const { now, later } = splitChosen(chosen);
-    expect(now).toHaveLength(MAX_RUN_ADDRESSES - 1);
+    expect(now.map((p) => p.url)).toEqual(pages.map((p) => p.url));
     expect(now.every((p) => p.inWindow === true)).toBe(true);
-    expect(later.map((p) => p.url)).toEqual(pages.slice(MAX_RUN_ADDRESSES - 1).map((p) => p.url));
+    expect(later).toEqual([]);
   });
 });
 
