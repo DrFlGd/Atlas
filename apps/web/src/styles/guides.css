@@ -406,3 +406,262 @@ button.guides-crumb:hover {
   width: 40px;
   height: 40px;
 }
+
+/* ------------------------------------------------------------------ */
+/* Pages linked to the map (src/touch/GuideLinksReview.tsx and friends) */
+
+.guides-link-button {
+  margin: 4px 0 16px;
+}
+
+.guides-inline-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  text-decoration: underline;
+}
+
+/* "On the map: 44 locations" at the top of a page. */
+.guides-on-map {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 4px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  font-size: 14px;
+}
+
+.guides-on-map-none {
+  display: block;
+  color: var(--atlas-muted);
+}
+
+.guides-on-map-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+
+.guides-on-map-text > .ui-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--atlas-accent);
+}
+
+.guides-on-map-button {
+  min-height: 40px;
+}
+
+/* The review list. */
+.guide-links-status {
+  margin: 0 0 16px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.guide-links-group {
+  margin: 20px 0 8px;
+}
+
+.guide-links-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.guide-links-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 18px;
+}
+
+.guide-links-group-line {
+  margin: 4px 0 8px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.guide-links-all {
+  min-height: 40px;
+}
+
+.guide-links-rows > li + li {
+  border-top: 1px solid var(--atlas-border);
+}
+
+.guide-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 0;
+}
+
+.guide-links-row-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.guide-links-page {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.guide-links-page:hover span {
+  text-decoration: underline;
+}
+
+.guide-links-page > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.guide-links-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 0 26px;
+  font-size: 14px;
+}
+
+.guide-links-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.guide-links-button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+.guide-links-finder {
+  flex: 1 1 100%;
+  margin: 4px 0 4px 26px;
+  padding: 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+}
+
+.guide-links-hits {
+  margin: 6px 0;
+}
+
+.guide-links-hit {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.guide-links-hit:hover {
+  background: var(--atlas-surface-hover);
+}
+
+/* Pages from other games, at the end of the contents. */
+.guides-from {
+  margin: 24px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.guides-from-list {
+  margin: 8px 0;
+}
+
+.guides-from-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.guides-from-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.guides-from-pick {
+  margin: 4px 0 0;
+}
+
+/* "From the wiki" on a location's card. */
+.place-wiki {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+}
+
+.place-wiki-heading {
+  margin: 0 0 4px;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.place-wiki-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.place-wiki-text {
+  margin: 0 0 6px;
+  color: var(--touch-text-soft, var(--atlas-text));
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.place-wiki-credit {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 12px;
+}
+
+.place-wiki-read {
+  min-height: 40px;
+  margin-top: 2px;
+  padding: 0 4px;
+}
+
+.place-wiki .place-lists {
+  margin-top: 4px;
+}

@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../../components/icons';
 import { MarkdownBody } from '../../components/MarkdownBody';
 import { numberFormat } from '../../state/derived';
+import { guidesOf, hasGuidePages } from '../../state/guides';
 import type { LoadedGame } from '../../state/store';
 import {
   addPhotoToStep,
@@ -495,6 +496,85 @@ function LocationFinder({
   );
 }
 
+/** "Link a guide": the pages of the Guides section by title and text, to link one in a note. */
+function GuideFinder({
+  game,
+  onChoose,
+  onCancel,
+}: {
+  game: LoadedGame;
+  onChoose: (guideId: string) => void;
+  onCancel: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const inputId = useId();
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
+  const hits = useMemo(() => {
+    const text = query.trim();
+    return text ? guidesOf(game).search.search(text, 8) : [];
+  }, [game, query]);
+  return (
+    <div className="editor-finder" data-testid="guide-finder">
+      <label htmlFor={inputId} className="visually-hidden">
+        Find a guide page to link
+      </label>
+      <input
+        ref={input}
+        id={inputId}
+        className="own-input"
+        type="search"
+        autoComplete="off"
+        placeholder="Find a guide page to link"
+        value={query}
+        data-testid="guide-finder-input"
+        onChange={(event) => {
+          setQuery(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          } else if (event.key === 'Enter' && hits[0]) {
+            event.preventDefault();
+            onChoose(hits[0].guide.id);
+          }
+        }}
+      />
+      <p className="editor-side-line">A guide page opens in Guides when the list is used.</p>
+      {hits.length > 0 ? (
+        <ul className="touch-plain-list editor-finder-hits">
+          {hits.map((hit) => (
+            <li key={hit.guide.id}>
+              <button
+                type="button"
+                className="editor-finder-hit"
+                data-testid="guide-hit"
+                onClick={() => {
+                  onChoose(hit.guide.id);
+                }}
+              >
+                <span className="editor-location-name">{hit.guide.title}</span>
+                <span className="editor-location-detail">
+                  {guidesOf(game)
+                    .contents.pathTo(hit.guide.id)
+                    .map((section) => section.title)
+                    .join(' › ') || 'Guides'}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : query.trim() ? (
+        <p className="editor-side-line">No guide page has that.</p>
+      ) : null}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The note
 
@@ -505,9 +585,9 @@ function linkText(text: string): string {
 
 /**
  * The note, in Markdown: a toolbar for bold, a bulleted list, a link to a
- * location, a photo (shown under the note, see `PhotosField`) and hidden
- * text (`||like this||`), the text itself, and the note as it will be
- * shown.
+ * location or to a guide page, a photo (shown under the note, see
+ * `PhotosField`) and hidden text (`||like this||`), the text itself, and
+ * the note as it will be shown.
  */
 function NoteEditor({
   game,
@@ -528,8 +608,11 @@ function NoteEditor({
   const noteId = useId();
   const helpId = useId();
   const note = item.note ?? '';
-  // Where the cursor was when "Link a location" was pressed.
+  // Where the cursor was when "Link a location" (or "Link a guide") was pressed.
   const selection = useRef<[number, number]>([note.length, note.length]);
+  // "Link a guide": finding a page of the Guides section to link.
+  const [guideLinking, setGuideLinking] = useState(false);
+  const pages = hasGuidePages(game);
 
   const setNote = (next: string, select?: [number, number]) => {
     changeOpenStep(item.id, { note: next });
@@ -578,6 +661,17 @@ function NoteEditor({
     const next = note.slice(0, start) + link + note.slice(end);
     onLinkPicked(null);
     setPicking(null);
+    setNote(next, [start + link.length, start + link.length]);
+  };
+
+  const insertGuideLink = (guideId: string) => {
+    const guide = guidesOf(game).contents.guide(guideId);
+    if (!guide) return;
+    const [start, end] = selection.current;
+    const text = note.slice(start, end) || guide.title;
+    const link = `[${linkText(text)}](${guide.id})`;
+    const next = note.slice(0, start) + link + note.slice(end);
+    setGuideLinking(false);
     setNote(next, [start + link.length, start + link.length]);
   };
 
@@ -641,12 +735,36 @@ function NoteEditor({
               selection.current = element
                 ? [element.selectionStart, element.selectionEnd]
                 : [note.length, note.length];
+              setGuideLinking(false);
               setPicking({ purpose: 'link', stepId: item.id });
             }}
           >
             <UiIcon name="pin" size={16} strokeWidth={1.8} />
             Link a location
           </button>
+          {pages ? (
+            <button
+              type="button"
+              className="editor-tool editor-tool-wide"
+              aria-pressed={guideLinking}
+              data-testid="note-link-guide"
+              onClick={() => {
+                if (guideLinking) {
+                  setGuideLinking(false);
+                  return;
+                }
+                const element = area.current;
+                selection.current = element
+                  ? [element.selectionStart, element.selectionEnd]
+                  : [note.length, note.length];
+                if (linking) setPicking(null);
+                setGuideLinking(true);
+              }}
+            >
+              <UiIcon name="book" size={16} strokeWidth={1.8} />
+              Link a guide
+            </button>
+          ) : null}
           <button
             type="button"
             className="editor-tool editor-tool-wide"
@@ -679,6 +797,16 @@ function NoteEditor({
             onChoose={insertLink}
             onCancel={() => {
               setPicking(null);
+              area.current?.focus();
+            }}
+          />
+        ) : null}
+        {guideLinking && !linking ? (
+          <GuideFinder
+            game={game}
+            onChoose={insertGuideLink}
+            onCancel={() => {
+              setGuideLinking(false);
               area.current?.focus();
             }}
           />

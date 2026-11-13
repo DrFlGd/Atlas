@@ -10,7 +10,9 @@ export type ReaderPlace =
   /** The contents: its top (`sectionId` null), or one section. */
   | { kind: 'contents'; sectionId: string | null }
   | { kind: 'page'; guideId: string }
-  | { kind: 'search'; query: string };
+  | { kind: 'search'; query: string }
+  /** Linking the pages to the map (see `GuideLinksReview.tsx`). */
+  | { kind: 'links' };
 
 interface Visit {
   place: ReaderPlace;
@@ -46,7 +48,9 @@ const samePlace = (a: ReaderPlace, b: ReaderPlace) =>
     ? a.sectionId === (b as typeof a).sectionId
     : a.kind === 'page'
       ? a.guideId === (b as typeof a).guideId
-      : a.query === (b as typeof a).query);
+      : a.kind === 'search'
+        ? a.query === (b as typeof a).query
+        : true);
 
 /** Keeps how far the place shown is scrolled, for when it is shown again. */
 export function rememberScroll(scroll: number): void {

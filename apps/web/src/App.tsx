@@ -18,6 +18,7 @@ import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
+import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
 import { loadOwnLists } from './state/ownLists';
 import { sweepOwnPicturesOnOpen } from './state/ownPictures';
 import { initSaves } from './state/saves';
@@ -76,6 +77,12 @@ export function App() {
     void loadOwnLists(game).then(() => {
       sweepOwnPicturesOnOpen(gameId);
     });
+  }, [game]);
+  // Their links between guide pages and the map, and other games with pages to read with it.
+  useEffect(() => {
+    if (!game) return;
+    void loadGuideLinks(game);
+    void lookForGuideGames(game);
   }, [game]);
 
   useViewHashSync();

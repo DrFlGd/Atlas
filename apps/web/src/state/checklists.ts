@@ -1,7 +1,7 @@
 import { tickChanges, type ChecklistItemEntry } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import { applyProgress, goToLocation, goToRegion, notify, setPane, showMap } from './actions';
-import { pictureOf } from './guides';
+import { guidesOf, pictureOf } from './guides';
 import { ownItemById } from './ownLists';
 import { useAtlas, type ChecklistPage, type LeftTab, type LoadedGame } from './store';
 
@@ -142,7 +142,8 @@ export function appLinkKind(game: LoadedGame, rawId: string): AppLinkKind | null
     case 'checkitem':
       return checklists.item(id) ? 'item' : null;
     case 'guide':
-      return checklists.guide(id) ? 'guide' : null;
+      // A guide of the game, or of another game whose pages are read with it.
+      return checklists.guide(id) || guidesOf(game).contents.isPage(id) ? 'guide' : null;
     default:
       return null;
   }

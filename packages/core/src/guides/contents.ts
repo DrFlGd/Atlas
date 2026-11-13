@@ -166,3 +166,45 @@ export function sortGuides(guides: readonly GuideEntry[]): GuideEntry[] {
     return collator.compare(a.title, b.title);
   });
 }
+
+/** The guides of another game, read with a game's own (see {@link guidesTogether}). */
+export interface GuidesOfGame {
+  gameId: string;
+  /** The other game's title, the heading its pages are under. */
+  title: string;
+  data: Pick<LoadedPack['data'], 'guides' | 'sections'>;
+}
+
+/** The local id of the section that holds another game's pages. */
+export const OTHER_GAME_SECTION = 'atlas.from-game';
+
+/**
+ * A game's guides together with those of other games (a wiki read as a
+ * game of its own), as {@link GuideContents} takes them: each other game's
+ * contents under a section of its own, named after that game, after the
+ * game's own. Ids keep their own game, so nothing is renamed; no pack is
+ * changed.
+ */
+export function guidesTogether(
+  pack: Pick<LoadedPack, 'data'>,
+  others: readonly GuidesOfGame[],
+): Pick<LoadedPack, 'data'> {
+  if (others.length === 0) return pack;
+  const guides = [...pack.data.guides];
+  const sections: Section[] = [...(pack.data.sections ?? [])];
+  for (const other of others) {
+    const own = other.data.sections ?? [];
+    const listed = new Set(own.flatMap((section) => section.items));
+    const top =
+      own.length > 0
+        ? own.filter((section) => !listed.has(section.id)).map((section) => section.id)
+        : sortGuides(other.data.guides).map((guide) => guide.id);
+    if (top.length === 0) continue;
+    guides.push(...other.data.guides);
+    sections.push(
+      { id: `${other.gameId}:section:${OTHER_GAME_SECTION}`, title: other.title, items: top },
+      ...own,
+    );
+  }
+  return { data: { ...pack.data, guides, sections } };
+}

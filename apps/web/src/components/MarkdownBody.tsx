@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
+import { useGuideLinks } from '../state/guideLinks';
 import { useAtlas } from '../state/store';
 
 /**
@@ -10,9 +11,12 @@ import { useAtlas } from '../state/store';
  */
 export function MarkdownBody({ source, className }: { source: string; className: string }) {
   const game = useAtlas((s) => s.game);
+  // Pages of other games read with this one can be linked to, once loaded.
+  const others = useGuideLinks((s) => s.others);
   const html = useMemo(
     () => renderGuideMarkdown(source, game ? markdownOptionsFor(game) : {}),
-    [source, game],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [source, game, others],
   );
   return (
     <div
