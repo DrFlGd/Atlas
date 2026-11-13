@@ -10,6 +10,7 @@ import {
 } from '../desktop';
 import { exportProgress, loadGame, notify } from './actions';
 import { addImportedGuideLinks, flushGuideLinks } from './guideLinks';
+import { addImportedOwnPages, flushOwnPages } from './ownPages';
 import { applyListing } from './library';
 import { addImportedOwnLists, flushOwnLists } from './ownLists';
 import { addImportedOwnLocations, flushOwnLocations } from './ownLocations';
@@ -138,7 +139,9 @@ export async function exportPackFile(
     ? `${JSON.stringify(await exportProgress({ scope: 'all' }), null, 2)}\n`
     : undefined;
   // The shell reads them from their files: what was changed last is saved first.
-  if (withMine) await Promise.all([flushOwnLists(), flushOwnLocations(), flushGuideLinks()]);
+  if (withMine) {
+    await Promise.all([flushOwnLists(), flushOwnLocations(), flushGuideLinks(), flushOwnPages()]);
+  }
   return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos);
 }
 
@@ -151,6 +154,9 @@ export interface MineRestored {
   photos: number;
   /** Whether links between guide pages and the map were added. */
   guideLinks: boolean;
+  /** Own guide pages and changed pages, and own sections, added. */
+  pages: number;
+  sections: number;
   /** Why some could not be added, in plain words. */
   problem: string | null;
 }
@@ -162,6 +168,7 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     !imported.ownLists &&
     !imported.ownLocations &&
     !imported.guideLinks &&
+    !imported.ownPages &&
     pictures.length === 0
   ) {
     return null;
@@ -173,6 +180,8 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     areas: 0,
     photos: 0,
     guideLinks: false,
+    pages: 0,
+    sections: 0,
     problem: null,
   };
   const problems: string[] = [];
@@ -214,6 +223,15 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
       problems.push(
         `Your links between guide pages and the map could not be added: ${errorText(error)}`,
       );
+    }
+  }
+  if (imported.ownPages) {
+    try {
+      const added = await addImportedOwnPages(imported.packId, imported.ownPages);
+      restored.pages = added.pages;
+      restored.sections = added.sections;
+    } catch (error) {
+      problems.push(`Your pages from the file could not be added: ${errorText(error)}`);
     }
   }
   restored.problem = problems.length > 0 ? problems.join(' ') : null;
