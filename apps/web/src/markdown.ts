@@ -1,5 +1,6 @@
 import { parseId } from '@atlas/schema';
 import MarkdownIt, { type Token } from 'markdown-it';
+import { markdownMarks } from './markdownMarks';
 
 /**
  * Renders guide Markdown from a pack, which is untrusted content.
@@ -29,9 +30,17 @@ import MarkdownIt, { type Token } from 'markdown-it';
  *   `hidden` attribute, so it is neither seen, read out nor reachable with
  *   the keyboard. A hidden part may span paragraphs, lists and code, and
  *   may hold in-app links. Bars pair up left to right; a last bar without a
- *   partner, bars in code and escaped bars stay plain text.
+ *   partner, bars in code and escaped bars stay plain text. Bars in
+ *   paragraphs of their own around other blocks hide those blocks whole,
+ *   a whole table among them (never a part of one), and a paragraph that
+ *   only closes a hidden part is left out.
+ * - Raised and lowered text, `^like this^` and `~like this~`, and a line
+ *   break in a table cell, the exact text `<br>` (see `markdownMarks.ts`):
+ *   the renderer makes the tags, as for any other mark; the text holds no
+ *   HTML of its own.
  */
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: true });
+markdown.use(markdownMarks);
 
 /** A picture of the pack, as a guide shows it. */
 export interface GuidePicture {
@@ -347,6 +356,23 @@ markdown.core.ruler.before('text_join', 'atlas_hidden_text', (state) => {
     closeSpan();
     block.children = out;
   }
+
+  // A paragraph that held only a bar that closes (after a hidden table or
+  // list) shows nothing, so it is left out rather than left empty.
+  state.tokens.forEach((block, b) => {
+    const open = state.tokens[b - 1];
+    const close = state.tokens[b + 1];
+    if (
+      block.type === 'inline' &&
+      block.children?.length === 0 &&
+      open?.type === 'paragraph_open' &&
+      close?.type === 'paragraph_close' &&
+      /^\s*\|\|\s*$/.test(block.content)
+    ) {
+      open.hidden = true;
+      close.hidden = true;
+    }
+  });
 });
 
 markdown.renderer.rules.hidden_text_show = (tokens, index) => {

@@ -172,8 +172,9 @@ export function InlineField({
       if (latest.current.onKey?.(key, selection, current)) return;
       if (context === 'block' || key === 'ShiftEnter') {
         // A line break inside the text.
+        // In a table cell, Shift+Enter is the cell's one line break (`<br>`).
         const piece: Inline =
-          context === 'block' && key === 'ShiftEnter'
+          (context === 'block' || context === 'cell') && key === 'ShiftEnter'
             ? { kind: 'break', marks: {} }
             : context === 'block'
               ? { kind: 'soft', marks: {} }

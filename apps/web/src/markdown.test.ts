@@ -193,6 +193,74 @@ describe('hidden text', () => {
   });
 });
 
+describe('raised and lowered text, and line breaks in table cells', () => {
+  it('raises ^text^ and lowers ~text~, and leaves strikethrough as it is', () => {
+    expect(renderGuideMarkdown('The Vale^DLC^ and H~2~O, ~~struck~~.')).toBe(
+      '<p>The Vale<sup>DLC</sup> and H<sub>2</sub>O, <s>struck</s>.</p>\n',
+    );
+    // A note's mark, as a page shows it.
+    expect(renderGuideMarkdown('As told^\\[a\\]^ before.')).toBe(
+      '<p>As told<sup>[a]</sup> before.</p>\n',
+    );
+  });
+
+  it('holds a space only escaped, and marks, links and code inside', () => {
+    expect(renderGuideMarkdown('^two\\ words^')).toBe('<p><sup>two words</sup></p>\n');
+    expect(renderGuideMarkdown('^**b**^ ~`a b`~ ^[c d](demo:guide:walk)^')).toBe(
+      '<p><sup><strong>b</strong></sup> <sub><code>a b</code></sub> <sup><span class="app-link-missing">c d</span></sup></p>\n',
+    );
+  });
+
+  it('does not make marks of text that only looks like them', () => {
+    for (const text of [
+      'x^2 + y^2 = r^2',
+      '^two words^',
+      'a ^ b ^ c',
+      '\\^not raised\\^ and \\~not lowered\\~',
+      '~ about 5 ~',
+      '^^',
+      '`^code^`',
+      'a^\nb^',
+    ]) {
+      expect(renderGuideMarkdown(text)).not.toMatch(/<su[pb]>/);
+    }
+  });
+
+  it('stays safe: nothing but the tags the renderer makes', () => {
+    const html = renderGuideMarkdown(
+      '^<img src=x onerror="alert(1)">^ ~[x](javascript:alert(1))~ ^![p](https://example.test/p.png)^',
+    );
+    expect(html).not.toMatch(/<img|href="javascript|onerror="/);
+  });
+
+  it('hides text in a table cell, its bars escaped as a table needs any bar there', () => {
+    const html = renderGuideMarkdown('| Room | Floor |\n| --- | --- |\n| \\|\\|Vault\\|\\| | 9 |');
+    expect(html).toContain(
+      '<td><button type="button" class="hidden-text-show" data-hidden-show="1">Show hidden text</button><span class="hidden-text" data-hidden-part="1" hidden="">Vault</span></td>\n<td>9</td>',
+    );
+  });
+
+  it('breaks a line in a table cell at <br>, and nowhere else', () => {
+    const html = renderGuideMarkdown(
+      '| Damage | Note |\n| --- | --- |\n| 82 DPS<br>16.4 a hit | a<BR>b \\<br> c `x<br>y` |\n\nA <br> in text.',
+    );
+    expect(html).toContain('<td>82 DPS<br>\n16.4 a hit</td>');
+    // Only the exact text, not escaped, not in code.
+    expect(html).toContain('<td>a&lt;BR&gt;b &lt;br&gt; c <code>x&lt;br&gt;y</code></td>');
+    expect(html).toContain('<p>A &lt;br&gt; in text.</p>');
+    expect(guideSearchText('| a |\n| - |\n| one<br>two |')).toBe('a one two');
+  });
+
+  it('hides a whole table between bars in paragraphs of their own, and leaves out the last bar', () => {
+    const html = renderGuideMarkdown('||\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n||\n\nAfter.');
+    expect(html).toMatch(
+      /^<p><button type="button" class="hidden-text-show" data-hidden-show="1">Show hidden text<\/button><\/p>\n<table data-hidden-part="1" hidden="">/,
+    );
+    expect(html).toMatch(/<\/table>\n+<p>After\.<\/p>\n$/);
+    expect(guideSearchText('||\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n||\n\nAfter.')).toBe('After.');
+  });
+});
+
 describe('pictures', () => {
   const pictures = new Map([
     [
@@ -279,7 +347,7 @@ describe('guideSearchText', () => {
   it('reads the words as shown, without hidden text, targets or marks', () => {
     expect(
       guideSearchText(
-        '## Tower\n\nClimb [the stairs](demo:loc:1) ![a bell](demo:picture:bell) and `code`.\n\n| A | B |\n| - | - |\n| one | ||two|| |\n\n||Whole\n\nparagraphs||\n\n    indented || code\n\nend ||secret||',
+        '## Tower\n\nClimb [the stairs](demo:loc:1) ![a bell](demo:picture:bell) and `code`.\n\n| A | B |\n| - | - |\n| one | \\|\\|two\\|\\| |\n\n||Whole\n\nparagraphs||\n\n    indented || code\n\nend ||secret||',
       ),
     ).toBe('Tower Climb the stairs a bell and code. A B one indented || code end');
   });

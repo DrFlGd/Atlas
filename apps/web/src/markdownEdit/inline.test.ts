@@ -51,6 +51,9 @@ describe('inline Markdown, read and written', () => {
     'Raw <b>HTML</b> shows as text.',
     'Not # a heading, - a list, 1. a number',
     'Strike ~~with **bold**~~ inside.',
+    'Raised^DLC^ and lowered H~2~O, a mark^\\[a\\]^ and ^two\\ words^.',
+    'Inside: **^bold^**, ~`code`~, [^a\\ page^](demo:guide:walk), ||hidden^up^|| and ||^up^||.',
+    'Not marks: x^2 + y^2, \\^a\\^, \\~b\\~ and ~ c ~.',
   ])('%s', (markdown) => {
     roundTrip(markdown);
   });
@@ -104,10 +107,64 @@ describe('inline Markdown, read and written', () => {
     );
   });
 
+  it('writes bold around raised text, which shows the same as raised bold', () => {
+    const pieces = parseInline('^**bold**^');
+    expect(writeInline(pieces)).toBe('**^bold^**');
+    expect(sameInline(parseInline('**^bold^**'), pieces)).toBe(true);
+  });
+
+  it('writes carets and tildes in text so they stay text', () => {
+    const written = writeInline([text('x^2^ and ~3~ and 2^10')]);
+    expect(written).toBe('x\\^2\\^ and \\~3\\~ and 2\\^10');
+    expect(render(written)).toBe('<p>x^2^ and ~3~ and 2^10</p>\n');
+  });
+
+  it('writes the spaces of raised and lowered text escaped, so they stay inside', () => {
+    const pieces = [
+      text('see'),
+      text('note one', { sup: true }),
+      text(' and '),
+      text('a b', { sub: true }),
+    ];
+    const written = writeInline(pieces);
+    expect(written).toBe('see^note\\ one^ and ~a\\ b~');
+    expect(render(written)).toBe('<p>see<sup>note one</sup> and <sub>a b</sub></p>\n');
+    expect(sameInline(parseInline(written), pieces)).toBe(true);
+    // Bold that starts with a space keeps the space raised.
+    const bold = [text('x'), text(' y', { sup: true, strong: '**' })];
+    expect(render(writeInline(bold))).toBe('<p>x<sup> <strong>y</strong></sup></p>\n');
+  });
+
+  it('keeps raised text when other marks are turned on and off', () => {
+    const pieces = parseInline('Vale^DLC^ here');
+    const bold = toggleMark(pieces, 0, 7, 'strong');
+    expect(writeInline(bold)).toBe('**Vale^DLC^** here');
+    expect(writeInline(toggleMark(bold, 0, 7, 'strong'))).toBe('Vale^DLC^ here');
+  });
+
+  it('writes a line break in a table cell as <br>', () => {
+    const cell: Inline[] = [text('82 DPS'), { kind: 'break', marks: {} }, text('16.4 a hit')];
+    expect(writeInline(cell, 'cell')).toBe('82 DPS<br>16.4 a hit');
+    expect(sameInline(parseInline('82 DPS<br>16.4 a hit'), cell)).toBe(false);
+  });
+
   it('escapes bars in a table cell, and writes line ends there as spaces', () => {
     expect(writeInline([text('a|b'), { kind: 'soft', marks: {} }, text('c')], 'cell')).toBe(
-      'a\\|b c',
+      'a\\\\|b c',
     );
+  });
+
+  it('writes hidden text, bars and code in a table cell so the table keeps them in the cell', () => {
+    const cell: Inline[] = [
+      text('5', { hidden: true }),
+      text(' a || b '),
+      { kind: 'code', text: 'x|y', marks: {} },
+    ];
+    const written = writeInline(cell, 'cell');
+    expect(written).toBe('\\|\\|5\\|\\| a \\\\|\\\\| b `x\\|y`');
+    const html = render(`| A |\n| - |\n| ${written} |`);
+    expect(html).toContain('<td><button type="button" class="hidden-text-show"');
+    expect(html).toContain('hidden="">5</span> a || b <code>x|y</code></td>');
   });
 });
 

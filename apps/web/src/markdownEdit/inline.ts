@@ -1,4 +1,5 @@
 import MarkdownIt, { type Token } from 'markdown-it';
+import { CELL_BREAK, markdownMarks } from '../markdownMarks';
 
 /**
  * The text of one part of a page (a paragraph, a heading, a list item, a
@@ -7,10 +8,11 @@ import MarkdownIt, { type Token } from 'markdown-it';
  * view uses (see `markdown.ts`), and written back to Markdown.
  *
  * Every inline feature the view shows has a piece or a mark here: bold
- * (`**`, `__`), italic (`*`, `_`), strikethrough (`~~`), code, links (to the
- * web, to a page or a location by its id, `<autolinks>`), pictures by id,
- * hidden text (`||like this||`) and line breaks, soft (a line end) and hard
- * (a backslash or two spaces at a line end). Character references and
+ * (`**`, `__`), italic (`*`, `_`), strikethrough (`~~`), raised and lowered
+ * text (`^`, `~`), code, links (to the web, to a page or a location by its
+ * id, `<autolinks>`), pictures by id, hidden text (`||like this||`) and
+ * line breaks, soft (a line end) and hard (a backslash or two spaces at a
+ * line end; `<br>` in a table cell). Character references and
  * backslash escapes are read as the characters they stand for, and written
  * back escaped where they would mean something else.
  *
@@ -39,6 +41,9 @@ export interface Marks {
   s?: true;
   /** Hidden until the reader asks (`||`). */
   hidden?: true;
+  /** Raised (`^`) or lowered (`~`): a note's mark, a small tag, a formula. */
+  sup?: true;
+  sub?: true;
   link?: LinkMark;
 }
 
@@ -57,6 +62,7 @@ export type Inline =
  * apart from text (`text_special`), so a `||` counts as the view counts it.
  */
 export const editParser = new MarkdownIt({ html: false, linkify: true, typographer: false });
+editParser.use(markdownMarks);
 editParser.core.ruler.disable('text_join');
 
 // ---------------------------------------------------------------------------
@@ -92,7 +98,8 @@ export function inlineFromTokens(
         break;
       }
       case 'text_special':
-        pieces.push({ kind: 'text', text: token.content, marks: now() });
+        // An escaped space in raised text is a space, which follows it.
+        if (token.content !== '') pieces.push({ kind: 'text', text: token.content, marks: now() });
         break;
       case 'code_inline':
         pieces.push({ kind: 'code', text: token.content, marks: now() });
@@ -120,6 +127,18 @@ export function inlineFromTokens(
         break;
       case 's_close':
         delete marks.s;
+        break;
+      case 'sup_open':
+        marks.sup = true;
+        break;
+      case 'sup_close':
+        delete marks.sup;
+        break;
+      case 'sub_open':
+        marks.sub = true;
+        break;
+      case 'sub_close':
+        delete marks.sub;
         break;
       case 'link_open': {
         const href = String(token.attrGet('href') ?? '');
@@ -178,6 +197,8 @@ export function sameMarks(a: Marks, b: Marks): boolean {
     !a.em === !b.em &&
     !a.s === !b.s &&
     !a.hidden === !b.hidden &&
+    !a.sup === !b.sup &&
+    !a.sub === !b.sub &&
     sameLink(a.link, b.link)
   );
 }
@@ -266,6 +287,7 @@ export function escapeText(text: string, atLineStart: boolean): string {
       case ']':
       case '<':
       case '~':
+      case '^':
       case '|':
         out += `\\${ch}`;
         break;
@@ -331,9 +353,12 @@ const writeTitle = (title: string | undefined) =>
 /** Plain text for inside `[…]` or `![…]`. */
 const escapeLabel = (text: string) => escapeText(text.replace(/\s*\n\s*/g, ' '), false);
 
-type MarkName = 'link' | 'strong' | 'em' | 's';
-/** Outermost first: a link holds bold, bold holds italic, italic holds strikethrough. */
-const ORDER: readonly MarkName[] = ['link', 'strong', 'em', 's'];
+type MarkName = 'link' | 'strong' | 'em' | 's' | 'sup' | 'sub';
+/**
+ * Outermost first: a link holds bold, bold holds italic, italic holds
+ * strikethrough, which holds raised and lowered text.
+ */
+const ORDER: readonly MarkName[] = ['link', 'strong', 'em', 's', 'sup', 'sub'];
 
 interface Open {
   name: MarkName;
@@ -351,11 +376,16 @@ const hasMark = (marks: Marks, name: MarkName): boolean =>
  */
 function spacesOutside(pieces: readonly Inline[]): Inline[] {
   const out: Inline[] = [];
+  // Spaces may stand inside raised and lowered text (escaped), so they keep those.
+  const kept = (a: Marks): Marks => ({
+    ...(a.hidden ? { hidden: true } : {}),
+    ...(a.sup ? { sup: true } : {}),
+    ...(a.sub ? { sub: true } : {}),
+  });
   const shared = (a: Marks, b: Marks | undefined): Marks => {
-    if (!b) return { ...(a.link ? { link: a.link } : {}), ...(a.hidden ? { hidden: true } : {}) };
-    const m: Marks = {};
+    if (!b) return { ...(a.link ? { link: a.link } : {}), ...kept(a) };
+    const m: Marks = kept(a);
     if (a.link && sameLink(a.link, b.link)) m.link = a.link;
-    if (a.hidden) m.hidden = true;
     if (a.strong && b.strong) m.strong = a.strong;
     if (a.em && b.em) m.em = a.em;
     if (a.s && b.s) m.s = true;
@@ -388,6 +418,8 @@ function spacesOutside(pieces: readonly Inline[]): Inline[] {
  * one line they are written as spaces.
  */
 export function writeInline(pieces: readonly Inline[], context: InlineContext = 'block'): string {
+  /** Raised and lowered text holds no bare space or line end: they are escaped. */
+  const inScript = (marks: Marks) => marks.sup === true || marks.sub === true;
   // Line ends at the ends of a text are not shown, and a break at its end would be a backslash.
   const trimmed = normalizeInline(pieces);
   while (trimmed[0]?.kind === 'soft' || trimmed[0]?.kind === 'break') trimmed.shift();
@@ -441,7 +473,10 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
         continue;
       }
       out += delimiterFor(name, marks, lastChar());
-      stack.push({ name, delimiter: out.slice(-(name === 'em' ? 1 : 2)) });
+      stack.push({
+        name,
+        delimiter: out.slice(-(name === 'em' || name === 'sup' || name === 'sub' ? 1 : 2)),
+      });
     }
     if (atom) {
       out += link.auto === 'bare' ? piece.text : `<${piece.text}>`;
@@ -456,7 +491,8 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
             out += context === 'block' ? '\n' : ' ';
             atLineStart = context === 'block';
           }
-          out += escapeText(line, atLineStart);
+          const escaped = escapeText(line, atLineStart);
+          out += inScript(piece.marks) ? escaped.replace(/[ \t]/g, '\\ ') : escaped;
           if (line !== '') atLineStart = false;
         });
         break;
@@ -470,7 +506,12 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
         atLineStart = false;
         break;
       case 'break':
-        if (context === 'block') {
+        if (inScript(piece.marks) && context !== 'cell') {
+          out += '\\ ';
+        } else if (context === 'cell') {
+          // The one line break a table cell has.
+          out += CELL_BREAK;
+        } else if (context === 'block') {
           out += '\\\n';
           atLineStart = true;
         } else {
@@ -478,6 +519,10 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
         }
         break;
       case 'soft':
+        if (inScript(piece.marks)) {
+          out += '\\ ';
+          break;
+        }
         // Spaces before a line end would make it a hard break.
         out = out.replace(/[ \t]+$/, '');
         out += context === 'block' ? '\n' : ' ';
@@ -487,7 +532,10 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
   });
   while (stack.length > 0) close(stack.pop()!);
   if (hidden as boolean) out += '||';
-  return out;
+  // A table splits its rows at bars and takes one backslash before a bar as
+  // its own (a bar it does not split at), so in a cell every bar gets one:
+  // the cell then reads as the text does, hidden text, code and all.
+  return context === 'cell' ? out.replaceAll('|', '\\|') : out;
 }
 
 /**
@@ -498,6 +546,8 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
  */
 function delimiterFor(name: Exclude<MarkName, 'link'>, marks: Marks, before: string | undefined) {
   if (name === 's') return '~~';
+  if (name === 'sup') return '^';
+  if (name === 'sub') return '~';
   const wanted = name === 'strong' ? marks.strong! : marks.em!;
   const char = wanted[0]!;
   const other = char === '*' ? '_' : '*';
@@ -647,6 +697,8 @@ function tidyMarks(marks: Marks): Marks {
   if (marks.em) out.em = marks.em;
   if (marks.s) out.s = true;
   if (marks.hidden) out.hidden = true;
+  if (marks.sup) out.sup = true;
+  if (marks.sub) out.sub = true;
   if (marks.link) out.link = marks.link;
   return out;
 }
