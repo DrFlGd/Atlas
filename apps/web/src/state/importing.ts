@@ -24,6 +24,7 @@ import {
   robotsAllows,
   rulesFromAnswer,
   sameSite,
+  siteInfoOf,
   type AtlasImporter,
   type ConfirmedLicence,
   type FetchedPage,
@@ -1457,6 +1458,10 @@ async function convertAndSave(
 export const BROWSE_ONLY =
   'This wiki is read only as you browse it, so this app does not open or fetch its pages by itself. Start browsing on its screen in the Library, or add its address again, and each page you open in the window is kept.';
 
+/** A page the person opened while browsing that its importer counts part of another wiki. */
+export const OTHER_WIKI =
+  'This page is of another wiki than the one you are browsing, so it was not kept. Start browsing that wiki to keep its pages.';
+
 /**
  * Browse and keep: opens `url` in the app's window, browsing, and keeps
  * each page the person opens there that the importer's browse reader reads
@@ -1530,6 +1535,11 @@ async function startBrowse(
     const key = address.split('#')[0] ?? address;
     if (!sameSite(url, address) || seen.has(key)) continue;
     seen.add(key);
+    // A page of another wiki on the same host (another language, say) is not kept here.
+    if (site && siteInfoOf(importer, address).key !== site.info.key) {
+      show({ note: OTHER_WIKI });
+      continue;
+    }
     const kept = await keepBrowsed(importer, address, result.data);
     if (id !== session) break;
     if (kept.title) {
