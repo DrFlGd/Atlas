@@ -192,6 +192,12 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.6.0
+
+          - **Edit guide pages.** **Edit the page** in **Guides** opens a page editor: edit a page as it looks or as Markdown, add pages of your own, hide pages and arrange the contents. The game's own pages are never changed, and your version can be undone. Not tried on a phone yet.
+          - **Small pictures in the line of text.** A picture a page gives a small size (an icon or a badge) now stands in the line of text at that size, with no caption.
+          - **Map pack files with your pages.** A map pack file exported from Atlas 0.6.0 on a computer can carry the pages you changed or wrote. Such a file needs this version or later.
+
           ## New since 0.4.4
 
           - **Guides**: guides read as pages, with a contents, tables, pictures, links between pages and search. A game can hold guides and no map.
