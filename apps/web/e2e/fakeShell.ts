@@ -23,6 +23,42 @@ export const DOWNLOADS_BUILD = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOA
 export const SITE = 'https://maps.example.com/demo-maps';
 const PACKS = 'http://atlas-pack.localhost/';
 const IMPORTER = new URL('../../../packages/importer-api/demo/demo-importer.js', import.meta.url);
+const WIKI_IMPORTER = new URL(
+  '../../../packages/importer-api/demo/example-wiki-importer.js',
+  import.meta.url,
+);
+
+/** The made-up Example Wiki that `example-wiki-importer.js` reads, answered by `import_fetch`. */
+export const WIKI = 'https://wiki.example.org/wiki';
+
+export interface WikiSite {
+  /** The contents: each heading's pages, by slug. */
+  headings: { title: string; pages: string[] }[];
+  /** Every page there is, by slug: its title, its text and the slugs it links to. */
+  pages: Record<string, { title: string; body: string; links?: string[] }>;
+  /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
+  busy?: string[];
+}
+
+export const EXAMPLE_WIKI: WikiSite = {
+  headings: [
+    { title: 'Basics', pages: ['Welcome', 'Bells', 'Gates'] },
+    { title: 'Places', pages: ['Harbour', 'Lighthouse', 'Missing'] },
+  ],
+  pages: {
+    Welcome: {
+      title: 'Welcome',
+      body: 'The isle has [bells](Bells) and [gates](Gates).',
+      links: ['Bells', 'Gates', 'Old_bell', 'Rusty_gate'],
+    },
+    Bells: { title: 'Bells', body: 'Ring every bell once.' },
+    Gates: { title: 'Gates', body: 'Gates open at dusk.' },
+    Harbour: { title: 'Harbour', body: 'Boats leave at dawn.' },
+    Lighthouse: { title: 'Lighthouse', body: 'The light turns all night.' },
+    Old_bell: { title: 'Old bell', body: 'It is cracked.' },
+    Rusty_gate: { title: 'Rusty gate', body: 'It squeaks.' },
+  },
+};
 
 export interface World {
   name: string;
@@ -57,7 +93,7 @@ export const WORLDS: Record<string, World> = {
 };
 
 interface ShellEvent {
-  what: 'open' | 'close' | 'poll';
+  what: 'open' | 'close' | 'poll' | 'fetch';
   url: string | null;
   at: number;
   purpose?: string;
@@ -91,9 +127,11 @@ export interface MockShell {
 function installFakeShell({
   worlds,
   downloads,
+  wiki,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
+  wiki: WikiSite | null;
 }) {
   const shell: MockShell = { events: [], hold: [], close: [], extra: {}, reports: [] };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
@@ -106,8 +144,9 @@ function installFakeShell({
     string,
     { key: string; url: string; importedAt: string; mapId?: string; data: string }[]
   > = {};
-  // What each pack written holds, for the Library's facts.
+  // What each pack written holds, and the pages it was made from, for the Library's facts.
   const contents: Record<string, Record<string, number>> = {};
+  const written: Record<string, { url: string; mapId?: string; importedAt?: string }[]> = {};
   const listing = () => ({
     mapsFolder: { path: '/maps', isDefault: true, exists: true },
     packs: structuredClone(packs),
@@ -225,6 +264,40 @@ function installFakeShell({
         }
         return { state: 'ready', data: JSON.stringify(data) };
       }
+      case 'import_fetch': {
+        // The made-up wiki: robots.txt, its contents and its pages, as JSON.
+        const address = args.url as string;
+        shell.events.push({ what: 'fetch', url: address, at: Date.now() });
+        const answer = (status: number, body: unknown) => ({
+          url: address,
+          finalUrl: address,
+          status,
+          contentType: 'application/json',
+          text: typeof body === 'string' ? body : JSON.stringify(body),
+          retryAfter: null,
+        });
+        const at = new URL(address);
+        if (!wiki || at.origin !== 'https://wiki.example.org') {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'The site could not be reached.';
+        }
+        if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nDisallow: /private/');
+        const slug = at.pathname.replace(/^\/wiki\//, '');
+        if (slug === 'Contents') {
+          return answer(200, {
+            headings: wiki.headings.map((heading) => ({
+              title: heading.title,
+              pages: heading.pages.map((page) => ({
+                slug: page,
+                title: wiki.pages[page]?.title ?? page.replaceAll('_', ' '),
+              })),
+            })),
+          });
+        }
+        if (wiki.busy?.includes(slug)) return answer(503, 'Busy');
+        const page = wiki.pages[slug];
+        return page ? answer(200, page) : answer(404, 'Not found');
+      }
       case 'import_close':
         if (current) shell.events.push({ what: 'close', url: current.url, at: Date.now() });
         current = null;
@@ -260,8 +333,9 @@ function installFakeShell({
         const manifest = JSON.parse(request.files['manifest.json']!) as {
           title: string;
           packVersion: string;
-          source?: { pages: { url: string; mapId?: string }[] };
+          source?: { pages: { url: string; mapId?: string; importedAt?: string }[] };
         };
+        written[request.packId] = manifest.source?.pages ?? [];
         const listed = {
           id: request.packId,
           title: manifest.title,
@@ -302,7 +376,9 @@ function installFakeShell({
         const id = args.id as string;
         return {
           pack: { id, title: id, packVersion: '1.0.0', schemaVersion: 1, attribution: [] },
-          source: { kind: 'app', pages: [] },
+          source: written[id]
+            ? { kind: 'web-pages', pages: written[id] }
+            : { kind: 'app', pages: [] },
           contents: contents[id] ?? {
             maps: 2,
             layers: 3,
@@ -329,12 +405,17 @@ function installFakeShell({
 }
 
 /** Lists the demo importer in `config.json`, serves it, and serves the packs the fake shell writes. */
-export async function setUp(page: Page, downloads = DOWNLOADS_BUILD) {
+export async function setUp(
+  page: Page,
+  downloads = DOWNLOADS_BUILD,
+  { wiki = null }: { wiki?: WikiSite | null } = {},
+) {
   const packs: Record<string, Record<string, string>> = {};
   await page.exposeFunction('__writePack', (id: string, files: Record<string, string>) => {
     packs[id] = files;
   });
   const importer = await readFile(IMPORTER, 'utf8');
+  const wikiImporter = await readFile(WIKI_IMPORTER, 'utf8');
   await page.route('**/config.json', async (route) => {
     const response = await route.fetch();
     const config = (await response.json()) as Record<string, unknown>;
@@ -349,12 +430,26 @@ export async function setUp(page: Page, downloads = DOWNLOADS_BUILD) {
             version: '1.0.0',
             module: 'importers/demo-maps.js',
           },
+          ...(wiki
+            ? [
+                {
+                  id: 'example-wiki',
+                  title: 'Example Wiki',
+                  description: 'Reads the made-up Example Wiki.',
+                  version: '1.0.0',
+                  module: 'importers/example-wiki.js',
+                },
+              ]
+            : []),
         ],
       },
     });
   });
   await page.route('**/importers/demo-maps.js', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: importer }),
+  );
+  await page.route('**/importers/example-wiki.js', (route) =>
+    route.fulfill({ contentType: 'text/javascript', body: wikiImporter }),
   );
   await page.route(`${PACKS}**`, (route) => {
     const [, id = '', name = ''] =
@@ -366,7 +461,7 @@ export async function setUp(page: Page, downloads = DOWNLOADS_BUILD) {
       : route.fulfill({ headers, contentType: 'application/json', body });
   });
   await page.clock.install();
-  await page.addInitScript(installFakeShell, { worlds: WORLDS, downloads });
+  await page.addInitScript(installFakeShell, { worlds: WORLDS, downloads, wiki });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
 }

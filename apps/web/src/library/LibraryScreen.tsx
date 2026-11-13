@@ -22,6 +22,7 @@ import {
 } from '../state/libraryView';
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
+import { listedPages, loadWikiNotes, useWikiNotes } from '../state/wikiNotes';
 import { NewGameButton } from '../touch/OwnGames';
 import { GamePane } from './GamePane';
 import { DownloadsPanel, DownloadsStrip } from './DownloadsPanel';
@@ -162,6 +163,16 @@ function GameList({ openId }: { openId: string | null }) {
   const downloads = useAtlas(downloadsOffered);
   const facts = useGameFacts((s) => s.byId);
   const jobs = useDownloadsView((s) => s.jobs);
+  const wikiNotes = useWikiNotes((s) => s.byImporter);
+  // The notes on wikis' pages, for "38 of 412 pages read": read from this computer only.
+  const importerIds = [
+    ...new Set((packs ?? []).flatMap((pack) => (pack.imported ? [pack.imported.importerId] : []))),
+  ].join(' ');
+  useEffect(() => {
+    for (const importerId of importerIds.split(' ').filter(Boolean)) {
+      void loadWikiNotes(importerId);
+    }
+  }, [importerIds]);
   return (
     <section className="library-list-section" aria-labelledby="library-games-heading">
       <h2 className="library-group-title" id="library-games-heading">
@@ -188,7 +199,13 @@ function GameList({ openId }: { openId: string | null }) {
             downloads: __ATLAS_DOWNLOADS__ && downloads,
             wikiPages:
               kind === 'wiki' && own?.details
-                ? { read: own.details.contents.guides, listed: null }
+                ? {
+                    read: own.details.contents.guides,
+                    listed: listedPages(
+                      listed?.imported ? wikiNotes[listed.imported.importerId] : undefined,
+                      listed?.pages ?? [],
+                    ),
+                  }
                 : null,
           });
           return (

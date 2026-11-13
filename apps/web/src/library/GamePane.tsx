@@ -26,13 +26,14 @@ import {
 } from '../state/gameFacts';
 import { canChangeGuideLinks, useGuideLinks, type OtherGuides } from '../state/guideLinks';
 import { hasMap } from '../state/guides';
-import { updateGame } from '../state/importing';
+import { updateGame, wikiSourceOf, type WikiSource } from '../state/importing';
 import { focusAddBox, leaveLibrary, setMoreOpen, showGame, useLibrary } from '../state/libraryView';
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
 import { showSection } from '../touch/state';
 import { OwnGameActions } from '../touch/OwnGames';
 import { MoreMenu, type MoreConfirm } from './MoreMenu';
+import { WikiScreen } from './WikiScreen';
 
 /** Whether a job is not over, as a plain boolean (no narrowing of the job). */
 const isGoing = (job: DownloadSnapshot | null | undefined): boolean => jobGoing(job);
@@ -68,6 +69,19 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const more = useLibrary((s) => s.more);
   const [confirming, setConfirming] = useState<MoreConfirm | null>(null);
   const canMake = useAtlas(ownGamesOffered);
+  // A wiki read page by page: its own screen, once its importer is known.
+  const [wiki, setWiki] = useState<WikiSource | null>(null);
+  const imported = listed?.imported?.importerId ?? null;
+  useEffect(() => {
+    if (!imported) return;
+    let current = true;
+    void wikiSourceOf(id).then((source) => {
+      if (current) setWiki(source);
+    });
+    return () => {
+      current = false;
+    };
+  }, [id, imported]);
 
   useEffect(() => {
     void loadGameFacts(id, true).then(() => {
@@ -153,43 +167,66 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
           />
         ) : null}
       </header>
-      <div className="library-cards touch-scroll" data-scroll-root>
-        {confirming === 'pack' ? (
-          <DeletePackConfirm id={id} title={title} onClose={close} />
-        ) : confirming === 'images' ? (
-          <DeleteImagesConfirm id={id} title={title} onClose={close} />
-        ) : null}
-        <ContentsCard
-          id={id}
-          kind={kind}
-          listed={listed}
-          facts={facts}
-          updatable={updatable && !busy}
-        />
-        {__ATLAS_DOWNLOADS__ && downloads && details ? (
-          <ImagesCard id={id} facts={facts} shown={shown} />
-        ) : null}
-        {__ATLAS_DOWNLOADS__ && downloads && facts?.photos && facts.photos.total > 0 ? (
-          <PhotosCard id={id} facts={facts} kind={kind} />
-        ) : null}
-        {kind !== 'wiki' && shown ? <WikiCard /> : null}
-        {ownGame && !busy ? (
-          <Card icon="pencil" title="Your game" testId="library-own-card">
-            <p className="library-card-state">
-              Made in this app from pictures of its maps. Add map makes another map from a picture;
-              Add level adds a level to a map of the game shown; Rename changes its name; Delete map
-              deletes one of its maps after asking which.
-            </p>
-            <OwnGameActions id={id} title={title} />
-          </Card>
-        ) : null}
-        {details ? (
-          <details className="library-details">
-            <summary data-testid="pack-details-toggle">What this game holds</summary>
-            <PackDetailsView details={details} />
-          </details>
-        ) : null}
-      </div>
+      {confirming && kind === 'wiki' && wiki ? (
+        <div className="library-cards library-cards-confirm">
+          {confirming === 'pack' ? (
+            <DeletePackConfirm id={id} title={title} onClose={close} />
+          ) : (
+            <DeleteImagesConfirm id={id} title={title} onClose={close} />
+          )}
+        </div>
+      ) : null}
+      {kind === 'wiki' && wiki ? (
+        <WikiScreen id={id} title={title} source={wiki} listed={listed} details={details}>
+          {__ATLAS_DOWNLOADS__ && downloads && facts?.photos && facts.photos.total > 0 ? (
+            <PhotosCard id={id} facts={facts} kind={kind} />
+          ) : null}
+          {details ? (
+            <details className="library-details">
+              <summary data-testid="pack-details-toggle">What this wiki holds</summary>
+              <PackDetailsView details={details} />
+            </details>
+          ) : null}
+        </WikiScreen>
+      ) : (
+        <div className="library-cards touch-scroll" data-scroll-root>
+          {confirming === 'pack' ? (
+            <DeletePackConfirm id={id} title={title} onClose={close} />
+          ) : confirming === 'images' ? (
+            <DeleteImagesConfirm id={id} title={title} onClose={close} />
+          ) : null}
+          <ContentsCard
+            id={id}
+            kind={kind}
+            listed={listed}
+            facts={facts}
+            updatable={updatable && !busy}
+          />
+          {__ATLAS_DOWNLOADS__ && downloads && details ? (
+            <ImagesCard id={id} facts={facts} shown={shown} />
+          ) : null}
+          {__ATLAS_DOWNLOADS__ && downloads && facts?.photos && facts.photos.total > 0 ? (
+            <PhotosCard id={id} facts={facts} kind={kind} />
+          ) : null}
+          {kind !== 'wiki' && shown ? <WikiCard /> : null}
+          {ownGame && !busy ? (
+            <Card icon="pencil" title="Your game" testId="library-own-card">
+              <p className="library-card-state">
+                Made in this app from pictures of its maps. Add map makes another map from a
+                picture; Add level adds a level to a map of the game shown; Rename changes its name;
+                Delete map deletes one of its maps after asking which.
+              </p>
+              <OwnGameActions id={id} title={title} />
+            </Card>
+          ) : null}
+          {details ? (
+            <details className="library-details">
+              <summary data-testid="pack-details-toggle">What this game holds</summary>
+              <PackDetailsView details={details} />
+            </details>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

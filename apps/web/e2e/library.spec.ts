@@ -1,6 +1,6 @@
 import { collectErrors } from './helpers';
 import { expect, test } from './layout';
-import { mock, paste, realErrors, setUp, url } from './fakeShell';
+import { DOWNLOADS_BUILD, mock, paste, realErrors, setUp, url } from './fakeShell';
 
 /**
  * The Library of the desktop app, against the stand-in shell of
@@ -22,13 +22,18 @@ test('the folder button opens the Library over the whole window', async ({ page 
   const demo = library.locator('[data-testid="library-game"][data-pack="demo"]');
   await expect(demo).toContainText('Shown');
   await expect(demo).toContainText('Maps');
-  await expect(demo.getByTestId('library-status')).toContainText('maps,');
+  // Its state: what it holds, or in a build with downloads, what is left to download.
+  await expect(demo.getByTestId('library-status')).toContainText(
+    DOWNLOADS_BUILD ? 'Nothing to download' : 'maps,',
+  );
   const pane = page.getByTestId('library-game-pane');
   await expect(pane).toHaveAttribute('data-pack', 'demo');
   await expect(pane.getByTestId('library-contents-card')).toContainText('locations');
-  // This build downloads nothing: no map image or photo cards.
-  await expect(pane.getByTestId('library-images-card')).toHaveCount(0);
-  await expect(pane.getByTestId('library-photos-card')).toHaveCount(0);
+  // A build without downloads has no map image or photo cards (`downloads.spec.ts` covers them).
+  if (!DOWNLOADS_BUILD) {
+    await expect(pane.getByTestId('library-images-card')).toHaveCount(0);
+    await expect(pane.getByTestId('library-photos-card')).toHaveCount(0);
+  }
 
   // More: each thing it does has a sentence; Esc closes it, and only it.
   await pane.getByTestId('library-more').click();
