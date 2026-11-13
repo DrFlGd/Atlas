@@ -40,6 +40,16 @@ describe('desktop bridge', () => {
     ]);
   });
 
+  it('reads a page for an importer with the shell command of a build with downloads', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    await bridge.tiles.fetchPage('https://wiki.example.org/wiki/Start');
+    expect(calls).toEqual([['import_fetch', { url: 'https://wiki.example.org/wiki/Start' }]]);
+  });
+
   it('calls the shell commands with their arguments', async () => {
     const calls: [string, unknown][] = [];
     const bridge = createBridge((command, args) => {

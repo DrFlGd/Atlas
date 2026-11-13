@@ -1,4 +1,10 @@
-import { findImporter, isAllowedPageUrl, type PictureSummary } from '@atlas/importer-api';
+import {
+  findImporter,
+  isAllowedPageUrl,
+  refusalFor,
+  type AtlasImporter,
+  type PictureSummary,
+} from '@atlas/importer-api';
 
 /**
  * "Add a map" with several addresses at once: reading the pasted text, and
@@ -60,6 +66,8 @@ export const tooManyMessage = (count: number) =>
 
 export interface CheckedAddress<T> {
   url: string;
+  /** How the page was listed, when it was chosen from a game's list of pages. */
+  listed?: { title: string; group?: string };
   /** The importer that recognises the address, or null. */
   importer: T | null;
   /** Why the address is left out, when no importer recognises it. */
@@ -74,11 +82,14 @@ export function leftOutReason(url: string): string {
 }
 
 /** Checks each address against the importers, as a single address is checked. */
-export function checkAddresses<T extends { matches(url: string): boolean }>(
+export function checkAddresses<T extends Pick<AtlasImporter, 'matches' | 'refuses'>>(
   addresses: readonly string[],
   importers: readonly T[],
 ): CheckedAddress<T>[] {
   return addresses.map((url) => {
+    // An address an importer refuses is never opened, whoever recognises it.
+    const refusal = refusalFor(importers, url);
+    if (refusal) return { url, importer: null, problem: refusal };
     const importer = findImporter(importers, url);
     return { url, importer, problem: importer ? null : leftOutReason(url) };
   });
@@ -96,7 +107,9 @@ export type FailureCause =
   /** The run was cancelled while the page was open. */
   | 'cancelled'
   /** The data could not be used or saved: the importer refused it, a bundled game, … */
-  | 'other';
+  | 'other'
+  /** The site refused, asked to slow down or to confirm the reader is a person. */
+  | 'refused';
 
 export type RunPageState =
   /** Not reached yet. */
@@ -123,6 +136,8 @@ export type RunPageState =
       checklist?: { items: number; leftOut: number };
       /** How the map's picture was sized, when the importer measured it or tried to. */
       picture?: PictureSummary;
+      /** The page became a guide, read as a page. */
+      guide?: boolean;
     }
   /** A page that lists pages (a game page) or games was read. */
   | { kind: 'listed'; game: string; count: number; other: number }
@@ -143,7 +158,9 @@ export type StopReason =
   /** Two pages in a row ended without their map data. */
   | 'no-data'
   /** The dialog was closed, or another import took over. */
-  | 'cancelled';
+  | 'cancelled'
+  /** A site refused, asked to slow down or to confirm the reader is a person. */
+  | 'refused';
 
 export interface RunState {
   pages: RunPage[];
@@ -170,6 +187,8 @@ export type PageOutcome =
       checklist?: { items: number; leftOut: number };
       /** How the map's picture was sized, when the importer measured it or tried to. */
       picture?: PictureSummary;
+      /** The page became a guide, read as a page. */
+      guide?: boolean;
     }
   /** A list was read: `count` pages (or games) the app can add, `other` it cannot yet. */
   | { kind: 'listed'; game: string; count: number; other: number }
@@ -179,6 +198,8 @@ export type PageOutcome =
   | { kind: 'no-data'; message: string }
   /** The person closed the page window; the run stops. */
   | { kind: 'closed'; message: string }
+  /** The site refused or asked to slow down, or to confirm the reader is a person; the run stops at once. */
+  | { kind: 'refused'; message: string }
   /** The run was cancelled; it stops. */
   | { kind: 'cancelled'; message: string };
 
@@ -228,6 +249,8 @@ const pageState = (outcome: PageOutcome): RunPageState => {
       return { kind: 'failed', message: outcome.message, cause: 'no-data' };
     case 'closed':
       return { kind: 'failed', message: outcome.message, cause: 'closed' };
+    case 'refused':
+      return { kind: 'failed', message: outcome.message, cause: 'refused' };
     case 'cancelled':
       return { kind: 'failed', message: outcome.message, cause: 'cancelled' };
   }
@@ -247,6 +270,7 @@ export function settlePage(run: RunState, index: number, outcome: PageOutcome): 
   const next = updatePage(run, index, pageState(outcome));
   if (outcome.kind === 'closed') return endRun(next, 'closed');
   if (outcome.kind === 'cancelled') return endRun(next, 'cancelled');
+  if (outcome.kind === 'refused') return endRun(next, 'refused');
   const last = index === next.pages.length - 1;
   if (last) return endRun(next, null);
   let inARow = 0;
@@ -288,8 +312,11 @@ export function runSummary(run: RunState): string {
     [counts.notStarted, 'not started'],
   ];
   const shown = parts.filter(([count]) => count > 0);
-  // A run that added checklists as well as maps counts pages.
-  const noun = run.pages.some(({ state }) => state.kind === 'added' && state.checklist)
+  // A run that added checklists or guides counts pages.
+  const noun = run.pages.some(
+    ({ state }) =>
+      state.kind === 'added' && (state.checklist !== undefined || state.guide === true),
+  )
     ? ['page', 'pages']
     : ['map', 'maps'];
   return shown
@@ -310,6 +337,8 @@ export function stopReasonText(reason: StopReason): string {
       return 'Two pages in a row did not provide their map data, so this app stopped rather than open the rest. The site may be asking you to sign in or to confirm you are a person, or it may not be letting maps load just now. You can try the rest later.';
     case 'cancelled':
       return 'Adding maps was cancelled.';
+    case 'refused':
+      return 'The site refused a page, asked to slow down or asked to confirm you are a person, so this app stopped at once and read no more pages. Nothing is tried again or around it; you can try the rest another day.';
   }
 }
 

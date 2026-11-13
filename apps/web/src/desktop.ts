@@ -637,6 +637,16 @@ export interface PackFileProgress {
   cancelling: boolean;
 }
 
+/** One answer to {@link DesktopBridge.tiles.fetchPage}. */
+export interface ShellFetchedPage {
+  url: string;
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  text: string;
+  retryAfter: string | null;
+}
+
 export interface DesktopBridge {
   info(): Promise<DesktopInfo>;
   /** Opens an http or https link in the system browser. */
@@ -663,6 +673,12 @@ export interface DesktopBridge {
     pictureTiles(request: PictureTilesRequest): Promise<unknown>;
     /** Stops a measurement that is running, when an import is cancelled. */
     cancelPicture(): Promise<void>;
+    /**
+     * Reads one address for an importer that reads pages by fetching them,
+     * as the app (see `fetching.ts` in the importer contract): the answer,
+     * whatever its status. Rejects when the site could not be reached.
+     */
+    fetchPage(url: string): Promise<ShellFetchedPage>;
   };
   library: {
     list(): Promise<Listing>;
@@ -780,6 +796,7 @@ function noDownloads(): DesktopBridge['tiles'] {
     setSettings: missing,
     pictureTiles: missing,
     cancelPicture: missing,
+    fetchPage: missing,
   };
 }
 
@@ -807,6 +824,7 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           setSettings: (settings) => call('download_settings_set', { settings }),
           pictureTiles: (request) => call('picture_tiles', { request }),
           cancelPicture: () => call('picture_cancel'),
+          fetchPage: (url) => call('import_fetch', { url }),
         }
       : noDownloads(),
     library: {
