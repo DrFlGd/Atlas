@@ -30,6 +30,8 @@ export interface BackState {
   listsPage: boolean;
   /** Guides can go back to a place read before. */
   guidesBack?: boolean;
+  /** The page editor of Guides is open. */
+  pageEditor?: boolean;
   /** The section Back ends on: the map, or Guides in a game with no map. */
   home?: Section;
   /**
@@ -52,7 +54,8 @@ export type BackStep =
   | 'editor-picking'
   | 'editor-panel'
   | 'editor-preview'
-  | 'editor-leave';
+  | 'editor-leave'
+  | 'page-editor-leave';
 
 /** The thing Back closes, or null when Back should leave the app. */
 export function backStep(state: BackState): BackStep | null {
@@ -68,6 +71,8 @@ export function backStep(state: BackState): BackStep | null {
   if (state.editor === 'panel') return 'editor-panel';
   if (state.editor === 'preview') return 'editor-preview';
   if (state.editor === 'open') return 'editor-leave';
+  // The page editor closes (asking first about changes not saved), then Guides goes back.
+  if (state.section === 'guides' && state.pageEditor) return 'page-editor-leave';
   if (state.section === 'lists' && state.listsPage) return 'lists-page';
   if (state.section === 'guides' && state.guidesBack) return 'guides-back';
   if (state.section !== (state.home ?? 'map')) return 'to-map';

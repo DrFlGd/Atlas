@@ -682,3 +682,42 @@ button.guides-crumb:hover {
 .place-wiki .place-lists {
   margin-top: 4px;
 }
+
+/* The reader: editing, and what the person changed */
+
+.guides-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.guides-edit-button {
+  flex: none;
+  gap: 6px;
+}
+
+.guides-changed {
+  margin: 16px 0 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.guides-wiki-changed {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-accent);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.guides-wiki-changed p {
+  margin: 0 0 8px;
+}
+
+.guides-wiki-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

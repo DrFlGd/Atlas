@@ -1773,6 +1773,9 @@ pub struct PackFileImported {
     own_locations: Option<String>,
     /// Their links between guide pages and the map (the text of the file).
     guide_links: Option<String>,
+    /// Their own guide pages and changes to the pack's pages (the text of
+    /// the file).
+    own_pages: Option<String>,
     /// Their own photos: each file's name and bytes in base64.
     own_pictures: Vec<OwnPictureFile>,
 }
@@ -1889,6 +1892,7 @@ async fn import_pack_file(
             own_lists: imported.mine.lists,
             own_locations: imported.mine.locations,
             guide_links: imported.mine.guide_links,
+            own_pages: imported.mine.pages,
             own_pictures: imported
                 .mine
                 .pictures

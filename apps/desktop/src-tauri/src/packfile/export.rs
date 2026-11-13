@@ -14,7 +14,7 @@ use super::{
     analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal,
     shared_pictures, unavailable, AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts,
     LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE, MINE_PICTURES_DIR,
-    PICTURES_FILE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
+    PICTURES_FILE, VERSION_WITHOUT_MINE,
 };
 use crate::{
     library::PackLock,
@@ -175,10 +175,8 @@ pub fn export_with_mine(
 
     let header = Header {
         format: FORMAT.to_owned(),
-        version: if mine.needs_version_3() {
-            VERSION
-        } else if mine_facts.is_some() {
-            VERSION_WITH_MINE
+        version: if mine_facts.is_some() {
+            mine.version()
         } else {
             VERSION_WITHOUT_MINE
         },

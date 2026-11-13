@@ -1,8 +1,16 @@
-import { GuideContents, GuideSearch, guidesTogether, type LoadedPack } from '@atlas/core';
-import type { GuideEntry, Picture } from '@atlas/schema';
+import {
+  applyOwnPages,
+  GuideContents,
+  GuideSearch,
+  guidesTogether,
+  type LoadedPack,
+} from '@atlas/core';
+import type { GuideEntry, OwnPages, Picture } from '@atlas/schema';
 import type { GuidePicture } from '../markdown';
 import { guideSearchText } from '../markdown';
 import { useGuideLinks, useGuideGamesOffered, type OtherGuides } from './guideLinks';
+import { ownPagesOf, useOwnPages } from './ownPages';
+import { ownPictureUrl } from './ownPictures';
 import type { LoadedGame } from './store';
 
 /**
@@ -16,7 +24,10 @@ export interface GameGuides {
   pictures: ReadonlyMap<string, GuidePicture>;
 }
 
-const known = new WeakMap<LoadedPack, { others: readonly OtherGuides[]; guides: GameGuides }>();
+const known = new WeakMap<
+  LoadedPack,
+  { others: readonly OtherGuides[]; own: OwnPages; guides: GameGuides }
+>();
 const NO_OTHERS: readonly OtherGuides[] = [];
 
 /**
@@ -38,13 +49,19 @@ const pictureOfPack = (pack: LoadedPack, picture: Picture): [string, GuidePictur
   },
 ];
 
+/**
+ * The game's guides as shown: the person's own pages and changes laid over
+ * the pack's (see `ownPages.ts`), with the pages of the other games read
+ * with it.
+ */
 export function guidesOf(game: LoadedGame): GameGuides {
   const others = otherGuidesOf(game);
+  const own = ownPagesOf(game.pack.manifest.gameId);
   const cached = known.get(game.pack);
-  if (cached?.others === others) return cached.guides;
+  if (cached?.others === others && cached.own === own) return cached.guides;
   const contents = new GuideContents(
     guidesTogether(
-      game.pack,
+      applyOwnPages(game.pack.data, own),
       others.map((other) => ({
         gameId: other.gameId,
         title: other.title,
@@ -65,7 +82,7 @@ export function guidesOf(game: LoadedGame): GameGuides {
     search: new GuideSearch(contents.browsable ? contents.pages() : [], guideSearchText),
     pictures,
   };
-  known.set(game.pack, { others, guides });
+  known.set(game.pack, { others, own, guides });
   return guides;
 }
 
@@ -76,6 +93,7 @@ export function guidesOf(game: LoadedGame): GameGuides {
  */
 export function useGuidesSection(game: LoadedGame | null): boolean {
   useGuideLinks((s) => s.others);
+  useOwnPages((s) => s.own);
   const offered = useGuideGamesOffered(
     (s) => game !== null && s.gameId === game.pack.manifest.gameId && s.offered,
   );
@@ -92,9 +110,28 @@ export function hasGuidePages(game: LoadedGame | null): boolean {
   return game !== null && guidesOf(game).contents.browsable;
 }
 
-/** The picture of a game with this id, as a guide shows it, or null. */
+/**
+ * The picture of a game with this id, as a guide shows it, or null: one of
+ * the pack's, or a photo the person added to a page (null while its file
+ * is read; follow `useOwnPictures`).
+ */
 export function pictureOf(game: LoadedGame, id: string): GuidePicture | null {
-  return guidesOf(game).pictures.get(game.pack.currentId(id)) ?? null;
+  const packPicture = guidesOf(game).pictures.get(game.pack.currentId(id));
+  if (packPicture) return packPicture;
+  const gameId = game.pack.manifest.gameId;
+  const pages = useOwnPages.getState();
+  // One being edited first: its caption as changed.
+  const picture =
+    (pages.gameId === gameId ? pages.draftPictures.find((p) => p.id === id) : undefined) ??
+    ownPagesOf(gameId, pages).pictures?.find((p) => p.id === id);
+  if (!picture) return null;
+  const url = ownPictureUrl(gameId, picture);
+  if (!url || url === 'missing') return null;
+  return {
+    url,
+    ...(picture.caption ? { caption: picture.caption } : {}),
+    ...(picture.width && picture.height ? { width: picture.width, height: picture.height } : {}),
+  };
 }
 
 /**
@@ -104,7 +141,15 @@ export function pictureOf(game: LoadedGame, id: string): GuidePicture | null {
 export function listedGuides(game: LoadedGame): readonly GuideEntry[] {
   const { contents } = guidesOf(game);
   const { guides } = game.checklists;
-  return contents.browsable ? guides.filter((g) => !contents.isPage(g.id)) : guides;
+  // A page the person hid is a page still, not a guide of the lists.
+  const hidden = new Set(
+    ownPagesOf(game.pack.manifest.gameId)
+      .pages.filter((page) => page.hidden)
+      .map((page) => page.id),
+  );
+  return contents.browsable
+    ? guides.filter((g) => !contents.isPage(g.id) && !hidden.has(g.id))
+    : guides;
 }
 
 /** Whether a game has anything for the Lists section: a list, or a guide not read in Guides. */

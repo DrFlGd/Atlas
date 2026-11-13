@@ -33,7 +33,15 @@ export type RandomText = () => string;
 
 /** The kinds of record a person makes, each with own ids (see `OWN_ID_PREFIX`). */
 export type OwnIdKind =
-  'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region' | 'picture';
+  | 'checklist'
+  | 'checkitem'
+  | 'loc'
+  | 'cat'
+  | 'catgroup'
+  | 'region'
+  | 'picture'
+  | 'guide'
+  | 'section';
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
