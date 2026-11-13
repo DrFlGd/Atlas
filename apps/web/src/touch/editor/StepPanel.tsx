@@ -90,6 +90,7 @@ export function StepPanel({
       <div className="editor-side-body">
         <NameField
           id={nameId}
+          rowId={item.id}
           label="Name"
           value={item.name}
           testId="step-name"
@@ -182,6 +183,7 @@ export function HeadingPanel({ list, heading }: { list: OwnList; heading: OwnHea
       <div className="editor-side-body">
         <NameField
           id={nameId}
+          rowId={heading.id}
           label="Title"
           value={heading.title}
           testId="heading-title"
@@ -258,12 +260,15 @@ function MoveButtons({ id, first, last }: { id: string; first: boolean; last: bo
  */
 function NameField({
   id,
+  rowId,
   label,
   value,
   testId,
   onChange,
 }: {
   id: string;
+  /** The step or heading named. */
+  rowId: string;
   label: string;
   value: string;
   testId: string;
@@ -271,16 +276,15 @@ function NameField({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const focusName = useEditor((s) => s.focusName);
-  const seen = useRef(focusName);
+  const focusNameFor = useEditor((s) => s.focusNameFor);
   useEffect(() => {
     // A step or heading just added: its name is ready to be typed over.
-    if (focusName !== seen.current) {
-      seen.current = focusName;
+    if (focusNameFor !== null && focusNameFor === rowId) {
       input.current?.focus();
       input.current?.select();
+      useEditor.setState({ focusNameFor: null });
     }
-  }, [focusName]);
+  }, [focusNameFor, rowId]);
   return (
     <div className="own-field">
       <label htmlFor={id} className="own-label">

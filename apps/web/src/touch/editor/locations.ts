@@ -8,7 +8,9 @@ export function locationDetail(game: LoadedGame, locationId: string): string {
   const location = game.pack.locations.get(locationId);
   if (!location) return '';
   const type = game.pack.categories.get(location.categoryId)?.name;
-  const area = areaName(game, areaOfPlace(game.pack, location));
+  // The location's own region (the most precise), else its area, else its map.
+  const own = location.regionId ? game.pack.regions.get(location.regionId)?.name : undefined;
+  const area = own ?? areaName(game, areaOfPlace(game.pack, location));
   return [type, area === 'No area' ? game.pack.maps.get(location.mapId)?.name : area]
     .filter(Boolean)
     .join(' · ');

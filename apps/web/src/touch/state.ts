@@ -32,6 +32,11 @@ export interface TouchState {
   input: 'touch' | 'mouse';
   /** How the layout is arranged for the window (see `layout.ts`). */
   arrangement: Arrangement;
+  /**
+   * The window has room for the list editor (see `editorFits` in
+   * `layout.ts`): a tablet on its side or a computer, not a phone.
+   */
+  editorRoom: boolean;
   section: Section;
   /** Search is open: full screen on a phone, in the panel on a wide screen. */
   search: boolean;
@@ -58,6 +63,7 @@ export interface TouchState {
 export const useTouch = create<TouchState>()(() => ({
   input: 'touch',
   arrangement: 'compact',
+  editorRoom: false,
   section: 'map',
   search: false,
   query: '',
@@ -129,9 +135,7 @@ export function toggleLists(): void {
   if (get().section === 'lists') showSection('map');
   else if (
     game &&
-    (!game.checklists.isEmpty ||
-      get().arrangement === 'wide' ||
-      useOwnLists.getState().lists.length > 0)
+    (!game.checklists.isEmpty || get().editorRoom || useOwnLists.getState().lists.length > 0)
   ) {
     showSection('lists');
   }

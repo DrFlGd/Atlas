@@ -42,7 +42,7 @@ const VIEWS: { id: ListView; label: string }[] = [
 export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistEntry }) {
   const chosen = useListView(entry);
   const canEdit = useCanEdit();
-  const wide = useTouch((s) => s.arrangement === 'wide');
+  const room = useTouch((s) => s.editorRoom);
   const previewing = useEditor((s) => s.listId !== null);
   const focus = useAtlas((s) => s.itemFocus);
   const states = useItemStates(entry);
@@ -129,9 +129,9 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
           />
         </div>
       </header>
-      {own && !wide ? (
+      {own && !room ? (
         <p className="touch-note own-phone-note own-frame-note" data-testid="own-lists-phone-note">
-          This list can be changed on a tablet or a computer.
+          This list can be changed on a wider screen: a tablet on its side, or a computer.
         </p>
       ) : null}
       {views.length > 1 ? (

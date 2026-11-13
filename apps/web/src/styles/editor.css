@@ -784,13 +784,18 @@
 /* ---------------------------------------------------------------------------
  * Over the map */
 
+.touch-map {
+  /* The open step's panel: narrower where the map is. */
+  --editor-side: clamp(280px, 40%, 340px);
+}
+
 .editor-map-top {
-  right: calc(16px + 340px + 16px + var(--atlas-inset-right)) !important;
+  right: calc(32px + var(--editor-side) + var(--atlas-inset-right)) !important;
 }
 
 .editor-map-hint {
-  flex: 0 1 auto;
-  max-width: 100%;
+  flex: 0 0 auto;
+  max-width: calc(100% - 120px);
 }
 
 .editor-map-top .touch-map-chip {
@@ -824,7 +829,7 @@
   bottom: calc(16px + var(--atlas-inset-bottom));
   display: flex;
   flex-direction: column;
-  width: min(340px, calc(100% - 32px));
+  width: var(--editor-side);
   border: 1px solid var(--atlas-border);
   border-radius: 16px;
   background: var(--atlas-surface);
@@ -965,6 +970,10 @@
   border: 1px solid var(--atlas-border);
   border-radius: 12px;
   color: var(--atlas-muted);
+}
+
+.editor-location .editor-location-name {
+  white-space: normal;
 }
 
 .editor-location-text,

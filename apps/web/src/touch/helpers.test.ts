@@ -1,7 +1,7 @@
 import type { ChecklistEntry, ChecklistItemEntry, SearchEntry, SearchHit } from '@atlas/core';
 import { describe, expect, it } from 'vitest';
 import { backStep, type BackState } from './backStack';
-import { arrangementFor, panelWidthFor } from './layout';
+import { arrangementFor, editorFits, panelWidthFor } from './layout';
 import { nextOnList, orderHits, revealShift, type Placed } from './ordering';
 import { parseRecent, withRecent } from './recent';
 import { keyList, withKey } from './keys';
@@ -32,6 +32,17 @@ describe('arrangement', () => {
     expect(panelWidthFor(1280, 800)).toBe(360);
     expect(panelWidthFor(844, 390)).toBe(320);
     expect(panelWidthFor(800, 1280)).toBe(360);
+  });
+
+  it('offers the list editor on a tablet on its side and a computer, not on a phone', () => {
+    expect(editorFits(1280, 800, 'mouse')).toBe(true);
+    expect(editorFits(960, 600)).toBe(true);
+    // A phone on its side is wide, but too short for the editor.
+    expect(editorFits(844, 390)).toBe(false);
+    expect(editorFits(390, 844)).toBe(false);
+    // A tablet held upright is compact.
+    expect(editorFits(800, 1280)).toBe(false);
+    expect(editorFits(839, 800, 'mouse')).toBe(false);
   });
 });
 

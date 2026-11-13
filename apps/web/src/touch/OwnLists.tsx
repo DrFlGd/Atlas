@@ -35,14 +35,16 @@ export function OwnListsSection({
   const error = useOwnLists((s) => s.error);
   const readOnly = useOwnLists((s) => s.readOnly);
   const lists = useOwnLists((s) => s.lists);
-  const wide = useTouch((s) => s.arrangement === 'wide');
+  // Lists are made where the editor fits: a tablet on its side, or a computer.
+  const room = useTouch((s) => s.editorRoom);
   const [dialog, setDialog] = useState(false);
   const newButton = useRef<HTMLButtonElement>(null);
   const editable = status === 'ready' && readOnly === null;
-  if (!wide && lists.length === 0) {
+  if (!room && lists.length === 0) {
     return (
       <p className="touch-note own-phone-note" data-testid="own-lists-phone-note">
-        Your own lists and guides can be made on a tablet or a computer.
+        Your own lists and guides can be made on a wider screen: a tablet on its side, or a
+        computer.
       </p>
     );
   }
@@ -62,7 +64,7 @@ export function OwnListsSection({
           ))}
         </ul>
       ) : null}
-      {wide ? (
+      {room ? (
         editable ? (
           <div className="own-actions">
             <button
@@ -93,7 +95,8 @@ export function OwnListsSection({
         ) : null
       ) : (
         <p className="touch-note own-phone-note" data-testid="own-lists-phone-note">
-          Lists and guides can be made and changed on a tablet or a computer.
+          Lists and guides can be made and changed on a wider screen: a tablet on its side, or a
+          computer.
         </p>
       )}
       {dialog ? (

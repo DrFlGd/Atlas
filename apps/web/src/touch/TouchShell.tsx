@@ -23,7 +23,7 @@ import { withKey } from './keys';
 import { KeysDialog } from './KeysDialog';
 import { EditorMapHint, EditorOutline, EditorSide, PreviewBar } from './editor/ListEditor';
 import { setPreview, stopEditing, useEditor } from './editor/editorState';
-import { arrangementFor, panelWidthFor, type Arrangement } from './layout';
+import { arrangementFor, editorFits, panelWidthFor, type Arrangement } from './layout';
 import { ListOnlyChip } from './ListMapChips';
 import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
@@ -85,21 +85,22 @@ declare global {
 export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const arrangement = useArrangement(input);
   const wide = arrangement.kind === 'wide';
+  const room = arrangement.editor;
   const section = useTouch((s) => s.section);
   const search = useTouch((s) => s.search);
   const filters = useTouch((s) => s.filters);
   const ownLists = useOwnLists((s) => s.lists.length > 0);
   // Lists is there from a tablet's width up, where lists can be made.
   const hasLists =
-    useAtlas((s) => s.game !== null && (!s.game.checklists.isEmpty || wide)) || ownLists;
-  const editorMode = useEditor((s) => (s.listId === null || !wide ? null : s.mode));
+    useAtlas((s) => s.game !== null && (!s.game.checklists.isEmpty || room)) || ownLists;
+  const editorMode = useEditor((s) => (s.listId === null || !room ? null : s.mode));
   const game = useAtlas((s) => s.game);
   const selected = useAtlas((s) => s.selectedId !== null && editorMode !== 'edit');
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
   const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
   const pageViews = useAtlas(downloadsOffered);
-  useTouchEffects(wide);
+  useTouchEffects(wide, room);
 
   useEffect(() => {
     if (!hasLists && section === 'lists') showSection('map');
@@ -236,17 +237,27 @@ function MapPanel() {
 function measure(input: 'touch' | 'mouse') {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  return { kind: arrangementFor(width, height, input), panel: panelWidthFor(width, height) };
+  return {
+    kind: arrangementFor(width, height, input),
+    panel: panelWidthFor(width, height),
+    editor: editorFits(width, height, input),
+  };
 }
 
 /** The arrangement for the window, following rotation and resizing. */
-function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: number } {
+function useArrangement(input: 'touch' | 'mouse'): {
+  kind: Arrangement;
+  panel: number;
+  editor: boolean;
+} {
   const [arrangement, setArrangement] = useState(() => measure(input));
   useEffect(() => {
     const onResize = () => {
       const next = measure(input);
       setArrangement((prev) =>
-        prev.kind === next.kind && prev.panel === next.panel ? prev : next,
+        prev.kind === next.kind && prev.panel === next.panel && prev.editor === next.editor
+          ? prev
+          : next,
       );
     };
     window.addEventListener('resize', onResize);
@@ -255,8 +266,8 @@ function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: n
     };
   }, [input]);
   useEffect(() => {
-    useTouch.setState({ arrangement: arrangement.kind });
-  }, [arrangement.kind]);
+    useTouch.setState({ arrangement: arrangement.kind, editorRoom: arrangement.editor });
+  }, [arrangement.kind, arrangement.editor]);
   // Set before the children render, so they know what they are made for.
   if (useTouch.getState().input !== input) useTouch.setState({ input });
   return arrangement;
@@ -265,7 +276,7 @@ function useArrangement(input: 'touch' | 'mouse'): { kind: Arrangement; panel: n
 // ---------------------------------------------------------------------------
 // What follows the app's store
 
-function useTouchEffects(wide: boolean) {
+function useTouchEffects(wide: boolean, room: boolean) {
   const game = useAtlas((s) => s.game);
 
   useEffect(() => {
@@ -387,8 +398,8 @@ function useTouchEffects(wide: boolean) {
   // with: narrower, another section or another page closes it (what changed
   // is saved at once).
   useEffect(() => {
-    if (!wide) stopEditing();
-  }, [wide]);
+    if (!room) stopEditing();
+  }, [room]);
   useEffect(() => {
     const check = () => {
       const { listId, mode } = useEditor.getState();

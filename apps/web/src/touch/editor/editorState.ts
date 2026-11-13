@@ -62,8 +62,8 @@ export interface EditorState {
   picked: readonly string[];
   /** Said to screen readers after a move. */
   announce: string;
-  /** Increases when the open row's name field should take focus. */
-  focusName: number;
+  /** A row just added, whose name field takes the focus once it shows. */
+  focusNameFor: string | null;
 }
 
 const INITIAL: EditorState = {
@@ -75,7 +75,7 @@ const INITIAL: EditorState = {
   picking: null,
   picked: [],
   announce: '',
-  focusName: 0,
+  focusNameFor: null,
 };
 
 export const useEditor = create<EditorState>()(() => INITIAL);
@@ -272,7 +272,7 @@ export function addBlankStep(name = ''): void {
   update((list) =>
     insertRows(list, insertAfter(list), [newStep(list, id, { name: name || 'New step' })]),
   );
-  set({ open: id, panel: 'row', picking: null, focusName: get().focusName + 1 });
+  set({ open: id, panel: 'row', picking: null, focusNameFor: id });
 }
 
 /** Adds a heading after the open row, opens it and puts the cursor in its title. */
@@ -281,7 +281,7 @@ export function addHeading(): void {
   if (!made) return;
   const id = made.next();
   update((list) => insertRows(list, insertAfter(list), [newHeading(id, 'New heading')]));
-  set({ open: id, panel: 'row', picking: null, focusName: get().focusName + 1 });
+  set({ open: id, panel: 'row', picking: null, focusNameFor: id });
 }
 
 export function changeOpenStep(id: string, changes: StepChanges): void {
