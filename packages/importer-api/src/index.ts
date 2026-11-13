@@ -39,6 +39,9 @@ import {
   type PackData,
 } from '@atlas/schema';
 import { z } from 'zod';
+import { MAX_PAGE_FETCHES, type PageFetch } from './fetching';
+
+export * from './fetching';
 
 /** The contract version described here. */
 export const IMPORTER_API_VERSION = 1;
@@ -132,6 +135,12 @@ export interface ImportContext {
    * means.
    */
   pageObservations?: PageObservations;
+  /**
+   * Optional: how the page was listed, when it was chosen from a game's
+   * list of pages (see {@link GamePages}): its title there and the heading
+   * it was under, for an importer that files pages under sections.
+   */
+  listed?: { title: string; group?: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +672,12 @@ export interface ImportSuccess {
   mapId?: string;
   /** The checklist in `pack` that this page became, when it is not a map. */
   checklistId?: string;
+  /**
+   * The guide in `pack` that this page became, when it is a page of text
+   * read as a guide (a wiki page, say): exactly one of `mapId`,
+   * `checklistId` and `guideId` is given.
+   */
+  guideId?: string;
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
@@ -672,6 +687,11 @@ export interface ImportFailure {
   ok: false;
   /** A plain sentence for the person. */
   message: string;
+  /**
+   * The page asked to confirm the reader is a person, to sign in or to
+   * slow down: the app stops the go at once and reads no more pages.
+   */
+  stop?: boolean;
 }
 
 export type ImportOutcome = ImportSuccess | ImportFailure;
@@ -748,7 +768,9 @@ export interface GamePages {
   /** Whether `url` is the address of a game's page. Must not throw. */
   matches(url: string): boolean;
   /** Like {@link AtlasImporter.pageReader}, for a game page: returns what `convert` needs, or null while it is not there. */
-  pageReader: string;
+  pageReader?: string;
+  /** Like {@link AtlasImporter.fetch}, for a game page; then `pageReader` is not needed. */
+  fetch?: PageFetch;
   /** How long to wait for it, in seconds; the importer's own wait when absent. */
   waitSeconds?: number;
   /** Turns what the reader returned into the game's listing. Must not throw for bad data. */
@@ -794,6 +816,18 @@ export interface AtlasImporter {
   /** Whether this importer can read the page at `url` (a full `https:` URL). Must not throw. */
   matches(url: string): boolean;
   /**
+   * Optional: why the app must not read `url` at all, in a plain sentence,
+   * or null. Asked before anything is opened or fetched, for every address
+   * the person enters, also those no importer recognises. Must not throw.
+   */
+  refuses?(url: string): string | null;
+  /**
+   * Optional: the page is read by fetching the addresses this names,
+   * instead of opening it in a window (see `fetching.ts`); `convert` gets
+   * {@link FetchedPages}. Then `pageReader` is not needed.
+   */
+  fetch?: PageFetch;
+  /**
    * Source text of a function taking no arguments, evaluated in the page as
    * `(<pageReader>)()`. It must be synchronous and must not change the page.
    * It must not make requests, with one exception: when the data the page
@@ -803,9 +837,9 @@ export interface AtlasImporter {
    * returns `null` or `undefined` while the data is not there yet (the app
    * asks again a few seconds later), and otherwise a JSON-serialisable value
    * with only the parts the importer needs. An exception counts as "not
-   * there yet".
+   * there yet". Required unless the importer reads by {@link fetch}.
    */
-  pageReader: string;
+  pageReader?: string;
   /**
    * Optional: measuring a map's picture from the page, when the person asks
    * for it (see {@link PageMeasure}). An app without it never runs it.
@@ -834,13 +868,24 @@ const isFunction = (value: unknown): value is (...args: never[]) => unknown =>
 const readerSchema = z.string().min(1).max(MAX_READER_CHARS);
 const waitSchema = z.int().min(MIN_WAIT_SECONDS).max(MAX_WAIT_SECONDS).optional();
 
-const gamePagesSchema = z.object({
-  matches: z.custom<GamePages['matches']>(isFunction, 'must be a function'),
-  pageReader: readerSchema,
-  waitSeconds: waitSchema,
-  convert: z.custom<GamePages['convert']>(isFunction, 'must be a function'),
-  gameAddress: z.custom<NonNullable<GamePages['gameAddress']>>(isFunction).optional(),
+const fetchSchema = z.object({
+  addresses: z.custom<PageFetch['addresses']>(isFunction, 'must be a function'),
 });
+
+const readsSomehow = (part: { pageReader?: string; fetch?: unknown }) =>
+  part.pageReader !== undefined || part.fetch !== undefined;
+const readsSomehowError = { message: 'needs a pageReader or fetch', path: ['pageReader'] };
+
+const gamePagesSchema = z
+  .object({
+    matches: z.custom<GamePages['matches']>(isFunction, 'must be a function'),
+    pageReader: readerSchema.optional(),
+    fetch: fetchSchema.optional(),
+    waitSeconds: waitSchema,
+    convert: z.custom<GamePages['convert']>(isFunction, 'must be a function'),
+    gameAddress: z.custom<NonNullable<GamePages['gameAddress']>>(isFunction).optional(),
+  })
+  .refine(readsSomehow, readsSomehowError);
 
 const catalogueSchema = z.object({
   address: z
@@ -864,7 +909,9 @@ export const importerSchema = z
     version: z.string().trim().min(1).max(50),
     example: z.string().max(500).optional(),
     matches: z.custom<AtlasImporter['matches']>(isFunction, 'must be a function'),
-    pageReader: z.string().min(1).max(MAX_READER_CHARS),
+    refuses: z.custom<NonNullable<AtlasImporter['refuses']>>(isFunction).optional(),
+    fetch: fetchSchema.optional(),
+    pageReader: z.string().min(1).max(MAX_READER_CHARS).optional(),
     pageMeasure: z
       .object({
         matches: z.custom<NonNullable<PageMeasure['matches']>>(isFunction).optional(),
@@ -880,7 +927,8 @@ export const importerSchema = z
   .refine((importer) => !importer.catalogue || importer.games, {
     message: 'an importer with a catalogue must also read game pages',
     path: ['catalogue'],
-  });
+  })
+  .refine(readsSomehow, readsSomehowError);
 
 /** Validates a module's default export as an importer, or throws a readable error. */
 export function asImporter(value: unknown, label = 'importer'): AtlasImporter {
@@ -957,10 +1005,15 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     sourceKey: z.string().regex(SLUG_PATTERN),
     mapId: idOf('map').optional(),
     checklistId: idOf('checklist').optional(),
+    guideId: idOf('guide').optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
-  z.object({ ok: z.literal(false), message: z.string().trim().min(1).max(2000) }),
+  z.object({
+    ok: z.literal(false),
+    message: z.string().trim().min(1).max(2000),
+    stop: z.boolean().optional(),
+  }),
 ]);
 
 /**
@@ -1000,10 +1053,13 @@ export function checkOutcome(value: unknown): ImportOutcome {
   if (pack.data.manifest.gameId !== success.packId) {
     return { ok: false, message: 'The importer named a pack id that differs from its manifest.' };
   }
-  if ((success.mapId === undefined) === (success.checklistId === undefined)) {
+  const named = [success.mapId, success.checklistId, success.guideId].filter(
+    (id) => id !== undefined,
+  );
+  if (named.length !== 1) {
     return {
       ok: false,
-      message: 'The importer must name either the map or the checklist the page became.',
+      message: 'The importer must name one map, checklist or guide the page became.',
     };
   }
   if (success.mapId !== undefined && !pack.data.maps.some((map) => map.id === success.mapId)) {
@@ -1014,6 +1070,9 @@ export function checkOutcome(value: unknown): ImportOutcome {
     !pack.data.checklists.some((checklist) => checklist.id === success.checklistId)
   ) {
     return { ok: false, message: 'The importer named a checklist that is not in its pack.' };
+  }
+  if (success.guideId !== undefined && !pack.data.guides.some((g) => g.id === success.guideId)) {
+    return { ok: false, message: 'The importer named a guide that is not in its pack.' };
   }
   return { ...success, pack: pack.data };
 }
@@ -1241,4 +1300,55 @@ export function checkCatalogue(
     });
   }
   return { ok: true, games };
+}
+
+// ---------------------------------------------------------------------------
+// Reading by fetching, and addresses an importer refuses
+
+/**
+ * Why the app must not read `url`, from the first importer that refuses
+ * it, or null. A throw counts as no refusal.
+ */
+export function refusalFor(
+  importers: readonly Pick<AtlasImporter, 'refuses'>[],
+  url: string,
+): string | null {
+  for (const importer of importers) {
+    const reason: unknown = importer.refuses
+      ? safely(() => importer.refuses!(url.trim()), null)
+      : null;
+    if (typeof reason === 'string' && reason.trim()) return reason.trim().slice(0, 500);
+  }
+  return null;
+}
+
+/**
+ * The addresses to fetch for the page at `url`, checked: at most
+ * {@link MAX_PAGE_FETCHES}, each once, each a web address on the same
+ * site. A plain reason instead when there are none or one is not allowed.
+ */
+export function fetchAddresses(
+  fetcher: PageFetch,
+  url: string,
+): { ok: true; addresses: string[] } | ImportFailure {
+  const named: unknown = safely(() => fetcher.addresses(url.trim()), null);
+  if (!Array.isArray(named) || named.length === 0) {
+    return { ok: false, message: 'The importer cannot read this page.' };
+  }
+  if (named.length > MAX_PAGE_FETCHES) {
+    return unexpected('addresses', `more than ${MAX_PAGE_FETCHES} for one page.`);
+  }
+  const addresses: string[] = [];
+  for (const address of named) {
+    if (
+      typeof address !== 'string' ||
+      address.length > MAX_ADDRESS_CHARS ||
+      !isAllowedPageUrl(address) ||
+      !sameSite(url, address)
+    ) {
+      return unexpected('addresses', `${String(address)} is not on the site of the page.`);
+    }
+    if (!addresses.includes(address)) addresses.push(address);
+  }
+  return { ok: true, addresses };
 }
