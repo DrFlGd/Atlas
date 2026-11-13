@@ -61,7 +61,7 @@ describe('ticking checklist items', () => {
     setFound('demo:loc:0002', true);
     setItemDone('demo:checkitem:both', true);
     expect(found()).toEqual(['demo:loc:0001', 'demo:loc:0002']);
-    expect(useAtlas.getState().notice?.text).toContain('One place marked found');
+    expect(useAtlas.getState().notice?.text).toContain('One location marked found');
 
     // Unticking unmarks all of its locations, also the one marked on the map.
     setItemDone('demo:checkitem:both', false);

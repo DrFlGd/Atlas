@@ -460,7 +460,7 @@ test('imports a map pack file, saying which is newer and asking before using old
   await page.getByTestId('import-pack-file').click();
   await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
   await expect(dialog.getByTestId('import-summary')).toHaveText(
-    'Atlas demo world, version 1.0.0: 2 maps, 5,000 places, 1 checklist, 1 guide. 340 map images at standard detail.',
+    'Atlas demo world, version 1.0.0: 2 maps, 5,000 locations, 1 checklist, 1 guide. 340 map images at standard detail.',
   );
   const compare = dialog.getByTestId('import-compare');
   await expect(compare).toContainText('Atlas demo world, installed now');

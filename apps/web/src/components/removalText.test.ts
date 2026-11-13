@@ -16,12 +16,12 @@ describe('delete confirmations', () => {
 
   it('says what deleting a pack removes, and that a download is stopped first', () => {
     expect(deletePackDetails('My Game', null)).toEqual([
-      'This removes My Game from the maps folder, with its places, checklists and its downloaded map images. This cannot be undone.',
+      'This removes My Game from the maps folder, with its locations, checklists and its downloaded map images. This cannot be undone.',
     ]);
     expect(
       deletePackDetails('My Game', { files: 320, bytes: 2_500_000, downloading: true }),
     ).toEqual([
-      'This removes My Game from the maps folder, with its places, checklists and its 320 map images (about 2.5 MB). This cannot be undone.',
+      'This removes My Game from the maps folder, with its locations, checklists and its 320 map images (about 2.5 MB). This cannot be undone.',
       'Its map images are downloading right now. The download is stopped first.',
     ]);
     expect(deletePackDetails('My Game', { files: 0, bytes: 0, downloading: false })[0]).toContain(
@@ -53,7 +53,7 @@ describe('delete confirmations', () => {
     });
     expect(lines).toEqual([
       'This removes 12 map images (about 840 KB) of My Game from this computer.',
-      'My Game itself stays, with its places, checklists and your found marks. You can download the images again later.',
+      'My Game itself stays, with its locations, checklists and your found marks. You can download the images again later.',
       'The download that is running is stopped first.',
     ]);
     expect(deleteImagesDetails('My Game', { files: 0, bytes: 0, downloading: true })[0]).toBe(

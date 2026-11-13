@@ -457,7 +457,7 @@ function MapFigures({
         <dd>{numberFormat.format(summary.maps)}</dd>
         <dt>Locations in this game</dt>
         <dd>{numberFormat.format(summary.locations)}</dd>
-        <dt>Categories</dt>
+        <dt>Types</dt>
         <dd>{numberFormat.format(summary.categories)}</dd>
       </dl>
       {summary.picture ? (
@@ -482,8 +482,8 @@ function ChecklistResult({ checklist }: { checklist: { items: number; leftOut: n
         ? 'It has 1 item'
         : `It has ${numberFormat.format(checklist.items)} items`}
       {checklist.leftOut > 0
-        ? `. ${checklist.leftOut === 1 ? '1 row was' : `${numberFormat.format(checklist.leftOut)} rows were`} left out, because their places are on maps that are not in this app yet; they are added when you add those maps.`
-        : ', each one a place on the maps of this game.'}
+        ? `. ${checklist.leftOut === 1 ? '1 row was' : `${numberFormat.format(checklist.leftOut)} rows were`} left out, because their locations are on maps that are not in this app yet; they are added when you add those maps.`
+        : ', each one a location on the maps of this game.'}
     </p>
   );
 }
@@ -546,7 +546,7 @@ function PageState({ state }: { state: RunPageState }) {
                 ? `; map picture measured from the page (${state.picture.page.images} map images)`
                 : state.picture.measured
                   ? `; map picture measured${state.picture.tiles === undefined ? '' : ` (${state.picture.tiles} map images)`}`
-                  : '; map picture not measured, sized from the places'
+                  : '; map picture not measured, sized from the locations'
               : ''}
           </span>
         </span>

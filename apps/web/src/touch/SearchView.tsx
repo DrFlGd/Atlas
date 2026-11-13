@@ -29,7 +29,7 @@ const ROW_HEIGHT = 64;
 
 const SCOPES: { id: SearchScope; label: string }[] = [
   { id: 'all', label: 'All' },
-  { id: 'places', label: 'Places' },
+  { id: 'places', label: 'Locations' },
   { id: 'unfound', label: 'Not found yet' },
   { id: 'lists', label: 'Lists' },
 ];
@@ -63,7 +63,7 @@ export function SearchField({ inPanel = false }: { inPanel?: boolean }) {
   const hints = useKeyHints();
   const inputRef = useRef<HTMLInputElement>(null);
   const id = useId();
-  const label = hasLists ? 'Search places, lists and guides' : 'Search places';
+  const label = hasLists ? 'Search locations, lists and guides' : 'Search locations';
 
   // On a phone the field takes focus as the screen opens.
   useEffect(() => {
@@ -268,7 +268,7 @@ function Browse({ game }: { game: LoadedGame }) {
       ) : null}
       <section aria-labelledby="kinds-heading">
         <h2 className="touch-group-title touch-group-title-row" id="kinds-heading">
-          Browse by kind
+          Browse by type
         </h2>
         <ul className="touch-plain-list" data-testid="browse-kinds">
           {kinds.map((category) => {
@@ -416,7 +416,9 @@ function ListDetail({ game, entry }: { game: LoadedGame; entry: SearchEntry }) {
     }
     case 'guide': {
       const places = new Set(entry.locationIds).size;
-      return <>Guide{places > 0 ? ` · ${places === 1 ? 'one place' : `${places} places`}` : ''}</>;
+      return (
+        <>Guide{places > 0 ? ` · ${places === 1 ? 'one location' : `${places} locations`}` : ''}</>
+      );
     }
     default:
       return <>{entry.detail}</>;

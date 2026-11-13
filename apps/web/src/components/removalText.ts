@@ -29,7 +29,7 @@ export function deletePackDetails(title: string, info: ImagesInfo | null): strin
         ? 'everything else in its folder'
         : `its ${imagesAmount(info)}`;
   const lines = [
-    `This removes ${title} from the maps folder, with its places, checklists and ${images}. This cannot be undone.`,
+    `This removes ${title} from the maps folder, with its locations, checklists and ${images}. This cannot be undone.`,
   ];
   if (info?.downloading) {
     lines.push('Its map images are downloading right now. The download is stopped first.');
@@ -61,7 +61,7 @@ export function deleteImagesDetails(title: string, info: ImagesInfo | null): str
     info.files === 0
       ? `A download of ${title} has started, but no map images are saved yet.`
       : `This removes ${imagesAmount(info)} of ${title} from this computer.`,
-    `${title} itself stays, with its places, checklists and your found marks. You can download the images again later.`,
+    `${title} itself stays, with its locations, checklists and your found marks. You can download the images again later.`,
   ];
   if (info.downloading) lines.push('The download that is running is stopped first.');
   return lines;

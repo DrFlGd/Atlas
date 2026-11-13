@@ -78,7 +78,7 @@ function Place({
     <section
       ref={sheet}
       className={wide ? 'place-sheet place-card' : 'place-sheet'}
-      aria-label="Selected place"
+      aria-label="Selected location"
       data-testid="place-sheet"
       data-expanded={open}
     >
@@ -184,7 +184,7 @@ function PlaceActions({
         const isDone = (id: string) => useAtlas.getState().found.has(id);
         const target = nextOnList(list!, listItem.item.id, isDone);
         if (target) showItemPlace(target.itemId, target.locationId);
-        else notify(`Every entry on ${list!.checklist.name} with a place is done.`);
+        else notify(`Every entry on ${list!.checklist.name} with a location is done.`);
       }}
     >
       Next on this list

@@ -471,7 +471,7 @@ function SearchPill() {
         onClick={openSearch}
       >
         <UiIcon name="search" size={20} />
-        {hasLists ? 'Search places, lists and guides' : 'Search places'}
+        {hasLists ? 'Search locations, lists and guides' : 'Search locations'}
       </button>
       <button
         type="button"
@@ -526,7 +526,7 @@ function NearestButton() {
       type="button"
       className="touch-fab"
       data-testid="nearest-unfound"
-      title={hints ? 'The nearest place not yet found (N)' : undefined}
+      title={hints ? 'The nearest location not yet found (N)' : undefined}
       aria-keyshortcuts={hints ? 'N' : undefined}
       onClick={jumpToNearestUnfound}
     >

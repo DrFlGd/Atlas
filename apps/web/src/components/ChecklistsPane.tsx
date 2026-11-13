@@ -166,7 +166,9 @@ function IndexPage({ game }: { game: LoadedGame }) {
 
 function guideDetail(game: LoadedGame, guide: GuideEntry): string {
   const places = new Set(guide.locationIds.filter((id) => game.pack.locations.has(id))).size;
-  return places === 0 ? 'Guide' : `Guide · ${places === 1 ? 'one place' : `${places} places`}`;
+  return places === 0
+    ? 'Guide'
+    : `Guide · ${places === 1 ? 'one location' : `${places} locations`}`;
 }
 
 function ChecklistLink({ entry, tally }: { entry: ChecklistEntry; tally: ChecklistTally }) {
@@ -388,7 +390,7 @@ function ChecklistItems({
               setFiltersOpen(!filtersOpen);
             }}
           >
-            {filtersOpen ? 'Hide filters' : 'Filter by region and category'}
+            {filtersOpen ? 'Hide filters' : 'Filter by region and type'}
             {hiddenCount > 0 ? ` (${hiddenCount} off)` : ''}
           </button>
         ) : null}
@@ -431,7 +433,7 @@ function ChecklistItems({
           ) : null}
           {showCategories ? (
             <FacetGroup
-              legend="Categories"
+              legend="Types"
               counts={categoryCounts}
               hidden={hiddenCategories}
               name={names.category}
@@ -590,7 +592,7 @@ const ItemRow = memo(
       if (place.regionId) meta.push(names.region(place.regionId));
       if (names.severalMaps || !place.regionId) meta.push(names.mapName(place.mapId));
     }
-    if (entry.places.length > 1) meta.push(`${entry.places.length} places`);
+    if (entry.places.length > 1) meta.push(`${entry.places.length} locations`);
     if (!entry.ownMark && state.total > 1) meta.push(`${state.found} of ${state.total} found`);
     const entities = item.entityIds.flatMap(
       (id) => pack.data.entities.find((e) => e.id === id)?.name ?? [],
@@ -668,7 +670,7 @@ const ItemRow = memo(
                   setPlacesOpen(!placesOpen);
                 }}
               >
-                {placesOpen ? 'Hide the places' : `Show the ${entry.places.length} places`}
+                {placesOpen ? 'Hide the locations' : `Show the ${entry.places.length} locations`}
               </button>
               {placesOpen ? (
                 <ul className="place-list" id={placesId}>
@@ -795,7 +797,7 @@ export function GuideView({
         {places.length > 0 ? (
           <section className="section guide-places" aria-labelledby="guide-places-heading">
             <h3 className="section-title" id="guide-places-heading">
-              Places in this guide
+              Locations in this guide
             </h3>
             <ul className="place-list">
               {shown.map((locationId) => (
@@ -818,7 +820,7 @@ export function GuideView({
                   setAllPlaces(true);
                 }}
               >
-                Show all {numberFormat.format(places.length)} places
+                Show all {numberFormat.format(places.length)} locations
               </button>
             ) : null}
           </section>

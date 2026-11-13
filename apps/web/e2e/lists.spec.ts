@@ -89,7 +89,7 @@ test.describe('on a phone', () => {
     await list(page, ROUTE).click();
     await expect(screen).toHaveAttribute('data-view', 'order');
     const views = screen.locator('.touch-view-switch button');
-    await expect(views).toHaveText(['By area', 'By kind', 'In order']);
+    await expect(views).toHaveText(['By area', 'By type', 'In order']);
     await expect(page.getByTestId('next-up')).toBeVisible();
     await page.getByTestId('lists-back').click();
     // A list with no place at all is shown as it is written, with no choice
@@ -104,7 +104,7 @@ test.describe('on a phone', () => {
     // A collection is grouped, by area or by kind, and not offered in order.
     await list(page, 'Waystones').click();
     await expect(screen).toHaveAttribute('data-view', 'area');
-    await expect(views).toHaveText(['By area', 'By kind']);
+    await expect(views).toHaveText(['By area', 'By type']);
     await screen.getByTestId('view-kind').click();
     await expect(screen).toHaveAttribute('data-view', 'kind');
     await expect(page.getByTestId('next-up')).toHaveCount(0);
@@ -251,7 +251,7 @@ test.describe('on a phone', () => {
     await list(page, RIDDLES).click();
     await expect(screen).toHaveAttribute('data-list-type', 'secrets');
     await expect(screen).toHaveAttribute('data-view', 'area');
-    await expect(views).toHaveText(['By area', 'By kind']);
+    await expect(views).toHaveText(['By area', 'By type']);
     await page.getByTestId('lists-back').click();
     // The route says it is one, and keeps kind "guide" for older apps.
     await list(page, ROUTE).click();
@@ -304,7 +304,7 @@ test.describe('on a phone', () => {
     // An unknown type: the list is what it would be without one.
     await list(page, 'Lore of the isle').click();
     await expect(screen).toHaveAttribute('data-list-type', 'collection');
-    await expect(views).toHaveText(['By area', 'By kind']);
+    await expect(views).toHaveText(['By area', 'By type']);
     await page.getByTestId('lists-back').click();
 
     // In order, entries of one name are told apart by their notes.

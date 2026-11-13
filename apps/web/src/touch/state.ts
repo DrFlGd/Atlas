@@ -141,7 +141,7 @@ export function markFound(locationId: string, found: boolean): boolean {
   const location = game?.pack.locations.get(locationId);
   if (!game || !location) return false;
   if (!game.counter.isTrackable(locationId)) {
-    const kind = game.pack.categories.get(location.categoryId)?.name ?? 'This kind';
+    const kind = game.pack.categories.get(location.categoryId)?.name ?? 'This type';
     notify(`${kind} is not tracked.`);
     return false;
   }
@@ -200,7 +200,7 @@ export function toggleSolo(categoryId: string): void {
   set({ solo: { categoryId, before, applied } });
 }
 
-/** Shows one kind alone (from "Browse by kind"), keeping how to go back. */
+/** Shows one kind alone (from "Browse by type"), keeping how to go back. */
 export function showOnlyKind(categoryId: string): void {
   if (soloKind(get(), useAtlas.getState().overrides) !== categoryId) toggleSolo(categoryId);
 }

@@ -88,9 +88,9 @@ function SaveDialogBody() {
   return (
     <>
       <p className="muted small">
-        Atlas reads a copy of your {reader.title} save to mark the places it shows done and to show
-        where you last saved. It never changes the save, and marks you set by hand always stay as
-        they are.
+        Atlas reads a copy of your {reader.title} save to mark the locations it shows done and to
+        show where you last saved. It never changes the save, and marks you set by hand always stay
+        as they are.
       </p>
       {link ? <LinkedSave /> : <LinkChoices />}
       {busy ? (
@@ -110,7 +110,7 @@ function SaveDialogBody() {
   );
 }
 
-/** "Map places from the game": reading the game's own map pins (desktop app). */
+/** "Map locations from the game": reading the game's own map pins (desktop app). */
 function GameTable() {
   const state = useAtlas((s) => s.save.gameTable);
   const game = useAtlas((s) => s.game);
@@ -133,20 +133,20 @@ function GameTable() {
   const total = counts.reduce((sum, world) => sum + world.pins, 0);
   return (
     <section className="dialog-section" data-testid="game-table">
-      <h3 className="dialog-subhead">Map places from the game</h3>
+      <h3 className="dialog-subhead">Map locations from the game</h3>
       {!desktop ? (
         <p className="muted small" data-testid="game-table-desktop-only">
-          Reading where the game’s own map places are, to place what a save names and to line the
+          Reading where the game’s own map locations are, to place what a save names and to line the
           maps up by themselves, needs the Atlas desktop app: it reads them from your copy of{' '}
           {reader?.title ?? 'the game'}.
         </p>
       ) : (
         <>
           <p className="muted small">
-            Atlas can read where the game’s own map places are (signposts, nests, treasure and the
-            rest) from your copy of {reader?.title ?? 'the game'}, to place what a save names and to
-            line the maps up by themselves. It only reads the game’s files, never changes them, and
-            keeps what it reads on this computer.
+            Atlas can read where the game’s own map locations are (signposts, nests, treasure and
+            the rest) from your copy of {reader?.title ?? 'the game'}, to place what a save names
+            and to line the maps up by themselves. It only reads the game’s files, never changes
+            them, and keeps what it reads on this computer.
           </p>
           {folder?.path ? (
             <p className="path" data-testid="game-folder">
@@ -157,14 +157,14 @@ function GameTable() {
           )}
           {table && total > 0 ? (
             <p className="small" data-testid="game-table-counts">
-              {numberFormat.format(total)} map places read:{' '}
+              {numberFormat.format(total)} map locations read:{' '}
               {counts.map((world) => `${world.name} ${numberFormat.format(world.pins)}`).join(', ')}
               .
             </p>
           ) : null}
           {tableStale(state) && !busy ? (
             <p className="small muted" data-testid="game-table-stale">
-              The game was updated since Atlas read its map places. Read them again.
+              The game was updated since Atlas read its map locations. Read them again.
             </p>
           ) : null}
           {busy ? (
@@ -200,7 +200,7 @@ function GameTable() {
                   void readGameTable();
                 }}
               >
-                {table ? 'Read map places again' : 'Read map places from the game'}
+                {table ? 'Read map locations again' : 'Read map locations from the game'}
               </button>
             ) : null}
             {folder?.path || table ? (
@@ -366,7 +366,7 @@ function LinkedSave() {
           <dd data-testid="save-world">{last.world?.name ?? 'not in the save'}</dd>
           <dt>Found</dt>
           <dd data-testid="save-found">
-            {numberFormat.format(last.found)} places, {numberFormat.format(last.marked)} newly
+            {numberFormat.format(last.found)} locations, {numberFormat.format(last.marked)} newly
             marked
           </dd>
         </dl>
@@ -449,12 +449,12 @@ function Screenshot({ path }: { path: string }) {
 /** How a table fit is said: "118 of 130 signposts". */
 function fitText(fit: Pick<TableFit, 'inliers' | 'candidates' | 'places' | 'kinds'>): string {
   const of = Math.min(fit.candidates, fit.places || fit.candidates);
-  return `${numberFormat.format(fit.inliers)} of ${numberFormat.format(of)} ${fit.kinds === 'first' ? 'signposts' : 'places'} fit`;
+  return `${numberFormat.format(fit.inliers)} of ${numberFormat.format(of)} ${fit.kinds === 'first' ? 'signposts' : 'locations'} fit`;
 }
 
 const REASONS: Record<Unmatched['reason'], string> = {
-  'no-category': 'this pack has no category for them',
-  'no-place-nearby': 'no place of their kind in the pack is close enough',
+  'no-category': 'this pack has no type for them',
+  'no-place-nearby': 'no location of their type in the pack is close enough',
   'no-position': 'the save does not say where they are',
   'no-map': 'no map is chosen for their world',
   'not-lined-up': 'their map is not lined up with the game world yet',
@@ -540,7 +540,7 @@ function SaveResult() {
             {why}
           </p>
         ) : match.categories.length === 0 ? (
-          <p className="muted small">No places of this pack match the save yet.</p>
+          <p className="muted small">No locations of this pack match the save yet.</p>
         ) : (
           <ul className="save-counts">
             {match.categories.map((count) => (
@@ -553,7 +553,7 @@ function SaveResult() {
         )}
         {match.unmatched.length > 0 ? (
           <>
-            <p className="muted small">Not matched to a place:</p>
+            <p className="muted small">Not matched to a location:</p>
             <ul className="save-unmatched small" data-testid="save-unmatched">
               {match.unmatched.map((miss) => (
                 <li key={`${miss.kind}-${miss.reason}`}>
@@ -617,7 +617,7 @@ function WorldRow({
             : world.calibration === 'manual'
               ? 'Lined up from the spots you marked.'
               : world.calibration === 'auto' && calibration?.from?.startsWith('table:')
-                ? `Lined up from the game’s map places${calibration.fit ? ` (${fitText({ kinds: 'anchors', places: 0, ...calibration.fit })})` : ''}.`
+                ? `Lined up from the game’s map locations${calibration.fit ? ` (${fitText({ kinds: 'anchors', places: 0, ...calibration.fit })})` : ''}.`
                 : world.calibration === 'auto'
                   ? `Lined up from the save’s map pins${calibration?.fit ? ` (${calibration.fit.inliers} of ${calibration.fit.candidates} fit)` : ''}.`
                   : spots > 0
@@ -627,8 +627,8 @@ function WorldRow({
       ) : null}
       {world.mapId && world.fit && !world.fit.passed ? (
         <p className="small muted" data-testid="save-fit-failed">
-          The game’s map places do not line up with this map well enough ({fitText(world.fit)}), so
-          Atlas does not use them for it. Place yourself on the map instead.
+          The game’s map locations do not line up with this map well enough ({fitText(world.fit)}),
+          so Atlas does not use them for it. Place yourself on the map instead.
         </p>
       ) : null}
       {world.mapId && world.calibration !== 'pack' ? (
@@ -673,8 +673,8 @@ function SaveMarks() {
     <section className="dialog-section">
       <h3 className="dialog-subhead">Marks made from saves</h3>
       <p className="muted small">
-        {numberFormat.format(count)} {count === 1 ? 'place is' : 'places are'} marked found because
-        a save said so.
+        {numberFormat.format(count)} {count === 1 ? 'location is' : 'locations are'} marked found
+        because a save said so.
       </p>
       {confirming ? (
         <div className="save-buttons">

@@ -87,7 +87,7 @@ describe('measuring the picture of an imported map', () => {
     );
     expect(pictureText({ measured: true, tiles: 1 })).toMatch(/: 1 map image of it was found/);
     expect(pictureText({ measured: false, note: 'The image server could not be asked' })).toBe(
-      'The map picture could not be measured, so its size was estimated from where the places are. The image server could not be asked.',
+      'The map picture could not be measured, so its size was estimated from where the locations are. The image server could not be asked.',
     );
   });
 });
@@ -205,10 +205,10 @@ describe('what the page loaded when the picture was measured from it', () => {
         measured: true,
         tiles: 40,
         page: { ...page, images: 1, complete: false, unseen: 4 },
-        note: 'The page did not show all of it, so the places and the last size were added',
+        note: 'The page did not show all of it, so the locations and the last size were added',
       }),
     ).toBe(
-      'The map picture was measured from the page: it showed 1 map image of it. The page did not show all of it, so the places and the last size were added.',
+      'The map picture was measured from the page: it showed 1 map image of it. The page did not show all of it, so the locations and the last size were added.',
     );
     expect(pictureText({ measured: true, tiles: 40, page: { ...page, used: false } })).toBe(
       'The map picture was measured: 40 map images of it were found on the image server.',

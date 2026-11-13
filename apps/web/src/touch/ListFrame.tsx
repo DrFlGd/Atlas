@@ -25,7 +25,7 @@ import { SwitchTrack } from './widgets';
 
 const VIEWS: { id: ListView; label: string }[] = [
   { id: 'area', label: 'By area' },
-  { id: 'kind', label: 'By kind' },
+  { id: 'kind', label: 'By type' },
   { id: 'order', label: 'In order' },
 ];
 

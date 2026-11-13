@@ -417,9 +417,7 @@ export function toggleFound(locationId = get().selectedId): void {
   const location = game.pack.locations.get(locationId);
   if (!location) return;
   if (!game.counter.isTrackable(locationId)) {
-    notify(
-      `${game.pack.categories.get(location.categoryId)?.name ?? 'This category'} is not tracked.`,
-    );
+    notify(`${game.pack.categories.get(location.categoryId)?.name ?? 'This type'} is not tracked.`);
     return;
   }
   const next = !found.has(locationId);

@@ -265,9 +265,9 @@ function ExportView({
   return (
     <div className="download-body">
       <p className="download-intro">
-        A map pack file holds <strong>{title}</strong> in one file: its maps, places and checklists,
-        and the map images at the detail you choose. Copy it to another computer or to Atlas for
-        Android and import it there to use the maps offline. It never holds your progress.
+        A map pack file holds <strong>{title}</strong> in one file: its maps, locations and
+        checklists, and the map images at the detail you choose. Copy it to another computer or to
+        Atlas for Android and import it there to use the maps offline. It never holds your progress.
       </p>
       {error ? (
         <p className="download-error" role="alert" data-testid="pack-file-error">
@@ -504,7 +504,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
       ) : installed ? (
         <p className="download-note" data-testid="import-replace-note">
           {file.replaces
-            ? `Importing replaces ${installed.title} in the maps folder. Your found marks are kept; its places, checklists and map images are replaced by the ones in this file.`
+            ? `Importing replaces ${installed.title} in the maps folder. Your found marks are kept; its locations, checklists and map images are replaced by the ones in this file.`
             : installed.origin === 'bundled'
               ? `${installed.title} comes with the app. The imported game goes into the maps folder and is shown in its place. Your found marks are kept.`
               : `The imported game goes into the maps folder and is shown in place of the one in ${installed.folder ?? 'its folder'}, which is left as it is. Your found marks are kept.`}
