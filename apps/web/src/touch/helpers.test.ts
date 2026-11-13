@@ -92,10 +92,18 @@ describe('Back', () => {
           'editor-panel': { editor: 'open' as const },
           'editor-preview': { editor: 'open' as const },
           'editor-leave': { editor: null },
+          'page-editor-leave': { pageEditor: false },
         }[step],
       };
     }
     expect(steps).toEqual(['dialog', 'collapse-place', 'filters', 'place', 'lists-page', 'to-map']);
+  });
+
+  it('closes the page editor before going back in Guides', () => {
+    const state: BackState = { ...nothing, section: 'guides', guidesBack: true, pageEditor: true };
+    expect(backStep(state)).toBe('page-editor-leave');
+    expect(backStep({ ...state, dialog: true })).toBe('dialog');
+    expect(backStep({ ...state, pageEditor: false })).toBe('guides-back');
   });
 
   it('closes what is open in the list editor, then the editor, before the list', () => {

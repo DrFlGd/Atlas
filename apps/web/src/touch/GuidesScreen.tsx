@@ -1,11 +1,13 @@
 import type { ContentsEntry, GuideHit } from '@atlas/core';
 import type { GuideEntry, GuideSource, Section } from '@atlas/schema';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { keepOwnVersion, pageChange, revertPage } from '@atlas/core';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
 import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
 import { guidesOf, hasMap } from '../state/guides';
+import { canChangeOwnPages, changeContents, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { GuideLinksReview } from './GuideLinksReview';
 import { GuidesFromGames } from './GuidesFromGames';
@@ -21,6 +23,7 @@ import {
   useReader,
   type ReaderPlace,
 } from './reader';
+import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
 import { useTouch } from './state';
 import '../styles/guides.css';
 
@@ -34,9 +37,26 @@ import '../styles/guides.css';
  * Wide, the contents stay beside the page; compact (a phone), the contents
  * are a place of their own, as the pages are.
  */
+const PageEditor = lazy(() => import('./pages/PageEditor'));
+
 export function GuidesScreen({ wide }: { wide: boolean }) {
   const game = useAtlas((s) => s.game);
+  const editing = usePageEditor((s) => s.open);
+  // The person's own pages and changes change what is shown.
+  useOwnPages((s) => s.own);
   if (!game) return null;
+  if (editing) {
+    return (
+      <div
+        className={`guides ${wide ? 'guides-wide' : 'guides-compact'} guides-editing`}
+        data-testid="guides-screen"
+      >
+        <Suspense fallback={<p className="touch-empty">Opening the editor…</p>}>
+          <PageEditor wide={wide} />
+        </Suspense>
+      </div>
+    );
+  }
   return (
     <div
       className={wide ? 'guides guides-wide' : 'guides guides-compact'}
@@ -243,6 +263,7 @@ function ContentsPlace({ game, sectionId }: { game: LoadedGame; sectionId: strin
     <div className="guides-contents" data-testid="guides-contents">
       <h1 className="guides-title">{section ? section.title : game.pack.manifest.title}</h1>
       {section ? null : <p className="guides-lead">Contents</p>}
+      {!section ? <EditPagesButton label="Edit the pages" guideId={null} /> : null}
       {!section && canLinkPages(game) ? (
         <button
           type="button"
@@ -393,15 +414,199 @@ function TreeLevel({
 // ---------------------------------------------------------------------------
 // A page
 
+/** "Edit the page" (or the pages): the page editor, where pages can be changed here. */
+function EditPagesButton({ label, guideId }: { label: string; guideId: string | null }) {
+  const status = useOwnPages((s) => s.status);
+  if (status !== 'ready') return null;
+  return (
+    <button
+      type="button"
+      className="touch-button guides-edit-button"
+      data-testid={guideId ? 'edit-page' : 'edit-pages'}
+      onClick={() => {
+        openPageEditor(guideId);
+      }}
+    >
+      <UiIcon name="pencil" size={18} />
+      {label}
+    </button>
+  );
+}
+
 function Page({ game, guide }: { game: LoadedGame; guide: GuideEntry | undefined }) {
+  const own = useOwnPages((s) => s.own);
+  const [showWiki, setShowWiki] = useState(false);
   if (!guide) return <p className="touch-empty">This page is not in this game any more.</p>;
+  const pack = packPage(game, guide.id);
+  const change = pageChange(
+    pack,
+    own.pages.find((p) => p.id === guide.id),
+  );
+  const shown = showWiki && pack ? pack : guide;
   return (
     <article className="guides-page" data-testid="guides-page" data-guide={guide.id}>
-      <h1 className="guides-title">{guide.title}</h1>
+      <div className="guides-page-head">
+        <h1 className="guides-title">{shown.title}</h1>
+        <EditPagesButton label="Edit the page" guideId={guide.id} />
+      </div>
+      {change.wikiChanged && pack ? (
+        <WikiChanged
+          guideId={guide.id}
+          showsWiki={change.showsWiki}
+          showing={showWiki}
+          onShow={setShowWiki}
+          onDone={() => {
+            setShowWiki(false);
+          }}
+        />
+      ) : null}
       {guide.source && hasMap(game) ? <OnTheMap game={game} guide={guide} /> : null}
-      <MarkdownBody source={guide.body} className="guide-body guides-page-body" />
+      <MarkdownBody source={shown.body} className="guide-body guides-page-body" />
+      {change.changed && !showWiki ? (
+        <p className="guides-changed" data-testid="changed-by-you">
+          Changed by you. Your changes are kept apart from the wiki’s text.
+        </p>
+      ) : change.own ? (
+        <p className="guides-changed">A page of your own.</p>
+      ) : null}
       {guide.source ? <Credit source={guide.source} title={guide.title} /> : null}
     </article>
+  );
+}
+
+/**
+ * The wiki changed a page the person changed: said, with its new version
+ * to see, and the choice of keeping theirs or taking the wiki's.
+ */
+function WikiChanged({
+  guideId,
+  showsWiki,
+  showing,
+  onShow,
+  onDone,
+}: {
+  guideId: string;
+  showsWiki: boolean;
+  showing: boolean;
+  onShow: (show: boolean) => void;
+  onDone: () => void;
+}) {
+  const game = useAtlas((s) => s.game);
+  const canChange = useOwnPages((s) => canChangeOwnPages(s));
+  const [confirm, setConfirm] = useState(false);
+  const pack = game ? packPage(game, guideId) : undefined;
+  if (!pack) return null;
+  return (
+    <div className="guides-wiki-changed" role="status" data-testid="wiki-changed">
+      <p>
+        {showsWiki
+          ? 'The wiki changed this page since you changed it, so its new version is shown, as you chose. Your version is kept.'
+          : 'The wiki changed this page since you changed it. Your version is shown.'}
+      </p>
+      <div className="guides-wiki-actions">
+        {showsWiki ? null : (
+          <button
+            type="button"
+            className="touch-button"
+            data-testid="see-wiki-new"
+            onClick={() => {
+              onShow(!showing);
+            }}
+          >
+            {showing ? 'Show my version' : 'See the wiki’s new version'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="touch-button"
+          disabled={!canChange}
+          data-testid="keep-my-version"
+          onClick={() => {
+            changeContents(
+              (own) => keepOwnVersion(own, pack, new Date()),
+              showsWiki ? 'Your version is shown again' : 'Kept your version',
+            );
+            onDone();
+          }}
+        >
+          {showsWiki ? 'Use my version' : 'Keep my version'}
+        </button>
+        {showsWiki ? null : (
+          <button
+            type="button"
+            className="touch-button"
+            disabled={!canChange}
+            data-testid="take-wiki-version"
+            onClick={() => {
+              setConfirm(true);
+            }}
+          >
+            Take the wiki’s version
+          </button>
+        )}
+      </div>
+      {confirm ? (
+        <TakeWikiDialog
+          onClose={() => {
+            setConfirm(false);
+          }}
+          onTake={() => {
+            changeContents(
+              (own) => revertPage(own, guideId, new Date()),
+              'Took the wiki’s version of the page',
+            );
+            onDone();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TakeWikiDialog({ onClose, onTake }: { onClose: () => void; onTake: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+    };
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="own-dialog own-dialog-small"
+      aria-label="Take the wiki’s version?"
+      data-testid="take-wiki-dialog"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="own-dialog-body">
+        <h2 className="own-dialog-title">Take the wiki’s version?</h2>
+        <p className="own-dialog-line">
+          Your changes to this page’s title and text go, and the wiki’s new version is shown.
+        </p>
+        <footer className="own-dialog-foot">
+          <span className="own-space" />
+          <button type="button" className="own-pill-button" autoFocus onClick={onClose}>
+            Keep mine
+          </button>
+          <button
+            type="button"
+            className="own-pill-button own-pill-danger"
+            data-testid="confirm-take-wiki"
+            onClick={() => {
+              onClose();
+              onTake();
+            }}
+          >
+            Take the wiki’s version
+          </button>
+        </footer>
+      </div>
+    </dialog>
   );
 }
 

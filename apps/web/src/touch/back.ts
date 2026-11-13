@@ -2,6 +2,7 @@ import { moveMap, select } from '../state/actions';
 import { checklistBack } from '../state/checklists';
 import { useAtlas } from '../state/store';
 import { backStep } from './backStack';
+import { closePageEditor, usePageEditor } from './pages/pageEditorState';
 import { canGoBack, readerBack, useReader } from './reader';
 import { closePanel, setPicking, setPreview, stopEditing, useEditor } from './editor/editorState';
 import { revealShift, type Rect } from './ordering';
@@ -35,6 +36,7 @@ export function handleBack(): boolean {
     section: touch.section,
     listsPage: page !== undefined && page.kind !== 'index',
     guidesBack: canGoBack(useReader.getState()),
+    pageEditor: usePageEditor.getState().open,
     home: homeSection(),
     editor:
       editor.listId === null
@@ -90,6 +92,9 @@ export function handleBack(): boolean {
       return true;
     case 'editor-leave':
       stopEditing();
+      return true;
+    case 'page-editor-leave':
+      closePageEditor();
       return true;
     case null:
       return false;
