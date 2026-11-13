@@ -57,7 +57,7 @@ export function readWitcher3Tree(bytes: Uint8Array, options: ReadOptions = {}): 
     throw new SaveReadError(
       'unsupported-version',
       `This Witcher 3 save was written by a game version Atlas cannot read yet (${versionLabel(header)}). ` +
-        'Atlas reads saves of patches 4.0x and 5.0x. Nothing was changed, and marking places by hand keeps working.',
+        'Atlas reads saves of patches 4.0x and 5.0x. Nothing was changed, and marking locations by hand keeps working.',
     );
   }
   try {
