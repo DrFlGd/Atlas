@@ -19,6 +19,8 @@
     "allow-library-images-info",
     "allow-library-delete-images",
     "allow-library-import-sources",
+    "allow-library-import-source-list",
+    "allow-library-import-source",
     "allow-library-save-import",
     "allow-import-open",
     "allow-import-poll",

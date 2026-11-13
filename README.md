@@ -100,7 +100,7 @@ A link whose target is a content id of the same pack is an in-app link: `[the ol
 | an item (`<gameId>:checkitem:…`)     | opens its checklist with the item in view                             |
 | a guide (`<gameId>:guide:…`)         | opens it on the checklists screen                                     |
 
-Ids from an earlier pack version are followed through `idMigrations`. A link to an id the pack does not have, to another pack, or to another kind of content is shown as plain text. In-app links work in every Markdown text: location notes in the details pane and in checklist rows, guide pages and item notes.
+Ids from an earlier pack version are followed through `idMigrations`. A link to an id the pack does not have, to another pack, or to another kind of content is shown as plain text; on a guide page of a game read from a site, a link to one of its pages that was not read yet is underlined with dots and says "This page has not been read yet" when pointed at, and works once that page is read. In-app links work in every Markdown text: location notes in the details pane and in checklist rows, guide pages and item notes.
 
 Text between double bars, `||like this||`, is hidden until the reader presses "Show hidden text" where it begins (a solution, a spoiler). A hidden part may sit inside a sentence or run over several paragraphs, lists and code, and may hold in-app links. Bars pair up left to right; a last bar without a partner, bars in code and escaped bars (`\|`) are plain text. Where a note is shown as one line (list rows, Next up), each hidden part reads "(Hidden)".
 

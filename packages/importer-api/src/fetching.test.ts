@@ -6,6 +6,7 @@ import {
   DISALLOW_ALL,
   MAX_PAGE_FETCHES,
   MAX_PAGE_LINKS,
+  MAX_WRITTEN_AGAIN,
   asImporter,
   checkOutcome,
   fetchAddresses,
@@ -235,6 +236,68 @@ describe('a page that became a guide', () => {
     expect(checkOutcome({ ...success, guideId: 'pages:guide:start', links: [1] }, page).ok).toBe(
       false,
     );
+  });
+
+  it('keeps the links of the other pages it wrote again, entry by entry', () => {
+    const page = 'https://wiki.example.org/wiki/Start';
+    const outcome = checkOutcome(
+      {
+        ...success,
+        guideId: 'pages:guide:start',
+        writtenAgain: [
+          {
+            url: 'https://wiki.example.org/wiki/Bells#Top',
+            links: [
+              'https://wiki.example.org/wiki/Gates#Where',
+              'https://wiki.example.org/wiki/Bells',
+              'https://elsewhere.example.com/wiki/Gates',
+              7,
+            ],
+          },
+          // The same page again, the page read, another site, and entries out of shape: left out.
+          { url: 'https://wiki.example.org/wiki/Bells/', links: ['https://wiki.example.org/x'] },
+          { url: page, links: ['https://wiki.example.org/wiki/Bells'] },
+          { url: 'https://elsewhere.example.com/wiki/Bells', links: [] },
+          { url: 'not an address', links: [] },
+          { url: 'https://wiki.example.org/wiki/Gates' },
+          'https://wiki.example.org/wiki/Gates',
+          null,
+          // A page that links to nothing is kept, so its links are known to be none.
+          { url: 'https://wiki.example.org/wiki/Gates', links: [] },
+        ],
+      },
+      page,
+    );
+    expect(outcome.ok && outcome.writtenAgain).toEqual([
+      {
+        url: 'https://wiki.example.org/wiki/Bells',
+        links: ['https://wiki.example.org/wiki/Gates'],
+      },
+      { url: 'https://wiki.example.org/wiki/Gates', links: [] },
+    ]);
+    // Not a list, nothing in shape, or no page address: none, and the page is still added.
+    for (const writtenAgain of ['Bells', [{ url: 3 }]]) {
+      const odd = checkOutcome({ ...success, guideId: 'pages:guide:start', writtenAgain }, page);
+      expect(odd.ok && 'writtenAgain' in odd).toBe(false);
+      expect(odd.ok).toBe(true);
+    }
+    const unplaced = checkOutcome({
+      ...success,
+      guideId: 'pages:guide:start',
+      writtenAgain: [{ url: 'https://wiki.example.org/wiki/Bells', links: [] }],
+    });
+    expect(unplaced.ok && 'writtenAgain' in unplaced).toBe(false);
+    // Kept up to the cap.
+    const many = Array.from({ length: MAX_WRITTEN_AGAIN + 5 }, (_, i) => ({
+      url: `${page}-${i}`,
+      links: [page],
+    }));
+    const capped = checkOutcome(
+      { ...success, guideId: 'pages:guide:start', writtenAgain: many },
+      page,
+    );
+    expect(capped.ok && capped.writtenAgain?.length).toBe(MAX_WRITTEN_AGAIN);
+    expect(capped.ok && capped.writtenAgain?.[0]).toEqual({ url: `${page}-0`, links: [page] });
   });
 
   it('may stop the go when the page asked to confirm the reader is a person', () => {

@@ -40,6 +40,7 @@ import {
   type PictureTiles,
   type PictureTilesRequest,
   type SavedSource,
+  type WrittenAgain,
 } from '@atlas/importer-api';
 import {
   COLLECTION_NAMES,
@@ -52,7 +53,7 @@ import {
 } from '@atlas/schema';
 import { create } from 'zustand';
 import type { ImporterEntry } from '../config';
-import { desktop, type ImportReport, type Listing, type StoredSource } from '../desktop';
+import { desktop, type ImportReport, type Listing, type StoredPage } from '../desktop';
 import { downloadsOffered } from '../features';
 import { loadGame, notify } from './actions';
 import {
@@ -66,6 +67,7 @@ import {
   type PageOutcome,
   type RunState,
 } from './importRun';
+import { pagesToFollow, type FollowLinks } from './followLinks';
 import { fetchPagePictures } from './pagePictures';
 import {
   choiceGame,
@@ -92,7 +94,16 @@ import { applyListing } from './library';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
-import { leftOutKeys, noteWikiContents, noteWikiFailed, noteWikiRead } from './wikiNotes';
+import {
+  leftOutKeys,
+  flushWikiNotes,
+  loadWikiNotes,
+  NO_WIKI_NOTES,
+  noteWikiContents,
+  noteWikiFailed,
+  noteWikiLinks,
+  noteWikiRead,
+} from './wikiNotes';
 
 /**
  * "Add a map": the person pastes a page address, an importer that
@@ -145,6 +156,8 @@ export type ImportPhase =
       guideId?: string;
       /** The pages of the same site it links to, when the importer gave them. */
       links?: string[];
+      /** Other pages the importer wrote again, with the pages each links to. */
+      writtenAgain?: WrittenAgain[];
       title: string;
       summary: ImportSummary;
       rebuilt: boolean;
@@ -769,18 +782,37 @@ const outcomeOf = (
 
 /**
  * Works through several pages, one at a time, in the order given (see
- * `importRun.ts`), then shows the game of the last map added.
+ * `importRun.ts`), then shows the game of the last map added. In a go of
+ * pages an importer fetches, `follow` says per importer how far the links
+ * of the pages read are followed (see `followLinks.ts`): the pages found
+ * are added to the go, after the others, while it has room.
  */
 async function startRun(
   checked: readonly CheckedAddress<AtlasImporter>[],
   leftOut: number,
-  { update = false, firstPauseMs = 0 }: { update?: boolean; firstPauseMs?: number } = {},
+  {
+    update = false,
+    firstPauseMs = 0,
+    follow,
+  }: {
+    update?: boolean;
+    firstPauseMs?: number;
+    follow?: ReadonlyMap<string, FollowLinks>;
+  } = {},
 ): Promise<RunState | null> {
   const shell = desktop;
   if (!shell) return null;
-  const pages = checked.flatMap(({ url, importer, listed }) =>
+  const pages: {
+    url: string;
+    importer: AtlasImporter;
+    listed?: CheckedAddress<unknown>['listed'] | undefined;
+  }[] = checked.flatMap(({ url, importer, listed }) =>
     importer ? [{ url, importer, listed }] : [],
   );
+  // How many links away from a page ticked each page is (0: ticked), and every page of the go.
+  const depths = pages.map(() => 0);
+  const inGo = new Set(pages.map((page) => pageKey(page.url)));
+  const following = follow !== undefined && pages.every((page) => page.importer.fetch);
   const id = ++session;
   const run = new ImportRun(
     pages.map((page) => page.url),
@@ -832,7 +864,14 @@ async function startRun(
         );
         reportPhase(importer.id, outcome);
         if (importer.fetch && outcome.kind === 'done') {
-          void noteWikiRead(importer.id, url, outcome.links ?? []);
+          const { links = [], writtenAgain = [] } = outcome;
+          void noteWikiRead(importer.id, url, links).then(() =>
+            noteWikiLinks(importer.id, writtenAgain),
+          );
+          // The pages it links to join this go, when the person chose that.
+          if (following && links.length > 0) {
+            await followFrom(index, url, importer, links);
+          }
         } else if (importer.fetch && outcome.kind === 'failed') {
           void noteWikiFailed(importer.id, url, outcome.message);
         }
@@ -862,6 +901,46 @@ async function startRun(
     RUN_PAUSE_MS,
     firstPauseMs,
   );
+  /** Adds the pages a page read links to, as `follow` says, within the go's limit. */
+  async function followFrom(
+    index: number,
+    url: string,
+    importer: AtlasImporter,
+    links: readonly string[],
+  ): Promise<void> {
+    const notes = await loadWikiNotes(importer.id).catch(() => null);
+    const depth = depths[index] ?? 0;
+    const { add } = pagesToFollow({
+      follow: follow?.get(importer.id) ?? 'ticked',
+      depth,
+      links,
+      importer,
+      inGo,
+      read: recordedKeys(),
+      leftOut: new Set(notes?.leftOut ?? []),
+      room: MAX_FETCHED_RUN_PAGES - run.state.pages.length,
+    });
+    if (add.length === 0 || id !== session || run.state.stopRequested) return;
+    // A page the wiki's contents list is filed under its heading there.
+    const listedPages = new Map(
+      Object.values(notes?.contents ?? {}).flatMap((contents) =>
+        contents.pages.map((page) => [pageKey(page.url), page] as const),
+      ),
+    );
+    for (const found of add) {
+      const listed = listedPages.get(pageKey(found));
+      pages.push({
+        url: found,
+        importer,
+        ...(listed
+          ? { listed: { title: listed.title, ...(listed.group ? { group: listed.group } : {}) } }
+          : {}),
+      });
+      depths.push(depth + 1);
+      inGo.add(pageKey(found));
+    }
+    run.add(add.map((found) => ({ url: found, foundOn: url })));
+  }
   currentRun = run;
   // The pages of an importer that names addresses to fetch become guides.
   if (pages.length > 0 && pages.every((page) => page.importer.fetch)) {
@@ -876,6 +955,8 @@ async function startRun(
   });
   const final = await run.run();
   if (currentRun === run) currentRun = null;
+  // The links of the pages read, written every few seconds during the go, are all written now.
+  void flushWikiNotes();
   // The pictures of the pages added, once the pages are all read: one download a game.
   const withPictures = new Set(
     final.pages.flatMap(({ state }) =>
@@ -1001,6 +1082,20 @@ export function importContext(
           : [{ key: source.key, url: source.url, importedAt: source.importedAt, data }];
       });
     },
+    // The same pages one at a time, for an importer that goes through many of them.
+    async savedPages(packId) {
+      if (!desktop) return [];
+      const stored = await desktop.library.importSourceList(packId, importerId).catch(() => []);
+      return stored.map(({ key, url, importedAt }) => ({ key, url, importedAt }));
+    },
+    async savedSource(packId, key) {
+      if (!desktop) return null;
+      const source = await desktop.library.importSource(packId, importerId, key).catch(() => null);
+      const data = source ? parse(source.data) : undefined;
+      return source && data !== undefined
+        ? { key: source.key, url: source.url, importedAt: source.importedAt, data }
+        : null;
+    },
     async existingPack(packId) {
       // A pack in the maps folder, else one that comes with the app (to refresh it).
       const url =
@@ -1028,7 +1123,7 @@ export function importContext(
 /** The `source` block of the manifest: every page the pack was made from. */
 function packSource(
   importer: AtlasImporter,
-  stored: readonly StoredSource[],
+  stored: readonly StoredPage[],
   current: { key: string; url: string; mapId: string | undefined; importedAt: string },
 ): PackSource {
   const pages = stored
@@ -1127,9 +1222,10 @@ async function convertAndSave(
       };
     }
   }
+  // The pages kept with it, without their data: a wiki's can be many, and large.
   const stored = await shell.library
-    .importSources(outcome.packId, importer.id)
-    .catch((): StoredSource[] => []);
+    .importSourceList(outcome.packId, importer.id)
+    .catch((): StoredPage[] => []);
   const app = useAtlas.getState().app;
   const manifest = describePack(outcome.pack, {
     ...(existing?.manifest.schemaVersion === 2 && existing.manifest.created
@@ -1178,6 +1274,7 @@ async function convertAndSave(
     mapId: outcome.mapId ?? null,
     ...(outcome.guideId ? { guideId: outcome.guideId } : {}),
     ...(outcome.links ? { links: outcome.links } : {}),
+    ...(outcome.writtenAgain ? { writtenAgain: outcome.writtenAgain } : {}),
     title: outcome.summary.game,
     summary: outcome.summary,
     rebuilt,
@@ -1214,8 +1311,11 @@ export async function rebuildPack(packId: string): Promise<void> {
   const id = ++session;
   try {
     const importer = await loadImporter(entry);
-    const stored = await shell.library.importSources(packId, importer.id);
-    const last = stored.at(-1);
+    // The last page kept, read alone: the importer reads the others itself when it needs them.
+    const listedLast = (await shell.library.importSourceList(packId, importer.id)).at(-1);
+    const last = listedLast
+      ? await shell.library.importSource(packId, importer.id, listedLast.key)
+      : null;
     if (!last) {
       notify(`No page data is kept with ${listed.title}, so it cannot be rebuilt.`, 'error');
       return;
@@ -1228,6 +1328,15 @@ export async function rebuildPack(packId: string): Promise<void> {
       true,
     );
     reportPhase(importer.id, outcome);
+    // The links of the pages written again, this one too, are kept; nothing else about them changes.
+    if (importer.fetch && outcome.kind === 'done') {
+      await noteWikiLinks(importer.id, [
+        { url: last.url, links: outcome.links ?? [] },
+        ...(outcome.writtenAgain ?? []),
+      ])
+        .then(flushWikiNotes)
+        .catch(() => undefined);
+    }
     if (id === session) setPhase(outcome);
   } catch (error) {
     report({ importerId: entry.id, outcome: 'failed', message: errorText(error) });
@@ -1729,12 +1838,14 @@ export async function readWikiContents(source: WikiSource): Promise<string | nul
 /**
  * "Read n pages" on the wiki screen: the pages go to the front of the
  * wiki's pages kept to read, and a go reads them now, one at a time with
- * the pause, as "Read the next…" does. Pages left out are not read.
+ * the pause, as "Read the next…" does, following their links as far as
+ * `follow` says. Pages left out are not read.
  */
 export async function readWikiPages(
   source: WikiSource,
   game: string,
   pages: readonly QueuedPage[],
+  follow: FollowLinks,
 ): Promise<void> {
   const key = source.address ?? pages[0]?.url;
   const importer = (await loadImporters()).find((i) => i.id === source.importerId);
@@ -1752,7 +1863,7 @@ export async function readWikiPages(
       { ...kept, pages: kept.pages.filter((page) => !now.has(pageKey(page.url))) },
     ]);
   }
-  await readChosen(importer, key, game, reading.slice(0, MAX_FETCHED_RUN_PAGES));
+  await readChosen(importer, key, game, reading.slice(0, MAX_FETCHED_RUN_PAGES), follow);
   // Those that did not fit in one go wait at the front of the list.
   const later = reading.slice(MAX_FETCHED_RUN_PAGES);
   if (later.length > 0) await queuePages(importer.id, key, game, later, true);
@@ -1889,6 +2000,13 @@ export async function confirmChoice(): Promise<void> {
   if (now.length === 0) return;
   // Pages that do not fit in this go are kept, to continue with later.
   for (const page of later) await queuePages(page.importerId, page.gameKey, page.game, [page]);
+  // How far the links of a wiki's pages are followed, as last chosen for its importer.
+  const follow = new Map<string, FollowLinks>();
+  for (const page of now) {
+    if (page.queues && !follow.has(page.importerId)) {
+      follow.set(page.importerId, await followOf(page.importerId));
+    }
+  }
   const final = await startRun(
     now.map((page) => ({
       url: page.url,
@@ -1897,7 +2015,7 @@ export async function confirmChoice(): Promise<void> {
       listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
     })),
     0,
-    { update: phase.choice.mode === 'update', firstPauseMs: pauseLeft() },
+    { update: phase.choice.mode === 'update', firstPauseMs: pauseLeft(), follow },
   );
   await requeueUnread(now, final);
 }
@@ -2016,7 +2134,12 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
     { ...game, pages: pages.slice(now.length) },
   ]);
   if (now.length === 0) return;
-  await readChosen(importer, key, game.game, now);
+  await readChosen(importer, key, game.game, now, await followOf(importerId));
+}
+
+/** How far a go follows links for an importer's wikis, as the person last chose. */
+async function followOf(importerId: string): Promise<FollowLinks> {
+  return (await loadWikiNotes(importerId).catch(() => NO_WIKI_NOTES)).follow;
 }
 
 /** Reads pages of a game that keeps pages for later, as one go; those it did not read are kept. */
@@ -2025,6 +2148,7 @@ async function readChosen(
   key: string,
   game: string,
   pages: readonly QueuedPage[],
+  follow: FollowLinks,
 ): Promise<void> {
   const chosen: ChosenPage[] = pages.map((page) => ({
     url: page.url,
@@ -2043,7 +2167,7 @@ async function readChosen(
       listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
     })),
     0,
-    { firstPauseMs: pauseLeft() },
+    { firstPauseMs: pauseLeft(), follow: new Map([[importer.id, follow]]) },
   );
   await requeueUnread(chosen, final);
 }

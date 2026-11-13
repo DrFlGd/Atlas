@@ -93,3 +93,30 @@ describe('words', () => {
     expect(readWhen(null, now)).toBe('Read');
   });
 });
+
+describe('a wiki with a thousand pages found by links', () => {
+  it('lists them, found on the pages that link to them, quickly enough to work out after every page', () => {
+    // One page that links to 932 others, each of which was read and links to 100 more.
+    const list = Array.from({ length: 932 }, (_, i) => `${WIKI}/Item_${i}`);
+    const links: Record<string, string[]> = { [`https://wiki.example.org/wiki/Items`]: list };
+    const read = [{ url: `${WIKI}/Items`, importedAt: '2026-11-13T09:00:00Z' }];
+    for (let i = 0; i < 932; i++) {
+      read.push({ url: list[i]!, importedAt: '2026-11-13T09:00:00Z' });
+      links[`https://wiki.example.org/wiki/Item_${i}`] = Array.from(
+        { length: 100 },
+        (_, j) => `${WIKI}/Detail_${(i * 7 + j) % 1200}`,
+      );
+    }
+    const notes: WikiNotes = { ...NO_WIKI_NOTES, links };
+    const work = () => wikiGroups({ contents, read, guides: [], notes });
+    work();
+    const started = performance.now();
+    const groups = work();
+    const took = performance.now() - started;
+    const rows = allRows(groups);
+    // The contents, the pages read, and every detail page found once.
+    expect(rows).toHaveLength(4 + 933 + 1200);
+    expect(rows.filter((row) => row.state === 'read')).toHaveLength(933);
+    expect(took).toBeLessThan(1000);
+  });
+});

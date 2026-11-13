@@ -48,6 +48,12 @@ export interface MarkdownOptions {
   isAppTarget?: (id: string) => boolean;
   /** The pack's picture with this id, or null when the pack has none. */
   picture?: (id: string) => GuidePicture | null;
+  /**
+   * For a page of a game read from a site: what a link to one of its pages
+   * that is not in the game says when pointed at ("This page has not been
+   * read yet"). It stays plain text, marked with `data-unread`.
+   */
+  unreadPage?: string;
 }
 
 interface AppLinkMeta {
@@ -56,6 +62,7 @@ interface AppLinkMeta {
 
 markdown.core.ruler.push('atlas_app_links', (state) => {
   const isAppTarget = (state.env as MarkdownOptions | undefined)?.isAppTarget;
+  const unreadPage = (state.env as MarkdownOptions | undefined)?.unreadPage;
   for (const block of state.tokens) {
     if (block.type !== 'inline' || !block.children) continue;
     // Links do not nest, so each link_open is closed by the next link_close.
@@ -63,7 +70,8 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
     for (const token of block.children) {
       if (token.type === 'link_open') {
         const href = String(token.attrGet('href') ?? '');
-        open = parseId(href) ? token : null;
+        const target = parseId(href);
+        open = target ? token : null;
         if (!open) continue;
         const ok = isAppTarget?.(href) ?? false;
         const title = token.attrGet('title');
@@ -78,6 +86,10 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
         } else {
           token.tag = 'span';
           token.attrs = [['class', 'app-link-missing']];
+          // A page of the site the game was read from that was not read yet.
+          if (unreadPage && target?.kind === 'guide') {
+            token.attrs.push(['data-unread', ''], ['title', unreadPage]);
+          }
         }
         if (title !== null && title !== '') token.attrSet('title', String(title));
       } else if (token.type === 'link_close' && open) {

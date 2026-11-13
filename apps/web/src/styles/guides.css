@@ -339,6 +339,8 @@ button.guides-crumb:hover {
 .guide-picture {
   display: inline-flex;
   flex-direction: column;
+  /* A picture keeps its own width: a long line under it does not stretch it. */
+  align-items: flex-start;
   max-width: 100%;
   margin: 4px 0;
   vertical-align: top;

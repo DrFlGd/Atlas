@@ -71,6 +71,9 @@ export interface SavedSource {
   data: unknown;
 }
 
+/** A page an importer stored with a pack, without its data (see {@link ImportContext.savedPages}). */
+export type SavedPage = Omit<SavedSource, 'data'>;
+
 export interface ImportContext {
   /** The page URL the person entered. */
   url: string;
@@ -84,6 +87,21 @@ export interface ImportContext {
    * this importer.
    */
   savedSources(packId: string): Promise<SavedSource[]>;
+  /**
+   * Optional: the pages this importer stored with the pack `packId`, as
+   * {@link savedSources} gives them but without their data, oldest first.
+   * With {@link savedSource}, for an importer that goes through many kept
+   * pages (a wiki's, say), so it holds one page's data at a time rather
+   * than every page's. An app that offers one offers both; an importer must
+   * check that they are there and use `savedSources` otherwise.
+   */
+  savedPages?(packId: string): Promise<SavedPage[]>;
+  /**
+   * Optional, with {@link savedPages}: the data of one page stored with the
+   * pack, by its key; null when there is no such page or its data cannot
+   * be read.
+   */
+  savedSource?(packId: string, key: string): Promise<SavedSource | null>;
   /**
    * The pack the import would replace, if one with that id is in the maps
    * folder: for example to keep each location's `since` version.
@@ -689,6 +707,18 @@ export interface ImportSuccess {
    * this field leave it out.
    */
   links?: string[];
+  /**
+   * Optional, like `links`: the other pages kept with the pack that this
+   * call wrote again from their saved data (after the importer changed how
+   * it writes pages, say), each with the pages of the same site it links
+   * to, so the app knows the links of pages read before it kept them. Each
+   * `url` is a page of the same site as the page read; its `links` are
+   * kept as `links` are, on the site of that page. The app keeps at most
+   * {@link MAX_WRITTEN_AGAIN} pages, each once, and leaves out the page
+   * read (its links are `links`) and any entry that is not in this shape.
+   * It records the links only; nothing is read because of them.
+   */
+  writtenAgain?: WrittenAgain[];
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
@@ -696,6 +726,15 @@ export interface ImportSuccess {
 
 /** Links of one page that the app keeps at most (see {@link ImportSuccess.links}). */
 export const MAX_PAGE_LINKS = 1000;
+
+/** A page written again in the same call, with the pages it links to (see {@link ImportSuccess.writtenAgain}). */
+export interface WrittenAgain {
+  url: string;
+  links: string[];
+}
+
+/** Pages written again whose links the app keeps at most (see {@link ImportSuccess.writtenAgain}). */
+export const MAX_WRITTEN_AGAIN = 2000;
 
 export interface ImportFailure {
   ok: false;
@@ -1046,6 +1085,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
       .array(z.string().max(MAX_ADDRESS_CHARS))
       .max(MAX_PAGE_LINKS * 4)
       .optional(),
+    // Checked entry by entry, and entries that are not in shape are left out.
+    writtenAgain: z.unknown().optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
@@ -1080,13 +1121,45 @@ export function pageLinks(links: readonly string[] | undefined, pageUrl?: string
 }
 
 /**
+ * The pages written again as the app keeps them (see
+ * {@link ImportSuccess.writtenAgain}): each a web address on the same site
+ * as `pageUrl` and not that page, without its fragment, each page once,
+ * with its links as {@link pageLinks} gives them for it; at most
+ * {@link MAX_WRITTEN_AGAIN}. An entry that is not in shape is left out.
+ * Without `pageUrl`, none.
+ */
+export function writtenAgainLinks(value: unknown, pageUrl?: string): WrittenAgain[] {
+  if (!Array.isArray(value) || !pageUrl) return [];
+  const seen = new Set([pageKey(pageUrl)]);
+  const kept: WrittenAgain[] = [];
+  for (const entry of value as unknown[]) {
+    if (kept.length >= MAX_WRITTEN_AGAIN) break;
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { url: given, links } = entry as { url?: unknown; links?: unknown };
+    if (typeof given !== 'string' || !Array.isArray(links)) continue;
+    if (!isAllowedPageUrl(given) || !sameSite(pageUrl, given)) continue;
+    const url = new URL(given.trim());
+    url.hash = '';
+    const key = pageKey(url.href);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const texts = (links as unknown[])
+      .filter((link): link is string => typeof link === 'string')
+      .slice(0, MAX_PAGE_LINKS * 4);
+    kept.push({ url: url.href, links: pageLinks(texts, url.href) });
+  }
+  return kept;
+}
+
+/**
  * Checks what an importer's `convert` returned: the outcome's shape, and for
  * a success the pack against the pack schema and its integrity rules. Returns
  * a failure with a readable message when anything is wrong. The pack is about
  * to be written, so it is checked strictly: an unknown key is an error here,
  * although the app skips one when it reads a pack. A success's `links` are
  * kept as {@link pageLinks} gives them for `pageUrl`, the page read (none
- * without it), and left out when there are none.
+ * without it), and left out when there are none; so are the pages it wrote
+ * again ({@link writtenAgainLinks}).
  */
 export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   const outcome = outcomeSchema.safeParse(value);
@@ -1139,9 +1212,15 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   if (success.guideId !== undefined && !pack.data.guides.some((g) => g.id === success.guideId)) {
     return { ok: false, message: 'The importer named a guide that is not in its pack.' };
   }
-  const { links: given, ...rest } = success;
+  const { links: given, writtenAgain: again, ...rest } = success;
   const links = pageLinks(given, pageUrl);
-  return { ...rest, ...(links.length > 0 ? { links } : {}), pack: pack.data };
+  const writtenAgain = writtenAgainLinks(again, pageUrl);
+  return {
+    ...rest,
+    ...(links.length > 0 ? { links } : {}),
+    ...(writtenAgain.length > 0 ? { writtenAgain } : {}),
+    pack: pack.data,
+  };
 }
 
 // ---------------------------------------------------------------------------

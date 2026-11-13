@@ -79,6 +79,24 @@ describe('in-app links', () => {
     expect(renderGuideMarkdown('[well](demo:loc:0412)')).toContain('app-link-missing');
   });
 
+  it('on a page read from a site, says that a page it links to was not read yet', () => {
+    const page = { ...options, unreadPage: 'This page has not been read yet' };
+    const html = renderGuideMarkdown(
+      '[the gate](demo:guide:gate), [gone](demo:loc:9999) and [named](demo:guide:x "Its name")',
+      page,
+    );
+    expect(html).toContain(
+      '<span class="app-link-missing" data-unread="" title="This page has not been read yet">the gate</span>',
+    );
+    // Only a link to a page; a title of its own wins.
+    expect(html).toContain('<span class="app-link-missing">gone</span>');
+    expect(html).toContain('title="Its name">named</span>');
+    // Elsewhere a link to a page that is not there stays as it was.
+    expect(renderGuideMarkdown('[the gate](demo:guide:gate)', options)).toContain(
+      '<span class="app-link-missing">the gate</span>',
+    );
+  });
+
   it('leaves web links alone next to in-app links', () => {
     const html = renderGuideMarkdown(
       '[site](https://example.test/) and [well](demo:loc:0412)',

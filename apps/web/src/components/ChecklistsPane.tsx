@@ -828,7 +828,7 @@ export function GuideView({
         <h2 className="checklist-title" id="guide-page-title" tabIndex={-1} ref={headingRef}>
           {guide.title}
         </h2>
-        <MarkdownBody source={guide.body} className="guide-body" />
+        <MarkdownBody source={guide.body} className="guide-body" page />
         {places.length > 0 ? (
           <section className="section guide-places" aria-labelledby="guide-places-heading">
             <h3 className="section-title" id="guide-places-heading">

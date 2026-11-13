@@ -6,12 +6,25 @@ import { useOwnPages } from '../state/ownPages';
 import { useOwnPictures } from '../state/ownPictures';
 import { useAtlas } from '../state/store';
 
+/** What a link to a page of the site that is not in the game says, on a guide page. */
+export const UNREAD_PAGE = 'This page has not been read yet';
+
 /**
  * Guide Markdown from the pack, rendered safely (see `renderGuideMarkdown`).
  * In-app links are buttons; pressing one acts in the app. Web links open
  * outside the app as before. Hidden text shows when its button is pressed.
+ * On a guide page (`page`) of a game read from a site, a link to a page of
+ * it that was not read yet says so (see `MarkdownOptions.unreadPage`).
  */
-export function MarkdownBody({ source, className }: { source: string; className: string }) {
+export function MarkdownBody({
+  source,
+  className,
+  page = false,
+}: {
+  source: string;
+  className: string;
+  page?: boolean;
+}) {
   const game = useAtlas((s) => s.game);
   // Pages of other games read with this one can be linked to, once loaded.
   const others = useGuideLinks((s) => s.others);
@@ -52,9 +65,20 @@ export function MarkdownBody({ source, className }: { source: string; className:
     };
   });
   const html = useMemo(
-    () => renderGuideMarkdown(source, game ? markdownOptionsFor(game) : {}),
+    () =>
+      renderGuideMarkdown(
+        source,
+        game
+          ? {
+              ...markdownOptionsFor(game),
+              ...(page && game.pack.data.guides.some((guide) => guide.source)
+                ? { unreadPage: UNREAD_PAGE }
+                : {}),
+            }
+          : {},
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, game, others, own, draftPictures, ownPictures],
+    [source, game, page, others, own, draftPictures, ownPictures],
   );
   return (
     <div

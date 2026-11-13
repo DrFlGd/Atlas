@@ -29,7 +29,7 @@ use crate::{
     activity::{self, ActivityLog, Area, RecentLog},
     downloads::Downloads,
     imports::{Imports, PollResult},
-    library::{FolderChoice, Library, Listing, SaveImport, SavedSource},
+    library::{FolderChoice, Library, Listing, SaveImport, SavedSource, SavedSourceEntry},
     ownlists,
     packfile::{self, AppInfo, ExportOptions, Progress, Stop},
     removal::{ImagesCount, ImagesDeleted, PackDeleted},
@@ -1143,6 +1143,29 @@ pub async fn library_import_sources(
 ) -> Result<Vec<SavedSource>, String> {
     let library = Arc::clone(&library);
     blocking(move || library.saved_sources(&pack_id, &importer_id)).await
+}
+
+/// The pages an importer stored with a pack, without their data.
+#[tauri::command]
+pub async fn library_import_source_list(
+    library: LibraryState<'_>,
+    pack_id: String,
+    importer_id: String,
+) -> Result<Vec<SavedSourceEntry>, String> {
+    let library = Arc::clone(&library);
+    blocking(move || library.saved_source_list(&pack_id, &importer_id)).await
+}
+
+/// The data of one page an importer stored with a pack, by its key.
+#[tauri::command]
+pub async fn library_import_source(
+    library: LibraryState<'_>,
+    pack_id: String,
+    importer_id: String,
+    key: String,
+) -> Result<Option<SavedSource>, String> {
+    let library = Arc::clone(&library);
+    blocking(move || library.saved_source(&pack_id, &importer_id, &key)).await
 }
 
 /// Writes an imported pack and lists the packs again.

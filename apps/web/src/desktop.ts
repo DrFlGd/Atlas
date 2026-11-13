@@ -412,6 +412,9 @@ export interface StoredSource {
   data: string;
 }
 
+/** A page stored with an imported pack, without its data. */
+export type StoredPage = Omit<StoredSource, 'data'>;
+
 export interface SaveImportRequest {
   packId: string;
   importer: { id: string; title: string };
@@ -822,6 +825,10 @@ export interface DesktopBridge {
     /** Deletes a pack's downloaded map images only, stopping its download first. */
     deleteImages(id: string): Promise<ImagesDeleted>;
     importSources(packId: string, importerId: string): Promise<StoredSource[]>;
+    /** The pages stored with an imported pack, without their data. */
+    importSourceList(packId: string, importerId: string): Promise<StoredPage[]>;
+    /** One page stored with an imported pack, by its key; null when there is none. */
+    importSource(packId: string, importerId: string, key: string): Promise<StoredSource | null>;
     saveImport(request: SaveImportRequest): Promise<Listing>;
   };
   importWindow: {
@@ -1073,6 +1080,10 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       imagesInfo: (id) => call('library_images_info', { id }),
       deleteImages: (id) => call('library_delete_images', { id }),
       importSources: (packId, importerId) => call('library_import_sources', { packId, importerId }),
+      importSourceList: (packId, importerId) =>
+        call('library_import_source_list', { packId, importerId }),
+      importSource: (packId, importerId, key) =>
+        call('library_import_source', { packId, importerId, key }),
       saveImport: (request) => call('library_save_import', { request }),
     },
     importWindow: {

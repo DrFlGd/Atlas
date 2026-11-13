@@ -1415,6 +1415,14 @@ label.tree-row:hover,
   color: var(--atlas-muted);
 }
 
+/* On a guide page: a link to a page of the site that was not read yet, so it does not go anywhere. */
+.guide-body .app-link-missing[data-unread] {
+  text-decoration: underline dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
 /* Hidden text (||like this||): a button where it begins, until pressed. */
 .hidden-text-show {
   display: inline-block;
@@ -2268,6 +2276,52 @@ label.tree-row:hover,
 
 .add-map-measure {
   margin-top: 8px;
+}
+
+/* How far a go of a wiki's pages follows their links: three choices, each with its sentence. */
+.follow-links {
+  min-width: 0;
+  margin: 8px 0 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+.follow-links legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.follow-links-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 6px 16px;
+}
+
+.follow-links-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.follow-links-option input {
+  margin-top: 3px;
+}
+
+.follow-links-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.follow-links > p {
+  margin: 8px 0 0;
+}
+
+.follow-links:disabled .follow-links-option {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .add-map-measure p {

@@ -298,7 +298,7 @@ function PageArea({
             The wiki’s version of this page, as the game’s files have it. It cannot be edited here.
           </p>
           <h1 className="guides-title">{pack.title}</h1>
-          <MarkdownBody source={pack.body} className="guide-body guides-page-body" />
+          <MarkdownBody source={pack.body} className="guide-body guides-page-body" page />
         </div>
       ) : (
         <>

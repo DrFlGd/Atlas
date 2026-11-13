@@ -12,8 +12,10 @@ import {
  * the shell; `importing.ts` opens, reads and saves each page the same way
  * as a single import, and hands the outcome to the run.
  *
- * The run opens only the pages the person listed, in their order, one at a
- * time in the same import window, with a pause between them. It never
+ * The run opens only the pages the person listed, in their order (and, in
+ * a go of a wiki's pages, the pages found by their links when the person
+ * chose that, after them), one at a time in the same import window, with
+ * a pause between them. It never
  * retries a page. It stops when the person closes the page window or
  * presses Stop, and when two pages in a row end without their map data (a
  * site that asks a person to step in on every page, or refuses), rather than
@@ -158,6 +160,8 @@ export type RunPageState =
 export interface RunPage {
   url: string;
   state: RunPageState;
+  /** The page of the go it was found on, for a page added because that page links to it. */
+  foundOn?: string;
 }
 
 export type StopReason =
@@ -294,6 +298,16 @@ export function settlePage(run: RunState, index: number, outcome: PageOutcome): 
   return next;
 }
 
+/** Pages of the go that were added because a page read links to them. */
+export const foundByLinks = (run: RunState): number =>
+  run.pages.filter((page) => page.foundOn !== undefined).length;
+
+/** "28 found by links", or null when the go found none. */
+export function foundText(run: RunState): string | null {
+  const found = foundByLinks(run);
+  return found > 0 ? `${found.toLocaleString('en')} found by links` : null;
+}
+
 export interface RunCounts {
   added: number;
   refreshed: number;
@@ -375,7 +389,8 @@ export interface RunDriver {
 
 /**
  * Works through the pages one at a time, in order, with a pause between
- * them. Never two pages at once, and no page twice.
+ * them. Never two pages at once, and no page twice. Pages found by links
+ * may be added while it runs ({@link ImportRun.add}).
  */
 export class ImportRun {
   state: RunState;
@@ -403,6 +418,22 @@ export class ImportRun {
     if (this.state.status !== 'running' || this.state.stopRequested) return;
     this.set({ ...this.state, stopRequested: true });
     this.wake?.();
+  }
+
+  /**
+   * Adds pages at the end of the go: pages found by links of a page read
+   * (see `followLinks.ts`). Only while it runs and Stop was not pressed;
+   * call it before the page being read is settled, so the go goes on.
+   */
+  add(pages: readonly { url: string; foundOn: string }[]): void {
+    if (pages.length === 0 || this.state.status !== 'running' || this.state.stopRequested) return;
+    this.set({
+      ...this.state,
+      pages: [
+        ...this.state.pages,
+        ...pages.map(({ url, foundOn }) => ({ url, state: { kind: 'waiting' } as const, foundOn })),
+      ],
+    });
   }
 
   /** Stop as soon as the current page lets go (the app has closed its window). */

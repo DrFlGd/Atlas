@@ -31,12 +31,15 @@ import {
 import {
   MAX_FETCHED_RUN_PAGES,
   MAX_RUN_ADDRESSES,
+  foundByLinks,
+  foundText,
   parseAddresses,
   runSummary,
   stopReasonText,
   type RunPageState,
   type RunState,
 } from '../state/importRun';
+import { titleFromAddress } from '../state/gameChoice';
 import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
@@ -726,6 +729,8 @@ function Run({
   const openId = shownPackId ?? (lastAdded?.kind === 'added' ? lastAdded.packId : null);
   const openTitle = openId ? games.get(openId) : undefined;
   const guides = run.pages.some(({ state }) => state.kind === 'added' && state.guide);
+  const found = foundText(run);
+  const foundCount = foundByLinks(run);
   return (
     <section
       className="dialog-section"
@@ -738,13 +743,21 @@ function Run({
           <strong>
             {update ? 'Updating' : 'Adding'} {run.pages.length}{' '}
             {run.pages.length === 1 ? 'page' : 'pages'}, one page at a time: {done} of{' '}
-            {run.pages.length} done.
+            {run.pages.length} done{found ? `, ${found}` : ''}.
           </strong>{' '}
+          {found ? (
+            <span className="muted" data-testid="add-map-run-found">
+              The pages found by links were added to this go as the pages linking to them were read.
+            </span>
+          ) : null}{' '}
           {run.pausing ? <span className="muted">Opening the next page in a moment.</span> : null}
         </p>
       ) : (
         <p role="status" data-testid="add-map-summary">
           <strong>{runSummary(run)}.</strong>
+          {foundCount > 0
+            ? ` ${foundCount === 1 ? '1 of the pages was' : `${foundCount.toLocaleString('en')} of the pages were`} found by links on the pages read.`
+            : ''}
         </p>
       )}
       {run.stopReason ? (
@@ -762,8 +775,18 @@ function Run({
       ) : null}
       <ol className="add-map-run-list">
         {run.pages.map((page) => (
-          <li key={page.url} data-testid="add-map-run-page" data-state={page.state.kind}>
+          <li
+            key={page.url}
+            data-testid="add-map-run-page"
+            data-state={page.state.kind}
+            data-found={page.foundOn ? '' : undefined}
+          >
             <span className="add-map-url">{page.url}</span>
+            {page.foundOn ? (
+              <span className="muted small">
+                Found by a link on {titleFromAddress(page.foundOn)}
+              </span>
+            ) : null}
             <PageState state={page.state} />
           </li>
         ))}

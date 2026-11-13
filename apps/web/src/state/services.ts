@@ -110,4 +110,6 @@ export const SETTINGS = {
   wikiLinks: (importerId: string) => `wikiLinks:${importerId}`,
   /** Pages of a wiki the person left out. */
   wikiLeftOut: (importerId: string) => `wikiLeftOut:${importerId}`,
+  /** How far a go follows the links of a wiki's pages, as last chosen (see `followLinks.ts`). */
+  wikiFollow: (importerId: string) => `wikiFollow:${importerId}`,
 } as const;
