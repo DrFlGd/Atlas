@@ -198,24 +198,23 @@ export function changeOwnLocation(
   changes: OwnLocationChanges,
   now: Date,
 ): OwnLocations {
-  let changed = false;
-  const locations = own.locations.map((location) => {
-    if (location.id !== id) return location;
-    const next: OwnLocation = { ...location };
-    let touched = false;
-    for (const [key, value] of Object.entries(changes) as [keyof OwnLocationChanges, unknown][]) {
-      if (value === undefined && key !== 'note') continue;
-      if (next[key] === value) continue;
-      touched = true;
-      if (key === 'note' && (value === undefined || value === '')) delete next.note;
-      else (next as Record<string, unknown>)[key] = value;
-    }
-    if (!touched) return location;
-    changed = true;
-    next.updatedAt = now.toISOString();
-    return next;
-  });
-  return changed ? { ...own, locations } : own;
+  const index = own.locations.findIndex((location) => location.id === id);
+  const location = own.locations[index];
+  if (!location) return own;
+  const next: OwnLocation = { ...location };
+  let touched = false;
+  for (const [key, value] of Object.entries(changes) as [keyof OwnLocationChanges, unknown][]) {
+    if (value === undefined && key !== 'note') continue;
+    if (next[key] === value) continue;
+    touched = true;
+    if (key === 'note' && (value === undefined || value === '')) delete next.note;
+    else (next as Record<string, unknown>)[key] = value;
+  }
+  if (!touched) return own;
+  next.updatedAt = now.toISOString();
+  const locations = [...own.locations];
+  locations[index] = next;
+  return { ...own, locations };
 }
 
 /** Removes an own location. */
