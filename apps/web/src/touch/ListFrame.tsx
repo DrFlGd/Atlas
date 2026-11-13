@@ -1,6 +1,10 @@
-import { stageOf, type ChecklistEntry, type ItemState } from '@atlas/core';
+import { stageOf, tallyStates, type ChecklistEntry, type ItemState } from '@atlas/core';
+import { isOwnId } from '@atlas/schema';
 import { useEffect, useMemo, useState } from 'react';
+import { UiIcon } from '../components/icons';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { useCanEdit } from './editor/canEdit';
+import { startEditing, useEditor } from './editor/editorState';
 import { AreasView } from './ListAreas';
 import { KindList, ShowChoice, type Show } from './ListGroups';
 import { useListTools } from './ListTools';
@@ -21,6 +25,7 @@ import {
   viewsOf,
   type ListView,
 } from './listViews';
+import { useTouch } from './state';
 import { SwitchTrack } from './widgets';
 
 const VIEWS: { id: ListView; label: string }[] = [
@@ -36,6 +41,9 @@ const VIEWS: { id: ListView; label: string }[] = [
  */
 export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistEntry }) {
   const chosen = useListView(entry);
+  const canEdit = useCanEdit();
+  const room = useTouch((s) => s.editorRoom);
+  const previewing = useEditor((s) => s.listId !== null);
   const focus = useAtlas((s) => s.itemFocus);
   const states = useItemStates(entry);
   const next = useNextStep(entry, states);
@@ -63,12 +71,12 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
     };
   }, [entry, view]);
 
-  const done = states.filter((s) => s.done).length;
-  const total = states.length;
+  const { done, total } = tallyStates(states);
   const stages = stagesOf(entry);
   const titled = stages.filter((s) => s.title !== null);
   const stage = next === null ? undefined : stageOf(stages, next);
   const name = entry.checklist.name;
+  const own = isOwnId(entry.checklist.id);
   return (
     <div
       className="touch-page"
@@ -93,6 +101,19 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
                 : ''}
             </p>
           </div>
+          {own && canEdit && !previewing ? (
+            <button
+              type="button"
+              className="own-edit-button"
+              data-testid="edit-own-list"
+              onClick={() => {
+                startEditing(entry.checklist.id);
+              }}
+            >
+              <UiIcon name="pencil" size={18} strokeWidth={1.8} />
+              Edit
+            </button>
+          ) : null}
         </div>
         <div
           className="touch-progressbar"
@@ -108,6 +129,11 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
           />
         </div>
       </header>
+      {own && !room ? (
+        <p className="touch-note own-phone-note own-frame-note" data-testid="own-lists-phone-note">
+          This list can be changed on a wider screen: a tablet on its side, or a computer.
+        </p>
+      ) : null}
       {views.length > 1 ? (
         <div
           className="touch-segmented touch-view-switch"

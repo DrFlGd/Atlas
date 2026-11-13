@@ -4,6 +4,7 @@ import { probeTiles } from '../../pack/tileProbe';
 import type {
   FlyToTarget,
   MapLayerSpec,
+  MapOverlay,
   MapMarker,
   MapView,
   MapViewOptions,
@@ -18,6 +19,7 @@ import { createTileLayer, firstViewBounds, imageBounds } from './tileLayer';
 
 const MARKER_PANE = 'atlasMarkers';
 const PLAYER_PANE = 'atlasPlayer';
+const OVERLAY_PANE = 'atlasOverlay';
 /** How long a press must last to count as press and hold, in milliseconds. */
 const LONG_PRESS_MS = 500;
 /** How far a finger may wander during a press and hold, in CSS pixels. */
@@ -35,6 +37,19 @@ function playerIcon(player: PlayerMarker): L.DivIcon {
     html: `<svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"${turn}><circle class="atlas-player-halo" cx="16" cy="16" r="15" />${shape}</svg>`,
     iconSize: [32, 32],
     iconAnchor: [16, 16],
+  });
+}
+
+/** A numbered point of a list's overlay. */
+function overlayIcon(point: MapOverlay['points'][number]): L.DivIcon {
+  const size = point.style === 'current' ? 40 : point.style === 'pick' ? 28 : 26;
+  const text = point.style === 'pick' ? '+' : point.label;
+  const label = text.replace(/[^0-9+]/g, '');
+  return L.divIcon({
+    className: `atlas-step atlas-step-${point.style}`,
+    html: `<span aria-hidden="true">${label}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
@@ -73,6 +88,7 @@ export function createLeafletMapView(
   const pane = map.createPane(MARKER_PANE);
   pane.style.zIndex = '450';
   map.createPane(PLAYER_PANE).style.zIndex = '460';
+  map.createPane(OVERLAY_PANE).style.zIndex = '455';
 
   let layer: MapLayerSpec | null = null;
   let tileLayer: L.GridLayer | null = null;
@@ -87,6 +103,8 @@ export function createLeafletMapView(
   let swallowClickUntil = 0;
   let player: PlayerMarker | null = null;
   let playerMarker: L.Marker | null = null;
+  let overlay: MapOverlay | null = null;
+  let overlayLayer: L.LayerGroup | null = null;
   const viewListeners = new Set<(state: MapViewState) => void>();
   const hoverListeners = new Set<(hover: MarkerHover | null) => void>();
   const tileListeners = new Set<(status: TileStatus) => void>();
@@ -244,6 +262,41 @@ export function createLeafletMapView(
     element?.setAttribute('aria-label', player.label);
   };
 
+  const showOverlay = () => {
+    overlayLayer?.remove();
+    overlayLayer = null;
+    if (!overlay || !layer || overlay.points.length === 0) return;
+    const group = L.layerGroup();
+    const steps = overlay.points.filter((point) => point.style !== 'pick');
+    if (overlay.joined && steps.length > 1) {
+      L.polyline(
+        steps.map((point) => toLatLng(point.x, point.y)),
+        {
+          pane: OVERLAY_PANE,
+          interactive: false,
+          className: 'atlas-step-line',
+          weight: 3,
+          dashArray: '2 7',
+          lineCap: 'round',
+        },
+      ).addTo(group);
+    }
+    // The open step last, so it is drawn on top.
+    const ordered = [
+      ...overlay.points.filter((point) => point.style !== 'current'),
+      ...overlay.points.filter((point) => point.style === 'current'),
+    ];
+    for (const point of ordered) {
+      L.marker(toLatLng(point.x, point.y), {
+        icon: overlayIcon(point),
+        pane: OVERLAY_PANE,
+        interactive: false,
+        keyboard: false,
+      }).addTo(group);
+    }
+    overlayLayer = group.addTo(map);
+  };
+
   const select = (id: string | null) => {
     selectedId = id;
     markerLayer?.setSelected(id);
@@ -297,6 +350,10 @@ export function createLeafletMapView(
       player = null;
       playerMarker?.remove();
       playerMarker = null;
+      // So does an overlay.
+      overlay = null;
+      overlayLayer?.remove();
+      overlayLayer = null;
 
       const bounds = imageBounds(spec);
       map.setMinZoom(spec.minZoom);
@@ -354,6 +411,12 @@ export function createLeafletMapView(
       if (same || (next === null && player === null)) return;
       player = next;
       showPlayer();
+    },
+
+    setOverlay(next) {
+      if (destroyed || (next === null && overlay === null)) return;
+      overlay = next;
+      showOverlay();
     },
 
     setSelected(id) {

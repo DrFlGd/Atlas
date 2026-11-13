@@ -207,7 +207,7 @@ export function OrderView({
   );
 }
 
-/** "Step 10 · Chest · Duskmoor", or "Step 10 · " and the entry's note when it has one. */
+/** "Step 10 · Chest · Duskmoor", or "Step 10 · " and the entry's note when it has one ("Step 10 · Optional · …" for an optional step). */
 function stepDetail(
   game: LoadedGame,
   item: ChecklistEntry['items'][number],
@@ -215,16 +215,12 @@ function stepDetail(
   index: number,
   note?: string,
 ): string {
-  if (note) return `Step ${numberFormat.format(index + 1)} · ${note}`;
+  // An optional step says so: Next up passes over it.
+  const step = `Step ${numberFormat.format(index + 1)}${state.optional ? ' · Optional' : ''}`;
+  if (note) return `${step} · ${note}`;
   const first = item.places.length > 0 ? game.pack.locations.get(item.places[0]!) : undefined;
   const kind = first ? game.pack.categories.get(first.categoryId)?.name : undefined;
-  return [
-    `Step ${numberFormat.format(index + 1)}`,
-    kind,
-    entryWhere(game, item, state, item.places[0]),
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  return [step, kind, entryWhere(game, item, state, item.places[0])].filter(Boolean).join(' · ');
 }
 
 /** F and N while this view is shown: the next step done, and on to the one after. */

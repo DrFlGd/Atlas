@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { canKeepScreenOn, keepScreenOn } from '../androidBars';
 import { keyboardHintsOffered } from '../features';
 import { notify, saveSetting, setFound, setOverrides } from '../state/actions';
+import { useOwnLists } from '../state/ownLists';
 import { SETTINGS, progressStore } from '../state/services';
 import { useAtlas, type LoadedGame } from '../state/store';
 import type { Section } from './backStack';
@@ -31,6 +32,11 @@ export interface TouchState {
   input: 'touch' | 'mouse';
   /** How the layout is arranged for the window (see `layout.ts`). */
   arrangement: Arrangement;
+  /**
+   * The window has room for the list editor (see `editorFits` in
+   * `layout.ts`): a tablet on its side or a computer, not a phone.
+   */
+  editorRoom: boolean;
   section: Section;
   /** Search is open: full screen on a phone, in the panel on a wide screen. */
   search: boolean;
@@ -57,6 +63,7 @@ export interface TouchState {
 export const useTouch = create<TouchState>()(() => ({
   input: 'touch',
   arrangement: 'compact',
+  editorRoom: false,
   section: 'map',
   search: false,
   query: '',
@@ -126,7 +133,12 @@ export function focusSearchField(): void {
 export function toggleLists(): void {
   const { game } = useAtlas.getState();
   if (get().section === 'lists') showSection('map');
-  else if (game && !game.checklists.isEmpty) showSection('lists');
+  else if (
+    game &&
+    (!game.checklists.isEmpty || get().editorRoom || useOwnLists.getState().lists.length > 0)
+  ) {
+    showSection('lists');
+  }
 }
 
 // ---------------------------------------------------------------------------

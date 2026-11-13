@@ -1,4 +1,6 @@
 import { GuideView } from '../components/ChecklistsPane';
+import { isOwnId } from '@atlas/schema';
+import { useOwnLists } from '../state/ownLists';
 import { useAtlas, type ChecklistPage, type LoadedGame } from '../state/store';
 import { AreaScreen } from './ListAreas';
 import { ListFrame } from './ListFrame';
@@ -17,10 +19,13 @@ const INDEX: ChecklistPage = { kind: 'index' };
 export function ListsScreen() {
   const game = useAtlas((s) => s.game)!;
   const page = useAtlas((s) => s.checklistPages.at(-1) ?? INDEX);
+  // An own list is shown as it is now, while it is edited too.
+  const ownStatus = useOwnLists((s) => s.status);
+  useOwnLists((s) => s.lists);
   if (page.kind === 'guide') return <GuideScreen key={page.id} game={game} id={page.id} />;
   if (page.kind === 'index') return <ListsHome game={game} />;
   const entry = listById(game, page.id);
-  if (!entry) return <MissingList />;
+  if (!entry) return <MissingList loading={isOwnId(page.id) && ownStatus === 'loading'} />;
   if (page.area !== undefined) {
     return (
       <AreaScreen key={`${page.id}|${page.area}`} game={game} entry={entry} area={page.area} />
@@ -29,13 +34,15 @@ export function ListsScreen() {
   return <ListFrame key={page.id} game={game} entry={entry} />;
 }
 
-function MissingList() {
+function MissingList({ loading }: { loading: boolean }) {
   return (
     <div className="touch-page">
       <header className="touch-page-head touch-page-head-back">
         <PageBack />
       </header>
-      <p className="touch-empty">This list is not in the pack.</p>
+      <p className="touch-empty">
+        {loading ? 'Reading your lists…' : 'This list is not in the pack.'}
+      </p>
     </div>
   );
 }

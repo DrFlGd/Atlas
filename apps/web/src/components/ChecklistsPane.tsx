@@ -4,13 +4,14 @@ import {
   filterChecklist,
   itemFacets,
   itemState,
+  tallyStates,
   type ChecklistEntry,
   type ChecklistItemEntry,
   type ChecklistTally,
   type FacetCount,
   type ItemState,
 } from '@atlas/core';
-import type { GuideEntry } from '@atlas/schema';
+import { isOwnId, type GuideEntry } from '@atlas/schema';
 import { memo, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { goToLocation, setHideDone } from '../state/actions';
 import {
@@ -22,6 +23,7 @@ import {
   showItemPlace,
 } from '../state/checklists';
 import { numberFormat } from '../state/derived';
+import { entryOfOwn, ownEntryById, useOwnLists } from '../state/ownLists';
 import { useAtlas, type ChecklistPage, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
 import { useFacetNames } from './facetNames';
@@ -112,6 +114,13 @@ function IndexPage({ game }: { game: LoadedGame }) {
     total += t.total;
   }
   const lists = checklists.filter((c) => c.checklist.kind !== 'guide');
+  // The person's own lists, to use here; they are made and changed in the standard layout.
+  const ownLists = useOwnLists((s) => s.lists);
+  const own = useMemo(() => ownLists.map((list) => entryOfOwn(game, list)), [ownLists, game]);
+  const ownTallies = useMemo(() => {
+    const isDone = isDoneIn(found);
+    return new Map(own.map((entry) => [entry, checklistTally(entry, isDone)]));
+  }, [own, found]);
   const guideLists = checklists.filter((c) => c.checklist.kind === 'guide');
   const link = (entry: ChecklistEntry) => (
     <li key={entry.checklist.id}>
@@ -133,6 +142,20 @@ function IndexPage({ game }: { game: LoadedGame }) {
             Checklists
           </h2>
           <ul className="plain-list">{lists.map(link)}</ul>
+        </section>
+      ) : null}
+      {own.length > 0 ? (
+        <section className="section" aria-labelledby="own-lists-heading" data-testid="own-lists">
+          <h2 className="section-title" id="own-lists-heading">
+            Your own
+          </h2>
+          <ul className="plain-list">
+            {own.map((entry) => (
+              <li key={entry.checklist.id}>
+                <ChecklistLink entry={entry} tally={ownTallies.get(entry)!} />
+              </li>
+            ))}
+          </ul>
         </section>
       ) : null}
       {guideLists.length > 0 || guides.length > 0 ? (
@@ -209,7 +232,9 @@ function ChecklistLink({ entry, tally }: { entry: ChecklistEntry; tally: Checkli
 // One checklist
 
 function ChecklistView({ game, id, visible }: { game: LoadedGame; id: string; visible: boolean }) {
-  const entry = game.checklists.checklist(id);
+  // A pack's list, or one of the person's own (shown here as it is, to tick).
+  useOwnLists((s) => s.lists);
+  const entry = game.checklists.checklist(id) ?? ownEntryById(game, id);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const focus = useAtlas((s) => s.itemFocus);
   useFocusOnOpen(
@@ -227,6 +252,11 @@ function ChecklistView({ game, id, visible }: { game: LoadedGame; id: string; vi
   return (
     <>
       <BackButton game={game} />
+      {isOwnId(id) ? (
+        <p className="muted small" data-testid="own-list-classic-note">
+          Your own list. It can be changed in the standard layout.
+        </p>
+      ) : null}
       <ChecklistItems game={game} entry={entry} headingRef={headingRef} visible={visible} />
     </>
   );
@@ -273,7 +303,8 @@ function ChecklistItems({
     const isDone = isDoneIn(found);
     return entry.items.map((item) => itemState(item, isDone));
   }, [entry, found]);
-  const done = useMemo(() => states.filter((s) => s.done).length, [states]);
+  // Optional steps do not count against the list.
+  const { done, total } = useMemo(() => tallyStates(states), [states]);
   const regionCounts = useMemo(
     () => countFacets(facets, states, 'regions').sort((a, b) => names.compareRegions(a.key, b.key)),
     [facets, states, names],
@@ -355,14 +386,11 @@ function ChecklistItems({
         <p className="checklist-description">{entry.checklist.description}</p>
       ) : null}
       <p className="checklist-progress" data-testid="checklist-progress">
-        <span data-testid="checklist-done" data-done={done} data-total={entry.items.length}>
-          {numberFormat.format(done)} of {numberFormat.format(entry.items.length)} found or done
+        <span data-testid="checklist-done" data-done={done} data-total={total}>
+          {numberFormat.format(done)} of {numberFormat.format(total)} found or done
         </span>
         <span className="meter meter-small" aria-hidden="true">
-          <span
-            className="meter-fill"
-            style={{ width: `${(done / Math.max(1, entry.items.length)) * 100}%` }}
-          />
+          <span className="meter-fill" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} />
         </span>
       </p>
 

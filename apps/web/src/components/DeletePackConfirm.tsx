@@ -19,6 +19,7 @@ export function DeletePackConfirm({
 }) {
   const [info, setInfo] = useState<ImagesInfo | null>(null);
   const [withProgress, setWithProgress] = useState(false);
+  const [withLists, setWithLists] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -38,10 +39,12 @@ export function DeletePackConfirm({
       working={working}
       error={error}
       onWithProgress={setWithProgress}
+      withLists={withLists}
+      onWithLists={setWithLists}
       onConfirm={() => {
         setWorking(true);
         setError(null);
-        void deletePack(id, withProgress).then((outcome) => {
+        void deletePack(id, withProgress, withLists).then((outcome) => {
           setWorking(false);
           if (outcome.ok) onClose();
           else setError(outcome.error);
@@ -60,6 +63,8 @@ export function DeletePackConfirmView({
   working,
   error,
   onWithProgress,
+  withLists = false,
+  onWithLists,
   onConfirm,
   onCancel,
 }: {
@@ -69,10 +74,14 @@ export function DeletePackConfirmView({
   working: boolean;
   error: string | null;
   onWithProgress: (checked: boolean) => void;
+  /** The person's own lists of the game, kept beside the pack; offered when this is given. */
+  withLists?: boolean;
+  onWithLists?: (checked: boolean) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const checkboxId = useId();
+  const listsId = useId();
   return (
     <div
       className="download-confirm removal-confirm"
@@ -100,6 +109,21 @@ export function DeletePackConfirmView({
         />{' '}
         Also delete my progress for this game in this app
       </label>
+      {onWithLists ? (
+        <label htmlFor={listsId} className="checkbox-row">
+          <input
+            id={listsId}
+            type="checkbox"
+            checked={withLists}
+            disabled={working}
+            data-testid="delete-pack-lists"
+            onChange={(event) => {
+              onWithLists(event.target.checked);
+            }}
+          />{' '}
+          Also delete my lists and guides for this game
+        </label>
+      ) : null}
       {error ? (
         <p className="download-error" role="alert" data-testid="delete-error">
           {error}

@@ -36,6 +36,16 @@ describe('DeletePackConfirmView', () => {
     expect(view()).toContain('data-testid="confirm-delete-pack"');
   });
 
+  it('offers to delete the person’s own lists too, unticked', () => {
+    expect(text(view())).not.toContain('Also delete my lists and guides');
+    const offered = view({ onWithLists: noop });
+    expect(text(offered)).toContain('Also delete my lists and guides for this game');
+    expect(offered).not.toMatch(/data-testid="delete-pack-lists"[^>]*checked/);
+    expect(view({ onWithLists: noop, withLists: true })).toMatch(
+      /data-testid="delete-pack-lists" checked=""/,
+    );
+  });
+
   it('shows that it is working, and a plain error', () => {
     const working = view({ working: true });
     expect(text(working)).toContain('Stopping the download…');

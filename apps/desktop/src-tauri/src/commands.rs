@@ -30,6 +30,7 @@ use crate::{
     downloads::Downloads,
     imports::{Imports, PollResult},
     library::{FolderChoice, Library, Listing, SaveImport, SavedSource},
+    ownlists,
     packfile::{self, AppInfo, ExportOptions, Progress, Stop},
     removal::{ImagesCount, ImagesDeleted, PackDeleted},
     tiles::pyramid::Detail,
@@ -77,6 +78,11 @@ pub struct DesktopInfo {
     /// `packfile_copy_picked`), since the picker gives no path. True on
     /// Android; a desktop uses `packfile_pick`.
     copy_picked_files: bool,
+    /// A person's own lists are kept in a file beside the game's folder in
+    /// the maps folder (`own_lists_read`, `own_lists_write`). False on
+    /// Android, whose maps folder is never backed up: there the web app
+    /// keeps them in its own storage, with the found marks.
+    own_list_files: bool,
 }
 
 /// Whether this platform has what `DesktopInfo::folders` and
@@ -108,6 +114,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         progress_files: true,
         imports: DESKTOP_ONLY,
         copy_picked_files: !DESKTOP_ONLY,
+        own_list_files: DESKTOP_ONLY,
     }
 }
 
@@ -235,14 +242,20 @@ mod content {
 
 /// A file name to suggest in the save dialog: the web app's name, kept to
 /// safe characters.
+#[cfg(test)]
 fn safe_file_name(name: &str) -> String {
+    safe_file_name_or(name, PROGRESS_FILE.fallback_name)
+}
+
+/// [`safe_file_name`], with `fallback` when nothing usable is left.
+fn safe_file_name_or(name: &str, fallback: &str) -> String {
     let cleaned: String = name
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
         .collect();
     let cleaned = cleaned.trim().trim_start_matches('.');
     if cleaned.is_empty() {
-        "atlas-progress.json".to_owned()
+        fallback.to_owned()
     } else {
         cleaned.to_owned()
     }
@@ -253,6 +266,40 @@ fn safe_file_name(name: &str) -> String {
 pub struct SavedFile {
     name: String,
 }
+
+/// What a text file the person saves or opens through the system's dialogs
+/// is: the dialog's title, the file type and its extensions, and what to
+/// call it in messages.
+struct TextFileKind {
+    save_title: &'static str,
+    open_title: &'static str,
+    filter: &'static str,
+    extensions: &'static [&'static str],
+    /// "an Atlas progress file", in "… is too large to be an Atlas progress file."
+    what: &'static str,
+    /// The name to suggest when the web app's is unusable.
+    fallback_name: &'static str,
+}
+
+const PROGRESS_FILE: TextFileKind = TextFileKind {
+    save_title: "Export progress",
+    open_title: "Import progress",
+    filter: "Atlas progress",
+    extensions: &["json"],
+    what: "an Atlas progress file",
+    fallback_name: "atlas-progress.json",
+};
+
+/// A file of one of the person's own lists (see `ownLists.ts` in the schema
+/// package): JSON, named `.atlaslist`.
+const LIST_FILE: TextFileKind = TextFileKind {
+    save_title: "Export a list",
+    open_title: "Import a list",
+    filter: "Atlas list",
+    extensions: &["atlaslist", "json"],
+    what: "an Atlas list",
+    fallback_name: "atlas-list.atlaslist",
+};
 
 /// Asks where to save a progress export and writes it there. `None` when
 /// the person closes the dialog.
@@ -266,10 +313,32 @@ pub async fn save_text_file<R: Runtime>(
     suggested_name: String,
     contents: String,
 ) -> Result<Option<SavedFile>, String> {
-    let suggested = safe_file_name(&suggested_name);
-    let dialog = file_dialog(&window, "Export progress")
+    save_text(app, window, &PROGRESS_FILE, suggested_name, contents).await
+}
+
+/// Asks where to save one of the person's own lists and writes it there,
+/// as [`save_text_file`] does for progress.
+#[tauri::command]
+pub async fn list_file_save<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    suggested_name: String,
+    contents: String,
+) -> Result<Option<SavedFile>, String> {
+    save_text(app, window, &LIST_FILE, suggested_name, contents).await
+}
+
+async fn save_text<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    kind: &TextFileKind,
+    suggested_name: String,
+    contents: String,
+) -> Result<Option<SavedFile>, String> {
+    let suggested = safe_file_name_or(&suggested_name, kind.fallback_name);
+    let dialog = file_dialog(&window, kind.save_title)
         .set_file_name(suggested.clone())
-        .add_filter("Atlas progress", &["json"]);
+        .add_filter(kind.filter, kind.extensions);
     let Some(file) = chosen_file(|done| dialog.save_file(done)).await else {
         return Ok(None);
     };
@@ -318,33 +387,49 @@ pub struct OpenedFile {
     contents: String,
 }
 
+#[cfg(test)]
 fn read_text(path: &std::path::Path) -> Result<OpenedFile, String> {
+    read_text_as(path, PROGRESS_FILE.what)
+}
+
+/// [`read_text`] for a file that is `what` ("an Atlas list").
+fn read_text_as(path: &std::path::Path, what: &str) -> Result<OpenedFile, String> {
     let name = file_name(path);
     let size = fs::metadata(path)
         .map_err(|error| format!("Could not open {name}: {error}"))?
         .len();
     if size > MAX_OPEN_BYTES {
-        return Err(format!("{name} is too large to be an Atlas progress file."));
+        return Err(format!("{name} is too large to be {what}."));
     }
     let bytes = fs::read(path).map_err(|error| format!("Could not open {name}: {error}"))?;
     let contents = String::from_utf8(bytes)
-        .map_err(|_| format!("{name} is not a text file, so it is not an Atlas progress file."))?;
+        .map_err(|_| format!("{name} is not a text file, so it is not {what}."))?;
     Ok(OpenedFile { name, contents })
 }
 
 /// The text of a progress file read in order (a `content://` file on
 /// Android), with the same limits as [`read_text`].
+#[cfg(test)]
 fn read_text_stream(name: String, file: impl std::io::Read) -> Result<OpenedFile, String> {
+    read_text_stream_as(name, file, PROGRESS_FILE.what)
+}
+
+/// [`read_text_stream`] for a file that is `what`.
+fn read_text_stream_as(
+    name: String,
+    file: impl std::io::Read,
+    what: &str,
+) -> Result<OpenedFile, String> {
     use std::io::Read as _;
     let mut bytes = Vec::new();
     file.take(MAX_OPEN_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| format!("Could not open {name}: {error}"))?;
     if bytes.len() as u64 > MAX_OPEN_BYTES {
-        return Err(format!("{name} is too large to be an Atlas progress file."));
+        return Err(format!("{name} is too large to be {what}."));
     }
     let contents = String::from_utf8(bytes)
-        .map_err(|_| format!("{name} is not a text file, so it is not an Atlas progress file."))?;
+        .map_err(|_| format!("{name} is not a text file, so it is not {what}."))?;
     Ok(OpenedFile { name, contents })
 }
 
@@ -360,9 +445,27 @@ pub async fn open_text_file<R: Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
 ) -> Result<Option<OpenedFile>, String> {
-    let dialog = file_dialog(&window, "Import progress");
+    open_text(app, window, &PROGRESS_FILE).await
+}
+
+/// Asks for a file of one of the person's own lists and returns its text,
+/// as [`open_text_file`] does for progress. The web app checks it.
+#[tauri::command]
+pub async fn list_file_open<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+) -> Result<Option<OpenedFile>, String> {
+    open_text(app, window, &LIST_FILE).await
+}
+
+async fn open_text<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    kind: &'static TextFileKind,
+) -> Result<Option<OpenedFile>, String> {
+    let dialog = file_dialog(&window, kind.open_title);
     #[cfg(desktop)]
-    let dialog = dialog.add_filter("Atlas progress", &["json"]);
+    let dialog = dialog.add_filter(kind.filter, kind.extensions);
     let Some(file) = chosen_file(|done| dialog.pick_file(done)).await else {
         return Ok(None);
     };
@@ -372,14 +475,74 @@ pub async fn open_text_file<R: Runtime>(
             let name = content::name(&app, &url).unwrap_or_else(|| "The file".to_owned());
             let opened = content::open(&app, &url)
                 .map_err(|error| format!("Could not open {name}: {error}"))?;
-            read_text_stream(name, opened).map(Some)
+            read_text_stream_as(name, opened, kind.what).map(Some)
         })
         .await;
     }
     let path = file
         .into_path()
         .map_err(|error| format!("That location cannot be used: {error}"))?;
-    read_text(&path).map(Some)
+    read_text_as(&path, kind.what).map(Some)
+}
+
+// ---------------------------------------------------------------------------
+// Own lists
+
+/// A person's own lists of a game, from their file beside the game's folder
+/// in the maps folder (see `ownlists`); `None` when there is none yet. Not
+/// on Android, where the web app keeps them itself.
+#[tauri::command]
+pub async fn own_lists_read(
+    library: LibraryState<'_>,
+    game_id: String,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || ownlists::read(&maps, &game_id)).await
+}
+
+/// Writes a person's own lists of a game, whole and at once. With
+/// `keep_copy` (a time), the file as it was is kept beside it first; the
+/// name of that copy is returned.
+#[tauri::command]
+pub async fn own_lists_write(
+    library: LibraryState<'_>,
+    game_id: String,
+    contents: String,
+    keep_copy: Option<String>,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || {
+        let kept = ownlists::write(&maps, &game_id, &contents, keep_copy.as_deref())?;
+        if let Some(name) = &kept {
+            activity::info(
+                Area::Library,
+                format!("Kept a copy of the lists of {game_id} as {name} before saving them"),
+            );
+        }
+        Ok(kept)
+    })
+    .await
+}
+
+/// Deletes a person's own lists of a game, when they ask for it as they
+/// delete the game. Whether there were any.
+#[tauri::command]
+pub async fn own_lists_delete(library: LibraryState<'_>, game_id: String) -> Result<bool, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || {
+        let deleted = ownlists::delete(&maps, &game_id)?;
+        if deleted {
+            activity::info(
+                Area::Library,
+                format!("Deleted the lists of {game_id}, as asked with the game"),
+            );
+        }
+        Ok(deleted)
+    })
+    .await
 }
 
 #[cfg(feature = "downloads")]
@@ -2351,6 +2514,26 @@ mod tests {
         assert_eq!(safe_file_name("../../etc/passwd"), "etcpasswd");
         assert_eq!(safe_file_name("..."), "atlas-progress.json");
         assert_eq!(safe_file_name("a\\b:c.json"), "abc.json");
+    }
+
+    #[test]
+    fn names_and_reads_list_files_as_lists() {
+        assert_eq!(
+            safe_file_name_or("Flame build.atlaslist", LIST_FILE.fallback_name),
+            "Flame build.atlaslist"
+        );
+        assert_eq!(
+            safe_file_name_or("../..", LIST_FILE.fallback_name),
+            "atlas-list.atlaslist"
+        );
+        let binary = [0xff_u8, 0xfe, 0x00].as_slice();
+        assert_eq!(
+            read_text_stream_as("photo.jpg".into(), binary, LIST_FILE.what).unwrap_err(),
+            "photo.jpg is not a text file, so it is not an Atlas list."
+        );
+        let opened =
+            read_text_stream_as("a.atlaslist".into(), b"{}".as_slice(), LIST_FILE.what).unwrap();
+        assert_eq!(opened.contents, "{}");
     }
 
     #[test]

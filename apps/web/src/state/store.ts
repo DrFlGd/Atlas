@@ -82,6 +82,11 @@ export interface Notice {
    * says to press Z, the touch layout shows an Undo button.
    */
   undo?: boolean;
+  /**
+   * A button of the notice's own, in the standard layout: an undo that is
+   * not of progress (a step deleted in the list editor).
+   */
+  action?: { label: string; run: () => void };
 }
 
 /** Map image downloads of the current pack, in the desktop app. */

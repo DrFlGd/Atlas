@@ -298,6 +298,13 @@ export interface DesktopInfo {
    * Android app. Absent counts as false.
    */
   copyPickedFiles?: boolean;
+  /**
+   * A person's own lists are kept in a file beside the game's folder in
+   * the maps folder (`ownLists`). False in the Android app, whose maps
+   * folder is never backed up; absent (an older shell) counts as false.
+   * Without it the web app keeps them in its own storage, with progress.
+   */
+  ownListFiles?: boolean;
 }
 
 /** Where a listed pack comes from. */
@@ -730,6 +737,22 @@ export interface DesktopBridge {
     read(game: string, index: number): Promise<Uint8Array>;
     report(report: GameFilesReport): Promise<void>;
   };
+  /** A person's own lists of a game, in their file in the maps folder (see `ownListFiles`). */
+  ownLists: {
+    /** The file's text, or null when the game has none yet. */
+    read(gameId: string): Promise<string | null>;
+    /** Writes the file whole; with `keepCopy` (a time), keeps the old one beside it first. */
+    write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    /** Deletes the file; whether there was one. */
+    delete(gameId: string): Promise<boolean>;
+  };
+  /** Files of one list (`.atlaslist`), through the system's dialogs. */
+  listFiles: {
+    /** Asks where to save, then saves. Null when the dialog was closed. */
+    save(suggestedName: string, contents: string): Promise<{ name: string } | null>;
+    /** Asks for a file and reads it. Null when the dialog was closed. */
+    open(): Promise<{ name: string; contents: string } | null>;
+  };
   /** Map pack files (`.atlaspack`): one game in one file, for another device. */
   packFiles: {
     /** What can be exported of a pack, and how large each detail is. */
@@ -858,6 +881,16 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       scan: (game) => call('game_files_scan', { game }),
       read: (game, index) => call<unknown>('game_files_read', { game, index }).then(bytesOf),
       report: (report) => call('game_files_report', { report }),
+    },
+    ownLists: {
+      read: (gameId) => call('own_lists_read', { gameId }),
+      write: (gameId, contents, keepCopy) =>
+        call('own_lists_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('own_lists_delete', { gameId }),
+    },
+    listFiles: {
+      save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),
+      open: () => call('list_file_open'),
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),

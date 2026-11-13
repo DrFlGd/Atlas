@@ -19,7 +19,7 @@ export function TouchToast({ wide }: { wide: boolean }) {
       () => {
         setDismissed(notice.seq);
       },
-      notice.tone === 'error' ? 8000 : notice.undo ? 5000 : 3500,
+      notice.tone === 'error' ? 8000 : notice.undo || notice.action ? 6000 : 3500,
     );
     return () => {
       window.clearTimeout(timer);
@@ -54,6 +54,19 @@ export function TouchToast({ wide }: { wide: boolean }) {
               <UiIcon name="undo" size={18} strokeWidth={1.9} />
               Undo
               <KeyHint k="Z" />
+            </button>
+          ) : shown.action ? (
+            <button
+              type="button"
+              className="touch-toast-action"
+              data-testid="toast-action"
+              onClick={() => {
+                setDismissed(shown.seq);
+                shown.action?.run();
+              }}
+            >
+              <UiIcon name="undo" size={18} strokeWidth={1.9} />
+              {shown.action.label}
             </button>
           ) : null}
         </div>

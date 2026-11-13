@@ -21,6 +21,28 @@ describe('desktop bridge', () => {
     expect(packFolderOf('atlas-pack://localhost/../')).toBeNull();
   });
 
+  it('keeps own lists and list files through the shell commands', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    await bridge.ownLists.read('demo');
+    await bridge.ownLists.write('demo', '{}');
+    await bridge.ownLists.write('demo', '{}', '2026-11-13T10:00:00Z');
+    await bridge.ownLists.delete('demo');
+    await bridge.listFiles.save('Flame build.atlaslist', '{}');
+    await bridge.listFiles.open();
+    expect(calls).toEqual([
+      ['own_lists_read', { gameId: 'demo' }],
+      ['own_lists_write', { gameId: 'demo', contents: '{}', keepCopy: null }],
+      ['own_lists_write', { gameId: 'demo', contents: '{}', keepCopy: '2026-11-13T10:00:00Z' }],
+      ['own_lists_delete', { gameId: 'demo' }],
+      ['list_file_save', { suggestedName: 'Flame build.atlaslist', contents: '{}' }],
+      ['list_file_open', undefined],
+    ]);
+  });
+
   it('measures a picture with the shell commands of a build with downloads', async () => {
     const calls: [string, unknown][] = [];
     const bridge = createBridge((command, args) => {
