@@ -135,7 +135,57 @@ The choices are the person's own and are kept beside the map, not in the pack: i
 }
 ```
 
-`choices` is keyed by guide id (of this game, or of a game in `guidesFrom`); a target is a type (`{ "to": "type", "id": "<gameId>:cat:…" }`), a location name (`{ "to": "name", "name" }`, every location of that name or of that name with a number) or a region (`{ "to": "region", "id": "<gameId>:region:…" }`, with its sub-regions), at most 20 per page. The file is written strictly and read tolerantly: unknown fields are ignored, a choice that cannot be read is left out (and a copy of the file is kept before it is next written), and choices for pages the game does not have now are kept, so reading the pages again keeps them. It holds no personal data. A map pack file does not carry it yet.
+`choices` is keyed by guide id (of this game, or of a game in `guidesFrom`); a target is a type (`{ "to": "type", "id": "<gameId>:cat:…" }`), a location name (`{ "to": "name", "name" }`, every location of that name or of that name with a number) or a region (`{ "to": "region", "id": "<gameId>:region:…" }`, with its sub-regions), at most 20 per page. The file is written strictly and read tolerantly: unknown fields are ignored, a choice that cannot be read is left out (and a copy of the file is kept before it is next written), and choices for pages the game does not have now are kept, so reading the pages again keeps them. It holds no personal data. A map pack file carries it with the person's own things (`mine/guide-links.json`).
+
+#### Editing pages
+
+**Edit the page**, on a page of Guides (or **Edit the pages**, at the top of its contents), opens the page editor. Beside the page are the contents as the person arranges them: a page or a section is moved by dragging its handle, by Alt+Up and Alt+Down on the handle, or from its menu (**Move up**, **Move down**, **Move to section…**); **New page** and **New section** add one's own; a wiki page can be hidden from the contents and shown again; one's own pages and sections can be deleted (what a section held stays where it was). Pages are tagged **Changed by you** or **Yours**.
+
+The page is edited with text tools (headings, bold, italic, strikethrough, bulleted, numbered and nested lists, tables with their rows, columns and alignment, pictures of the game or one's own, links to a page, a location or the web, quotes, code, a line across the page, and hidden text) or, with **Markdown**, as its Markdown text; both edit the same page, with Undo and Redo. A picture's size is kept as its title (`"=28x13"` or `"=28"`, in CSS pixels; a height of at most 48 px is shown in the line of text). What has no tool of its own (reference links, raw HTML shown as text, hidden text that runs across a list) is kept and edited as Markdown. The page is edited part by part (each paragraph, heading, list, table, quote or code block): a part that is not changed keeps its text byte for byte, and in a list or a table only the item or row changed is written anew, so a page opened and saved without a change is the pack's page still. Changes are saved with **Save**; until then they are kept in the browser, and leaving asks first.
+
+**About this page** has its section, the locations it is linked to on the map (as in "Pages linked to the map"), and for a wiki page **See the wiki's version**, **Go back to the wiki's version** (after asking) and what to do **When the wiki changes this page**: keep the person's version and say so, or take the wiki's. When the pack's text of a page changed since the person changed it, the page says so, with the wiki's new version to see and **Keep my version** or **Take the wiki's version**; the person's text is never replaced without them choosing it.
+
+The changes are the person's own and kept apart from the pack, so reading the wiki again never overwrites them: in the desktop app as the file `<gameId>.my-pages.json` in the maps folder (moved with the maps folder, deleted with the game's lists when asked), in the browser and on Android in IndexedDB (the setting `ownPages:<gameId>`). A map pack file carries them, with the person's other own things, as `mine/my-pages.json`. Both hold the same JSON:
+
+```json
+{
+  "format": "atlas-own-pages",
+  "version": 1,
+  "gameId": "demo",
+  "updatedAt": "2026-11-13T10:00:00.000Z",
+  "pages": [
+    {
+      "id": "demo:guide:wiki-wolves",
+      "body": "Wolves hunt in packs…",
+      "basedOn": "The wiki's text the change was made to",
+      "updatedAt": "2026-11-13T10:00:00.000Z"
+    },
+    { "id": "demo:guide:wiki-regions", "hidden": true, "updatedAt": "2026-11-13T10:00:00.000Z" },
+    {
+      "id": "demo:guide:own.k3x9q2",
+      "title": "My notes",
+      "body": "…",
+      "updatedAt": "2026-11-13T10:00:00.000Z"
+    }
+  ],
+  "sections": [{ "id": "demo:section:own.a7m2p0", "title": "Mine" }],
+  "contents": {
+    "top": ["demo:section:wiki-basics", "demo:section:wiki-isle", "demo:section:own.a7m2p0"],
+    "sections": { "demo:section:own.a7m2p0": ["demo:guide:own.k3x9q2"] }
+  },
+  "pictures": [
+    {
+      "id": "demo:picture:own.f4c8",
+      "file": "pictures/own.f4c8.webp",
+      "shareable": true,
+      "width": 1280,
+      "height": 720
+    }
+  ]
+}
+```
+
+A wiki page's record keeps only what the person changed (`title`, `body`, with `basedOn`, the wiki's text it was changed from), `hidden`, and `whenWikiChanges` (`"take"`; absent is "keep"); a page or section of one's own has an id starting `own.`. `contents` is the person's arrangement, when they made one: pages and sections of the pack it does not name (read from a newer pack) are put after the entry before them in the pack's contents, and one's own it does not name at the end. `pictures` are the person's own photos the pages show, kept with their own photos. The file is written strictly and read tolerantly, as the other own files are.
 
 ## The demo pack
 

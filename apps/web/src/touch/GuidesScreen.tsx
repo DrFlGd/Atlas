@@ -1,5 +1,6 @@
 import type { ContentsEntry, GuideHit } from '@atlas/core';
 import type { GuideEntry, GuideSource, Section } from '@atlas/schema';
+import { parseId } from '@atlas/schema';
 import { keepOwnVersion, pageChange, revertPage } from '@atlas/core';
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
@@ -447,7 +448,10 @@ function Page({ game, guide }: { game: LoadedGame; guide: GuideEntry | undefined
     <article className="guides-page" data-testid="guides-page" data-guide={guide.id}>
       <div className="guides-page-head">
         <h1 className="guides-title">{shown.title}</h1>
-        <EditPagesButton label="Edit the page" guideId={guide.id} />
+        {/* A page of another game read with this one is changed in that game. */}
+        {parseId(guide.id)?.gameId === game.pack.manifest.gameId ? (
+          <EditPagesButton label="Edit the page" guideId={guide.id} />
+        ) : null}
       </div>
       {change.wikiChanged && pack ? (
         <WikiChanged

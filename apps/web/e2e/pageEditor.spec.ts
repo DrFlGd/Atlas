@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { devices, type Page } from '@playwright/test';
 import { collectErrors, storedSetting } from './helpers';
 import { expect, test } from './layout';
 
@@ -308,4 +308,32 @@ test('says when the wiki changed a page the person changed, and keeps their text
   const wiki = await packBody(page, 'demo:guide:wiki-wolves');
   await expect.poll(async () => (await stored(page))?.pages[0]?.basedOn).toBe(wiki);
   expect((await stored(page))!.pages[0]!.body).toBe('My own notes on wolves.');
+});
+
+test.describe('on a phone', () => {
+  const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7'];
+  test.use({ ...pixel });
+
+  test('edits a page with a finger: the text, then “About this page” under it', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await openGuides(page);
+    await openPage(page, 'Basics', 'Getting around');
+    await page.getByTestId('edit-page').tap();
+    await expect(page.getByTestId('page-editor')).toHaveClass(/pe-compact/);
+    await expect(page.getByTestId('about-page')).toBeVisible();
+    const field = page.getByTestId('paragraph-field').first();
+    await field.tap();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.type(' Bring a lamp.');
+    // Enter makes a new paragraph, as a phone's keyboard sends it.
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('A second thought.');
+    await expect(page.getByTestId('paragraph-field').nth(1)).toHaveText('A second thought.');
+    await page.getByTestId('save-page').tap();
+    await expect(page.getByTestId('guides-page')).toContainText('Bring a lamp.');
+    await expect(page.getByTestId('guides-page')).toContainText('A second thought.');
+    expect(errors).toEqual([]);
+  });
 });
