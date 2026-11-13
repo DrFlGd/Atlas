@@ -5,7 +5,7 @@ import { create } from 'zustand';
 import { useOwnLists } from '../state/ownLists';
 import { useOwnLocations } from '../state/ownLocations';
 import { useOwnPictureUrl } from '../state/ownPictures';
-import type { LoadedGame } from '../state/store';
+import { useAtlas, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
 
 /**
@@ -76,19 +76,24 @@ export function PhotoTile({
 }) {
   const { picture, url } = usePhotoSource(game, photo.picture);
   const [revealed, setRevealed] = useState(false);
-  const [failed, setFailed] = useState(false);
+  // A photo downloaded later is tried again when new images are saved.
+  const revision = useAtlas((s) => s.tileRevision);
+  const [failedAt, setFailedAt] = useState<number | null>(null);
+  const failed = failedAt === revision;
   const hidden = photo.spoiler === true && !revealed;
   const description = picture?.caption ?? (name ? `Photo of ${name}` : 'Photo');
   const ratio =
     picture?.width && picture.height ? `${picture.width} / ${picture.height}` : undefined;
 
   if (url === null) {
-    return <div className={`photo photo-${size} photo-loading`} style={{ aspectRatio: ratio }} />;
+    return (
+      <div className={`photo photo-size-${size} photo-loading`} style={{ aspectRatio: ratio }} />
+    );
   }
   if (url === 'missing' || failed) {
     return (
       <div
-        className={`photo photo-${size} photo-missing`}
+        className={`photo photo-size-${size} photo-missing`}
         style={{ aspectRatio: ratio }}
         data-testid="photo-missing"
       >
@@ -99,7 +104,7 @@ export function PhotoTile({
   }
   return (
     <figure
-      className={`photo photo-${size}`}
+      className={`photo photo-size-${size}`}
       data-testid="photo"
       data-spoiler={photo.spoiler ? (hidden ? 'hidden' : 'shown') : undefined}
     >
@@ -114,6 +119,7 @@ export function PhotoTile({
         }}
       >
         <img
+          key={failedAt === null ? 'shown' : revision}
           src={url}
           alt={hidden ? '' : description}
           loading="lazy"
@@ -122,7 +128,10 @@ export function PhotoTile({
           width={picture?.width}
           height={picture?.height}
           onError={() => {
-            setFailed(true);
+            setFailedAt(revision);
+          }}
+          onLoad={() => {
+            if (failedAt !== null) setFailedAt(null);
           }}
         />
         {hidden ? (

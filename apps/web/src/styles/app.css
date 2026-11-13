@@ -1613,6 +1613,14 @@ label.tree-row:hover,
   line-height: 1.45;
 }
 
+.photo-download p {
+  margin: 0;
+}
+
+.photo-download > p {
+  margin-top: 8px;
+}
+
 .download-body .download-error {
   margin: 0;
 }
@@ -2719,13 +2727,13 @@ label.tree-row:hover,
   max-width: 420px;
 }
 
-.photo-cover {
+.photo-size-cover {
   width: 100%;
   aspect-ratio: 16 / 10;
   border-radius: 0;
 }
 
-.photo-card {
+.photo-size-card {
   width: 120px;
   aspect-ratio: 16 / 10;
 }

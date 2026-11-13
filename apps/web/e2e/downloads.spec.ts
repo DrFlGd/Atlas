@@ -3,7 +3,7 @@ import { deflateSync } from 'node:zlib';
 import type { Page } from '@playwright/test';
 import { expect, test } from './layout';
 import { downloadsEnabled } from '../tooling/buildFlags.ts';
-import { collectErrors } from './helpers';
+import { collectErrors, selectByName } from './helpers';
 
 /**
  * The "Download map images" interface, against a stand-in for the desktop
@@ -21,6 +21,8 @@ const DOWNLOADS_BUILD = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
 
 const PACK_URL = 'http://atlas-pack.localhost/remote/';
 const SHOTS = 'test-results/downloads';
+/** Where the photo screenshots go: ATLAS_PHOTO_SHOTS, or beside the other test results. */
+const PHOTO_SHOTS = process.env.ATLAS_PHOTO_SHOTS ?? 'test-results/photos';
 
 function remotePack(): Record<string, unknown> {
   const id = (kind: string, local: string) => `remote:${kind}:${local}`;
@@ -82,6 +84,16 @@ function remotePack(): Record<string, unknown> {
       entityIds: [],
       guideId: null,
       since: '1.0.0',
+      // The first two have a photo listed to be fetched later.
+      ...(i < 2 ? { photos: [{ picture: id('picture', `beacon-${i + 1}`) }] } : {}),
+    })),
+    'pictures.json': [1, 2].map((n) => ({
+      id: id('picture', `beacon-${n}`),
+      file: `pictures/beacon-${n}.jpg`,
+      caption: `Beacon ${n} at noon`,
+      credit: 'Example photo site',
+      remote: `https://photos.example.com/beacon-${n}.jpg`,
+      shareable: false,
     })),
     ...Object.fromEntries(
       ['regions', 'entities', 'checklists', 'checklistItems', 'guides', 'links', 'presets'].map(
@@ -166,6 +178,8 @@ function installFakeShell(downloads: boolean) {
     calls: [] as string[],
     /** The map page window: its saved images make `revision` go up. */
     view: { open: false, revision: 0 },
+    /** The "Download location photos" job: one photo a poll. */
+    photos: null as Job | null,
   };
   (window as unknown as { __mockShell: typeof shell }).__mockShell = shell;
   // Set by a test before this script: the pack is also listed as one added from a web page.
@@ -279,6 +293,58 @@ function installFakeShell(downloads: boolean) {
       case 'tiles_cancel':
         if (shell.job) shell.job.state = 'cancelled';
         return Promise.resolve(null);
+      case 'photos_plan': {
+        const job = shell.photos;
+        const saved = job ? job.done : 0;
+        return Promise.resolve({
+          packId: 'remote',
+          total: 2,
+          remaining: 2 - saved,
+          hosts: ['photos.example.com'],
+          job: job ? structuredClone(job) : null,
+          busyWith: null,
+        });
+      }
+      case 'photos_start':
+        shell.photos = {
+          packId: 'remote#photos',
+          detail: 'full',
+          state: 'running',
+          reason: null,
+          maps: [],
+          done: 0,
+          total: 2,
+          saved: 0,
+          missing: 0,
+          notAsked: 0,
+          failed: 0,
+          bytes: 0,
+          tilesPerSecond: 0,
+          bytesPerSecond: 0,
+          secondsLeft: null,
+          statusRevision: 0,
+        };
+        return Promise.resolve(structuredClone(shell.photos));
+      case 'photos_snapshot': {
+        const job = shell.photos;
+        if (job?.state === 'running' && !shell.hold) {
+          job.done++;
+          job.saved++;
+          job.bytes += 84_000;
+          job.statusRevision++;
+          if (job.done === job.total) job.state = 'done';
+        }
+        return Promise.resolve(job ? structuredClone(job) : null);
+      }
+      case 'photos_pause':
+      case 'photos_resume':
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        if (!shell.photos) return Promise.reject('The photos are not downloading.');
+        shell.photos.state = command === 'photos_pause' ? 'paused' : 'running';
+        return Promise.resolve(structuredClone(shell.photos));
+      case 'photos_cancel':
+        if (shell.photos) shell.photos.state = 'cancelled';
+        return Promise.resolve(null);
       case 'desktop_info':
         return Promise.resolve({ name: 'Atlas', version: '0.0.0', platform: 'test', downloads });
       // The pack comes from the index, as a bundled pack would; no other folders.
@@ -357,6 +423,7 @@ async function servePack(
   page: Page,
   levelsReady: () => number | null,
   savedTile: (name: string) => boolean = () => false,
+  photosThere: () => boolean = () => false,
 ) {
   const files = remotePack();
   const png = tilePng();
@@ -386,6 +453,10 @@ async function servePack(
       });
     }
     if (name.startsWith('tiles/') && (top !== null || savedTile(name))) {
+      return route.fulfill({ headers: { ...cors, 'content-type': 'image/png' }, body: png });
+    }
+    // A downloaded photo, as the shell stores it (any image does here).
+    if (name.startsWith('pictures/') && photosThere()) {
       return route.fulfill({ headers: { ...cors, 'content-type': 'image/png' }, body: png });
     }
     const body = files[name];
@@ -418,7 +489,9 @@ async function expectNoDownloads(page: Page) {
   await expect(page.getByTestId('marker-count')).toHaveText('6');
   const calls = await shellCalls(page);
   expect(calls).toContain('desktop_info');
-  expect(calls.filter((call) => /^(tiles_|download_settings_|view_)/.test(call))).toEqual([]);
+  expect(calls.filter((call) => /^(tiles_|download_settings_|view_|photos_)/.test(call))).toEqual(
+    [],
+  );
 }
 
 test('downloads map images from the notice, with pause, errors and progress', async ({ page }) => {
@@ -598,6 +671,84 @@ test('shows map images saved while browsing a map page without a restart', async
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
 });
 
+test.describe('location photos', () => {
+  test.use({ deviceScaleFactor: 2 });
+
+  test('downloads the location photos a pack lists, from the Maps dialog', async ({ page }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads photos');
+    await mkdir(PHOTO_SHOTS, { recursive: true });
+    const errors = collectErrors(page);
+    let photosThere = false;
+    await page.addInitScript(() => {
+      (window as unknown as { __listRemote: boolean }).__listRemote = true;
+    });
+    await page.addInitScript(installFakeShell, true);
+    await servePack(
+      page,
+      () => null,
+      () => false,
+      () => photosThere,
+    );
+    await page.goto('./');
+    await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
+
+    // Before: the location card says its photo is not downloaded, and nothing was asked for.
+    await selectByName(page, 'Beacon 1');
+    const missing = page.getByTestId('photo-missing');
+    await expect(missing).toHaveText('Photo not downloaded');
+    expect((await shellCalls(page)).filter((call) => call.startsWith('photos_'))).toEqual([]);
+
+    // The Maps dialog offers it per game; nothing is fetched until asked.
+    await page.getByTestId('maps-button').click();
+    const row = page.locator('[data-testid="pack-row"][data-pack="remote"]');
+    const photos = row.getByTestId('photo-download');
+    await photos.getByText('Location photos…').click();
+    await expect(photos.getByTestId('photo-download-plan')).toHaveText(
+      '2 photos listed, 2 not on this device yet.',
+    );
+    await expect(photos).toContainText('From photos.example.com.');
+    const start = photos.getByTestId('download-photos');
+    await expect(start).toHaveText('Download location photos');
+    await page.screenshot({ path: `${PHOTO_SHOTS}/7-download-photos.png` });
+    expect(await shellCalls(page)).not.toContain('photos_start');
+
+    // Paused and resumed, then done.
+    await page.evaluate(() => {
+      (window as unknown as { __mockShell: { hold: boolean } }).__mockShell.hold = true;
+    });
+    photosThere = true;
+    await start.click();
+    await expect(photos.getByTestId('photo-job')).toHaveAttribute('data-state', 'running');
+    await photos.getByTestId('photos-pause').click();
+    await expect(photos.getByTestId('photo-job')).toHaveAttribute('data-state', 'paused');
+    await expect(photos).toContainText('Paused. Nothing is downloaded until you resume.');
+    await page.evaluate(() => {
+      (window as unknown as { __mockShell: { hold: boolean } }).__mockShell.hold = false;
+    });
+    await photos.getByTestId('photos-resume').click();
+    await expect(photos.getByTestId('photo-job')).toHaveAttribute('data-state', 'done');
+    await expect(photos.getByTestId('photo-download-summary')).toContainText('2 photos downloaded');
+    await expect(photos.getByTestId('photo-download-plan')).toHaveText(
+      '2 photos listed, all on this device.',
+    );
+    await expect(start).toHaveCount(0);
+    await page.screenshot({ path: `${PHOTO_SHOTS}/8-download-photos-done.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `${PHOTO_SHOTS}/8-download-photos-done-narrow.png` });
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    // The location card shows the photo now, without a restart.
+    await page.keyboard.press('Escape');
+    await expect(missing).toHaveCount(0);
+    const img = page.getByTestId('photo').locator('img');
+    await expect(img).toHaveAttribute('alt', 'Beacon 1 at noon');
+    await expect
+      .poll(() => img.evaluate((element: HTMLImageElement) => element.naturalWidth))
+      .toBeGreaterThan(0);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+});
+
 test('the plain web app offers no download', async ({ page }) => {
   const errors = collectErrors(page);
   await servePack(page, () => null);
@@ -622,10 +773,17 @@ test('a shell without downloads offers none', async ({ page }) => {
 test('a build without downloads offers none, even in a shell that has them', async ({ page }) => {
   test.skip(DOWNLOADS_BUILD, 'checks a build without ATLAS_ENABLE_DOWNLOADS');
   const errors = collectErrors(page);
+  await page.addInitScript(() => {
+    (window as unknown as { __listRemote: boolean }).__listRemote = true;
+  });
   await page.addInitScript(installFakeShell, true);
   await servePack(page, () => null);
   await page.goto('./');
   await expectNoDownloads(page);
+  // No "Download location photos" either.
+  await page.getByTestId('maps-button').click();
+  await expect(page.locator('[data-testid="pack-row"][data-pack="remote"]')).toBeVisible();
+  await expect(page.getByTestId('photo-download')).toHaveCount(0);
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
 });
 

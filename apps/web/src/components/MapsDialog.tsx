@@ -22,6 +22,7 @@ import { formatBytes } from './downloadFormat';
 import { UiIcon } from './icons';
 import { MapPageActions } from './MapPageActions';
 import { PackDetailsView } from './PackFacts';
+import { PhotoDownload } from './PhotoDownload';
 
 /**
  * "Maps", in the desktop app: where maps are kept, the packs it shows and
@@ -623,6 +624,7 @@ function PackRow({
         )}
         {details.panel}
         {__ATLAS_DOWNLOADS__ && mapPages && pack.imported ? <MapPageActions pack={pack} /> : null}
+        {__ATLAS_DOWNLOADS__ && mapPages ? <PhotoDownload pack={pack} /> : null}
       </div>
     </li>
   );

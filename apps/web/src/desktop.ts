@@ -99,6 +99,21 @@ export interface DownloadSnapshot {
   statusRevision: number;
 }
 
+/** What "Download location photos" offers for a pack. */
+export interface PhotoPlan {
+  packId: string;
+  /** Pictures the pack lists to be fetched later. */
+  total: number;
+  /** Of those, not on this device yet. */
+  remaining: number;
+  /** The servers they come from. */
+  hosts: string[];
+  /** The current or last photo job of this pack in this session. */
+  job: DownloadSnapshot | null;
+  /** The title of another download that runs now; a new one waits for it. */
+  busyWith: string | null;
+}
+
 export interface DownloadPlan {
   packId: string;
   options: DetailOption[];
@@ -750,6 +765,13 @@ export interface DesktopBridge {
      * whatever its status. Rejects when the site could not be reached.
      */
     fetchPage(url: string): Promise<ShellFetchedPage>;
+    /** "Download location photos": the pictures a pack lists to be fetched later. */
+    photosPlan(packId: string): Promise<PhotoPlan>;
+    photosStart(packId: string): Promise<DownloadSnapshot>;
+    photosPause(packId: string): Promise<DownloadSnapshot>;
+    photosResume(packId: string): Promise<DownloadSnapshot>;
+    photosCancel(packId: string): Promise<void>;
+    photosSnapshot(packId: string): Promise<DownloadSnapshot | null>;
   };
   library: {
     list(): Promise<Listing>;
@@ -951,6 +973,12 @@ function noDownloads(): DesktopBridge['tiles'] {
     pictureTiles: missing,
     cancelPicture: missing,
     fetchPage: missing,
+    photosPlan: missing,
+    photosStart: missing,
+    photosPause: missing,
+    photosResume: missing,
+    photosCancel: missing,
+    photosSnapshot: missing,
   };
 }
 
@@ -979,6 +1007,12 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           pictureTiles: (request) => call('picture_tiles', { request }),
           cancelPicture: () => call('picture_cancel'),
           fetchPage: (url) => call('import_fetch', { url }),
+          photosPlan: (packId) => call('photos_plan', { packId }),
+          photosStart: (packId) => call('photos_start', { packId }),
+          photosPause: (packId) => call('photos_pause', { packId }),
+          photosResume: (packId) => call('photos_resume', { packId }),
+          photosCancel: (packId) => call('photos_cancel', { packId }),
+          photosSnapshot: (packId) => call('photos_snapshot', { packId }),
         }
       : noDownloads(),
     library: {
