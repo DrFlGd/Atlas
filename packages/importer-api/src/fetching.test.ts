@@ -8,6 +8,7 @@ import {
   checkOutcome,
   fetchAddresses,
   isFetchedPages,
+  readsInWindow,
   refusalFor,
   refusalOf,
   robotsAllows,
@@ -91,6 +92,33 @@ describe('importers that read by fetching', () => {
     expect(asImporter(fetching).fetch).toBeDefined();
     const { fetch: _, ...neither } = fetching;
     expect(() => asImporter(neither)).toThrow(/pageReader or fetch/);
+  });
+
+  it('may have some pages opened in a window instead, with a reader for them', () => {
+    const inWindow = (url: string) => url.startsWith('https://wiki.example.org/checked/');
+    const mixed = {
+      ...fetching,
+      fetch: { ...fetching.fetch, inWindow },
+      pageReader: '() => null',
+    };
+    const checked = asImporter(mixed);
+    expect(readsInWindow(checked.fetch, 'https://wiki.example.org/checked/Page')).toBe(true);
+    expect(readsInWindow(checked.fetch, 'https://wiki.example.org/open/Page')).toBe(false);
+    // An importer that fetches every page, or none, opens nothing in a window this way.
+    expect(readsInWindow(fetching.fetch, 'https://wiki.example.org/checked/Page')).toBe(false);
+    expect(readsInWindow(undefined, 'https://wiki.example.org/checked/Page')).toBe(false);
+    // One that throws is taken as fetching.
+    const throwing = {
+      addresses: fetching.fetch.addresses,
+      inWindow: () => {
+        throw new Error('broken');
+      },
+    };
+    expect(readsInWindow(throwing, 'https://wiki.example.org/x')).toBe(false);
+    // Without a reader there is nothing to read the window with.
+    const { pageReader: _, ...noReader } = mixed;
+    expect(() => asImporter(noReader)).toThrow(/pageReader for the pages/);
+    expect(() => asImporter({ ...mixed, fetch: { ...fetching.fetch, inWindow: 'yes' } })).toThrow();
   });
 
   it('name at most a few addresses, all on the site of the page', () => {

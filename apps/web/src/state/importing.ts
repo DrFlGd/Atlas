@@ -18,6 +18,7 @@ import {
   isAllowedPageUrl,
   isPictureRequest,
   pageKey,
+  readsInWindow,
   pageMeasureStep,
   pageTilesFit,
   refusalFor,
@@ -86,7 +87,7 @@ import {
   type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
-import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
+import { MAX_FETCHED_RUN_PAGES, MAX_RUN_ADDRESSES, RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
@@ -391,7 +392,7 @@ async function readPage(
   /** The importer's page measuring step, when the map picture is to be measured from the page. */
   measure: string | null = null,
 ): Promise<PageRead> {
-  const fetcher = fetcherFor(importer, reading);
+  const fetcher = fetcherFor(importer, reading, url);
   if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
   const { pageReader, waitSeconds } = readerFor(importer, reading);
   const startedAt = Date.now();
@@ -452,10 +453,11 @@ async function readPage(
 // Reading a page by fetching it (see `fetching.ts` in the importer contract)
 
 /** How an importer has a page of this reading fetched, if it reads that way. */
-function fetcherFor(importer: AtlasImporter, reading: Reading): PageFetch | null {
-  if (reading === 'game') return importer.games?.fetch ?? null;
+function fetcherFor(importer: AtlasImporter, reading: Reading, url: string): PageFetch | null {
   if (reading === 'catalogue') return null;
-  return importer.fetch ?? null;
+  const fetch = (reading === 'game' ? importer.games?.fetch : importer.fetch) ?? null;
+  // A page its site shows only to a person is opened in a window, where the person answers.
+  return fetch && !readsInWindow(fetch, url) ? fetch : null;
 }
 
 /** When the app last asked a site for a page. */
@@ -1426,6 +1428,8 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
     listed: result.pages,
     recorded: recordedPages(packId),
     queues: importer.fetch !== undefined,
+    // Its pages open in a window, when the importer says so of the game's own address.
+    inWindow: readsInWindow(importer.fetch, url),
   });
   setPhase({ kind: 'choose', choice: newChoice('add', [game], openedIn(read.run)) });
 }
@@ -1888,7 +1892,9 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
   const games = await readQueue(importerId);
   const game = games.find((g) => g.key === key);
   if (!importer || !game || game.pages.length === 0) return;
-  const now = game.pages.slice(0, MAX_FETCHED_RUN_PAGES);
+  // Pages opened in a window come as many as one go opens; fetched pages all at once.
+  const windowed = game.pages.some((page) => readsInWindow(importer.fetch, page.url));
+  const now = game.pages.slice(0, windowed ? MAX_RUN_ADDRESSES : MAX_FETCHED_RUN_PAGES);
   await writeQueue(importerId, [
     ...games.filter((g) => g.key !== key),
     { ...game, pages: game.pages.slice(now.length) },

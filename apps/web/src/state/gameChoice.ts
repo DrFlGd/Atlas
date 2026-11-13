@@ -53,6 +53,12 @@ export interface ChoiceGame {
    * than one go opens, and those left are kept to continue later.
    */
   queues: boolean;
+  /**
+   * Its pages are opened in a window though the importer fetches others
+   * (their site shows them only to a person): a go reads as many as the
+   * app opens at a time, and keeps the rest for later.
+   */
+  inWindow?: boolean;
 }
 
 export interface Choice {
@@ -107,6 +113,8 @@ export function choiceGame(options: {
   tick?: boolean;
   /** See {@link ChoiceGame.queues}. */
   queues?: boolean;
+  /** See {@link ChoiceGame.inWindow}. */
+  inWindow?: boolean;
 }): ChoiceGame {
   const queues = options.queues ?? false;
   // A game read page by page (a wiki, say) has many pages: the person picks.
@@ -152,6 +160,7 @@ export function choiceGame(options: {
     note: options.note ?? null,
     pages: mapsFirst(pages),
     queues,
+    ...(options.inWindow ? { inWindow: true } : {}),
   };
 }
 
@@ -247,6 +256,8 @@ export interface ChosenPage {
   group?: string;
   /** Its game keeps pages beyond one go for later. */
   queues: boolean;
+  /** It is opened in a window (see {@link ChoiceGame.inWindow}). */
+  inWindow?: boolean;
 }
 
 /** The ticked pages in the order they are opened: game by game, maps first. */
@@ -271,6 +282,7 @@ export function chosenToRead(choice: Choice): ChosenPage[] {
         title: page.title,
         ...(page.group ? { group: page.group } : {}),
         queues: game.queues,
+        ...(game.inWindow ? { inWindow: true } : {}),
       })),
   );
 }
@@ -289,12 +301,13 @@ export function splitChosen(choice: Choice): { now: ChosenPage[]; later: ChosenP
 /**
  * How many of the ticked pages one go reads: pages the app fetches itself
  * (their games keep the rest for later) have a go of their own size, since
- * no window is opened for them; any other choice has what is left of the
- * cap of pages opened.
+ * no window is opened for them; any other choice, also one with pages of
+ * such a game that are opened in a window, has what is left of the cap of
+ * pages opened.
  */
 export function goRoom(choice: Choice): number {
   const chosen = chosenToRead(choice);
-  return chosen.length > 0 && chosen.every((page) => page.queues)
+  return chosen.length > 0 && chosen.every((page) => page.queues && !page.inWindow)
     ? MAX_FETCHED_RUN_PAGES
     : pagesLeft(choice.opened);
 }

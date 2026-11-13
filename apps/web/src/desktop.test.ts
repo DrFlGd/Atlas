@@ -92,10 +92,25 @@ describe('desktop bridge', () => {
       ['own_game_cancel', undefined],
       ['own_game_rename', { gameId: 'cloud-isles', title: 'Cloud Isles II' }],
       ['own_game_delete_map', { gameId: 'cloud-isles', mapId: 'cloud-isles:map:caves' }],
-      ['packfile_export', { id: 'cloud-isles', detail: 'full', progress: null, includeMine: true }],
       [
         'packfile_export',
-        { id: 'cloud-isles', detail: 'full', progress: null, includeMine: false },
+        {
+          id: 'cloud-isles',
+          detail: 'full',
+          progress: null,
+          includeMine: true,
+          includePhotos: false,
+        },
+      ],
+      [
+        'packfile_export',
+        {
+          id: 'cloud-isles',
+          detail: 'full',
+          progress: null,
+          includeMine: false,
+          includePhotos: false,
+        },
       ],
     ]);
   });
