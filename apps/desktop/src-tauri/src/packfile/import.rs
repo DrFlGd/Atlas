@@ -6,8 +6,9 @@
 //! path or drive letter, no hidden segment such as `.atlas`, no `\`), and
 //! one of the pack's JSON files, a layer's status file, or a map image at
 //! a place one of the pack's own layer templates gives (or its "not on the
-//! server" marker); no symbolic links; sizes within limits; the manifest's
-//! pack id the header's. Then there must be room on the disk for all of it.
+//! server" marker), or one of the person's own files (`mine/`, checked to
+//! be this game's and kept apart, never written into the pack's folder); no
+//! symbolic links; sizes within limits; the manifest's pack id the header's. Then there must be room on the disk for all of it.
 //! The pack is unpacked into a hidden folder in the maps folder and moved
 //! into place only when complete, so a failure or a cancel leaves nothing
 //! half written.
@@ -23,12 +24,13 @@ use serde_json::Value;
 use zip::ZipArchive;
 
 use super::{
-    parse_header, parse_layers, space, Header, ImportedRecord, LayerInfo, Progress, Stop, TileKind,
-    HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES,
+    parse_header, parse_layers, space, Header, ImportedRecord, LayerInfo, Mine, Progress, Stop,
+    TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES, MINE_ENTRIES,
 };
 use crate::{
     library::{packs_in, PackLock, MAX_PACK_BYTES, MAX_PACK_FILE_BYTES, META_DIR, PACK_FILES},
     manifest::{now_rfc3339, read_head, MANIFEST_FILE, MAX_MANIFEST_BYTES},
+    ownlists::MAX_OWN_LISTS_BYTES,
     packs::is_valid_pack_id,
     removal::{self, is_real_dir, FileOps},
     tiles::{
@@ -61,6 +63,10 @@ pub struct Imported {
     /// A pack with this id was there and was replaced (in the same folder).
     pub replaced: bool,
     pub header: Header,
+    /// The person's own lists, locations and types the file carried, checked
+    /// to be this game's. They are not written anywhere: the caller adds
+    /// them to what the person has.
+    pub mine: Mine,
 }
 
 /// Reads a map pack file's header, its first entry, without reading the
@@ -191,7 +197,7 @@ pub(crate) fn import_with(
     let order = |kind: &Kind| match kind {
         Kind::Image | Kind::Marker => 0,
         Kind::Status(_) => 1,
-        Kind::PackFile => 2,
+        Kind::PackFile | Kind::Mine(_) => 2,
     };
     let mut entries: Vec<&Checked> = checked.entries.iter().collect();
     entries.sort_by_key(|entry| (order(&entry.kind), entry.name == MANIFEST_FILE));
@@ -262,6 +268,7 @@ pub(crate) fn import_with(
         folder,
         replaced,
         header,
+        mine: checked.mine,
     })
 }
 
@@ -292,6 +299,8 @@ fn write_new(target: &Path, data: &mut dyn Read, size: u64) -> io::Result<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     PackFile,
+    /// One of a person's own files (`mine/`), by its place in [`MINE_ENTRIES`].
+    Mine(usize),
     Status(usize),
     Image,
     Marker,
@@ -309,6 +318,8 @@ struct Checked {
 struct CheckedFile {
     entries: Vec<Checked>,
     bytes: u64,
+    /// A person's own files, read in full and kept apart from the pack.
+    mine: Mine,
 }
 
 fn refuse(message: impl Into<String>) -> Stop {
@@ -404,6 +415,7 @@ fn check_entries<R: Read + io::Seek>(
         .collect::<Result<_, _>>()?;
 
     let mut entries = Vec::new();
+    let mut mine = Mine::default();
     let mut seen: HashSet<String> = HashSet::new();
     let mut json_bytes: u64 = 0;
     let mut bytes: u64 = 0;
@@ -454,7 +466,23 @@ fn check_entries<R: Read + io::Seek>(
                 crate::activity::clean(&name)
             )));
         }
+        if let Kind::Mine(which) = kind {
+            let (_, own) = MINE_ENTRIES[which];
+            let shown = crate::activity::clean(&name);
+            let data = read_entry(archive, index, &name, MAX_OWN_LISTS_BYTES as u64)?;
+            let text = String::from_utf8(data)
+                .map_err(|_| refuse(format!("{shown} in this map pack file is not text.")))?;
+            own.check(&header.pack_id, &text).map_err(|_| {
+                refuse(format!(
+                    "{shown} in this map pack file is not this game's {}.",
+                    own.what
+                ))
+            })?;
+            *mine.slot(own) = Some(text);
+            continue;
+        }
         let too_large = match kind {
+            Kind::Mine(_) => unreachable!("taken above"),
             Kind::PackFile => size > MAX_PACK_FILE_BYTES as u64,
             Kind::Status(_) => size > MAX_STATUS_BYTES,
             Kind::Image => size > MAX_IMAGE_BYTES,
@@ -492,7 +520,7 @@ fn check_entries<R: Read + io::Seek>(
                 }
                 Some(data)
             }
-            Kind::Image | Kind::Marker => None,
+            Kind::Image | Kind::Marker | Kind::Mine(_) => None,
         };
         bytes = bytes.saturating_add(size);
         entries.push(Checked {
@@ -503,7 +531,11 @@ fn check_entries<R: Read + io::Seek>(
             json,
         });
     }
-    Ok(CheckedFile { entries, bytes })
+    Ok(CheckedFile {
+        entries,
+        bytes,
+        mine,
+    })
 }
 
 /// What an entry is, or none when it has no place in a map pack.
@@ -515,6 +547,9 @@ fn classify(name: &str, layers: &[LayerInfo], templates: &[Template]) -> Option<
     }
     if PACK_FILES.contains(&name) {
         return Some(Kind::PackFile);
+    }
+    if let Some(which) = MINE_ENTRIES.iter().position(|(entry, _)| *entry == name) {
+        return Some(Kind::Mine(which));
     }
     if let Some(file) = name.strip_prefix(&format!("{STATUS_DIR}/")) {
         return layers

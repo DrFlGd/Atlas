@@ -1255,9 +1255,11 @@ fn progress_file_beside(pack_file: &std::path::Path) -> PathBuf {
 
 /// Asks where to save a map pack file of a pack at `detail` and writes it.
 /// With `progress` (the text of a progress export, as "Export all
-/// profiles" writes it), that is saved beside it too. `None` when the
-/// person closes the dialog. `packfile_progress` reports how far it is and
-/// `packfile_cancel` stops it.
+/// profiles" writes it), that is saved beside it too. With `include_mine`,
+/// the person's own lists, locations and types of the game go in the file
+/// (the web app saves them first). `None` when the person closes the
+/// dialog. `packfile_progress` reports how far it is and `packfile_cancel`
+/// stops it.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn packfile_export<R: Runtime>(
@@ -1269,6 +1271,7 @@ pub async fn packfile_export<R: Runtime>(
     id: String,
     detail: Detail,
     progress: Option<String>,
+    include_mine: Option<bool>,
 ) -> Result<Option<PackFileExported>, String> {
     desktop_only()?;
     listed(&library, &id)?;
@@ -1312,13 +1315,14 @@ pub async fn packfile_export<R: Runtime>(
                 destination.display()
             ),
         );
-        let result = packfile::shell::export_pack(
+        let result = packfile::shell::export_pack_with_mine(
             &library,
             &downloads,
             &id,
             &app_info,
             detail,
             &destination,
+            include_mine.unwrap_or(false),
             &mut |done| turn.update(done),
             &|| turn.cancelled(),
         );
@@ -1680,6 +1684,10 @@ pub struct PackFileImported {
     replaced: bool,
     header: packfile::Header,
     listing: Listing,
+    /// The person's own lists and own locations, types and areas the file
+    /// carried (the text of their files), for the web app to add to theirs.
+    own_lists: Option<String>,
+    own_locations: Option<String>,
 }
 
 /// Imports the map pack file at `path` (a `.atlaspack` file) into the maps
@@ -1784,6 +1792,8 @@ async fn import_pack_file(
             replaced: imported.replaced,
             header: imported.header,
             listing: library.scan(),
+            own_lists: imported.mine.lists,
+            own_locations: imported.mine.locations,
         })
     })
     .await

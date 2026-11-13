@@ -24,8 +24,17 @@
 //! (`layers.json` is unchanged, so its remote source is kept).
 //!
 //! Never in it: the app's lock and download records (`.atlas/`), the page
-//! data kept by "Add a map" (`import/`), and anything personal: found marks
-//! and other progress stay in the browser storage and its own export file.
+//! data kept by "Add a map" (`import/`), and found marks and other
+//! progress, which stay in the browser storage and its own export file.
+//!
+//! Only when the person ticks "Include my lists, locations and types": their
+//! own lists and their own locations, types and areas of the game (the files
+//! beside the game's folder, see `ownlists.rs`), as `mine/my-lists.json` and
+//! `mine/my-locations.json` ([`Mine`]). Such a file is version 2 of the
+//! format, so an older app says it needs a newer one instead of refusing an
+//! entry it does not know; a file without them stays version 1. An import
+//! never writes them into the pack's folder: it hands them to the web app,
+//! which adds them to what the person has (see `Imported::mine`).
 //!
 //! Images are stored as they are (they are compressed already), JSON is
 //! deflated.
@@ -49,6 +58,7 @@ use serde_json::Value;
 use crate::{
     library::{read_import_sources, META_DIR, PACK_FILES},
     manifest::{rfc3339, MANIFEST_FILE, MAX_MANIFEST_BYTES},
+    ownlists::{self, OwnFile},
     removal::is_real_dir,
     tiles::{
         pyramid::{fill_template, is_safe_segment, level_grid, relative_path, Detail, LayerPlan},
@@ -58,8 +68,12 @@ use crate::{
 
 /// `format` of the header.
 pub const FORMAT: &str = "atlas-pack-file";
-/// The newest version of the format this app reads and writes.
-pub const VERSION: u32 = 1;
+/// The newest version of the format this app reads and writes. Version 2
+/// adds a person's own lists, locations and types ([`Mine`]).
+pub const VERSION: u32 = 2;
+/// The version of a file without a person's own lists, locations and types,
+/// which every app with map pack files reads.
+pub const VERSION_WITHOUT_MINE: u32 = 1;
 /// The header, the file's first entry.
 pub const HEADER_FILE: &str = "atlaspack.json";
 /// The file name extension, without the dot.
@@ -140,6 +154,10 @@ pub struct Header {
     /// Entries after the header, and their size unpacked.
     pub files: u64,
     pub bytes: u64,
+    /// How many of a person's own records the file carries, when it carries
+    /// them (version 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mine: Option<MineFacts>,
 }
 
 /// The pack itself, from its manifest.
@@ -224,6 +242,79 @@ pub struct Counts {
     pub guides: u64,
 }
 
+/// How many of a person's own records a file carries.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MineFacts {
+    pub lists: u64,
+    pub locations: u64,
+    pub types: u64,
+    pub areas: u64,
+}
+
+/// The entries of a person's own files, and which file each is.
+pub const MINE_ENTRIES: [(&str, OwnFile); 2] = [
+    ("mine/my-lists.json", ownlists::LISTS),
+    ("mine/my-locations.json", ownlists::LOCATIONS),
+];
+
+/// A person's own lists, and own locations, types and areas, of one game:
+/// the text of their files (see `ownlists.rs`), each when there is one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Mine {
+    pub lists: Option<String>,
+    pub locations: Option<String>,
+}
+
+impl Mine {
+    /// The person's files of a game in the maps folder.
+    pub fn read(maps_folder: &Path, game_id: &str) -> Result<Self, String> {
+        Ok(Self {
+            lists: ownlists::LISTS.read(maps_folder, game_id)?,
+            locations: ownlists::LOCATIONS.read(maps_folder, game_id)?,
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lists.is_none() && self.locations.is_none()
+    }
+
+    /// Each file there is, with its entry's name and kind.
+    pub fn files(&self) -> impl Iterator<Item = (&'static str, OwnFile, &str)> {
+        MINE_ENTRIES
+            .into_iter()
+            .zip([&self.lists, &self.locations])
+            .filter_map(|((name, kind), text)| text.as_deref().map(|text| (name, kind, text)))
+    }
+
+    fn slot(&mut self, kind: OwnFile) -> &mut Option<String> {
+        if kind.suffix == ownlists::LISTS.suffix {
+            &mut self.lists
+        } else {
+            &mut self.locations
+        }
+    }
+
+    /// Checks that each file is the game's, and counts what is in them.
+    pub fn check(&self, game_id: &str) -> Result<MineFacts, String> {
+        let mut facts = MineFacts::default();
+        for (_, kind, text) in self.files() {
+            kind.check(game_id, text)?;
+            let value: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+            let count =
+                |key: &str| value.get(key).and_then(Value::as_array).map_or(0, Vec::len) as u64;
+            if kind.suffix == ownlists::LISTS.suffix {
+                facts.lists = count("lists");
+            } else {
+                facts.locations = count("locations");
+                facts.types = count("categories");
+                facts.areas = count("regions");
+            }
+        }
+        Ok(facts)
+    }
+}
+
 /// The map images in the file.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -294,7 +385,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
             crate::activity::clean(app_version)
         ));
     }
-    if version != u64::from(VERSION) {
+    if version < u64::from(VERSION_WITHOUT_MINE) {
         return Err(not_ours());
     }
     serde_json::from_value(value)

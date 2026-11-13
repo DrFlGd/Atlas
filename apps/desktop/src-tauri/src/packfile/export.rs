@@ -12,8 +12,8 @@ use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 
 use super::{
     analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal, unavailable,
-    AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts, LayerFacts, PackSource, Progress,
-    Stop, FORMAT, HEADER_FILE, VERSION,
+    AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts, LayerFacts, Mine, PackSource,
+    Progress, Stop, FORMAT, HEADER_FILE, VERSION, VERSION_WITHOUT_MINE,
 };
 use crate::{
     library::PackLock,
@@ -50,6 +50,33 @@ pub fn export(
     progress: &mut dyn FnMut(Progress),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Exported, Stop> {
+    export_with_mine(
+        source,
+        app,
+        detail,
+        destination,
+        &Mine::default(),
+        progress,
+        cancelled,
+    )
+}
+
+/// [`export`], with a person's own lists, locations and types of the game
+/// when `mine` has any: then the file is version 2 (see the module).
+pub fn export_with_mine(
+    source: &PackSource,
+    app: &AppInfo,
+    detail: Detail,
+    destination: &Path,
+    mine: &Mine,
+    progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Exported, Stop> {
+    let mine_facts = if mine.is_empty() {
+        None
+    } else {
+        Some(mine.check(&source.pack_id)?)
+    };
     let _lock = if source.lock {
         match PackLock::acquire(&source.root) {
             Ok(lock) => Some(lock),
@@ -119,10 +146,21 @@ pub fn export(
         });
     }
     entries.extend(image_entries);
+    for (name, _, text) in mine.files() {
+        entries.push(Entry {
+            name: name.to_owned(),
+            size: text.len() as u64,
+            data: EntryData::Bytes(text.as_bytes().to_vec()),
+        });
+    }
 
     let header = Header {
         format: FORMAT.to_owned(),
-        version: VERSION,
+        version: if mine_facts.is_some() {
+            VERSION
+        } else {
+            VERSION_WITHOUT_MINE
+        },
         pack_id: source.pack_id.clone(),
         title: pack.title.clone(),
         pack_version: pack.pack_version.clone(),
@@ -140,6 +178,7 @@ pub fn export(
         },
         files: entries.len() as u64,
         bytes: entries.iter().map(|entry| entry.size).sum(),
+        mine: mine_facts,
     };
     let mut header_bytes = serde_json::to_vec_pretty(&header).expect("the header serialises");
     header_bytes.push(b'\n');
