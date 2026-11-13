@@ -114,6 +114,30 @@ A [reference link][ref] and a [collapsed][] one.
 Text after.
 `;
 
+/** A page as the wiki importer writes one: raised text, notes, cells with line breaks, a hidden table. */
+const FROM_A_WIKI = `The [Vale]{color=#b8714a}^\\[a\\]^ is reached by boat.
+
+| Area | Level | Damage |
+| --- | --- | --- |
+| Old Vale^[DLC]{color=#82c936}^ | 2 | 82 DPS<br>16.4 a hit |
+| \\|\\|Hidden Hall^DLC^\\|\\| | \\|\\|7\\|\\| | 1<br>2<br>3 |
+
+> A quote with a break  
+> on its second line.
+
+||
+
+| History |
+| --- |
+| 1.2: changed |
+
+||
+
+## Footnotes
+
+- \\[a\\] Only by boat, and only at night^\\[1\\]^.
+`;
+
 const fixtures = (): [string, string][] => {
   const pages: [string, string][] = [
     ['everything', EVERYTHING],
@@ -126,6 +150,7 @@ const fixtures = (): [string, string][] => {
     ['hidden across a list', 'Before ||the answer\n\n- one\n- two||\n\nafter'],
     ['hidden across list items', '- one ||two\n- three|| four\n'],
     ['a last bar alone', 'Open || never closed\n\nNext paragraph'],
+    ['a page from a wiki', FROM_A_WIKI],
   ];
   const guides: GuideEntry[] = [...makeGuidesFixturePack().guides, ...makeFixturePack().guides];
   for (const guide of guides) pages.push([guide.id, guide.body]);
@@ -239,6 +264,35 @@ describe('a page split into blocks', () => {
     ]);
     expect(readBlock(page.blocks[0]!.source)).toEqual({ kind: 'raw', why: 'other' });
     expect(readBlock('- one ||two\n- three|| four')).toEqual({ kind: 'raw', why: 'hidden' });
+  });
+});
+
+describe('a page from a wiki', () => {
+  it('edits its parts with the text tools, the hidden table as Markdown', () => {
+    const blocks = splitBlocks(FROM_A_WIKI).blocks;
+    expect(blocks.map((block) => readBlock(block.source).kind)).toEqual([
+      'paragraph',
+      'table',
+      'quote',
+      'raw',
+      'heading',
+      'list',
+    ]);
+    expect(blocks[3]!.source).toBe('||\n\n| History |\n| --- |\n| 1.2: changed |\n\n||');
+  });
+
+  it('keeps raised and coloured text and line breaks of a table row it writes anew', () => {
+    const source = splitBlocks(FROM_A_WIKI).blocks[1]!.source;
+    const table = readBlock(source) as TableModel;
+    table.rows[0]![1] = [{ kind: 'text', text: '3', marks: {} }];
+    const written = writeBlock(table, source);
+    expect(written.split('\n')[2]).toBe(
+      '| Old Vale^[DLC]{color=#82c936}^ | 3 | 82 DPS<br>16.4 a hit |',
+    );
+    expect(render(written)).toContain(
+      '<td>Old Vale<sup><span class="text-colour" data-text-colour="#82c936">DLC</span></sup></td>',
+    );
+    expect(render(written)).toContain('<td>82 DPS<br>\n16.4 a hit</td>');
   });
 });
 

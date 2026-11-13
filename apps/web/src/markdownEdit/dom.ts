@@ -1,3 +1,4 @@
+import { parseColour, TEXT_COLOUR_ATTRIBUTE } from '../textColour';
 import { normalizeInline, type Inline, type LinkMark, type Marks } from './inline';
 import { readPictureSize } from './pictureSize';
 
@@ -30,7 +31,12 @@ function wrap(html: string, marks: Marks): string {
   if (marks.strong) out = `<strong${attrs({ 'data-d': marks.strong })}>${out}</strong>`;
   if (marks.em) out = `<em${attrs({ 'data-d': marks.em })}>${out}</em>`;
   if (marks.s) out = `<s>${out}</s>`;
+  if (marks.sup) out = `<sup>${out}</sup>`;
+  if (marks.sub) out = `<sub>${out}</sub>`;
   if (marks.hidden) out = `<span class="md-hidden" data-md-hidden="">${out}</span>`;
+  if (marks.colour) {
+    out = `<span${attrs({ class: 'text-colour', [TEXT_COLOUR_ATTRIBUTE]: marks.colour })}>${out}</span>`;
+  }
   if (marks.link) {
     const { href, title, auto } = marks.link;
     out = `<a${attrs({
@@ -150,7 +156,11 @@ export function piecesFromDom(root: HTMLElement): Inline[] {
     if (tag === 'STRONG' || tag === 'B') inner.strong = node.dataset.d === '__' ? '__' : '**';
     else if (tag === 'EM' || tag === 'I') inner.em = node.dataset.d === '_' ? '_' : '*';
     else if (tag === 'S' || tag === 'DEL' || tag === 'STRIKE') inner.s = true;
+    else if (tag === 'SUP') inner.sup = true;
+    else if (tag === 'SUB') inner.sub = true;
     if (node.hasAttribute('data-md-hidden')) inner.hidden = true;
+    const colour = parseColour(node.getAttribute(TEXT_COLOUR_ATTRIBUTE) ?? '');
+    if (colour) inner.colour = colour;
     if (node.hasAttribute('data-md-link')) {
       const link: LinkMark = { href: node.dataset.href ?? '' };
       if (node.dataset.title !== undefined) link.title = node.dataset.title;
