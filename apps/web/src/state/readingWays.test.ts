@@ -69,6 +69,23 @@ describe('how a site is read', () => {
     expect(asksHow(await siteReading(narrowed, PAGE))).toBe(false);
   });
 
+  it('asks once for a site with one way and a notice, so the notice is shown before it is read', async () => {
+    const importer: AtlasImporter = {
+      ...base,
+      id: 'ways-notice',
+      siteInfo: (url) => ({
+        key: new URL(url).hostname,
+        ways: ['fetch'],
+        notice: 'The site’s terms say something about reading it.',
+      }),
+    };
+    const reading = await siteReading(importer, PAGE);
+    expect(reading.info.notice).toBe('The site’s terms say something about reading it.');
+    expect(asksHow(reading)).toBe(true);
+    await setSiteWay(importer.id, reading.info.key, 'fetch');
+    expect(asksHow(await siteReading(importer, PAGE))).toBe(false);
+  });
+
   it('is left to the importer when it offers no ways (`fetch.inWindow` as before)', async () => {
     await expect(wayFor({ ...base, id: 'ways-none' }, PAGE)).resolves.toBeUndefined();
   });

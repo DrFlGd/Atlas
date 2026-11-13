@@ -89,8 +89,9 @@ export function HowStep({ phase }: { phase: Extract<ImportPhase, { kind: 'how' }
         <WaysChoice ways={phase.site.ways} way={phase.way} onChange={setHowWay} />
       ) : null}
       <p className="muted small">
-        This choice is kept for this site. You can change it later on its screen in the Library;
-        this app never changes it by itself.
+        {phase.site.ways.length > 1
+          ? 'This choice is kept for this site. You can change it later on its screen in the Library; this app never changes it by itself.'
+          : 'This is shown once for this site, and again on its screen in the Library.'}
       </p>
       <div className="row-actions">
         <button
