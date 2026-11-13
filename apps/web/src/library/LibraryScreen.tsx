@@ -9,6 +9,7 @@ import {
   statusLine,
   useGameFacts,
 } from '../state/gameFacts';
+import { followDownloads, useDownloadsView } from '../state/downloadsView';
 import { stopRun, updateAll, useImport } from '../state/importing';
 import {
   closeLibraryWindow,
@@ -23,6 +24,7 @@ import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
 import { NewGameButton } from '../touch/OwnGames';
 import { GamePane } from './GamePane';
+import { DownloadsPanel, DownloadsStrip } from './DownloadsPanel';
 import { SettingsScreen } from './SettingsScreen';
 import { useUpdatable } from './updatable';
 import '../styles/library.css';
@@ -43,9 +45,18 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
   const catalog = useAtlas((s) => s.catalog);
   const library = useAtlas((s) => s.library);
 
+  const downloads = useAtlas(downloadsOffered);
+  const downloadsOpen = useLibrary((s) => s.downloads);
+
   useEffect(() => {
     void loadAllGameFacts();
   }, [catalog, library]);
+
+  // The jobs of the shell, followed while the Library is open.
+  useEffect(() => {
+    if (!__ATLAS_DOWNLOADS__ || !downloads) return;
+    return followDownloads();
+  }, [downloads]);
 
   // Esc closes the More menu first, then (over the whole window) the Library.
   useEffect(() => {
@@ -123,7 +134,14 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
           )}
         </main>
       </div>
-      <LibraryStrip />
+      {__ATLAS_DOWNLOADS__ && downloads ? (
+        <>
+          {downloadsOpen ? <DownloadsPanel /> : null}
+          <DownloadsStrip />
+        </>
+      ) : (
+        <LibraryStrip />
+      )}
     </div>
   );
 }
@@ -143,6 +161,7 @@ function GameList({ openId }: { openId: string | null }) {
   const shown = useAtlas((s) => s.game?.entry.id ?? null);
   const downloads = useAtlas(downloadsOffered);
   const facts = useGameFacts((s) => s.byId);
+  const jobs = useDownloadsView((s) => s.jobs);
   return (
     <section className="library-list-section" aria-labelledby="library-games-heading">
       <h2 className="library-group-title" id="library-games-heading">
@@ -156,7 +175,16 @@ function GameList({ openId }: { openId: string | null }) {
           const line = statusLine({
             kind,
             facts: own,
-            jobs: { images: own?.images?.job ?? null, photos: own?.photos?.job ?? null },
+            jobs: {
+              images:
+                jobs.find((job) => job.packId === entry.id && job.kind === 'images')?.job ??
+                own?.images?.job ??
+                null,
+              photos:
+                jobs.find((job) => job.packId === entry.id && job.kind === 'photos')?.job ??
+                own?.photos?.job ??
+                null,
+            },
             downloads: __ATLAS_DOWNLOADS__ && downloads,
             wikiPages:
               kind === 'wiki' && own?.details

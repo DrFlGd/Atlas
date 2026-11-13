@@ -16,6 +16,8 @@
     "allow-photos-resume",
     "allow-photos-cancel",
     "allow-photos-snapshot",
+    "allow-downloads-jobs",
+    "allow-downloads-move",
     "allow-picture-tiles",
     "allow-picture-cancel",
     "allow-import-fetch",

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { desktop } from '../desktop';
 import { notify, switchGame } from './actions';
+import { openGuide } from './checklists';
 import { refreshLibrary } from './library';
 import type { AtlasState } from './store';
 import { useAtlas } from './store';
@@ -69,6 +70,11 @@ export interface LibraryHost {
 
 let host: LibraryHost | null = null;
 
+/** Whether the Library is a section of the standard layout (which has the page editor). */
+export function hasLibraryHost(): boolean {
+  return host !== null;
+}
+
 /** The standard layout registers how it shows the Library; null when it goes. */
 export function setLibraryHost(next: LibraryHost | null): void {
   host = next;
@@ -136,6 +142,31 @@ export function setDownloadsOpen(downloads: boolean): void {
 export async function showGame(gameId: string): Promise<void> {
   if (useAtlas.getState().game?.entry.id !== gameId) await switchGame(gameId);
   leaveLibrary();
+}
+
+/**
+ * "Edit" on a page of a wiki: shows its game (when `gameId` is another
+ * game than the one shown), leaves the Library for Guides, opens the page
+ * there and its editor. The page editor is in the standard layout; the
+ * classic layout opens the page to read.
+ */
+export async function openPageForEditing(guideId: string, gameId?: string): Promise<void> {
+  if (gameId && useAtlas.getState().game?.entry.id !== gameId) await switchGame(gameId);
+  set({ more: false, downloads: false });
+  if (host) {
+    const [{ openPlace }, { showSection }, { openPageEditor }] = await Promise.all([
+      import('../touch/reader'),
+      import('../touch/state'),
+      import('../touch/pages/pageEditorState'),
+    ]);
+    host.leave();
+    showSection('guides');
+    openPlace({ kind: 'page', guideId });
+    openPageEditor(guideId);
+  } else {
+    closeLibraryWindow();
+    openGuide(guideId);
+  }
 }
 
 /** The game open in the Library: the one chosen, else the one shown. */

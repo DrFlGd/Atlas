@@ -11,6 +11,7 @@ import { downloadsOffered, importsOffered } from '../features';
 import { notify } from '../state/actions';
 import { numberFormat } from '../state/derived';
 import { loadDownloads } from '../state/downloads';
+import { loadJobs } from '../state/downloadsView';
 import {
   DETAIL_NAME,
   followJobs,
@@ -175,8 +176,9 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
         {ownGame && !busy ? (
           <Card icon="pencil" title="Your game" testId="library-own-card">
             <p className="library-card-state">
-              Made in this app from pictures of its maps. Add a map or a level from another picture,
-              or rename it.
+              Made in this app from pictures of its maps. Add map makes another map from a picture;
+              Add level adds a level to a map of the game shown; Rename changes its name; Delete map
+              deletes one of its maps after asking which.
             </p>
             <OwnGameActions id={id} title={title} />
           </Card>
@@ -338,6 +340,7 @@ async function act(id: string, shown: boolean, step: () => Promise<unknown>): Pr
   }
   await loadGameFacts(id, true);
   followJobs(id);
+  void loadJobs();
   // The button over the map follows the game shown.
   const game = useAtlas.getState().game;
   if (shown && game) void loadDownloads(game);

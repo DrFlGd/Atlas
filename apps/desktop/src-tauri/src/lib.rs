@@ -174,6 +174,8 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::photos_resume,
         commands::photos_cancel,
         commands::photos_snapshot,
+        commands::downloads_jobs,
+        commands::downloads_move,
         commands::picture_tiles,
         commands::picture_cancel,
         commands::import_fetch,

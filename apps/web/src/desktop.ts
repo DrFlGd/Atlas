@@ -97,6 +97,17 @@ export interface DownloadSnapshot {
   secondsLeft: number | null;
   /** Increases whenever a layer's status file changes. */
   statusRevision: number;
+  /** When it ended (done, cancelled or stopped), in milliseconds since 1970; null while not over. */
+  finishedAt?: number | null;
+}
+
+/** One job of this app, for the Downloads panel (see {@link DesktopBridge.tiles.jobs}). */
+export interface JobEntry {
+  /** What steers it: the pack id, or the pack id and `#photos`. */
+  key: string;
+  packId: string;
+  kind: 'images' | 'photos';
+  job: DownloadSnapshot;
 }
 
 /** What "Download location photos" offers for a pack. */
@@ -784,6 +795,13 @@ export interface DesktopBridge {
     photosResume(packId: string): Promise<DownloadSnapshot>;
     photosCancel(packId: string): Promise<void>;
     photosSnapshot(packId: string): Promise<DownloadSnapshot | null>;
+    /**
+     * Every map image and photo job of this session: the one downloading,
+     * then the queue in order, then paused ones, then those that are over.
+     */
+    jobs(): Promise<JobEntry[]>;
+    /** Moves a job waiting its turn one place earlier or later in the queue. */
+    moveJob(key: string, earlier: boolean): Promise<void>;
   };
   library: {
     list(): Promise<Listing>;
@@ -1003,6 +1021,8 @@ function noDownloads(): DesktopBridge['tiles'] {
     photosResume: missing,
     photosCancel: missing,
     photosSnapshot: missing,
+    jobs: missing,
+    moveJob: missing,
   };
 }
 
@@ -1037,6 +1057,8 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           photosResume: (packId) => call('photos_resume', { packId }),
           photosCancel: (packId) => call('photos_cancel', { packId }),
           photosSnapshot: (packId) => call('photos_snapshot', { packId }),
+          jobs: () => call('downloads_jobs'),
+          moveJob: (key, earlier) => call('downloads_move', { key, earlier }),
         }
       : noDownloads(),
     library: {

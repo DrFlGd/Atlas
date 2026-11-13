@@ -332,6 +332,7 @@ impl DownloadManager {
                     total * 200_000,
                 )),
                 status_revision,
+                finished_at: None,
             },
             layer_maps: vec![0],
             recent: VecDeque::new(),

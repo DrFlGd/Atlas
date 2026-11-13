@@ -148,6 +148,7 @@ function tilePng(): Buffer {
 function installFakeShell(downloads: boolean) {
   interface Job {
     packId: string;
+    title: string;
     detail: string;
     state: string;
     reason: string | null;
@@ -254,6 +255,27 @@ function installFakeShell(downloads: boolean) {
     switch (command) {
       case 'tiles_plan':
         return Promise.resolve(plan());
+      case 'downloads_jobs': {
+        // The shell's one queue: what moves first, then paused, then what is over.
+        advance();
+        const order = ['running', 'queued', 'waiting', 'paused', 'stopped', 'done', 'cancelled'];
+        const entries = [
+          shell.job ? { key: 'remote', packId: 'remote', kind: 'images', job: shell.job } : null,
+          shell.photos
+            ? { key: 'remote#photos', packId: 'remote', kind: 'photos', job: shell.photos }
+            : null,
+        ]
+          .filter((entry) => entry !== null)
+          .map((entry) => {
+            const over = ['stopped', 'done', 'cancelled'].includes(entry.job.state);
+            return structuredClone({
+              ...entry,
+              job: { ...entry.job, finishedAt: over ? Date.now() : null },
+            });
+          });
+        entries.sort((a, b) => order.indexOf(a.job.state) - order.indexOf(b.job.state));
+        return Promise.resolve(entries);
+      }
       case 'tiles_snapshot':
         advance();
         return Promise.resolve(snapshot());
@@ -262,6 +284,7 @@ function installFakeShell(downloads: boolean) {
         const [island, cave] = totals[detail]!;
         shell.job = {
           packId: 'remote',
+          title: 'Remote test pack',
           detail,
           state: 'running',
           reason: null,
@@ -308,6 +331,7 @@ function installFakeShell(downloads: boolean) {
       case 'photos_start':
         shell.photos = {
           packId: 'remote#photos',
+          title: 'Location photos of Remote test pack',
           detail: 'full',
           state: 'running',
           reason: null,
@@ -888,6 +912,87 @@ test.describe('in the standard layout', () => {
     await openLibraryGame(page, 'remote');
     await expect(page.getByTestId('library-contents-card')).toBeVisible();
     await expect(page.getByTestId('map-page-details')).toHaveCount(0);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+});
+
+test.describe('the Library', () => {
+  const LIBRARY_SHOTS = process.env.ATLAS_LIBRARY_SHOTS ?? 'test-results/library';
+  const setShell = (page: Page, patch: Record<string, unknown>) =>
+    page.evaluate((patch) => {
+      Object.assign((window as unknown as { __mockShell: object }).__mockShell, patch);
+    }, patch);
+
+  test('downloads map images from the game’s card, and follows them in Downloads', async ({
+    page,
+  }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads map images');
+    await mkdir(LIBRARY_SHOTS, { recursive: true });
+    const errors = collectErrors(page);
+    await page.addInitScript(() => {
+      (window as unknown as { __listRemote: boolean }).__listRemote = true;
+    });
+    await page.addInitScript(installFakeShell, true);
+    await servePack(page, () => null);
+    await page.goto('./');
+    await openLibraryGame(page, 'remote');
+
+    // The card says what is on this computer, and offers the detail to download.
+    const card = page.getByTestId('library-images-card');
+    await expect(card.getByTestId('library-images-state')).toContainText(
+      'No map images on this computer yet',
+    );
+    await card.getByTestId('library-images-choose').click();
+    await expect(card.getByTestId('library-detail-chooser')).toContainText('Recommended');
+    await page.screenshot({ path: `${LIBRARY_SHOTS}/images-card-choose.png` });
+    await setShell(page, { hold: true });
+    await card.getByTestId('library-images-start').click();
+    await expect(card).toHaveAttribute('data-state', 'running');
+    await expect(page.getByTestId('library-strip-now')).toContainText(
+      'Downloading map images of Remote test pack',
+    );
+    await expect(
+      page.locator(
+        '[data-testid="library-game"][data-pack="remote"] [data-testid="library-status"]',
+      ),
+    ).toContainText('Downloading map images');
+
+    // All downloads: now, with Pause and Stop.
+    await page.getByTestId('all-downloads').click();
+    const panel = page.getByTestId('downloads-panel');
+    await expect(panel.getByTestId('downloads-now')).toContainText(
+      'Map images of Remote test pack',
+    );
+    await expect(panel.getByTestId('downloads-pace')).toContainText(
+      'Pages are always read one at a time.',
+    );
+    await page.screenshot({ path: `${LIBRARY_SHOTS}/downloads-now.png` });
+
+    // Pause everything: the job waits, paused, until resumed.
+    await page.getByTestId('pause-everything').click();
+    const next = panel.getByTestId('downloads-next');
+    await expect(next.getByTestId('downloads-job')).toHaveAttribute('data-state', 'paused');
+    await expect(card).toHaveAttribute('data-state', 'paused');
+    await next.getByTestId('downloads-resume').click();
+    await expect(panel.getByTestId('downloads-now')).toBeVisible();
+
+    // A refusal stops it: it needs the person, with why, and Try again.
+    await setShell(page, { hold: false, failNext: 'The server refused access (403).' });
+    const needs = panel.getByTestId('downloads-needs-you');
+    await expect(needs.getByTestId('downloads-reason')).toHaveText(
+      'The server refused access (403).',
+    );
+    await expect(
+      page.locator(
+        '[data-testid="library-game"][data-pack="remote"] [data-testid="library-status"]',
+      ),
+    ).toHaveText('A download stopped: it needs you');
+    await page.screenshot({ path: `${LIBRARY_SHOTS}/downloads-needs-you.png` });
+    await needs.getByTestId('downloads-retry').click();
+    await expect(panel.getByTestId('downloads-today')).toContainText('downloaded', {
+      timeout: 30_000,
+    });
+    await expect(panel.getByTestId('downloads-needs-you')).toHaveCount(0);
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
 });

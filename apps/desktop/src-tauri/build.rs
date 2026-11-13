@@ -96,6 +96,8 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "photos_resume",
     "photos_cancel",
     "photos_snapshot",
+    "downloads_jobs",
+    "downloads_move",
     "picture_tiles",
     "picture_cancel",
     "import_fetch",
