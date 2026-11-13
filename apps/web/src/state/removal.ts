@@ -3,6 +3,7 @@ import { deleteImagesResult, deletePackResult, plainError } from '../components/
 import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
 import { applyListing } from './library';
+import { deleteOwnListsOf } from './ownLists';
 import { loadMapImages } from './mapImages';
 import { clock, progressStore } from './services';
 import { useAtlas } from './store';
@@ -45,7 +46,12 @@ function titleOf(id: string): string {
  * with the same id that it hid shows up); if it was the game shown, another
  * one is shown.
  */
-export async function deletePack(id: string, deleteProgress: boolean): Promise<RemovalOutcome> {
+export async function deletePack(
+  id: string,
+  deleteProgress: boolean,
+  /** Also the person's own lists of the game, kept beside the pack (see `ownLists.ts`). */
+  deleteLists = false,
+): Promise<RemovalOutcome> {
   if (!desktop) return { ok: false, error: 'Maps can only be deleted in the desktop app.' };
   const title = titleOf(id);
   let outcome;
@@ -55,6 +61,14 @@ export async function deletePack(id: string, deleteProgress: boolean): Promise<R
     return { ok: false, error: plainError(error, `delete ${title}`) };
   }
   await refreshWithout(id);
+  if (deleteLists) {
+    try {
+      await deleteOwnListsOf(id);
+    } catch {
+      notify(`Deleted ${title}, but your lists and guides for it could not be deleted.`, 'error');
+      return { ok: true };
+    }
+  }
   if (deleteProgress) {
     try {
       const store = progressStore();

@@ -1,6 +1,7 @@
 import { tickChanges, type ChecklistItemEntry } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import { applyProgress, goToLocation, goToRegion, notify, setPane, showMap } from './actions';
+import { ownItemById } from './ownLists';
 import { useAtlas, type ChecklistPage, type LeftTab, type LoadedGame } from './store';
 
 const get = useAtlas.getState;
@@ -77,7 +78,9 @@ export function checklistBack(): void {
  * change that `Z` takes back, and says what changed.
  */
 export function setItemDone(itemId: string, done: boolean): void {
-  const entry = get().game?.checklists.item(itemId);
+  const game = get().game;
+  // A pack's entry, or one of a list of the person's own.
+  const entry = game ? (game.checklists.item(itemId) ?? ownItemById(game, itemId)) : undefined;
   if (entry) setEntryDone(entry, done);
 }
 

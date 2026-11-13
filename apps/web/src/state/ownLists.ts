@@ -5,6 +5,7 @@ import {
   newOwnList,
   ownListEntry,
   type ChecklistEntry,
+  type ChecklistItemEntry,
 } from '@atlas/core';
 import {
   OWN_LISTS_VERSION,
@@ -240,6 +241,14 @@ export function ownEntryById(game: LoadedGame, id: string): ChecklistEntry | und
   if (gameId !== game.pack.manifest.gameId) return undefined;
   const list = ownListById(id);
   return list ? entryOfOwn(game, list) : undefined;
+}
+
+/** An entry of an own list of the game shown, by its id. */
+export function ownItemById(game: LoadedGame, itemId: string): ChecklistItemEntry | undefined {
+  const { gameId, lists } = get();
+  if (gameId !== game.pack.manifest.gameId) return undefined;
+  const list = lists.find((l) => l.items.some((item) => item.id === itemId));
+  return list ? entryOfOwn(game, list).items.find((i) => i.item.id === itemId) : undefined;
 }
 
 /** Every id that a new own id must not be: the own lists' and the pack's lists' and entries'. */
