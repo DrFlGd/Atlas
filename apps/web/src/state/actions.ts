@@ -35,6 +35,7 @@ import type { HashView } from '../viewHash';
 import { catalogFrom } from './library';
 import { loadMapImages } from './mapImages';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
+import { packWithOwn, readOwnLocationsOf } from './ownLocations';
 import { useAtlas, type AtlasState, type PaneName, type Theme, type UndoEntry } from './store';
 
 const get = useAtlas.getState;
@@ -154,8 +155,12 @@ export async function loadGame(
   set({ status: { kind: 'loading' } });
   try {
     const store = progressStore();
-    const pack = await loadPack(entry.url);
-    const gameId = pack.manifest.gameId;
+    const read = await loadPack(entry.url);
+    const gameId = read.manifest.gameId;
+    // The person's own locations, types and areas, added to the game's.
+    const mine = await readOwnLocationsOf(gameId);
+    if (token !== loadToken) return false;
+    const { pack, skipped: ownSkipped } = packWithOwn(read, mine.own);
     const counter = new ProgressCounter(pack);
     const search = new SearchIndex(pack);
     const checklists = new ChecklistIndex(pack, (id) => counter.isTrackable(id));
@@ -207,6 +212,15 @@ export async function loadGame(
     });
     saveSetting(SETTINGS.activePack, entry.id);
     void loadMapImages(get().game!);
+    if (mine.problem) notify(mine.problem, 'error');
+    else if (ownSkipped > 0) {
+      notify(
+        ownSkipped === 1
+          ? 'One of your locations or types is not shown: its map, level or type is not in this game any more.'
+          : `${ownSkipped} of your locations and types are not shown: their map, level or type is not in this game any more.`,
+        'error',
+      );
+    }
     return true;
   } catch (error) {
     if (token !== loadToken) return false;

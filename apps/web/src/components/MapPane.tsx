@@ -7,7 +7,9 @@ import { numberFormat, useLayerMarkers, useSummary } from '../state/derived';
 import { setDownloadPanelOpen } from '../state/downloads';
 import { useMapOverlay } from '../state/mapOverlay';
 import { cancelPlacing, placePlayerAt, showPlayer, shownPlayer } from '../state/saves';
+import { changeOwn, useOwnLocations } from '../state/ownLocations';
 import { useAtlas } from '../state/store';
+import { clickedOnMap, pickedOnMap, useLocationEditor } from '../touch/locations/locationEditor';
 import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
@@ -66,6 +68,13 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
         useAtlas.setState({ view: state });
       }),
       view.onSelect((id) => {
+        // Edit locations takes clicks on markers for itself; a click off
+        // them puts a location there (see `onMapClick` below).
+        if (useLocationEditor.getState().active) {
+          if (id) pickedOnMap(id);
+          else view.setSelected(useAtlas.getState().selectedId);
+          return;
+        }
         // The list editor takes taps on markers for itself while it is open.
         const pick = useMapOverlay.getState().pick;
         if (pick) {
@@ -90,8 +99,16 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
       view.onTileStatus((tileStatus) => {
         useAtlas.setState({ tileStatus });
       }),
-      view.onMapClick((point) => {
+      view.onMapClick((point, onMarker) => {
+        if (useLocationEditor.getState().active) {
+          if (!onMarker) clickedOnMap(point);
+          return;
+        }
         placePlayerAt(useAtlas.getState().mapId, point);
+      }),
+      view.onHandleMove((point) => {
+        const { side } = useLocationEditor.getState();
+        if (side?.kind === 'location') changeOwn(side.id, point, 'Location moved');
       }),
     ];
     setMap(view);
@@ -184,6 +201,30 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     const points = overlayPoints?.filter((point) => point.layerId === layerId) ?? null;
     map.setOverlay(points ? { points, joined: overlayJoined } : null);
   }, [map, overlayPoints, overlayJoined, layerId, layerShown]);
+
+  // The handle of the location open in Edit locations, on its level.
+  const handleId = useLocationEditor((s) =>
+    s.active && s.side?.kind === 'location' ? s.side.id : null,
+  );
+  const handleLocation = useOwnLocations((s) =>
+    handleId ? s.own.locations.find((l) => l.id === handleId) : undefined,
+  );
+  const handleColor = handleLocation
+    ? pack?.categories.get(handleLocation.categoryId)?.color
+    : undefined;
+  useEffect(() => {
+    if (!layerShown) return;
+    map.setHandle(
+      handleLocation?.layerId === layerId
+        ? {
+            x: handleLocation.x,
+            y: handleLocation.y,
+            label: `Move “${handleLocation.name}”: drag, or use the arrow keys`,
+            ...(handleColor ? { color: handleColor } : {}),
+          }
+        : null,
+    );
+  }, [map, handleLocation, handleColor, layerId, layerShown]);
 
   // Fly requests run after the layer is set, so a jump to another layer lands on the right map.
   const handledFly = useRef(0);

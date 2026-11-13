@@ -305,6 +305,16 @@ export interface DesktopInfo {
    * Without it the web app keeps them in its own storage, with progress.
    */
   ownListFiles?: boolean;
+  /**
+   * A person's own locations, types and areas are kept in a file beside the
+   * game's folder (`ownLocations`), as own lists are. Absent counts as false.
+   */
+  ownLocationFiles?: boolean;
+  /**
+   * Games can be made in the app from a picture, and maps and levels added
+   * to them (`ownGames`): the desktop apps. Absent counts as false.
+   */
+  ownGames?: boolean;
 }
 
 /** Where a listed pack comes from. */
@@ -324,6 +334,8 @@ export interface ListedPack {
   imported: { importerId: string; importerTitle: string } | null;
   /** The web pages the pack was made from, as its manifest records them. */
   pages?: { url: string; mapId: string | null }[];
+  /** The game was made in the app (its manifest's `madeInApp`); absent counts as false. */
+  madeInApp?: boolean;
 }
 
 /** A pack that is not shown because another with the same id is. */
@@ -526,6 +538,8 @@ export interface PackFileHeader {
   /** Entries after the header, and their size unpacked. */
   files: number;
   bytes: number;
+  /** The person's own lists, locations, types and areas the file carries (version 2). */
+  mine?: { lists: number; locations: number; types: number; areas: number };
 }
 
 /** What is known about an installed pack, as a map pack file would say. */
@@ -616,6 +630,45 @@ export interface PackFileImported {
   title: string;
   replaced: boolean;
   header: PackFileHeader;
+  listing: Listing;
+  /** The text of the own lists file the file carried, to add to the person's. */
+  ownLists?: string | null;
+  /** The text of the own locations file the file carried, to add to the person's. */
+  ownLocations?: string | null;
+}
+
+/** A picture chosen for a map, and whether it can be one. */
+export interface PickedPicture {
+  path: string;
+  fileName: string;
+  width: number;
+  height: number;
+  format: 'png' | 'jpeg' | 'webp';
+  /** The file's size. */
+  bytes: number;
+  /** How many levels of detail and tiles it makes. */
+  levels: number;
+  tiles: number;
+  /** Why it cannot be made into a map, in plain words; null when it can. */
+  problem: string | null;
+}
+
+/** How far a picture being made into a map is. */
+export interface CutJobProgress {
+  kind: 'game' | 'map' | 'level';
+  /** The name of what is being made. */
+  name: string;
+  /** The picture is being read, before any tile is cut. */
+  reading: boolean;
+  tilesDone: number;
+  tilesTotal: number;
+  cancelling: boolean;
+}
+
+/** What a change to a game made in the app gives back. */
+export interface OwnGameChanged {
+  /** What was added: the game's id, and the map and level made. */
+  added: { gameId: string; mapId: string; layerId: string } | null;
   listing: Listing;
 }
 
@@ -746,6 +799,34 @@ export interface DesktopBridge {
     /** Deletes the file; whether there was one. */
     delete(gameId: string): Promise<boolean>;
   };
+  /**
+   * A person's own locations, types and areas of a game, in their file in
+   * the maps folder (see `ownLocationFiles`).
+   */
+  ownLocations: {
+    read(gameId: string): Promise<string | null>;
+    write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    delete(gameId: string): Promise<boolean>;
+  };
+  /** Games made in the app from pictures (see `ownGames`). */
+  ownGames: {
+    /** Asks for a picture and says what it is. Null when the dialog was closed. */
+    pickPicture(): Promise<PickedPicture | null>;
+    /** Makes a game from its name and its first map's picture. */
+    create(title: string, mapName: string, picture: string): Promise<OwnGameChanged>;
+    addMap(gameId: string, mapName: string, picture: string): Promise<OwnGameChanged>;
+    addLevel(
+      gameId: string,
+      mapId: string,
+      levelName: string,
+      picture: string,
+    ): Promise<OwnGameChanged>;
+    progress(): Promise<CutJobProgress | null>;
+    /** Stops the picture being made into a map; nothing is left of it. */
+    cancel(): Promise<void>;
+    rename(gameId: string, title: string): Promise<OwnGameChanged>;
+    deleteMap(gameId: string, mapId: string): Promise<OwnGameChanged>;
+  };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
     /** Asks where to save, then saves. Null when the dialog was closed. */
@@ -759,9 +840,16 @@ export interface DesktopBridge {
     options(packId: string): Promise<PackFileOptions>;
     /**
      * Asks where to save, then writes the file; with `progress` (a progress
-     * export's text) saves that beside it. Null when the dialog was closed.
+     * export's text) saves that beside it, and with `includeMine` the
+     * person's own lists, locations and types go in the file. Null when the
+     * dialog was closed.
      */
-    export(packId: string, detail: Detail, progress?: string): Promise<PackFileExported | null>;
+    export(
+      packId: string,
+      detail: Detail,
+      progress?: string,
+      includeMine?: boolean,
+    ): Promise<PackFileExported | null>;
     /** Asks for a file to import and reads its description. Null when the dialog was closed. */
     pick(): Promise<PackFileInfo | null>;
     /** Reads the description of the file at a path the app has (for example from Android's picker). */
@@ -888,14 +976,36 @@ export function createBridge(invoke: Invoke): DesktopBridge {
         call('own_lists_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_lists_delete', { gameId }),
     },
+    ownLocations: {
+      read: (gameId) => call('own_locations_read', { gameId }),
+      write: (gameId, contents, keepCopy) =>
+        call('own_locations_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('own_locations_delete', { gameId }),
+    },
+    ownGames: {
+      pickPicture: () => call('map_picture_pick'),
+      create: (title, mapName, picture) => call('own_game_create', { title, mapName, picture }),
+      addMap: (gameId, mapName, picture) => call('own_game_add_map', { gameId, mapName, picture }),
+      addLevel: (gameId, mapId, levelName, picture) =>
+        call('own_game_add_level', { gameId, mapId, levelName, picture }),
+      progress: () => call('own_game_progress'),
+      cancel: () => call('own_game_cancel'),
+      rename: (gameId, title) => call('own_game_rename', { gameId, title }),
+      deleteMap: (gameId, mapId) => call('own_game_delete_map', { gameId, mapId }),
+    },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),
       open: () => call('list_file_open'),
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
-      export: (id, detail, progress) =>
-        call('packfile_export', { id, detail, progress: progress ?? null }),
+      export: (id, detail, progress, includeMine) =>
+        call('packfile_export', {
+          id,
+          detail,
+          progress: progress ?? null,
+          includeMine: includeMine ?? false,
+        }),
       pick: () => call('packfile_pick'),
       inspect: (path) => call('packfile_inspect', { path }),
       pickCopy: () => call('packfile_pick_copy'),
