@@ -4,6 +4,7 @@ import {
   everythingList,
   itemState,
   listAreas,
+  listShape,
   listStages,
   nextStep,
   regionTarget,
@@ -11,6 +12,8 @@ import {
   type ChecklistEntry,
   type ItemState,
   type ListAreas,
+  type ListShape,
+  type ListView,
   type Stage,
 } from '@atlas/core';
 import { useMemo } from 'react';
@@ -27,8 +30,8 @@ import { useAtlas, type LoadedGame } from '../state/store';
  * conveniences; nothing here is progress.
  */
 
-/** The three ways to show a list. */
-export type ListView = 'area' | 'kind' | 'order';
+/** The three ways to show a list (see `listShape`). */
+export type { ListView };
 
 const VIEWS: readonly ListView[] = ['area', 'kind', 'order'];
 
@@ -81,12 +84,6 @@ export function areaName(game: LoadedGame, area: string): string {
   return area === NO_AREA ? 'No area' : (game.pack.regions.get(area)?.name ?? 'No area');
 }
 
-/**
- * A list meant to be followed step by step (`kind: 'guide'`): the only kind
- * of list that has a next step, and that is offered in order.
- */
-export const isRoute = (entry: ChecklistEntry) => entry.checklist.kind === 'guide';
-
 function cached<K extends object, V>(make: (key: K) => V): (key: K) => V {
   const cache = new WeakMap<K, V>();
   return (key) => {
@@ -98,6 +95,16 @@ function cached<K extends object, V>(make: (key: K) => V): (key: K) => V {
     return value;
   };
 }
+
+/** How a list is shown: its type, views, default view and steps (see `listShape`). */
+export const shapeOf = cached((entry: ChecklistEntry): ListShape => listShape(entry));
+
+/**
+ * A list meant to be followed step by step (a route or a build, see
+ * `listShape`): the only kind of list that has a next step, and that is
+ * listed under Routes.
+ */
+export const isRoute = (entry: ChecklistEntry) => shapeOf(entry).steps;
 
 /** Every place of a list's items, to show the list alone on the map. */
 export const placesOf = cached((entry: ChecklistEntry): ReadonlySet<string> => {
@@ -126,29 +133,25 @@ export function areasOf(game: LoadedGame, entry: ChecklistEntry): ListAreas {
   return areas;
 }
 
-/** What a list's figures count: places found, or (a route, a list of things to do) steps done. */
+/** What a list's figures count: places found, or (a route, a list of things to do) entries done. */
 export function doneWord(entry: ChecklistEntry): 'found' | 'done' {
-  return isRoute(entry) || placesOf(entry).size === 0 ? 'done' : 'found';
+  return shapeOf(entry).doneWord;
 }
-
-const GROUPED: readonly ListView[] = ['area', 'kind'];
-const AS_WRITTEN: readonly ListView[] = ['order'];
 
 /**
- * The views a list offers. What the list is decides: a route is followed
- * in order, and can be grouped as well; any other list of places is a
- * collection, grouped by area or by kind, and is not offered in order. A
- * list with no place at all has nothing to group: it is shown as it is
- * written, with no choice (and with a next step only if it is a route).
+ * The views a list offers. What the list is decides (see `listShape`): a
+ * route is followed in order, and can be grouped as well; a build is
+ * followed in order only; a collection is grouped by area or by kind, and
+ * is not offered in order. A plain list, or a list with no place at all, is
+ * shown as it is written, with no choice.
  */
 export function viewsOf(entry: ChecklistEntry): readonly ListView[] {
-  if (placesOf(entry).size === 0) return AS_WRITTEN;
-  return isRoute(entry) ? VIEWS : GROUPED;
+  return shapeOf(entry).views;
 }
 
-/** The view a list opens in until one is chosen: the first it offers, in order for a route. */
+/** The view a list opens in until one is chosen: in order for a route, by area for a collection. */
 export function defaultView(entry: ChecklistEntry): ListView {
-  return isRoute(entry) || placesOf(entry).size === 0 ? 'order' : 'area';
+  return shapeOf(entry).defaultView;
 }
 
 /** The view a list is shown in: the one chosen last if the list offers it, or its default. */
@@ -169,8 +172,8 @@ export function useItemStates(entry: ChecklistEntry): ItemState[] {
 }
 
 /**
- * The step a route points at (see `nextStep`): null when every step is
- * done, and for any list that is not a route.
+ * The step a route or a build points at (see `nextStep`): null when every
+ * step is done, and for any list that is not followed step by step.
  */
 export function useNextStep(entry: ChecklistEntry, states: readonly ItemState[]): number | null {
   const from = useLists((s) => (s.orderFrom?.listId === entry.checklist.id ? s.orderFrom.from : 0));
