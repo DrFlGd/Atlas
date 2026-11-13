@@ -82,6 +82,42 @@ impl Downloads {
         }
     }
 
+    /// Whether a pack's map images are downloading (running, paused, queued
+    /// or waiting). Its photos do not count.
+    pub fn images_active(&self, pack_id: &str) -> bool {
+        #[cfg(feature = "downloads")]
+        return self.manager.images_active(pack_id);
+        #[cfg(not(feature = "downloads"))]
+        {
+            let _ = pack_id;
+            false
+        }
+    }
+
+    /// Stops a pack's download of photos for a write of the pack's files and
+    /// waits until it has let go of them. `Some(true)` when it was fetching,
+    /// to be started again with [`Self::start_photos`] after the write;
+    /// `None` when it did not stop within `timeout`.
+    pub async fn stop_photos_and_wait(&self, pack_id: &str, timeout: Duration) -> Option<bool> {
+        #[cfg(feature = "downloads")]
+        return self.manager.stop_photos_and_wait(pack_id, timeout).await;
+        #[cfg(not(feature = "downloads"))]
+        {
+            let _ = (pack_id, timeout);
+            Some(false)
+        }
+    }
+
+    /// Starts a pack's download of photos again after
+    /// [`Self::stop_photos_and_wait`]. Nothing happens when the pack lists
+    /// none that it lacks.
+    pub fn start_photos(&self, pack_id: &str) {
+        #[cfg(feature = "downloads")]
+        let _ = self.manager.start_photos(pack_id);
+        #[cfg(not(feature = "downloads"))]
+        let _ = pack_id;
+    }
+
     /// Forgets what is kept about a pack's downloads, such as the record of
     /// an unfinished one, after its images or the pack were deleted.
     pub fn forget(&self, pack_id: &str) {

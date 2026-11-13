@@ -44,6 +44,52 @@ impl DownloadManager {
         true
     }
 
+    /// Whether the job of a pack's map images is running, paused, queued or
+    /// waiting. A job of its photos does not count: see
+    /// [`Self::stop_photos_and_wait`].
+    pub fn images_active(&self, pack_id: &str) -> bool {
+        lock(&self.schedule)
+            .jobs
+            .get(pack_id)
+            .is_some_and(|job| !job.finished)
+    }
+
+    /// Stops a pack's job of photos, if there is one, and waits until it has
+    /// let go of the pack's files, so that the pack's files can be written
+    /// (pages added while the pictures of earlier pages are still coming in).
+    /// The photos already saved stay. `Some(true)` when the job was fetching
+    /// or waiting its turn, so the caller starts it again after the write
+    /// with [`Self::start_photos`], which then also fetches what the new
+    /// files list; `Some(false)` when there was none or the person had paused
+    /// it; `None` when it has not ended within `timeout`.
+    pub async fn stop_photos_and_wait(
+        self: &Arc<Self>,
+        pack_id: &str,
+        timeout: Duration,
+    ) -> Option<bool> {
+        let key = super::photos_key(pack_id);
+        let going = |manager: &Self| {
+            lock(&manager.schedule)
+                .jobs
+                .get(&key)
+                .filter(|job| !job.finished)
+                .map(|job| !job.paused)
+        };
+        let Some(fetching) = going(self) else {
+            return Some(false);
+        };
+        // An error only means the job ended in the meantime.
+        let _ = self.cancel(&key);
+        let deadline = Instant::now() + timeout;
+        while going(self).is_some() {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+        Some(fetching)
+    }
+
     /// Forgets what is kept about a pack's downloads: its last job in this
     /// session and the record of an unfinished job (in the pack folder and in
     /// the app's data folder). A job that is still running is left alone;

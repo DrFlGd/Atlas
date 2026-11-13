@@ -365,9 +365,10 @@ export function ChoosePages({ choice }: { choice: Choice }) {
         {queues && windowed ? (
           <>
             Tick a section, or a page and “From here on”. This site shows its pages only to a
-            person, so each page opens in a window of its own, {MAX_RUN_ADDRESSES} in one go. If a
-            page asks you to confirm you are a person, do that in its window. This app keeps the
-            pages beyond one go, and Add a map offers to continue with them.
+            person, so this app opens the pages you tick in a window, one at a time with a pause. If
+            a page asks you to confirm you are a person, do that in its window. If you stop it or
+            close a window, it keeps the rest, and Add a map offers to continue with them another
+            time.
           </>
         ) : queues ? (
           <>

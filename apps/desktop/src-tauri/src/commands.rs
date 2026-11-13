@@ -1130,13 +1130,23 @@ pub async fn library_save_import(
     downloads: DownloadsState<'_>,
     request: SaveImport,
 ) -> Result<Listing, String> {
-    if downloads.is_active(&request.pack_id) {
+    if downloads.images_active(&request.pack_id) {
         return Err(
             "Map images of this game are downloading. Pause or cancel that first.".to_owned(),
         );
     }
+    // The pictures of pages added before may still be coming in: that
+    // download stops for the write and starts again after it, when it also
+    // fetches the pictures these files list.
+    let pack_id = request.pack_id.clone();
+    let Some(photos_again) = downloads.stop_photos_and_wait(&pack_id, STOP_TIMEOUT).await else {
+        return Err(
+            "The photos of this game are downloading and did not stop in time. Try again in a moment."
+                .to_owned(),
+        );
+    };
     let library = Arc::clone(&library);
-    blocking(move || {
+    let saved = blocking(move || {
         match library.save_import(&request) {
             Ok(dir) => activity::info(
                 Area::Import,
@@ -1161,7 +1171,11 @@ pub async fn library_save_import(
         }
         Ok(library.scan())
     })
-    .await
+    .await;
+    if photos_again {
+        downloads.start_photos(&pack_id);
+    }
+    saved
 }
 
 // ---------------------------------------------------------------------------

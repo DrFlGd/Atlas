@@ -87,7 +87,7 @@ import {
   type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
-import { MAX_FETCHED_RUN_PAGES, MAX_RUN_ADDRESSES, RUN_PAUSE_MS } from './importRun';
+import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
@@ -850,6 +850,10 @@ async function startRun(
     firstPauseMs,
   );
   currentRun = run;
+  // The pages of an importer that names addresses to fetch become guides.
+  if (pages.length > 0 && pages.every((page) => page.importer.fetch)) {
+    run.state = { ...run.state, guidePages: true };
+  }
   report({
     importerId: null,
     outcome: 'run-started',
@@ -1892,9 +1896,7 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
   const games = await readQueue(importerId);
   const game = games.find((g) => g.key === key);
   if (!importer || !game || game.pages.length === 0) return;
-  // Pages opened in a window come as many as one go opens; fetched pages all at once.
-  const windowed = game.pages.some((page) => readsInWindow(importer.fetch, page.url));
-  const now = game.pages.slice(0, windowed ? MAX_RUN_ADDRESSES : MAX_FETCHED_RUN_PAGES);
+  const now = game.pages.slice(0, MAX_FETCHED_RUN_PAGES);
   await writeQueue(importerId, [
     ...games.filter((g) => g.key !== key),
     { ...game, pages: game.pages.slice(now.length) },
