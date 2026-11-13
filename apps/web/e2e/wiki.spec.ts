@@ -41,6 +41,11 @@ async function addWiki(page: Page) {
     .filter({ hasText: 'Welcome' })
     .getByRole('checkbox')
     .check();
+  // How far the go follows links: the pages they link to at first; here, only the page ticked.
+  const follow = flow.getByTestId('follow-links');
+  await expect(follow).toHaveAttribute('data-follow', 'linked');
+  await follow.getByTestId('follow-links-ticked').click();
+  await expect(follow).toHaveAttribute('data-follow', 'ticked');
   await page.getByTestId('add-map-choose-confirm').click();
   await expect(flow).toHaveAttribute('data-run', 'finished', { timeout: 30_000 });
   await flow.getByTestId('library-flow-close').click();
@@ -191,4 +196,137 @@ test('Edit opens the page in Guides with its editor; the wiki screen then says i
   await preview.getByTestId('wiki-take-back').click();
   await expect(row(page, 'Welcome')).toHaveAttribute('data-state', 'read');
   expect(realErrors(errors)).toEqual([]);
+});
+
+test.describe('following links', () => {
+  test.use({ deviceScaleFactor: 2 });
+
+  /** Ticks Harbour (and more) on the wiki screen, with the choice of how far to follow links. */
+  async function tickAndChoose(page: Page, titles: string[], follow: 'ticked' | 'linked' | 'all') {
+    for (const title of titles) await row(page, title).getByTestId('wiki-row-tick').check();
+    const choice = page.getByTestId('wiki-foot').getByTestId('follow-links');
+    // The choice of the first go is remembered.
+    await expect(choice).toHaveAttribute('data-follow', 'ticked');
+    await choice.getByTestId(`follow-links-${follow}`).click();
+    await expect(choice).toHaveAttribute('data-follow', follow);
+  }
+
+  const found = (page: Page, on: string) =>
+    page.locator(`[data-testid="wiki-found"][data-from="${WIKI}/${on}"]`);
+
+  test('Only the pages ticked: the pages they link to are found, not read', async ({ page }) => {
+    test.setTimeout(120_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { wiki: EXAMPLE_WIKI });
+    await addWiki(page);
+    const before = await fetched(page);
+    await tickAndChoose(page, ['Harbour'], 'ticked');
+    await expect(page.getByTestId('wiki-foot-sentence')).toContainText('Nothing else is read.');
+    await page.getByTestId('wiki-read').click();
+    await expect(row(page, 'Harbour')).toHaveAttribute('data-state', 'read', { timeout: 60_000 });
+    await expect(page.getByTestId('wiki-read')).toBeVisible({ timeout: 30_000 });
+    expect((await fetched(page)).slice(before.length)).toEqual([
+      'https://wiki.example.org/robots.txt',
+      `${WIKI}/Harbour`,
+    ]);
+    // Boats is listed as found on Harbour; Welcome, read before, is not.
+    await expect(found(page, 'Harbour')).toContainText('Boats');
+    await expect(found(page, 'Harbour')).toContainText('Found on Harbour, not read');
+    await expect(found(page, 'Harbour')).not.toContainText('Welcome');
+
+    // In the page, the link to Boats goes nowhere yet, and says why.
+    await row(page, 'Harbour').getByTestId('wiki-row-open').click();
+    const preview = page.getByTestId('wiki-preview');
+    await preview.getByTestId('wiki-preview-show').click();
+    const unread = preview.locator('.app-link-missing[data-unread]');
+    await expect(unread).toHaveText('The boats');
+    await expect(unread).toHaveAttribute('title', 'This page has not been read yet');
+    await expect(unread).toHaveCSS('text-decoration-style', 'dotted');
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('And the pages they link to: one step from the pages ticked, not further', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { wiki: EXAMPLE_WIKI });
+    await addWiki(page);
+    const before = await fetched(page);
+    await tickAndChoose(page, ['Harbour'], 'linked');
+    await expect(page.getByTestId('wiki-foot-sentence')).toContainText(
+      'Plus the pages they link to: how many is known only as they are read',
+    );
+    await expect(page.getByTestId('wiki-ticked')).toHaveText('1 page ticked');
+    await mkdir(SHOTS, { recursive: true });
+    await page.screenshot({ path: `${SHOTS}/follow-links-choice.png` });
+    // Choosing fetched nothing.
+    expect(await fetched(page)).toEqual(before);
+
+    await page.getByTestId('wiki-read').click();
+    await expect(row(page, 'Boats')).toHaveAttribute('data-state', 'read', { timeout: 60_000 });
+    await expect(page.getByTestId('wiki-read')).toBeVisible({ timeout: 30_000 });
+    expect((await fetched(page)).slice(before.length)).toEqual([
+      'https://wiki.example.org/robots.txt',
+      `${WIKI}/Harbour`,
+      `${WIKI}/Boats`,
+    ]);
+    // Oars, two links away, is found on Boats and not read.
+    await expect(found(page, 'Boats')).toContainText('Oars');
+    await expect(found(page, 'Boats')).toContainText('Found on Boats, not read');
+
+    // Now that Boats is read, the link to it in Harbour works.
+    await row(page, 'Harbour').getByTestId('wiki-row-open').click();
+    const preview = page.getByTestId('wiki-preview');
+    await preview.getByTestId('wiki-preview-show').click();
+    await expect(preview.locator('button.app-link')).toHaveText('The boats');
+    await expect(preview.locator('[data-unread]')).toHaveCount(0);
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('And every page those lead to: until no new page is found', async ({ page }) => {
+    test.setTimeout(150_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { wiki: EXAMPLE_WIKI });
+    await addWiki(page);
+    const before = await fetched(page);
+    await tickAndChoose(page, ['Harbour', 'Lighthouse'], 'all');
+    await page.getByTestId('wiki-read').click();
+
+    // The go grows as pages are found, and says so.
+    const strip = page.getByTestId('library-strip-now');
+    await expect(strip).toContainText('3 found by links', { timeout: 60_000 });
+    await expect(page.getByTestId('wiki-foot-sentence')).toContainText('found by links');
+    await expect(found(page, 'Harbour')).toContainText('Found on Harbour, being read in this go');
+    await mkdir(SHOTS, { recursive: true });
+    await page.screenshot({ path: `${SHOTS}/follow-links-running.png` });
+
+    await expect(row(page, 'Oars')).toHaveAttribute('data-state', 'read', { timeout: 90_000 });
+    await expect(page.getByTestId('wiki-read')).toBeVisible({ timeout: 30_000 });
+    // Each page once, the pages ticked first, then those found, in the order found.
+    expect((await fetched(page)).slice(before.length)).toEqual([
+      'https://wiki.example.org/robots.txt',
+      `${WIKI}/Harbour`,
+      `${WIKI}/Lighthouse`,
+      `${WIKI}/Boats`,
+      `${WIKI}/Lamp`,
+      `${WIKI}/Keeper`,
+      `${WIKI}/Oars`,
+    ]);
+    for (const title of ['Boats', 'Lamp', 'Keeper', 'Oars']) {
+      await expect(row(page, title)).toHaveAttribute('data-state', 'read');
+    }
+    await expect(page.getByTestId('wiki-found')).toHaveCount(1);
+    await expect(page.getByTestId('wiki-found')).toContainText('Found on Welcome, not read');
+
+    // The end of the go, in Add a map: how many were found by links.
+    await page.getByTestId('add-map-url').focus();
+    await expect(page.getByTestId('add-map-summary')).toContainText(
+      '6 pages added. 4 of the pages were found by links on the pages read.',
+    );
+    await expect(
+      page.locator('[data-testid="add-map-run-page"][data-found]').first(),
+    ).toContainText('Found by a link on Harbour');
+    expect(realErrors(errors)).toEqual([]);
+  });
 });

@@ -390,14 +390,13 @@ export function WikiScreen({
  * they are read.
  */
 function estimate(ticked: number, follow: FollowLinks): string {
-  const pages = plural(ticked, 'page');
   switch (follow) {
     case 'ticked':
       return `${readingTime(ticked)}, one page at a time with a pause. Nothing else is read.`;
     case 'linked':
-      return `${pages} ticked, plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.`;
+      return 'Plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.';
     case 'all':
-      return `${pages} ticked, plus every page their links lead to, up to ${MAX_FETCHED_RUN_PAGES.toLocaleString('en')} pages in all: how many is known only as they are read, so this go may take long. One page at a time with a pause.`;
+      return `Plus every page their links lead to, up to ${MAX_FETCHED_RUN_PAGES.toLocaleString('en')} pages in all: how many is known only as they are read, so this go may take long. One page at a time with a pause.`;
   }
 }
 
@@ -575,6 +574,7 @@ function Group({
                   <FoundRow
                     key={`found-${row.key}`}
                     found={found}
+                    inRun={inRun}
                     ticked={ticked}
                     onTick={onTick}
                     onChoose={onChoose}
@@ -587,7 +587,13 @@ function Group({
             .filter((found) => !group.rows.some((row) => row.key === found.from.key))
             .map((found) => (
               <li key={`found-${found.from.key}`}>
-                <FoundRow found={found} ticked={ticked} onTick={onTick} onChoose={onChoose} />
+                <FoundRow
+                  found={found}
+                  inRun={inRun}
+                  ticked={ticked}
+                  onTick={onTick}
+                  onChoose={onChoose}
+                />
               </li>
             ))}
         </ul>
@@ -649,11 +655,13 @@ function PageRow({
 /** "Daggers, Straight Swords and 94 more: Found on Weapons, not read". */
 function FoundRow({
   found,
+  inRun,
   ticked,
   onTick,
   onChoose,
 }: {
   found: FoundRows;
+  inRun: ReadonlyMap<string, string>;
   ticked: ReadonlySet<string>;
   onTick: (keys: readonly string[], on: boolean) => void;
   onChoose: (key: string) => void;
@@ -688,7 +696,10 @@ function FoundRow({
         {names.join(', ')}
         {more > 0 ? ` and ${more.toLocaleString('en')} more` : ''}
       </button>
-      <span className="wiki-row-state">Found on {found.from.title}, not read</span>
+      <span className="wiki-row-state">
+        Found on {found.from.title},{' '}
+        {found.pages.some((page) => inRun.has(page.key)) ? 'being read in this go' : 'not read'}
+      </span>
     </div>
   );
 }

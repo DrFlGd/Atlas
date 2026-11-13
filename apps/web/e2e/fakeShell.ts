@@ -53,8 +53,25 @@ export const EXAMPLE_WIKI: WikiSite = {
     },
     Bells: { title: 'Bells', body: 'Ring every bell once.' },
     Gates: { title: 'Gates', body: 'Gates open at dusk.' },
-    Harbour: { title: 'Harbour', body: 'Boats leave at dawn.' },
-    Lighthouse: { title: 'Lighthouse', body: 'The light turns all night.' },
+    // Boats, Oars, Lamp and Keeper are in no contents: reached only through links, two deep.
+    Harbour: {
+      title: 'Harbour',
+      body: '[The boats](example-wiki:guide:boats) leave at dawn.',
+      links: ['Boats', 'Welcome'],
+    },
+    Lighthouse: {
+      title: 'Lighthouse',
+      body: 'The light turns all night.',
+      links: ['Lamp', 'Keeper'],
+    },
+    Boats: {
+      title: 'Boats',
+      body: 'Each has [oars](example-wiki:guide:oars).',
+      links: ['Oars', 'Harbour'],
+    },
+    Oars: { title: 'Oars', body: 'Two to a boat.', links: ['Boats'] },
+    Lamp: { title: 'Lamp', body: 'It burns oil.' },
+    Keeper: { title: 'Keeper', body: 'She lives up the stairs.', links: ['Lighthouse'] },
     Old_bell: { title: 'Old bell', body: 'It is cracked.' },
     Rusty_gate: { title: 'Rusty gate', body: 'It squeaks.' },
   },
