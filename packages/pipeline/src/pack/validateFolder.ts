@@ -17,8 +17,9 @@ export interface FolderReport {
 }
 
 /**
- * Checks a pack folder on disk the way the app reads it: each JSON file
- * against the pack schema (strict, so an unknown field is a problem), the
+ * Checks a pack folder on disk as a tool that writes packs must leave it:
+ * each JSON file against the pack schema (strict, so an unknown field or an
+ * unknown list type is a problem, although the app would skip it), the
  * pack's integrity rules, and, for every layer whose tiles are a
  * `{z}/{x}/{y}` folder, that every tile of its pyramid is there.
  *

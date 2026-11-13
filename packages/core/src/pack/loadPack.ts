@@ -4,7 +4,7 @@ import {
   PACK_COLLECTIONS,
   SUPPORTED_SCHEMA_VERSIONS,
   checkPackIntegrity,
-  manifestSchema,
+  packReadSchemas,
   type CollectionName,
   type PackData,
   type PackManifest,
@@ -39,6 +39,10 @@ const MAX_LISTED_ISSUES = 20;
  * Loads, validates and indexes the data pack at `packUrl`. The URL must be
  * absolute and point at the pack root folder (the one holding
  * `manifest.json`); relative paths inside the pack resolve against it.
+ *
+ * The pack is read tolerantly (`packReadSchemas`): fields this app does not
+ * know, and values of optional enum fields it does not know, are skipped,
+ * so a pack made by a newer tool still opens. Everything else is checked.
  */
 export async function loadPack(
   packUrl: string | URL,
@@ -75,13 +79,17 @@ export async function loadPack(
       MANIFEST_FILE,
     );
   }
-  const manifest: PackManifest = parseWith(manifestSchema, rawManifest, MANIFEST_FILE);
+  const manifest: PackManifest = parseWith(
+    packReadSchemas.manifestSchema,
+    rawManifest,
+    MANIFEST_FILE,
+  );
 
   const entries = await Promise.all(
     COLLECTION_NAMES.map(async (name) => {
       const spec = PACK_COLLECTIONS[name];
       const raw = await readJson(spec.file, spec.required);
-      const parsed = raw === undefined ? [] : parseWith(spec.schema, raw, spec.file);
+      const parsed = raw === undefined ? [] : parseWith(spec.readSchema, raw, spec.file);
       return [name, parsed] as const;
     }),
   );

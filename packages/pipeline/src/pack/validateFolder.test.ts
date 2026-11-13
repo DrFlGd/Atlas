@@ -5,7 +5,7 @@ import { pyramidLevel } from '@atlas/core';
 import { makeFixturePack } from '@atlas/schema/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validatePackFolder } from './validateFolder';
-import { writePackJson, writeTileFolder } from './writePack';
+import { assertValidPack, writePackJson, writeTileFolder } from './writePack';
 
 const folders: string[] = [];
 afterEach(async () => {
@@ -49,5 +49,29 @@ describe('validatePackFolder', () => {
     expect(report.problems).toEqual([
       'demo:layer:surface: 1 tiles missing, such as tiles/surface/2/1/1.webp',
     ]);
+  });
+
+  it('reports an unknown list type and an unknown key, which the app would skip', async () => {
+    const dir = await fixtureFolder();
+    const pack = makeFixturePack();
+    const checklists = pack.checklists.map((c) => ({ ...c, type: 'timeline', colour: 'red' }));
+    await writeFile(join(dir, 'checklists.json'), JSON.stringify(checklists));
+    const report = await validatePackFolder(dir);
+    expect(report.problems.join('\n')).toMatch(/checklists\.0\.type/);
+    expect(report.problems.join('\n')).toMatch(/colour/);
+  });
+});
+
+describe('assertValidPack', () => {
+  it('refuses what a writer did not mean to write: unknown keys and list types', () => {
+    const pack = makeFixturePack();
+    expect(() => assertValidPack(pack)).not.toThrow();
+    const typo = { ...pack, checklists: [{ ...pack.checklists[0]!, tpye: 'route' }] };
+    expect(() => assertValidPack(typo)).toThrow(/tpye/);
+    const unknown = {
+      ...pack,
+      checklists: [{ ...pack.checklists[0]!, type: 'timeline' as never }],
+    };
+    expect(() => assertValidPack(unknown)).toThrow(/checklists\.0\.type/);
   });
 });

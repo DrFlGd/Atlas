@@ -283,6 +283,13 @@ describe('outcome checks', () => {
     const broken = structuredClone(good.pack);
     broken.locations[0]!.categoryId = 'test-valley:cat:missing';
     expect(checkOutcome({ ...good, pack: broken })).toMatchObject({ ok: false });
+    // The pack is written as returned, so it is checked strictly: no unknown keys.
+    const extra = structuredClone(good.pack);
+    Object.assign(extra.locations[0]!, { addedLater: true });
+    expect(checkOutcome({ ...good, pack: extra })).toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/addedLater/) as string,
+    });
     expect(checkOutcome({ ...good, packId: 'other' })).toMatchObject({ ok: false });
     expect(checkOutcome({ ...good, mapId: 'test-valley:map:nowhere' })).toMatchObject({
       ok: false,

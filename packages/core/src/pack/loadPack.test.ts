@@ -120,6 +120,24 @@ describe('loadPack', () => {
     expect(error.issues.some((issue) => issue.startsWith('1.x:'))).toBe(true);
   });
 
+  it('skips fields and list types it does not know, as a newer pack may have them', async () => {
+    const pack = makeFixturePack();
+    const files = packFiles(pack);
+    files['manifest.json'] = { ...pack.manifest, addedLater: true };
+    files['locations.json'] = pack.locations.map((l) => ({ ...l, photo: 'photos/a.webp' }));
+    files['checklists.json'] = [
+      { ...pack.checklists[0]!, type: 'timeline', addedLater: 1 },
+      { id: 'demo:checklist:two', name: 'Two', order: 1, type: 'secrets' },
+    ];
+    const { fetchFn } = servePack(files);
+    const loaded = await loadPack(BASE, { fetch: fetchFn });
+    expect(loaded.data.locations[0]).toEqual(pack.locations[0]);
+    expect(loaded.data.checklists[0]).not.toHaveProperty('addedLater');
+    expect(loaded.data.checklists[0]!.type).toBeUndefined();
+    expect(loaded.data.checklists[1]!.type).toBe('secrets');
+    expect(loaded.data.manifest).not.toHaveProperty('addedLater');
+  });
+
   it('reports invalid JSON', async () => {
     const files = packFiles(makeFixturePack());
     files['maps.json'] = '{ not json';

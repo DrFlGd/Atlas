@@ -1,4 +1,4 @@
-import { MANIFEST_FILE, manifestSchema } from '@atlas/schema';
+import { MANIFEST_FILE, packReadSchemas } from '@atlas/schema';
 import { packEntrySchema, resolvePackEntries, type PackEntry } from '@atlas/core';
 import { z } from 'zod';
 
@@ -104,7 +104,7 @@ export async function loadCatalog(
     const response = await fetchFn(manifestUrl, { cache: 'no-store' });
     if (!response.ok)
       throw new Error(`Could not load ${manifestUrl.href}: HTTP ${response.status}`);
-    const manifest = manifestSchema.safeParse(await response.json());
+    const manifest = packReadSchemas.manifestSchema.safeParse(await response.json());
     if (!manifest.success) throw new Error(`Invalid ${manifestUrl.href}`);
     return [{ id: manifest.data.gameId, url: config.packUrl, title: manifest.data.title }];
   }
