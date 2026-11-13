@@ -31,7 +31,7 @@ export function entryWhere(
   const region = place?.regionId ? pack.regions.get(place.regionId) : undefined;
   return [
     region?.name ?? (place ? pack.maps.get(place.mapId)?.name : undefined),
-    entry.places.length > 1 ? `${entry.places.length} places` : undefined,
+    entry.places.length > 1 ? `${entry.places.length} locations` : undefined,
     !entry.ownMark && state.total > 1 && !state.done
       ? `${state.found} of ${state.total} found`
       : undefined,

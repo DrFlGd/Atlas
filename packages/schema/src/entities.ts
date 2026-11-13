@@ -44,15 +44,15 @@ export const checklistKindSchema = z.enum(['checklist', 'guide']);
 
 /**
  * What a list is, which decides how the app shows it (see the checklist's
- * `type`). The app's views are "By area", "By kind" and "In order".
+ * `type`). The app's views are "By area", "By type" and "In order".
  *
- * - `collection`: find everything of a set. Views: By area, By kind.
+ * - `collection`: find everything of a set. Views: By area, By type.
  * - `secrets`: a collection whose notes are solutions, with hidden text
- *   (`||like this||`) and places named in the text. Views: By area, By kind.
+ *   (`||like this||`) and places named in the text. Views: By area, By type.
  * - `photos`: a collection shown with a photo per entry. Until photos are
  *   shown, it behaves as a collection.
  * - `route`: steps followed in order, with places. Views: In order (the
- *   default), By area, By kind; it has a next step.
+ *   default), By area, By type; it has a next step.
  * - `build`: ordered steps of items, places and bosses, each with a reason.
  *   View: In order only; it has a next step.
  * - `plain`: things to do, shown as written, with no choice of view and no

@@ -283,7 +283,7 @@ export function pictureText(picture: PictureSummary): string {
       ? tiles === undefined
         ? 'The map picture was measured on the image server.'
         : `The map picture was measured: ${tiles === 1 ? '1 map image of it was' : `${tiles} map images of it were`} found on the image server.`
-      : 'The map picture could not be measured, so its size was estimated from where the places are.';
+      : 'The map picture could not be measured, so its size was estimated from where the locations are.';
   const note = picture.note?.trim();
   if (!note) return text;
   return `${text} ${note.endsWith('.') ? note : `${note}.`}`;

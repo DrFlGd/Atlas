@@ -220,7 +220,7 @@ function matchContext(game: LoadedGame, readerId: string): SaveJobContext {
   };
 }
 
-const placesText = (n: number) => (n === 1 ? '1 place' : `${n} places`);
+const placesText = (n: number) => (n === 1 ? '1 location' : `${n} locations`);
 
 /** Marks found the places a match shows done, where nothing was set by hand. Returns how many. */
 function markFound(match: SaveMatch): number {
@@ -547,7 +547,7 @@ export function saveMarkTargets(
 export function removeSaveMarks(): void {
   const targets = saveMarkTargets(get().game, get().rows);
   if (targets.length === 0) {
-    notify('No places are marked from saves.');
+    notify('No locations are marked from saves.');
     return;
   }
   applyProgress(
@@ -711,7 +711,7 @@ async function checkGameFolder(token = loadToken): Promise<void> {
 /** Why a scan gave no files to read, in plain words. */
 function noFilesText(scan: GameFilesScan): string {
   if (scan.bundles === 0) {
-    return 'Atlas found no bundles in the game folder, so it cannot read the map places.';
+    return 'Atlas found no bundles in the game folder, so it cannot read the map locations.';
   }
   const unknown = scan.layouts.unknown ?? 0;
   if (unknown * 2 >= scan.bundles) {
@@ -723,7 +723,7 @@ function noFilesText(scan: GameFilesScan): string {
 /** Why no map file could be unpacked, in plain words. */
 function unpackFailedText(problems: readonly string[]): string {
   if (problems.some((p) => p.includes('Doboz') || p.includes('compression Atlas'))) {
-    return 'The game’s map files are packed with a compression Atlas cannot read yet, so it cannot read the map places.';
+    return 'The game’s map files are packed with a compression Atlas cannot read yet, so it cannot read the map locations.';
   }
   if (problems.some((p) => p.includes('CR2W'))) {
     return 'The game’s map files did not unpack the way Atlas expects: an unknown file layout.';
@@ -770,7 +770,7 @@ export async function readGameTable(): Promise<void> {
       set({ busy: null, error: unpackFailedText(problems) });
       return;
     }
-    set({ busy: 'Reading the map places…' });
+    set({ busy: 'Reading the map locations…' });
     const result = await runTableJob({
       kind: 'table',
       readerId: reader.id,
@@ -789,7 +789,7 @@ export async function readGameTable(): Promise<void> {
       set({
         busy: null,
         error:
-          'Atlas read the game’s map files but found no map places in them: an unknown file layout.',
+          'Atlas read the game’s map files but found no map locations in them: an unknown file layout.',
       });
       return;
     }
@@ -800,7 +800,7 @@ export async function readGameTable(): Promise<void> {
       table: result.table,
       last: { files: files.length, unreadable: problems.length, pins },
     });
-    notify(`Read ${pins === 1 ? '1 map place' : `${pins} map places`} from the game.`);
+    notify(`Read ${pins === 1 ? '1 map location' : `${pins} map locations`} from the game.`);
     void rematch();
   } catch (error) {
     set({ busy: null, error: errorText(error) });

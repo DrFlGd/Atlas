@@ -141,7 +141,7 @@ export function ProgressScreen() {
         ) : null}
 
         <section aria-labelledby="progress-kinds">
-          <GroupTitle id="progress-kinds">Kinds</GroupTitle>
+          <GroupTitle id="progress-kinds">Types</GroupTitle>
           <ul className="touch-plain-list">
             {kinds.map((category) => {
               const kindTally = summary.category(category.id);

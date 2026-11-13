@@ -22,7 +22,7 @@ function EmptyDetails() {
   const keyHints = useAtlas(keyboardHintsOffered);
   return (
     <div className="pane-body empty-details" data-testid="details-empty">
-      <p>Select a marker on the map, or search for a place.</p>
+      <p>Select a marker on the map, or search for a location.</p>
       {keyHints ? <Shortcuts checklists={checklists} /> : null}
     </div>
   );
@@ -124,7 +124,7 @@ function LocationDetails({ locationId }: { locationId: string }) {
           {keyHints ? <kbd>F</kbd> : null}
         </button>
       ) : (
-        <p className="muted small">This category is not tracked.</p>
+        <p className="muted small">This type is not tracked.</p>
       )}
       {found?.source === 'save' ? (
         <p className="muted small" data-testid="found-from-save">

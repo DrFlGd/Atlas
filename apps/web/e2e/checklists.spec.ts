@@ -104,7 +104,7 @@ test('ticking an item marks its place found on the map, and the counters follow'
   await itemBox(page, first!.id).check();
   await expectOverallFound(page, 1);
   await expect(page.getByTestId('checklist-done')).toHaveText('1 of 120 found or done');
-  await expect(page.getByTestId('toast')).toContainText('One place marked found');
+  await expect(page.getByTestId('toast')).toContainText('One location marked found');
 
   // "Show on map" selects the place: it is found there.
   await itemRow(page, first!.id)
@@ -157,7 +157,7 @@ test('Z undoes a tick that marked several places, as one change', async ({ page,
   await page.getByRole('searchbox', { name: 'Search this list' }).fill(several.name);
   await itemBox(page, several.id).check();
   await expectOverallFound(page, 3);
-  await expect(page.getByTestId('toast')).toContainText('3 places marked found');
+  await expect(page.getByTestId('toast')).toContainText('3 locations marked found');
 
   await itemBox(page, several.id).uncheck();
   await expectOverallFound(page, 0);
@@ -265,16 +265,16 @@ test('a list filters by region and category with counts, by text, and hides foun
   const keys = route.filter((i) => i.locationIds.length > 0 && i.name.includes(' key '));
   await openMap(page);
   await openList(page, 'Treasure hunter’s route');
-  await page.getByRole('button', { name: 'Filter by region and category' }).click();
+  await page.getByRole('button', { name: 'Filter by region and type' }).click();
   const facets = page.getByTestId('checklist-facets');
-  const categories = facets.getByRole('group', { name: 'Categories' });
+  const categories = facets.getByRole('group', { name: 'Types' });
   await expect(categories.getByTestId('facet').filter({ hasText: 'Old key' })).toContainText(
     `0/${keys.length}`,
   );
   // Places on the second map have no region; they are listed under that map.
   await expect(facets.getByRole('group', { name: 'Regions' })).toContainText('The Hollow Deep');
 
-  await categories.getByRole('button', { name: 'Deselect all categories' }).click();
+  await categories.getByRole('button', { name: 'Deselect all types' }).click();
   await expect(page.getByText('No items match the filters.')).toBeVisible();
   await categories.getByRole('checkbox', { name: /Old key/ }).check();
   await expect(page.getByTestId('check-item').first()).toContainText('key');
@@ -287,7 +287,7 @@ test('a list filters by region and category with counts, by text, and hides foun
   await page.getByRole('searchbox', { name: 'Search this list' }).fill('');
   await page.getByRole('switch', { name: 'Hide found' }).check();
   await expect(itemRow(page, keys[0]!.id)).toHaveCount(0);
-  await categories.getByRole('button', { name: 'Select all categories', exact: true }).click();
+  await categories.getByRole('button', { name: 'Select all types', exact: true }).click();
   await expect(page.getByTestId('check-item').first()).toBeVisible();
   expect(errors).toEqual([]);
 });

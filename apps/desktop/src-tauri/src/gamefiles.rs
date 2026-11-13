@@ -927,14 +927,14 @@ fn key(text: &str) -> String {
 pub fn report_line(report: &GameFilesReport) -> String {
     if report.kind == "match" {
         let mut line = format!(
-            "Used the game's map places with a save: {} of {} map pin tags of the save found in the table",
+            "Used the game's map locations with a save: {} of {} map pin tags of the save found in the table",
             report.save_tags_found, report.save_tags
         );
         for (world, fit) in report.fits.iter().take(20) {
             line += &format!(
-                " | {}: from {}, {} of {} pins landed on {} places, {:.1} px apart on average (radius {:.1} px), {}",
+                " | {}: from {}, {} of {} pins landed on {} locations, {:.1} px apart on average (radius {:.1} px), {}",
                 key(world),
-                if fit.kinds == "first" { "signposts" } else { "every kind that never moves" },
+                if fit.kinds == "first" { "signposts" } else { "every type that never moves" },
                 fit.inliers,
                 fit.candidates,
                 fit.places,
@@ -969,7 +969,7 @@ pub fn report_line(report: &GameFilesReport) -> String {
         .collect::<Vec<_>>()
         .join("; ");
     format!(
-        "Read the game's map places: {} files ({} could not be unpacked), {} read as CR2W (versions {}), {} not | {} pin files ({} with pins), {} worlds in world.w2am, {} DLC mounters | pins by world: {} | {} in files of no known world, {} with no position, {} replaced by a later file",
+        "Read the game's map locations: {} files ({} could not be unpacked), {} read as CR2W (versions {}), {} not | {} pin files ({} with pins), {} worlds in world.w2am, {} DLC mounters | pins by world: {} | {} in files of no known world, {} with no position, {} replaced by a later file",
         report.files,
         report.read_failed,
         report.parsed,
@@ -1529,7 +1529,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             report_line(&table),
-            "Read the game's map places: 14 files (1 could not be unpacked), 12 read as CR2W (versions 163: 12), 1 not | 10 pin files (9 with pins), 9 worlds in world.w2am, 2 DLC mounters | pins by world: bobfakeline 3 (); novigrad 1200 (MonsterNest 40, RoadSign 80) | 0 in files of no known world, 2 with no position, 5 replaced by a later file"
+            "Read the game's map locations: 14 files (1 could not be unpacked), 12 read as CR2W (versions 163: 12), 1 not | 10 pin files (9 with pins), 9 worlds in world.w2am, 2 DLC mounters | pins by world: bobfakeline 3 (); novigrad 1200 (MonsterNest 40, RoadSign 80) | 0 in files of no known world, 2 with no position, 5 replaced by a later file"
         );
         let used: GameFilesReport = serde_json::from_value(serde_json::json!({
             "kind": "match",
@@ -1542,7 +1542,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             report_line(&used),
-            "Used the game's map places with a save: 12 of 14 map pin tags of the save found in the table | novigrad: from signposts, 118 of 140 pins landed on 130 places, 1.8 px apart on average (radius 9.3 px), lined up"
+            "Used the game's map locations with a save: 12 of 14 map pin tags of the save found in the table | novigrad: from signposts, 118 of 140 pins landed on 130 locations, 1.8 px apart on average (radius 9.3 px), lined up"
         );
     }
 }

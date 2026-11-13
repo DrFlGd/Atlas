@@ -18,7 +18,7 @@ No command line needed, ever.
 
 4. **Click Make map.** It reads every area in full (collision, or the navmesh where collision cannot be read), works out the floors, draws them and cuts them into map tiles. A progress bar shows each area as it goes; it may take several minutes. Reading an area's collision is stopped after 5 minutes; that area is then drawn from its navmesh, or with markers only, and the rest goes on. **Cancel** stops it at once and leaves your maps folder as it was.
 5. **Open Atlas.** The map pack is installed in Atlas's maps folder (`%LOCALAPPDATA%\Atlas\Maps\dark-souls-remastered`, or the folder you chose in Atlas's Maps dialog), and the window says where; **Show in folder** opens it. In Atlas, the pack appears in the list of maps (click **Refresh** in the Maps dialog if Atlas was already open). Making the map again replaces the pack it made before; it never replaces a pack it did not make.
-6. **Read the result.** The table lists every area with its floors, its markers by category, and anything to look at (markers not over any floor, bosses not found, item lots missing from the item table, an area too large for one picture). Below are small pictures of every floor.
+6. **Read the result.** The table lists every area with its floors, its markers by type, and anything to look at (markers not over any floor, bosses not found, item lots missing from the item table, an area too large for one picture). Below are small pictures of every floor.
 7. **Click Save report…**, save the `.zip` file and **upload it to the thread**. It holds the report and the small floor pictures, not the map pack.
 
 **Check game files** still works as in 0.1: it only reports what can be read, and makes nothing.
@@ -26,7 +26,7 @@ No command line needed, ever.
 ### What is on the map
 
 - **One map per area, one layer per floor.** Floors are found from the height of the walkable ground: where one walkable surface lies at least 3 metres over another across enough ground, they are split into floors (at most 5 per area). Each floor is drawn from above, shaded by height (dark teal low, light teal high) with light from the north-west, walls outlined in dark lines, and the floors below faded underneath. North (+z) is up.
-- **Markers:** bonfires (from the event scripts), every treasure pickup (one marker per item, with its name, count and description; consumables and souls are in categories hidden by default), bosses, NPCs you can talk to, and enemies with a guaranteed one-time drop. No regular enemies. Each marker sits on the floor its height falls in, and has the game's event flag where there is one.
+- **Markers:** bonfires (from the event scripts), every treasure pickup (one marker per item, with its name, count and description; consumables and souls are in types hidden by default), bosses, NPCs you can talk to, and enemies with a guaranteed one-time drop. No regular enemies. Each marker sits on the floor its height falls in, and has the game's event flag where there is one.
 - **Checklists:** All bonfires, Bosses, Items by area, Rings, Key items.
 - Names and numbers that need choosing (area names, floor names for a few areas, bosses and their flags, item category ranges) are in [tools/gamefiles/config/dark-souls-remastered.json](../../tools/gamefiles/config/dark-souls-remastered.json); the defaults need no tuning.
 

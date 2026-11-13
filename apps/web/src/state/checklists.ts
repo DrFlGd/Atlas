@@ -95,7 +95,7 @@ export function setEntryDone(entry: ChecklistItemEntry, done: boolean): void {
   }
   const places = entry.ownMark
     ? ''
-    : ` ${changes.length === 1 ? 'One place' : `${changes.length} places`} marked ${done ? 'found' : 'not found'}.`;
+    : ` ${changes.length === 1 ? 'One location' : `${changes.length} locations`} marked ${done ? 'found' : 'not found'}.`;
   notify(`“${name}”: ${done ? 'done' : 'not done'}.${places}`, 'info', { undo: true });
 }
 

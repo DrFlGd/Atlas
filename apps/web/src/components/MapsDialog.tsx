@@ -439,7 +439,7 @@ export function PackSummary({ id }: { id: string }) {
     detail ? DETAIL_WORDS[detail] : null,
     details.packFile ? formatBytes(details.packFile.header.bytes) : null,
     `${details.contents.maps.toLocaleString('en')} map${details.contents.maps === 1 ? '' : 's'}`,
-    `${details.contents.locations.toLocaleString('en')} place${details.contents.locations === 1 ? '' : 's'}`,
+    `${details.contents.locations.toLocaleString('en')} location${details.contents.locations === 1 ? '' : 's'}`,
   ].filter((part) => part !== null);
   return (
     <span className="muted small" data-testid="pack-summary">

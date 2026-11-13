@@ -138,7 +138,7 @@ test('imports a map pack file from the picker, copying it into the app first', a
   const row = maps.locator('[data-testid="game-row"][data-pack="demo"]');
   await expect(row).toContainText('Imported from a map pack file');
   await expect(row.getByTestId('pack-summary')).toHaveText(
-    'Standard detail · 2.1 MB · 2 maps · 5,000 places',
+    'Standard detail · 2.1 MB · 2 maps · 5,000 locations',
   );
   await row.getByTestId('pack-details-toggle').click();
   await expect(row.getByTestId('pack-details')).toContainText(

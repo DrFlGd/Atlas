@@ -2100,7 +2100,7 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
     }
     if let Some(counts) = &report.counts {
         line.push_str(&format!(
-            " | locations on this map: {} | in the game: maps {}, locations {}, categories {}",
+            " | locations on this map: {} | in the game: maps {}, locations {}, types {}",
             counts.map_locations, counts.maps, counts.locations, counts.categories
         ));
     }
@@ -2109,7 +2109,7 @@ fn import_report_line(report: &ImportReport) -> (bool, String) {
             (true, Some(tiles)) => format!(" | map picture: measured, {tiles} map images found"),
             (true, None) => " | map picture: measured".to_owned(),
             (false, _) => {
-                " | map picture: not measured, sized from where the places are".to_owned()
+                " | map picture: not measured, sized from where the locations are".to_owned()
             }
         });
         if let Some(page) = &picture.page {
@@ -2208,7 +2208,7 @@ mod tests {
         assert!(!warn);
         assert_eq!(
             line,
-            "Import with importer demo-maps added: pack test-valley, map test-valley:map:east | locations on this map: 4 | in the game: maps 1, locations 4, categories 3"
+            "Import with importer demo-maps added: pack test-valley, map test-valley:map:east | locations on this map: 4 | in the game: maps 1, locations 4, types 3"
         );
         let report: ImportReport = serde_json::from_str(
             r#"{"importerId":"demo-maps","outcome":"updated","packId":"test-valley",
@@ -2224,7 +2224,7 @@ mod tests {
         )
         .unwrap();
         assert!(import_report_line(&report).1.ends_with(
-            "| map picture: not measured, sized from where the places are (the image server could not be asked)"
+            "| map picture: not measured, sized from where the locations are (the image server could not be asked)"
         ));
         let report: ImportReport = serde_json::from_str(
             r#"{"importerId":"demo-maps","outcome":"updated","packId":"test-valley",

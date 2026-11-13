@@ -742,7 +742,7 @@ pub fn report_line(report: &SaveReport) -> String {
         line += &format!(" | world {}", short(world, 40));
     }
     line += &format!(
-        " | {} places matched, {} newly marked found",
+        " | {} locations matched, {} newly marked found",
         report.matched, report.marked
     );
     line
@@ -981,7 +981,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             report_line(&report),
-            "Used the save ManualSave_12.sav (save version 67, game version 29, format 164) | world novigrad | 31 places matched, 4 newly marked found"
+            "Used the save ManualSave_12.sav (save version 67, game version 29, format 164) | world novigrad | 31 locations matched, 4 newly marked found"
         );
         let failed: SaveReport = serde_json::from_value(serde_json::json!({
             "file": "AutoSave_3.sav",

@@ -111,7 +111,7 @@ export function useListTools(
                 setFacetsOpen(!facetsOpen);
               }}
             >
-              {facetsOpen ? 'Hide filters' : 'Filter by region and category'}
+              {facetsOpen ? 'Hide filters' : 'Filter by region and type'}
               {hiddenCount > 0 ? ` (${hiddenCount} off)` : ''}
             </button>
           ) : null}
@@ -130,7 +130,7 @@ export function useListTools(
             ) : null}
             {showCategories ? (
               <FacetGroup
-                legend="Categories"
+                legend="Types"
                 counts={categoryCounts}
                 hidden={hiddenCategories}
                 name={names.category}

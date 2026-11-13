@@ -17,18 +17,18 @@ export function keyList(lists: string | null): KeyHelp[] {
     {
       keys: ['N'],
       what: lists
-        ? 'Nearest place not yet found; in a list shown in order, the next step'
-        : 'Nearest place not yet found',
+        ? 'Nearest location not yet found; in a list shown in order, the next step'
+        : 'Nearest location not yet found',
     },
     {
       keys: ['F'],
       what: lists
-        ? 'Mark the selected place found, or not found; in a list shown in order, the next step done'
-        : 'Mark the selected place found, or not found',
+        ? 'Mark the selected location found, or not found; in a list shown in order, the next step done'
+        : 'Mark the selected location found, or not found',
     },
     { keys: ['Z'], what: 'Undo' },
     ...(lists ? [{ keys: ['C'], what: `${lists}, or back to the map` }] : []),
-    { keys: ['Esc'], what: 'Close what is on top: a menu, search, the place, a list' },
+    { keys: ['Esc'], what: 'Close what is on top: a menu, search, the location, a list' },
     { keys: ['?'], what: 'This list of keys' },
   ];
 }
@@ -40,8 +40,8 @@ export function withKey(label: string, key: string, shown: boolean): string {
 
 /** What the mouse does on the map, listed with the keys. */
 export const MOUSE_HELP: readonly { action: string; what: string }[] = [
-  { action: 'Point at a place', what: 'Its name' },
-  { action: 'Click a place', what: 'Show it' },
-  { action: 'Right-click a place', what: 'Mark it found, or not found, at once' },
+  { action: 'Point at a location', what: 'Its name' },
+  { action: 'Click a location', what: 'Show it' },
+  { action: 'Right-click a location', what: 'Mark it found, or not found, at once' },
   { action: 'Scroll wheel', what: 'Zoom in and out' },
 ];

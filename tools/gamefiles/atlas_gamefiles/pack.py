@@ -31,7 +31,7 @@ PACK_VERSION = "1.0.0"
 SINCE = "1.0.0"
 HUNTERS_ATLAS = "https://github.com/MikeTat1988/HuntersAtlas"
 
-GROUPS = (("places", "Places", 0), ("characters", "Characters", 1), ("items", "Items", 2))
+GROUPS = (("places", "Locations", 0), ("characters", "Characters", 1), ("items", "Items", 2))
 # id, group, name, icon (Atlas's icon set), colour, trackable, shown at first
 CATEGORIES = (
     ("bonfire", "places", "Bonfire", "flame", "#ff9a3c", True, True),

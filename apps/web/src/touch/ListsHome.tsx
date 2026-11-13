@@ -113,7 +113,9 @@ export function ListsHome({ game }: { game: LoadedGame }) {
                         <span className="touch-list-card-name">{guide.title}</span>
                         {places > 0 ? (
                           <span className="touch-figure">
-                            {places === 1 ? 'One place' : `${numberFormat.format(places)} places`}
+                            {places === 1
+                              ? 'One location'
+                              : `${numberFormat.format(places)} locations`}
                           </span>
                         ) : null}
                       </span>

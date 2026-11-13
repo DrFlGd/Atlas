@@ -229,7 +229,7 @@ function FilterBody({ groups, showAll }: { groups: KindGroups; showAll?: React.R
       <Presets />
       {showAll ? (
         <div className="touch-group-head touch-kinds-head">
-          <h2 className="touch-group-title">Kinds on this map</h2>
+          <h2 className="touch-group-title">Types on this map</h2>
           {showAll}
         </div>
       ) : null}

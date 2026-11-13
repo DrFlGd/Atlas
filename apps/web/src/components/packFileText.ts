@@ -181,11 +181,14 @@ export function installedImagesText(details: PackDetails): string {
     : 'Not downloaded.';
 }
 
-/** The size of a game's contents: "3 maps, 120 places, 2 checklists". */
+/** The size of a game's contents: "3 maps, 120 locations, 2 checklists". */
 export function contentsText(contents: PackFileHeader['contents']): string {
   const part = (count: number, one: string, many: string) =>
     `${numberFormat.format(count)} ${count === 1 ? one : many}`;
-  const parts = [part(contents.maps, 'map', 'maps'), part(contents.locations, 'place', 'places')];
+  const parts = [
+    part(contents.maps, 'map', 'maps'),
+    part(contents.locations, 'location', 'locations'),
+  ];
   if (contents.checklists > 0) parts.push(part(contents.checklists, 'checklist', 'checklists'));
   if (contents.guides > 0) parts.push(part(contents.guides, 'guide', 'guides'));
   return parts.join(', ');

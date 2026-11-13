@@ -154,14 +154,14 @@ test('a save marks places found, shows where the player stood, and never overrid
   // Read a save.
   await openSave(page, 'ManualSave_1.sav', VELEN_SAVE);
   await expect(page.getByTestId('toast')).toHaveText(
-    'Read ManualSave_1.sav: 2 places marked found.',
+    'Read ManualSave_1.sav: 2 locations marked found.',
   );
   await expectOverallFound(page, 2);
   // Read in the worker, not on the page.
   expect(workers.some((url) => url.includes('saveWorker'))).toBe(true);
   const dialog = page.getByTestId('save-dialog');
   await expect(dialog.getByTestId('save-world')).toHaveText('Velen and Novigrad');
-  await expect(dialog.getByTestId('save-found')).toContainText('2 places, 2 newly marked');
+  await expect(dialog.getByTestId('save-found')).toContainText('2 locations, 2 newly marked');
   await expect(dialog.getByTestId('save-categories')).toContainText('Signposts1');
   await expect(dialog.getByTestId('save-categories')).toContainText('Monster Nests1');
   await expect(dialog.getByTestId('save-lined-up')).toHaveText(
@@ -261,13 +261,13 @@ test('a save that marks nothing says why, without calling it a failure', async (
     }),
   );
   await expect(page.getByTestId('toast')).toHaveText(
-    'Read AutoSave_0.sav: nothing to mark. The save has not discovered any places yet.',
+    'Read AutoSave_0.sav: nothing to mark. The save has not discovered any locations yet.',
   );
   await expect(dialog.getByTestId('save-why')).toContainText(
-    'has not discovered or cleared any places yet',
+    'has not discovered or cleared any locations yet',
   );
   await expect(dialog.getByTestId('save-map-state')).toHaveText(
-    'On the save’s own map: 0 places discovered, 0 cleared, 0 known of.',
+    'On the save’s own map: 0 locations discovered, 0 cleared, 0 known of.',
   );
   await expect(dialog.getByTestId('save-error')).toHaveCount(0);
 
@@ -281,7 +281,7 @@ test('a save that marks nothing says why, without calling it a failure', async (
     }),
   );
   await expect(page.getByTestId('toast')).toHaveText(
-    'Read AutoSave_1.sav: nothing to mark. The save names 2 discovered places by the game’s own tags only, and Atlas has no table yet of where those are.',
+    'Read AutoSave_1.sav: nothing to mark. The save names 2 discovered locations by the game’s own tags only, and Atlas has no table yet of where those are.',
   );
   await expect(dialog.getByTestId('save-why')).toContainText('Nothing is wrong with the save.');
   await expectOverallFound(page, 0);
@@ -500,7 +500,9 @@ test('in the desktop app, the saves folder is linked and each new save is read a
   await page.getByTestId('save-button').click();
   await expect(page.getByTestId('save-dialog')).toContainText(folder);
   await page.getByTestId('save-use-default').click();
-  await expect(page.getByTestId('toast')).toHaveText('Read AutoSave_1.sav: 1 place marked found.');
+  await expect(page.getByTestId('toast')).toHaveText(
+    'Read AutoSave_1.sav: 1 location marked found.',
+  );
   await expectOverallFound(page, 1);
   await expect(page.getByTestId('save-follow')).toBeChecked();
   await expect(page.getByTestId('save-link')).toContainText('gamesaves');
@@ -515,9 +517,12 @@ test('in the desktop app, the saves folder is linked and each new save is read a
     // The crossroads sign and the drowner nest done.
     [...VELEN_SAVE],
   );
-  await expect(page.getByTestId('toast')).toHaveText('Read AutoSave_2.sav: 1 place marked found.', {
-    timeout: 10_000,
-  });
+  await expect(page.getByTestId('toast')).toHaveText(
+    'Read AutoSave_2.sav: 1 location marked found.',
+    {
+      timeout: 10_000,
+    },
+  );
   await expectOverallFound(page, 2);
 
   // The log gets file names, versions, world ids and counts only.
@@ -635,18 +640,20 @@ test('in the desktop app, the game’s map places line the map up and place what
   const table = page.getByTestId('game-table');
   await expect(table).toContainText('No game folder chosen yet.');
   await table.getByTestId('game-folder-choose').click();
-  await expect(page.getByTestId('toast')).toHaveText('Read 38 map places from the game.');
+  await expect(page.getByTestId('toast')).toHaveText('Read 38 map locations from the game.');
   await expect(table.getByTestId('game-table-counts')).toHaveText(
-    '38 map places read: Velen and Novigrad 38.',
+    '38 map locations read: Velen and Novigrad 38.',
   );
   await expect(table.getByTestId('game-folder')).toHaveText('C:\\Games\\The Witcher 3');
 
   // The save names a signpost discovered and a nest cleared: both placed, the map lined up.
   await page.getByTestId('save-use-default').click();
-  await expect(page.getByTestId('toast')).toHaveText('Read AutoSave_1.sav: 2 places marked found.');
+  await expect(page.getByTestId('toast')).toHaveText(
+    'Read AutoSave_1.sav: 2 locations marked found.',
+  );
   await expectOverallFound(page, 2);
   await expect(page.getByTestId('save-lined-up')).toHaveText(
-    'Lined up from the game’s map places (30 of 30 signposts fit).',
+    'Lined up from the game’s map locations (30 of 30 signposts fit).',
   );
   await page.getByTestId('save-show-me').click();
   await expect(page.locator('.atlas-player')).toBeVisible();
@@ -690,7 +697,7 @@ test.describe('in the standard layout', () => {
     await expect(button).toHaveAttribute('title', 'Game save: read your progress from a save');
     await openSave(page, 'ManualSave_1.sav', VELEN_SAVE);
     await expect(page.getByTestId('toast')).toHaveText(
-      'Read ManualSave_1.sav: 2 places marked found.',
+      'Read ManualSave_1.sav: 2 locations marked found.',
     );
     await expect(found).toHaveAttribute('data-found', '2');
     await expect(button).toHaveAttribute('title', 'Game save: linked');

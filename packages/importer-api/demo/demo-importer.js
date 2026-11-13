@@ -298,7 +298,7 @@ function buildPack(pages, since, version) {
       tileSize: 256,
     })),
     regions: [],
-    categoryGroups: [{ id: id('catgroup', 'places'), name: 'Places', order: 0 }],
+    categoryGroups: [{ id: id('catgroup', 'places'), name: 'Locations', order: 0 }],
     categories: Object.entries(KINDS)
       .filter(([kind]) => kinds.has(kind))
       .map(([kind, style]) => ({

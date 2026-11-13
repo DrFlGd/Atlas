@@ -20,19 +20,19 @@ const match = (parts: Partial<SaveMatch>): SaveMatch => ({
 describe('why a save marks nothing', () => {
   it('says a new game has found nothing yet, without implying a failure', () => {
     const fresh = match({ nothingBecause: 'nothing-done' });
-    expect(nothingNotice(fresh)).toBe('The save has not discovered any places yet.');
+    expect(nothingNotice(fresh)).toBe('The save has not discovered any locations yet.');
     expect(nothingExplained(fresh)).toContain('expected near the start of the game');
   });
 
   it('says the places are named by tag only, and Atlas has no table of them yet', () => {
     const tagged = match({ nothingBecause: 'no-tag-table', unplaced: 12 });
     expect(nothingNotice(tagged)).toBe(
-      'The save names 12 discovered places by the game’s own tags only, and Atlas has no table yet of where those are.',
+      'The save names 12 discovered locations by the game’s own tags only, and Atlas has no table yet of where those are.',
     );
-    expect(nothingExplained(tagged)).toContain('lists 12 places as discovered or cleared');
+    expect(nothingExplained(tagged)).toContain('lists 12 locations as discovered or cleared');
     expect(nothingExplained(tagged)).toContain('Nothing is wrong with the save.');
     expect(nothingNotice(match({ nothingBecause: 'no-tag-table', unplaced: 1 }))).toContain(
-      '1 discovered place by',
+      '1 discovered location by',
     );
   });
 
@@ -43,9 +43,9 @@ describe('why a save marks nothing', () => {
       table: { tags: 3, found: 0 },
     });
     expect(nothingNotice(missing)).toBe(
-      'The save names 3 discovered places by tags that are not among the map places Atlas read from the game.',
+      'The save names 3 discovered locations by tags that are not among the map locations Atlas read from the game.',
     );
-    expect(nothingExplained(missing)).toContain('read the map places again');
+    expect(nothingExplained(missing)).toContain('read the map locations again');
   });
 
   it('says nothing when there is nothing to explain', () => {
@@ -61,7 +61,7 @@ describe('why a save marks nothing', () => {
       map: { known: 1, discovered: 0, disabled: 3, visited: [], lists: {} },
     } as unknown as SaveSummary;
     expect(mapStateText(summary)).toBe(
-      'On the save’s own map: 0 places discovered, 3 cleared, 1 known of.',
+      'On the save’s own map: 0 locations discovered, 3 cleared, 1 known of.',
     );
     expect(mapStateText({ map: null } as unknown as SaveSummary)).toBeNull();
   });

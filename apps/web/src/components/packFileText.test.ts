@@ -208,7 +208,7 @@ describe('map pack file facts in words', () => {
   });
 
   it('counts the contents and the map images', () => {
-    expect(contentsText(contents)).toBe('2 maps, 120 places, 1 checklist');
+    expect(contentsText(contents)).toBe('2 maps, 120 locations, 1 checklist');
     expect(imagesText(header())).toBe('1,234 map images at standard detail.');
     expect(imagesDownloadedAt(header())).toBe('2026-11-03T08:00:00.000Z');
   });

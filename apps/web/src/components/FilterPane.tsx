@@ -228,7 +228,7 @@ function CategoryTree({ mapId, summary }: { mapId: string; summary: ProgressSumm
     <section className="section" aria-labelledby="categories-heading">
       <div className="section-head">
         <h2 className="section-title" id="categories-heading">
-          Categories
+          Types
         </h2>
         <div className="row-actions">
           <button

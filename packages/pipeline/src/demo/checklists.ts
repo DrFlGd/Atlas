@@ -93,7 +93,8 @@ export function addChecklists(data: PackData): PackData {
     {
       id: DEMO_CHECKLISTS.story,
       name: 'The Sundered Isle story',
-      description: 'The main story, step by step. Steps are not places, so you tick them yourself.',
+      description:
+        'The main story, step by step. Steps are not locations, so you tick them yourself.',
       order: 1,
     },
     {
