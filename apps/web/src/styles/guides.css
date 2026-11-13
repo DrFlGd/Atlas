@@ -351,6 +351,23 @@ button.guides-crumb:hover {
   background: var(--atlas-surface-raised);
 }
 
+/* A small picture in the line of text (a badge, an icon), at the size the guide gives it. */
+.guide-picture.inline {
+  display: inline-block;
+  margin: 0 1px;
+  vertical-align: middle;
+}
+
+.guide-picture.inline img {
+  display: block;
+  border-radius: 0;
+  background: none;
+}
+
+.guide-picture.inline[data-missing] {
+  display: inline;
+}
+
 .guide-picture-note {
   margin-top: 4px;
   color: var(--atlas-muted);

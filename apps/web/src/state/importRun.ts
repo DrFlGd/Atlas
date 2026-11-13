@@ -182,6 +182,8 @@ export interface RunState {
   /** Between two pages. */
   pausing: boolean;
   stopReason: StopReason | null;
+  /** Its pages can only become guides, so its summary counts pages, not maps. */
+  guidePages?: boolean;
 }
 
 /** How one page ended, as `importing.ts` reports it. */
@@ -324,13 +326,16 @@ export function runSummary(run: RunState): string {
     [counts.notStarted, 'not started'],
   ];
   const shown = parts.filter(([count]) => count > 0);
-  // A run that added checklists or guides counts pages.
-  const noun = run.pages.some(
-    ({ state }) =>
-      state.kind === 'added' && (state.checklist !== undefined || state.guide === true),
-  )
-    ? ['page', 'pages']
-    : ['map', 'maps'];
+  // A run that added checklists or guides counts pages, and so does one whose
+  // pages could only become guides.
+  const noun =
+    run.guidePages === true ||
+    run.pages.some(
+      ({ state }) =>
+        state.kind === 'added' && (state.checklist !== undefined || state.guide === true),
+    )
+      ? ['page', 'pages']
+      : ['map', 'maps'];
   return shown
     .map(([count, what], i) =>
       i === 0 ? `${count} ${count === 1 ? noun[0] : noun[1]} ${what}` : `${count} ${what}`,

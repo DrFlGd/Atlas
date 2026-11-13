@@ -680,4 +680,51 @@ mod tests {
         manager.forget("t");
         assert!(manager.photos_snapshot("t").is_none());
     }
+
+    #[tokio::test]
+    async fn stops_for_a_write_of_the_pack_and_starts_again() {
+        ensure_crypto();
+        let png = picture(20, 20, ImageFormat::Png);
+        let server = MockServer::start(Arc::new(move |_: &str, _| {
+            Reply::image(png.clone()).delayed(Duration::from_millis(60))
+        }))
+        .await;
+        let dir = TempDir::new("photo-write");
+        let pack_dir = dir.0.join("pack");
+        pack(&pack_dir, &server);
+        let manager = manager(&dir, &pack_dir);
+        // None under way: nothing to stop, nothing to start again.
+        assert_eq!(
+            manager
+                .stop_photos_and_wait("t", Duration::from_secs(5))
+                .await,
+            Some(false)
+        );
+        manager.start_photos("t").unwrap();
+        // The photos do not count as a download of map images.
+        assert!(manager.is_active("t"));
+        assert!(!manager.images_active("t"));
+        assert_eq!(
+            manager
+                .stop_photos_and_wait("t", Duration::from_secs(5))
+                .await,
+            Some(true)
+        );
+        assert!(!manager.is_active("t"));
+        // The pack's files can be written now; the download then carries on.
+        manager.start_photos("t").unwrap();
+        assert_eq!(wait_done(&manager, "t").await.state, JobState::Done);
+        assert!(pack_dir.join("pictures/a.jpg").exists());
+        // One the person paused is stopped too, but not started again.
+        fs::remove_file(pack_dir.join("pictures/a.jpg")).unwrap();
+        manager.start_photos("t").unwrap();
+        manager.pause(&photos_key("t")).unwrap();
+        assert_eq!(
+            manager
+                .stop_photos_and_wait("t", Duration::from_secs(5))
+                .await,
+            Some(false)
+        );
+        assert!(!manager.is_active("t"));
+    }
 }

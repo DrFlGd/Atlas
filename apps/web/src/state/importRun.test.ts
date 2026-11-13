@@ -154,6 +154,9 @@ describe('settlePage', () => {
     one = settlePage(one, 0, failed);
     one = settlePage(one, 1, added(2, true));
     expect(runSummary(one)).toBe('1 map refreshed, 1 not added');
+    // A run whose pages can only become guides counts pages, also when none was added.
+    const none = settlePage({ ...newRun([page(1)]), guidePages: true }, 0, failed);
+    expect(runSummary(none)).toBe('1 page not added');
   });
 });
 
