@@ -1,6 +1,7 @@
 import { loadPack, type LoadedPack, type PackEntry } from '@atlas/core';
 import {
   GUIDE_LINKS_VERSION,
+  MAX_GUIDES_FROM,
   readGuideLinksFile,
   sameLinkTarget,
   writeGuideLinksFile,
@@ -85,6 +86,7 @@ export const guideLinksSetting = (gameId: string) => `guideLinks:${gameId}`;
 interface Backend {
   read(gameId: string): Promise<string | null>;
   write(gameId: string, text: string, keepCopy?: string): Promise<void>;
+  remove(gameId: string): Promise<boolean>;
 }
 
 const browserBackend: Backend = {
@@ -102,6 +104,12 @@ const browserBackend: Backend = {
     }
     await store.putSetting(guideLinksSetting(gameId), text);
   },
+  async remove(gameId) {
+    const store = progressStore();
+    const before = await store.getSetting(guideLinksSetting(gameId));
+    await store.putSetting(guideLinksSetting(gameId), null);
+    return typeof before === 'string';
+  },
 };
 
 function backend(): Backend {
@@ -113,6 +121,7 @@ function backend(): Backend {
       write: async (gameId, text, keepCopy) => {
         await bridge.guideLinks.write(gameId, text, keepCopy);
       },
+      remove: (gameId) => bridge.guideLinks.delete(gameId),
     };
   }
   return browserBackend;
@@ -449,4 +458,75 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush();
   });
+}
+
+// ---------------------------------------------------------------------------
+// With the game: deleted, or carried in a map pack file
+
+/** Deletes a game's guide links, when the person asks for it as they delete the game. */
+export async function deleteGuideLinksOf(gameId: string): Promise<boolean> {
+  if (get().gameId === gameId) {
+    window.clearTimeout(timer);
+    dirty = false;
+    await writing;
+    set({ links: EMPTY, save: 'saved' });
+  }
+  return backend().remove(gameId);
+}
+
+/** The guide links of one file added to another's: the file's choice wins for a page. */
+function mergeLinks(here: GuideLinks, incoming: GuideLinks): GuideLinks {
+  const guidesFrom = [...here.guidesFrom];
+  for (const id of incoming.guidesFrom) {
+    if (!guidesFrom.includes(id) && guidesFrom.length < MAX_GUIDES_FROM) guidesFrom.push(id);
+  }
+  return { guidesFrom, choices: { ...here.choices, ...incoming.choices } };
+}
+
+/**
+ * Adds the guide links a map pack file carried to the person's of that
+ * game: a page's choice in the file replaces theirs. Returns how many
+ * choices the file had.
+ */
+export async function addImportedGuideLinks(gameId: string, text: string): Promise<number> {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    value = null;
+  }
+  const read = readGuideLinksFile(value);
+  if (!read.ok || read.file.gameId !== gameId) {
+    throw new Error('The links in the file could not be read.');
+  }
+  const incoming = { guidesFrom: read.file.guidesFrom, choices: read.file.choices };
+  const count = Object.keys(incoming.choices).length;
+  if (get().gameId === gameId && get().status === 'ready') {
+    if (!canChangeGuideLinks()) throw new Error(get().readOnly ?? 'They cannot be changed now.');
+    changed(mergeLinks(get().links, incoming));
+    await flushGuideLinks();
+    return count;
+  }
+  const store = backend();
+  const before = await store.read(gameId);
+  let here: GuideLinks = EMPTY;
+  if (before !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(before);
+    } catch {
+      parsed = null;
+    }
+    const was = readGuideLinksFile(parsed);
+    if (!was.ok || was.file.version > GUIDE_LINKS_VERSION) {
+      throw new Error('The links you have for this game could not be read.');
+    }
+    here = { guidesFrom: was.file.guidesFrom, choices: was.file.choices };
+  }
+  await store.write(
+    gameId,
+    writeGuideLinksFile(gameId, mergeLinks(here, incoming), new Date()),
+    before !== null ? new Date().toISOString() : undefined,
+  );
+  return count;
 }

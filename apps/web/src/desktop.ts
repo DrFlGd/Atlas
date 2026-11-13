@@ -539,7 +539,14 @@ export interface PackFileHeader {
   files: number;
   bytes: number;
   /** The person's own lists, locations, types and areas the file carries (version 2). */
-  mine?: { lists: number; locations: number; types: number; areas: number; photos?: number };
+  mine?: {
+    lists: number;
+    locations: number;
+    types: number;
+    areas: number;
+    photos?: number;
+    guideLinks?: boolean;
+  };
 }
 
 /** What is known about an installed pack, as a map pack file would say. */
@@ -635,6 +642,8 @@ export interface PackFileImported {
   ownLists?: string | null;
   /** The text of the own locations file the file carried, to add to the person's. */
   ownLocations?: string | null;
+  /** The text of the guide links file the file carried, to add to the person's. */
+  guideLinks?: string | null;
   /** The person's own photos the file carried: their file names and bytes in base64. */
   ownPictures?: { file: string; data: string }[] | null;
 }
@@ -827,6 +836,8 @@ export interface DesktopBridge {
     read(gameId: string): Promise<string | null>;
     /** Writes the file whole; with `keepCopy` (a time), keeps the old one beside it first. */
     write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    /** Deletes the file; whether there was one. */
+    delete(gameId: string): Promise<boolean>;
   };
   /**
    * A person's own locations, types and areas of a game, in their file in
@@ -1030,6 +1041,7 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       read: (gameId) => call('guide_links_read', { gameId }),
       write: (gameId, contents, keepCopy) =>
         call('guide_links_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('guide_links_delete', { gameId }),
     },
     ownLocations: {
       read: (gameId) => call('own_locations_read', { gameId }),

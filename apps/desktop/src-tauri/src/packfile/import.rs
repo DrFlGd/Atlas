@@ -27,13 +27,14 @@ use zip::ZipArchive;
 
 use super::{
     is_picture_path, parse_header, parse_layers, space, Header, ImportedRecord, LayerInfo, Mine,
-    Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES, MAX_PICTURE_BYTES,
-    MINE_ENTRIES, PICTURES_FILE,
+    Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES,
+    MAX_MINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MINE_ENTRIES, MINE_PICTURES_DIR, PICTURES_FILE,
 };
 use crate::{
     library::{packs_in, PackLock, MAX_PACK_BYTES, MAX_PACK_FILE_BYTES, META_DIR, PACK_FILES},
     manifest::{now_rfc3339, read_head, MANIFEST_FILE, MAX_MANIFEST_BYTES},
     ownlists::MAX_OWN_LISTS_BYTES,
+    ownpictures,
     packs::is_valid_pack_id,
     removal::{self, is_real_dir, FileOps},
     tiles::{
@@ -200,7 +201,7 @@ pub(crate) fn import_with(
     let order = |kind: &Kind| match kind {
         Kind::Image | Kind::Marker | Kind::Picture => 0,
         Kind::Status(_) => 1,
-        Kind::PackFile | Kind::Mine(_) => 2,
+        Kind::PackFile | Kind::Mine(_) | Kind::MinePicture => 2,
     };
     let mut entries: Vec<&Checked> = checked.entries.iter().collect();
     entries.sort_by_key(|entry| (order(&entry.kind), entry.name == MANIFEST_FILE));
@@ -304,6 +305,8 @@ enum Kind {
     PackFile,
     /// One of a person's own files (`mine/`), by its place in [`MINE_ENTRIES`].
     Mine(usize),
+    /// One of a person's own photos (`mine/pictures/<file>`).
+    MinePicture,
     Status(usize),
     Image,
     Marker,
@@ -443,6 +446,7 @@ fn check_entries<R: Read + io::Seek>(
 
     let mut entries = Vec::new();
     let mut mine = Mine::default();
+    let mut mine_picture_bytes: u64 = 0;
     let mut seen: HashSet<String> = HashSet::new();
     let mut json_bytes: u64 = 0;
     let mut bytes: u64 = 0;
@@ -508,8 +512,36 @@ fn check_entries<R: Read + io::Seek>(
             *mine.slot(own) = Some(text);
             continue;
         }
+        if kind == Kind::MinePicture {
+            let shown = crate::activity::clean(&name);
+            let file = name[MINE_PICTURES_DIR.len()..].to_owned();
+            if mine.pictures.len() >= ownpictures::MAX_OWN_PICTURES {
+                return Err(refuse("This map pack file holds too many photos."));
+            }
+            mine_picture_bytes = mine_picture_bytes.saturating_add(size);
+            if size > ownpictures::MAX_OWN_PICTURE_BYTES as u64
+                || mine_picture_bytes > MAX_MINE_PICTURE_BYTES
+            {
+                return Err(refuse(format!(
+                    "{shown} in this map pack file is too large."
+                )));
+            }
+            let data = read_entry(
+                archive,
+                index,
+                &name,
+                ownpictures::MAX_OWN_PICTURE_BYTES as u64,
+            )?;
+            if !ownpictures::bytes_match_name(&file, &data) {
+                return Err(refuse(format!(
+                    "{shown} in this map pack file is not the picture it says it is."
+                )));
+            }
+            mine.pictures.push((file, data));
+            continue;
+        }
         let too_large = match kind {
-            Kind::Mine(_) => unreachable!("taken above"),
+            Kind::Mine(_) | Kind::MinePicture => unreachable!("taken above"),
             Kind::PackFile => size > MAX_PACK_FILE_BYTES as u64,
             Kind::Status(_) => size > MAX_STATUS_BYTES,
             Kind::Image => size > MAX_IMAGE_BYTES,
@@ -548,7 +580,7 @@ fn check_entries<R: Read + io::Seek>(
                 }
                 Some(data)
             }
-            Kind::Image | Kind::Marker | Kind::Picture | Kind::Mine(_) => None,
+            Kind::Image | Kind::Marker | Kind::Picture | Kind::Mine(_) | Kind::MinePicture => None,
         };
         bytes = bytes.saturating_add(size);
         entries.push(Checked {
@@ -583,6 +615,12 @@ fn classify(
     }
     if let Some(which) = MINE_ENTRIES.iter().position(|(entry, _)| *entry == name) {
         return Some(Kind::Mine(which));
+    }
+    if name
+        .strip_prefix(MINE_PICTURES_DIR)
+        .is_some_and(ownpictures::is_own_picture_name)
+    {
+        return Some(Kind::MinePicture);
     }
     if pictures.contains(name) {
         return Some(Kind::Picture);

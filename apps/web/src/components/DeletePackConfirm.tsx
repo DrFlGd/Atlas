@@ -130,7 +130,7 @@ export function DeletePackConfirmView({
               onWithLists(event.target.checked);
             }}
           />{' '}
-          Also delete my lists and guides for this game
+          Also delete my lists, guides and guide links for this game
         </label>
       ) : null}
       {onWithLocations ? (

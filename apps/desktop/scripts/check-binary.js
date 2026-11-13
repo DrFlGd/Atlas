@@ -2,7 +2,8 @@
 /**
  * Checks whether a built app binary holds the code that fetches map images
  * from other servers, which only a build with `ATLAS_ENABLE_DOWNLOADS=1`
- * has ("Download map images", "View map page and save images as I browse").
+ * has ("Download map images", "Download location photos", "View map page and
+ * save images as I browse").
  *
  *   node apps/desktop/scripts/check-binary.js [path/to/binary]
  *
@@ -26,6 +27,7 @@ export const DOWNLOAD_MARKERS = [
   'tiles_start',
   'download_settings_set',
   'view_open',
+  'photos_start',
   // A line the downloader writes to the activity log.
   'not asked for, because the area above them',
   // The script that keeps the map images a page loads.

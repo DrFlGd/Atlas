@@ -367,8 +367,8 @@ function ExportView({
               <span id={`${mineId}-name`}>Include my lists, locations, types and photos</span>
               <span id={`${mineId}-hint`} className="muted small pack-file-hint">
                 Your own lists and guides of this game, the locations, types and areas you added,
-                and your photos of them, so they come with it on the other device. Found marks are
-                never included.
+                your photos of them and your links between guide pages and the map, so they come
+                with it on the other device. Found marks are never included.
               </span>
             </span>
           </label>
@@ -497,7 +497,8 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
               result.mine.locations +
               result.mine.types +
               result.mine.areas +
-              result.mine.photos >
+              result.mine.photos +
+              (result.mine.guideLinks ? 1 : 0) >
             0
               ? `Your own ${mineText(result.mine)} from the file were added to yours.`
               : ''}
@@ -726,6 +727,7 @@ function mineText(mine: {
   types: number;
   areas: number;
   photos?: number;
+  guideLinks?: boolean;
 }): string {
   const count = (n: number, one: string, many: string) =>
     n === 1 ? `1 ${one}` : `${n.toLocaleString('en')} ${many}`;
@@ -735,6 +737,7 @@ function mineText(mine: {
     mine.types > 0 ? count(mine.types, 'type', 'types') : null,
     mine.areas > 0 ? count(mine.areas, 'area', 'areas') : null,
     (mine.photos ?? 0) > 0 ? count(mine.photos ?? 0, 'photo', 'photos') : null,
+    mine.guideLinks ? 'guide links' : null,
   ].filter((part): part is string => part !== null);
   if (parts.length === 0) return 'lists, locations and types (none)';
   return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;

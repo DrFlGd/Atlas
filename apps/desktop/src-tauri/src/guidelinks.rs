@@ -125,6 +125,18 @@ pub fn write(
     Ok(kept)
 }
 
+/// Deletes a game's guide links file, when the person asks for it as they
+/// delete the game with their lists. Whether there was one.
+pub fn delete(maps_folder: &Path, game_id: &str) -> Result<bool, String> {
+    let path = guide_links_path(maps_folder, game_id)?;
+    let _writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Could not delete your guide links: {error}")),
+    }
+}
+
 /// The guide links files directly in a folder, by name.
 fn guide_link_files(dir: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -217,10 +229,42 @@ pub async fn guide_links_write(
     .await
 }
 
+/// Deletes a person's guide links of a game, when they ask for it as they
+/// delete the game. Whether there were any.
+#[tauri::command]
+pub async fn guide_links_delete(
+    library: State<'_, Arc<Library>>,
+    game_id: String,
+) -> Result<bool, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || {
+        let deleted = delete(&maps, &game_id)?;
+        if deleted {
+            activity::info(
+                Area::Library,
+                format!("Deleted the guide links of {game_id}, as asked with the game"),
+            );
+        }
+        Ok(deleted)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tiles::store::tests::TempDir;
+
+    #[test]
+    fn deletes_only_when_asked_and_says_whether_there_was_one() {
+        let maps = TempDir::new("guide-links-delete");
+        assert!(!delete(maps.0.as_path(), "demo").unwrap());
+        write(maps.0.as_path(), "demo", &links("demo"), None).unwrap();
+        assert!(delete(maps.0.as_path(), "demo").unwrap());
+        assert_eq!(read(maps.0.as_path(), "demo").unwrap(), None);
+        assert!(delete(maps.0.as_path(), "../demo").is_err());
+    }
 
     fn links(game: &str) -> String {
         format!(

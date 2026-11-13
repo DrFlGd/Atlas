@@ -654,6 +654,56 @@ pub async fn tiles_snapshot(
 }
 
 // ---------------------------------------------------------------------------
+// "Download location photos" (see `tiles::manager::photos`)
+
+/// How many pictures a pack lists to be fetched later, and its photo job.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_plan(
+    manager: Manager<'_>,
+    pack_id: String,
+) -> Result<crate::tiles::manager::photos::PhotoPlan, String> {
+    let manager = Arc::clone(&manager);
+    // Looks at every picture's file.
+    tokio::task::spawn_blocking(move || manager.photos_plan(&pack_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_start(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    manager.start_photos(&pack_id)
+}
+
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_pause(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    manager.pause(&crate::tiles::manager::photos::photos_key(&pack_id))
+}
+
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_resume(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    manager.resume(&crate::tiles::manager::photos::photos_key(&pack_id))
+}
+
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_cancel(manager: Manager<'_>, pack_id: String) -> Result<(), String> {
+    manager.cancel(&crate::tiles::manager::photos::photos_key(&pack_id))
+}
+
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_snapshot(
+    manager: Manager<'_>,
+    pack_id: String,
+) -> Result<Option<Snapshot>, String> {
+    Ok(manager.photos_snapshot(&pack_id))
+}
+
+// ---------------------------------------------------------------------------
 // Download settings
 
 #[cfg(feature = "downloads")]
@@ -1702,6 +1752,17 @@ pub struct PackFileImported {
     /// carried (the text of their files), for the web app to add to theirs.
     own_lists: Option<String>,
     own_locations: Option<String>,
+    /// Their links between guide pages and the map (the text of the file).
+    guide_links: Option<String>,
+    /// Their own photos: each file's name and bytes in base64.
+    own_pictures: Vec<OwnPictureFile>,
+}
+
+/// One of a person's own photos a map pack file carried.
+#[derive(Debug, Serialize)]
+pub struct OwnPictureFile {
+    file: String,
+    data: String,
 }
 
 /// Imports the map pack file at `path` (a `.atlaspack` file) into the maps
@@ -1808,6 +1869,16 @@ async fn import_pack_file(
             listing: library.scan(),
             own_lists: imported.mine.lists,
             own_locations: imported.mine.locations,
+            guide_links: imported.mine.guide_links,
+            own_pictures: imported
+                .mine
+                .pictures
+                .iter()
+                .map(|(file, bytes)| OwnPictureFile {
+                    file: file.clone(),
+                    data: crate::ownpictures::to_base64(bytes),
+                })
+                .collect(),
         })
     })
     .await

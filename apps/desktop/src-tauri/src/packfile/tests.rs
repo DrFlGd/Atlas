@@ -1406,17 +1406,19 @@ fn carries_own_lists_and_locations_only_when_asked() {
     let mine = Mine {
         lists: Some(own_lists_text(ID)),
         locations: Some(own_locations_text(ID)),
+        ..Mine::default()
     };
     let file = dir.0.join("mine.atlaspack");
     let exported = export_mine(&source, &file, &mine).unwrap();
-    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(exported.header.version, VERSION_WITH_MINE);
     assert_eq!(
         exported.header.mine,
         Some(MineFacts {
             lists: 1,
             locations: 2,
             types: 1,
-            areas: 0
+            areas: 0,
+            ..MineFacts::default()
         })
     );
     let names = entry_names(&file);
@@ -1445,7 +1447,7 @@ fn carries_own_lists_and_locations_only_when_asked() {
     // Only lists: only that file.
     let lists_only = Mine {
         lists: Some(own_lists_text(ID)),
-        locations: None,
+        ..Mine::default()
     };
     let file = dir.0.join("lists.atlaspack");
     let exported = export_mine(&source, &file, &lists_only).unwrap();
@@ -1470,8 +1472,8 @@ fn refuses_own_files_of_another_game() {
     write_pack(&pack, "1.0.0");
     // Not exported.
     let other = Mine {
-        lists: None,
         locations: Some(own_locations_text("another-game")),
+        ..Mine::default()
     };
     let file = dir.0.join("other.atlaspack");
     let error = export_mine(&folder_source(&pack), &file, &other)
@@ -1533,6 +1535,74 @@ fn exports_the_own_files_beside_the_game() {
     assert_eq!(without.header.version, VERSION_WITHOUT_MINE);
 }
 
+#[test]
+fn carries_own_photos_and_guide_links_when_asked() {
+    let dir = TempDir::new("packfile-mine-photos");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let source = folder_source(&pack);
+    let jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
+    let links = format!(r#"{{"format":"atlas-guide-links","version":1,"gameId":"{ID}"}}"#);
+    let mine = Mine {
+        lists: Some(own_lists_text(ID)),
+        guide_links: Some(links.clone()),
+        pictures: vec![("own.ab12.jpg".to_owned(), jpeg.clone())],
+        ..Mine::default()
+    };
+    let file = dir.0.join("photos.atlaspack");
+    let exported = export_mine(&source, &file, &mine).unwrap();
+    // Only an app that knows photos and links reads it.
+    assert_eq!(exported.header.version, VERSION);
+    let facts = exported.header.mine.unwrap();
+    assert_eq!((facts.lists, facts.photos, facts.guide_links), (1, 1, true));
+    let names = entry_names(&file);
+    assert!(names.contains_key("mine/pictures/own.ab12.jpg"));
+    assert!(names.contains_key("mine/guide-links.json"));
+    let maps = dir.0.join("maps-photos");
+    let imported = run_import(&file, &maps).unwrap();
+    assert_eq!(imported.mine, mine);
+    // Never written into the pack's folder.
+    assert!(files_under(&maps).keys().all(|name| !name.contains("own.")));
+
+    // A photo that is not the picture its name says, or with a name no own
+    // photo has, is refused; nothing is left behind.
+    let (mut header, mut entries) = good_file(&dir.0);
+    header["version"] = json!(VERSION);
+    entries.push(("mine/pictures/own.ab12.png".to_owned(), jpeg.clone()));
+    let error = import_error(&dir.0, "wrong-photo", &header, &entries);
+    assert!(error.contains("not the picture"), "{error}");
+    let (header, mut entries) = good_file(&dir.0);
+    entries.push(("mine/pictures/gate.jpg".to_owned(), jpeg.clone()));
+    let error = import_error(&dir.0, "not-own-photo", &header, &entries);
+    assert!(error.contains("not part of a map pack"), "{error}");
+    // A photo is never exported unless it is one.
+    let bad = Mine {
+        pictures: vec![("own.ab12.png".to_owned(), jpeg)],
+        ..Mine::default()
+    };
+    assert!(export_mine(&source, &dir.0.join("bad.atlaspack"), &bad).is_err());
+}
+
+#[test]
+fn reads_the_photos_the_own_files_name() {
+    let dir = TempDir::new("packfile-mine-read");
+    let maps = dir.0.join("maps");
+    std::fs::create_dir_all(&maps).unwrap();
+    let jpeg = [0xff, 0xd8, 0xff, 0xe0, 1];
+    crate::ownpictures::write(&maps, ID, "own.a.jpg", &jpeg).unwrap();
+    crate::ownpictures::write(&maps, ID, "own.unused.jpg", &jpeg).unwrap();
+    let locations = own_locations_text(ID).replacen(
+        "\"locations\":",
+        "\"pictures\":[{\"id\":\"x:picture:own.a\",\"file\":\"pictures/own.a.jpg\",\"shareable\":true}],\"locations\":",
+        1,
+    );
+    crate::ownlists::LOCATIONS
+        .write(&maps, ID, &locations, None)
+        .unwrap();
+    let mine = Mine::read(&maps, ID).unwrap();
+    assert_eq!(mine.pictures, vec![("own.a.jpg".to_owned(), jpeg.to_vec())]);
+}
+
 // ---------------------------------------------------------------------------
 // A game with no map, and the pictures its guides show
 
@@ -1560,11 +1630,15 @@ fn write_pages_pack(dir: &Path) {
         &json!([
             {"id": format!("{ID}:picture:gate"), "file": "pictures/gate.png", "shareable": true},
             {"id": format!("{ID}:picture:own"), "file": "pictures/own.png", "shareable": false},
-            {"id": format!("{ID}:picture:gone"), "file": "pictures/gone.png", "shareable": true}
+            {"id": format!("{ID}:picture:gone"), "file": "pictures/gone.png", "shareable": true},
+            {"id": format!("{ID}:picture:far"), "file": "pictures/far.jpg", "shareable": false,
+             "remote": "https://pictures.example.com/far.jpg"}
         ]),
     );
     put(&dir.join("pictures/gate.png"), b"gate picture");
     put(&dir.join("pictures/own.png"), b"my own picture");
+    // Downloaded for the person's own use: listed in a file, never carried.
+    put(&dir.join("pictures/far.jpg"), b"downloaded picture");
 }
 
 #[test]
@@ -1591,8 +1665,10 @@ fn exports_a_game_with_no_map_and_only_the_pictures_it_may_pass_on() {
             .iter()
             .map(|p| p["file"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["pictures/gate.png"]
+        // The picture fetched later stays listed, so it can be fetched again.
+        ["pictures/gate.png", "pictures/far.jpg"]
     );
+    assert!(!names.contains_key("pictures/far.jpg"));
     let header = json_entry(&file, HEADER_FILE);
     assert_eq!(header["contents"]["maps"], 0);
     assert_eq!(header["contents"]["guides"], 1);
