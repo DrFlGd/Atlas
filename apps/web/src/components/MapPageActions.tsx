@@ -9,7 +9,7 @@ import {
 import '../styles/pageView.css';
 
 /**
- * In the Maps dialog, for a pack added from a web page: the page (or pages)
+ * On a game in the Library, for a pack added from a web page: the page (or pages)
  * it was made from, with "View map page", "View map page and save images as
  * I browse" and "Open in my browser".
  */
@@ -31,6 +31,11 @@ export function MapPageActions({ pack }: { pack: ListedPack }) {
       }}
     >
       <summary className="link-button">Map page…</summary>
+      <p className="muted small">
+        The page this map was made from. View map page opens it in a window of this app, just to
+        look at it; with “save images as I browse” it also keeps the map images it shows while you
+        pan and zoom. Open in my browser opens it in your own browser.
+      </p>
       {entry?.state === 'loading' ? <p className="muted small">Looking…</p> : null}
       {entry?.state === 'failed' ? <p className="download-error">{entry.message}</p> : null}
       {entry?.state === 'ready' && entry.info.pages.length === 0 ? (

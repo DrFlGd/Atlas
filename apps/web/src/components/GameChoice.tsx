@@ -138,7 +138,7 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
       {pick.keptFrom !== null ? (
         <p className="muted small" data-testid="add-map-catalogue-kept">
           This is the list as this app read it on {localDate(pick.keptFrom)}. Games the site added
-          since then are not in it.{' '}
+          since then are not in it. Update the list reads the site’s list again, one page.{' '}
           <button
             type="button"
             className="link-button"
@@ -364,17 +364,18 @@ export function ChoosePages({ choice }: { choice: Choice }) {
         </strong>{' '}
         {queues && windowed ? (
           <>
-            Tick a section, or a page and “From here on”. This site shows its pages only to a
-            person, so this app opens the pages you tick in a window, one at a time with a pause. If
-            a page asks you to confirm you are a person, do that in its window. If you stop it or
-            close a window, it keeps the rest, and Add a map offers to continue with them another
-            time.
+            A section’s name ticks or unticks every page under it; “From here on” ticks a page and
+            every page after it. This site shows its pages only to a person, so this app opens the
+            pages you tick in a window, one at a time with a pause. If a page asks you to confirm
+            you are a person, do that in its window. If you stop it or close a window, it keeps the
+            rest, and the Library offers to continue with them another time.
           </>
         ) : queues ? (
           <>
-            Tick a section, or a page and “From here on”. This app reads the pages you tick in one
-            go, one at a time with a pause. If you stop it or the site asks it to wait, it keeps the
-            rest, and Add a map offers to continue with them another time.
+            A section’s name ticks or unticks every page under it; “From here on” ticks a page and
+            every page after it. This app reads the pages you tick in one go, one at a time with a
+            pause. If you stop it or the site asks it to wait, it keeps the rest, and the Library
+            offers to continue with them another time.
           </>
         ) : (
           <>
