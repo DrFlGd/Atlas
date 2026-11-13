@@ -30,6 +30,7 @@ import {
   imagesDownloadedAt,
   imagesText,
   installedImagesText,
+  photosHint,
   sourceText,
 } from './packFileText';
 
@@ -230,6 +231,9 @@ function ExportView({
   );
   const [withMine, setWithMine] = useState(madeInApp);
   const mineId = useId();
+  // Off until asked for: a file with them is one to keep, not to pass on.
+  const [withPhotos, setWithPhotos] = useState(false);
+  const photosId = useId();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PackFileExported | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -252,11 +256,13 @@ function ExportView({
     };
   }, [packId]);
 
+  const ownUse = options?.ownUsePictures ?? 0;
+
   const start = (detail: Detail) => {
     setError(null);
     setRunning(true);
     setBusy(true);
-    exportPackFile(packId, detail, withProgress, withMine)
+    exportPackFile(packId, detail, withProgress, withMine, withPhotos && ownUse > 0)
       .then(setResult, (reason: unknown) => {
         setError(errorText(reason));
       })
@@ -372,6 +378,27 @@ function ExportView({
               </span>
             </span>
           </label>
+          {ownUse > 0 ? (
+            <label className="checkbox-row pack-file-check">
+              <input
+                type="checkbox"
+                data-testid="export-with-photos"
+                aria-labelledby={`${photosId}-name`}
+                aria-describedby={`${photosId}-hint`}
+                checked={withPhotos}
+                disabled={running}
+                onChange={(event) => {
+                  setWithPhotos(event.target.checked);
+                }}
+              />
+              <span>
+                <span id={`${photosId}-name`}>Include downloaded photos</span>
+                <span id={`${photosId}-hint`} className="muted small pack-file-hint">
+                  {photosHint(ownUse, formatBytes(options.ownUsePictureBytes ?? 0))}
+                </span>
+              </span>
+            </label>
+          ) : null}
           {running ? (
             <JobProgress verb="Saving the map pack file" />
           ) : (

@@ -109,7 +109,7 @@ pub fn export_with_mine(
 
     // The pack's JSON files, the manifest's image summaries rewritten, and
     // its pictures that may be passed on (the list cut down to them).
-    let pictures = shared_pictures(&source.root, &source.images)?;
+    let pictures = shared_pictures(&source.root, &source.images, source.own_use_pictures)?;
     let mut entries: Vec<Entry> = Vec::new();
     for entry in pack_file_entries(&source.root)? {
         if entry.name == PICTURES_FILE {

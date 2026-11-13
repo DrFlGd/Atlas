@@ -824,7 +824,8 @@ export interface AtlasImporter {
   /**
    * Optional: the page is read by fetching the addresses this names,
    * instead of opening it in a window (see `fetching.ts`); `convert` gets
-   * {@link FetchedPages}. Then `pageReader` is not needed.
+   * {@link FetchedPages}. Then `pageReader` is not needed, except for the
+   * pages `fetch.inWindow` has opened in a window after all.
    */
   fetch?: PageFetch;
   /**
@@ -879,11 +880,20 @@ const waitSchema = z.int().min(MIN_WAIT_SECONDS).max(MAX_WAIT_SECONDS).optional(
 
 const fetchSchema = z.object({
   addresses: z.custom<PageFetch['addresses']>(isFunction, 'must be a function'),
+  inWindow: z.custom<NonNullable<PageFetch['inWindow']>>(isFunction).optional(),
 });
 
 const readsSomehow = (part: { pageReader?: string; fetch?: unknown }) =>
   part.pageReader !== undefined || part.fetch !== undefined;
 const readsSomehowError = { message: 'needs a pageReader or fetch', path: ['pageReader'] };
+
+/** Pages a fetching part has opened in a window need its reader for them. */
+const readsItsWindows = (part: { pageReader?: string; fetch?: { inWindow?: unknown } }) =>
+  part.fetch?.inWindow === undefined || part.pageReader !== undefined;
+const readsItsWindowsError = {
+  message: 'needs a pageReader for the pages fetch.inWindow has opened in a window',
+  path: ['pageReader'],
+};
 
 const gamePagesSchema = z
   .object({
@@ -894,7 +904,8 @@ const gamePagesSchema = z
     convert: z.custom<GamePages['convert']>(isFunction, 'must be a function'),
     gameAddress: z.custom<NonNullable<GamePages['gameAddress']>>(isFunction).optional(),
   })
-  .refine(readsSomehow, readsSomehowError);
+  .refine(readsSomehow, readsSomehowError)
+  .refine(readsItsWindows, readsItsWindowsError);
 
 const catalogueSchema = z.object({
   address: z
@@ -938,7 +949,8 @@ export const importerSchema = z
     message: 'an importer with a catalogue must also read game pages',
     path: ['catalogue'],
   })
-  .refine(readsSomehow, readsSomehowError);
+  .refine(readsSomehow, readsSomehowError)
+  .refine(readsItsWindows, readsItsWindowsError);
 
 /** Validates a module's default export as an importer, or throws a readable error. */
 export function asImporter(value: unknown, label = 'importer'): AtlasImporter {

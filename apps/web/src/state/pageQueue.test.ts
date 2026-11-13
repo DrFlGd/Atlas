@@ -80,6 +80,38 @@ describe('choosing the pages of a wiki', () => {
   });
 });
 
+describe('pages their site shows only to a person', () => {
+  const windowed = () =>
+    newChoice(
+      'add',
+      [
+        choiceGame({
+          key: `${SITE}/wiki/Contents`,
+          title: 'Example wiki',
+          importer: wiki,
+          packId: null,
+          listed: pages,
+          recorded: [],
+          queues: true,
+          inWindow: true,
+        }),
+      ],
+      1,
+    );
+
+  it('open in a window, as many as one go opens, and the rest are kept for later', () => {
+    const chosen = tickFrom(windowed(), `${SITE}/wiki/Contents`, pages[0]!.url);
+    // More may be ticked than one go opens: nothing has to be unticked.
+    expect(overCap(chosen)).toBeNull();
+    // The list of pages was opened in a window too, and counts.
+    expect(goRoom(chosen)).toBe(MAX_RUN_ADDRESSES - 1);
+    const { now, later } = splitChosen(chosen);
+    expect(now).toHaveLength(MAX_RUN_ADDRESSES - 1);
+    expect(now.every((p) => p.inWindow === true)).toBe(true);
+    expect(later.map((p) => p.url)).toEqual(pages.slice(MAX_RUN_ADDRESSES - 1).map((p) => p.url));
+  });
+});
+
 describe('a go that a site refuses', () => {
   it('stops at once, and says so', () => {
     let run = newRun(pages.slice(0, 3).map((p) => p.url));

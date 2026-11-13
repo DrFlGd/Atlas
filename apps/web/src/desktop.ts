@@ -612,6 +612,13 @@ export interface PackFileOptions {
   /** Layers whose images all come with the pack: exported whole at every detail. */
   wholeLayers: string[];
   defaultNames: Record<Detail, string>;
+  /**
+   * The pictures downloaded for the person's own use (location photos,
+   * pictures of guide pages) that "Include downloaded photos" would add,
+   * and their bytes. None from a shell that does not offer it.
+   */
+  ownUsePictures?: number;
+  ownUsePictureBytes?: number;
   /** A download of the pack is not over. */
   downloading: boolean;
 }
@@ -921,15 +928,17 @@ export interface DesktopBridge {
     options(packId: string): Promise<PackFileOptions>;
     /**
      * Asks where to save, then writes the file; with `progress` (a progress
-     * export's text) saves that beside it, and with `includeMine` the
-     * person's own lists, locations and types go in the file. Null when the
-     * dialog was closed.
+     * export's text) saves that beside it, with `includeMine` the person's
+     * own lists, locations and types go in the file, and with
+     * `includePhotos` the pictures downloaded for their own use. Null when
+     * the dialog was closed.
      */
     export(
       packId: string,
       detail: Detail,
       progress?: string,
       includeMine?: boolean,
+      includePhotos?: boolean,
     ): Promise<PackFileExported | null>;
     /** Asks for a file to import and reads its description. Null when the dialog was closed. */
     pick(): Promise<PackFileInfo | null>;
@@ -1108,12 +1117,13 @@ export function createBridge(invoke: Invoke): DesktopBridge {
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
-      export: (id, detail, progress, includeMine) =>
+      export: (id, detail, progress, includeMine, includePhotos) =>
         call('packfile_export', {
           id,
           detail,
           progress: progress ?? null,
           includeMine: includeMine ?? false,
+          includePhotos: includePhotos ?? false,
         }),
       pick: () => call('packfile_pick'),
       inspect: (path) => call('packfile_inspect', { path }),

@@ -131,13 +131,15 @@ export async function exportPackFile(
   withProgress: boolean,
   /** The person's own lists, locations and types of the game go in the file. */
   withMine = false,
+  /** The pictures downloaded for the person's own use go in the file. */
+  withPhotos = false,
 ): Promise<PackFileExported | null> {
   const progress = withProgress
     ? `${JSON.stringify(await exportProgress({ scope: 'all' }), null, 2)}\n`
     : undefined;
   // The shell reads them from their files: what was changed last is saved first.
   if (withMine) await Promise.all([flushOwnLists(), flushOwnLocations(), flushGuideLinks()]);
-  return desktop!.packFiles.export(packId, detail, progress, withMine);
+  return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos);
 }
 
 /** What adding the person's own records from a map pack file did. */

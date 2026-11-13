@@ -39,6 +39,26 @@ export interface PageFetch {
    * read that page. Must not throw.
    */
   addresses(url: string): string[];
+  /**
+   * Optional: whether the page at `url` is opened in a window of the app
+   * instead, though the importer has its other pages fetched. For a site
+   * that asks its readers to confirm they are a person: only the person can
+   * do that, in the window, and the app never does it for them. The page is
+   * then read there by the `pageReader` beside this `fetch` (which must
+   * give what `convert` expects, {@link FetchedPages}), under the limits of
+   * pages opened in a window. Must not throw.
+   */
+  inWindow?(url: string): boolean;
+}
+
+/** Whether a part of an importer that fetches its pages has the page at `url` opened in a window instead. */
+export function readsInWindow(fetch: PageFetch | undefined, url: string): boolean {
+  if (!fetch?.inWindow) return false;
+  try {
+    return fetch.inWindow(url);
+  } catch {
+    return false;
+  }
 }
 
 /** One answer, as the app hands it to `convert`. */

@@ -350,6 +350,7 @@ export function ChoosePages({ choice }: { choice: Choice }) {
   const noun = allMaps ? ['map', 'maps'] : ['page', 'pages'];
   const verb = choice.mode === 'update' ? 'Update' : 'Add';
   const queues = choice.games.some((game) => game.queues);
+  const windowed = choice.games.some((game) => game.inWindow);
   const left = goRoom(choice);
   return (
     <section className="dialog-section" data-testid="add-map-choose" data-mode={choice.mode}>
@@ -361,7 +362,14 @@ export function ChoosePages({ choice }: { choice: Choice }) {
               ? `Choose what to add from ${choice.games[0]!.title}.`
               : 'Choose what to add.'}
         </strong>{' '}
-        {queues ? (
+        {queues && windowed ? (
+          <>
+            Tick a section, or a page and “From here on”. This site shows its pages only to a
+            person, so each page opens in a window of its own, {MAX_RUN_ADDRESSES} in one go. If a
+            page asks you to confirm you are a person, do that in its window. This app keeps the
+            pages beyond one go, and Add a map offers to continue with them.
+          </>
+        ) : queues ? (
           <>
             Tick a section, or a page and “From here on”. This app reads the pages you tick in one
             go, one at a time with a pause. If you stop it or the site asks it to wait, it keeps the

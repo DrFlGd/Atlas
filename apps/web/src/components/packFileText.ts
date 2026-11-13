@@ -14,6 +14,16 @@ export const DETAIL_LABELS: Record<Detail, string> = {
   full: 'Full detail',
 };
 
+/**
+ * The hint under "Include downloaded photos" in the Export dialog: how many
+ * there are, their size as the caller words it, and that such a file is one
+ * to keep.
+ */
+export function photosHint(count: number, size: string): string {
+  const photos = `${numberFormat.format(count)} photo${count === 1 ? '' : 's'}`;
+  return `The ${photos} downloaded for your own use (location photos and the pictures of guide pages, ${size}), so the other device shows them without downloading them again. Keep a file with them to yourself: they are not yours to pass on.`;
+}
+
 /** A date and time in the person's own format and time zone. */
 export function localDate(iso: string): string {
   const time = Date.parse(iso);
