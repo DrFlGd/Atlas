@@ -21,3 +21,5 @@ export * from './progress/resolve';
 export * from './progress/saveMarks';
 export * from './progress/counters';
 export * from './progress/exchange';
+export * from './guides/contents';
+export * from './guides/guideText';

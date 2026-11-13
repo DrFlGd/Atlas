@@ -1,8 +1,8 @@
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pyramidLevel } from '@atlas/core';
-import { makeFixturePack } from '@atlas/schema/testing';
+import { makeFixturePack, makeGuidesFixturePack } from '@atlas/schema/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validatePackFolder } from './validateFolder';
 import { assertValidPack, writePackJson, writeTileFolder } from './writePack';
@@ -73,5 +73,46 @@ describe('assertValidPack', () => {
       checklists: [{ ...pack.checklists[0]!, type: 'timeline' as never }],
     };
     expect(() => assertValidPack(unknown)).toThrow(/checklists\.0\.type/);
+  });
+});
+
+describe('validatePackFolder: a game with no map', () => {
+  async function guidesFolder(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'atlas-validate-'));
+    folders.push(dir);
+    await writePackJson(dir, makeGuidesFixturePack());
+    await mkdir(join(dir, 'pictures'));
+    await writeFile(join(dir, 'pictures/gate.png'), 'png');
+    return dir;
+  }
+
+  it('accepts it with empty map files and without them, but not with some', async () => {
+    const dir = await guidesFolder();
+    expect((await validatePackFolder(dir)).problems).toEqual([]);
+    for (const file of ['maps', 'layers', 'categoryGroups', 'categories', 'locations']) {
+      await unlink(join(dir, `${file}.json`));
+    }
+    expect((await validatePackFolder(dir)).problems).toEqual([]);
+    await writeFile(join(dir, 'maps.json'), '[]');
+    expect((await validatePackFolder(dir)).problems).toEqual(
+      expect.arrayContaining(['layers.json: missing']),
+    );
+  });
+
+  it('reports a picture whose file is missing', async () => {
+    const dir = await guidesFolder();
+    await unlink(join(dir, 'pictures/gate.png'));
+    expect((await validatePackFolder(dir)).problems).toEqual([
+      'pages:picture:gate: pictures/gate.png is missing',
+    ]);
+  });
+
+  it('writes contents and pictures only for a pack that has some', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'atlas-validate-'));
+    folders.push(dir);
+    expect(await writePackJson(dir, makeFixturePack())).not.toContain('sections.json');
+    expect(await writePackJson(dir, makeGuidesFixturePack())).toEqual(
+      expect.arrayContaining(['sections.json', 'pictures.json']),
+    );
   });
 });

@@ -1,5 +1,5 @@
 import type { PackData } from '@atlas/schema';
-import { makeFixturePack } from '@atlas/schema/testing';
+import { makeFixturePack, makeGuidesFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
 import { layerMarkers, layerViewSpec, placesFocus } from './viewSpec';
 import { PackLoadError, loadPack } from './loadPack';
@@ -241,5 +241,43 @@ describe('view helpers', () => {
     expect(
       layerMarkers(pack, 'demo:layer:surface', { filter: nothing, alwaysInclude: 'demo:loc:0001' }),
     ).toHaveLength(1);
+  });
+});
+
+describe('loadPack: a game with no map', () => {
+  const files = () => {
+    const pack = makeGuidesFixturePack();
+    return {
+      ...packFiles(pack),
+      'sections.json': pack.sections,
+      'pictures.json': pack.pictures,
+    } as Record<string, unknown>;
+  };
+
+  it('loads with empty map files, and with none', async () => {
+    const empty = await loadPack(BASE, { fetch: servePack(files()).fetchFn });
+    expect(empty.data.maps).toEqual([]);
+    expect(empty.data.sections).toHaveLength(2);
+    expect(empty.data.pictures![0]!.file).toBe('pictures/gate.png');
+    const mapFiles = ['maps', 'layers', 'categoryGroups', 'categories', 'locations'];
+    const without = Object.fromEntries(
+      Object.entries(files()).filter(([file]) => !mapFiles.includes(file.replace('.json', ''))),
+    );
+    const pack = await loadPack(BASE, { fetch: servePack(without).fetchFn });
+    expect(pack.data.locations).toEqual([]);
+    expect(pack.data.guides.map((g) => g.id)).toEqual(['pages:guide:start', 'pages:guide:bells']);
+  });
+
+  it('refuses a pack that leaves out only some map files', async () => {
+    const some = files();
+    delete some['maps.json'];
+    const error = await loadError(some);
+    expect(error.file).toBe('maps.json');
+  });
+
+  it('loads a pack made before contents and pictures with both empty', async () => {
+    const pack = await loadPack(BASE, { fetch: servePack(packFiles(makeFixturePack())).fetchFn });
+    expect(pack.data.sections).toEqual([]);
+    expect(pack.data.pictures).toEqual([]);
   });
 });

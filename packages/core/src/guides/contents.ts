@@ -1,0 +1,177 @@
+import type { GuideEntry, Section } from '@atlas/schema';
+import type { LoadedPack } from '../pack/loadedPack';
+
+/**
+ * A pack's guides as pages to browse: its contents (`sections.json`), the
+ * sections that hold sections and guides in the source's own order.
+ *
+ * A pack with no contents but no map either (a game of guides and lists
+ * only) is browsed as one list of its guides, in their order. Guides that
+ * no section lists are listed under "Other pages" at the end of the top.
+ */
+export type ContentsEntry =
+  | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
+  | { kind: 'page'; guide: GuideEntry };
+
+/** The id the top of the contents goes by, where a section's id would. */
+export const CONTENTS_TOP = 'top';
+/** The id of the "Other pages" part of the top. */
+export const CONTENTS_OTHER = 'other';
+
+export class GuideContents {
+  /** Whether the pack has guides to browse as pages: a contents, or no map but guides. */
+  readonly browsable: boolean;
+  /** Whether the pack has a contents of its own. */
+  readonly hasContents: boolean;
+  private readonly sections: ReadonlyMap<string, Section>;
+  private readonly guides: ReadonlyMap<string, GuideEntry>;
+  private readonly parent = new Map<string, string>();
+  private readonly topIds: string[];
+  /** Guides in no section, in guide order. */
+  private readonly others: GuideEntry[];
+  private readonly pageCounts = new Map<string, number>();
+
+  constructor(pack: Pick<LoadedPack, 'data'>) {
+    const sections = pack.data.sections ?? [];
+    const guides = sortGuides(pack.data.guides);
+    this.sections = new Map(sections.map((s) => [s.id, s]));
+    this.guides = new Map(guides.map((g) => [g.id, g]));
+    this.hasContents = sections.length > 0;
+    const hasMap = pack.data.maps.length > 0;
+    this.browsable = this.hasContents || (!hasMap && guides.length > 0);
+
+    const listed = new Set<string>();
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (this.sections.has(item)) {
+          if (!this.parent.has(item)) this.parent.set(item, section.id);
+        } else listed.add(item);
+      }
+    }
+    this.topIds = sections.filter((s) => !this.parent.has(s.id)).map((s) => s.id);
+    // On a map, a guide of one location is that location's note, not a page.
+    const notes = new Set(pack.data.locations.flatMap((l) => (l.guideId ? [l.guideId] : [])));
+    this.others = guides.filter(
+      (guide) =>
+        !listed.has(guide.id) &&
+        (!hasMap || (guide.locationIds.length !== 1 && !notes.has(guide.id))),
+    );
+    // Only sections listed from the top count; a pack checked for integrity has no loops.
+    for (const id of this.topIds) this.countPages(id, new Set());
+  }
+
+  private countPages(id: string, seen: Set<string>): Set<string> {
+    const pages = new Set<string>();
+    const section = this.sections.get(id);
+    if (!section || seen.has(id)) return pages;
+    seen.add(id);
+    for (const item of section.items) {
+      if (this.sections.has(item)) for (const page of this.countPages(item, seen)) pages.add(page);
+      else if (this.guides.has(item)) pages.add(item);
+    }
+    this.pageCounts.set(id, pages.size);
+    return pages;
+  }
+
+  /** What the top of the contents lists: its sections, then "Other pages" (or every page). */
+  top(): ContentsEntry[] {
+    if (!this.hasContents) return this.others.map((guide) => ({ kind: 'page', guide }));
+    return this.topIds.flatMap((id) => this.entry(id));
+  }
+
+  /** Guides in no section (with a contents), shown as "Other pages". */
+  otherPages(): GuideEntry[] {
+    return this.hasContents ? this.others : [];
+  }
+
+  section(id: string): Section | undefined {
+    return this.sections.get(id);
+  }
+
+  guide(id: string): GuideEntry | undefined {
+    return this.guides.get(id);
+  }
+
+  /** The guides and sections in a section, in order; items the pack lacks are left out. */
+  items(sectionId: string): ContentsEntry[] {
+    return (this.sections.get(sectionId)?.items ?? []).flatMap((id) => this.entry(id));
+  }
+
+  private entry(id: string): ContentsEntry[] {
+    const section = this.sections.get(id);
+    if (section) return [{ kind: 'section', section, pages: this.pageCounts.get(id) ?? 0 }];
+    const guide = this.guides.get(id);
+    return guide ? [{ kind: 'page', guide }] : [];
+  }
+
+  /** The sections from the top down to the one holding `id` (a guide or a section), outermost first. */
+  pathTo(id: string): Section[] {
+    let at: string | undefined = this.sections.has(id) ? this.parent.get(id) : this.holderOf(id);
+    const path: Section[] = [];
+    const seen = new Set<string>();
+    while (at !== undefined && !seen.has(at)) {
+      seen.add(at);
+      const section = this.sections.get(at);
+      if (!section) break;
+      path.unshift(section);
+      at = this.parent.get(at);
+    }
+    return path;
+  }
+
+  /** The first section, in contents order, that lists a guide. */
+  private holderOf(guideId: string): string | undefined {
+    const visit = (id: string, seen: Set<string>): string | undefined => {
+      const section = this.sections.get(id);
+      if (!section || seen.has(id)) return undefined;
+      seen.add(id);
+      for (const item of section.items) {
+        if (item === guideId) return id;
+        const inner = this.sections.has(item) ? visit(item, seen) : undefined;
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    const seen = new Set<string>();
+    for (const id of this.topIds) {
+      const found = visit(id, seen);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  /** Every page that can be browsed, in contents order, each once. */
+  pages(): GuideEntry[] {
+    const out: GuideEntry[] = [];
+    const seen = new Set<string>();
+    const add = (guide: GuideEntry) => {
+      if (!seen.has(guide.id)) {
+        seen.add(guide.id);
+        out.push(guide);
+      }
+    };
+    const visit = (id: string, sections: Set<string>) => {
+      if (sections.has(id)) return;
+      sections.add(id);
+      for (const entry of this.items(id)) {
+        if (entry.kind === 'page') add(entry.guide);
+        else visit(entry.section.id, sections);
+      }
+    };
+    const sections = new Set<string>();
+    for (const id of this.topIds) visit(id, sections);
+    this.others.forEach(add);
+    return out;
+  }
+}
+
+/** Guides in their listed order: by `order`, those without one after, by title. */
+export function sortGuides(guides: readonly GuideEntry[]): GuideEntry[] {
+  const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+  return [...guides].sort((a, b) => {
+    if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
+    if (a.order !== undefined) return -1;
+    if (b.order !== undefined) return 1;
+    return collator.compare(a.title, b.title);
+  });
+}

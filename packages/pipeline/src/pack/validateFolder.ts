@@ -4,6 +4,7 @@ import { pyramidLevel } from '@atlas/core';
 import {
   COLLECTION_NAMES,
   MANIFEST_FILE,
+  MAP_COLLECTIONS,
   PACK_COLLECTIONS,
   checkPackIntegrity,
   packDataSchema,
@@ -20,8 +21,9 @@ export interface FolderReport {
  * Checks a pack folder on disk as a tool that writes packs must leave it:
  * each JSON file against the pack schema (strict, so an unknown field or an
  * unknown list type is a problem, although the app would skip it), the
- * pack's integrity rules, and, for every layer whose tiles are a
- * `{z}/{x}/{y}` folder, that every tile of its pyramid is there.
+ * pack's integrity rules, that every picture's file is there, and, for
+ * every layer whose tiles are a `{z}/{x}/{y}` folder, that every tile of
+ * its pyramid is there. A game with no map may leave out every map file.
  *
  * Tools that write packs in other languages (the Map Maker's Python helper)
  * are checked with this, so their output cannot drift from the schema.
@@ -47,9 +49,20 @@ export async function validatePackFolder(dir: string): Promise<FolderReport> {
     }
   };
   raw.manifest = await read(MANIFEST_FILE, true);
+  // A game with no map may leave out every map file, but not some of them.
+  const mapFiles: readonly string[] = MAP_COLLECTIONS;
+  const present = await Promise.all(
+    MAP_COLLECTIONS.map((name) =>
+      access(join(dir, PACK_COLLECTIONS[name].file)).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  );
+  const noMap = !present.some(Boolean);
   for (const name of COLLECTION_NAMES) {
     const { file, required } = PACK_COLLECTIONS[name];
-    raw[name] = await read(file, required);
+    raw[name] = await read(file, required && !(noMap && mapFiles.includes(name)));
   }
   if (problems.length > 0) return { problems, files, tilesChecked: 0 };
 
@@ -92,6 +105,13 @@ export async function validatePackFolder(dir: string): Promise<FolderReport> {
       problems.push(
         `${layer.id}: ${missing.length} tiles missing, such as ${missing.slice(0, 3).join(', ')}`,
       );
+    }
+  }
+  for (const picture of pack.pictures ?? []) {
+    try {
+      await access(join(dir, picture.file));
+    } catch {
+      problems.push(`${picture.id}: ${picture.file} is missing`);
     }
   }
   return { problems, files, tilesChecked };

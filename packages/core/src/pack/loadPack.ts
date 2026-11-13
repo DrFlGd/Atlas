@@ -1,6 +1,7 @@
 import {
   COLLECTION_NAMES,
   MANIFEST_FILE,
+  MAP_COLLECTIONS,
   PACK_COLLECTIONS,
   SUPPORTED_SCHEMA_VERSIONS,
   checkPackIntegrity,
@@ -39,6 +40,9 @@ const MAX_LISTED_ISSUES = 20;
  * Loads, validates and indexes the data pack at `packUrl`. The URL must be
  * absolute and point at the pack root folder (the one holding
  * `manifest.json`); relative paths inside the pack resolve against it.
+ *
+ * A game with no map may leave out every map file (`MAP_COLLECTIONS`); they
+ * then load as empty. Leaving out only some of them is an error.
  *
  * The pack is read tolerantly (`packReadSchemas`): fields this app does not
  * know, and values of optional enum fields it does not know, are skipped,
@@ -85,14 +89,29 @@ export async function loadPack(
     MANIFEST_FILE,
   );
 
-  const entries = await Promise.all(
-    COLLECTION_NAMES.map(async (name) => {
+  // A game with no map may leave out every map file, but not some of them.
+  const mapFiles: readonly CollectionName[] = MAP_COLLECTIONS;
+  const raws = await Promise.all(
+    COLLECTION_NAMES.map((name) => {
       const spec = PACK_COLLECTIONS[name];
-      const raw = await readJson(spec.file, spec.required);
-      const parsed = raw === undefined ? [] : parseWith(spec.readSchema, raw, spec.file);
-      return [name, parsed] as const;
+      return readJson(spec.file, spec.required && !mapFiles.includes(name));
     }),
   );
+  const noMap = COLLECTION_NAMES.every(
+    (name, i) => !mapFiles.includes(name) || raws[i] === undefined,
+  );
+  const entries = COLLECTION_NAMES.map((name, i) => {
+    const spec = PACK_COLLECTIONS[name];
+    const raw = raws[i];
+    if (raw === undefined && spec.required && !noMap) {
+      throw new PackLoadError(
+        `Could not fetch ${new URL(spec.file, baseUrl).href}: HTTP 404`,
+        spec.file,
+      );
+    }
+    const parsed = raw === undefined ? [] : parseWith(spec.readSchema, raw, spec.file);
+    return [name, parsed] as const;
+  });
   const collections = Object.fromEntries(entries) as { [K in CollectionName]: PackData[K] };
   const data: PackData = { manifest, ...collections };
 
