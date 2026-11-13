@@ -6,6 +6,8 @@
  * size, and is kept as it is.
  */
 
+import { INLINE_PICTURE_HEIGHT, isInlinePicture, shownSize } from '../markdown';
+
 export type PictureSize =
   | { kind: 'own' }
   | { kind: 'inline'; width: number; height: number }
@@ -14,20 +16,19 @@ export type PictureSize =
   | { kind: 'other'; title: string };
 
 /** The tallest picture shown in the line of text. */
-export const INLINE_MAX_HEIGHT = 48;
+export const INLINE_MAX_HEIGHT = INLINE_PICTURE_HEIGHT;
 /** The height a picture put in the line of text gets. */
 export const INLINE_HEIGHT = 20;
 export const MAX_PICTURE_WIDTH = 4000;
 
-const SIZE = /^=(\d{1,4})(?:x(\d{1,4}))?$/;
-
+/** Reads a title as the page itself does when it is shown (`shownSize` in `markdown.ts`). */
 export function readPictureSize(title: string | undefined): PictureSize {
   if (title === undefined || title === '') return { kind: 'own' };
-  const match = SIZE.exec(title);
-  if (!match) return { kind: 'other', title };
-  const width = Number(match[1]);
-  const height = match[2] === undefined ? undefined : Number(match[2]);
-  if (height !== undefined && height <= INLINE_MAX_HEIGHT) return { kind: 'inline', width, height };
+  const size = shownSize(title);
+  if (!size) return { kind: 'other', title };
+  const { width, height } = size;
+  // A width alone that small is shown in the line too; its title is kept as written.
+  if (isInlinePicture(size) && height !== undefined) return { kind: 'inline', width, height };
   return height === undefined ? { kind: 'width', width } : { kind: 'width', width, height };
 }
 
