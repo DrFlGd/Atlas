@@ -39,6 +39,17 @@ export const MAX_RUN_ADDRESSES = 25;
  * on one site, before the window moves to the next page.
  */
 export const RUN_PAUSE_MS = 3000;
+/**
+ * The pause between two pages of a go read in the window kept for it
+ * (pages an importer names through `fetch.inWindow`): after one page has
+ * been read and before the window moves to the next. It is the pace sites
+ * that show their pages only to a person ask of archiving programs, about
+ * two seconds a page with the page's own loading. It starts when a page
+ * has been read, and the window moves only after it; it is never skipped.
+ * Every other pause stays: {@link RUN_PAUSE_MS} for map pages and between
+ * pages the app fetches itself, with the pause of its requests.
+ */
+export const WINDOW_PAGE_PAUSE_MS = 1000;
 /** Pages in a row that end without their map data before the run stops. */
 export const NO_DATA_IN_A_ROW = 2;
 
@@ -417,7 +428,8 @@ export class ImportRun {
     urls: readonly string[],
     leftOut: number,
     private readonly driver: RunDriver,
-    private readonly pauseMs = RUN_PAUSE_MS,
+    /** The pause before a page after the first, or how long it is before page `index`. */
+    private readonly pauseMs: number | ((index: number) => number) = RUN_PAUSE_MS,
     /** A pause before the first page too, when a page closed just before the run. */
     private readonly firstPauseMs = 0,
   ) {
@@ -460,7 +472,12 @@ export class ImportRun {
 
   async run(): Promise<RunState> {
     for (let index = 0; index < this.state.pages.length; index++) {
-      const pause = index > 0 ? this.pauseMs : this.firstPauseMs;
+      const pause =
+        index === 0
+          ? this.firstPauseMs
+          : typeof this.pauseMs === 'function'
+            ? this.pauseMs(index)
+            : this.pauseMs;
       if (index > 0 || pause > 0) {
         this.set({ ...this.state, pausing: true });
         if (!this.cancelled && !this.state.stopRequested) {

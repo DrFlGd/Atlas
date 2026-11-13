@@ -349,7 +349,7 @@ export function WikiScreen({
                     : ''
                 } Stop ends it after the page open now.`
               : tickedRows.length > 0
-                ? `${estimate(tickedRows.length, notes.follow)}${source.pictures ? ' Pictures come with each page.' : ''}`
+                ? `${estimate(tickedRows.length, notes.follow, source.inWindow)}${source.pictures ? ' Pictures come with each page.' : ''}`
                 : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
           </span>
         </div>
@@ -403,10 +403,10 @@ export function WikiScreen({
  * ticked alone; with links, how many pages there are is known only as
  * they are read.
  */
-function estimate(ticked: number, follow: FollowLinks): string {
+function estimate(ticked: number, follow: FollowLinks, inWindow: boolean): string {
   switch (follow) {
     case 'ticked':
-      return `${readingTime(ticked)}, one page at a time with a pause. Nothing else is read.`;
+      return `${readingTime(ticked, inWindow)}, one page at a time with a pause. Nothing else is read.`;
     case 'linked':
       return 'Plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.';
     case 'all':

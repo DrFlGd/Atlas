@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PollResult } from '../desktop';
-import { ImportRun, RUN_PAUSE_MS, type PageOutcome } from './importRun';
+import { ImportRun, RUN_PAUSE_MS, WINDOW_PAGE_PAUSE_MS, type PageOutcome } from './importRun';
 import {
   KEPT_POLL_MS,
   POLL_MS,
@@ -103,42 +103,49 @@ async function go(
   const windows = new PageWindows({ sleep: fake.sleep, now: fake.now, report: () => undefined });
   const reads: PageRead[] = [];
   const waiting: PageWaiting[] = [];
-  const run = new ImportRun(urls, 0, {
-    sleep: fake.sleep,
-    onChange: () => undefined,
-    async importPage(_index, url): Promise<PageOutcome> {
-      const read = await windows.read(
-        fake.shell,
-        {
-          url,
-          importer: { id: 'example-wiki' },
-          pageReader: '() => null',
-          waitSeconds: 60,
-          reading: 'map',
-          measure: null,
-          keepFor: kept(url) ? goId : null,
-          onWaiting: (state) => waiting.push(state),
-        },
-        () => true,
-      );
-      reads.push(read);
-      if (read.state === 'ready') {
-        const shown = (JSON.parse(read.data) as { page: string }).page;
-        return {
-          kind: 'added',
-          game: 'Example Wiki',
-          map: shown,
-          packId: 'example-wiki',
-          refreshed: false,
-        };
-      }
-      if (read.state === 'closed') return { kind: 'closed', message: read.message };
-      if (read.state === 'timed-out' || read.state === 'open-failed') {
-        return { kind: 'no-data', message: read.message };
-      }
-      return { kind: 'failed', message: 'failed' };
+  const run = new ImportRun(
+    urls,
+    0,
+    {
+      sleep: fake.sleep,
+      onChange: () => undefined,
+      async importPage(_index, url): Promise<PageOutcome> {
+        const read = await windows.read(
+          fake.shell,
+          {
+            url,
+            importer: { id: 'example-wiki' },
+            pageReader: '() => null',
+            waitSeconds: 60,
+            reading: 'map',
+            measure: null,
+            keepFor: kept(url) ? goId : null,
+            onWaiting: (state) => waiting.push(state),
+          },
+          () => true,
+        );
+        reads.push(read);
+        if (read.state === 'ready') {
+          const shown = (JSON.parse(read.data) as { page: string }).page;
+          return {
+            kind: 'added',
+            game: 'Example Wiki',
+            map: shown,
+            packId: 'example-wiki',
+            refreshed: false,
+          };
+        }
+        if (read.state === 'closed') return { kind: 'closed', message: read.message };
+        if (read.state === 'timed-out' || read.state === 'open-failed') {
+          return { kind: 'no-data', message: read.message };
+        }
+        return { kind: 'failed', message: 'failed' };
+      },
     },
-  });
+    // As `importing.ts` pauses: shorter before a page read in the window kept from the page before.
+    (index) =>
+      kept(urls[index]!) ? windows.pauseBefore(goId, 'example-wiki', urls[index]!) : RUN_PAUSE_MS,
+  );
   const final = await run.run();
   await windows.release(fake.shell, goId);
   return { final, reads, waiting, windows };
@@ -162,23 +169,44 @@ describe('a go of pages read in a window kept for it', () => {
     expect(final.pages.map((p) => (p.state.kind === 'added' ? p.state.map : null))).toEqual(urls);
   });
 
-  it('asks the page every half second, and keeps the whole pause between a page read and the next move', async () => {
+  it('asks the page every half second, and keeps the whole pause of a second between a page read and the next move', async () => {
     const fake = fakeWindow();
     await go(fake, [page('Welcome'), page('Bells'), page('Gates')], () => true);
+    expect(WINDOW_PAGE_PAUSE_MS).toBe(1000);
     expect(fake.sleeps).toEqual([
       KEPT_POLL_MS,
       KEPT_POLL_MS,
-      RUN_PAUSE_MS,
+      WINDOW_PAGE_PAUSE_MS,
       KEPT_POLL_MS,
       KEPT_POLL_MS,
-      RUN_PAUSE_MS,
+      WINDOW_PAGE_PAUSE_MS,
       KEPT_POLL_MS,
       KEPT_POLL_MS,
     ]);
     const at = (what: string) =>
       Number(fake.log.find((line) => line.endsWith(what))!.split(' ')[0]);
-    expect(at(`navigate ${page('Bells')}`) - at(`read ${page('Welcome')}`)).toBe(RUN_PAUSE_MS);
-    expect(at(`navigate ${page('Gates')}`) - at(`read ${page('Bells')}`)).toBe(RUN_PAUSE_MS);
+    expect(at(`navigate ${page('Bells')}`) - at(`read ${page('Welcome')}`)).toBe(
+      WINDOW_PAGE_PAUSE_MS,
+    );
+    expect(at(`navigate ${page('Gates')}`) - at(`read ${page('Bells')}`)).toBe(
+      WINDOW_PAGE_PAUSE_MS,
+    );
+  });
+
+  it('keeps the pause of any run before a page that gets a window of its own', async () => {
+    const windows = new PageWindows({
+      sleep: () => Promise.resolve(),
+      now: () => 0,
+      report: () => undefined,
+    });
+    // No window is kept yet: the first page of a go, a page of another go, site or importer.
+    expect(windows.pauseBefore(1, 'example-wiki', page('Welcome'))).toBe(RUN_PAUSE_MS);
+    const fake = fakeWindow();
+    const urls = [page('Welcome'), 'https://maps.example.com/demo-maps/a/b', page('Bells')];
+    await go(fake, urls, (url) => url.startsWith(WIKI));
+    // The map page after a kept page, and the wiki page after it (its window was closed), wait the run's pause.
+    expect(fake.sleeps.filter((ms) => ms === RUN_PAUSE_MS)).toHaveLength(2);
+    expect(fake.sleeps).not.toContain(WINDOW_PAGE_PAUSE_MS);
   });
 
   it('never takes the page shown before for the page asked for', async () => {

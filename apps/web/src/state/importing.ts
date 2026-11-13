@@ -827,7 +827,13 @@ async function startRun(
         };
       },
     },
-    RUN_PAUSE_MS,
+    // A page read in the window kept from the page before follows after a shorter pause.
+    (index) => {
+      const next = pages[index];
+      return next && keptInWindow(next.importer, next.url)
+        ? pageWindows.pauseBefore(id, next.importer.id, next.url)
+        : RUN_PAUSE_MS;
+    },
     firstPauseMs,
   );
   /** Adds the pages a page read links to, as `follow` says, within the go's limit. */
@@ -1730,6 +1736,8 @@ export interface WikiSource {
   address: string | null;
   /** A page's pictures are downloaded with it. */
   pictures: boolean;
+  /** Its pages are read in a window kept for a go (`fetch.inWindow`), with that window's shorter pause. */
+  inWindow: boolean;
 }
 
 /** The wiki a game was read from, when an importer that fetches its pages made it; null otherwise. */
@@ -1743,6 +1751,7 @@ export async function wikiSourceOf(packId: string): Promise<WikiSource | null> {
     importerTitle: game.importerTitle,
     address: importer.games ? game.address : null,
     pictures: importer.picturesWithPages === true,
+    inWindow: readsInWindow(importer.fetch, game.address ?? game.recorded[0]?.url ?? ''),
   };
 }
 

@@ -1,5 +1,6 @@
 import { checkPageObservations, type PageObservations } from '@atlas/importer-api';
 import type { DesktopBridge, ImportReport, PollResult } from '../desktop';
+import { RUN_PAUSE_MS, WINDOW_PAGE_PAUSE_MS } from './importRun';
 
 /**
  * Reading one page in the import window: open it (or, in a go of pages an
@@ -156,6 +157,14 @@ export class PageWindows {
       originOf(url) !== null &&
       kept.origin === originOf(url)
     );
+  }
+
+  /**
+   * The pause before `url` of go `go`: {@link WINDOW_PAGE_PAUSE_MS} when it
+   * is read in the window kept from the page before, else {@link RUN_PAUSE_MS}.
+   */
+  pauseBefore(go: number, importerId: string, url: string): number {
+    return this.continues(go, importerId, url) ? WINDOW_PAGE_PAUSE_MS : RUN_PAUSE_MS;
   }
 
   /** Closes the window, kept or not. */

@@ -175,6 +175,9 @@ describe('words', () => {
     expect(readingTime(3)).toBe('Less than a minute');
     expect(readingTime(112)).toBe('About 9 minutes');
     expect(readingTime(2000)).toBe('About 3 hours');
+    // Pages read in the window kept for a go: about 2 seconds a page.
+    expect(readingTime(900, true)).toBe('About 30 minutes');
+    expect(readingTime(20, true)).toBe('Less than a minute');
   });
 
   it('says when a page was read', () => {

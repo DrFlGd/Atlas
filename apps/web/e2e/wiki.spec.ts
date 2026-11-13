@@ -343,7 +343,7 @@ test.describe('pages their site shows only to a person', () => {
       .map((e) => `${e.what}${e.url ? ` ${e.url}` : ''}${e.keep ? ' (kept)' : ''}`);
   }
 
-  test('a go opens one window, moves it from page to page with the pause, and never reads the page before', async ({
+  test('a go opens one window, moves it from page to page after a pause of a second, and never reads the page before', async ({
     page,
   }) => {
     test.setTimeout(150_000);
@@ -371,12 +371,15 @@ test.describe('pages their site shows only to a person', () => {
     // Nothing was fetched: these pages are read in the window only.
     expect(await fetched(page)).toEqual(fetchedBefore);
     const events = (await mock(page)).events.slice(from);
-    // Each page read once, and the window moved on only after the whole pause.
+    // Each page read once, and the window moved on only after the whole pause of a second
+    // (the kept window's own pause, shorter than the 3 seconds between other pages).
     const reads = events.filter((e) => e.what === 'read');
     expect(reads.map((e) => e.url)).toEqual([`${WIKI}/Bells`, `${WIKI}/Gates`, `${WIKI}/Harbour`]);
     const moves = events.filter((e) => e.what === 'navigate');
+    expect(moves).toHaveLength(2);
     for (const [i, move] of moves.entries()) {
-      expect(move.at - reads[i]!.at).toBeGreaterThanOrEqual(3000);
+      expect(move.at - reads[i]!.at).toBeGreaterThanOrEqual(1000);
+      expect(move.at - reads[i]!.at).toBeLessThan(3000);
     }
     // Each page holds its own text, not that of the page shown before it.
     const preview = page.getByTestId('wiki-preview');

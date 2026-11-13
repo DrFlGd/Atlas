@@ -200,9 +200,13 @@ export function headingTick(
 /** Pages "Tick every page not read" ticks: of the contents, not read yet, not left out. */
 export const unread = (row: WikiRow) => row.state === 'not-read' || row.state === 'failed';
 
-/** "About 9 minutes": how long reading `pages` takes, one at a time with the pause. */
-export function readingTime(pages: number): string {
-  const seconds = pages * 5;
+/**
+ * "About 9 minutes": how long reading `pages` takes, one at a time with the
+ * pause: about 5 seconds a page fetched by the app, about 2 seconds a page
+ * read in the window kept for a go (its shorter pause, `WINDOW_PAGE_PAUSE_MS`).
+ */
+export function readingTime(pages: number, inWindow = false): string {
+  const seconds = pages * (inWindow ? 2 : 5);
   if (seconds < 60) return 'Less than a minute';
   const minutes = Math.round(seconds / 60);
   if (minutes < 90) return minutes === 1 ? 'About a minute' : `About ${minutes} minutes`;
