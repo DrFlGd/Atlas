@@ -611,6 +611,50 @@ mod tests {
         read_array(pack, name).unwrap()
     }
 
+    /// Makes a game with two maps and a level in `ATLAS_OWN_GAME_OUT`, to
+    /// open by hand with the web app's pack reader (`loadPack` in the core
+    /// package) and so check that what the shell writes is a pack it reads.
+    #[test]
+    #[ignore = "writes a game for the web app's check; run by hand"]
+    fn writes_a_game_for_the_web_check() {
+        let out = PathBuf::from(std::env::var("ATLAS_OWN_GAME_OUT").expect("ATLAS_OWN_GAME_OUT"));
+        let scratch = TempDir::new("own-game-web-check");
+        let mut progress = quietly();
+        let mut how = Cutting {
+            progress: &mut progress,
+            cancelled: &never,
+        };
+        let added = create_game(
+            &out,
+            "Cloud Isles",
+            "Harbour",
+            &picture(&scratch.0, "harbour.png", 1300, 700),
+            &app(),
+            |_| false,
+            &mut how,
+        )
+        .unwrap();
+        let pack = out.join(&added.game_id);
+        let caves = add_map(
+            &pack,
+            &added.game_id,
+            "Sea caves",
+            &picture(&scratch.0, "caves.png", 300, 900),
+            &mut how,
+        )
+        .unwrap();
+        add_level(
+            &pack,
+            &added.game_id,
+            &caves.map_id,
+            "Lower",
+            &picture(&scratch.0, "lower.png", 300, 900),
+            &mut how,
+        )
+        .unwrap();
+        println!("WROTE {}", pack.display());
+    }
+
     #[test]
     fn names_and_ids() {
         assert_eq!(slug("Ruined Keep 2"), "ruined-keep-2");
