@@ -32,6 +32,20 @@ async function openEntry(page: Page, name: string): Promise<void> {
 }
 
 test.describe('on a desktop', () => {
+  test('a picture whose file is not here shows in words', async ({ page }) => {
+    // As a picture listed to be downloaded later, before it is.
+    await page.route('**/packs/demo/pictures/wiki-waystone.png', (route) =>
+      route.fulfill({ status: 404, body: 'not found' }),
+    );
+    await openGuides(page);
+    await openEntry(page, 'The isle');
+    await openEntry(page, 'Waystones');
+    const frame = shownPage(page).locator('.guide-picture');
+    await expect(frame).toHaveAttribute('data-missing', '');
+    await expect(frame.locator('img')).toHaveCount(0);
+    await expect(frame.locator('.picture-alt')).toContainText('(picture not downloaded)');
+  });
+
   test('browses the contents, follows links, and goes back to where it was read', async ({
     page,
   }) => {

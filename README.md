@@ -87,7 +87,7 @@ The export file is `{ "format": "atlas-progress", "version": 1, "exportedAt", "s
 
 ### Guides
 
-Guide entries are Markdown, rendered with markdown-it with raw HTML disabled, so any HTML in a pack shows as text. Images are rendered only from the pack's own pictures, by id: `![a waystone](demo:picture:wiki-waystone)` shows the file that `pictures.json` gives for that id, with its caption and credit; an image of any other address, or of an id the pack does not have, shows its alternative text, so a guide never makes the app load anything from the web. Web links open in a new tab with `rel="noopener noreferrer"` (in the desktop app, in the system browser).
+Guide entries are Markdown, rendered with markdown-it with raw HTML disabled, so any HTML in a pack shows as text. Images are rendered only from the pack's own pictures, by id: `![a waystone](demo:picture:wiki-waystone)` shows the file that `pictures.json` gives for that id, with its caption and credit; an image of any other address, or of an id the pack does not have, shows its alternative text, so a guide never makes the app load anything from the web. A picture whose file is not in the pack's folder (one listed with a `remote` address and not downloaded yet) shows its alternative text with "(picture not downloaded)", and is tried again when images are saved. Web links open in a new tab with `rel="noopener noreferrer"` (in the desktop app, in the system browser).
 
 A link whose target is a content id of the same pack is an in-app link: `[the old well](demo:loc:0412)`, or `<demo:loc:0412>`. It is drawn as a button and acts in the app instead of opening a browser:
 
