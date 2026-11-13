@@ -1555,7 +1555,7 @@ fn carries_own_photos_and_guide_links_when_asked() {
     let file = dir.0.join("photos.atlaspack");
     let exported = export_mine(&source, &file, &mine).unwrap();
     // Only an app that knows photos and links reads it.
-    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(exported.header.version, VERSION_WITH_PHOTOS);
     let facts = exported.header.mine.unwrap();
     assert_eq!((facts.lists, facts.photos, facts.guide_links), (1, 1, true));
     let names = entry_names(&file);
@@ -1584,6 +1584,47 @@ fn carries_own_photos_and_guide_links_when_asked() {
         ..Mine::default()
     };
     assert!(export_mine(&source, &dir.0.join("bad.atlaspack"), &bad).is_err());
+}
+
+#[test]
+fn carries_own_pages_as_version_4() {
+    let dir = TempDir::new("packfile-mine-pages");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let source = folder_source(&pack);
+    let pages = format!(
+        r#"{{"format":"atlas-own-pages","version":1,"gameId":"{ID}","pages":[{{"id":"{ID}:guide:own.a","title":"A","body":"x","updatedAt":"2026-11-13T10:00:00.000Z"}}],"sections":[]}}"#
+    );
+    let mine = Mine {
+        lists: Some(own_lists_text(ID)),
+        pages: Some(pages.clone()),
+        ..Mine::default()
+    };
+    let file = dir.0.join("pages.atlaspack");
+    let exported = export_mine(&source, &file, &mine).unwrap();
+    assert_eq!(exported.header.version, VERSION);
+    let facts = exported.header.mine.unwrap();
+    assert_eq!((facts.lists, facts.pages, facts.sections), (1, 1, 0));
+    assert!(entry_names(&file).contains_key("mine/my-pages.json"));
+    let maps = dir.0.join("maps-pages");
+    let imported = run_import(&file, &maps).unwrap();
+    assert_eq!(imported.mine, mine);
+    assert!(files_under(&maps).keys().all(|name| !name.contains("my-")));
+    // Another game's pages are refused.
+    let other = Mine {
+        pages: Some(pages.replace(&format!("\"gameId\":\"{ID}\""), "\"gameId\":\"x\"")),
+        ..Mine::default()
+    };
+    assert!(export_mine(&source, &dir.0.join("other.atlaspack"), &other).is_err());
+    // Photos without pages stay version 3, for apps from before pages.
+    assert_eq!(
+        Mine {
+            pictures: vec![("own.ab12.jpg".to_owned(), Vec::new())],
+            ..Mine::default()
+        }
+        .version(),
+        VERSION_WITH_PHOTOS
+    );
 }
 
 #[test]

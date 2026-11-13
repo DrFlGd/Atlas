@@ -40,11 +40,13 @@
 //! own lists and their own locations, types and areas of the game (the files
 //! beside the game's folder, see `ownlists.rs`), as `mine/my-lists.json` and
 //! `mine/my-locations.json`, their links between guide pages and the map as
-//! `mine/guide-links.json`, and the photos their lists and locations show as
-//! `mine/pictures/<file>` ([`Mine`]). Such a file is version 2 of the
-//! format (version 3 when it carries photos or guide links), so an older
-//! app says it needs a newer one instead of refusing an entry it does not
-//! know; a file without them stays version 1. An import
+//! `mine/guide-links.json`, their own guide pages and changes to the
+//! pack's pages as `mine/my-pages.json`, and the photos their lists,
+//! locations and pages show as `mine/pictures/<file>` ([`Mine`]). Such a
+//! file is version 2 of the format (version 3 when it carries photos or
+//! guide links, version 4 when it carries pages), so an older app says it
+//! needs a newer one instead of refusing an entry it does not know; a file
+//! without them stays version 1. An import
 //! never writes them into the pack's folder: it hands them to the web app,
 //! which adds them to what the person has (see `Imported::mine`).
 //!
@@ -83,8 +85,12 @@ use crate::{
 pub const FORMAT: &str = "atlas-pack-file";
 /// The newest version of the format this app reads and writes. Version 2
 /// adds a person's own lists, locations and types ([`Mine`]); version 3
-/// their photos and links between guide pages and the map.
-pub const VERSION: u32 = 3;
+/// their photos and links between guide pages and the map; version 4 their
+/// own guide pages.
+pub const VERSION: u32 = 4;
+/// The version of a file with a person's photos or guide links but no own
+/// pages, which an app from before version 4 reads too.
+pub const VERSION_WITH_PHOTOS: u32 = 3;
 /// The version of a file with a person's own lists, locations and types
 /// only, which an app from before version 3 reads too.
 pub const VERSION_WITH_MINE: u32 = 2;
@@ -271,13 +277,19 @@ pub struct MineFacts {
     pub photos: u64,
     /// Whether their links between guide pages and the map are in it.
     pub guide_links: bool,
+    /// Their own guide pages, and the pack's pages they changed or hid
+    /// (version 4).
+    pub pages: u64,
+    /// Their own sections of the guide pages.
+    pub sections: u64,
 }
 
 /// The entries of a person's own files, and which file each is.
-pub const MINE_ENTRIES: [(&str, OwnFile); 3] = [
+pub const MINE_ENTRIES: [(&str, OwnFile); 4] = [
     ("mine/my-lists.json", ownlists::LISTS),
     ("mine/my-locations.json", ownlists::LOCATIONS),
     ("mine/guide-links.json", ownlists::GUIDE_LINKS),
+    ("mine/my-pages.json", ownlists::PAGES),
 ];
 
 /// Where a person's own photos are in a file: `mine/pictures/<file>`.
@@ -285,28 +297,31 @@ pub const MINE_PICTURES_DIR: &str = "mine/pictures/";
 /// The most bytes of own photos one file carries.
 pub const MAX_MINE_PICTURE_BYTES: u64 = 512 << 20;
 
-/// A person's own lists, own locations, types and areas, and links between
-/// guide pages and the map, of one game: the text of their files (see
-/// `ownlists.rs` and `guidelinks.rs`), each when there is one; and the
-/// photos the lists and locations show (see `ownpictures.rs`), by file name.
+/// A person's own lists, own locations, types and areas, links between
+/// guide pages and the map, and own guide pages, of one game: the text of
+/// their files (see `ownlists.rs` and `guidelinks.rs`), each when there is
+/// one; and the photos the lists, locations and pages show (see
+/// `ownpictures.rs`), by file name.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Mine {
     pub lists: Option<String>,
     pub locations: Option<String>,
     pub guide_links: Option<String>,
+    pub pages: Option<String>,
     pub pictures: Vec<(String, Vec<u8>)>,
 }
 
 impl Mine {
     /// The person's files of a game in the maps folder, and the photos their
-    /// lists and locations name.
+    /// lists, locations and pages name.
     pub fn read(maps_folder: &Path, game_id: &str) -> Result<Self, String> {
         let lists = ownlists::LISTS.read(maps_folder, game_id)?;
         let locations = ownlists::LOCATIONS.read(maps_folder, game_id)?;
         let guide_links = crate::guidelinks::read(maps_folder, game_id)?;
+        let pages = ownlists::PAGES.read(maps_folder, game_id)?;
         let mut pictures = Vec::new();
         let mut total = 0u64;
-        let named = [&lists, &locations]
+        let named = [&lists, &locations, &pages]
             .into_iter()
             .flatten()
             .flat_map(|text| ownpictures::named_in(text))
@@ -328,20 +343,28 @@ impl Mine {
             lists,
             locations,
             guide_links,
+            pages,
             pictures,
         })
     }
 
-    /// Whether only an app that reads version 3 can take it: it has photos
-    /// or guide links.
-    pub fn needs_version_3(&self) -> bool {
-        self.guide_links.is_some() || !self.pictures.is_empty()
+    /// The version of the format a file carrying these needs: 4 with own
+    /// pages, 3 with photos or guide links, 2 otherwise.
+    pub fn version(&self) -> u32 {
+        if self.pages.is_some() {
+            VERSION
+        } else if self.guide_links.is_some() || !self.pictures.is_empty() {
+            VERSION_WITH_PHOTOS
+        } else {
+            VERSION_WITH_MINE
+        }
     }
 
     pub fn is_empty(&self) -> bool {
         self.lists.is_none()
             && self.locations.is_none()
             && self.guide_links.is_none()
+            && self.pages.is_none()
             && self.pictures.is_empty()
     }
 
@@ -349,7 +372,7 @@ impl Mine {
     pub fn files(&self) -> impl Iterator<Item = (&'static str, OwnFile, &str)> {
         MINE_ENTRIES
             .into_iter()
-            .zip([&self.lists, &self.locations, &self.guide_links])
+            .zip([&self.lists, &self.locations, &self.guide_links, &self.pages])
             .filter_map(|((name, kind), text)| text.as_deref().map(|text| (name, kind, text)))
     }
 
@@ -358,6 +381,8 @@ impl Mine {
             &mut self.lists
         } else if kind.suffix == ownlists::LOCATIONS.suffix {
             &mut self.locations
+        } else if kind.suffix == ownlists::PAGES.suffix {
+            &mut self.pages
         } else {
             &mut self.guide_links
         }
@@ -378,6 +403,9 @@ impl Mine {
                 facts.locations = count("locations");
                 facts.types = count("categories");
                 facts.areas = count("regions");
+            } else if kind.suffix == ownlists::PAGES.suffix {
+                facts.pages = count("pages");
+                facts.sections = count("sections");
             } else {
                 facts.guide_links = true;
             }

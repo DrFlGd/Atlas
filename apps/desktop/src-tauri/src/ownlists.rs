@@ -6,7 +6,8 @@
 //!
 //! Their own locations, types and areas are kept the same way, in
 //! `<game id>.my-locations.json` ([`LOCATIONS`], see `ownLocations.ts` in
-//! the schema package).
+//! the schema package), and their changes to the guide pages in
+//! `<game id>.my-pages.json` ([`PAGES`], see `ownPages.ts`).
 //!
 //! It is never inside a pack folder, so nothing that replaces a pack's
 //! files touches it: refreshing a pack from its site, a newer pack that
@@ -59,8 +60,15 @@ pub const LOCATIONS: OwnFile = OwnFile {
     what: "locations and types",
 };
 
+/// Own guide pages and sections, and the changes to the pack's pages.
+pub const PAGES: OwnFile = OwnFile {
+    suffix: ".my-pages.json",
+    format: "atlas-own-pages",
+    what: "pages",
+};
+
 /// Every kind of own file.
-pub const OWN_FILES: [OwnFile; 2] = [LISTS, LOCATIONS];
+pub const OWN_FILES: [OwnFile; 3] = [LISTS, LOCATIONS, PAGES];
 
 /// The person's links between guide pages and the map (see `guidelinks`,
 /// which reads, writes and carries the file): described here too, so a map
@@ -222,7 +230,7 @@ pub fn delete(maps_folder: &Path, game_id: &str) -> Result<bool, String> {
 }
 
 /// When the maps folder changes: the own files of the old folder (lists,
-/// locations) go to the new one, moved (`move_files`, with the pack
+/// locations, pages) go to the new one, moved (`move_files`, with the pack
 /// folders) or copied (the old folder stays listed with its packs, and
 /// keeps its copies). A file the new folder has already is left as it is
 /// in both. The names carried over.
@@ -379,6 +387,31 @@ mod tests {
         assert_eq!(read(path, "demo").unwrap(), None);
         assert!(LOCATIONS.delete(path, "demo").unwrap());
         assert!(!LOCATIONS.delete(path, "demo").unwrap());
+    }
+
+    #[test]
+    fn keeps_own_pages_in_a_file_of_their_own() {
+        let maps = TempDir::new("own-pages-1");
+        let path = maps.0.as_path();
+        let pages = |game: &str| {
+            format!(
+                r#"{{"format":"atlas-own-pages","version":1,"gameId":"{game}","pages":[],"sections":[]}}"#
+            )
+        };
+        assert_eq!(PAGES.read(path, "demo").unwrap(), None);
+        PAGES.write(path, "demo", &pages("demo"), None).unwrap();
+        assert!(path.join("demo.my-pages.json").is_file());
+        assert_eq!(PAGES.read(path, "demo").unwrap(), Some(pages("demo")));
+        assert!(PAGES.write(path, "demo", &lists("demo"), None).is_err());
+        assert!(PAGES.write(path, "demo", &pages("other"), None).is_err());
+        // Carried with the other own files.
+        let new = TempDir::new("own-pages-2");
+        assert_eq!(
+            carry_over(path, new.0.as_path(), false),
+            vec!["demo.my-pages.json"]
+        );
+        assert!(PAGES.delete(path, "demo").unwrap());
+        assert!(!PAGES.delete(path, "demo").unwrap());
     }
 
     #[test]
