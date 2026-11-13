@@ -7,9 +7,11 @@ import { desktop, type PackDetails } from '../desktop';
 import { copiesPickedFiles, foldersOffered, layoutChoiceOffered } from '../features';
 import { setLayout, setTheme, switchGame } from '../state/actions';
 import { openActivityLog } from '../state/activityLog';
+import { ownGamesOffered } from '../state/ownGames';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
 import { LibraryTools, ProgressTools } from './DesktopTools';
+import { NewGameButton, OwnGameActions } from './OwnGames';
 import { setKeepScreenOn, setKeysOpen, useKeyHints, useTouch } from './state';
 import { GroupTitle, SwitchTrack } from './widgets';
 
@@ -24,6 +26,7 @@ export function GamesScreen() {
   const copies = useAtlas(copiesPickedFiles);
   const folders = useAtlas(foldersOffered);
   const canImport = desktop !== null && (copies || folders);
+  const canMake = useAtlas(ownGamesOffered);
   return (
     <div className="touch-page" data-testid="games-screen">
       <header className="touch-page-head">
@@ -43,10 +46,13 @@ export function GamesScreen() {
                   title={entry.title}
                   current={entry.id === shown}
                   origin={
-                    listed && !listed.bundled
-                      ? 'Imported from a map pack file'
-                      : 'Comes with the app'
+                    listed?.madeInApp
+                      ? 'Made in this app'
+                      : listed && !listed.bundled
+                        ? 'Imported from a map pack file'
+                        : 'Comes with the app'
                   }
+                  ownGame={canMake && listed?.madeInApp === true && listed.origin === 'maps-folder'}
                   listed={listed !== undefined}
                   deletable={listed?.origin === 'maps-folder' && !listed.bundled}
                   busy={library?.busy.includes(entry.id) ?? false}
@@ -54,6 +60,7 @@ export function GamesScreen() {
               );
             })}
           </ul>
+          {canMake ? <NewGameButton /> : null}
           {canImport ? (
             <>
               <button
@@ -87,6 +94,7 @@ function GameRow({
   listed,
   deletable,
   busy,
+  ownGame = false,
 }: {
   id: string;
   title: string;
@@ -95,6 +103,8 @@ function GameRow({
   listed: boolean;
   deletable: boolean;
   busy: boolean;
+  /** Made in this app: maps and levels can be added, and it can be renamed. */
+  ownGame?: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [details, setDetails] = useState(false);
@@ -148,6 +158,7 @@ function GameRow({
           ) : null}
         </div>
       ) : null}
+      {ownGame && !busy ? <OwnGameActions id={id} title={title} /> : null}
       {details ? <GameDetails id={id} /> : null}
       {confirming ? (
         <div className="touch-game-confirm">

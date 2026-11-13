@@ -509,6 +509,57 @@ export async function deleteOwnListsOf(gameId: string): Promise<boolean> {
   return ownListsBackend().remove(gameId);
 }
 
+/**
+ * Adds the own lists a map pack file carried to the person's of that game:
+ * a list with the same id is replaced by the file's. Returns how many lists
+ * the file had.
+ */
+export async function addImportedOwnLists(gameId: string, text: string): Promise<number> {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    value = null;
+  }
+  const read = readOwnListsFile(value);
+  if (!read.ok || read.file.gameId !== gameId) {
+    throw new Error('The lists in the file could not be read.');
+  }
+  const incoming = read.file.lists;
+  const merge = (here: readonly OwnList[]) => {
+    const ids = new Set(incoming.map((list) => list.checklist.id));
+    return [...here.filter((list) => !ids.has(list.checklist.id)), ...incoming];
+  };
+  if (get().gameId === gameId && get().status === 'ready') {
+    if (!canChangeOwnLists()) throw new Error(get().readOnly ?? 'They cannot be changed now.');
+    changed(merge(get().lists));
+    await flushOwnLists();
+    return incoming.length;
+  }
+  const backend = ownListsBackend();
+  const before = await backend.read(gameId);
+  let here: readonly OwnList[] = [];
+  if (before !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(before);
+    } catch {
+      parsed = null;
+    }
+    const was = readOwnListsFile(parsed);
+    if (!was.ok || was.file.version > OWN_LISTS_VERSION) {
+      throw new Error('The lists you have for this game could not be read.');
+    }
+    here = was.file.lists;
+  }
+  await backend.write(
+    gameId,
+    writeOwnListsFile(gameId, merge(here), new Date()),
+    before !== null ? new Date().toISOString() : undefined,
+  );
+  return incoming.length;
+}
+
 // ---------------------------------------------------------------------------
 // Saving when the page goes
 

@@ -26,6 +26,13 @@ import { KeysDialog } from './KeysDialog';
 import { EditorMapHint, EditorOutline, EditorSide, PreviewBar } from './editor/ListEditor';
 import { setPreview, stopEditing, useEditor } from './editor/editorState';
 import { arrangementFor, editorFits, panelWidthFor, type Arrangement } from './layout';
+import {
+  EditLocationsButton,
+  LocationEditorOutline,
+  LocationEditorSide,
+  LocationMapHint,
+} from './locations/LocationEditor';
+import { stopLocationEditing, useLocationEditor } from './locations/locationEditorState';
 import { ListOnlyChip } from './ListMapChips';
 import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
@@ -103,7 +110,10 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const hasLists =
     useAtlas((s) => hasListsSection(s.game) || (s.game !== null && room)) || ownLists;
   const editorMode = useEditor((s) => (s.listId === null || !room ? null : s.mode));
-  const selected = useAtlas((s) => s.selectedId !== null && editorMode !== 'edit');
+  // Edit locations: where the list editor fits, and only one of them at a time.
+  const locating = useLocationEditor((s) => s.active) && room && wide && editorMode === null;
+  const locationSide = useLocationEditor((s) => s.side !== null);
+  const selected = useAtlas((s) => s.selectedId !== null && editorMode !== 'edit' && !locating);
   const loading = useAtlas((s) => s.status.kind === 'loading');
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
   const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
@@ -112,10 +122,16 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
 
   useEffect(() => {
     if (!hasLists && section === 'lists') showSection(mapShown ? 'map' : 'guides');
-    if (!mapShown && section === 'map') showSection('guides');
-    if (!pages && section === 'guides') showSection('map');
+    // One or the other; a game with neither stays where it is.
+    if (!mapShown && pages && section === 'map') showSection('guides');
+    if (!pages && mapShown && section === 'guides') showSection('map');
   }, [hasLists, section, mapShown, pages]);
   const sections: Shown = { lists: hasLists, map: mapShown, guides: pages };
+
+  // A window too small for it ends Edit locations.
+  useEffect(() => {
+    if (!room || !wide) stopLocationEditing();
+  }, [room, wide]);
 
   const [mapOptions] = useState<TouchMapOptions>(() => ({
     input,
@@ -133,11 +149,16 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
     <main className="touch-map" aria-label="Map">
       <MapPane touch={mapOptions} />
       {wide ? (
-        <WideMapControls editing={editorMode === 'edit'} />
+        <WideMapControls
+          editing={editorMode === 'edit'}
+          locating={locating ? (locationSide ? 'side' : 'open') : null}
+          canLocate={room && editorMode === null}
+        />
       ) : section === 'map' ? (
         <CompactMapControls />
       ) : null}
       {editorMode === 'edit' && game ? <EditorSide game={game} /> : null}
+      {locating && game ? <LocationEditorSide game={game} /> : null}
       {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
     </main>
   ) : null;
@@ -156,16 +177,24 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
       {wide ? (
         <>
           <Rail shown={sections} />
-          {section === 'guides' && editorMode === null ? (
+          {section === 'guides' && editorMode === null && !locating ? (
             <GuidesScreen wide />
           ) : (
             <aside
-              className={editorMode === 'edit' ? 'touch-panel touch-panel-editor' : 'touch-panel'}
+              className={
+                editorMode === 'edit' || locating ? 'touch-panel touch-panel-editor' : 'touch-panel'
+              }
               aria-label={
-                editorMode === 'edit' ? 'List editor' : PANEL_LABEL[search ? 'search' : section]
+                editorMode === 'edit'
+                  ? 'List editor'
+                  : locating
+                    ? 'Edit locations'
+                    : PANEL_LABEL[search ? 'search' : section]
               }
             >
-              {editorMode === 'edit' && game ? (
+              {locating && game ? (
+                <LocationEditorOutline game={game} />
+              ) : editorMode === 'edit' && game ? (
                 <EditorOutline game={game} />
               ) : editorMode === 'preview' ? (
                 <div className="editor-preview">
@@ -195,7 +224,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
         </>
       )}
       {placeShown ? <PlaceSheet wide={wide} /> : null}
-      {wide && editorMode !== 'edit' ? <NextUpCard /> : null}
+      {wide && editorMode !== 'edit' && !locating ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
       <TouchToast wide={wide} />
       <ProfileDialog />
@@ -298,7 +327,8 @@ function useArrangement(input: 'touch' | 'mouse'): {
 // What follows the app's store
 
 function useTouchEffects(wide: boolean, room: boolean) {
-  const game = useAtlas((s) => s.game);
+  // The game's entry stays the same while the person's own locations change.
+  const gameEntry = useAtlas((s) => s.game?.entry);
 
   useEffect(() => {
     void loadKeepScreenOn();
@@ -309,18 +339,20 @@ function useTouchEffects(wide: boolean, room: boolean) {
   }, []);
 
   useEffect(() => {
-    if (!game) return;
+    const shown = useAtlas.getState().game;
+    if (!shown) return;
     useTouch.setState({ solo: null });
-    void loadRecent(game);
-    void loadListPrefs(game);
-  }, [game]);
+    void loadRecent(shown);
+    void loadListPrefs(shown);
+  }, [gameEntry]);
 
   // Guides: each game's reader starts at its contents; a game with no map
   // opens on them; a link to a page opens it there.
   useEffect(() => {
     resetReader();
-    if (game && !hasMap(game)) showSection('guides');
-  }, [game]);
+    const shown = useAtlas.getState().game;
+    if (shown && !hasMap(shown)) showSection('guides');
+  }, [gameEntry]);
   useEffect(() => {
     setGuideReader((id) => {
       const shown = useAtlas.getState().game;
@@ -567,8 +599,29 @@ function CompactMapControls() {
   );
 }
 
-function WideMapControls({ editing }: { editing: boolean }) {
+function WideMapControls({
+  editing,
+  locating,
+  canLocate,
+}: {
+  editing: boolean;
+  /** Edit locations is on: with the panel over the map open, or not. */
+  locating: 'open' | 'side' | null;
+  canLocate: boolean;
+}) {
   const section = useTouch((s) => s.section);
+  if (locating) {
+    return (
+      <div
+        className={
+          locating === 'side' ? 'touch-map-top editor-map-top' : 'touch-map-top locations-map-top'
+        }
+      >
+        <LocationMapHint />
+        <MapChip />
+      </div>
+    );
+  }
   if (editing) {
     return (
       <div className="touch-map-top editor-map-top">
@@ -582,6 +635,7 @@ function WideMapControls({ editing }: { editing: boolean }) {
       <div className="touch-map-top">
         <ListOnlyChip />
         <MapChip />
+        {canLocate ? <EditLocationsButton /> : null}
         <span className="touch-map-bottom-space" />
         <ProgressPill />
       </div>

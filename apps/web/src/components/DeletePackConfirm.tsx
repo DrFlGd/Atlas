@@ -20,6 +20,7 @@ export function DeletePackConfirm({
   const [info, setInfo] = useState<ImagesInfo | null>(null);
   const [withProgress, setWithProgress] = useState(false);
   const [withLists, setWithLists] = useState(false);
+  const [withLocations, setWithLocations] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -41,10 +42,12 @@ export function DeletePackConfirm({
       onWithProgress={setWithProgress}
       withLists={withLists}
       onWithLists={setWithLists}
+      withLocations={withLocations}
+      onWithLocations={setWithLocations}
       onConfirm={() => {
         setWorking(true);
         setError(null);
-        void deletePack(id, withProgress, withLists).then((outcome) => {
+        void deletePack(id, withProgress, withLists, withLocations).then((outcome) => {
           setWorking(false);
           if (outcome.ok) onClose();
           else setError(outcome.error);
@@ -65,6 +68,8 @@ export function DeletePackConfirmView({
   onWithProgress,
   withLists = false,
   onWithLists,
+  withLocations = false,
+  onWithLocations,
   onConfirm,
   onCancel,
 }: {
@@ -77,11 +82,15 @@ export function DeletePackConfirmView({
   /** The person's own lists of the game, kept beside the pack; offered when this is given. */
   withLists?: boolean;
   onWithLists?: (checked: boolean) => void;
+  /** The person's own locations, types and areas of the game; offered when this is given. */
+  withLocations?: boolean;
+  onWithLocations?: (checked: boolean) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const checkboxId = useId();
   const listsId = useId();
+  const locationsId = useId();
   return (
     <div
       className="download-confirm removal-confirm"
@@ -122,6 +131,21 @@ export function DeletePackConfirmView({
             }}
           />{' '}
           Also delete my lists and guides for this game
+        </label>
+      ) : null}
+      {onWithLocations ? (
+        <label htmlFor={locationsId} className="checkbox-row">
+          <input
+            id={locationsId}
+            type="checkbox"
+            checked={withLocations}
+            disabled={working}
+            data-testid="delete-pack-locations"
+            onChange={(event) => {
+              onWithLocations(event.target.checked);
+            }}
+          />{' '}
+          Also delete my locations and types for this game
         </label>
       ) : null}
       {error ? (

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './layout';
-import { collectErrors } from './helpers';
+import { collectErrors, ownLocationsText, ownListsText, selectByName } from './helpers';
 
 /**
  * Map pack files in the desktop app: "Export…" and "Details" on a game in
@@ -32,6 +32,10 @@ interface PackShell {
   job: Job | null;
   /** The demo pack is in the maps folder (after an import). */
   imported: boolean;
+  /** Whether each export was asked to include one's own lists, locations and types. */
+  exportsMine: boolean[];
+  /** One's own files the next import gives back, as the shell reads them from the file. */
+  importMine: { ownLists?: string; ownLocations?: string } | null;
 }
 
 function installPackShell() {
@@ -43,8 +47,12 @@ function installPackShell() {
     pick: null,
     job: null,
     imported: false,
+    exportsMine: [],
+    importMine: null,
   };
   (window as unknown as { __packShell: PackShell }).__packShell = shell;
+  /** What the shell says of the own files it put in a file. */
+  const mineFacts = { lists: 1, locations: 2, types: 1, areas: 0 };
   const demoUrl = new URL('packs/demo/', window.location.href).href;
   const listing = () => ({
     mapsFolder: { path: '/home/test/Atlas/Maps', isDefault: true, exists: true },
@@ -205,13 +213,17 @@ function installPackShell() {
         const detail = args.detail as string;
         const progress = (args.progress as string | null) ?? null;
         shell.exports.push({ id: args.id as string, detail, progress });
+        const withMine = args.includeMine === true;
+        shell.exportsMine.push(withMine);
         const images = detail === 'overview' ? 18 : 340;
         const path = `/home/test/Exports/demo-${detail}.atlaspack`;
         return run('export', 20, () => ({
           path,
           fileName: `demo-${detail}.atlaspack`,
           size: images * 6000 + 20_000,
-          header: header(detail, images),
+          header: withMine
+            ? { ...header(detail, images), version: 2, mine: mineFacts }
+            : header(detail, images),
           progressFile:
             progress !== null && !shell.progressFails
               ? `/home/test/Exports/demo-${detail}.progress.json`
@@ -235,6 +247,7 @@ function installPackShell() {
             replaced: request.replace,
             header: header('standard', 340),
             listing: listing(),
+            ...(shell.importMine ?? {}),
           };
         });
       }
@@ -509,6 +522,68 @@ test('imports a map pack file, saying which is newer and asking before using old
   await expect(details).toContainText('Imported from demo-standard.atlaspack on');
   await expect(details.locator('time[title="2026-11-11T10:00:00Z"]')).toBeVisible();
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+  expect(errors).toEqual([]);
+});
+
+test('carries one’s own lists, locations and types in a map pack file only when asked', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await page.getByTestId('maps-button').click();
+  const row = page.locator('[data-testid="pack-row"][data-pack="demo"]');
+  const dialog = page.getByTestId('pack-file-dialog');
+
+  // A game not made in the app: one's own things are left out unless asked for.
+  await row.getByTestId('export-pack').click();
+  const withMine = dialog.getByTestId('export-with-mine');
+  await expect(withMine).toHaveAccessibleName('Include my lists, locations and types');
+  await expect(withMine).not.toBeChecked();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  await expect(dialog.getByTestId('export-mine')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  await row.getByTestId('export-pack').click();
+  await withMine.check();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-mine')).toHaveText(
+    'It holds your own 1 list, 2 locations and 1 type.',
+  );
+  expect((await packShell(page)).exportsMine).toEqual([false, true]);
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await page.keyboard.press('Escape');
+
+  // A file with someone's own things says so, and importing it adds them.
+  const picked = pickedFile('2026-11-08T10:00:00.000Z');
+  await setShell(page, {
+    pick: {
+      ...picked,
+      header: {
+        ...picked.header,
+        version: 2,
+        mine: { lists: 1, locations: 2, types: 1, areas: 0 },
+      },
+    },
+    importMine: { ownLists: ownListsText, ownLocations: ownLocationsText },
+  });
+  await page.getByTestId('maps-button').click();
+  await page.getByTestId('import-pack-file').click();
+  await expect(dialog.getByTestId('import-has-mine')).toContainText(
+    'It also holds someone’s own 1 list, 2 locations and 1 type.',
+  );
+  await dialog.getByTestId('import-start').click();
+  await expect(dialog.getByTestId('import-mine')).toHaveText(
+    'Your own 1 list, 2 locations and 1 type from the file were added to yours.',
+  );
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await page.keyboard.press('Escape');
+
+  // They are on the map, found by search, and the list is there.
+  await expect(page.getByTestId('marker-count')).toHaveText('5,002');
+  await selectByName(page, 'Stone well');
+  await expect(
+    page.getByTestId('checklist-link').filter({ hasText: 'Wells to visit' }),
+  ).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 

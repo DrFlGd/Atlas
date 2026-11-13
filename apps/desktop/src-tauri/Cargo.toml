@@ -56,6 +56,14 @@ httpdate = { version = "1.0.3", optional = true }
 tauri-plugin-fs = "2.7.1"
 
 # Free disk space before a map pack file is unpacked (src/packfile/space.rs).
+# A map from one picture ("New game", src/tiles/cut.rs): decoding PNG, JPEG
+# and WebP pictures and encoding map tiles, in every desktop build (with
+# downloads too, which uses the same crate). The PNG decoder is used
+# directly to read a large picture a band of rows at a time. Not on Android.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+png = "0.18.1"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

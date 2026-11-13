@@ -119,6 +119,22 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
           .optional() as unknown as z.ZodOptional<T>)
       : values.optional();
 
+  /**
+   * The id of a pack's record of a kind a person can also make: lists and
+   * their entries, locations, types, type groups, areas and notes. A pack
+   * being written may not use the ids kept for what people make (see
+   * `OWN_ID_PREFIX`); reading takes any.
+   */
+  const packId = (
+    kind: 'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region' | 'guide',
+  ) =>
+    reading || ownIds
+      ? idOf(kind)
+      : idOf(kind).refine(
+          (id) => !isOwnId(id),
+          `must not start with ${OWN_ID_PREFIX}, which is kept for what people make in the app`,
+        );
+
   // ---------------------------------------------------------------------------
   // Manifest
 
@@ -231,6 +247,12 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     writtenBy: descriptive(writtenBySchema),
     source: descriptive(packSourceSchema),
     contents: descriptive(packContentsSchema),
+    /**
+     * The game was made in the app (New game): its maps are pictures the
+     * person chose, and its locations, types and areas are their own, kept
+     * beside it (see `ownLocations.ts`). Absent for packs made any other way.
+     */
+    madeInApp: descriptive(z.literal(true)),
   });
 
   const manifestSchema = z.discriminatedUnion('schemaVersion', [
@@ -367,7 +389,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * locations for progress, but the app cannot show where it is.
    */
   const regionSchema = record({
-    id: idOf('region'),
+    id: packId('region'),
     mapId: idOf('map'),
     /** Enclosing region, or null for a top-level region. */
     parentId: idOf('region').nullable(),
@@ -385,14 +407,14 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   // Categories
 
   const categoryGroupSchema = record({
-    id: idOf('catgroup'),
+    id: packId('catgroup'),
     name: nonEmpty,
     /** Sort order within the pack, ascending. */
     order: z.int(),
   });
 
   const categorySchema = record({
-    id: idOf('cat'),
+    id: packId('cat'),
     groupId: idOf('catgroup'),
     name: nonEmpty,
     /** Icon name from the app's icon set. */
@@ -408,7 +430,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   // Locations and content
 
   const locationSchema = record({
-    id: idOf('loc'),
+    id: packId('loc'),
     mapId: idOf('map'),
     layerId: idOf('layer'),
     /** Map image pixel, origin top-left. */
@@ -440,21 +462,8 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * whose checklists have `kind`, and 0.4.4 and earlier one whose checklists
    * have `type`. Later apps read packs tolerantly (see {@link SchemaMode}).
    */
-  /**
-   * The id of a pack's list or entry. A pack being written may not use the
-   * ids kept for a person's own lists (see `OWN_ID_PREFIX`); reading takes
-   * any.
-   */
-  const packListId = (kind: 'checklist' | 'checkitem') =>
-    reading || ownIds
-      ? idOf(kind)
-      : idOf(kind).refine(
-          (id) => !isOwnId(id),
-          `must not start with ${OWN_ID_PREFIX}, which is kept for lists people make`,
-        );
-
   const checklistSchema = record({
-    id: packListId('checklist'),
+    id: packId('checklist'),
     name: nonEmpty,
     description: z.string().optional(),
     order: z.int(),
@@ -482,7 +491,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * change; Atlas 0.3.3 and earlier refuse a pack whose items have them.
    */
   const checklistItemSchema = record({
-    id: packListId('checkitem'),
+    id: packId('checkitem'),
     checklistId: idOf('checklist'),
     name: nonEmpty,
     order: z.int(),
@@ -579,7 +588,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * Atlas 0.4.4 and earlier refuse a pack whose guides have it.
    */
   const guideEntrySchema = record({
-    id: idOf('guide'),
+    id: packId('guide'),
     title: nonEmpty,
     /** Markdown text. */
     body: z.string(),
@@ -685,6 +694,17 @@ export const packReadSchemas = packSchemas('read');
 export const ownEntryWriteSchemas = (({ checklistSchema, checklistItemSchema }) => ({
   checklistSchema,
   checklistItemSchema,
+}))(packSchemas('write', { ownIds: true }));
+
+/**
+ * The strict type, type group and area schemas for a person's own
+ * locations, types and areas, kept apart from packs with the ids packs may
+ * not use (see `ownLocations.ts`).
+ */
+export const ownRecordWriteSchemas = (({ categorySchema, categoryGroupSchema, regionSchema }) => ({
+  categorySchema,
+  categoryGroupSchema,
+  regionSchema,
 }))(packSchemas('write', { ownIds: true }));
 
 export type Attribution = z.infer<typeof attributionSchema>;

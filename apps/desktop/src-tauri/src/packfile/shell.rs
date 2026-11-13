@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::{
-    export::{export, Exported},
+    export::{export_with_mine, Exported},
     import::{existing_folder, import, read_header, Imported},
-    pack_details, AppInfo, Header, PackDetails, PackSource, Progress, Stop, EXTENSION,
+    pack_details, AppInfo, Header, Mine, PackDetails, PackSource, Progress, Stop, EXTENSION,
 };
 use crate::{
     downloads::Downloads,
@@ -65,12 +65,53 @@ pub fn export_pack(
     progress: &mut dyn FnMut(Progress),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Exported, Stop> {
+    export_pack_with_mine(
+        library,
+        downloads,
+        id,
+        app,
+        detail,
+        destination,
+        false,
+        progress,
+        cancelled,
+    )
+}
+
+/// [`export_pack`], with the person's own lists, locations and types of the
+/// game from beside its folder in the maps folder when `include_mine` is
+/// set and there are any.
+#[allow(clippy::too_many_arguments)]
+pub fn export_pack_with_mine(
+    library: &Library,
+    downloads: &Downloads,
+    id: &str,
+    app: &AppInfo,
+    detail: Detail,
+    destination: &Path,
+    include_mine: bool,
+    progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Exported, Stop> {
     let source = source_for(library, downloads, id)?;
     if downloads.is_active(id) {
         return Err(Stop::Failed(DOWNLOADING.to_owned()));
     }
     library.check_not_moving(id)?;
-    export(&source, app, detail, destination, progress, cancelled)
+    let mine = if include_mine {
+        Mine::read(&library.maps_folder(), id)?
+    } else {
+        Mine::default()
+    };
+    export_with_mine(
+        &source,
+        app,
+        detail,
+        destination,
+        &mine,
+        progress,
+        cancelled,
+    )
 }
 
 /// What the Import dialog shows about a file before anything is written.

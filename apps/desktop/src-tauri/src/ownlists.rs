@@ -4,6 +4,10 @@
 //! in the schema package for what it holds); the shell only checks that it
 //! is the own lists file of that game and keeps it safe.
 //!
+//! Their own locations, types and areas are kept the same way, in
+//! `<game id>.my-locations.json` ([`LOCATIONS`], see `ownLocations.ts` in
+//! the schema package).
+//!
 //! It is never inside a pack folder, so nothing that replaces a pack's
 //! files touches it: refreshing a pack from its site, a newer pack that
 //! comes with the app, importing a `.atlaspack` file over the game, or
@@ -29,134 +33,197 @@ use std::{
 
 use crate::{manifest::write_atomic, packs::is_valid_pack_id};
 
+/// One kind of file a person's own things of a game are kept in, beside
+/// the game's folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnFile {
+    /// The end of the file's name, after the game id.
+    pub suffix: &'static str,
+    /// What the file says it is (`format`).
+    pub format: &'static str,
+    /// What it holds, in the person's words: "lists".
+    pub what: &'static str,
+}
+
+/// Own lists and guides.
+pub const LISTS: OwnFile = OwnFile {
+    suffix: ".my-lists.json",
+    format: "atlas-own-lists",
+    what: "lists",
+};
+
+/// Own locations, types and areas.
+pub const LOCATIONS: OwnFile = OwnFile {
+    suffix: ".my-locations.json",
+    format: "atlas-own-locations",
+    what: "locations and types",
+};
+
+/// Every kind of own file.
+pub const OWN_FILES: [OwnFile; 2] = [LISTS, LOCATIONS];
+
 /// The end of an own lists file's name, after the game id.
-pub const OWN_LISTS_SUFFIX: &str = ".my-lists.json";
-/// What the file says it is (`format`).
-const FORMAT: &str = "atlas-own-lists";
-/// An own lists file larger than this is refused, read or written.
+pub const OWN_LISTS_SUFFIX: &str = LISTS.suffix;
+/// An own file larger than this is refused, read or written.
 pub const MAX_OWN_LISTS_BYTES: usize = 16 << 20;
 
 static WRITING: Mutex<()> = Mutex::new(());
 
+impl OwnFile {
+    /// This file of a game in a maps folder.
+    pub fn path(self, maps_folder: &Path, game_id: &str) -> Result<PathBuf, String> {
+        if !is_valid_pack_id(game_id) {
+            return Err("That is not a game id Atlas can use.".to_owned());
+        }
+        Ok(maps_folder.join(format!("{game_id}{}", self.suffix)))
+    }
+
+    /// The text of a game's file, or `None` when it has none.
+    pub fn read(self, maps_folder: &Path, game_id: &str) -> Result<Option<String>, String> {
+        let what = self.what;
+        let path = self.path(maps_folder, game_id)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("Could not read your {what}: {error}")),
+        };
+        if !metadata.is_file() {
+            return Err(format!(
+                "{} is not a file, so your {what} cannot be read.",
+                path.display()
+            ));
+        }
+        if metadata.len() > MAX_OWN_LISTS_BYTES as u64 {
+            return Err(format!("Your {what} file is too large to read."));
+        }
+        let bytes =
+            fs::read(&path).map_err(|error| format!("Could not read your {what}: {error}"))?;
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| format!("Your {what} file is not text, so it cannot be read."))
+    }
+
+    /// Checks that a text is this kind of file of this game: JSON, not too
+    /// large, with the right `format` and `gameId`. The web app checks the
+    /// rest with the schema before it writes.
+    pub fn check(self, game_id: &str, contents: &str) -> Result<(), String> {
+        let what = self.what;
+        if contents.len() > MAX_OWN_LISTS_BYTES {
+            return Err(format!("Your {what} are too large to save."));
+        }
+        let value: serde_json::Value = serde_json::from_str(contents)
+            .map_err(|_| format!("Your {what} could not be saved: they are not JSON."))?;
+        let format = value.get("format").and_then(serde_json::Value::as_str);
+        let game = value.get("gameId").and_then(serde_json::Value::as_str);
+        if format != Some(self.format) || game != Some(game_id) {
+            return Err(format!(
+                "Your {what} could not be saved: they are not this game's {what}."
+            ));
+        }
+        Ok(())
+    }
+
+    /// Writes a game's file whole (see the module). With `keep_copy`, the
+    /// file there now is kept beside it first, named with `stamp`. Returns
+    /// the name of the copy kept, if one was.
+    pub fn write(
+        self,
+        maps_folder: &Path,
+        game_id: &str,
+        contents: &str,
+        keep_copy: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let what = self.what;
+        self.check(game_id, contents)?;
+        let path = self.path(maps_folder, game_id)?;
+        // One write at a time, so a later save never lands before an earlier one.
+        let _writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
+        fs::create_dir_all(maps_folder)
+            .map_err(|error| format!("Could not create the maps folder: {error}"))?;
+        let mut kept = None;
+        if let Some(stamp) = keep_copy {
+            if path.is_file() {
+                let safe: String = stamp
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+                    .take(40)
+                    .collect();
+                let stem = self.suffix.trim_end_matches(".json");
+                let name = format!("{game_id}{stem}.{safe}.json");
+                fs::copy(&path, maps_folder.join(&name))
+                    .map_err(|error| format!("Could not keep a copy of your {what}: {error}"))?;
+                kept = Some(name);
+            }
+        }
+        write_atomic(&path, contents.as_bytes())
+            .map_err(|error| format!("Could not save your {what}: {error}"))?;
+        Ok(kept)
+    }
+
+    /// Deletes a game's file, when the person asks for it with the game.
+    /// Whether there was one.
+    pub fn delete(self, maps_folder: &Path, game_id: &str) -> Result<bool, String> {
+        let path = self.path(maps_folder, game_id)?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!("Could not delete your {}: {error}", self.what)),
+        }
+    }
+
+    /// The files of this kind directly in a folder, by name.
+    fn files_in(self, dir: &Path) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.strip_suffix(self.suffix).is_some_and(is_valid_pack_id))
+            .collect();
+        names.sort();
+        names
+    }
+}
+
 /// The own lists file of a game in a maps folder.
 pub fn own_lists_path(maps_folder: &Path, game_id: &str) -> Result<PathBuf, String> {
-    if !is_valid_pack_id(game_id) {
-        return Err("That is not a game id Atlas can use.".to_owned());
-    }
-    Ok(maps_folder.join(format!("{game_id}{OWN_LISTS_SUFFIX}")))
+    LISTS.path(maps_folder, game_id)
 }
 
 /// The text of a game's own lists file, or `None` when it has none.
 pub fn read(maps_folder: &Path, game_id: &str) -> Result<Option<String>, String> {
-    let path = own_lists_path(maps_folder, game_id)?;
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Could not read your lists: {error}")),
-    };
-    if !metadata.is_file() {
-        return Err(format!(
-            "{} is not a file, so your lists cannot be read.",
-            path.display()
-        ));
-    }
-    if metadata.len() > MAX_OWN_LISTS_BYTES as u64 {
-        return Err("Your lists file is too large to read.".to_owned());
-    }
-    let bytes = fs::read(&path).map_err(|error| format!("Could not read your lists: {error}"))?;
-    String::from_utf8(bytes)
-        .map(Some)
-        .map_err(|_| "Your lists file is not text, so it cannot be read.".to_owned())
+    LISTS.read(maps_folder, game_id)
 }
 
-/// Checks that a text is an own lists file of this game: JSON, not too
-/// large, with the right `format` and `gameId`. The web app checks the
-/// rest with the schema before it writes.
-fn check(game_id: &str, contents: &str) -> Result<(), String> {
-    if contents.len() > MAX_OWN_LISTS_BYTES {
-        return Err("Your lists are too large to save.".to_owned());
-    }
-    let value: serde_json::Value = serde_json::from_str(contents)
-        .map_err(|_| "Your lists could not be saved: they are not JSON.".to_owned())?;
-    let format = value.get("format").and_then(serde_json::Value::as_str);
-    let game = value.get("gameId").and_then(serde_json::Value::as_str);
-    if format != Some(FORMAT) || game != Some(game_id) {
-        return Err("Your lists could not be saved: they are not this game's lists.".to_owned());
-    }
-    Ok(())
-}
-
-/// Writes a game's own lists file whole (see the module). With `keep_copy`,
-/// the file there now is kept beside it first, named with `stamp`.
-/// Returns the name of the copy kept, if one was.
+/// Writes a game's own lists file whole; see [`OwnFile::write`].
 pub fn write(
     maps_folder: &Path,
     game_id: &str,
     contents: &str,
     keep_copy: Option<&str>,
 ) -> Result<Option<String>, String> {
-    check(game_id, contents)?;
-    let path = own_lists_path(maps_folder, game_id)?;
-    // One write at a time, so a later save never lands before an earlier one.
-    let _writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
-    fs::create_dir_all(maps_folder)
-        .map_err(|error| format!("Could not create the maps folder: {error}"))?;
-    let mut kept = None;
-    if let Some(stamp) = keep_copy {
-        if path.is_file() {
-            let safe: String = stamp
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-                .take(40)
-                .collect();
-            let name = format!("{game_id}.my-lists.{safe}.json");
-            fs::copy(&path, maps_folder.join(&name))
-                .map_err(|error| format!("Could not keep a copy of your lists: {error}"))?;
-            kept = Some(name);
-        }
-    }
-    write_atomic(&path, contents.as_bytes())
-        .map_err(|error| format!("Could not save your lists: {error}"))?;
-    Ok(kept)
+    LISTS.write(maps_folder, game_id, contents, keep_copy)
 }
 
-/// Deletes a game's own lists file, when the person asks for it with the
-/// game. Whether there was one.
+/// Deletes a game's own lists file. Whether there was one.
 pub fn delete(maps_folder: &Path, game_id: &str) -> Result<bool, String> {
-    let path = own_lists_path(maps_folder, game_id)?;
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!("Could not delete your lists: {error}")),
-    }
+    LISTS.delete(maps_folder, game_id)
 }
 
-/// The own lists files directly in a folder, by name.
-fn own_list_files(dir: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| {
-            name.strip_suffix(OWN_LISTS_SUFFIX)
-                .is_some_and(is_valid_pack_id)
-        })
-        .collect();
-    names.sort();
-    names
-}
-
-/// When the maps folder changes: the own lists files of the old folder go
-/// to the new one, moved (`move_files`, with the pack folders) or copied
-/// (the old folder stays listed with its packs, and keeps its copies). A
-/// file the new folder has already is left as it is in both. The names
-/// carried over.
+/// When the maps folder changes: the own files of the old folder (lists,
+/// locations) go to the new one, moved (`move_files`, with the pack
+/// folders) or copied (the old folder stays listed with its packs, and
+/// keeps its copies). A file the new folder has already is left as it is
+/// in both. The names carried over.
 pub fn carry_over(old: &Path, new: &Path, move_files: bool) -> Vec<String> {
     let mut carried = Vec::new();
-    for name in own_list_files(old) {
+    for name in OWN_FILES
+        .iter()
+        .flat_map(|kind| kind.files_in(old))
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         let target = new.join(&name);
         if fs::symlink_metadata(&target).is_ok() {
             continue;
@@ -260,12 +327,60 @@ mod tests {
         assert!(crate::library::packs_in(maps.0.as_path()).0.is_empty());
     }
 
+    fn locations(game: &str) -> String {
+        format!(
+            r#"{{"format":"atlas-own-locations","version":1,"gameId":"{game}","locations":[]}}"#
+        )
+    }
+
+    #[test]
+    fn keeps_own_locations_in_a_file_of_their_own() {
+        let maps = TempDir::new("own-locations-1");
+        let path = maps.0.as_path();
+        assert_eq!(LOCATIONS.read(path, "demo").unwrap(), None);
+        LOCATIONS
+            .write(path, "demo", &locations("demo"), None)
+            .unwrap();
+        assert!(path.join("demo.my-locations.json").is_file());
+        assert_eq!(
+            LOCATIONS.read(path, "demo").unwrap(),
+            Some(locations("demo"))
+        );
+        // Lists are not locations, and the other way round.
+        assert!(LOCATIONS.write(path, "demo", &lists("demo"), None).is_err());
+        assert!(LISTS.write(path, "demo", &locations("demo"), None).is_err());
+        assert!(LOCATIONS
+            .write(path, "demo", &locations("other"), None)
+            .is_err());
+        assert!(LOCATIONS
+            .write(path, "../x", &locations("../x"), None)
+            .is_err());
+        let kept = LOCATIONS
+            .write(
+                path,
+                "demo",
+                &locations("demo"),
+                Some("2026-11-13T10:00:00Z"),
+            )
+            .unwrap();
+        assert_eq!(
+            kept.as_deref(),
+            Some("demo.my-locations.2026-11-13T100000Z.json")
+        );
+        assert_eq!(read(path, "demo").unwrap(), None);
+        assert!(LOCATIONS.delete(path, "demo").unwrap());
+        assert!(!LOCATIONS.delete(path, "demo").unwrap());
+    }
+
     #[test]
     fn carries_the_files_to_a_new_maps_folder() {
         let old = TempDir::new("own-lists-6");
         let new = TempDir::new("own-lists-7");
         write(old.0.as_path(), "demo", &lists("demo"), None).unwrap();
         write(old.0.as_path(), "other", &lists("other"), None).unwrap();
+        LOCATIONS
+            .write(old.0.as_path(), "other", &locations("other"), None)
+            .unwrap();
         fs::write(old.0.as_path().join("notes.json"), "{}").unwrap();
         write(
             new.0.as_path(),
@@ -278,7 +393,7 @@ mod tests {
         // Copied: both folders have it; the new folder's own file stays.
         assert_eq!(
             carry_over(old.0.as_path(), new.0.as_path(), false),
-            vec!["demo.my-lists.json"]
+            vec!["demo.my-lists.json", "other.my-locations.json"]
         );
         assert!(old.0.as_path().join("demo.my-lists.json").is_file());
         assert_eq!(
@@ -290,7 +405,11 @@ mod tests {
         let third = TempDir::new("own-lists-8");
         assert_eq!(
             carry_over(old.0.as_path(), third.0.as_path(), true),
-            vec!["demo.my-lists.json", "other.my-lists.json"]
+            vec![
+                "demo.my-lists.json",
+                "other.my-lists.json",
+                "other.my-locations.json"
+            ]
         );
         assert!(!old.0.as_path().join("demo.my-lists.json").exists());
         assert!(old.0.as_path().join("notes.json").exists());

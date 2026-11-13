@@ -8,6 +8,8 @@
 //! resumably (`download`, `downscale`, `manager`), and measures how large
 //! an imported map's picture is (`measure`).
 
+#[cfg(not(target_os = "android"))]
+pub mod cut;
 #[cfg(feature = "downloads")]
 pub mod download;
 #[cfg(feature = "downloads")]

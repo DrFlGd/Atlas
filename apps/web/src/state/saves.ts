@@ -189,7 +189,7 @@ async function loadSaveState(): Promise<void> {
 /** Keeps the save state with the game and profile shown. Returns the unsubscribe function. */
 export function initSaves(): () => void {
   return useAtlas.subscribe((state, previous) => {
-    if (state.game !== previous.game || state.profileId !== previous.profileId) {
+    if (state.game?.entry !== previous.game?.entry || state.profileId !== previous.profileId) {
       void loadSaveState();
     }
   });

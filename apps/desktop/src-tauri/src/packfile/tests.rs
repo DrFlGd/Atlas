@@ -788,7 +788,7 @@ fn refuses_files_that_are_not_map_pack_files_or_too_new() {
     other["format"] = json!("atlas-progress");
     assert!(import_error(&dir.0, "format", &other, &entries).contains("not an Atlas map pack file"));
     let mut newer = header.clone();
-    newer["version"] = json!(2);
+    newer["version"] = json!(VERSION + 1);
     newer["exportedBy"] = json!({"name": "Atlas", "version": "0.9.1", "platform": "windows"});
     let error = import_error(&dir.0, "newer", &newer, &entries);
     assert!(
@@ -1343,6 +1343,194 @@ fn a_picked_file_is_read_in_order_copied_and_imported_from_the_copy() {
     assert_eq!(picked::discard(&copies, &copy), Ok(true));
     assert!(!copy.exists() && file.exists());
     assert_eq!(fs::read_dir(&copies).unwrap().count(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// A person's own lists, locations and types in the file
+
+fn own_lists_text(game: &str) -> String {
+    json!({"format": "atlas-own-lists", "version": 1, "gameId": game, "updatedAt": "2026-11-12T09:00:00Z",
+           "lists": [{"checklist": {"id": format!("{game}:checklist:own.trail")}}]})
+    .to_string()
+}
+
+fn own_locations_text(game: &str) -> String {
+    json!({"format": "atlas-own-locations", "version": 1, "gameId": game, "updatedAt": "2026-11-12T09:00:00Z",
+           "categoryGroups": [{"id": format!("{game}:catgroup:own.mine"), "name": "My types", "order": 9}],
+           "categories": [{"id": format!("{game}:cat:own.well"), "groupId": format!("{game}:catgroup:own.mine"), "name": "Well"}],
+           "regions": [],
+           "locations": [
+               {"id": format!("{game}:loc:own.a"), "mapId": format!("{game}:map:east"), "layerId": format!("{game}:layer:a"), "x": 10, "y": 20, "categoryId": format!("{game}:cat:own.well"), "regionId": null, "name": "Old well"},
+               {"id": format!("{game}:loc:own.b"), "mapId": format!("{game}:map:east"), "layerId": format!("{game}:layer:a"), "x": 30, "y": 40, "categoryId": format!("{game}:cat:own.well"), "regionId": null, "name": "New well"}
+           ]})
+    .to_string()
+}
+
+fn export_mine(
+    source: &PackSource,
+    destination: &Path,
+    mine: &Mine,
+) -> Result<export::Exported, Stop> {
+    export::export_with_mine(
+        source,
+        &app(),
+        Detail::Overview,
+        destination,
+        mine,
+        &mut |_| {},
+        &|| false,
+    )
+}
+
+#[test]
+fn carries_own_lists_and_locations_only_when_asked() {
+    let dir = TempDir::new("packfile-mine");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let source = folder_source(&pack);
+
+    // Without them: version 1, nothing under mine/, nothing handed back.
+    let plain = dir.0.join("plain.atlaspack");
+    let exported = run_export(&source, Detail::Overview, &plain).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITHOUT_MINE);
+    assert_eq!(exported.header.mine, None);
+    assert!(json_entry(&plain, HEADER_FILE).get("mine").is_none());
+    assert!(entry_names(&plain)
+        .keys()
+        .all(|name| !name.starts_with("mine/")));
+    let imported = run_import(&plain, &dir.0.join("maps-plain")).unwrap();
+    assert!(imported.mine.is_empty());
+
+    // With them: version 2, counted in the header, handed back as they were
+    // and never written into the pack's folder.
+    let mine = Mine {
+        lists: Some(own_lists_text(ID)),
+        locations: Some(own_locations_text(ID)),
+    };
+    let file = dir.0.join("mine.atlaspack");
+    let exported = export_mine(&source, &file, &mine).unwrap();
+    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(
+        exported.header.mine,
+        Some(MineFacts {
+            lists: 1,
+            locations: 2,
+            types: 1,
+            areas: 0
+        })
+    );
+    let names = entry_names(&file);
+    assert!(names.contains_key("mine/my-lists.json"));
+    assert!(names.contains_key("mine/my-locations.json"));
+    assert_eq!(read_header(&file).unwrap(), exported.header);
+    let maps = dir.0.join("maps-mine");
+    let imported = run_import(&file, &maps).unwrap();
+    assert_eq!(imported.mine, mine);
+    assert!(!maps.join(ID).join("mine").exists());
+    assert!(files_under(&maps).keys().all(|name| !name.contains("my-")));
+    // The pack itself is the same as without them.
+    let plain_pack = files_under(&dir.0.join("maps-plain").join(ID));
+    let mine_pack = files_under(&maps.join(ID));
+    assert_eq!(
+        plain_pack
+            .keys()
+            .filter(|n| !n.starts_with(".atlas"))
+            .collect::<Vec<_>>(),
+        mine_pack
+            .keys()
+            .filter(|n| !n.starts_with(".atlas"))
+            .collect::<Vec<_>>()
+    );
+
+    // Only lists: only that file.
+    let lists_only = Mine {
+        lists: Some(own_lists_text(ID)),
+        locations: None,
+    };
+    let file = dir.0.join("lists.atlaspack");
+    let exported = export_mine(&source, &file, &lists_only).unwrap();
+    assert_eq!(
+        exported.header.mine,
+        Some(MineFacts {
+            lists: 1,
+            ..MineFacts::default()
+        })
+    );
+    assert!(!entry_names(&file).contains_key("mine/my-locations.json"));
+    assert_eq!(
+        run_import(&file, &dir.0.join("maps-lists")).unwrap().mine,
+        lists_only
+    );
+}
+
+#[test]
+fn refuses_own_files_of_another_game() {
+    let dir = TempDir::new("packfile-mine-refuse");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    // Not exported.
+    let other = Mine {
+        lists: None,
+        locations: Some(own_locations_text("another-game")),
+    };
+    let file = dir.0.join("other.atlaspack");
+    let error = export_mine(&folder_source(&pack), &file, &other)
+        .unwrap_err()
+        .message();
+    assert!(error.contains("not this game's"), "{error}");
+    assert!(!file.exists() && !part_path(&file).exists());
+    // Not imported either, and nothing is left behind.
+    let (mut header, mut entries) = good_file(&dir.0);
+    header["version"] = json!(VERSION);
+    entries.push((
+        "mine/my-locations.json".to_owned(),
+        own_locations_text("another-game").into_bytes(),
+    ));
+    let error = import_error(&dir.0, "other-game", &header, &entries);
+    assert!(error.contains("not this game's"), "{error}");
+    let (header, mut entries) = good_file(&dir.0);
+    entries.push(("mine/my-lists.json".to_owned(), b"not json".to_vec()));
+    let error = import_error(&dir.0, "not-json", &header, &entries);
+    assert!(error.contains("my-lists.json"), "{error}");
+    // Anything else under mine/ has no place in a pack.
+    let (header, mut entries) = good_file(&dir.0);
+    entries.push(("mine/notes.json".to_owned(), b"{}".to_vec()));
+    let error = import_error(&dir.0, "other-entry", &header, &entries);
+    assert!(error.contains("not part of a map pack"), "{error}");
+}
+
+#[test]
+fn exports_the_own_files_beside_the_game() {
+    let dir = TempDir::new("packfile-mine-library");
+    let (library, registry) = library_with(&dir.0, Vec::new());
+    let maps = library.maps_folder();
+    write_pack(&maps.join(ID), "1.0.0");
+    library.scan();
+    crate::ownlists::LOCATIONS
+        .write(&maps, ID, &own_locations_text(ID), None)
+        .unwrap();
+    let downloads = crate::downloads::for_tests(&registry, dir.0.join("data"));
+    let export = |name: &str, include: bool| {
+        shell::export_pack_with_mine(
+            &library,
+            &downloads,
+            ID,
+            &app(),
+            Detail::Overview,
+            &dir.0.join(name),
+            include,
+            &mut |_| {},
+            &|| false,
+        )
+        .unwrap()
+    };
+    let with = export("with.atlaspack", true);
+    assert_eq!(with.header.mine.map(|m| m.locations), Some(2));
+    assert!(entry_names(&dir.0.join("with.atlaspack")).contains_key("mine/my-locations.json"));
+    assert!(!entry_names(&dir.0.join("with.atlaspack")).contains_key("mine/my-lists.json"));
+    let without = export("without.atlaspack", false);
+    assert_eq!(without.header.mine, None);
+    assert_eq!(without.header.version, VERSION_WITHOUT_MINE);
 }
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,9 @@ import { followsSteps, listType } from './listTypes';
 /** Where random parts of ids come from; tests give their own. */
 export type RandomText = () => string;
 
+/** The kinds of record a person makes, each with own ids (see `OWN_ID_PREFIX`). */
+export type OwnIdKind = 'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region';
+
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 /** Eight random letters and digits. */
@@ -45,7 +48,7 @@ export const randomText: RandomText = () => {
  */
 export function newOwnId(
   gameId: string,
-  kind: 'checklist' | 'checkitem',
+  kind: OwnIdKind,
   taken: ReadonlySet<string>,
   random: RandomText = randomText,
 ): string {

@@ -83,6 +83,14 @@ pub struct DesktopInfo {
     /// Android, whose maps folder is never backed up: there the web app
     /// keeps them in its own storage, with the found marks.
     own_list_files: bool,
+    /// A person's own locations, types and areas are kept in a file beside
+    /// the game's folder (`own_locations_read`, `own_locations_write`), as
+    /// own lists are. False on Android, for the same reason.
+    own_location_files: bool,
+    /// Games can be made in the app, and maps and levels added to them, from
+    /// a picture chosen with the system's dialog (`map_picture_pick`,
+    /// `own_game_create`). False on Android.
+    own_games: bool,
 }
 
 /// Whether this platform has what `DesktopInfo::folders` and
@@ -92,9 +100,9 @@ const DESKTOP_ONLY: bool = cfg!(desktop);
 
 /// The answer of a desktop-only command on Android, whose web app does not
 /// offer it.
-const NOT_ON_THIS_DEVICE: &str = "This is not available on this device.";
+pub(crate) const NOT_ON_THIS_DEVICE: &str = "This is not available on this device.";
 
-fn desktop_only() -> Result<(), String> {
+pub(crate) fn desktop_only() -> Result<(), String> {
     if DESKTOP_ONLY {
         Ok(())
     } else {
@@ -115,6 +123,8 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         imports: DESKTOP_ONLY,
         copy_picked_files: !DESKTOP_ONLY,
         own_list_files: DESKTOP_ONLY,
+        own_location_files: DESKTOP_ONLY,
+        own_games: DESKTOP_ONLY,
     }
 }
 
@@ -369,7 +379,7 @@ fn write_stream(mut file: impl std::io::Write, bytes: &[u8]) -> std::io::Result<
     file.flush()
 }
 
-fn file_name(path: &std::path::Path) -> String {
+pub(crate) fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
@@ -665,7 +675,7 @@ pub struct DownloadBounds {
     kilobytes_per_second: (u32, u32),
 }
 
-type LibraryState<'a> = State<'a, Arc<Library>>;
+pub(crate) type LibraryState<'a> = State<'a, Arc<Library>>;
 
 #[cfg(feature = "downloads")]
 fn settings_info(settings: DownloadSettings) -> DownloadSettingsInfo {
@@ -1195,7 +1205,7 @@ impl PackFileTurn {
 
 type PackFileJobsState<'a> = State<'a, PackFileJobs>;
 
-fn app_info<R: Runtime>(app: &AppHandle<R>) -> AppInfo {
+pub(crate) fn app_info<R: Runtime>(app: &AppHandle<R>) -> AppInfo {
     AppInfo {
         name: app.package_info().name.clone(),
         version: app.package_info().version.to_string(),
@@ -1259,9 +1269,11 @@ fn progress_file_beside(pack_file: &std::path::Path) -> PathBuf {
 
 /// Asks where to save a map pack file of a pack at `detail` and writes it.
 /// With `progress` (the text of a progress export, as "Export all
-/// profiles" writes it), that is saved beside it too. `None` when the
-/// person closes the dialog. `packfile_progress` reports how far it is and
-/// `packfile_cancel` stops it.
+/// profiles" writes it), that is saved beside it too. With `include_mine`,
+/// the person's own lists, locations and types of the game go in the file
+/// (the web app saves them first). `None` when the person closes the
+/// dialog. `packfile_progress` reports how far it is and `packfile_cancel`
+/// stops it.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn packfile_export<R: Runtime>(
@@ -1273,6 +1285,7 @@ pub async fn packfile_export<R: Runtime>(
     id: String,
     detail: Detail,
     progress: Option<String>,
+    include_mine: Option<bool>,
 ) -> Result<Option<PackFileExported>, String> {
     desktop_only()?;
     listed(&library, &id)?;
@@ -1316,13 +1329,14 @@ pub async fn packfile_export<R: Runtime>(
                 destination.display()
             ),
         );
-        let result = packfile::shell::export_pack(
+        let result = packfile::shell::export_pack_with_mine(
             &library,
             &downloads,
             &id,
             &app_info,
             detail,
             &destination,
+            include_mine.unwrap_or(false),
             &mut |done| turn.update(done),
             &|| turn.cancelled(),
         );
@@ -1684,6 +1698,10 @@ pub struct PackFileImported {
     replaced: bool,
     header: packfile::Header,
     listing: Listing,
+    /// The person's own lists and own locations, types and areas the file
+    /// carried (the text of their files), for the web app to add to theirs.
+    own_lists: Option<String>,
+    own_locations: Option<String>,
 }
 
 /// Imports the map pack file at `path` (a `.atlaspack` file) into the maps
@@ -1788,6 +1806,8 @@ async fn import_pack_file(
             replaced: imported.replaced,
             header: imported.header,
             listing: library.scan(),
+            own_lists: imported.mine.lists,
+            own_locations: imported.mine.locations,
         })
     })
     .await
@@ -1902,7 +1922,7 @@ fn site_address(url: &Url) -> String {
 }
 
 /// A short, clean piece of text from the web app, for the log.
-fn short(text: &str) -> String {
+pub(crate) fn short(text: &str) -> String {
     let text = activity::clean(text);
     if text.chars().count() > 300 {
         text.chars().take(300).collect::<String>() + "…"

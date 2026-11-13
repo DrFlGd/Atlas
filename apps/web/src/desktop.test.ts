@@ -47,6 +47,59 @@ describe('desktop bridge', () => {
     ]);
   });
 
+  it('makes games from pictures and keeps own locations through the shell commands', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    await bridge.ownLocations.read('demo');
+    await bridge.ownLocations.write('demo', '{}');
+    await bridge.ownLocations.delete('demo');
+    await bridge.ownGames.pickPicture();
+    await bridge.ownGames.create('Cloud Isles', 'Harbour', '/pictures/harbour.png');
+    await bridge.ownGames.addMap('cloud-isles', 'Caves', '/pictures/caves.webp');
+    await bridge.ownGames.addLevel('cloud-isles', 'cloud-isles:map:caves', 'Deep', '/p/deep.jpg');
+    await bridge.ownGames.progress();
+    await bridge.ownGames.cancel();
+    await bridge.ownGames.rename('cloud-isles', 'Cloud Isles II');
+    await bridge.ownGames.deleteMap('cloud-isles', 'cloud-isles:map:caves');
+    await bridge.packFiles.export('cloud-isles', 'full', undefined, true);
+    await bridge.packFiles.export('cloud-isles', 'full');
+    expect(calls).toEqual([
+      ['own_locations_read', { gameId: 'demo' }],
+      ['own_locations_write', { gameId: 'demo', contents: '{}', keepCopy: null }],
+      ['own_locations_delete', { gameId: 'demo' }],
+      ['map_picture_pick', undefined],
+      [
+        'own_game_create',
+        { title: 'Cloud Isles', mapName: 'Harbour', picture: '/pictures/harbour.png' },
+      ],
+      [
+        'own_game_add_map',
+        { gameId: 'cloud-isles', mapName: 'Caves', picture: '/pictures/caves.webp' },
+      ],
+      [
+        'own_game_add_level',
+        {
+          gameId: 'cloud-isles',
+          mapId: 'cloud-isles:map:caves',
+          levelName: 'Deep',
+          picture: '/p/deep.jpg',
+        },
+      ],
+      ['own_game_progress', undefined],
+      ['own_game_cancel', undefined],
+      ['own_game_rename', { gameId: 'cloud-isles', title: 'Cloud Isles II' }],
+      ['own_game_delete_map', { gameId: 'cloud-isles', mapId: 'cloud-isles:map:caves' }],
+      ['packfile_export', { id: 'cloud-isles', detail: 'full', progress: null, includeMine: true }],
+      [
+        'packfile_export',
+        { id: 'cloud-isles', detail: 'full', progress: null, includeMine: false },
+      ],
+    ]);
+  });
+
   it('measures a picture with the shell commands of a build with downloads', async () => {
     const calls: [string, unknown][] = [];
     const bridge = createBridge((command, args) => {

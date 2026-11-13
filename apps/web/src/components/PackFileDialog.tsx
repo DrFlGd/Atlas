@@ -5,7 +5,6 @@ import {
   type PackDetails,
   type PackFileExported,
   type PackFileHeader,
-  type PackFileImported,
   type PackFileInfo,
   type PackFileOptions,
   type PackFileProgress,
@@ -225,6 +224,12 @@ function ExportView({
   const [options, setOptions] = useState<PackFileOptions | null>(null);
   const [chosen, setChosen] = useState<Detail | null>(null);
   const [withProgress, setWithProgress] = useState(false);
+  // A game made in the app is mostly the person's own: theirs go with it unless they say not.
+  const madeInApp = useAtlas(
+    (s) => s.library?.packs.find((pack) => pack.id === packId)?.madeInApp === true,
+  );
+  const [withMine, setWithMine] = useState(madeInApp);
+  const mineId = useId();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PackFileExported | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -251,7 +256,7 @@ function ExportView({
     setError(null);
     setRunning(true);
     setBusy(true);
-    exportPackFile(packId, detail, withProgress)
+    exportPackFile(packId, detail, withProgress, withMine)
       .then(setResult, (reason: unknown) => {
         setError(errorText(reason));
       })
@@ -346,6 +351,26 @@ function ExportView({
               </span>
             </span>
           </label>
+          <label className="checkbox-row pack-file-check">
+            <input
+              type="checkbox"
+              data-testid="export-with-mine"
+              aria-labelledby={`${mineId}-name`}
+              aria-describedby={`${mineId}-hint`}
+              checked={withMine}
+              disabled={running}
+              onChange={(event) => {
+                setWithMine(event.target.checked);
+              }}
+            />
+            <span>
+              <span id={`${mineId}-name`}>Include my lists, locations and types</span>
+              <span id={`${mineId}-hint`} className="muted small pack-file-hint">
+                Your own lists and guides of this game, and the locations, types and areas you
+                added, so they come with it on the other device. Found marks are never included.
+              </span>
+            </span>
+          </label>
           {running ? (
             <JobProgress verb="Saving the map pack file" />
           ) : (
@@ -409,6 +434,11 @@ function ExportResult({ result }: { result: PackFileExported }) {
       </p>
       <p className="path">{result.path}</p>
       <DatesLine header={result.header} />
+      {result.header.mine ? (
+        <p className="download-note" data-testid="export-mine">
+          It holds your own {mineText(result.header.mine)}.
+        </p>
+      ) : null}
       {result.progressFile ? (
         <p className="download-note" data-testid="export-progress-file">
           Your progress (every game and profile) is saved beside it:{' '}
@@ -435,7 +465,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
   const older = freshness?.verdict === 'installed-newer';
   const [confirmOlder, setConfirmOlder] = useState(false);
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<PackFileImported | null>(null);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof importPackFile>> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const start = () => {
@@ -460,6 +490,14 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
           maps folder and shown now.
           {result.replaced ? ' Your found marks are kept.' : ''}
         </p>
+        {result.mine ? (
+          <p className="download-note" data-testid="import-mine">
+            {result.mine.lists + result.mine.locations + result.mine.types + result.mine.areas > 0
+              ? `Your own ${mineText(result.mine)} from the file were added to yours.`
+              : ''}
+            {result.mine.problem ? ` ${result.mine.problem}` : ''}
+          </p>
+        ) : null}
         <div className="row-actions">
           <button type="button" className="button button-primary" onClick={closePackFileDialog}>
             Done
@@ -483,6 +521,12 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
         on <When iso={header.exportedAt} />.
       </p>
       <DatesLine header={header} />
+      {header.mine ? (
+        <p className="download-note" data-testid="import-has-mine">
+          It also holds someone’s own {mineText(header.mine)}. They are added to yours for this
+          game; one with the same name and id as one of yours replaces it.
+        </p>
+      ) : null}
       {installed ? (
         <>
           <Compare header={header} installed={installed.details} title={installed.title} />
@@ -667,4 +711,23 @@ function Compare({
       </tbody>
     </table>
   );
+}
+
+/** "2 lists, 5 locations and 1 type" of a person's own, as a file carries them. */
+function mineText(mine: {
+  lists: number;
+  locations: number;
+  types: number;
+  areas: number;
+}): string {
+  const count = (n: number, one: string, many: string) =>
+    n === 1 ? `1 ${one}` : `${n.toLocaleString('en')} ${many}`;
+  const parts = [
+    mine.lists > 0 ? count(mine.lists, 'list', 'lists') : null,
+    mine.locations > 0 ? count(mine.locations, 'location', 'locations') : null,
+    mine.types > 0 ? count(mine.types, 'type', 'types') : null,
+    mine.areas > 0 ? count(mine.areas, 'area', 'areas') : null,
+  ].filter((part): part is string => part !== null);
+  if (parts.length === 0) return 'lists, locations and types (none)';
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;
 }
