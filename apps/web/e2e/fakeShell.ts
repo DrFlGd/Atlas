@@ -43,7 +43,7 @@ export interface WikiSite {
 export const EXAMPLE_WIKI: WikiSite = {
   headings: [
     { title: 'Basics', pages: ['Welcome', 'Bells', 'Gates'] },
-    { title: 'Places', pages: ['Harbour', 'Lighthouse', 'Missing'] },
+    { title: 'Sights', pages: ['Harbour', 'Lighthouse', 'Missing'] },
   ],
   pages: {
     Welcome: {
