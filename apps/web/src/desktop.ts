@@ -433,15 +433,23 @@ export interface SaveImportRequest {
 
 /** What the shell found when it looked at the import window. */
 export type PollResult =
-  | { state: 'waiting'; loading: boolean; note: string | null }
+  /**
+   * `attention`: a page of a window kept for a go has loaded and given no
+   * data for a while, and the window asked for the person's attention.
+   */
+  | { state: 'waiting'; loading: boolean; note: string | null; attention?: boolean }
   /**
    * The page data has been read and the map picture is being measured from
    * the page: the importer's step has run `steps` times, `presses` of which
    * pressed the page's zoom control.
    */
   | { state: 'measuring'; steps: number; presses: number }
-  /** The page data, and when the page was measured, what it loaded (`PageObservations`, unchecked). */
-  | { state: 'ready'; data: string; page?: unknown }
+  /**
+   * The page data, and when the page was measured, what it loaded
+   * (`PageObservations`, unchecked). In a kept window, the address of the
+   * document it was read from.
+   */
+  | { state: 'ready'; data: string; page?: unknown; address?: string }
   | { state: 'closed' }
   | { state: 'failed'; message: string };
 
@@ -844,7 +852,22 @@ export interface DesktopBridge {
        * a shell with downloads takes it.
        */
       measure?: string,
+      /**
+       * Keep the window for the next pages of the go on the same site
+       * ({@link navigate}); only for pages an importer opens in a window
+       * through `fetch.inWindow`, never with `measure`.
+       */
+      keep?: boolean,
     ): Promise<void>;
+    /**
+     * Moves the window kept for a go to its next page on the same site,
+     * without bringing it to the front; `closed` when the person closed it.
+     */
+    navigate(
+      url: string,
+      reader: string,
+      importer?: { id: string; waitSeconds: number },
+    ): Promise<'navigated' | 'closed'>;
     poll(): Promise<PollResult>;
     close(): Promise<void>;
     /** Records how an import ended in the activity log. */
@@ -1087,13 +1110,20 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       saveImport: (request) => call('library_save_import', { request }),
     },
     importWindow: {
-      open: (url, reader, importer, purpose, measure) =>
+      open: (url, reader, importer, purpose, measure, keep) =>
         call('import_open', {
           url,
           reader,
           ...(importer ? { importerId: importer.id, waitSeconds: importer.waitSeconds } : {}),
           ...(purpose && purpose !== 'map' ? { purpose } : {}),
           ...(measure ? { measure } : {}),
+          ...(keep ? { keep: true } : {}),
+        }),
+      navigate: (url, reader, importer) =>
+        call('import_navigate', {
+          url,
+          reader,
+          ...(importer ? { importerId: importer.id, waitSeconds: importer.waitSeconds } : {}),
         }),
       poll: () => call('import_poll'),
       close: () => call('import_close'),

@@ -8,7 +8,6 @@ import {
   checkCatalogue,
   checkGameListing,
   checkOutcome,
-  checkPageObservations,
   checkPictureTiles,
   fetchAddresses,
   findCatalogueImporter,
@@ -68,6 +67,13 @@ import {
   type RunState,
 } from './importRun';
 import { pagesToFollow, type FollowLinks } from './followLinks';
+import {
+  PageWindows,
+  closedMessage,
+  type PageRead,
+  type PageWaiting,
+  type Reading,
+} from './pageWindow';
 import { fetchPagePictures } from './pagePictures';
 import {
   choiceGame,
@@ -223,14 +229,7 @@ const setPhase = (phase: ImportPhase) => {
   useImport.setState({ phase });
 };
 
-/** How often the open page is asked for its data. */
-export const POLL_MS = 2000;
-/** After this long, the dialog explains what may be holding the page up. */
-export const STILL_WAITING_SECONDS = 20;
-
-/** A wait in words: "45 seconds", "5 minutes". */
-export const waitText = (seconds: number) =>
-  seconds < 120 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
+export { POLL_MS, KEPT_POLL_MS, STILL_WAITING_SECONDS, waitText } from './pageWindow';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -331,50 +330,25 @@ export function pictureText(picture: PictureSummary): string {
 /** The importer of the import in progress, for the log. */
 let currentImporter: string | null = null;
 
-/** When the page window last closed: the next page opens no sooner than the pause after it. */
-let lastClosedAt = 0;
+/**
+ * The import window: one at a time, kept for the pages of a go that an
+ * importer opens in a window through `fetch.inWindow` (`pageWindow.ts`).
+ */
+const pageWindows = new PageWindows({
+  sleep: (ms) => sleep(ms),
+  now: () => Date.now(),
+  report,
+});
 
-/** What is left of the pause after the page window last closed. */
-const pauseLeft = () => Math.max(0, lastClosedAt + RUN_PAUSE_MS - Date.now());
+/** What is left of the pause after the page window last let go of a page (closed it, or read a kept window's page). */
+const pauseLeft = () => Math.max(0, pageWindows.releasedAt + RUN_PAUSE_MS - Date.now());
 
-const closeWindow = async (shell: NonNullable<typeof desktop>) => {
-  await shell.importWindow.close().catch(() => undefined);
-  lastClosedAt = Date.now();
-};
-
-/** What a page is read for. */
-type Reading = 'map' | 'game' | 'catalogue';
-
-const READING_NOUN: Record<Reading, string> = {
-  map: 'the map data',
-  game: 'the list of its pages',
-  catalogue: 'the list of games',
-};
+const closeWindow = (shell: NonNullable<typeof desktop>) => pageWindows.close(shell.importWindow);
 
 // ---------------------------------------------------------------------------
 // Waiting for the page
 
 let session = 0;
-
-/** How reading one page ended. */
-type PageRead =
-  /** The data, and what the page loaded when it was measured. */
-  | { state: 'ready'; data: string; page?: PageObservations }
-  /** The person closed the page window. */
-  | { state: 'closed'; message: string }
-  /** The page's data could not be used (not JSON, too large). */
-  | { state: 'failed'; message: string }
-  /** The data did not appear within the wait (reported to the log). */
-  | { state: 'timed-out'; message: string }
-  /** The window did not open. */
-  | { state: 'open-failed'; message: string }
-  /** The site refused, asked to slow down, or robots.txt does not allow the page: stop. */
-  | { state: 'refused'; message: string }
-  /** Another import or a cancel took over. */
-  | { state: 'cancelled' };
-
-const closedMessage = (reading: Reading) =>
-  `The page window was closed before the page provided ${READING_NOUN[reading]}. Nothing was added.`;
 
 /** The reader and wait for a page: a map page, a game page or the list of games. */
 function readerFor(importer: AtlasImporter, reading: Reading) {
@@ -390,81 +364,35 @@ function readerFor(importer: AtlasImporter, reading: Reading) {
  * Opens `url` in the import window, asks it for its data every few seconds
  * until it appears, the window is closed or the wait runs out, and closes
  * the window. The same for one page and for each page of a run, and for a
- * game page or a list of games with the importer's reader for those.
+ * game page or a list of games with the importer's reader for those. With
+ * `keepFor`, the go a page an importer opens in a window through
+ * `fetch.inWindow` is read in, the window is kept for the go's next pages
+ * on the same site and moved to them (see `pageWindow.ts`).
  */
 async function readPage(
   shell: NonNullable<typeof desktop>,
   url: string,
   importer: AtlasImporter,
   id: number,
-  onWaiting: (waiting: {
-    startedAt: number;
-    now: number;
-    waitSeconds: number;
-    loading: boolean;
-    note: string | null;
-    measuring?: boolean;
-  }) => void,
+  onWaiting: (waiting: PageWaiting) => void,
   reading: Reading = 'map',
   /** The importer's page measuring step, when the map picture is to be measured from the page. */
   measure: string | null = null,
+  keepFor: number | null = null,
 ): Promise<PageRead> {
   const fetcher = fetcherFor(importer, reading, url);
   if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
   const { pageReader, waitSeconds } = readerFor(importer, reading);
-  const startedAt = Date.now();
-  onWaiting({ startedAt, now: startedAt, waitSeconds, loading: true, note: null });
-  try {
-    await shell.importWindow.open(
-      url,
-      pageReader,
-      { id: importer.id, waitSeconds },
-      reading,
-      measure ?? undefined,
-    );
-  } catch (error) {
-    lastClosedAt = Date.now();
-    return id === session
-      ? { state: 'open-failed', message: errorText(error) }
-      : { state: 'cancelled' };
-  }
-
-  // Once the data is read, measuring the page has bounds of its own in the shell.
-  let measuring = false;
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-    if (id !== session) return { state: 'cancelled' };
-    const now = Date.now();
-    if (!measuring && now - startedAt > waitSeconds * 1000) {
-      await closeWindow(shell);
-      const message = `The page did not provide ${READING_NOUN[reading]} within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the ${reading === 'map' ? 'map' : 'page'} load; you can try again later. Nothing was added.`;
-      report({ importerId: importer.id, outcome: 'timed-out', message });
-      return { state: 'timed-out', message };
-    }
-    let result;
-    try {
-      result = await shell.importWindow.poll();
-    } catch (error) {
-      result = { state: 'failed', message: errorText(error) } as const;
-    }
-    if (id !== session) return { state: 'cancelled' };
-    if (result.state === 'waiting') {
-      onWaiting({ startedAt, now, waitSeconds, loading: result.loading, note: result.note });
-      continue;
-    }
-    if (result.state === 'measuring') {
-      measuring = true;
-      onWaiting({ startedAt, now, waitSeconds, loading: false, note: null, measuring: true });
-      continue;
-    }
-    await closeWindow(shell);
-    if (result.state === 'closed') return { state: 'closed', message: closedMessage(reading) };
-    if (result.state === 'failed') return { state: 'failed', message: result.message };
-    // What the page loaded is handed on only when it was asked for and has the expected shape.
-    const page = measure && result.page !== undefined ? checkPageObservations(result.page) : null;
-    return { state: 'ready', data: result.data, ...(page ? { page } : {}) };
-  }
+  return pageWindows.read(
+    shell.importWindow,
+    { url, importer, pageReader, waitSeconds, reading, measure, keepFor, onWaiting },
+    () => id === session,
+  );
 }
+
+/** Whether a page of a go is one an importer opens in a window through `fetch.inWindow`, whose window the go keeps. */
+const keptInWindow = (importer: AtlasImporter, url: string) =>
+  importer.fetch !== undefined && readsInWindow(importer.fetch, url);
 
 // ---------------------------------------------------------------------------
 // Reading a page by fetching it (see `fetching.ts` in the importer contract)
@@ -835,6 +763,7 @@ async function startRun(
           },
           'map',
           measureStep(importer, url),
+          keptInWindow(importer, url) ? id : null,
         );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
@@ -955,6 +884,8 @@ async function startRun(
   });
   const final = await run.run();
   if (currentRun === run) currentRun = null;
+  // The window kept for the go's pages closes with it, however it ended.
+  await pageWindows.release(shell.importWindow, id);
   // The links of the pages read, written every few seconds during the go, are all written now.
   void flushWikiNotes();
   // The pictures of the pages added, once the pages are all read: one download a game.

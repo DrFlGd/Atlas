@@ -23,6 +23,7 @@ const COMMANDS: &[&str] = &[
     "import_open",
     "import_poll",
     "import_close",
+    "import_navigate",
     "import_report",
     "activity_log_read",
     "saves_default_folder",

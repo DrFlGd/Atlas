@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { collectErrors } from './helpers';
 import { expect, test } from './layout';
-import { DOWNLOADS_BUILD, EXAMPLE_WIKI, WIKI, mock, realErrors, setUp } from './fakeShell';
+import { DOWNLOADS_BUILD, EXAMPLE_WIKI, WIKI, mock, realErrors, setMock, setUp } from './fakeShell';
 
 /**
  * The Library's wiki screen, against the stand-in shell of `fakeShell.ts`
@@ -327,6 +327,115 @@ test.describe('following links', () => {
     await expect(
       page.locator('[data-testid="add-map-run-page"][data-found]').first(),
     ).toContainText('Found by a link on Harbour');
+    expect(realErrors(errors)).toEqual([]);
+  });
+});
+
+test.describe('pages their site shows only to a person', () => {
+  /** The Example Wiki, its pages opened in a window (`fetch.inWindow`). */
+  const WINDOWED = { ...EXAMPLE_WIKI, inWindow: true };
+
+  /** What the import window was asked to do since event `from`: open (kept or not), move and close. */
+  async function windowSteps(page: Page, from: number): Promise<string[]> {
+    return (await mock(page)).events
+      .slice(from)
+      .filter((e) => e.what === 'open' || e.what === 'navigate' || e.what === 'close')
+      .map((e) => `${e.what}${e.url ? ` ${e.url}` : ''}${e.keep ? ' (kept)' : ''}`);
+  }
+
+  test('a go opens one window, moves it from page to page with the pause, and never reads the page before', async ({
+    page,
+  }) => {
+    test.setTimeout(150_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { wiki: WINDOWED });
+    await addWiki(page);
+    const from = (await mock(page)).events.length;
+    const fetchedBefore = await fetched(page);
+    // The first poll after each move hands over the page shown before.
+    await setMock(page, { lag: true });
+    for (const title of ['Bells', 'Gates', 'Harbour']) {
+      await row(page, title).getByTestId('wiki-row-tick').check();
+    }
+    await page.getByTestId('wiki-read').click();
+    await expect(row(page, 'Harbour')).toHaveAttribute('data-state', 'read', { timeout: 60_000 });
+    await expect(page.getByTestId('wiki-read')).toBeVisible({ timeout: 30_000 });
+
+    // One window, opened for the first page and moved to the others, closed at the end.
+    expect(await windowSteps(page, from)).toEqual([
+      `open ${WIKI}/Bells (kept)`,
+      `navigate ${WIKI}/Gates`,
+      `navigate ${WIKI}/Harbour`,
+      `close ${WIKI}/Harbour`,
+    ]);
+    // Nothing was fetched: these pages are read in the window only.
+    expect(await fetched(page)).toEqual(fetchedBefore);
+    const events = (await mock(page)).events.slice(from);
+    // Each page read once, and the window moved on only after the whole pause.
+    const reads = events.filter((e) => e.what === 'read');
+    expect(reads.map((e) => e.url)).toEqual([`${WIKI}/Bells`, `${WIKI}/Gates`, `${WIKI}/Harbour`]);
+    const moves = events.filter((e) => e.what === 'navigate');
+    for (const [i, move] of moves.entries()) {
+      expect(move.at - reads[i]!.at).toBeGreaterThanOrEqual(3000);
+    }
+    // Each page holds its own text, not that of the page shown before it.
+    const preview = page.getByTestId('wiki-preview');
+    for (const [title, text] of [
+      ['Bells', 'Ring every bell once.'],
+      ['Gates', 'Gates open at dusk.'],
+      ['Harbour', 'leave at dawn.'],
+    ] as const) {
+      await row(page, title).getByTestId('wiki-row-open').click();
+      // The wiki is shown with the first page previewed, and stays shown.
+      const show = preview.getByTestId('wiki-preview-show');
+      if (await show.isVisible()) await show.click();
+      await expect(preview.getByTestId('wiki-preview-text')).toContainText(text);
+    }
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('says when the page window waits for the person, and stops when the window is closed', async ({
+    page,
+  }) => {
+    test.setTimeout(150_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { wiki: WINDOWED });
+    await addWiki(page);
+    const from = (await mock(page)).events.length;
+    // Gates shows the site's check until the person answers it; the person closes the window on Harbour.
+    await setMock(page, { check: ['Gates'], close: ['Harbour'] });
+    for (const title of ['Bells', 'Gates', 'Harbour', 'Lighthouse']) {
+      await row(page, title).getByTestId('wiki-row-tick').check();
+    }
+    await page.getByTestId('wiki-read').click();
+    await expect(page.getByTestId('wiki-foot-sentence')).toContainText(
+      'The page window is waiting for you',
+      { timeout: 60_000 },
+    );
+    await expect(page.getByTestId('library-strip-now')).toContainText(
+      'The page window is waiting for you',
+    );
+    await expect(row(page, 'Gates').getByTestId('wiki-row-state')).toContainText(
+      'Waiting for you in the page window',
+    );
+    await mkdir(SHOTS, { recursive: true });
+    await page.screenshot({ path: `${SHOTS}/window-waiting.png` });
+    // The person answers the check: the go goes on in the same window.
+    await setMock(page, { check: [] });
+    await expect(row(page, 'Gates')).toHaveAttribute('data-state', 'read', { timeout: 60_000 });
+    await expect(page.getByTestId('wiki-read')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('wiki-foot-sentence')).not.toContainText('waiting for you');
+    // Closing the window stopped the go: Lighthouse was never opened, and nothing opened again.
+    await expect(row(page, 'Lighthouse')).not.toHaveAttribute('data-state', 'read');
+    expect(await windowSteps(page, from)).toEqual([
+      `open ${WIKI}/Bells (kept)`,
+      `navigate ${WIKI}/Gates`,
+      `navigate ${WIKI}/Harbour`,
+    ]);
+    await page.getByTestId('add-map-url').focus();
+    await expect(page.getByTestId('add-map-run')).toContainText(
+      'The page window was closed, so this app stopped and opened no more pages.',
+    );
     expect(realErrors(errors)).toEqual([]);
   });
 });

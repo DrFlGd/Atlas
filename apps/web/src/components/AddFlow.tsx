@@ -624,13 +624,23 @@ function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> })
         <strong>
           {state.measuring
             ? 'Open: measuring the map picture from the page…'
-            : state.loading
-              ? 'Open: the page is loading…'
-              : 'Open: waiting for the map data…'}
+            : state.attention
+              ? 'Open: the page window is waiting for you'
+              : state.loading
+                ? 'Open: the page is loading…'
+                : 'Open: waiting for the map data…'}
         </strong>{' '}
         <span className="muted">{formatDuration(elapsed)} so far</span>
       </span>
-      {state.measuring ? null : elapsed >= STILL_WAITING_SECONDS ? (
+      {state.measuring ? null : state.attention ? (
+        <span className="download-note small" data-testid="add-map-window-waiting">
+          The page has loaded but has not provided its data. Look at the page window: if it asks you
+          to sign in or to confirm you are a person, deal with it there, or close the window to
+          stop. This app does not answer it for you, and it did not bring the window to the front.
+          It waits{' '}
+          {left > 60 ? `about ${Math.ceil(left / 60)} more minutes` : 'less than a minute more'}.
+        </span>
+      ) : elapsed >= STILL_WAITING_SECONDS ? (
         <span className="download-note small" data-testid="add-map-still-waiting">
           Look at the page window: if it asks you to sign in, to confirm you are a person or to
           wait, deal with it there, or close the window to stop. This app waits{' '}

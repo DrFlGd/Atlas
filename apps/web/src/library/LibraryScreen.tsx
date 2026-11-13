@@ -11,7 +11,7 @@ import {
 } from '../state/gameFacts';
 import { followDownloads, useDownloadsView } from '../state/downloadsView';
 import { stopRun, updateAll, useImport } from '../state/importing';
-import { foundText } from '../state/importRun';
+import { foundText, waitingForPerson } from '../state/importRun';
 import {
   closeLibraryWindow,
   openLibraryGame,
@@ -306,6 +306,7 @@ function LibraryStrip() {
         <strong>Now:</strong> reading page {Math.min(done + 1, total)} of {total}
         {found ? `, ${found}` : ''}
         {phase.run.stopRequested ? ', stopping after this page' : ''}
+        {waitingForPerson(phase.run) ? '. The page window is waiting for you' : ''}
       </span>
       <span className="meter meter-small library-strip-meter" aria-hidden="true">
         <span className="meter-fill" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} />

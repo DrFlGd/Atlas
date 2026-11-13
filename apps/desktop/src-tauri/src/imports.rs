@@ -30,19 +30,37 @@
 //! page measuring step runs a bounded number of times before the data and
 //! what the page loaded are handed over.
 //!
+//! For a go of pages that an importer has opened in a window (a wiki whose
+//! site asks its readers to confirm they are a person), the web app can
+//! open the window *kept*: once a page has been read, `navigate` moves the
+//! same window to the next page of the go on the same site, instead of
+//! closing it and opening a new one in front of whatever the person is
+//! doing. Only the first page opens the window in front; moving it does not
+//! focus it or bring it to the front, and the person may put it aside or
+//! minimize it. The window is the same private, visible window on the same
+//! site as before, and closing it still stops the go. In a kept window the
+//! reader runs only once the page asked for has finished loading, in a
+//! load that started after the window was told to go there, and the data
+//! is handed over only when the document's address is that page or one the
+//! site led to from it, never the page shown before (see [`Visit`]). When a
+//! loaded page gives no data for a while (a check that only the person may
+//! answer), the window asks for the person's attention without taking the
+//! focus and without being un-minimized. Map pages, and pages whose map
+//! picture is measured, are never kept.
+//!
 //! There is no import window on Android, where a second window would
 //! replace the app's screen and a private session is not available.
 
 use std::{
     sync::{Arc, Mutex, PoisonError},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 #[cfg(desktop)]
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
-    WebviewUrl, WebviewWindowBuilder,
+    UserAttentionType, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri::{AppHandle, Manager, Runtime, Url, WebviewWindow};
 use tokio::sync::oneshot;
@@ -58,6 +76,9 @@ const MAX_READER_CHARS: usize = 64 * 1024;
 const SLICE_CHARS: usize = 1 << 20;
 /// How long one evaluation may take before the page counts as busy.
 const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a page of a kept window may give no data, after it finished
+/// loading, before the window asks for the person's attention.
+pub const ATTENTION_AFTER: Duration = Duration::from_secs(8);
 
 /// Whether the person may open `url` in the import window: `https`, or
 /// `http` to this computer for tests; no user names or passwords.
@@ -100,6 +121,125 @@ pub fn same_site(start: &Url, next: &Url) -> bool {
     host == site || host.ends_with(&format!(".{site}"))
 }
 
+/// Whether two addresses are the same page: the same address without its
+/// fragment.
+#[cfg_attr(mobile, allow(dead_code))]
+fn same_page(a: &Url, b: &Url) -> bool {
+    let mut a = a.clone();
+    let mut b = b.clone();
+    a.set_fragment(None);
+    b.set_fragment(None);
+    a == b
+}
+
+/// Where a kept import window is on its way to the page asked for, from
+/// the page load events of the window. Nothing here touches a window, so
+/// it is tested on its own.
+///
+/// The reader may run only once a page load that started after the window
+/// was told to go to `asked` has finished ([`Visit::readable`]), and the
+/// data counts only when the document it came from is `asked` or a page of
+/// the same site the site led to from it, but never one of the addresses
+/// of the page shown before ([`Visit::address_ok`]). So a poll right after
+/// the window was told to move, while it still shows the page before, never
+/// reads that page.
+#[derive(Debug)]
+#[cfg_attr(mobile, allow(dead_code))]
+struct Visit {
+    /// The site of the window: the first page of the go.
+    start: Url,
+    /// The page asked for.
+    asked: Url,
+    /// The addresses of the page before: never read as this one.
+    before: Vec<Url>,
+    /// A page load of this page has started since it was asked for.
+    started: bool,
+    /// When that load finished, while no other has started since.
+    finished: Option<Instant>,
+    /// The document address the data was last read from.
+    read: Option<Url>,
+    /// The person's attention was asked for, for this page.
+    attention: bool,
+}
+
+#[cfg_attr(mobile, allow(dead_code))]
+impl Visit {
+    fn new(start: Url) -> Self {
+        Visit {
+            asked: start.clone(),
+            start,
+            before: Vec::new(),
+            started: false,
+            finished: None,
+            read: None,
+            attention: false,
+        }
+    }
+
+    /// The window is told to go to `next`: nothing of this page counts for it.
+    fn next(&mut self, next: Url) {
+        let mut before = vec![self.asked.clone()];
+        before.extend(
+            self.read
+                .take()
+                .filter(|read| !same_page(read, &self.asked)),
+        );
+        *self = Visit {
+            start: self.start.clone(),
+            asked: next,
+            before,
+            started: false,
+            finished: None,
+            read: None,
+            attention: false,
+        };
+    }
+
+    /// Whether `address` may be the page asked for: on the window's site,
+    /// and the page asked for, or another page the site led to that is not
+    /// the page shown before.
+    fn address_ok(&self, address: &Url) -> bool {
+        matches!(address.scheme(), "http" | "https")
+            && same_site(&self.start, address)
+            && (same_page(address, &self.asked)
+                || !self.before.iter().any(|before| same_page(address, before)))
+    }
+
+    /// A page load event of the window. Only loads of the page asked for
+    /// (or where the site led from it) count; a load that starts again (a
+    /// check that reloads the page, say) waits for its own end.
+    fn page_load(&mut self, started: bool, url: &Url, now: Instant) {
+        if !self.address_ok(url) {
+            return;
+        }
+        if started {
+            self.started = true;
+            self.finished = None;
+        } else if self.started {
+            self.finished = Some(now);
+        }
+    }
+
+    /// The page asked for has finished loading: the reader may run.
+    fn readable(&self) -> bool {
+        self.finished.is_some()
+    }
+
+    /// Whether to ask for the person's attention now: the page finished
+    /// loading [`ATTENTION_AFTER`] ago and gave no data, and it was not
+    /// asked for this page before. Notes that it is asked.
+    fn attention_due(&mut self, now: Instant) -> bool {
+        let due = !self.attention
+            && self
+                .finished
+                .is_some_and(|at| now.saturating_duration_since(at) >= ATTENTION_AFTER);
+        if due {
+            self.attention = true;
+        }
+        due
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase", tag = "state")]
 pub enum PollResult {
@@ -109,6 +249,9 @@ pub enum PollResult {
         loading: bool,
         /// The reader's last complaint, if it threw.
         note: Option<String>,
+        /// A kept window's page has loaded and given no data for a while,
+        /// and the window has asked for the person's attention.
+        attention: bool,
     },
     /// The page data has been read, and the map's picture is being measured
     /// from the page: the importer's step has run `steps` times, `presses`
@@ -121,6 +264,9 @@ pub enum PollResult {
         data: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         page: Option<PageObservations>,
+        /// In a kept window, the address of the document the data was read from.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        address: Option<String>,
     },
     /// The person closed the window.
     Closed,
@@ -149,6 +295,9 @@ struct Session {
     /// does not put its measuring into that one.
     #[cfg(feature = "downloads")]
     id: u64,
+    /// The window is kept for the next page of the go: where it is going.
+    /// None for every other import window, which works as it always has.
+    kept: Option<Visit>,
 }
 
 /// Measuring the map's picture from the page: the page data, once read, waits here.
@@ -189,7 +338,8 @@ pub(crate) async fn evaluate<R: Runtime>(
 }
 
 /// The script that runs the reader. It always returns a JSON string,
-/// because exceptions do not come back from every platform's webview.
+/// because exceptions do not come back from every platform's webview. With
+/// the data, it gives the address of the document it was read from.
 fn reader_script(reader: &str, key: &str) -> String {
     format!(
         r#"(function () {{
@@ -200,7 +350,7 @@ fn reader_script(reader: &str, key: &str) -> String {
     if (typeof text !== 'string') return JSON.stringify({{ state: 'failed', message: 'not JSON' }});
     if (text.length > {max}) return JSON.stringify({{ state: 'failed', message: 'too large' }});
     Object.defineProperty(window, {key:?}, {{ value: text, configurable: true, enumerable: false, writable: true }});
-    return JSON.stringify({{ state: 'ready', length: text.length }});
+    return JSON.stringify({{ state: 'ready', length: text.length, address: String(location.href) }});
   }} catch (error) {{
     return JSON.stringify({{ state: 'waiting', note: String(error && error.message || error).slice(0, 200) }});
   }}
@@ -226,9 +376,17 @@ fn slice_script(key: &str, start: usize) -> String {
 #[derive(Deserialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 enum ReaderAnswer {
-    Waiting { note: Option<String> },
-    Ready { length: usize },
-    Failed { message: String },
+    Waiting {
+        note: Option<String>,
+    },
+    Ready {
+        length: usize,
+        #[serde(default)]
+        address: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -267,13 +425,27 @@ impl Imports {
         _url: &str,
         _reader: String,
         _measure: Option<String>,
+        _keep: bool,
     ) -> Result<(), String> {
+        Err("Maps cannot be added from web pages on this device.".to_owned())
+    }
+
+    /// The import window is not available on Android.
+    #[cfg(mobile)]
+    pub fn navigate<R: Runtime>(
+        &self,
+        _app: &AppHandle<R>,
+        _url: &str,
+        _reader: String,
+    ) -> Result<Navigated, String> {
         Err("Maps cannot be added from web pages on this device.".to_owned())
     }
 
     /// Opens the import window on `url`, replacing an earlier import. With
     /// `measure`, the importer's page measuring step, the map's picture is
-    /// measured from the page once its data has been read.
+    /// measured from the page once its data has been read. With `keep`, the
+    /// window is kept for the next page of a go on the same site
+    /// ([`Imports::navigate`]); a page that is measured cannot be kept.
     #[cfg(desktop)]
     pub fn open<R: Runtime>(
         &self,
@@ -281,11 +453,16 @@ impl Imports {
         url: &str,
         reader: String,
         measure: Option<String>,
+        keep: bool,
     ) -> Result<(), String> {
         let start = allowed_page_url(url)
             .ok_or_else(|| "Only https web addresses can be imported from.".to_owned())?;
-        if reader.is_empty() || reader.len() > MAX_READER_CHARS {
-            return Err("The importer's page reader is not usable.".to_owned());
+        check_reader(&reader)?;
+        if keep && measure.is_some() {
+            return Err(
+                "A page whose map picture is measured cannot be kept open for the next page."
+                    .to_owned(),
+            );
         }
         #[cfg(not(feature = "downloads"))]
         if measure.is_some() {
@@ -323,6 +500,7 @@ impl Imports {
             }),
             #[cfg(feature = "downloads")]
             id,
+            kept: keep.then(|| Visit::new(start.clone())),
         });
 
         let navigation_start = start.clone();
@@ -355,7 +533,11 @@ impl Imports {
             .on_download(|_, event| !matches!(event, DownloadEvent::Requested { .. }))
             .on_page_load(move |_, payload| {
                 if let Some(session) = lock(&session).as_mut() {
-                    session.loading = matches!(payload.event(), PageLoadEvent::Started);
+                    let started = matches!(payload.event(), PageLoadEvent::Started);
+                    session.loading = started;
+                    if let Some(visit) = session.kept.as_mut() {
+                        visit.page_load(started, payload.url(), Instant::now());
+                    }
                 }
             });
         // A page's map only loads the images in its view: as large as the
@@ -375,6 +557,57 @@ impl Imports {
         Ok(())
     }
 
+    /// Moves a kept import window to the next page of the go, `url`, on the
+    /// same site, to be read with `reader`. The window is not focused, not
+    /// brought to the front and not un-minimized. Nothing of the page it
+    /// showed is read for the new one (see [`Visit`]). When the person has
+    /// closed the window, nothing is opened and the answer says so.
+    #[cfg(desktop)]
+    pub fn navigate<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        url: &str,
+        reader: String,
+    ) -> Result<Navigated, String> {
+        let next = allowed_page_url(url)
+            .ok_or_else(|| "Only https web addresses can be imported from.".to_owned())?;
+        check_reader(&reader)?;
+        let Some(window) = app.get_webview_window(IMPORT_WINDOW) else {
+            return if lock(&self.session).take().is_some() {
+                Ok(Navigated::Closed)
+            } else {
+                Err("No page window is open.".to_owned())
+            };
+        };
+        {
+            let mut guard = lock(&self.session);
+            let session = guard
+                .as_mut()
+                .ok_or_else(|| "No page window is open.".to_owned())?;
+            let visit = session
+                .kept
+                .as_mut()
+                .ok_or_else(|| "The page window is not kept for the next page.".to_owned())?;
+            // The window stays on its site; another site gets a window of its own.
+            if !same_site(&visit.start, &next) {
+                return Err(
+                    "The next page is on another site, so it is not opened in this window."
+                        .to_owned(),
+                );
+            }
+            visit.next(next.clone());
+            session.reader = reader;
+            session.key = format!("__atlasImport{:016x}", rand_u64());
+            session.loading = true;
+        }
+        // Asking for the person's attention ends with the page it was for.
+        stop_attention(&window);
+        window
+            .navigate(next)
+            .map_err(|error| format!("Could not move the page window to the next page: {error}"))?;
+        Ok(Navigated::Navigated)
+    }
+
     /// Asks the page for its data once; once it has been read, measures the
     /// map's picture from the page one step at a time when that was asked for.
     pub async fn poll<R: Runtime>(&self, app: &AppHandle<R>) -> PollResult {
@@ -391,26 +624,33 @@ impl Imports {
                 }
             };
         };
-        let Some((reader, key, loading)) = lock(&self.session)
-            .as_ref()
-            .map(|session| (session.reader.clone(), session.key.clone(), session.loading))
-        else {
+        let Some((reader, key, loading, kept)) = lock(&self.session).as_ref().map(|session| {
+            (
+                session.reader.clone(),
+                session.key.clone(),
+                session.loading,
+                session.kept.is_some(),
+            )
+        }) else {
             return PollResult::Failed {
                 message: "No page is open.".to_owned(),
             };
         };
+        // A kept window is read only once the page asked for has loaded.
+        if kept && !self.kept_readable() {
+            return PollResult::Waiting {
+                loading: true,
+                note: None,
+                attention: false,
+            };
+        }
         let answer = evaluate(&window, reader_script(&reader, &key))
             .await
             .and_then(|result| decode_string(&result))
             .and_then(|text| serde_json::from_str::<ReaderAnswer>(&text).ok());
-        let length = match answer {
-            None => {
-                return PollResult::Waiting {
-                    loading,
-                    note: None,
-                }
-            }
-            Some(ReaderAnswer::Waiting { note }) => return PollResult::Waiting { loading, note },
+        let (length, address) = match answer {
+            None => return self.waiting(&window, loading, None),
+            Some(ReaderAnswer::Waiting { note }) => return self.waiting(&window, loading, note),
             Some(ReaderAnswer::Failed { message }) => {
                 return PollResult::Failed {
                     message: if message == "too large" {
@@ -420,7 +660,33 @@ impl Imports {
                     },
                 }
             }
-            Some(ReaderAnswer::Ready { length }) => length,
+            Some(ReaderAnswer::Ready { length, address }) => (length, address),
+        };
+        // A kept window's data counts only from the page asked for.
+        let address = if kept {
+            let mut guard = lock(&self.session);
+            let Some(visit) = guard.as_mut().and_then(|session| session.kept.as_mut()) else {
+                return PollResult::Failed {
+                    message: "No page is open.".to_owned(),
+                };
+            };
+            let parsed = address.as_deref().and_then(|text| Url::parse(text).ok());
+            match parsed {
+                Some(parsed) if visit.readable() && visit.address_ok(&parsed) => {
+                    visit.read = Some(parsed);
+                    address
+                }
+                _ => {
+                    let _ = window.eval(format!("delete window[{key:?}];"));
+                    return PollResult::Waiting {
+                        loading: !visit.readable(),
+                        note: Some("the window does not show the page asked for yet".to_owned()),
+                        attention: visit.attention,
+                    };
+                }
+            }
+        } else {
+            None
         };
         let mut data = String::with_capacity(length.min(MAX_PAGE_DATA_BYTES));
         let mut start = 0;
@@ -434,6 +700,7 @@ impl Imports {
                 return PollResult::Waiting {
                     loading,
                     note: Some("the page changed while it was read".to_owned()),
+                    attention: false,
                 };
             };
             data.push_str(&slice.text);
@@ -464,7 +731,50 @@ impl Imports {
                 };
             }
         }
-        PollResult::Ready { data, page: None }
+        if kept {
+            // The attention asked for, if it was, is no longer needed.
+            stop_attention(&window);
+        }
+        PollResult::Ready {
+            data,
+            page: None,
+            address,
+        }
+    }
+
+    /// Whether the page a kept window was asked for has finished loading.
+    fn kept_readable(&self) -> bool {
+        lock(&self.session)
+            .as_ref()
+            .and_then(|session| session.kept.as_ref())
+            .is_some_and(Visit::readable)
+    }
+
+    /// The data is not there yet. A kept window's page that has loaded and
+    /// given no data for a while asks for the person's attention, once: in
+    /// the task bar or the dock, without taking the focus, coming to the
+    /// front or being un-minimized.
+    fn waiting<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        loading: bool,
+        note: Option<String>,
+    ) -> PollResult {
+        let (due, attention) = match lock(&self.session)
+            .as_mut()
+            .and_then(|session| session.kept.as_mut())
+        {
+            Some(visit) => (visit.attention_due(Instant::now()), visit.attention),
+            None => (false, false),
+        };
+        if due {
+            ask_attention(window);
+        }
+        PollResult::Waiting {
+            loading,
+            note,
+            attention,
+        }
     }
 
     /// One poll of a page whose data has been read and whose map picture is
@@ -487,6 +797,7 @@ impl Imports {
             return Some(PollResult::Ready {
                 data,
                 page: Some(measure.measuring.closed(now)),
+                address: None,
             });
         };
         let size = window.inner_size().ok().map(|size| {
@@ -501,6 +812,7 @@ impl Imports {
             Progress::Finished(observations) => Some(PollResult::Ready {
                 data,
                 page: Some(observations),
+                address: None,
             }),
             Progress::Measuring { steps, presses } => {
                 if let Some(current) = lock(&self.session)
@@ -523,6 +835,47 @@ impl Imports {
         }
     }
 }
+
+/// What moving a kept window to the next page did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Navigated {
+    /// The window is on its way to the next page.
+    Navigated,
+    /// The person had closed the window: nothing was opened.
+    #[cfg_attr(mobile, allow(dead_code))]
+    Closed,
+}
+
+/// Checks the importer's page reader before it is run in a page.
+#[cfg_attr(mobile, allow(dead_code))]
+fn check_reader(reader: &str) -> Result<(), String> {
+    if reader.is_empty() || reader.len() > MAX_READER_CHARS {
+        return Err("The importer's page reader is not usable.".to_owned());
+    }
+    Ok(())
+}
+
+/// Asks for the person's attention in the window's task bar button or dock
+/// icon until they look at it. It never focuses, raises or un-minimizes it.
+#[cfg(desktop)]
+fn ask_attention<R: Runtime>(window: &WebviewWindow<R>) {
+    let _ = window.request_user_attention(Some(UserAttentionType::Critical));
+}
+
+/// Stops asking for the person's attention, where the platform can.
+#[cfg(desktop)]
+fn stop_attention<R: Runtime>(window: &WebviewWindow<R>) {
+    let _ = window.request_user_attention(None);
+}
+
+/// No import window on Android.
+#[cfg(mobile)]
+fn ask_attention<R: Runtime>(_window: &WebviewWindow<R>) {}
+
+/// No import window on Android.
+#[cfg(mobile)]
+fn stop_attention<R: Runtime>(_window: &WebviewWindow<R>) {}
 
 /// A random number for the page data's name, from the standard library's
 /// randomly seeded hasher.
@@ -611,8 +964,186 @@ mod tests {
         assert_eq!(decode_string("{}"), None);
         assert!(matches!(
             serde_json::from_str::<ReaderAnswer>(r#"{"state":"ready","length":5}"#),
-            Ok(ReaderAnswer::Ready { length: 5 })
+            Ok(ReaderAnswer::Ready {
+                length: 5,
+                address: None
+            })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<ReaderAnswer>(
+                r#"{"state":"ready","length":5,"address":"https://wiki.example.org/wiki/A"}"#
+            ),
+            Ok(ReaderAnswer::Ready { length: 5, address: Some(address) })
+                if address == "https://wiki.example.org/wiki/A"
         ));
         assert!(serde_json::from_str::<ReaderAnswer>(r#"{"state":"pwned"}"#).is_err());
+        assert!(reader_script("function () { return 1; }", "__atlasImport1")
+            .contains("address: String(location.href)"));
+    }
+
+    #[test]
+    fn says_what_a_poll_found_in_the_shape_the_web_app_reads() {
+        let waiting = PollResult::Waiting {
+            loading: false,
+            note: None,
+            attention: true,
+        };
+        assert_eq!(
+            serde_json::to_value(waiting).unwrap(),
+            serde_json::json!({ "state": "waiting", "loading": false, "note": null, "attention": true })
+        );
+        let ready = PollResult::Ready {
+            data: "{}".to_owned(),
+            page: None,
+            address: None,
+        };
+        assert_eq!(
+            serde_json::to_value(ready).unwrap(),
+            serde_json::json!({ "state": "ready", "data": "{}" })
+        );
+        let kept = PollResult::Ready {
+            data: "{}".to_owned(),
+            page: None,
+            address: Some("https://wiki.example.org/wiki/B".to_owned()),
+        };
+        assert_eq!(
+            serde_json::to_value(kept).unwrap(),
+            serde_json::json!({ "state": "ready", "data": "{}", "address": "https://wiki.example.org/wiki/B" })
+        );
+        assert_eq!(
+            serde_json::to_value(Navigated::Navigated).unwrap(),
+            serde_json::json!("navigated")
+        );
+        assert_eq!(
+            serde_json::to_value(Navigated::Closed).unwrap(),
+            serde_json::json!("closed")
+        );
+    }
+
+    const A: &str = "https://wiki.example.org/wiki/A";
+    const B: &str = "https://wiki.example.org/wiki/B";
+
+    /// A kept window that read page A and was then told to go to B.
+    fn moved_to_b(at: Instant) -> Visit {
+        let mut visit = Visit::new(url(A));
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        assert!(visit.readable());
+        visit.read = Some(url(A));
+        visit.next(url(B));
+        visit
+    }
+
+    #[test]
+    fn reads_the_first_page_only_once_it_has_loaded() {
+        let at = Instant::now();
+        let mut visit = Visit::new(url(A));
+        assert!(!visit.readable());
+        // A load that ends without having started for this page does not count.
+        visit.page_load(false, &url(A), at);
+        assert!(!visit.readable());
+        visit.page_load(true, &url(A), at);
+        assert!(!visit.readable());
+        visit.page_load(false, &url(A), at);
+        assert!(visit.readable());
+    }
+
+    #[test]
+    fn never_reads_the_page_shown_before_after_moving() {
+        let at = Instant::now();
+        let mut visit = moved_to_b(at);
+        // Straight after the move the window still shows A: not readable.
+        assert!(!visit.readable());
+        // A late end of A's load, or a new load of A, does not count for B.
+        visit.page_load(false, &url(A), at);
+        assert!(!visit.readable());
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        assert!(!visit.readable());
+        assert!(!visit.address_ok(&url(A)));
+        assert!(!visit.address_ok(&url("https://wiki.example.org/wiki/A#Section")));
+        // B's own load.
+        visit.page_load(true, &url(B), at);
+        assert!(!visit.readable());
+        visit.page_load(false, &url(B), at);
+        assert!(visit.readable());
+        assert!(visit.address_ok(&url(B)));
+        assert!(visit.address_ok(&url("https://wiki.example.org/wiki/B#History")));
+    }
+
+    #[test]
+    fn allows_the_sites_own_redirects_on_the_same_site_only() {
+        let at = Instant::now();
+        let mut visit = moved_to_b(at);
+        // The site leads from B to another of its pages.
+        let redirected = url("https://wiki.example.org/wiki/B_(page)");
+        visit.page_load(true, &redirected, at);
+        visit.page_load(false, &redirected, at);
+        assert!(visit.readable());
+        assert!(visit.address_ok(&redirected));
+        assert!(visit.address_ok(&url("https://www.wiki.example.org/wiki/Other")));
+        // Never another site, and never anything but a web page.
+        for bad in [
+            "https://other.example.net/wiki/B",
+            "http://wiki.example.org/wiki/B",
+            "about:blank",
+            "data:text/html,B",
+        ] {
+            assert!(!visit.address_ok(&url(bad)), "{bad}");
+        }
+        // A load of another site does not count as B's.
+        let mut other = moved_to_b(at);
+        other.page_load(true, &url("https://other.example.net/wiki/B"), at);
+        other.page_load(false, &url("https://other.example.net/wiki/B"), at);
+        assert!(!other.readable());
+    }
+
+    #[test]
+    fn a_page_that_loads_again_waits_for_its_new_load() {
+        let at = Instant::now();
+        let mut visit = moved_to_b(at);
+        visit.page_load(true, &url(B), at);
+        visit.page_load(false, &url(B), at);
+        assert!(visit.readable());
+        // The site's check reloads the page once the person has answered it.
+        visit.page_load(true, &url(B), at);
+        assert!(!visit.readable());
+        visit.page_load(false, &url(B), at + Duration::from_secs(1));
+        assert!(visit.readable());
+    }
+
+    #[test]
+    fn asks_for_attention_once_a_page_has_given_nothing_for_a_while() {
+        let at = Instant::now();
+        let mut visit = moved_to_b(at);
+        // Not while it loads.
+        assert!(!visit.attention_due(at + ATTENTION_AFTER * 2));
+        visit.page_load(true, &url(B), at);
+        visit.page_load(false, &url(B), at);
+        assert!(!visit.attention_due(at + ATTENTION_AFTER - Duration::from_millis(1)));
+        assert!(!visit.attention);
+        assert!(visit.attention_due(at + ATTENTION_AFTER));
+        assert!(visit.attention);
+        // Once per page.
+        assert!(!visit.attention_due(at + ATTENTION_AFTER * 3));
+        // The next page starts afresh.
+        visit.read = Some(url(B));
+        visit.next(url("https://wiki.example.org/wiki/C"));
+        assert!(!visit.attention);
+        assert_eq!(visit.before, vec![url(B)]);
+    }
+
+    #[test]
+    fn remembers_where_the_page_before_was_read() {
+        let at = Instant::now();
+        let mut visit = Visit::new(url(A));
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        // A was read where the site had led: both addresses are A's.
+        visit.read = Some(url("https://wiki.example.org/wiki/A_(page)"));
+        visit.next(url(B));
+        assert!(!visit.address_ok(&url(A)));
+        assert!(!visit.address_ok(&url("https://wiki.example.org/wiki/A_(page)")));
+        assert!(visit.address_ok(&url(B)));
     }
 }

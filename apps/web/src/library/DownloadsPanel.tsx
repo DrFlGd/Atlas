@@ -15,7 +15,7 @@ import {
   useDownloadsView,
 } from '../state/downloadsView';
 import { stopRun, useImport, type ImportPhase } from '../state/importing';
-import { foundText, stopReasonText, type RunState } from '../state/importRun';
+import { foundText, stopReasonText, waitingForPerson, type RunState } from '../state/importRun';
 import { openSettings, setDownloadsOpen, showLibraryAdd, useLibrary } from '../state/libraryView';
 import { useAtlas } from '../state/store';
 
@@ -69,7 +69,7 @@ export function DownloadsStrip() {
   if (run) {
     const done = runDone(run);
     const found = foundText(run);
-    text = `Reading page ${Math.min(done + 1, run.pages.length)} of ${run.pages.length}${found ? `, ${found}` : ''}${run.stopRequested ? ', stopping after this page' : ''}`;
+    text = `Reading page ${Math.min(done + 1, run.pages.length)} of ${run.pages.length}${found ? `, ${found}` : ''}${run.stopRequested ? ', stopping after this page' : ''}${waitingForPerson(run) ? '. The page window is waiting for you' : ''}`;
     share = done / Math.max(1, run.pages.length);
   } else if (now) {
     text = `Downloading ${noun(now)} of ${gameTitle(now)}, ${downloadPercent(now.job)}%`;

@@ -32,7 +32,11 @@ export const MAX_RUN_ADDRESSES = 25;
  * run stops at once on a refusal; what is left is kept for later.
  */
 export const MAX_FETCHED_RUN_PAGES = 2000;
-/** The pause after one page's window closes and before the next page opens. */
+/**
+ * The pause after one page has been read and before the next page opens:
+ * after its window closes, or, in a go whose window is kept for its pages
+ * on one site, before the window moves to the next page.
+ */
 export const RUN_PAUSE_MS = 3000;
 /** Pages in a row that end without their map data before the run stops. */
 export const NO_DATA_IN_A_ROW = 2;
@@ -124,7 +128,12 @@ export type FailureCause =
 export type RunPageState =
   /** Not reached yet. */
   | { kind: 'waiting' }
-  /** The page is open in the import window; `measuring` once its map picture is measured from the page. */
+  /**
+   * The page is open in the import window; `measuring` once its map picture
+   * is measured from the page; `attention` once the page window, kept for
+   * the go, has loaded the page and asked for the person's attention
+   * because the page gave no data.
+   */
   | {
       kind: 'open';
       startedAt: number;
@@ -132,6 +141,7 @@ export type RunPageState =
       waitSeconds: number;
       loading: boolean;
       measuring?: boolean;
+      attention?: boolean;
     }
   /** The page data is being turned into a map; `measuring` while its picture is measured. */
   | { kind: 'converting'; measuring?: boolean }
@@ -356,6 +366,11 @@ export function runSummary(run: RunState): string {
     )
     .join(', ');
 }
+
+/** The page open now is waiting for the person in the page window (see `RunPageState`). */
+export const waitingForPerson = (run: RunState): boolean =>
+  run.status === 'running' &&
+  run.pages.some((page) => page.state.kind === 'open' && page.state.attention === true);
 
 /** Why the run stopped early, in words. */
 export function stopReasonText(reason: StopReason): string {

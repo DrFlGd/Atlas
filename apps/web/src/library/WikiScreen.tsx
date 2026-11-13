@@ -16,7 +16,7 @@ import {
   useImport,
   type WikiSource,
 } from '../state/importing';
-import { MAX_FETCHED_RUN_PAGES, foundText } from '../state/importRun';
+import { MAX_FETCHED_RUN_PAGES, foundText, waitingForPerson } from '../state/importRun';
 import { hasLibraryHost, openPageForEditing } from '../state/libraryView';
 import { canChangeOwnPages, changeOwnPages, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -101,7 +101,14 @@ export function WikiScreen({
     return new Map(
       phase.run.pages.flatMap((page): [string, string][] =>
         page.state.kind === 'open' || page.state.kind === 'converting'
-          ? [[pageKey(page.url), 'Reading now']]
+          ? [
+              [
+                pageKey(page.url),
+                page.state.kind === 'open' && page.state.attention
+                  ? 'Waiting for you in the page window'
+                  : 'Reading now',
+              ],
+            ]
           : page.state.kind === 'waiting'
             ? [
                 [
@@ -122,6 +129,7 @@ export function WikiScreen({
           ).length,
           total: phase.run.pages.length,
           found: foundText(phase.run),
+          waiting: waitingForPerson(phase.run),
         }
       : null;
 
@@ -333,7 +341,11 @@ export function WikiScreen({
                   progress
                     ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
                     : ''
-                }. Stop ends it after the page open now.`
+                }.${
+                  progress?.waiting
+                    ? ' The page window is waiting for you: if the page asks you to confirm you are a person, answer it there. This app does not answer it for you.'
+                    : ''
+                } Stop ends it after the page open now.`
               : tickedRows.length > 0
                 ? `${estimate(tickedRows.length, notes.follow)}${source.pictures ? ' Pictures come with each page.' : ''}`
                 : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}

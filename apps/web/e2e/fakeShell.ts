@@ -38,6 +38,12 @@ export interface WikiSite {
   pages: Record<string, { title: string; body: string; links?: string[] }>;
   /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
   busy?: string[];
+  /**
+   * Its pages (not its contents) are shown only to a person: the importer
+   * has them opened in a window (`fetch.inWindow`), where the fake shell
+   * hands over what the site would have answered.
+   */
+  inWindow?: boolean;
 }
 
 export const EXAMPLE_WIKI: WikiSite = {
@@ -110,10 +116,13 @@ export const WORLDS: Record<string, World> = {
 };
 
 interface ShellEvent {
-  what: 'open' | 'close' | 'poll' | 'fetch';
+  /** `read`: a poll that handed over the page's data. */
+  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch';
   url: string | null;
   at: number;
   purpose?: string;
+  /** The window was opened kept for the go's next pages. */
+  keep?: boolean;
 }
 
 export interface MockShell {
@@ -122,6 +131,14 @@ export interface MockShell {
   hold: string[];
   /** Slugs whose window the person closes. */
   close: string[];
+  /** Slugs whose page shows the site's check: no data, and the window asks for attention after a while. */
+  check: string[];
+  /**
+   * A kept window that lags: the first poll after each move hands over the
+   * page shown before, with its address, as a shell without its own check
+   * would. The app must never take it for the page asked for.
+   */
+  lag: boolean;
   /** Maps the site has added since, by world: their game page lists them too. */
   extra: Record<string, Record<string, string>>;
   reports: {
@@ -150,12 +167,20 @@ function installFakeShell({
   downloads: boolean;
   wiki: WikiSite | null;
 }) {
-  const shell: MockShell = { events: [], hold: [], close: [], extra: {}, reports: [] };
+  const shell: MockShell = {
+    events: [],
+    hold: [],
+    close: [],
+    check: [],
+    lag: false,
+    extra: {},
+    reports: [],
+  };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
   const write = (
     window as unknown as { __writePack: (id: string, files: unknown) => Promise<void> }
   ).__writePack;
-  let current: { url: string; polls: number } | null = null;
+  let current: { url: string; polls: number; keep: boolean; previous: string | null } | null = null;
   const packs: Record<string, unknown>[] = [];
   const sources: Record<
     string,
@@ -254,6 +279,42 @@ function installFakeShell({
     }
     return parts.length === 3 && second ? mapData(world, second) : null;
   };
+  /** What the made-up wiki answers for an address: robots.txt, its contents and its pages, as JSON. */
+  const wikiAnswer = (address: string) => {
+    const answer = (status: number, body: unknown) => ({
+      url: address,
+      finalUrl: address,
+      status,
+      contentType: 'application/json',
+      text: typeof body === 'string' ? body : JSON.stringify(body),
+      retryAfter: null,
+    });
+    const at = new URL(address);
+    if (!wiki || at.origin !== 'https://wiki.example.org') return null;
+    if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nDisallow: /private/');
+    const slug = at.pathname.replace(/^\/wiki\//, '');
+    if (slug === 'Contents') {
+      return answer(200, {
+        headings: wiki.headings.map((heading) => ({
+          title: heading.title,
+          pages: heading.pages.map((page) => ({
+            slug: page,
+            title: wiki.pages[page]?.title ?? page.replaceAll('_', ' '),
+          })),
+        })),
+      });
+    }
+    if (wiki.busy?.includes(slug)) return answer(503, 'Busy');
+    const page = wiki.pages[slug];
+    return page ? answer(200, page) : answer(404, 'Not found');
+  };
+  /** A wiki page as a window shows it: what its reader would read, in the shape of a fetched page. */
+  const wikiWindowData = (address: string) => {
+    const answer = wikiAnswer(address);
+    if (!answer) return null;
+    const { retryAfter: _, ...page } = answer;
+    return { fetched: [page] };
+  };
   const invoke = async (command: string, args: Record<string, unknown> = {}) => {
     switch (command) {
       case 'desktop_info':
@@ -261,59 +322,67 @@ function installFakeShell({
       case 'library_list':
         return listing();
       case 'import_open':
-        current = { url: args.url as string, polls: 0 };
+        current = { url: args.url as string, polls: 0, keep: args.keep === true, previous: null };
         shell.events.push({
           what: 'open',
           url: current.url,
           at: Date.now(),
           ...(typeof args.purpose === 'string' ? { purpose: args.purpose } : {}),
+          ...(current.keep ? { keep: true } : {}),
         });
         return null;
+      case 'import_navigate': {
+        // The person closed the window: nothing is opened.
+        if (!current) return 'closed';
+        if (!current.keep) {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'The page window is not kept for the next page.';
+        }
+        current = { url: args.url as string, polls: 0, keep: true, previous: current.url };
+        shell.events.push({ what: 'navigate', url: current.url, at: Date.now() });
+        return 'navigated';
+      }
       case 'import_poll': {
         if (!current) return { state: 'failed', message: 'No page is open.' };
         current.polls++;
         shell.events.push({ what: 'poll', url: current.url, at: Date.now() });
         const slug = new URL(current.url).pathname.split('/').filter(Boolean).pop() ?? '';
-        if (shell.close.includes(slug)) return { state: 'closed' };
-        const data = pageData(current.url);
+        if (shell.close.includes(slug)) {
+          current = null;
+          return { state: 'closed' };
+        }
+        if (shell.lag && current.previous && current.polls === 1) {
+          // Still the page before, handed over as if it were the new one.
+          return {
+            state: 'ready',
+            data: JSON.stringify(wikiWindowData(current.previous) ?? pageData(current.previous)),
+            address: current.previous,
+          };
+        }
+        if (shell.check.includes(slug)) {
+          return { state: 'waiting', loading: false, note: null, attention: current.polls > 3 };
+        }
+        const data = wikiWindowData(current.url) ?? pageData(current.url);
         if (!data || shell.hold.includes(slug) || current.polls < 2) {
           return { state: 'waiting', loading: current.polls < 2, note: null };
         }
-        return { state: 'ready', data: JSON.stringify(data) };
+        shell.events.push({ what: 'read', url: current.url, at: Date.now() });
+        return {
+          state: 'ready',
+          data: JSON.stringify(data),
+          ...(current.keep ? { address: current.url } : {}),
+        };
       }
       case 'import_fetch': {
         // The made-up wiki: robots.txt, its contents and its pages, as JSON.
         const address = args.url as string;
         shell.events.push({ what: 'fetch', url: address, at: Date.now() });
-        const answer = (status: number, body: unknown) => ({
-          url: address,
-          finalUrl: address,
-          status,
-          contentType: 'application/json',
-          text: typeof body === 'string' ? body : JSON.stringify(body),
-          retryAfter: null,
-        });
-        const at = new URL(address);
-        if (!wiki || at.origin !== 'https://wiki.example.org') {
+        const answer = wikiAnswer(address);
+        if (!answer) {
           // eslint-disable-next-line @typescript-eslint/only-throw-error
           throw 'The site could not be reached.';
         }
-        if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nDisallow: /private/');
-        const slug = at.pathname.replace(/^\/wiki\//, '');
-        if (slug === 'Contents') {
-          return answer(200, {
-            headings: wiki.headings.map((heading) => ({
-              title: heading.title,
-              pages: heading.pages.map((page) => ({
-                slug: page,
-                title: wiki.pages[page]?.title ?? page.replaceAll('_', ' '),
-              })),
-            })),
-          });
-        }
-        if (wiki.busy?.includes(slug)) return answer(503, 'Busy');
-        const page = wiki.pages[slug];
-        return page ? answer(200, page) : answer(404, 'Not found');
+        return answer;
       }
       case 'import_close':
         if (current) shell.events.push({ what: 'close', url: current.url, at: Date.now() });
@@ -438,7 +507,9 @@ export async function setUp(
     packs[id] = files;
   });
   const importer = await readFile(IMPORTER, 'utf8');
-  const wikiImporter = await readFile(WIKI_IMPORTER, 'utf8');
+  const wikiImporter = wiki?.inWindow
+    ? windowedWikiImporter(await readFile(WIKI_IMPORTER, 'utf8'))
+    : await readFile(WIKI_IMPORTER, 'utf8');
   await page.route('**/config.json', async (route) => {
     const response = await route.fetch();
     const config = (await response.json()) as Record<string, unknown>;
@@ -492,7 +563,31 @@ export async function setUp(
 export const mock = (page: Page) =>
   page.evaluate(() => (window as unknown as { __mockShell: MockShell }).__mockShell);
 
-export const setMock = (page: Page, patch: Partial<Pick<MockShell, 'hold' | 'close' | 'extra'>>) =>
+/**
+ * The Example Wiki's importer with its pages (not its contents) opened in a
+ * window (`fetch.inWindow`), as for a site that shows its pages only to a
+ * person. The fake shell hands over the data itself, so the reader is never run.
+ */
+function windowedWikiImporter(source: string): string {
+  const fetchPart = `  fetch: {
+    addresses: (url) => (isPage(url) ? [url.trim()] : []),
+  },`;
+  if (!source.includes(fetchPart))
+    throw new Error('The Example Wiki importer changed: update fakeShell.ts.');
+  return source.replace(
+    fetchPart,
+    `  fetch: {
+    addresses: (url) => (isPage(url) ? [url.trim()] : []),
+    inWindow: (url) => isPage(url),
+  },
+  pageReader: '() => null',`,
+  );
+}
+
+export const setMock = (
+  page: Page,
+  patch: Partial<Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra'>>,
+) =>
   page.evaluate((patch) => {
     Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell, patch);
   }, patch);

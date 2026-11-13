@@ -90,6 +90,11 @@ test('adds several maps one after another, with a state for each and a summary',
     url('test-valley', 'broken'),
     url('test-hills', 'high-pass'),
   ]);
+  // Map pages get a window of their own each, opened and closed for that page: none is kept or moved.
+  const { events } = await mock(page);
+  expect(events.filter((e) => e.what === 'navigate')).toEqual([]);
+  expect(events.filter((e) => e.what === 'open' && e.keep)).toEqual([]);
+  expect(events.filter((e) => e.what === 'close')).toHaveLength(5);
 
   // The game of the last map added is shown.
   await expect(
