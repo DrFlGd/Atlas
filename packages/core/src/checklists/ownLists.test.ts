@@ -1,9 +1,10 @@
-import { isOwnId, readListFile, writeListFile, type OwnList } from '@atlas/schema';
+import { isOwnId, ownPicture, readListFile, writeListFile, type OwnList } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
 import { makeTestPack } from '../testing/packs';
 import { checklistTally, itemState, tallyStates, type ChecklistEntry } from './checklists';
 import { listShape } from './listTypes';
 import {
+  addStepPhoto,
   changeStep,
   changeTemplate,
   copyList,
@@ -22,8 +23,10 @@ import {
   outlineOf,
   ownListEntry,
   removeRow,
+  removeStepPhoto,
   renameHeading,
   rowId,
+  setStepPhotoSpoiler,
   suggestOrder,
   withOutline,
 } from './ownLists';
@@ -331,5 +334,45 @@ describe('importing a list', () => {
     expect(ids.every(isOwnId)).toBe(true);
     expect(again.list.items.every((i) => i.checklistId === again.list.checklist.id)).toBe(true);
     expect(names(again.list)).toEqual(names(list));
+  });
+});
+
+describe('photos of steps', () => {
+  const shot = ownPicture('demo:picture:own.shot', 'image/jpeg', 1280, 720);
+  const packPicture = { id: 'demo:picture:gate', file: 'pictures/gate.png', shareable: true };
+
+  it('adds, marks and removes a photo, keeping only the own pictures shown', () => {
+    const list = build([['A', 'demo:loc:0001'], ['B']]);
+    const [a, b] = list.items;
+    let next = addStepPhoto(list, a!.id, shot);
+    next = addStepPhoto(next, b!.id, packPicture, true);
+    expect(next.items[0]!.photos).toEqual([{ picture: shot.id }]);
+    expect(next.items[1]!.photos).toEqual([{ picture: packPicture.id, spoiler: true }]);
+    // Only the person's own picture is kept with the list.
+    expect(next.pictures).toEqual([shot]);
+    next = setStepPhotoSpoiler(next, a!.id, shot.id, true);
+    expect(next.items[0]!.photos).toEqual([{ picture: shot.id, spoiler: true }]);
+    // A duplicated step shows the same picture: it stays while one step shows it.
+    next = duplicateStep(next, a!.id, 'demo:checkitem:own.copy');
+    next = removeStepPhoto(next, a!.id, shot.id);
+    expect(next.items[0]!.photos).toBeUndefined();
+    expect(next.pictures).toEqual([shot]);
+    next = removeStepPhoto(next, 'demo:checkitem:own.copy', shot.id);
+    expect(next.pictures).toBeUndefined();
+    expect(idsOf(addStepPhoto(list, a!.id, shot))).toContain(shot.id);
+  });
+
+  it('gives a list’s own photos new ids and files with the list when its ids are taken', () => {
+    const game = { gameId: 'demo', title: 'Demo' };
+    const list = addStepPhoto(build([['A']]), build([['A']]).items[0]!.id, shot);
+    const again = importList(list, 'demo', game, new Set(idsOf(list)), NOW, counter());
+    if (!again.ok) throw new Error(again.error);
+    const [picture] = again.list.pictures!;
+    expect(picture!.id).not.toBe(shot.id);
+    expect(again.list.items[0]!.photos).toEqual([{ picture: picture!.id }]);
+    expect([...again.renamedFiles]).toEqual([[shot.file, picture!.file]]);
+    expect(picture!.file).toBe(`pictures/${picture!.id.split(':')[2]!}.jpg`);
+    const kept = importList(list, 'demo', game, new Set(), NOW, counter());
+    expect(kept.ok && kept.renamedFiles.size).toBe(0);
   });
 });

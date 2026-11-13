@@ -107,6 +107,18 @@ describe('validatePackFolder: a game with no map', () => {
     ]);
   });
 
+  it('accepts a missing file for a picture fetched later', async () => {
+    const pack = makeGuidesFixturePack();
+    pack.pictures = pack.pictures?.map((p) => ({
+      ...p,
+      remote: 'https://pictures.example.com/a.png',
+    }));
+    const dir = await mkdtemp(join(tmpdir(), 'atlas-validate-'));
+    folders.push(dir);
+    await writePackJson(dir, pack);
+    expect((await validatePackFolder(dir)).problems).toEqual([]);
+  });
+
   it('writes contents and pictures only for a pack that has some', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'atlas-validate-'));
     folders.push(dir);

@@ -46,6 +46,17 @@ const picturePath = z
   .string()
   .regex(PICTURE_PATH_PATTERN, 'must be pictures/<name>.png, .jpg, .jpeg, .webp or .gif');
 
+/** The most photos a location or a list entry may have. */
+export const MAX_PHOTOS = 20;
+
+/** Where a picture can be downloaded from (see the picture's `remote`). */
+const remotePictureUrl = z
+  .string()
+  .trim()
+  .max(2048)
+  .regex(/^https?:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/i, 'must be a web address')
+  .refine(isAllowedRemoteUrl, 'must be an https address');
+
 /**
  * Descriptive fields are informational: a value that does not have the
  * expected shape is dropped rather than making the whole pack unreadable,
@@ -126,7 +137,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * `OWN_ID_PREFIX`); reading takes any.
    */
   const packId = (
-    kind: 'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region' | 'guide',
+    kind: 'checklist' | 'checkitem' | 'loc' | 'cat' | 'catgroup' | 'region' | 'guide' | 'picture',
   ) =>
     reading || ownIds
       ? idOf(kind)
@@ -429,6 +440,36 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   // ---------------------------------------------------------------------------
   // Locations and content
 
+  /**
+   * A photo of a location or a list entry: the id of a picture in
+   * `pictures.json` (or, in a person's own files, one of their own
+   * pictures), and whether it gives something away, which keeps it blurred
+   * until the reader asks for it.
+   */
+  const photoSchema = record({
+    picture: idOf('picture'),
+    spoiler: z.boolean().optional(),
+  });
+
+  /**
+   * The photos of a location or an entry, first shown first. Added without
+   * a schema version change; Atlas 0.4.4 and earlier refuse a pack whose
+   * locations or entries have them. When reading, photos that cannot be
+   * read are left out rather than the pack.
+   */
+  const photosSchema = reading
+    ? (z
+        .array(z.unknown())
+        .transform((list) =>
+          list.flatMap((value) => {
+            const photo = photoSchema.safeParse(value);
+            return photo.success ? [photo.data] : [];
+          }),
+        )
+        .optional()
+        .catch(undefined) as unknown as z.ZodOptional<z.ZodArray<typeof photoSchema>>)
+    : z.array(photoSchema).max(MAX_PHOTOS).optional();
+
   const locationSchema = record({
     id: packId('loc'),
     mapId: idOf('map'),
@@ -445,6 +486,8 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     since: semver,
     /** Game save-file flag that marks this location as done, when known. */
     flagId: nonEmpty.optional(),
+    /** Photos of the location, shown on its card. */
+    photos: photosSchema,
   });
 
   /** Something in the game world that locations or checklist items refer to: an item, a character, an enemy. */
@@ -511,6 +554,8 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * refuse a pack whose items have it.
      */
     optional: z.boolean().optional(),
+    /** Photos of the entry, shown under it; the Photo guide puts them first. */
+    photos: photosSchema,
   });
 
   // ---------------------------------------------------------------------------
@@ -555,12 +600,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
 
   /**
    * A picture in the pack's `pictures/` folder. Guide Markdown shows one by
-   * its id (`![what it shows](demo:picture:gate)`); nothing else is ever
-   * loaded as a picture. Made general so that other content can name
-   * pictures later.
+   * its id (`![what it shows](demo:picture:gate)`), and locations and list
+   * entries name theirs as photos (`photos`); nothing else is ever loaded
+   * as a picture, and only from the pack's own folder (or a person's own
+   * pictures), never from a web address.
    */
   const pictureSchema = record({
-    id: idOf('picture'),
+    id: packId('picture'),
     /** `pictures/<name>.<png|jpg|jpeg|webp|gif>`, relative to the pack root. */
     file: picturePath,
     caption: z.string().trim().max(500).optional(),
@@ -569,6 +615,15 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     license: licenseSchema.optional(),
     /** Where the picture was taken from. */
     source: webUrl.optional(),
+    /**
+     * Where the picture's file can be downloaded from when it is not in the
+     * pack's folder yet: `https`, or plain `http` to this computer only.
+     * Only an app built with downloads fetches it, when the person asks
+     * ("Download location photos"); any other app shows nothing in its
+     * place. A downloaded picture is shrunk and stored in the format its
+     * `file` names. When reading, an address that cannot be used is left out.
+     */
+    remote: reading ? remotePictureUrl.optional().catch(undefined) : remotePictureUrl.optional(),
     /**
      * Whether the picture may be passed on: `false` for one kept for the
      * person's own use, which a map pack file leaves out.
@@ -634,6 +689,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     regionSchema,
     categoryGroupSchema,
     categorySchema,
+    photoSchema,
     locationSchema,
     entitySchema,
     checklistSchema,
@@ -667,6 +723,7 @@ export const {
   regionSchema,
   categoryGroupSchema,
   categorySchema,
+  photoSchema,
   locationSchema,
   entitySchema,
   checklistSchema,
@@ -691,9 +748,10 @@ export const packReadSchemas = packSchemas('read');
  * The strict list and entry schemas for a person's own lists, which are
  * kept apart from packs and use the ids packs may not (see `ownLists.ts`).
  */
-export const ownEntryWriteSchemas = (({ checklistSchema, checklistItemSchema }) => ({
+export const ownEntryWriteSchemas = (({ checklistSchema, checklistItemSchema, pictureSchema }) => ({
   checklistSchema,
   checklistItemSchema,
+  pictureSchema,
 }))(packSchemas('write', { ownIds: true }));
 
 /**
@@ -701,10 +759,18 @@ export const ownEntryWriteSchemas = (({ checklistSchema, checklistItemSchema }) 
  * locations, types and areas, kept apart from packs with the ids packs may
  * not use (see `ownLocations.ts`).
  */
-export const ownRecordWriteSchemas = (({ categorySchema, categoryGroupSchema, regionSchema }) => ({
+export const ownRecordWriteSchemas = (({
   categorySchema,
   categoryGroupSchema,
   regionSchema,
+  photoSchema,
+  pictureSchema,
+}) => ({
+  categorySchema,
+  categoryGroupSchema,
+  regionSchema,
+  photoSchema,
+  pictureSchema,
 }))(packSchemas('write', { ownIds: true }));
 
 export type Attribution = z.infer<typeof attributionSchema>;
@@ -736,3 +802,4 @@ export type License = z.infer<typeof licenseSchema>;
 export type GuideSource = z.infer<typeof guideSourceSchema>;
 export type Section = z.infer<typeof sectionSchema>;
 export type Picture = z.infer<typeof pictureSchema>;
+export type Photo = z.infer<typeof photoSchema>;

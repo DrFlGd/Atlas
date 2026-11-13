@@ -6,6 +6,7 @@ import { createRandom, deriveSeed } from '../random';
 import { generateDemoContent, layoutRegions } from './content';
 import { createTerrain, elevationAt, renderTerrain } from './terrain';
 import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
+import { DEMO_PHOTO_GUIDE, addPhotos, photoFiles } from './photos';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
 import { WIKI_PAGES, WIKI_PICTURE, addWiki, wikiPictureFiles } from './wiki';
 
@@ -345,6 +346,41 @@ describe('demo wiki', () => {
     expect(png?.subarray(1, 4).toString('latin1')).toBe('PNG');
     expect(png?.readUInt32BE(16)).toBe(picture?.width);
     expect(png?.readUInt32BE(20)).toBe(picture?.height);
+  });
+});
+
+describe('demo photos', () => {
+  const pack = addPhotos(addChecklists(generate()));
+
+  it('is valid and gives three waystones and a Photo guide photos, one of each a spoiler', () => {
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+    const shown = pack.locations.filter((l) => l.photos?.length);
+    expect(shown).toHaveLength(3);
+    expect(shown.filter((l) => l.photos?.[0]?.spoiler)).toHaveLength(1);
+    const guide = pack.checklists.find((c) => c.id === DEMO_PHOTO_GUIDE);
+    expect(guide?.type).toBe('photos');
+    const items = pack.checklistItems.filter((i) => i.checklistId === DEMO_PHOTO_GUIDE);
+    expect(items).toHaveLength(6);
+    for (const item of items) {
+      expect(item.photos).toHaveLength(1);
+      expect(item.locationIds).toHaveLength(1);
+      expect(item.note).toBeTruthy();
+    }
+    expect(items.filter((i) => i.photos?.[0]?.spoiler)).toHaveLength(1);
+    expect(new Set(items.map((i) => i.locationIds[0])).size).toBe(6);
+  });
+
+  it('draws every picture it names, at the size the pack gives', async () => {
+    const files = await photoFiles();
+    const own = (pack.pictures ?? []).filter((p) => p.credit === 'Drawn for the Atlas demo');
+    expect(own).toHaveLength(9);
+    for (const picture of own) {
+      const webp = files.get(picture.file);
+      expect(webp?.subarray(8, 12).toString('latin1'), picture.file).toBe('WEBP');
+      expect(picture.shareable).toBe(true);
+      expect(picture.remote).toBeUndefined();
+    }
   });
 });
 

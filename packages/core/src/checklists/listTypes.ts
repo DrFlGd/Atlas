@@ -7,8 +7,11 @@ import type { ChecklistEntry } from './checklists';
  * did before there were types (see {@link listType}).
  */
 
-/** The ways to show a list: by area, by kind, and in its own order. */
-export type ListView = 'area' | 'kind' | 'order';
+/**
+ * The ways to show a list: by area, by kind, in its own order, and as
+ * cards with the photo first (the Photo guide's).
+ */
+export type ListView = 'area' | 'kind' | 'order' | 'cards';
 
 /** How a list is shown, decided by its type (see {@link listShape}). */
 export interface ListShape {
@@ -26,6 +29,8 @@ export interface ListShape {
 const ALL: readonly ListView[] = ['area', 'kind', 'order'];
 const GROUPED: readonly ListView[] = ['area', 'kind'];
 const AS_WRITTEN: readonly ListView[] = ['order'];
+const CARDS: readonly ListView[] = ['cards', 'area', 'kind'];
+const CARDS_AS_WRITTEN: readonly ListView[] = ['cards', 'order'];
 
 /** Whether any entry of a list has a place in the pack. */
 export function hasPlaces(entry: ChecklistEntry): boolean {
@@ -52,8 +57,10 @@ export function followsSteps(type: ChecklistType): boolean {
 /**
  * How a list is shown:
  *
- * - A collection (and secrets, and photos for now) is grouped by area or
- *   by kind, and counts places found.
+ * - A collection (and secrets) is grouped by area or by kind, and counts
+ *   places found.
+ * - A Photo guide opens as cards with the photo first, by map and area,
+ *   and can be grouped by area or by kind too.
  * - A route is followed in order, with a next step, and can be grouped too.
  * - A build is followed in order only, with a next step.
  * - A plain list is shown as written: no choice of view, no next step.
@@ -67,12 +74,13 @@ export function listShape(entry: ChecklistEntry): ListShape {
   const places = hasPlaces(entry);
   const steps = followsSteps(type);
   let views: readonly ListView[];
-  if (!places || type === 'build' || type === 'plain') views = AS_WRITTEN;
+  if (type === 'photos') views = places ? CARDS : CARDS_AS_WRITTEN;
+  else if (!places || type === 'build' || type === 'plain') views = AS_WRITTEN;
   else views = type === 'route' ? ALL : GROUPED;
   return {
     type,
     views,
-    defaultView: views.includes('order') ? 'order' : views[0]!,
+    defaultView: views[0] === 'cards' ? 'cards' : views.includes('order') ? 'order' : views[0]!,
     steps,
     doneWord: steps || type === 'plain' || !places ? 'done' : 'found',
   };

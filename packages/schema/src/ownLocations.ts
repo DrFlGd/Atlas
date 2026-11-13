@@ -2,12 +2,15 @@ import { z } from 'zod';
 import {
   ownRecordWriteSchemas,
   packReadSchemas,
+  MAX_PHOTOS,
   type Category,
   type CategoryGroup,
+  type Picture,
   type Region,
   type SchemaMode,
 } from './entities';
 import { gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX, parseId } from './ids';
+import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
 
 /**
  * A person's own locations, types (`categories` in code), type groups and
@@ -26,6 +29,9 @@ import { gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX, parseId } from './ids';
  * {@link OWN_ID_PREFIX}, which packs may not use, so they never collide with
  * a pack's. A location may be of the pack's types and in the pack's areas
  * as well as of its own.
+ *
+ * A location may have photos (`photos`), the person's own pictures kept in
+ * the file's `pictures` (see `ownPictures.ts`).
  *
  * Written strictly and read tolerantly: one record that cannot be read is
  * left out, not the file.
@@ -77,9 +83,21 @@ function ownLocationSchemas(mode: SchemaMode) {
     note: reading
       ? z.string().max(MAX_OWN_NOTE_LENGTH).optional().catch(undefined)
       : z.string().max(MAX_OWN_NOTE_LENGTH).optional(),
+    /** Photos of the location: the person's own pictures (in `pictures`) or the pack's. */
+    photos: reading
+      ? z.array(packReadSchemas.photoSchema).optional().catch(undefined)
+      : z.array(ownRecordWriteSchemas.photoSchema).max(MAX_PHOTOS).optional(),
     createdAt: time,
     updatedAt: time,
   });
+
+  /** A person's own picture, named as `ownPictureFile` says. */
+  const ownPictureSchema = (
+    reading ? packReadSchemas.pictureSchema : ownRecordWriteSchemas.pictureSchema
+  ).refine(
+    (picture) => ownPictureFile(picture) !== null,
+    'must be an own picture: an own id, with pictures/<its local id>.jpg, .png or .webp',
+  );
 
   const own = <T extends z.ZodType<{ id: string }>>(schema: T) =>
     schema.refine((value) => isOwnId(value.id), { message: 'must be an own id', path: ['id'] });
@@ -97,10 +115,15 @@ function ownLocationSchemas(mode: SchemaMode) {
     categories: reading ? z.array(z.unknown()).catch([]) : z.array(own(pack.categorySchema)),
     regions: reading ? z.array(z.unknown()).catch([]) : z.array(own(pack.regionSchema)),
     locations: reading ? z.array(z.unknown()).catch([]) : z.array(ownLocationSchema),
+    /** The person's own photos of their locations. */
+    pictures: reading
+      ? z.array(z.unknown()).optional().catch(undefined)
+      : z.array(ownPictureSchema).max(MAX_OWN_PICTURES).optional(),
   });
 
   return {
     ownLocationSchema,
+    ownPictureSchema,
     ownTypeGroupSchema: own(pack.categoryGroupSchema),
     ownTypeSchema: own(pack.categorySchema),
     ownAreaSchema: own(pack.regionSchema),
@@ -123,6 +146,8 @@ export interface OwnLocations {
   categories: Category[];
   regions: Region[];
   locations: OwnLocation[];
+  /** The person's own photos of their locations; absent when there are none. */
+  pictures?: Picture[];
 }
 
 /** Nothing of one's own yet. */
@@ -191,19 +216,24 @@ export function readOwnLocationsFile(
       l.layerId,
       l.categoryId,
       l.regionId,
+      ...(l.photos ?? []).map((photo) => photo.picture),
     ]),
   };
+  const pictures = take(parsed.data.pictures ?? [], read.ownPictureSchema, () => []);
+  if (pictures.length > 0) own.pictures = pictures;
   return { ok: true, file: { gameId, version: parsed.data.version, own, skipped } };
 }
 
 /** The own locations file of a game, checked strictly; throws when a record is not valid. */
 export function writeOwnLocationsFile(gameId: string, own: OwnLocations, now: Date): string {
+  const { pictures, ...records } = own;
   const file = ownLocationsFileSchema.parse({
     format: OWN_LOCATIONS_FORMAT,
     version: OWN_LOCATIONS_VERSION,
     gameId,
     updatedAt: now.toISOString(),
-    ...own,
+    ...records,
+    ...(pictures && pictures.length > 0 ? { pictures } : {}),
   });
   return `${JSON.stringify(file, null, 2)}\n`;
 }

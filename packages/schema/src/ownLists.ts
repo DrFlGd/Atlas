@@ -4,9 +4,16 @@ import {
   packReadSchemas,
   type Checklist,
   type ChecklistItem,
+  type Picture,
   type SchemaMode,
 } from './entities';
 import { gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX, parseId } from './ids';
+import {
+  MAX_OWN_PICTURES,
+  ownPictureFile,
+  pictureFileSchema,
+  type PictureFile,
+} from './ownPictures';
 
 /**
  * A person's own lists and guides, kept apart from every pack.
@@ -24,6 +31,9 @@ import { gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX, parseId } from './ids';
  * {@link OWN_ID_PREFIX}, which packs may not use. Headings are kept as well
  * as the items' `section`, so that a heading with no step under it yet
  * survives; the items' `section` is the title of the heading above them.
+ *
+ * A list keeps the person's own photos of its steps (`pictures`, see
+ * `ownPictures.ts`); a list file carries their bytes too (`pictureFiles`).
  *
  * Both files are written strictly and read tolerantly, as packs are (see
  * {@link SchemaMode}). A file of a later version is still read, without
@@ -67,11 +77,33 @@ function ownListSchemas(mode: SchemaMode) {
     order: z.int(),
   });
 
+  /** A person's own picture, named as `ownPictureFile` says. */
+  const ownPictureSchema = pack.pictureSchema.refine(
+    (picture) => ownPictureFile(picture) !== null,
+    'must be an own picture: an own id, with pictures/<its local id>.jpg, .png or .webp',
+  );
+
   /** One list a person made, or copied from a pack's list. */
   const ownListSchema = record({
     checklist: pack.checklistSchema,
     items: z.array(pack.checklistItemSchema),
     headings: reading ? z.array(headingSchema).catch([]) : z.array(headingSchema),
+    /**
+     * The person's own photos its steps show (see `ownPictures.ts`). When
+     * reading, one that cannot be read is left out, not the list.
+     */
+    pictures: reading
+      ? z
+          .array(z.unknown())
+          .transform((list) =>
+            list.flatMap((value) => {
+              const picture = ownPictureSchema.safeParse(value);
+              return picture.success ? [picture.data] : [];
+            }),
+          )
+          .optional()
+          .catch(undefined)
+      : z.array(ownPictureSchema).max(MAX_OWN_PICTURES).optional(),
     /** The pack's list it was copied from, if it was. The pack's list is never changed. */
     copiedFrom: reading
       ? idOf('checklist').optional().catch(undefined)
@@ -102,6 +134,9 @@ function ownListSchemas(mode: SchemaMode) {
     list.headings.forEach((heading, i) => {
       check(heading.id, ['headings', i, 'id']);
     });
+    list.pictures?.forEach((picture, i) => {
+      check(picture.id, ['pictures', i, 'id']);
+    });
   });
 
   /** Every own list of one game. */
@@ -124,6 +159,14 @@ function ownListSchemas(mode: SchemaMode) {
     gameTitle: reading ? z.string().optional().catch(undefined) : z.string().min(1).optional(),
     exportedAt: reading ? isoTime.optional().catch(undefined) : isoTime,
     list: ownListSchema,
+    /**
+     * The bytes of the list's own photos, so they travel with it. Optional,
+     * so a file without photos is as before; an app that does not know it
+     * imports the list without its photos.
+     */
+    pictureFiles: reading
+      ? z.array(z.unknown()).optional().catch(undefined)
+      : z.array(pictureFileSchema).max(MAX_OWN_PICTURES).optional(),
   });
 
   return { headingSchema, ownListSchema, ownListsFileSchema, listFileSchema };
@@ -141,6 +184,8 @@ export interface OwnList {
   checklist: Checklist;
   items: ChecklistItem[];
   headings: OwnHeading[];
+  /** The person's own photos its steps show. */
+  pictures?: Picture[];
   copiedFrom?: string;
   createdAt: string;
   updatedAt: string;
@@ -165,6 +210,7 @@ function completeList(list: z.infer<typeof ownListReadSchemas.ownListSchema>): O
     checklist: list.checklist,
     items: list.items,
     headings: list.headings,
+    ...(list.pictures && list.pictures.length > 0 ? { pictures: list.pictures } : {}),
     ...(list.copiedFrom ? { copiedFrom: list.copiedFrom } : {}),
     createdAt: list.createdAt ?? list.updatedAt ?? now,
     updatedAt: list.updatedAt ?? list.createdAt ?? now,
@@ -176,8 +222,14 @@ function listOfGame(list: OwnList, gameId: string): boolean {
   const ofGame = (id: string) => parseId(id)?.gameId === gameId;
   return (
     ofGame(list.checklist.id) &&
-    list.items.every((item) => ofGame(item.id) && item.locationIds.every(ofGame)) &&
-    list.headings.every((heading) => ofGame(heading.id))
+    list.items.every(
+      (item) =>
+        ofGame(item.id) &&
+        item.locationIds.every(ofGame) &&
+        (item.photos ?? []).every((photo) => ofGame(photo.picture)),
+    ) &&
+    list.headings.every((heading) => ofGame(heading.id)) &&
+    (list.pictures ?? []).every((picture) => ofGame(picture.id))
   );
 }
 
@@ -221,8 +273,17 @@ export function writeOwnListsFile(gameId: string, lists: readonly OwnList[], now
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
-/** A list file for one list, checked strictly. */
-export function writeListFile(gameId: string, gameTitle: string, list: OwnList, now: Date): string {
+/**
+ * A list file for one list, checked strictly, with the bytes of its own
+ * photos when given (see `pictureFiles`).
+ */
+export function writeListFile(
+  gameId: string,
+  gameTitle: string,
+  list: OwnList,
+  now: Date,
+  pictureFiles: readonly PictureFile[] = [],
+): string {
   const file: ListFile = listFileSchema.parse({
     format: LIST_FILE_FORMAT,
     version: LIST_FILE_VERSION,
@@ -230,13 +291,21 @@ export function writeListFile(gameId: string, gameTitle: string, list: OwnList, 
     gameTitle,
     exportedAt: now.toISOString(),
     list,
+    ...(pictureFiles.length > 0 ? { pictureFiles } : {}),
   });
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
 /** What reading a list file found: its list and game, or why it cannot be used. */
 export type ListFileRead =
-  | { ok: true; gameId: string; gameTitle: string | null; list: OwnList }
+  | {
+      ok: true;
+      gameId: string;
+      gameTitle: string | null;
+      list: OwnList;
+      /** The bytes of the list's own photos that the file carries and the list names. */
+      pictureFiles: PictureFile[];
+    }
   | { ok: false; error: string };
 
 /** Reads a list file tolerantly (see {@link listFileSchema}). */
@@ -259,10 +328,16 @@ export function readListFile(text: string): ListFileRead {
   if (!listOfGame(list, parsed.data.gameId)) {
     return { ok: false, error: 'This Atlas list is damaged, so it cannot be imported.' };
   }
+  const named = new Set((list.pictures ?? []).map((picture) => picture.file));
+  const pictureFiles = (parsed.data.pictureFiles ?? []).flatMap((value) => {
+    const file = pictureFileSchema.safeParse(value);
+    return file.success && named.has(file.data.file) ? [file.data] : [];
+  });
   return {
     ok: true,
     gameId: parsed.data.gameId,
     gameTitle: parsed.data.gameTitle ?? null,
     list,
+    pictureFiles,
   };
 }
