@@ -966,7 +966,9 @@ const outcomeSchema = z.discriminatedUnion('ok', [
 /**
  * Checks what an importer's `convert` returned: the outcome's shape, and for
  * a success the pack against the pack schema and its integrity rules. Returns
- * a failure with a readable message when anything is wrong.
+ * a failure with a readable message when anything is wrong. The pack is about
+ * to be written, so it is checked strictly: an unknown key is an error here,
+ * although the app skips one when it reads a pack.
  */
 export function checkOutcome(value: unknown): ImportOutcome {
   const outcome = outcomeSchema.safeParse(value);

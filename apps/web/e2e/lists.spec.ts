@@ -13,6 +13,23 @@ import { back, choosePlace } from './touch';
 const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7'];
 
 const ROUTE = 'Treasure hunter’s route';
+const RIDDLES = 'Riddles of the ruins';
+
+interface PackChecklist {
+  id: string;
+  name: string;
+  order: number;
+  kind?: string;
+  type?: string;
+}
+
+/** Serves the demo pack's lists with some fields changed, as another pack would have them. */
+async function changeLists(page: Page, changes: Record<string, Record<string, unknown>>) {
+  await page.route('**/packs/demo/checklists.json', async (route) => {
+    const lists = (await (await route.fetch()).json()) as PackChecklist[];
+    await route.fulfill({ json: lists.map((l) => ({ ...l, ...changes[l.id] })) });
+  });
+}
 
 async function openLists(page: Page): Promise<void> {
   await page.getByTestId('section-lists').click();
@@ -215,6 +232,162 @@ test.describe('on a phone', () => {
     await expect(screen.locator('[data-done="true"]')).toHaveCount(3);
     // The story's steps have no place: nothing to show on the map.
     await expect(screen.getByTestId('list-only-switch')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('a list’s type decides how it is shown; a type this app does not know is skipped', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await openMap(page, './?ui=touch');
+    await openLists(page);
+    const home = page.getByTestId('lists-home');
+    const screen = page.getByTestId('checklist-screen');
+    const views = screen.locator('.touch-view-switch button');
+    // Secrets (the pack says so) are a collection: grouped, never in order.
+    await expect(
+      home.locator('section', { hasText: 'Collections' }).getByTestId('list-link'),
+    ).toContainText([RIDDLES]);
+    await list(page, RIDDLES).click();
+    await expect(screen).toHaveAttribute('data-list-type', 'secrets');
+    await expect(screen).toHaveAttribute('data-view', 'area');
+    await expect(views).toHaveText(['By area', 'By kind']);
+    await page.getByTestId('lists-back').click();
+    // The route says it is one, and keeps kind "guide" for older apps.
+    await list(page, ROUTE).click();
+    await expect(screen).toHaveAttribute('data-list-type', 'route');
+    await page.getByTestId('lists-back').click();
+    // Lists without a type are worked out as before.
+    await list(page, 'Waystones').click();
+    await expect(screen).toHaveAttribute('data-list-type', 'collection');
+    await page.getByTestId('lists-back').click();
+    await list(page, 'The Sundered Isle story').click();
+    await expect(screen).toHaveAttribute('data-list-type', 'plain');
+    expect(errors).toEqual([]);
+  });
+
+  test('a build, a route without places, and fields from a newer pack', async ({ page }) => {
+    const errors = collectErrors(page);
+    await changeLists(page, {
+      'demo:checklist:waystones': { type: 'build' },
+      'demo:checklist:story': { type: 'route' },
+      // Written by something newer: read as if they were not there.
+      'demo:checklist:lore': { type: 'timeline', addedLater: { any: 'thing' } },
+      'demo:checklist:riddles': { type: 'route' },
+    });
+    await openMap(page, './?ui=touch');
+    await openLists(page);
+    const home = page.getByTestId('lists-home');
+    const screen = page.getByTestId('checklist-screen');
+    const views = screen.locator('.touch-view-switch button');
+    await expect(
+      home.locator('section', { hasText: 'Routes' }).getByTestId('list-link'),
+    ).toHaveText([/Waystones/, /The Sundered Isle story/, new RegExp(ROUTE), new RegExp(RIDDLES)]);
+
+    // A build: in order only, with a next step.
+    await list(page, 'Waystones').click();
+    await expect(screen).toHaveAttribute('data-list-type', 'build');
+    await expect(screen).toHaveAttribute('data-view', 'order');
+    await expect(views).toHaveCount(0);
+    await expect(page.getByTestId('next-up')).toBeVisible();
+    await page.getByTestId('lists-back').click();
+
+    // A route with no place: in order, still with a next step.
+    await list(page, 'The Sundered Isle story').click();
+    await expect(screen).toHaveAttribute('data-list-type', 'route');
+    await expect(views).toHaveCount(0);
+    await expect(page.getByTestId('next-up').getByTestId('next-up-name')).toHaveText(
+      'Wake on the shore',
+    );
+    await page.getByTestId('lists-back').click();
+
+    // An unknown type: the list is what it would be without one.
+    await list(page, 'Lore of the isle').click();
+    await expect(screen).toHaveAttribute('data-list-type', 'collection');
+    await expect(views).toHaveText(['By area', 'By kind']);
+    await page.getByTestId('lists-back').click();
+
+    // In order, entries of one name are told apart by their notes.
+    await list(page, RIDDLES).click();
+    await expect(screen).toHaveAttribute('data-view', 'order');
+    const rows = screen.getByTestId('check-item');
+    await expect(rows).toHaveCount(8);
+    await expect(rows.locator('.touch-entry-name')).toHaveText(
+      Array.from({ length: 8 }, () => /Carved riddle/),
+    );
+    const lines = await rows.evaluateAll((items) =>
+      items.map((item) => item.querySelector('.touch-entry-where')!.textContent),
+    );
+    const notes = await rows.evaluateAll((items) =>
+      items.map((item) => item.querySelector('[data-testid="entry-note"]')?.textContent ?? ''),
+    );
+    const told = lines.map((line, i) => `${line} ${notes[i]}`);
+    expect(new Set(told).size).toBe(8);
+    for (const text of told) expect(text).toContain('(Hidden)');
+    expect(errors).toEqual([]);
+  });
+
+  test('hidden text in a note: told apart by kind and by area, shown on a tap, with its place', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await openMap(page, './?ui=touch');
+    await openLists(page);
+    await list(page, RIDDLES).click();
+    const screen = page.getByTestId('checklist-screen');
+    await screen.getByTestId('view-kind').click();
+    const rows = screen.getByTestId('check-item');
+    await expect(rows).toHaveCount(8);
+    // Eight entries of one name, each with its own note line; no answer in it.
+    const lines = await rows.locator('.touch-entry-where').allTextContents();
+    expect(new Set(lines).size).toBe(8);
+    for (const line of lines) {
+      expect(line).toContain('(Hidden)');
+      expect(line).not.toMatch(/The river|reward|valve by the door/);
+    }
+
+    // The note in full: the answer behind a button, shown on a tap.
+    const row = rows.filter({ hasText: 'What runs along the valley' });
+    await row.getByTestId('entry-more').click();
+    const body = row.getByTestId('entry-more-body');
+    const show = body.getByRole('button', { name: 'Show hidden text' });
+    await expect(show).toBeVisible();
+    await expect(body.getByText('The river')).toBeHidden();
+    await expect(body.locator('.hidden-text .app-link')).toBeHidden();
+    await show.tap();
+    await expect(show).toHaveCount(0);
+    await expect(body.getByText('The river')).toBeVisible();
+    // The place named in the hidden text opens.
+    const link = body.locator('.hidden-text .app-link');
+    const name = (await link.textContent())!;
+    expect(name).toMatch(/\S/);
+    await link.click();
+    await expect(page.getByTestId('selected-name')).toHaveText(name);
+
+    // An answer over several paragraphs and a list, shown with the keyboard.
+    await page.getByTestId('section-lists').click();
+    const valves = rows.filter({ hasText: 'Three valves' });
+    await valves.getByTestId('entry-more').click();
+    const steps = valves.getByTestId('entry-more-body');
+    await expect(steps.getByText('The valve by the door')).toBeHidden();
+    await steps.getByRole('button', { name: 'Show hidden text' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(steps.getByText('The valve by the door')).toBeVisible();
+    await expect(steps.locator('ol li')).toHaveCount(3);
+    await expect(steps.getByText(/the gate there opens/)).toBeVisible();
+
+    // In an area too, each entry shows its own note.
+    await screen.getByTestId('view-area').click();
+    await page.getByTestId('area-link').first().click();
+    const area = page.getByTestId('area-screen');
+    await area.getByTestId('show-all').click();
+    const inArea = await area
+      .getByTestId('check-item')
+      .locator('.touch-entry-where')
+      .allTextContents();
+    expect(inArea.length).toBeGreaterThan(1);
+    expect(new Set(inArea).size).toBe(inArea.length);
+    for (const line of inArea) expect(line).toContain('(Hidden)');
     expect(errors).toEqual([]);
   });
 

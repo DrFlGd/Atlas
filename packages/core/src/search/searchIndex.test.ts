@@ -65,6 +65,15 @@ describe('SearchIndex', () => {
     });
   });
 
+  it('does not search note text, so hidden words in notes cannot be found', () => {
+    const data = makeTestPackData();
+    data.guides[0]!.body = 'Herbs grow near water. ||The rarest one is under the zigguratbridge.||';
+    data.checklistItems[0] = { ...data.checklistItems[0]!, note: '||Ask the quartermaster.||' };
+    const hidden = new SearchIndex(indexPack(data, new URL('https://packs.example.test/demo/')));
+    expect(hidden.search('zigguratbridge')).toEqual([]);
+    expect(hidden.search('quartermaster')).toEqual([]);
+  });
+
   it('returns nothing for empty queries and respects the limit', () => {
     expect(index.search('   ')).toEqual([]);
     expect(index.search('e', 2)).toHaveLength(2);

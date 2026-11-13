@@ -12,6 +12,7 @@ import {
   doneWord,
   placesOf,
   setOnlyOnMap,
+  shapeOf,
   stagesOf,
   useItemStates,
   useListView,
@@ -69,7 +70,12 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
   const stage = next === null ? undefined : stageOf(stages, next);
   const name = entry.checklist.name;
   return (
-    <div className="touch-page" data-testid="checklist-screen" data-view={view}>
+    <div
+      className="touch-page"
+      data-testid="checklist-screen"
+      data-view={view}
+      data-list-type={shapeOf(entry).type}
+    >
       <header className="touch-page-head touch-page-head-back">
         <div className="touch-page-head-row">
           <PageBack />

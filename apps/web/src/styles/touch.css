@@ -3177,3 +3177,9 @@
     white-space: nowrap;
   }
 }
+
+/* Hidden text in notes and guides: a larger button to tap. */
+.touch .hidden-text-show {
+  padding: 0.15em 0.8em;
+  line-height: 1.9;
+}

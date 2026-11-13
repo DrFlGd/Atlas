@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COLLECTION_NAMES,
   FALLBACK_ICON,
   ICON_NAMES,
+  PACK_COLLECTIONS,
   checkPackIntegrity,
   checklistItemSchema,
   checklistSchema,
@@ -11,7 +13,9 @@ import {
   locationSchema,
   makeId,
   manifestSchema,
+  packDataReadSchema,
   packDataSchema,
+  packReadSchemas,
   parseId,
   regionSchema,
   resolveIconName,
@@ -193,6 +197,18 @@ describe('checklist and guide schemas', () => {
     }
   });
 
+  it('accepts the six list types, and nothing else when writing', () => {
+    const [checklist] = pack.checklists;
+    for (const type of ['collection', 'secrets', 'photos', 'route', 'build', 'plain']) {
+      expect(checklistSchema.safeParse({ ...checklist, type }).success).toBe(true);
+      // Older packs' kind stays next to it.
+      expect(checklistSchema.safeParse({ ...checklist, kind: 'guide', type }).success).toBe(true);
+    }
+    for (const type of ['timeline', 'Route', '', null, 3]) {
+      expect(checklistSchema.safeParse({ ...checklist, type }).success).toBe(false);
+    }
+  });
+
   it('refuses malformed values and unknown fields', () => {
     const badItems = [
       { ...item, section: '' },
@@ -208,6 +224,81 @@ describe('checklist and guide schemas', () => {
       { ...guide, chapter: 1 },
     ];
     for (const value of badGuides) expect(guideEntrySchema.safeParse(value).success).toBe(false);
+  });
+});
+
+describe('reading tolerantly, writing strictly', () => {
+  /** One record of each collection with a field no app knows yet. */
+  const withUnknownKeys = () => {
+    const pack = makeFixturePack();
+    const extra = { addedLater: { any: 'shape' } };
+    return {
+      ...pack,
+      manifest: { ...pack.manifest, ...extra },
+      maps: pack.maps.map((r) => ({ ...r, ...extra })),
+      layers: pack.layers.map((r) => ({ ...r, ...extra, tiles: { ...r.tiles, ...extra } })),
+      regions: pack.regions.map((r) => ({ ...r, ...extra })),
+      categoryGroups: pack.categoryGroups.map((r) => ({ ...r, ...extra })),
+      categories: pack.categories.map((r) => ({ ...r, ...extra })),
+      locations: pack.locations.map((r) => ({ ...r, ...extra })),
+      entities: pack.entities.map((r) => ({ ...r, ...extra })),
+      checklists: pack.checklists.map((r) => ({ ...r, ...extra, type: 'timeline' })),
+      checklistItems: pack.checklistItems.map((r) => ({ ...r, ...extra })),
+      guides: pack.guides.map((r) => ({ ...r, ...extra })),
+      links: pack.links.map((r) => ({ ...r, ...extra })),
+      presets: pack.presets.map((r) => ({ ...r, ...extra })),
+    };
+  };
+
+  it('reads a pack with unknown keys and an unknown list type, without them', () => {
+    const parsed = packDataReadSchema.safeParse(withUnknownKeys());
+    expect(parsed.success).toBe(true);
+    // What is left is the pack as this app knows it.
+    expect(JSON.parse(JSON.stringify(parsed.data))).toEqual(makeFixturePack());
+    expect(parsed.data!.checklists[0]!.type).toBeUndefined();
+    expect(checkPackIntegrity(parsed.data!)).toEqual([]);
+  });
+
+  it('refuses the same pack when writing', () => {
+    const result = packDataSchema.safeParse(withUnknownKeys());
+    expect(result.success).toBe(false);
+    const paths = result.error!.issues.map((issue) => issue.path.join('.'));
+    expect(paths).toEqual(expect.arrayContaining(['manifest', 'maps.0', 'checklists.0.type']));
+    for (const name of COLLECTION_NAMES) {
+      const records = withUnknownKeys()[name];
+      if (records.length === 0) continue;
+      expect(PACK_COLLECTIONS[name].schema.safeParse(records).success, name).toBe(false);
+      expect(PACK_COLLECTIONS[name].readSchema.safeParse(records).success, name).toBe(true);
+    }
+  });
+
+  it('reads a known list type, and treats only unknown words as absent', () => {
+    const [checklist] = makeFixturePack().checklists;
+    const read = packReadSchemas.checklistSchema;
+    expect(read.parse({ ...checklist, type: 'secrets' }).type).toBe('secrets');
+    expect(read.parse({ ...checklist, type: 'timeline' }).type).toBeUndefined();
+    expect(read.parse({ ...checklist, kind: 'chronicle' }).kind).toBeUndefined();
+    // A value of the wrong shape is still an error.
+    expect(read.safeParse({ ...checklist, type: 3 }).success).toBe(false);
+    expect(read.safeParse({ ...checklist, type: null }).success).toBe(false);
+  });
+
+  it('still refuses what is wrong rather than new when reading', () => {
+    const pack = makeFixturePack();
+    const [location] = pack.locations;
+    expect(packReadSchemas.locationSchema.safeParse({ ...location, x: 'far' }).success).toBe(false);
+    expect(
+      packReadSchemas.locationSchema.safeParse({ ...location, categoryId: undefined }).success,
+    ).toBe(false);
+    expect(
+      packReadSchemas.manifestSchema.safeParse({ ...pack.manifest, schemaVersion: 3 }).success,
+    ).toBe(false);
+    expect(
+      packReadSchemas.layerSchema.safeParse({
+        ...pack.layers[0],
+        tiles: { type: 'wms', url: 'x' },
+      }).success,
+    ).toBe(false);
   });
 });
 

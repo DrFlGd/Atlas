@@ -19,8 +19,9 @@ import { Meter } from './widgets';
 
 /**
  * The lists of a game: the one to continue, the collections (every place
- * of the game first, then the pack's lists), the routes (lists followed in
- * order), and the guides to read. A section with nothing in it is left out.
+ * of the game first, then the pack's collections, secrets, photos and
+ * plain lists), the routes (routes and builds, followed in order), and the
+ * guides to read. A section with nothing in it is left out.
  */
 export function ListsHome({ game }: { game: LoadedGame }) {
   const found = useAtlas((s) => s.found);

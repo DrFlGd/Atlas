@@ -90,3 +90,87 @@ describe('in-app links', () => {
     expect(html).toContain('data-atlas-target="demo:loc:0412">well</button>');
   });
 });
+
+describe('hidden text', () => {
+  const known = new Set(['demo:loc:0412', 'demo:loc:0413']);
+  const options = { isAppTarget: (id: string) => known.has(id) };
+  const SHOW = (part: number) =>
+    `<button type="button" class="hidden-text-show" data-hidden-show="${part}">Show hidden text</button>`;
+  const SPAN = (part: number) => `<span class="hidden-text" data-hidden-part="${part}" hidden="">`;
+
+  it('hides text inside a sentence behind a button', () => {
+    const html = renderGuideMarkdown('Pull the ||left|| lever, then the ||right|| one.');
+    expect(html).toBe(
+      `<p>Pull the ${SHOW(1)}${SPAN(1)}left</span> lever, then the ${SHOW(2)}${SPAN(2)}right</span> one.</p>\n`,
+    );
+  });
+
+  it('keeps in-app links working inside hidden text', () => {
+    const html = renderGuideMarkdown('The key: ||[Well lever](demo:loc:0412)||', options);
+    expect(html).toBe(
+      `<p>The key: ${SHOW(1)}${SPAN(1)}<button type="button" class="app-link" data-atlas-target="demo:loc:0412">Well lever</button></span></p>\n`,
+    );
+  });
+
+  it('hides a part that spans paragraphs, a list and code', () => {
+    const html = renderGuideMarkdown(
+      [
+        'Solution: ||Turn the valves in this order:',
+        '',
+        '1. Left',
+        '2. [Right](demo:loc:0413)',
+        '',
+        '```',
+        'code',
+        '```',
+        '',
+        'Then pull the lever.||',
+        '',
+        'Still shown.',
+      ].join('\n'),
+      options,
+    );
+    expect(html).toContain(
+      `<p>Solution: ${SHOW(1)}${SPAN(1)}Turn the valves in this order:</span></p>`,
+    );
+    expect(html).toContain('<ol data-hidden-part="1" hidden="">');
+    expect(html).toContain('data-atlas-target="demo:loc:0413">Right</button>');
+    expect(html).toContain(
+      '<div class="hidden-text-block" data-hidden-part="1" hidden><pre><code>code',
+    );
+    expect(html).toContain(`<p>${SPAN(1)}Then pull the lever.</span></p>`);
+    expect(html).toContain('<p>Still shown.</p>');
+    // One button for the whole part.
+    expect(html.match(/data-hidden-show/g)).toHaveLength(1);
+  });
+
+  it('nests properly with emphasis and links around the bars', () => {
+    const html = renderGuideMarkdown('**a ||b** c|| and [go ||there||](demo:loc:0412)', options);
+    expect(html).toBe(
+      `<p><strong>a ${SHOW(1)}${SPAN(1)}b</span></strong>${SPAN(1)} c</span> and ` +
+        `${SHOW(2)}<button type="button" class="app-link" data-atlas-target="demo:loc:0412">go ${SPAN(2)}there</span></button></p>\n`,
+    );
+  });
+
+  it('hides list items between bars in a tight list', () => {
+    const html = renderGuideMarkdown('- a ||b\n- c\n- d|| e');
+    expect(html).toBe(
+      `<ul>\n<li>a ${SHOW(1)}${SPAN(1)}b</span></li>\n<li data-hidden-part="1" hidden="">${SPAN(1)}c</span></li>\n<li>${SPAN(1)}d</span> e</li>\n</ul>\n`,
+    );
+  });
+
+  it('leaves a bar without a partner, bars in code and escaped bars as text', () => {
+    expect(renderGuideMarkdown('a || b')).toBe('<p>a || b</p>\n');
+    expect(renderGuideMarkdown('||a|| ||')).toBe(`<p>${SHOW(1)}${SPAN(1)}a</span> ||</p>\n`);
+    expect(renderGuideMarkdown('`x || y` ||')).toBe('<p><code>x || y</code> ||</p>\n');
+    expect(renderGuideMarkdown('\\|\\|a\\|\\|')).toBe('<p>||a||</p>\n');
+  });
+
+  it('stays safe: no raw HTML or images get in through hidden text', () => {
+    const html = renderGuideMarkdown(
+      '||<img src=x onerror="alert(1)"> ![p](https://example.test/p.png) [x](javascript:alert(1))||',
+    );
+    expect(html).not.toMatch(/<img|href="javascript|onerror="/);
+    expect(html).toContain('&lt;img');
+  });
+});

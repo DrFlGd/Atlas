@@ -492,12 +492,69 @@ function stageTally(stage: Stage, states: readonly Pick<ItemState, 'done'>[]) {
   return { done, total: stage.end - stage.start };
 }
 
+/** What a hidden part of a note reads as where the note is one plain line. */
+export const HIDDEN_TEXT = '(Hidden)';
+
+/**
+ * The hidden parts of a note: `||like this||`, possibly over several
+ * paragraphs. Bars pair up left to right; a last one without a partner is
+ * plain text. Bars in code (between backticks) and escaped bars (`\|`) do
+ * not count, as the app's Markdown renderer does not count them. Returns
+ * `[start, end)` offsets that include the bars.
+ */
+export function hiddenParts(markdown: string): [start: number, end: number][] {
+  const marks: number[] = [];
+  for (let i = 0; i < markdown.length; i++) {
+    const c = markdown[i];
+    if (c === '\\') {
+      i++;
+    } else if (c === '`') {
+      let run = 1;
+      while (markdown[i + run] === '`') run++;
+      const fence = '`'.repeat(run);
+      // The code ends at the next run of exactly as many backticks.
+      let close = markdown.indexOf(fence, i + run);
+      while (close >= 0 && markdown[close + run] === '`') {
+        let past = close;
+        while (markdown[past] === '`') past++;
+        close = markdown.indexOf(fence, past);
+      }
+      i = close < 0 ? i + run - 1 : close + run - 1;
+    } else if (c === '|' && markdown[i + 1] === '|') {
+      marks.push(i);
+      i++;
+    }
+  }
+  const parts: [number, number][] = [];
+  for (let m = 0; m + 1 < marks.length; m += 2) parts.push([marks[m]!, marks[m + 1]! + 2]);
+  return parts;
+}
+
+/**
+ * A note with each hidden part (see {@link hiddenParts}) put as
+ * `replacement`, so that no hidden word shows or can be found where the
+ * note is plain text.
+ */
+export function withoutHiddenText(markdown: string, replacement = HIDDEN_TEXT): string {
+  let out = '';
+  let at = 0;
+  for (const [start, end] of hiddenParts(markdown)) {
+    out += markdown.slice(at, start) + replacement;
+    at = end;
+  }
+  return out + markdown.slice(at);
+}
+
 /**
  * A note in Markdown as one line of plain text: links keep their text,
- * marks and markup go, and only the first paragraph is kept.
+ * marks and markup go, hidden parts read "(Hidden)", and only the first
+ * paragraph is kept.
  */
 export function plainNote(markdown: string): string {
-  const first = markdown.trim().split(/\n\s*\n/)[0] ?? '';
+  const first =
+    withoutHiddenText(markdown)
+      .trim()
+      .split(/\n\s*\n/)[0] ?? '';
   return first
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')

@@ -1,8 +1,9 @@
-import { areaOfPlace, plainNote, type ChecklistEntry } from '@atlas/core';
+import { areaOfPlace, type ChecklistEntry } from '@atlas/core';
 import { UiIcon } from '../components/icons';
 import { setEntryDone, showItemPlace } from '../state/checklists';
 import { numberFormat } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { entryNote } from './listText';
 import {
   areaName,
   centreOn,
@@ -92,6 +93,7 @@ function NextCard({ game, entry }: { game: LoadedGame; entry: ChecklistEntry }) 
   const kind = first ? game.pack.categories.get(first.categoryId)?.name : undefined;
   const where = first ? areaName(game, areaOfPlace(game.pack, first)) : undefined;
   const region = first?.regionId ? game.pack.regions.get(first.regionId)?.name : where;
+  const note = entryNote(game, item);
   return (
     <section className="touch-next-card" aria-label="Next up" data-testid="next-up-card">
       <div className="touch-next-card-head">
@@ -121,7 +123,7 @@ function NextCard({ game, entry }: { game: LoadedGame; entry: ChecklistEntry }) 
           </button>
         ) : null}
       </div>
-      {item.item.note ? <p className="touch-next-card-note">{plainNote(item.item.note)}</p> : null}
+      {note ? <p className="touch-next-card-note">{note}</p> : null}
       <div className="touch-next-card-actions">
         <DoneButton entry={entry} next={next} />
         <button

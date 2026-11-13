@@ -2924,12 +2924,12 @@ mod tests {
             s.library.start();
             let pack = s.library.maps_folder().join("my-game");
             assert!(pack.join("tiles/a/0/0/0.png").exists(), "installed");
-            // A finished download.
+            // A finished download. The slow server takes about ten seconds for
+            // the 320 images at best, and three times that on a busy machine,
+            // so the wait ends at a time, not after a count of short sleeps.
             s.manager.start("my-game", Detail::Full).unwrap();
-            for _ in 0..800 {
-                if !s.manager.is_active("my-game") {
-                    break;
-                }
+            let give_up = std::time::Instant::now() + Duration::from_secs(120);
+            while s.manager.is_active("my-game") && std::time::Instant::now() < give_up {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
             assert_eq!(s.manager.snapshot("my-game").unwrap().state, JobState::Done);
