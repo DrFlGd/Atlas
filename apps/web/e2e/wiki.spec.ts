@@ -439,3 +439,55 @@ test.describe('pages their site shows only to a person', () => {
     expect(realErrors(errors)).toEqual([]);
   });
 });
+
+test('the box of a heading ticks every page shown under it, never one left out', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  // Basics lists Welcome (read when the wiki is added) and Gates; Welcome links to three pages no heading lists.
+  await setUp(page, true, {
+    wiki: {
+      ...EXAMPLE_WIKI,
+      headings: [
+        { title: 'Basics', pages: ['Welcome', 'Gates'] },
+        { title: 'Sights', pages: ['Harbour', 'Lighthouse'] },
+      ],
+    },
+  });
+  await addWiki(page);
+  const preview = page.getByTestId('wiki-preview');
+  await row(page, 'Gates').getByTestId('wiki-row-open').click();
+  await preview.getByTestId('wiki-leave-out').click();
+  await expect(row(page, 'Gates')).toHaveAttribute('data-state', 'left-out');
+  const basics = page.locator('[data-testid="wiki-group"][data-group="Basics"]');
+  const box = basics.getByTestId('wiki-group-tick');
+  await expect(box).toHaveAccessibleName('Tick the pages under Basics');
+  await expect(basics.getByTestId('wiki-found')).toContainText('Found on Welcome, not read');
+
+  // Every page it lists is read or left out, and it still ticks: Welcome and the three found on it.
+  await expect(box).toBeEnabled();
+  await box.check();
+  await expect(page.getByTestId('wiki-ticked')).toHaveText('4 pages ticked');
+  await expect(basics).toContainText('4 ticked');
+  await expect(basics.getByTestId('wiki-found-tick')).toBeChecked();
+  await expect(row(page, 'Welcome').getByTestId('wiki-row-tick')).toBeChecked();
+  await expect(row(page, 'Gates').getByTestId('wiki-row-tick')).not.toBeChecked();
+  // Unticking a page under it leaves the box in between; clicking it again unticks them all.
+  await row(page, 'Welcome').getByTestId('wiki-row-tick').uncheck();
+  await expect(box).toHaveJSProperty('indeterminate', true);
+  await box.click();
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  await expect(page.getByTestId('wiki-ticked')).toHaveText('No page ticked');
+
+  // With "Not read" shown, it ticks only the pages that filter shows under it.
+  await page.getByTestId('wiki-filter-not-read').click();
+  await box.check();
+  await expect(page.getByTestId('wiki-ticked')).toHaveText('3 pages ticked');
+  await page.getByTestId('wiki-filter-all').click();
+  await expect(row(page, 'Welcome').getByTestId('wiki-row-tick')).not.toBeChecked();
+  await expect(row(page, 'Gates').getByTestId('wiki-row-tick')).not.toBeChecked();
+  await expect(box).toHaveJSProperty('indeterminate', true);
+  expect(realErrors(errors)).toEqual([]);
+});

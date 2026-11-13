@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { NO_WIKI_NOTES, type WikiNotes } from '../state/wikiNotes';
-import { allRows, readWhen, readingTime, wikiGroups } from './wikiRows';
+import {
+  allRows,
+  headingPages,
+  headingTick,
+  matchesFilter,
+  readWhen,
+  readingTime,
+  wikiGroups,
+  type WikiFilter,
+  type WikiGroup,
+} from './wikiRows';
 
 const WIKI = 'https://wiki.example.org/wiki';
 
@@ -74,6 +84,89 @@ describe('the rows of the wiki screen', () => {
     expect(allRows(groups).map((row) => [row.title, row.group, row.state])).toEqual([
       ['Welcome', 'Other pages', 'read'],
     ]);
+  });
+});
+
+describe('the box of a heading', () => {
+  /** Basics: Welcome and Bells read, Gates left out; Welcome links to two pages the contents do not list. */
+  const groups = () =>
+    wikiGroups({
+      contents: {
+        ...contents,
+        pages: [
+          { url: `${WIKI}/Welcome`, title: 'Welcome', group: 'Basics' },
+          { url: `${WIKI}/Bells`, title: 'Bells', group: 'Basics' },
+          { url: `${WIKI}/Gates`, title: 'Gates', group: 'Basics' },
+          { url: `${WIKI}/Harbour`, title: 'Harbour', group: 'Places' },
+        ],
+      },
+      read: [{ url: `${WIKI}/Welcome` }, { url: `${WIKI}/Bells` }],
+      guides: [],
+      notes: {
+        ...NO_WIKI_NOTES,
+        links: {
+          'https://wiki.example.org/wiki/Welcome': [
+            `${WIKI}/Old_bell`,
+            `${WIKI}/Rusty_gate`,
+            `${WIKI}/Gates`,
+          ],
+        },
+        leftOut: [
+          'https://wiki.example.org/wiki/Gates',
+          'https://wiki.example.org/wiki/Rusty_gate',
+        ],
+      },
+    });
+  /** The heading as the wiki screen shows it with `filter`. */
+  const shown = (group: WikiGroup, filter: WikiFilter): WikiGroup => ({
+    ...group,
+    rows: group.rows.filter((row) => matchesFilter(row, filter)),
+    found: group.found
+      .map((found) => ({ ...found, pages: found.pages.filter((p) => matchesFilter(p, filter)) }))
+      .filter((found) => found.pages.length > 0),
+  });
+
+  it('ticks the pages listed and those found on them, read or not, never one left out', () => {
+    const basics = groups()[0]!;
+    expect(basics.title).toBe('Basics');
+    // Every page listed under it that is not left out was read; the box still ticks, with the page found.
+    expect(basics.rows.filter((row) => row.state !== 'read').map((row) => row.state)).toEqual([
+      'left-out',
+    ]);
+    const pages = headingPages(shown(basics, 'all'));
+    expect(pages.map((row) => row.title)).toEqual(['Welcome', 'Bells', 'Old bell']);
+    expect(headingTick(pages, new Set()).disabled).toBe(false);
+  });
+
+  it('with a filter on, ticks only what the filter shows under it', () => {
+    const basics = groups()[0]!;
+    expect(headingPages(shown(basics, 'not-read')).map((row) => row.title)).toEqual(['Old bell']);
+    expect(headingPages(shown(basics, 'read')).map((row) => row.title)).toEqual([
+      'Welcome',
+      'Bells',
+    ]);
+    expect(headingPages(shown(basics, 'left-out'))).toEqual([]);
+    expect(headingTick([], new Set()).disabled).toBe(true);
+  });
+
+  it('is ticked when all its pages are, in between when some are', () => {
+    const pages = headingPages(groups()[0]!);
+    const keys = pages.map((row) => row.key);
+    expect(headingTick(pages, new Set())).toEqual({
+      checked: false,
+      indeterminate: false,
+      disabled: false,
+    });
+    expect(headingTick(pages, new Set(keys.slice(0, 1)))).toEqual({
+      checked: false,
+      indeterminate: true,
+      disabled: false,
+    });
+    expect(headingTick(pages, new Set(keys))).toEqual({
+      checked: true,
+      indeterminate: false,
+      disabled: false,
+    });
   });
 });
 

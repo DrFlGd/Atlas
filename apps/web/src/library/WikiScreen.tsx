@@ -25,6 +25,8 @@ import {
   WIKI_FILTERS,
   allRows,
   canTick,
+  headingPages,
+  headingTick,
   matchesFilter,
   readWhen,
   readingTime,
@@ -527,27 +529,27 @@ function Group({
 }) {
   const id = useId();
   const read = whole.rows.filter((row) => row.state === 'read').length;
-  // The heading ticks the pages under it that were not read, and are not left out.
-  const tickable = whole.rows.filter(unread);
-  const tickedHere = whole.rows.filter((row) => ticked.has(row.key) && canTick(row)).length;
-  const all = tickable.length > 0 && tickable.every((row) => ticked.has(row.key));
+  // The heading ticks every page shown under it, those found on its pages too; never one left out.
+  const tickable = headingPages(group);
+  const box = headingTick(tickable, ticked);
+  const tickedHere = headingPages(whole).filter((row) => ticked.has(row.key)).length;
   return (
     <section className="wiki-group" data-testid="wiki-group" data-group={group.title}>
       <div className="wiki-group-head">
         <input
           id={id}
           type="checkbox"
-          aria-label={`Tick the pages under ${group.title} that were not read`}
+          aria-label={`Tick the pages under ${group.title}`}
           data-testid="wiki-group-tick"
-          checked={all}
-          disabled={tickable.length === 0}
+          checked={box.checked}
+          disabled={box.disabled}
           ref={(input) => {
-            if (input) input.indeterminate = !all && tickable.some((row) => ticked.has(row.key));
+            if (input) input.indeterminate = box.indeterminate;
           }}
           onChange={() => {
             onTick(
               tickable.map((row) => row.key),
-              !all,
+              !box.checked,
             );
           }}
         />
