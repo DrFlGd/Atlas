@@ -1,7 +1,7 @@
 {
   "$schema": "../../gen/schemas/desktop-schema.json",
   "identifier": "main-downloads",
-  "description": "Only in a build with downloads (the `downloads` Cargo feature, ATLAS_ENABLE_DOWNLOADS=1): the main window's commands for downloading map images and their settings, for measuring which map images of an imported map exist, and for viewing a map page and saving its images as the person browses. No other window is granted anything.",
+  "description": "Only in a build with downloads (the `downloads` Cargo feature, ATLAS_ENABLE_DOWNLOADS=1): the main window's commands for downloading map images and their settings, for measuring which map images of an imported map exist, for reading pages for an importer that fetches them, and for viewing a map page and saving its images as the person browses. No other window is granted anything.",
   "windows": ["main"],
   "permissions": [
     "allow-tiles-plan",
@@ -12,6 +12,7 @@
     "allow-tiles-snapshot",
     "allow-picture-tiles",
     "allow-picture-cancel",
+    "allow-import-fetch",
     "allow-download-settings-get",
     "allow-download-settings-set",
     "allow-view-pages",

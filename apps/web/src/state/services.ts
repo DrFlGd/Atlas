@@ -100,4 +100,6 @@ export const SETTINGS = {
   gamePins: (readerId: string) => `gamePins:${readerId}`,
   /** A site's list of games as it was last read, kept so it need not be read each time. */
   catalogue: (importerId: string) => `catalogue:${importerId}`,
+  /** Pages chosen to read that did not fit in one go, by game, for an importer that keeps them. */
+  pageQueue: (importerId: string) => `pageQueue:${importerId}`,
 } as const;

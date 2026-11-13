@@ -1,6 +1,7 @@
 import { tickChanges, type ChecklistItemEntry } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import { applyProgress, goToLocation, goToRegion, notify, setPane, showMap } from './actions';
+import { pictureOf } from './guides';
 import { ownItemById } from './ownLists';
 import { useAtlas, type ChecklistPage, type LeftTab, type LoadedGame } from './store';
 
@@ -65,7 +66,18 @@ export function openChecklistItem(itemId: string): void {
   set({ itemFocus: { itemId, seq: ++focusSeq, open: true } });
 }
 
+/**
+ * Where a layout reads a guide as a page instead (the standard layout's
+ * Guides section): returns whether it opened it there.
+ */
+let guideReader: ((id: string) => boolean) | null = null;
+
+export function setGuideReader(reader: ((id: string) => boolean) | null): void {
+  guideReader = reader;
+}
+
 export function openGuide(id: string): void {
+  if (guideReader?.(id)) return;
   openChecklistPage({ kind: 'guide', id });
 }
 
@@ -169,7 +181,10 @@ export function followAppLink(rawId: string): void {
   }
 }
 
-/** Markdown options for a pack: which in-app links can be followed. */
+/** Markdown options for a pack: which in-app links can be followed, and its pictures. */
 export function markdownOptionsFor(game: LoadedGame) {
-  return { isAppTarget: (id: string) => appLinkKind(game, id) !== null };
+  return {
+    isAppTarget: (id: string) => appLinkKind(game, id) !== null,
+    picture: (id: string) => pictureOf(game, id),
+  };
 }

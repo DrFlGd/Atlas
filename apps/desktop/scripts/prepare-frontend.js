@@ -147,10 +147,16 @@ async function importerEntry(path) {
     if (importer.apiVersion !== 1) problems.push('apiVersion is not 1');
     if (typeof importer.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(importer.id))
       problems.push('id is not a lowercase slug');
-    for (const key of ['title', 'description', 'version', 'pageReader']) {
+    for (const key of ['title', 'description', 'version']) {
       if (typeof importer[key] !== 'string' || importer[key] === '')
         problems.push(`${key} is missing`);
     }
+    // A page is read by the importer's page reader, or by the app fetching
+    // the addresses the importer names.
+    const fetch = /** @type {{ addresses?: unknown } | undefined} */ (importer.fetch);
+    const readsByFetching = typeof fetch === 'object' && typeof fetch?.addresses === 'function';
+    if (!readsByFetching && (typeof importer.pageReader !== 'string' || importer.pageReader === ''))
+      problems.push('pageReader is missing (and there is no fetch.addresses)');
     for (const key of ['matches', 'convert']) {
       if (typeof importer[key] !== 'function') problems.push(`${key} is not a function`);
     }

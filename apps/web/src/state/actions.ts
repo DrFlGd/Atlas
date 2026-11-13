@@ -179,15 +179,16 @@ export async function loadGame(
     const layer =
       (place?.layerId ? pack.layers.get(place.layerId) : undefined) ??
       pack.layersOf(pack.data.maps[0]?.id ?? '')[0];
-    if (!layer) throw new Error('The pack has no map layers.');
+    // A game with no map (guides and lists only) has no layer to show.
+    if (!layer && pack.data.maps.length > 0) throw new Error('The pack has no map layers.');
 
     if (token !== loadToken) return false;
     const rowMap = new Map(rows.map((r) => [r.targetId, r]));
     set({
       status: { kind: 'ready' },
       game: { entry, pack, counter, search, checklists },
-      mapId: layer.mapId,
-      layerId: layer.id,
+      mapId: layer?.mapId ?? null,
+      layerId: layer?.id ?? null,
       selectedId: null,
       hover: null,
       tileStatus: null,

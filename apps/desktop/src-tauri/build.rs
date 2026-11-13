@@ -58,8 +58,8 @@ const COMMANDS: &[&str] = &[
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map
-/// images", measuring an imported map's picture, and "View map page and save
-/// images as I browse".
+/// images", measuring an imported map's picture, "View map page and save
+/// images as I browse", and reading pages for importers that fetch them.
 const DOWNLOAD_COMMANDS: &[&str] = &[
     "tiles_plan",
     "tiles_start",
@@ -69,6 +69,7 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "tiles_snapshot",
     "picture_tiles",
     "picture_cancel",
+    "import_fetch",
     "download_settings_get",
     "download_settings_set",
     "view_pages",

@@ -435,11 +435,17 @@ export function PackSummary({ id }: { id: string }) {
   }, [id, library]);
   if (!details) return null;
   const detail = details.detail ?? details.packFile?.header.detail ?? null;
+  const { maps, locations, guides } = details.contents;
   const parts = [
     detail ? DETAIL_WORDS[detail] : null,
     details.packFile ? formatBytes(details.packFile.header.bytes) : null,
-    `${details.contents.maps.toLocaleString('en')} map${details.contents.maps === 1 ? '' : 's'}`,
-    `${details.contents.locations.toLocaleString('en')} location${details.contents.locations === 1 ? '' : 's'}`,
+    // A game of guides and lists only: no map, and its guides counted instead.
+    ...(maps === 0
+      ? ['No map', `${guides.toLocaleString('en')} guide${guides === 1 ? '' : 's'}`]
+      : [
+          `${maps.toLocaleString('en')} map${maps === 1 ? '' : 's'}`,
+          `${locations.toLocaleString('en')} location${locations === 1 ? '' : 's'}`,
+        ]),
   ].filter((part) => part !== null);
   return (
     <span className="muted small" data-testid="pack-summary">

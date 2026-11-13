@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
 import { downloadsOffered } from '../features';
 import { setDownloadPanelOpen } from '../state/downloads';
@@ -8,7 +9,10 @@ import {
   cancelImport,
   catalogueImporters,
   confirmChecked,
+  continueQueue,
+  forgetQueue,
   pictureText,
+  queuedGames,
   resetImport,
   setAddMapOpen,
   setDraft,
@@ -16,6 +20,7 @@ import {
   submitAddresses,
   useImport,
   type ImportPhase,
+  type QueuedGame,
 } from '../state/importing';
 import {
   MAX_RUN_ADDRESSES,
@@ -180,6 +185,7 @@ function AddressForm({ failure }: { failure: string | null }) {
         </p>
       ) : null}
       <BrowseGames />
+      <QueuedPages />
       {importers.length > 0 ? (
         <div className="muted small">
           <p>This app can add maps from:</p>
@@ -234,6 +240,62 @@ function BrowseGames() {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Pages chosen in an earlier go that did not fit: continue reading them, or forget them. */
+function QueuedPages() {
+  const version = useImport((s) => s.queueVersion);
+  const [games, setGames] = useState<QueuedGame[]>([]);
+  useEffect(() => {
+    let live = true;
+    queuedGames().then(
+      (found) => {
+        if (live) setGames(found);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [version]);
+  if (games.length === 0) return null;
+  return (
+    <div className="add-map-browse" data-testid="add-map-queued">
+      <p className="muted small">
+        Pages you chose earlier that did not fit in one go. This app reads at most{' '}
+        {MAX_RUN_ADDRESSES} at a time.
+      </p>
+      <ul className="add-map-pick-list">
+        {games.map((game) => (
+          <li key={`${game.importerId} ${game.key}`} data-testid="add-map-queued-game">
+            <span>
+              <strong>{game.game}</strong>{' '}
+              <span className="muted small">
+                {game.pages.length} {game.pages.length === 1 ? 'page' : 'pages'} left
+              </span>
+            </span>
+            <span className="row-actions">
+              <button
+                type="button"
+                className="button"
+                data-testid="add-map-queued-continue"
+                onClick={() => void continueQueue(game.importerId, game.key)}
+              >
+                Read the next {Math.min(MAX_RUN_ADDRESSES, game.pages.length)}
+              </button>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => void forgetQueue(game.importerId, game.key)}
+              >
+                Forget them
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -392,12 +454,29 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
               : `Added ${summary.map} to ${summary.game}.`}
         </strong>
       </p>
-      {summary.checklist && !phase.rebuilt ? (
+      {phase.guideId && !phase.rebuilt ? (
+        <p className="muted" data-testid="add-map-guide">
+          It is a page of the game’s guides now, with the credit of the site it came from.
+        </p>
+      ) : summary.checklist && !phase.rebuilt ? (
         <ChecklistResult checklist={summary.checklist} />
       ) : (
         <MapFigures phase={phase} downloadable={downloadable} />
       )}
       <div className="row-actions wrap">
+        {phase.guideId && !phase.rebuilt ? (
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => {
+              const id = phase.guideId;
+              setAddMapOpen(false);
+              if (id) openGuide(id);
+            }}
+          >
+            Read it
+          </button>
+        ) : null}
         {__ATLAS_DOWNLOADS__ && downloadable ? (
           <button
             type="button"
@@ -534,6 +613,7 @@ function PageState({ state }: { state: RunPageState }) {
           {state.refreshed ? 'Refreshed' : 'Added'} “{state.map}”{' '}
           <span className="muted">
             {state.refreshed ? 'in' : 'to'} {state.game}
+            {state.guide ? ', a page of its guides' : ''}
             {state.checklist
               ? `, a checklist of ${state.checklist.items} ${state.checklist.items === 1 ? 'item' : 'items'}${
                   state.checklist.leftOut > 0

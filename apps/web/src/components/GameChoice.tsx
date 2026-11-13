@@ -19,7 +19,9 @@ import {
   setCatalogueQuery,
   stopRun,
   toggleCatalogueGame,
+  tickChoiceFrom,
   toggleChoice,
+  toggleChoiceGroup,
   toggleUpdateGame,
   updateCatalogue,
   type ImportPhase,
@@ -346,6 +348,8 @@ export function ChoosePages({ choice }: { choice: Choice }) {
   );
   const noun = allMaps ? ['map', 'maps'] : ['page', 'pages'];
   const verb = choice.mode === 'update' ? 'Update' : 'Add';
+  const queues = choice.games.some((game) => game.queues);
+  const left = pagesLeft(choice.opened);
   return (
     <section className="dialog-section" data-testid="add-map-choose" data-mode={choice.mode}>
       <p>
@@ -356,8 +360,18 @@ export function ChoosePages({ choice }: { choice: Choice }) {
               ? `Choose what to add from ${choice.games[0]!.title}.`
               : 'Choose what to add.'}
         </strong>{' '}
-        Everything this app can add is ticked to start with, maps first. Pages it cannot add yet are
-        listed so you know they are there.
+        {queues ? (
+          <>
+            Tick a section, or a page and “From here on”. This app reads at most {MAX_RUN_ADDRESSES}{' '}
+            pages in one go, one at a time with a pause; it keeps the rest, and Add a map offers to
+            continue with them another time.
+          </>
+        ) : (
+          <>
+            Everything this app can add is ticked to start with, maps first. Pages it cannot add yet
+            are listed so you know they are there.
+          </>
+        )}
       </p>
       {choice.capped > 0 ? (
         <p className="download-note" data-testid="add-map-choose-capped">
@@ -402,7 +416,19 @@ export function ChoosePages({ choice }: { choice: Choice }) {
                     data-state={note.tone}
                     data-url={page.url}
                   >
-                    {group ? (
+                    {group && game.queues ? (
+                      <button
+                        type="button"
+                        className="link-button add-map-choice-group small"
+                        data-testid="add-map-choose-group"
+                        title={`Tick or untick every page under ${page.group}`}
+                        onClick={() => {
+                          toggleChoiceGroup(game.key, page.group);
+                        }}
+                      >
+                        {page.group}
+                      </button>
+                    ) : group ? (
                       <span className="add-map-choice-group small">{page.group}</span>
                     ) : null}
                     <label htmlFor={id} className="checkbox-row">
@@ -420,6 +446,21 @@ export function ChoosePages({ choice }: { choice: Choice }) {
                     <span className="muted small">
                       {kindLabel(page.kind)} ·{' '}
                       <span className={note.tone === 'new' ? 'badge' : undefined}>{note.text}</span>
+                      {game.queues && page.supported ? (
+                        <>
+                          {' · '}
+                          <button
+                            type="button"
+                            className="link-button"
+                            data-testid="add-map-choose-from"
+                            onClick={() => {
+                              tickChoiceFrom(game.key, page.url);
+                            }}
+                          >
+                            From here on
+                          </button>
+                        </>
+                      ) : null}
                     </span>
                   </li>
                 );
@@ -444,7 +485,9 @@ export function ChoosePages({ choice }: { choice: Choice }) {
         >
           {maps === 0
             ? `Tick the ${noun[1]} to ${verb.toLowerCase()}`
-            : `${verb} ${plural(maps, noun[0]!, noun[1]!)}`}
+            : queues && maps > left
+              ? `Read ${left} now, keep ${maps - left} for later`
+              : `${verb} ${plural(maps, noun[0]!, noun[1]!)}`}
         </button>
         <button
           type="button"
