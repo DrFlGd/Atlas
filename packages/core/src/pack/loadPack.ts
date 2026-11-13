@@ -36,6 +36,9 @@ export interface LoadPackOptions {
 /** Highest number of issues listed in a {@link PackLoadError}. */
 const MAX_LISTED_ISSUES = 20;
 
+/** Files read only for a pack that has guides. */
+const GUIDE_FILES: readonly CollectionName[] = ['sections', 'pictures'];
+
 /**
  * Loads, validates and indexes the data pack at `packUrl`. The URL must be
  * absolute and point at the pack root folder (the one holding
@@ -91,10 +94,18 @@ export async function loadPack(
 
   // A game with no map may leave out every map file, but not some of them.
   const mapFiles: readonly CollectionName[] = MAP_COLLECTIONS;
+  const read = (name: CollectionName) => {
+    const spec = PACK_COLLECTIONS[name];
+    return readJson(spec.file, spec.required && !mapFiles.includes(name));
+  };
+  // The contents and the pictures belong to the guides: a pack without
+  // guides is not asked for them, so older packs cause no extra requests.
+  const guides = read('guides');
   const raws = await Promise.all(
     COLLECTION_NAMES.map((name) => {
-      const spec = PACK_COLLECTIONS[name];
-      return readJson(spec.file, spec.required && !mapFiles.includes(name));
+      if (name === 'guides') return guides;
+      if (!GUIDE_FILES.includes(name)) return read(name);
+      return guides.then((raw) => (Array.isArray(raw) && raw.length > 0 ? read(name) : undefined));
     }),
   );
   const noMap = COLLECTION_NAMES.every(

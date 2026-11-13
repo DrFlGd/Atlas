@@ -280,4 +280,22 @@ describe('loadPack: a game with no map', () => {
     expect(pack.data.sections).toEqual([]);
     expect(pack.data.pictures).toEqual([]);
   });
+
+  it('asks for the contents and pictures only of a pack with guides', async () => {
+    const asked = (requested: string[]) =>
+      requested.filter((url) => /(sections|pictures)\.json$/u.test(url));
+    const withGuides = servePack(files());
+    await loadPack(BASE, { fetch: withGuides.fetchFn });
+    expect(asked(withGuides.requested)).toEqual([`${BASE}sections.json`, `${BASE}pictures.json`]);
+    const fixture = makeFixturePack();
+    const plain: PackData = {
+      ...fixture,
+      guides: [],
+      locations: fixture.locations.map((location) => ({ ...location, guideId: null })),
+    };
+    const noGuides = servePack(packFiles(plain));
+    const pack = await loadPack(BASE, { fetch: noGuides.fetchFn });
+    expect(asked(noGuides.requested)).toEqual([]);
+    expect(pack.data.sections).toEqual([]);
+  });
 });
