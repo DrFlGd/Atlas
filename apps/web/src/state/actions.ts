@@ -51,9 +51,17 @@ let noticeSeq = 0;
 export function notify(
   text: string,
   tone: 'info' | 'error' = 'info',
-  options: { undo?: boolean } = {},
+  options: { undo?: boolean; action?: { label: string; run: () => void } } = {},
 ): void {
-  set({ notice: { text, tone, seq: ++noticeSeq, ...(options.undo ? { undo: true } : {}) } });
+  set({
+    notice: {
+      text,
+      tone,
+      seq: ++noticeSeq,
+      ...(options.undo ? { undo: true } : {}),
+      ...(options.action ? { action: options.action } : {}),
+    },
+  });
 }
 
 export function saveSetting(key: string, value: unknown): void {
