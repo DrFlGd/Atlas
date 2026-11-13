@@ -241,6 +241,11 @@ button.guides-crumb:hover {
   border-color: var(--atlas-accent);
 }
 
+.guides-search-input:focus-visible {
+  /* The box around it shows the focus. */
+  outline: none;
+}
+
 .guides-search-input {
   flex: 1;
   min-width: 0;

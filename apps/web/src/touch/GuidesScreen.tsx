@@ -165,6 +165,13 @@ function Breadcrumbs({ game, place }: { game: LoadedGame; place: ReaderPlace }) 
         ? contents.pathTo(place.sectionId)
         : [];
   const atTop = place.kind === 'contents' && place.sectionId === null;
+  // A section or a search shows itself last; a page's title is under the bar.
+  const here =
+    place.kind === 'search'
+      ? 'Search'
+      : place.kind === 'contents' && place.sectionId
+        ? (contents.section(place.sectionId)?.title ?? null)
+        : null;
   return (
     <nav className="guides-crumbs" aria-label="Where this is">
       {atTop ? (
@@ -196,6 +203,16 @@ function Breadcrumbs({ game, place }: { game: LoadedGame; place: ReaderPlace }) 
           </button>
         </span>
       ))}
+      {here ? (
+        <span className="guides-crumb-part">
+          <span className="guides-crumb-sep" aria-hidden="true">
+            ›
+          </span>
+          <span className="guides-crumb guides-crumb-here" aria-current="page">
+            {here}
+          </span>
+        </span>
+      ) : null}
     </nav>
   );
 }
@@ -443,6 +460,7 @@ function SearchResults({ game, query }: { game: LoadedGame; query: string }) {
   const hits = useMemo(() => guidesOf(game).search.search(query, 100), [game, query]);
   return (
     <div className="guides-results" data-testid="guides-results">
+      <h1 className="guides-title">Search</h1>
       <p className="guides-lead" aria-live="polite">
         {hits.length === 0
           ? `No page has “${query.trim()}”.`
