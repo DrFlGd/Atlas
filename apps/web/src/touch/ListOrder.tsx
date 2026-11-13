@@ -5,7 +5,6 @@ import {
   itemState,
   nextStep,
   orderRows,
-  plainNote,
   type ChecklistEntry,
   type ItemState,
   type OrderRow,
@@ -19,7 +18,7 @@ import { numberFormat } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { NextUpBar } from './ListNextUp';
 import { EntryRow, GroupHeader } from './ListRows';
-import { entryWhere, ROW_HEIGHT } from './listText';
+import { entryNote, entryWhere, ROW_HEIGHT } from './listText';
 import { useListTools } from './ListTools';
 import {
   areaName,
@@ -174,17 +173,23 @@ export function OrderView({
                 case 'item': {
                   const item = entry.items[row.index]!;
                   const isNext = row.index === next;
+                  const state = states[row.index]!;
+                  // Every row says which entry it is by its note (entries
+                  // can share a name); the next step has it on a line of its own.
+                  const note = entryNote(game, item);
                   return (
                     <EntryRow
                       game={game}
                       entry={item}
-                      state={states[row.index]!}
+                      state={state}
                       detail={
-                        steps ? stepDetail(game, item, states[row.index]!, row.index) : undefined
+                        steps
+                          ? stepDetail(game, item, state, row.index, isNext ? undefined : note)
+                          : note
                       }
                       more
                       next={isNext}
-                      note={isNext && item.item.note ? plainNote(item.item.note) : undefined}
+                      note={isNext ? note : undefined}
                     />
                   );
                 }
@@ -202,13 +207,15 @@ export function OrderView({
   );
 }
 
-/** "Step 10 · Chest · Duskmoor". */
+/** "Step 10 · Chest · Duskmoor", or "Step 10 · " and the entry's note when it has one. */
 function stepDetail(
   game: LoadedGame,
   item: ChecklistEntry['items'][number],
   state: ItemState,
   index: number,
+  note?: string,
 ): string {
+  if (note) return `Step ${numberFormat.format(index + 1)} · ${note}`;
   const first = item.places.length > 0 ? game.pack.locations.get(item.places[0]!) : undefined;
   const kind = first ? game.pack.categories.get(first.categoryId)?.name : undefined;
   return [
