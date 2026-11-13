@@ -1,5 +1,6 @@
 import { MAX_PAGE_LINKS, pageKey } from '@atlas/importer-api';
 import { create } from 'zustand';
+import { DEFAULT_FOLLOW, isFollowLinks, type FollowLinks } from './followLinks';
 import { SETTINGS, progressStore } from './services';
 
 /**
@@ -18,6 +19,8 @@ import { SETTINGS, progressStore } from './services';
  * - `wikiLeftOut:<importer id>`: the page keys of pages the person left
  *   out. They are never ticked or read until taken back in. A page read
  *   before is also hidden from Guides, among the person's own pages.
+ * - `wikiFollow:<importer id>`: how far a go follows the links of the
+ *   pages it reads (`followLinks.ts`), as the person last chose.
  *
  * Nothing here is fetched: these are notes on what the person read.
  */
@@ -53,9 +56,16 @@ export interface WikiNotes {
   failed: Record<string, WikiFailure>;
   links: Record<string, string[]>;
   leftOut: string[];
+  follow: FollowLinks;
 }
 
-export const NO_WIKI_NOTES: WikiNotes = { contents: {}, failed: {}, links: {}, leftOut: [] };
+export const NO_WIKI_NOTES: WikiNotes = {
+  contents: {},
+  failed: {},
+  links: {},
+  leftOut: [],
+  follow: DEFAULT_FOLLOW,
+};
 
 /** Wikis' contents kept per importer, pages with failures and with links, left-out pages: at most. */
 const MAX_CONTENTS = 50;
@@ -131,17 +141,19 @@ export function loadWikiNotes(importerId: string): Promise<WikiNotes> {
     pending = (async () => {
       const store = progressStore();
       const get = (key: string) => store.getSetting(key).catch((): unknown => undefined);
-      const [contents, failed, links, leftOut] = await Promise.all([
+      const [contents, failed, links, leftOut, follow] = await Promise.all([
         get(SETTINGS.wikiContents(importerId)),
         get(SETTINGS.wikiFailed(importerId)),
         get(SETTINGS.wikiLinks(importerId)),
         get(SETTINGS.wikiLeftOut(importerId)),
+        get(SETTINGS.wikiFollow(importerId)),
       ]);
       const notes: WikiNotes = {
         contents: readContents(contents),
         failed: readFailed(failed),
         links: readLinks(links),
         leftOut: readLeftOut(leftOut),
+        follow: isFollowLinks(follow) ? follow : DEFAULT_FOLLOW,
       };
       // Changes made while reading win.
       const now = useWikiNotes.getState().byImporter[importerId];
@@ -166,13 +178,16 @@ async function change(
   part: keyof WikiNotes,
   next: (notes: WikiNotes) => WikiNotes,
 ): Promise<void> {
-  const notes = next(await loadWikiNotes(importerId));
+  const loaded = await loadWikiNotes(importerId);
+  // The notes as they are now: another change may have been made meanwhile.
+  const notes = next(useWikiNotes.getState().byImporter[importerId] ?? loaded);
   setNotes(importerId, notes);
   const key = {
     contents: SETTINGS.wikiContents,
     failed: SETTINGS.wikiFailed,
     links: SETTINGS.wikiLinks,
     leftOut: SETTINGS.wikiLeftOut,
+    follow: SETTINGS.wikiFollow,
   }[part](importerId);
   writing = writing.then(() => progressStore().putSetting(key, notes[part])).catch(() => undefined);
   await writing;
@@ -233,6 +248,29 @@ export async function noteWikiRead(
   }
 }
 
+/**
+ * The links of pages read before, as the importer gave them when it wrote
+ * those pages again (`writtenAgain` of the import outcome): kept as the
+ * links of a page just read, but nothing else about the pages changes (a
+ * note that one could not be read again stays).
+ */
+export async function noteWikiLinks(
+  importerId: string,
+  pages: readonly { url: string; links: readonly string[] }[],
+): Promise<void> {
+  if (pages.length === 0) return;
+  await change(importerId, 'links', (n) => {
+    // The pages given last are the newest, as for pages read one by one.
+    const links = new Map(Object.entries(n.links));
+    for (const page of pages) {
+      const key = pageKey(page.url);
+      links.delete(key);
+      if (page.links.length > 0) links.set(key, [...page.links]);
+    }
+    return { ...n, links: Object.fromEntries([...links].slice(-MAX_LINKED_PAGES)) };
+  });
+}
+
 /** A page could not be read, and why. */
 export function noteWikiFailed(importerId: string, url: string, message: string): Promise<void> {
   const failure: WikiFailure = { url, message, at: new Date().toISOString() };
@@ -253,6 +291,11 @@ export function setWikiLeftOut(
     const others = notes.leftOut.filter((key) => !keys.has(key));
     return { ...notes, leftOut: leftOut ? [...others, ...keys].slice(-MAX_LEFT_OUT) : others };
   });
+}
+
+/** Keeps how far a go follows links, as the person chose it for this importer's wikis. */
+export function setWikiFollow(importerId: string, follow: FollowLinks): Promise<void> {
+  return change(importerId, 'follow', (notes) => ({ ...notes, follow }));
 }
 
 /** The page keys the person left out, of an importer's wikis. */

@@ -824,6 +824,11 @@
   background: var(--atlas-surface);
 }
 
+.wiki-foot .follow-links {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .wiki-foot-text {
   display: flex;
   flex: 1;

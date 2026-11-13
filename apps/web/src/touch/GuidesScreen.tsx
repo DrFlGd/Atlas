@@ -465,7 +465,7 @@ function Page({ game, guide }: { game: LoadedGame; guide: GuideEntry | undefined
         />
       ) : null}
       {guide.source && hasMap(game) ? <OnTheMap game={game} guide={guide} /> : null}
-      <MarkdownBody source={shown.body} className="guide-body guides-page-body" />
+      <MarkdownBody source={shown.body} className="guide-body guides-page-body" page />
       {change.changed && !showWiki ? (
         <p className="guides-changed" data-testid="changed-by-you">
           Changed by you. Your changes are kept apart from the wiki’s text.

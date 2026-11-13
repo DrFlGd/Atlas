@@ -11,6 +11,7 @@ import {
 } from '../state/gameFacts';
 import { followDownloads, useDownloadsView } from '../state/downloadsView';
 import { stopRun, updateAll, useImport } from '../state/importing';
+import { foundText } from '../state/importRun';
 import {
   closeLibraryWindow,
   openLibraryGame,
@@ -298,10 +299,12 @@ function LibraryStrip() {
       page.state.kind !== 'converting',
   ).length;
   const total = pages.length;
+  const found = foundText(phase.run);
   return (
     <footer className="library-strip" data-testid="library-strip" aria-label="Now">
       <span className="library-strip-now">
         <strong>Now:</strong> reading page {Math.min(done + 1, total)} of {total}
+        {found ? `, ${found}` : ''}
         {phase.run.stopRequested ? ', stopping after this page' : ''}
       </span>
       <span className="meter meter-small library-strip-meter" aria-hidden="true">

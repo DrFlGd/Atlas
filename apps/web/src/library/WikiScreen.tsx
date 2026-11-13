@@ -2,10 +2,12 @@ import { pageChange, setPageHidden } from '@atlas/core';
 import { pageKey } from '@atlas/importer-api';
 import type { OwnPages } from '@atlas/schema';
 import { useEffect, useId, useMemo, useState } from 'react';
+import { FollowLinksChoice } from '../components/FollowLinks';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
 import type { ListedPack, PackDetails } from '../desktop';
 import { notify, switchGame } from '../state/actions';
+import type { FollowLinks } from '../state/followLinks';
 import { guidesOf } from '../state/guides';
 import {
   readWikiContents,
@@ -14,6 +16,7 @@ import {
   useImport,
   type WikiSource,
 } from '../state/importing';
+import { foundText } from '../state/importRun';
 import { hasLibraryHost, openPageForEditing } from '../state/libraryView';
 import { canChangeOwnPages, changeOwnPages, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -40,7 +43,9 @@ import {
  * be read, left out), filters, a preview of the page chosen, and "Read n
  * pages" for the pages ticked. Everything here comes from this computer:
  * the contents as last read, the pages read, and the notes kept on them
- * (`wikiNotes.ts`). Nothing is fetched until the person starts a go.
+ * (`wikiNotes.ts`). Nothing is fetched until the person starts a go;
+ * the choice above "Read n pages" says how far that go follows the links
+ * of the pages it reads (`followLinks.ts`).
  *
  * "Changed on the wiki" is not offered: telling would mean reading every
  * page again.
@@ -97,12 +102,28 @@ export function WikiScreen({
       phase.run.pages.flatMap((page): [string, string][] =>
         page.state.kind === 'open' || page.state.kind === 'converting'
           ? [[pageKey(page.url), 'Reading now']]
-          : page.state.kind === 'not-started'
-            ? [[pageKey(page.url), 'Next in this go']]
+          : page.state.kind === 'waiting'
+            ? [
+                [
+                  pageKey(page.url),
+                  page.foundOn ? 'Found by a link, next in this go' : 'Next in this go',
+                ],
+              ]
             : [],
       ),
     );
   }, [phase]);
+  // The go's pages done, of all of them, and how many links found.
+  const progress =
+    phase.kind === 'run' && running
+      ? {
+          done: phase.run.pages.filter(
+            (page) => page.state.kind === 'added' || page.state.kind === 'failed',
+          ).length,
+          total: phase.run.pages.length,
+          found: foundText(phase.run),
+        }
+      : null;
 
   const tickedRows = rows.filter((row) => ticked.has(row.key) && canTick(row));
   const counts = Object.fromEntries(
@@ -141,7 +162,7 @@ export function WikiScreen({
       );
     }
   };
-  const readNow = async (targets: readonly WikiRow[]) => {
+  const readNow = async (targets: readonly WikiRow[], follow: FollowLinks) => {
     try {
       await readWikiPages(
         source,
@@ -151,6 +172,7 @@ export function WikiScreen({
           title: row.title,
           ...(row.listed ? { group: row.group } : {}),
         })),
+        follow,
       );
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error');
@@ -266,7 +288,8 @@ export function WikiScreen({
               ticked={ticked.has(selected.key)}
               running={running}
               onTick={tick}
-              onRead={(row) => void readNow([row])}
+              // Read again and Try again read that page only.
+              onRead={(row) => void readNow([row], 'ticked')}
               onLeaveOut={(row, out) => void leaveOut([row], out)}
               onShowGame={() => void switchGame(id)}
             />
@@ -297,17 +320,22 @@ export function WikiScreen({
         </aside>
       </div>
       <footer className="wiki-foot" data-testid="wiki-foot">
+        <FollowLinksChoice importerId={source.importerId} disabled={running} />
         <div className="wiki-foot-text">
           <strong data-testid="wiki-ticked">
             {tickedRows.length === 0
               ? 'No page ticked'
               : `${tickedRows.length.toLocaleString('en')} ${tickedRows.length === 1 ? 'page' : 'pages'} ticked`}
           </strong>
-          <span className="muted small">
+          <span className="muted small" data-testid="wiki-foot-sentence">
             {running
-              ? 'A go is reading pages now, one at a time with a pause. Stop ends it after the page open now.'
+              ? `A go is reading pages now, one at a time with a pause${
+                  progress
+                    ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
+                    : ''
+                }. Stop ends it after the page open now.`
               : tickedRows.length > 0
-                ? `${readingTime(tickedRows.length)}, one page at a time with a pause.${source.pictures ? ' Pictures come with each page.' : ''} Nothing else is read.`
+                ? `${readingTime(tickedRows.length)} for the pages ticked, one page at a time with a pause.${source.pictures ? ' Pictures come with each page.' : ''} ${FOLLOW_SENTENCE[notes.follow]}`
                 : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
           </span>
         </div>
@@ -343,7 +371,7 @@ export function WikiScreen({
             className="button button-primary"
             data-testid="wiki-read"
             disabled={tickedRows.length === 0}
-            onClick={() => void readNow(tickedRows)}
+            onClick={() => void readNow(tickedRows, notes.follow)}
           >
             <UiIcon name="download" size={16} />
             {tickedRows.length === 1
@@ -355,6 +383,13 @@ export function WikiScreen({
     </div>
   );
 }
+
+/** What a go reads besides the pages ticked, after how long those take. */
+const FOLLOW_SENTENCE: Record<FollowLinks, string> = {
+  ticked: 'Nothing else is read.',
+  linked: 'Then the pages they link to are read in the same go, which takes longer.',
+  all: 'Then every page their links lead to is read in the same go, which can take much longer.',
+};
 
 /**
  * Hides pages read from Guides, or shows them again, among the person's
@@ -703,7 +738,7 @@ function Preview({
       {row.state === 'read' || (leftOut && row.guideId) ? (
         guide ? (
           <div className="wiki-preview-text" data-testid="wiki-preview-text">
-            <MarkdownBody source={guide.body} className="guide-body" />
+            <MarkdownBody source={guide.body} className="guide-body" page />
           </div>
         ) : (
           <div className="wiki-preview-text wiki-preview-hidden">

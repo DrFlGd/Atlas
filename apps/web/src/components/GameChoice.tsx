@@ -29,6 +29,7 @@ import {
   type ListingPurpose,
 } from '../state/importing';
 import { MAX_RUN_ADDRESSES, stopReasonText, type RunState } from '../state/importRun';
+import { FollowLinksChoice } from './FollowLinks';
 import { MeasureFromPage } from './MeasureFromPage';
 import { localDate } from './packFileText';
 
@@ -350,6 +351,8 @@ export function ChoosePages({ choice }: { choice: Choice }) {
   const noun = allMaps ? ['map', 'maps'] : ['page', 'pages'];
   const verb = choice.mode === 'update' ? 'Update' : 'Add';
   const queues = choice.games.some((game) => game.queues);
+  // A wiki read page by page: how far the go follows the links of its pages.
+  const followFor = choice.games.find((game) => game.queues)?.importerId ?? null;
   const windowed = choice.games.some((game) => game.inWindow);
   const left = goRoom(choice);
   return (
@@ -486,6 +489,7 @@ export function ChoosePages({ choice }: { choice: Choice }) {
           {over}
         </p>
       ) : null}
+      {followFor ? <FollowLinksChoice importerId={followFor} /> : null}
       {__ATLAS_DOWNLOADS__ ? <MeasureFromPage urls={chosen.map((page) => page.url)} /> : null}
       <div className="row-actions wrap">
         <button
