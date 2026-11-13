@@ -103,6 +103,39 @@ Ids from an earlier pack version are followed through `idMigrations`. A link to 
 
 Text between double bars, `||like this||`, is hidden until the reader presses "Show hidden text" where it begins (a solution, a spoiler). A hidden part may sit inside a sentence or run over several paragraphs, lists and code, and may hold in-app links. Bars pair up left to right; a last bar without a partner, bars in code and escaped bars (`\|`) are plain text. Where a note is shown as one line (list rows, Next up), each hidden part reads "(Hidden)".
 
+#### Pages linked to the map
+
+Pages read from a site (guides with a `source`) can be linked to the map. **Link pages to the map**, at the top of the contents, compares each page's title with the game's types, location names and regions (without case, accents, punctuation, a leading article or simple plurals; a location name is also tried without its number) and lists the pages in three groups: **Sure** (one clear match), **Unsure** (several matches, or only a near one) and **No match**. Each page can be confirmed, changed to another type, location name or region found by name, or skipped; **Confirm all sure** confirms the first group at once. Nothing is linked until the person confirms it. Linking is done on a larger screen (a tablet on its side or a computer); a phone uses the links and says so.
+
+A linked page shows **From the wiki** on the cards of its locations (the page most about the location first: its own name, then its type, then its region; with its first lines, its credit and **Read the full page**), and the page shows **On the map: N locations** with **Show on the map**, which shows only those locations until the chip "Only …" is closed. In the list editor, **Link a guide** in a step's note tools finds a page by name and puts an in-app link to it in the note.
+
+A game with a map can also read the pages of another game on the device that has pages and no map (a wiki read as a game of its own): **Add guides from another game**, at the top of its contents. Those pages are read under their own heading, with their own ids, and can be linked to this map like the game's own. The other game's pack is never changed; **Stop reading here** takes them away again.
+
+The choices are the person's own and are kept beside the map, not in the pack: in the desktop app as the file `<gameId>.guide-links.json` in the maps folder, in the browser and on Android in IndexedDB (the setting `guideLinks:<gameId>`). Both hold the same JSON:
+
+```json
+{
+  "format": "atlas-guide-links",
+  "version": 1,
+  "gameId": "demo",
+  "updatedAt": "2026-11-13T10:00:00.000Z",
+  "guidesFrom": [{ "gameId": "isle-wiki" }],
+  "choices": {
+    "demo:guide:wiki-waystones": {
+      "state": "linked",
+      "targets": [{ "to": "type", "id": "demo:cat:waystone" }]
+    },
+    "demo:guide:wiki-wolves": {
+      "state": "linked",
+      "targets": [{ "to": "name", "name": "Wolf den" }]
+    },
+    "demo:guide:wiki-regions": { "state": "skipped" }
+  }
+}
+```
+
+`choices` is keyed by guide id (of this game, or of a game in `guidesFrom`); a target is a type (`{ "to": "type", "id": "<gameId>:cat:…" }`), a location name (`{ "to": "name", "name" }`, every location of that name or of that name with a number) or a region (`{ "to": "region", "id": "<gameId>:region:…" }`, with its sub-regions), at most 20 per page. The file is written strictly and read tolerantly: unknown fields are ignored, a choice that cannot be read is left out (and a copy of the file is kept before it is next written), and choices for pages the game does not have now are kept, so reading the pages again keeps them. It holds no personal data. A map pack file does not carry it yet.
+
 ## The demo pack
 
 `packs/demo` is a fictional island generated entirely by code in `packages/pipeline`: an 8192 × 8192 px relief map drawn from seeded noise, cut into a 256 px WebP tile pyramid (zoom 0–5, 1,365 tiles), with ten regions, twelve categories in three groups and 5,000 locations. A second, smaller map, an underground cave system of 2048 × 2048 px with two layers and 240 locations on each, exercises the map and layer switchers. The pack also has entities, guides with Markdown, three presets, a note of its own for each lore tablet and chest on the surface, five lists (a checklist of every waystone, a story of steps without places, a long mixed list of 326 items with sections, a route of 2,015 places across both maps, and secrets: eight riddles of one name whose notes hide their answers) and three walkthrough guides that use in-app links. It also has a small made-up wiki, "Example Wiki" under CC BY-SA 4.0: six pages in a contents of two sections (one inside the other), with a table, a drawn picture of a waystone (`pictures/wiki-waystone.png`), hidden text and links between the pages, each with its credit, read in the Guides section. The same seed always produces the same pack.
