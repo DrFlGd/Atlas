@@ -192,6 +192,17 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.6.2
+
+          - **Sort a table.** In Guides, press a column heading of a table to sort by it: once for smallest first, again for largest first, a third time for the page's own order. Numbers sort as numbers. It changes only what you see, never the page.
+          - **Raised and lowered text.** A guide page can hold raised and lowered text, such as a note's mark or a small tag after a name. In Markdown: ^raised^ and \~lowered\~.
+          - **Coloured words.** A guide page can hold coloured words, shown lighter or darker where needed so they can be read in both the light and the dark theme. In Markdown: [words]{color=#b8714a}.
+          - **Line breaks in table cells.** A table cell can hold several lines. In the page editor, Shift+Enter in a cell starts a new line; in Markdown it is written &lt;br&gt;.
+          - **Hidden tables and lists.** Hidden text can now hold a whole table or list, shown with **Show hidden text**.
+          - The page editor keeps all of these when you edit a page.
+
+          A map pack whose guide pages use the new marks needs Atlas 0.6.2 or later; an older app shows the marks as they are written.
+
           ## New in 0.6.1
 
           - **A caption no longer stretches a picture.** In Guides, a picture with a long line of words under it was stretched to the width of that line; it keeps its own size now.
