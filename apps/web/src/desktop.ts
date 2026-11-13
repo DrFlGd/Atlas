@@ -539,7 +539,7 @@ export interface PackFileHeader {
   files: number;
   bytes: number;
   /** The person's own lists, locations, types and areas the file carries (version 2). */
-  mine?: { lists: number; locations: number; types: number; areas: number };
+  mine?: { lists: number; locations: number; types: number; areas: number; photos?: number };
 }
 
 /** What is known about an installed pack, as a map pack file would say. */
@@ -635,6 +635,8 @@ export interface PackFileImported {
   ownLists?: string | null;
   /** The text of the own locations file the file carried, to add to the person's. */
   ownLocations?: string | null;
+  /** The person's own photos the file carried: their file names and bytes in base64. */
+  ownPictures?: { file: string; data: string }[] | null;
 }
 
 /** A picture chosen for a map, and whether it can be one. */
@@ -824,6 +826,25 @@ export interface DesktopBridge {
     write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
     delete(gameId: string): Promise<boolean>;
   };
+  /**
+   * A person's own photos of a game, in the folder of their own beside the
+   * game's folder in the maps folder (`<game id>.my-pictures/`). Kept with
+   * the own lists (see `ownListFiles`).
+   */
+  ownPictures: {
+    /** A photo's bytes; empty when it is not there. */
+    read(gameId: string, file: string): Promise<Uint8Array>;
+    /** Writes a photo (its bytes in base64). */
+    write(gameId: string, file: string, data: string): Promise<void>;
+    /** The photos kept, by file name. */
+    list(gameId: string): Promise<string[]>;
+    /** Deletes photos; how many there were. */
+    delete(gameId: string, files: string[]): Promise<number>;
+    /** Deletes every photo of a game; whether there were any. */
+    deleteAll(gameId: string): Promise<boolean>;
+    /** Asks for a picture (PNG, JPEG or WebP) and reads it; empty when the dialog was closed. */
+    pick(): Promise<Uint8Array>;
+  };
   /** Games made in the app from pictures (see `ownGames`). */
   ownGames: {
     /** Asks for a picture and says what it is. Null when the dialog was closed. */
@@ -999,6 +1020,14 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       write: (gameId, contents, keepCopy) =>
         call('own_locations_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_locations_delete', { gameId }),
+    },
+    ownPictures: {
+      read: (gameId, file) => call<unknown>('own_pictures_read', { gameId, file }).then(bytesOf),
+      write: (gameId, file, data) => call('own_pictures_write', { gameId, file, data }),
+      list: (gameId) => call('own_pictures_list', { gameId }),
+      delete: (gameId, files) => call('own_pictures_delete', { gameId, files }),
+      deleteAll: (gameId) => call('own_pictures_delete_all', { gameId }),
+      pick: () => call<unknown>('own_picture_pick').then(bytesOf),
     },
     ownGames: {
       pickPicture: () => call('map_picture_pick'),

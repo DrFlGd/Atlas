@@ -33,10 +33,10 @@ import { useEditor } from './editor/editorState';
  * conveniences; nothing here is progress.
  */
 
-/** The three ways to show a list (see `listShape`). */
+/** The ways to show a list (see `listShape`). */
 export type { ListView };
 
-const VIEWS: readonly ListView[] = ['area', 'kind', 'order'];
+const VIEWS: readonly ListView[] = ['cards', 'area', 'kind', 'order'];
 
 interface ListsState {
   /** The view each list was last shown in, by list id. */

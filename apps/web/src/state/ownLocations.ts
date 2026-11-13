@@ -1,5 +1,8 @@
 import {
   addOwnLocation,
+  addOwnLocationPhoto,
+  removeOwnLocationPhoto,
+  setOwnLocationPhotoSpoiler,
   changeOwnLocation,
   ChecklistIndex,
   indexPack,
@@ -34,10 +37,12 @@ import {
   type CategoryGroup,
   type OwnLocation,
   type OwnLocations,
+  type Picture,
   type Region,
 } from '@atlas/schema';
 import { create } from 'zustand';
 import { desktop } from '../desktop';
+import { sweepOwnPicturesLater } from './ownPictures';
 import { progressStore } from './services';
 import { useAtlas } from './store';
 import type { SaveState } from './ownLists';
@@ -437,7 +442,30 @@ export function changeOwn(
 export function deleteOwn(id: string): OwnLocation | null {
   const location = get().own.locations.find((l) => l.id === id) ?? null;
   if (!location) return null;
-  return apply(removeOwnLocation(get().own, id), `Deleted “${location.name}”`) ? location : null;
+  const done = apply(removeOwnLocation(get().own, id), `Deleted “${location.name}”`);
+  // Its photos stay while Undo can bring it back (see `ownPictures.ts`).
+  if (done && location.photos?.length) sweepOwnPicturesLater();
+  return done ? location : null;
+}
+
+/** Adds a photo to a location of the person's own; Undo takes it off. */
+export function addOwnPhoto(id: string, picture: Picture): boolean {
+  return apply(addOwnLocationPhoto(get().own, id, picture, new Date()), 'Photo added');
+}
+
+/** Takes a photo off a location of the person's own; Undo puts it back. */
+export function removeOwnPhoto(id: string, pictureId: string): boolean {
+  const done = apply(removeOwnLocationPhoto(get().own, id, pictureId, new Date()), 'Photo removed');
+  if (done) sweepOwnPicturesLater();
+  return done;
+}
+
+/** Marks a photo of a location of the person's own as a spoiler, or not. */
+export function setOwnPhotoSpoiler(id: string, pictureId: string, spoiler: boolean): boolean {
+  return apply(
+    setOwnLocationPhotoSpoiler(get().own, id, pictureId, spoiler, new Date()),
+    spoiler ? 'Photo marked as a spoiler' : 'Photo shown plainly',
+  );
 }
 
 /** How many of the person's own locations are of a type. */

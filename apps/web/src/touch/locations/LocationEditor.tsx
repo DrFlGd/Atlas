@@ -4,6 +4,7 @@ import { GlyphBadge, UiIcon } from '../../components/icons';
 import { goToLocation } from '../../state/actions';
 import { numberFormat } from '../../state/derived';
 import {
+  addOwnPhoto,
   canChangeOwnLocations,
   changeOwn,
   deleteOwnArea,
@@ -11,11 +12,15 @@ import {
   flushOwnLocations,
   OWN_TYPE_COLOURS,
   ownLocationsOfTypeCount,
+  removeOwnPhoto,
   saveOwnArea,
   saveOwnType,
+  setOwnPhotoSpoiler,
   useOwnLocations,
   type TypeForm,
 } from '../../state/ownLocations';
+import { PhotosField } from '../editor/PhotosField';
+import { useAddPhoto } from '../editor/useAddPhoto';
 import type { SaveState } from '../../state/ownLists';
 import { useAtlas, type LoadedGame } from '../../state/store';
 import {
@@ -489,6 +494,9 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
   const note = useDraft(location.note ?? '', (text) => {
     changeOwn(location.id, { note: text }, 'Note changed');
   });
+  const photo = useAddPhoto(game, (picture) => {
+    addOwnPhoto(location.id, picture);
+  });
 
   return (
     <aside className="editor-side" aria-labelledby={`${id}-title`} data-testid="location-panel">
@@ -626,6 +634,22 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
             {...note}
           />
         </label>
+        {photo.fileInput}
+        <PhotosField
+          game={game}
+          photos={location.photos}
+          name={location.name}
+          busy={photo.busy}
+          add={() => {
+            void photo.add();
+          }}
+          onRemove={(pictureId) => {
+            removeOwnPhoto(location.id, pictureId);
+          }}
+          onSpoiler={(pictureId, spoiler) => {
+            setOwnPhotoSpoiler(location.id, pictureId, spoiler);
+          }}
+        />
         <div className="own-field">
           <span className="own-label">Where it is</span>
           <p className="editor-side-line" data-testid="location-position">

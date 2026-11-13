@@ -8,6 +8,7 @@ import { UiIcon } from './components/icons';
 import { MapPageStatus } from './components/MapPageStatus';
 import { MapPane } from './components/MapPane';
 import { MapsDialog } from './components/MapsDialog';
+import { PhotoViewer } from './components/Photos';
 import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
@@ -18,6 +19,7 @@ import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
 import { loadOwnLists } from './state/ownLists';
+import { sweepOwnPicturesOnOpen } from './state/ownPictures';
 import { initSaves } from './state/saves';
 import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
 import { coarsePointer, requestedUi, sessionStore, shownUi } from './touch/uiMode';
@@ -69,7 +71,11 @@ export function App() {
 
   // The person's own lists of the game, read when the game opens.
   useEffect(() => {
-    if (game) void loadOwnLists(game);
+    if (!game) return;
+    const gameId = game.pack.manifest.gameId;
+    void loadOwnLists(game).then(() => {
+      sweepOwnPicturesOnOpen(gameId);
+    });
   }, [game]);
 
   useViewHashSync();
@@ -179,6 +185,7 @@ function Shell() {
       <MapsDialog />
       <AddMapDialog />
       <ActivityLogDialog />
+      <PhotoViewer />
       {packFileOpen ? (
         <Suspense fallback={null}>
           <PackFileDialog />

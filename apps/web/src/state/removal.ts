@@ -3,8 +3,9 @@ import { deleteImagesResult, deletePackResult, plainError } from '../components/
 import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
 import { applyListing } from './library';
-import { deleteOwnListsOf } from './ownLists';
-import { deleteOwnLocationsOf } from './ownLocations';
+import { deleteOwnListsOf, ownListsBackend } from './ownLists';
+import { deleteOwnLocationsOf, ownLocationsBackend } from './ownLocations';
+import { deleteOwnPictures, deleteOwnPicturesOf, picturesInFile } from './ownPictures';
 import { loadMapImages } from './mapImages';
 import { clock, progressStore } from './services';
 import { useAtlas } from './store';
@@ -64,6 +65,21 @@ export async function deletePack(
     return { ok: false, error: plainError(error, `delete ${title}`) };
   }
   await refreshWithout(id);
+  // Their photos go with them: all of them when both go, else those the one deleted names.
+  if (deleteLists || deleteLocations) {
+    try {
+      if (deleteLists && deleteLocations) {
+        await deleteOwnPicturesOf(id);
+      } else {
+        const text = deleteLists
+          ? await ownListsBackend().read(id)
+          : await ownLocationsBackend().read(id);
+        await deleteOwnPictures(id, picturesInFile(text, deleteLists ? 'lists' : 'locations'));
+      }
+    } catch {
+      notify(`Deleted ${title}, but your photos for it could not be deleted.`, 'error');
+    }
+  }
   if (deleteLists) {
     try {
       await deleteOwnListsOf(id);

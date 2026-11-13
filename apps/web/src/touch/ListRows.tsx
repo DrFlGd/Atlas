@@ -2,6 +2,7 @@ import { placesIn, type ChecklistItemEntry, type ItemState } from '@atlas/core';
 import { memo, useId, useState } from 'react';
 import { NoteText } from '../components/ChecklistsPane';
 import { UiIcon } from '../components/icons';
+import { PhotoStrip } from '../components/Photos';
 import { checklistBack, openGuide, setEntryDone, showItemPlace } from '../state/checklists';
 import { useAtlas, type ChecklistPage, type LoadedGame } from '../state/store';
 import { entryWhere, ofText } from './listText';
@@ -53,11 +54,14 @@ export const EntryRow = memo(
     const guide = first?.guideId ? game.checklists.guide(first.guideId) : undefined;
     const ownNote = guide && !game.checklists.isListed(guide.id) ? guide : undefined;
     const sharedGuide = guide && game.checklists.isListed(guide.id) ? guide : undefined;
+    // The entry's own photos show under it; its location's, with the rest when it is opened.
+    const placePhotos = item.photos?.length ? undefined : first?.photos;
     const hasMore =
       more &&
       (ownNote !== undefined ||
         Boolean(item.note) ||
         sharedGuide !== undefined ||
+        Boolean(placePhotos?.length) ||
         entry.places.length > 1);
     const show = () => {
       if (placeId) showItemPlace(item.id, placeId);
@@ -137,6 +141,12 @@ export const EntryRow = memo(
             <UiIcon name="pin" size={22} />
           </button>
         ) : null}
+        <PhotoStrip
+          game={game}
+          photos={item.photos}
+          name={item.name}
+          className="touch-entry-photos"
+        />
         {note && !open ? (
           <p className="touch-entry-note" data-testid="entry-note">
             <UiIcon name="details" size={16} />
@@ -145,6 +155,7 @@ export const EntryRow = memo(
         ) : null}
         {open ? (
           <div className="touch-entry-more-body" id={moreId} data-testid="entry-more-body">
+            <PhotoStrip game={game} photos={placePhotos} name={first?.name} />
             {ownNote ? <NoteText source={ownNote.body} /> : null}
             {item.note ? <NoteText source={item.note} /> : null}
             {sharedGuide ? (

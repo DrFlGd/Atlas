@@ -1627,3 +1627,41 @@
   flex: 1 1 220px;
   width: auto;
 }
+
+/* Photos of a step or an own location, in the editors. */
+.editor-photo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-photo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.editor-photo-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.editor-photo-spoiler {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.editor-add-photo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+}

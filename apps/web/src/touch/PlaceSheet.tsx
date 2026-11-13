@@ -2,6 +2,7 @@ import { itemState, pixelToWorld } from '@atlas/core';
 import { useEffect, useRef } from 'react';
 import { GlyphBadge, UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
+import { PhotoStrip } from '../components/Photos';
 import { goToLocation, jumpToNearestUnfound, notify, select } from '../state/actions';
 import { openChecklistItem, openGuide, showItemPlace } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
@@ -236,7 +237,9 @@ function DetailsSummary({ game, locationId }: { game: LoadedGame; locationId: st
   const items = checklists.itemsAt(locationId);
   const lists = new Set(items.map((i) => checklists.checklistOf(i.item.id)?.checklist.id)).size;
   const guides = checklists.guidesAt(locationId).filter((g) => g.id !== guide?.id).length;
+  const photos = location.photos?.length ?? 0;
   const more = [
+    photos > 0 ? (photos === 1 ? 'a photo' : `${photos} photos`) : null,
     lists > 0 ? `on ${lists === 1 ? '1 checklist' : `${lists} checklists`}` : null,
     guides > 0 ? `in ${guides === 1 ? '1 guide' : `${guides} guides`}` : null,
   ].filter((part) => part !== null);
@@ -278,6 +281,12 @@ function PlaceDetails({
 
   return (
     <div className="place-details" id="place-details" data-testid="place-details">
+      <PhotoStrip
+        game={game}
+        photos={location.photos}
+        name={location.name}
+        className="place-photos"
+      />
       {fromSave ? <p className="touch-note">Marked found from a game save.</p> : null}
       {guide ? (
         <section className="place-guide" aria-label={guide.title}>

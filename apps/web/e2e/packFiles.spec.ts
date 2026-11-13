@@ -536,7 +536,7 @@ test('carries one’s own lists, locations and types in a map pack file only whe
   // A game not made in the app: one's own things are left out unless asked for.
   await row.getByTestId('export-pack').click();
   const withMine = dialog.getByTestId('export-with-mine');
-  await expect(withMine).toHaveAccessibleName('Include my lists, locations and types');
+  await expect(withMine).toHaveAccessibleName('Include my lists, locations, types and photos');
   await expect(withMine).not.toBeChecked();
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');

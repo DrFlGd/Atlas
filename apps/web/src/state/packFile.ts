@@ -12,6 +12,7 @@ import { exportProgress, loadGame, notify } from './actions';
 import { applyListing } from './library';
 import { addImportedOwnLists, flushOwnLists } from './ownLists';
 import { addImportedOwnLocations, flushOwnLocations } from './ownLocations';
+import { keepPictureFiles } from './ownPictures';
 import { useAtlas } from './store';
 
 /**
@@ -144,15 +145,35 @@ export interface MineRestored {
   locations: number;
   types: number;
   areas: number;
+  photos: number;
   /** Why some could not be added, in plain words. */
   problem: string | null;
 }
 
 /** Adds the own lists, locations and types a file carried to the person's, where they keep them. */
 async function restoreMine(imported: PackFileImported): Promise<MineRestored | null> {
-  if (!imported.ownLists && !imported.ownLocations) return null;
-  const restored: MineRestored = { lists: 0, locations: 0, types: 0, areas: 0, problem: null };
+  const pictures = imported.ownPictures ?? [];
+  if (!imported.ownLists && !imported.ownLocations && pictures.length === 0) return null;
+  const restored: MineRestored = {
+    lists: 0,
+    locations: 0,
+    types: 0,
+    areas: 0,
+    photos: 0,
+    problem: null,
+  };
   const problems: string[] = [];
+  // The photos first, so the lists and locations that show them never name a file not there.
+  if (pictures.length > 0) {
+    try {
+      restored.photos = await keepPictureFiles(
+        imported.packId,
+        pictures.map(({ file, data }) => ({ file: `pictures/${file}`, data })),
+      );
+    } catch (error) {
+      problems.push(`Your photos from the file could not be added: ${errorText(error)}`);
+    }
+  }
   if (imported.ownLists) {
     try {
       restored.lists = await addImportedOwnLists(imported.packId, imported.ownLists);

@@ -1,4 +1,5 @@
 import {
+  addStepPhoto,
   changeStep,
   changeTemplate,
   duplicateStep,
@@ -12,14 +13,16 @@ import {
   newStep,
   outlineOf,
   removeRow,
+  removeStepPhoto,
   renameHeading,
   renameList,
   rowId,
+  setStepPhotoSpoiler,
   suggestOrder,
   type OutlineRow,
   type StepChanges,
 } from '@atlas/core';
-import type { ChecklistType, OwnList } from '@atlas/schema';
+import type { ChecklistType, OwnList, Picture } from '@atlas/schema';
 import { create } from 'zustand';
 import { notify } from '../../state/actions';
 import { openChecklist } from '../../state/checklists';
@@ -33,6 +36,7 @@ import {
   updateOwnList,
   useOwnLists,
 } from '../../state/ownLists';
+import { sweepOwnPicturesLater } from '../../state/ownPictures';
 import { useAtlas } from '../../state/store';
 
 /**
@@ -286,6 +290,27 @@ export function addHeading(): void {
 
 export function changeOpenStep(id: string, changes: StepChanges): void {
   update((list) => changeStep(list, id, changes));
+}
+
+/** Adds a photo to a step. */
+export function addPhotoToStep(id: string, picture: Picture): void {
+  update((list) => addStepPhoto(list, id, picture));
+}
+
+/** Takes a photo off a step, with Undo; its file goes later, once Undo has gone. */
+export function removePhotoFromStep(id: string, pictureId: string): void {
+  const before = editedList();
+  if (!before) return;
+  const after = update((list) => removeStepPhoto(list, id, pictureId));
+  if (after && after !== before) {
+    undoable('Removed the photo.', before);
+    sweepOwnPicturesLater();
+  }
+}
+
+/** Marks a step's photo as a spoiler, or not. */
+export function setStepPhotoSpoilerOf(id: string, pictureId: string, spoiler: boolean): void {
+  update((list) => setStepPhotoSpoiler(list, id, pictureId, spoiler));
 }
 
 export function renameOpenHeading(id: string, title: string): void {
