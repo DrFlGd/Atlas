@@ -32,7 +32,7 @@ import {
   LocationEditorSide,
   LocationMapHint,
 } from './locations/LocationEditor';
-import { stopLocationEditing, useLocationEditor } from './locations/locationEditor';
+import { stopLocationEditing, useLocationEditor } from './locations/locationEditorState';
 import { ListOnlyChip } from './ListMapChips';
 import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';

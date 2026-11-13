@@ -26,10 +26,10 @@ import {
   stopLocationEditing,
   undoLocationChange,
   useLocationEditor,
-} from './locationEditor';
+} from './locationEditorState';
 
 /*
- * Edit locations, in the standard layout (see `locationEditor.ts`): the
+ * Edit locations, in the standard layout (see `locationEditorState.ts`): the
  * panel beside the rail lists the person's own locations, types and areas
  * with Undo and Done; the panel over the map shows the one open; the bar
  * over the map says what a click does now.

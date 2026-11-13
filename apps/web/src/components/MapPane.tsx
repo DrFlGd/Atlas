@@ -9,7 +9,11 @@ import { useMapOverlay } from '../state/mapOverlay';
 import { cancelPlacing, placePlayerAt, showPlayer, shownPlayer } from '../state/saves';
 import { changeOwn, useOwnLocations } from '../state/ownLocations';
 import { useAtlas } from '../state/store';
-import { clickedOnMap, pickedOnMap, useLocationEditor } from '../touch/locations/locationEditor';
+import {
+  clickedOnMap,
+  pickedOnMap,
+  useLocationEditor,
+} from '../touch/locations/locationEditorState';
 import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
