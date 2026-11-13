@@ -11,6 +11,7 @@ import {
   areaTallies,
   doneRunBefore,
   everythingList,
+  hiddenParts,
   kindGroups,
   listAreas,
   listStages,
@@ -21,6 +22,7 @@ import {
   orderRows,
   plainNote,
   topRegionOf,
+  withoutHiddenText,
 } from './views';
 
 /**
@@ -289,4 +291,48 @@ it('makes a note plain text', () => {
     'Start near the first waystone.',
   );
   expect(plainNote('## Heading\n**Bold** and `code` _here_')).toBe('Heading Bold and code here');
+});
+
+describe('hidden text in notes', () => {
+  it('finds hidden parts, pairing bars left to right', () => {
+    expect(hiddenParts('Pull the ||left|| lever')).toEqual([[9, 17]]);
+    expect(hiddenParts('||a|| and ||b||')).toEqual([
+      [0, 5],
+      [10, 15],
+    ]);
+    // A bar without a partner is plain text.
+    expect(hiddenParts('a || b || c || d')).toEqual([[2, 9]]);
+    expect(hiddenParts('no bars | here')).toEqual([]);
+  });
+
+  it('does not count bars in code or escaped bars', () => {
+    expect(hiddenParts('`a || b` and ||c||')).toEqual([[13, 18]]);
+    expect(hiddenParts('``x `||` y`` ||c||')).toEqual([[13, 18]]);
+    expect(hiddenParts('\\|\\| not hidden \\|\\|')).toEqual([]);
+  });
+
+  it('puts each hidden part as (Hidden)', () => {
+    expect(withoutHiddenText('Turn the ||third|| valve, then the ||first||.')).toBe(
+      'Turn the (Hidden) valve, then the (Hidden).',
+    );
+    expect(withoutHiddenText('Odd || bar')).toBe('Odd || bar');
+  });
+
+  it('keeps hidden words out of a note as one line, over several paragraphs too', () => {
+    expect(plainNote('Behind the falls. ||The key is [under the bridge](demo:loc:7).||')).toBe(
+      'Behind the falls. (Hidden)',
+    );
+    const solution = [
+      'Solution: ||Turn the valves in this order:',
+      '',
+      '1. Left valve',
+      '2. Right valve',
+      '',
+      'Then pull the lever.||',
+      '',
+      'Comes back after a rest.',
+    ].join('\n');
+    expect(plainNote(solution)).toBe('Solution: (Hidden)');
+    expect(plainNote(solution)).not.toMatch(/valve|lever/);
+  });
 });

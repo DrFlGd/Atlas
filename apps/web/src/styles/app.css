@@ -1415,6 +1415,49 @@ label.tree-row:hover,
   color: var(--atlas-muted);
 }
 
+/* Hidden text (||like this||): a button where it begins, until pressed. */
+.hidden-text-show {
+  display: inline-block;
+  margin: 0 0.15em;
+  padding: 0 0.55em;
+  border: 1px dashed var(--atlas-border-strong);
+  border-radius: 999px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-muted);
+  font: inherit;
+  font-size: 0.9em;
+  line-height: 1.6;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+.hidden-text-show:hover {
+  border-color: var(--atlas-accent);
+  color: var(--atlas-text);
+}
+
+.hidden-text-show:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 1px;
+}
+
+/* Shown: the text is marked lightly, so it reads as what was hidden. */
+.hidden-text.hidden-text-shown {
+  border-radius: 3px;
+  background: var(--atlas-accent-soft);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.hidden-text-shown:focus {
+  outline: none;
+}
+
+.hidden-text-shown:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 1px;
+}
+
 .also-in {
   margin-top: 16px;
   padding-top: 14px;
