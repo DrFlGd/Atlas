@@ -14,6 +14,18 @@ export type ContentsEntry =
   | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
   | { kind: 'page'; guide: GuideEntry };
 
+/**
+ * Guides to browse as pages: a pack's data, or a pack's pages with a
+ * person's own laid over them (see `applyOwnPages`). With `top`, the top of
+ * the contents is that list, of sections and pages, and the pages are those
+ * it and its sections hold, however deep; without it, the top is every
+ * section no other section lists, as a pack's contents says.
+ */
+export interface GuidePages {
+  data: Pick<LoadedPack['data'], 'guides' | 'sections' | 'maps'>;
+  top?: readonly string[];
+}
+
 export class GuideContents {
   /** Whether the pack has guides to browse as pages: a contents, or no map but guides. */
   readonly browsable: boolean;
@@ -29,14 +41,18 @@ export class GuideContents {
   private readonly listed = new Set<string>();
   private readonly pageCounts = new Map<string, number>();
 
-  constructor(pack: Pick<LoadedPack, 'data'>) {
+  constructor(pack: GuidePages) {
     const sections = pack.data.sections ?? [];
     const guides = sortGuides(pack.data.guides);
     this.sections = new Map(sections.map((s) => [s.id, s]));
     this.guides = new Map(guides.map((g) => [g.id, g]));
-    this.hasContents = sections.length > 0;
+    const top = pack.top;
+    this.hasContents = top !== undefined || sections.length > 0;
     const hasMap = pack.data.maps.length > 0;
-    this.browsable = this.hasContents || (!hasMap && guides.length > 0);
+    this.browsable =
+      top !== undefined
+        ? top.some((id) => this.sections.has(id) || this.guides.has(id))
+        : this.hasContents || (!hasMap && guides.length > 0);
 
     for (const section of sections) {
       for (const item of section.items) {
@@ -45,10 +61,19 @@ export class GuideContents {
         } else if (this.guides.has(item)) this.listed.add(item);
       }
     }
-    this.topIds = sections.filter((s) => !this.parent.has(s.id)).map((s) => s.id);
+    if (top !== undefined) {
+      this.topIds = top.filter((id) => this.sections.has(id) || this.guides.has(id));
+      for (const id of this.topIds) {
+        if (this.guides.has(id)) this.listed.add(id);
+        // A section at the top is listed by none.
+        else this.parent.delete(id);
+      }
+    } else {
+      this.topIds = sections.filter((s) => !this.parent.has(s.id)).map((s) => s.id);
+    }
     this.loose = this.browsable && !this.hasContents ? guides : [];
     // Only sections listed from the top count; a pack checked for integrity has no loops.
-    for (const id of this.topIds) this.countPages(id, new Set());
+    for (const id of this.topIds) if (this.sections.has(id)) this.countPages(id, new Set());
   }
 
   private countPages(id: string, seen: Set<string>): Set<string> {
@@ -68,6 +93,11 @@ export class GuideContents {
   top(): ContentsEntry[] {
     if (!this.hasContents) return this.loose.map((guide) => ({ kind: 'page', guide }));
     return this.topIds.flatMap((id) => this.entry(id));
+  }
+
+  /** The ids at the top of the contents, in order: sections, and pages (see {@link GuidePages}). */
+  topEntryIds(): readonly string[] {
+    return this.hasContents ? this.topIds : this.loose.map((guide) => guide.id);
   }
 
   /** Whether a guide is one of the pages browsed here. */
@@ -150,7 +180,11 @@ export class GuideContents {
       }
     };
     const sections = new Set<string>();
-    for (const id of this.topIds) visit(id, sections);
+    for (const id of this.topIds) {
+      const guide = this.sections.has(id) ? undefined : this.guides.get(id);
+      if (guide) add(guide);
+      else visit(id, sections);
+    }
     this.loose.forEach(add);
     return out;
   }
@@ -185,11 +219,9 @@ export const OTHER_GAME_SECTION = 'atlas.from-game';
  * game's own. Ids keep their own game, so nothing is renamed; no pack is
  * changed.
  */
-export function guidesTogether(
-  pack: Pick<LoadedPack, 'data'>,
-  others: readonly GuidesOfGame[],
-): Pick<LoadedPack, 'data'> {
+export function guidesTogether(pack: GuidePages, others: readonly GuidesOfGame[]): GuidePages {
   if (others.length === 0) return pack;
+  const pageTop = pack.top ? [...pack.top] : undefined;
   const guides = [...pack.data.guides];
   const sections: Section[] = [...(pack.data.sections ?? [])];
   for (const other of others) {
@@ -201,10 +233,9 @@ export function guidesTogether(
         : sortGuides(other.data.guides).map((guide) => guide.id);
     if (top.length === 0) continue;
     guides.push(...other.data.guides);
-    sections.push(
-      { id: `${other.gameId}:section:${OTHER_GAME_SECTION}`, title: other.title, items: top },
-      ...own,
-    );
+    const id = `${other.gameId}:section:${OTHER_GAME_SECTION}`;
+    sections.push({ id, title: other.title, items: top }, ...own);
+    pageTop?.push(id);
   }
-  return { data: { ...pack.data, guides, sections } };
+  return { data: { ...pack.data, guides, sections }, ...(pageTop ? { top: pageTop } : {}) };
 }

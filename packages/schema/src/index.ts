@@ -8,3 +8,4 @@ export * from './ownLists';
 export * from './guideLinks';
 export * from './ownLocations';
 export * from './ownPictures';
+export * from './ownPages';
