@@ -16,6 +16,7 @@ export const DEMO_CHECKLISTS = {
   story: id('checklist', 'story'),
   lore: id('checklist', 'lore'),
   route: id('checklist', 'route'),
+  riddles: id('checklist', 'riddles'),
 } as const;
 
 export const DEMO_GUIDES = {
@@ -23,6 +24,18 @@ export const DEMO_GUIDES = {
   deep: id('guide', 'deep-walk'),
   tablets: id('guide', 'tablets'),
 } as const;
+
+/** The riddles of the ruins, each with its answer, all made up. */
+const RIDDLES: readonly [riddle: string, answer: string][] = [
+  ['Three valves, one gate, and water that must not rise.', ''],
+  ['What runs along the valley yet never leaves its bed?', 'The river'],
+  ['What grows lighter the more of it you carry up the hill?', 'A lantern’s oil'],
+  ['What has a crown of stone but never ruled?', 'The broken tower'],
+  ['What speaks every word you say, and only after you?', 'The echo in the gorge'],
+  ['What is cut on the table but never eaten?', 'A deck of cards'],
+  ['What wears a coat in winter and none in summer?', 'The old oak'],
+  ['What falls every evening and never breaks?', 'Night'],
+];
 
 const ofCategory = (data: PackData, category: string) =>
   data.locations.filter((l) => l.categoryId === id('cat', category));
@@ -37,8 +50,13 @@ const ofCategory = (data: PackData, category: string) =>
  * - "Lore of the isle": long and mixed. Every lore tablet region by region,
  *   with a step, a group of elite foes and a camp (which cannot be marked
  *   found) in each region, and items on the second map.
- * - "Treasure hunter’s route": a guide (`kind: 'guide'`) that is a long list
- *   of places across both maps, one place per item, as importers write them.
+ * - "Treasure hunter’s route": a guide (`kind: 'guide'`, `type: 'route'`)
+ *   that is a long list of places across both maps, one place per item, as
+ *   importers write them.
+ * - "Riddles of the ruins": secrets (`type: 'secrets'`), eight entries that
+ *   share one name, each a ruin whose own note asks a riddle and hides the
+ *   answer (`||like this||`), with places named in the hidden text; one
+ *   answer spans a list.
  * - A note of its own for each lore tablet and chest on the surface, linking
  *   to the nearest waystone.
  * - Three guides that belong to no single location, linking into the app.
@@ -212,6 +230,29 @@ export function addChecklists(data: PackData): PackData {
     description: 'Every relic shard, chest and old key, on both maps.',
     order: 3,
     kind: 'guide',
+    type: 'route',
+  });
+
+  // Secrets: entries that share a name, told apart by their notes, which
+  // hide their answers. The notes are the places' own, as importers write.
+  const ruins = ofCategory(data, 'ruin').filter((l) => l.mapId !== DEEP_MAP_ID);
+  const riddlePlaces = ruins
+    .filter((_, i) => i % Math.max(1, Math.floor(ruins.length / RIDDLES.length)) === 0)
+    .slice(0, RIDDLES.length);
+  const riddleItems: ChecklistItem[] = riddlePlaces.map((l, order) => ({
+    id: id('checkitem', `riddle-${order + 1}`),
+    checklistId: DEMO_CHECKLISTS.riddles,
+    name: 'Carved riddle',
+    order,
+    locationIds: [l.id],
+    entityIds: [],
+  }));
+  checklists.push({
+    id: DEMO_CHECKLISTS.riddles,
+    name: 'Riddles of the ruins',
+    description: 'A riddle is carved at eight ruins. The answers are hidden until you ask.',
+    order: 4,
+    type: 'secrets',
   });
 
   // Each lore tablet and each chest on the surface gets a note of its own,
@@ -264,6 +305,30 @@ export function addChecklists(data: PackData): PackData {
         locationIds: [l.id],
       });
     });
+  riddlePlaces.forEach((l, n) => {
+    const waystone = nearestWaystone(l.x, l.y);
+    const there = waystone ? link(waystone.name, waystone.id) : 'the nearest waystone';
+    const [riddle, answer] = RIDDLES[n]!;
+    const noteId = id('guide', `note-${l.id.split(':')[2]}`);
+    noted.set(l.id, noteId);
+    notes.push({
+      id: noteId,
+      title: l.name,
+      body:
+        n === 0
+          ? [
+              `${riddle} Solution: ||Turn the valves in this order:`,
+              '',
+              '1. The valve by the door',
+              '2. The valve under the stair',
+              '3. The valve in the well',
+              '',
+              `Then walk to ${there}; the gate there opens.||`,
+            ].join('\n')
+          : `${riddle} Answer: ||${answer}. The reward waits by ${there}.||`,
+      locationIds: [l.id],
+    });
+  });
   const locations = data.locations.map((l) => {
     const noteId = noted.get(l.id);
     return noteId ? { ...l, guideId: noteId } : l;
@@ -321,7 +386,13 @@ export function addChecklists(data: PackData): PackData {
     ...data,
     locations,
     checklists,
-    checklistItems: [...data.checklistItems, ...storyItems, ...loreItems, ...routeItems],
+    checklistItems: [
+      ...data.checklistItems,
+      ...storyItems,
+      ...loreItems,
+      ...routeItems,
+      ...riddleItems,
+    ],
     guides,
   };
 }

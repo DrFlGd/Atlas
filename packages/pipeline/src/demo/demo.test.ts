@@ -220,11 +220,48 @@ describe('demo checklists and guides', () => {
 
   it('has a long guide list of single places across both maps', () => {
     const route = items(DEMO_CHECKLISTS.route);
-    expect(pack.checklists.find((c) => c.id === DEMO_CHECKLISTS.route)?.kind).toBe('guide');
+    const checklist = pack.checklists.find((c) => c.id === DEMO_CHECKLISTS.route);
+    // A type for apps that know types, and a kind for those that do not.
+    expect(checklist?.type).toBe('route');
+    expect(checklist?.kind).toBe('guide');
     expect(route.filter((i) => i.locationIds.length === 0)).toHaveLength(2);
     expect(route.every((i) => i.locationIds.length <= 1)).toBe(true);
     const maps = new Set(route.flatMap((i) => i.locationIds.map((l) => locations.get(l)!.mapId)));
     expect(maps.size).toBe(2);
+  });
+
+  it('has secrets: entries of one name, told apart by notes that hide their answers', () => {
+    const checklist = pack.checklists.find((c) => c.id === DEMO_CHECKLISTS.riddles);
+    expect(checklist?.type).toBe('secrets');
+    expect(checklist?.kind).toBeUndefined();
+    const riddles = items(DEMO_CHECKLISTS.riddles);
+    expect(riddles).toHaveLength(8);
+    expect(new Set(riddles.map((i) => i.name))).toEqual(new Set(['Carved riddle']));
+    const notes = new Map(pack.guides.map((g) => [g.id, g]));
+    const bodies = riddles.map((i) => {
+      const place = locations.get(i.locationIds[0]!)!;
+      expect(place.categoryId).toBe('demo:cat:ruin');
+      const note = notes.get(place.guideId!)!;
+      expect(note.locationIds).toEqual([place.id]);
+      return note.body;
+    });
+    expect(new Set(bodies.map((b) => b.split('||')[0])).size).toBe(8);
+    for (const body of bodies) {
+      // One hidden part, with a place named in it.
+      expect(body.match(/\|\|/g)).toHaveLength(2);
+      expect(body.split('||')[1]).toMatch(/\]\(demo:loc:\d+\)/);
+    }
+    // One answer spans a list.
+    expect(bodies[0]).toMatch(/\|\|[^|]*\n\n1\. [^|]*\|\|$/);
+    // Both top-level areas have riddles.
+    const tops = new Set(
+      riddles.map((i) => {
+        let region = pack.regions.find((r) => r.id === locations.get(i.locationIds[0]!)!.regionId);
+        while (region?.parentId) region = pack.regions.find((r) => r.id === region!.parentId);
+        return region?.id;
+      }),
+    );
+    expect(tops.size).toBe(2);
   });
 
   it('gives tablets and chests on the surface a note of their own', () => {
