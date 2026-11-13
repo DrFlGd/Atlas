@@ -916,6 +916,18 @@ impl Library {
                 ),
             );
         }
+        // The person's links between guide pages and the map go the same way.
+        let links =
+            crate::guidelinks::carry_over(&current, &target, move_packs && failure.is_none());
+        if !links.is_empty() {
+            activity::info(
+                Area::Library,
+                format!(
+                    "Carried the person's guide links to the new maps folder: {}",
+                    links.join(", ")
+                ),
+            );
+        }
         // Once anything has moved, the new folder is used, and the old one is
         // listed while it still holds packs, so no pack drops out of sight.
         let target_text = target.display().to_string();

@@ -762,6 +762,17 @@ export interface DesktopBridge {
     /** Deletes the file; whether there was one. */
     delete(gameId: string): Promise<boolean>;
   };
+  /**
+   * A person's links between guide pages and the map of a game, in their
+   * file in the maps folder (`<game id>.guide-links.json`), kept as own lists
+   * are (see `ownListFiles`).
+   */
+  guideLinks: {
+    /** The file's text, or null when the game has none yet. */
+    read(gameId: string): Promise<string | null>;
+    /** Writes the file whole; with `keepCopy` (a time), keeps the old one beside it first. */
+    write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+  };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
     /** Asks where to save, then saves. Null when the dialog was closed. */
@@ -905,6 +916,11 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       write: (gameId, contents, keepCopy) =>
         call('own_lists_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_lists_delete', { gameId }),
+    },
+    guideLinks: {
+      read: (gameId) => call('guide_links_read', { gameId }),
+      write: (gameId, contents, keepCopy) =>
+        call('guide_links_write', { gameId, contents, keepCopy: keepCopy ?? null }),
     },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),

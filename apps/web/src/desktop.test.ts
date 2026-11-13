@@ -33,6 +33,8 @@ describe('desktop bridge', () => {
     await bridge.ownLists.delete('demo');
     await bridge.listFiles.save('Flame build.atlaslist', '{}');
     await bridge.listFiles.open();
+    await bridge.guideLinks.read('demo');
+    await bridge.guideLinks.write('demo', '{}', '2026-11-13T10:00:00Z');
     expect(calls).toEqual([
       ['own_lists_read', { gameId: 'demo' }],
       ['own_lists_write', { gameId: 'demo', contents: '{}', keepCopy: null }],
@@ -40,6 +42,8 @@ describe('desktop bridge', () => {
       ['own_lists_delete', { gameId: 'demo' }],
       ['list_file_save', { suggestedName: 'Flame build.atlaslist', contents: '{}' }],
       ['list_file_open', undefined],
+      ['guide_links_read', { gameId: 'demo' }],
+      ['guide_links_write', { gameId: 'demo', contents: '{}', keepCopy: '2026-11-13T10:00:00Z' }],
     ]);
   });
 

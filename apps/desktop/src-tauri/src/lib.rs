@@ -23,6 +23,8 @@ pub mod activity;
 mod commands;
 mod downloads;
 pub mod gamefiles;
+// A person's links between guide pages and the map, beside the game's folder.
+pub mod guidelinks;
 mod imports;
 pub mod library;
 pub mod manifest;
@@ -123,6 +125,8 @@ macro_rules! viewer_commands {
             commands::own_lists_delete,
             commands::list_file_save,
             commands::list_file_open,
+            guidelinks::guide_links_read,
+            guidelinks::guide_links_write,
             $($more)*
         ]
     };
