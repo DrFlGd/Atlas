@@ -339,8 +339,8 @@ impl Rows for PngRows {
                     }
                 }
                 png::ColorType::GrayscaleAlpha => {
-                    for pair in data.chunks_exact(2) {
-                        out.extend_from_slice(&[pair[0], pair[0], pair[0], pair[1]]);
+                    for &[grey, alpha] in data.as_chunks::<2>().0 {
+                        out.extend_from_slice(&[grey, grey, grey, alpha]);
                     }
                 }
                 _ => out.extend_from_slice(data),
@@ -440,8 +440,8 @@ fn encode_tile(
     let stride = width as usize * channels;
     let mut tile = vec![0u8; size * size * channels];
     if channels == 3 {
-        for pixel in tile.chunks_exact_mut(3) {
-            pixel.copy_from_slice(&BACKDROP);
+        for pixel in tile.as_chunks_mut::<3>().0 {
+            *pixel = BACKDROP;
         }
     }
     for y in 0..used_rows {
