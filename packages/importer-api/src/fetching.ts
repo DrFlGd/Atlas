@@ -52,6 +52,24 @@ export interface PageFetch {
   inWindow?(url: string): boolean;
 }
 
+/**
+ * How the pages of a site are read, as the person chose for it among the
+ * ways its importer offers (see `SiteInfo` in the contract):
+ *
+ * - `fetch`, "By itself": the app fetches the addresses `fetch.addresses`
+ *   names, as described above.
+ * - `window`, "In a window of this app": each page is opened in the app's
+ *   visible window, kept for a go, and read there by the importer's
+ *   `pageReader`, for a site that shows its pages only to a person.
+ */
+export type ReadingWay = 'fetch' | 'window';
+
+/** Every way of reading, in the order the app offers them. */
+export const READING_WAYS: readonly ReadingWay[] = ['fetch', 'window'];
+
+export const isReadingWay = (value: unknown): value is ReadingWay =>
+  typeof value === 'string' && (READING_WAYS as readonly string[]).includes(value);
+
 /** Whether a part of an importer that fetches its pages has the page at `url` opened in a window instead. */
 export function readsInWindow(fetch: PageFetch | undefined, url: string): boolean {
   if (!fetch?.inWindow) return false;

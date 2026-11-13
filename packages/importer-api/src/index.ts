@@ -39,9 +39,11 @@ import {
   type PackData,
 } from '@atlas/schema';
 import { z } from 'zod';
-import { MAX_PAGE_FETCHES, type PageFetch } from './fetching';
+import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
+import type { ConfirmedLicence, SiteInfo } from './sites';
 
 export * from './fetching';
+export * from './sites';
 
 /** The contract version described here. */
 export const IMPORTER_API_VERSION = 1;
@@ -159,6 +161,20 @@ export interface ImportContext {
    * it was under, for an importer that files pages under sections.
    */
   listed?: { title: string; group?: string };
+  /**
+   * Optional: how the page was read, as the person chose for its site
+   * among the ways {@link AtlasImporter.siteInfo} offers. Apps that do not
+   * know it leave it out.
+   */
+  reading?: ReadingWay;
+  /**
+   * Optional: the Creative Commons licence the person confirmed for the
+   * site of the page (see {@link ImportFailure.askLicence}), kept by the
+   * app per site. An importer uses it only for a page that states no
+   * licence it can read, says in what it writes that the person confirmed
+   * it, and never in place of a licence the page states.
+   */
+  confirmedLicence?: ConfirmedLicence;
 }
 
 // ---------------------------------------------------------------------------
@@ -750,6 +766,15 @@ export interface ImportFailure {
    * slow down: the app stops the go at once and reads no more pages.
    */
   stop?: boolean;
+  /**
+   * The page states no licence the importer can read, and the importer
+   * would read it under a licence the person confirms for its site: an app
+   * that can ask does so (one of {@link CONFIRMABLE_LICENCES}), keeps the
+   * answer for the site and hands the same page data to `convert` again
+   * with {@link ImportContext.confirmedLicence}, fetching nothing again.
+   * Without an answer nothing is kept. Other apps show the message.
+   */
+  askLicence?: boolean;
 }
 
 export type ImportOutcome = ImportSuccess | ImportFailure;
@@ -874,6 +899,23 @@ export interface AtlasImporter {
   /** Whether this importer can read the page at `url` (a full `https:` URL). Must not throw. */
   matches(url: string): boolean;
   /**
+   * Optional: whether the importer recognises `url` (with `matches`, or as
+   * a game address with `games.matches`) only as a general reader: it does
+   * not know the site, and reads it only if its pages turn out to be of a
+   * kind it reads, failing plainly otherwise. The app then gives the
+   * address to an importer that knows it first ({@link findReader}), and
+   * reads nothing until the person asks, as for any address. Must not throw.
+   */
+  general?(url: string): boolean;
+  /**
+   * Optional: what the importer says about the site of `url` before
+   * anything is read: its key, the ways its pages can be read, and a
+   * notice to show (see {@link SiteInfo}, checked with {@link siteInfoOf}).
+   * Asked for page and game addresses alike; null for an address it does
+   * not read. Must not throw.
+   */
+  siteInfo?(url: string): SiteInfo | null;
+  /**
    * Optional: why the app must not read `url` at all, in a plain sentence,
    * or null. Asked before anything is opened or fetched, for every address
    * the person enters, also those no importer recognises. Must not throw.
@@ -988,6 +1030,8 @@ export const importerSchema = z
     example: z.string().max(500).optional(),
     matches: z.custom<AtlasImporter['matches']>(isFunction, 'must be a function'),
     refuses: z.custom<NonNullable<AtlasImporter['refuses']>>(isFunction).optional(),
+    general: z.custom<NonNullable<AtlasImporter['general']>>(isFunction).optional(),
+    siteInfo: z.custom<NonNullable<AtlasImporter['siteInfo']>>(isFunction).optional(),
     fetch: fetchSchema.optional(),
     pageReader: z.string().min(1).max(MAX_READER_CHARS).optional(),
     pageMeasure: z
@@ -1032,17 +1076,61 @@ export function isAllowedPageUrl(text: string): boolean {
   return url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
 }
 
-/** The first installed importer that recognises `url`, or null. */
-export function findImporter<T extends Pick<AtlasImporter, 'matches'>>(
+/** Whether an importer recognises `url` only as a general reader (see {@link AtlasImporter.general}). */
+export function readsAsGeneral(importer: Pick<AtlasImporter, 'general'>, url: string): boolean {
+  return importer.general !== undefined && safely(() => importer.general!(url.trim()), false);
+}
+
+/**
+ * The first installed importer that recognises `url`, or null: one that
+ * knows its site first, then one that would read it as a general reader.
+ */
+export function findImporter<T extends Pick<AtlasImporter, 'matches' | 'general'>>(
   importers: readonly T[],
   url: string,
 ): T | null {
   if (!isAllowedPageUrl(url)) return null;
-  for (const importer of importers) {
-    try {
-      if (importer.matches(url.trim())) return importer;
-    } catch {
-      // An importer that throws does not recognise the URL.
+  const recognising = importers.filter((importer) =>
+    safely(() => importer.matches(url.trim()), false),
+  );
+  return recognising.find((importer) => !readsAsGeneral(importer, url)) ?? recognising[0] ?? null;
+}
+
+/** What an address is to the importer that reads it (see {@link findReader}). */
+export type ReaderKind = 'page' | 'game' | 'catalogue';
+
+/**
+ * The importer that reads `url`, and as what: a page, a game's page or
+ * the site's list of games. Importers that know the address come first, in
+ * that order of kinds; an importer that would read it only as a general
+ * reader comes after all of them, so a general reader never takes an
+ * address another importer knows. Null when none recognises it.
+ */
+export function findReader<
+  T extends Pick<AtlasImporter, 'matches' | 'general' | 'games' | 'catalogue'>,
+>(importers: readonly T[], url: string): { importer: T; kind: ReaderKind } | null {
+  if (!isAllowedPageUrl(url)) return null;
+  const address = url.trim();
+  const kinds: [ReaderKind, (importer: T) => boolean][] = [
+    ['page', (importer) => safely(() => importer.matches(address), false)],
+    [
+      'game',
+      (importer) =>
+        importer.games !== undefined && safely(() => importer.games!.matches(address), false),
+    ],
+    [
+      'catalogue',
+      (importer) =>
+        importer.catalogue !== undefined &&
+        safely(() => importer.catalogue!.matches(address), false),
+    ],
+  ];
+  for (const general of [false, true]) {
+    for (const [kind, recognises] of kinds) {
+      const importer = importers.find(
+        (candidate) => readsAsGeneral(candidate, address) === general && recognises(candidate),
+      );
+      if (importer) return { importer, kind };
     }
   }
   return null;
@@ -1099,6 +1187,7 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     ok: z.literal(false),
     message: z.string().trim().min(1).max(2000),
     stop: z.boolean().optional(),
+    askLicence: z.boolean().optional(),
   }),
 ]);
 
@@ -1271,15 +1360,19 @@ export function canAddPage(importer: Pick<AtlasImporter, 'matches'>, url: string
   return isAllowedPageUrl(url) && safely(() => importer.matches(url.trim()), false);
 }
 
-/** The first importer that recognises `url` as a game address, or null. */
-export function findGameImporter<T extends Pick<AtlasImporter, 'games'>>(
+/**
+ * The first importer that recognises `url` as a game address, or null: one
+ * that knows its site first, then one that would read it as a general reader.
+ */
+export function findGameImporter<T extends Pick<AtlasImporter, 'games' | 'general'>>(
   importers: readonly T[],
   url: string,
 ): T | null {
   if (!isAllowedPageUrl(url)) return null;
-  return (
-    importers.find((i) => i.games && safely(() => i.games!.matches(url.trim()), false)) ?? null
+  const recognising = importers.filter(
+    (i) => i.games && safely(() => i.games!.matches(url.trim()), false),
   );
+  return recognising.find((i) => !readsAsGeneral(i, url)) ?? recognising[0] ?? null;
 }
 
 /** The first importer that recognises `url` as the address of its list of games, or null. */
