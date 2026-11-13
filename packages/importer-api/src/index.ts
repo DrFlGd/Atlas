@@ -860,6 +860,15 @@ export interface AtlasImporter {
    * one; the app checks the last two. Without it such packs are refused.
    */
   refreshesBundledGames?: boolean;
+  /**
+   * Optional: the pictures its packs list to be fetched later (a picture's
+   * `remote`) belong to the pages it reads, so an app that downloads
+   * fetches them right after a page is added, without being asked again:
+   * by its own downloader, one at a time, at its pace and under its rules.
+   * Without it they wait until the person asks for them. An app that does
+   * not download ignores it.
+   */
+  picturesWithPages?: boolean;
 }
 
 const isFunction = (value: unknown): value is (...args: never[]) => unknown =>
@@ -923,6 +932,7 @@ export const importerSchema = z
     games: gamePagesSchema.optional(),
     catalogue: catalogueSchema.optional(),
     refreshesBundledGames: z.boolean().optional(),
+    picturesWithPages: z.boolean().optional(),
   })
   .refine((importer) => !importer.catalogue || importer.games, {
     message: 'an importer with a catalogue must also read game pages',

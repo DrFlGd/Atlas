@@ -618,9 +618,10 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     /**
      * Where the picture's file can be downloaded from when it is not in the
      * pack's folder yet: `https`, or plain `http` to this computer only.
-     * Only an app built with downloads fetches it, when the person asks
-     * ("Download location photos"); any other app shows nothing in its
-     * place. A downloaded picture is shrunk and stored in the format its
+     * Only an app built with downloads fetches it: when the person asks
+     * ("Download location photos"), or with the page it is on for an
+     * importer whose pages come with their pictures. Any other app shows
+     * what the picture is in words in its place. A downloaded picture is shrunk and stored in the format its
      * `file` names. When reading, an address that cannot be used is left out.
      */
     remote: reading ? remotePictureUrl.optional().catch(undefined) : remotePictureUrl.optional(),

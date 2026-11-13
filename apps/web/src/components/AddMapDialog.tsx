@@ -23,6 +23,7 @@ import {
   type QueuedGame,
 } from '../state/importing';
 import {
+  MAX_FETCHED_RUN_PAGES,
   MAX_RUN_ADDRESSES,
   parseAddresses,
   runSummary,
@@ -264,8 +265,8 @@ function QueuedPages() {
   return (
     <div className="add-map-browse" data-testid="add-map-queued">
       <p className="muted small">
-        Pages you chose earlier that did not fit in one go. This app reads at most{' '}
-        {MAX_RUN_ADDRESSES} at a time.
+        Pages you chose earlier that were not read: the go was stopped, or the site asked this app
+        to wait.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
@@ -283,7 +284,7 @@ function QueuedPages() {
                 data-testid="add-map-queued-continue"
                 onClick={() => void continueQueue(game.importerId, game.key)}
               >
-                Read the next {Math.min(MAX_RUN_ADDRESSES, game.pages.length)}
+                Read the next {Math.min(MAX_FETCHED_RUN_PAGES, game.pages.length)}
               </button>
               <button
                 type="button"
@@ -457,6 +458,7 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
       {phase.guideId && !phase.rebuilt ? (
         <p className="muted" data-testid="add-map-guide">
           It is a page of the game’s guides now, with the credit of the site it came from.
+          {phase.pictures ? ` ${PICTURES_COMING}` : ''}
         </p>
       ) : summary.checklist && !phase.rebuilt ? (
         <ChecklistResult checklist={summary.checklist} />
@@ -513,6 +515,10 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
     </section>
   );
 }
+
+/** Said when the pictures of pages just added are being fetched (see `pagePictures.ts`). */
+const PICTURES_COMING =
+  'Its pictures are downloading now, one at a time, and show on the page as they arrive.';
 
 /** The figures of a map that was added. */
 function MapFigures({
@@ -728,7 +734,13 @@ function Run({
       ) : null}
       {/* Pages chosen beyond this go: how many are left, and the next go. */}
       {!running ? <QueuedPages /> : null}
-      {!running && games.size > 0 ? (
+      {!running && run.pages.some(({ state }) => state.kind === 'added' && state.pictures) ? (
+        <p className="muted small" data-testid="add-map-pictures-note">
+          The pictures of these pages are downloading now, one at a time, and show on the pages as
+          they arrive. Maps, then Location photos… shows how far it is.
+        </p>
+      ) : null}
+      {!running && run.pages.some(({ state }) => state.kind === 'added' && !state.guide) ? (
         <p className="muted small" data-testid="add-map-images-note">
           {__ATLAS_DOWNLOADS__ && downloadable
             ? games.size === 1

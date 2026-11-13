@@ -5,6 +5,7 @@ import {
   chosenPages,
   filterGames,
   overCap,
+  goRoom,
   pagesLeft,
   planPick,
   type Choice,
@@ -349,7 +350,7 @@ export function ChoosePages({ choice }: { choice: Choice }) {
   const noun = allMaps ? ['map', 'maps'] : ['page', 'pages'];
   const verb = choice.mode === 'update' ? 'Update' : 'Add';
   const queues = choice.games.some((game) => game.queues);
-  const left = pagesLeft(choice.opened);
+  const left = goRoom(choice);
   return (
     <section className="dialog-section" data-testid="add-map-choose" data-mode={choice.mode}>
       <p>
@@ -362,9 +363,9 @@ export function ChoosePages({ choice }: { choice: Choice }) {
         </strong>{' '}
         {queues ? (
           <>
-            Tick a section, or a page and “From here on”. This app reads at most {MAX_RUN_ADDRESSES}{' '}
-            pages in one go, one at a time with a pause; it keeps the rest, and Add a map offers to
-            continue with them another time.
+            Tick a section, or a page and “From here on”. This app reads the pages you tick in one
+            go, one at a time with a pause. If you stop it or the site asks it to wait, it keeps the
+            rest, and Add a map offers to continue with them another time.
           </>
         ) : (
           <>

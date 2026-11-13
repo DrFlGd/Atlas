@@ -7,7 +7,7 @@ import {
   type CatalogueGame,
   type ListedPage,
 } from '@atlas/importer-api';
-import { MAX_RUN_ADDRESSES } from './importRun';
+import { MAX_FETCHED_RUN_PAGES, MAX_RUN_ADDRESSES } from './importRun';
 
 /**
  * The lists the person chooses from before pages are opened: the pages of
@@ -282,8 +282,21 @@ export function chosenToRead(choice: Choice): ChosenPage[] {
  */
 export function splitChosen(choice: Choice): { now: ChosenPage[]; later: ChosenPage[] } {
   const chosen = chosenToRead(choice);
-  const left = pagesLeft(choice.opened);
+  const left = goRoom(choice);
   return { now: chosen.slice(0, left), later: chosen.slice(left) };
+}
+
+/**
+ * How many of the ticked pages one go reads: pages the app fetches itself
+ * (their games keep the rest for later) have a go of their own size, since
+ * no window is opened for them; any other choice has what is left of the
+ * cap of pages opened.
+ */
+export function goRoom(choice: Choice): number {
+  const chosen = chosenToRead(choice);
+  return chosen.length > 0 && chosen.every((page) => page.queues)
+    ? MAX_FETCHED_RUN_PAGES
+    : pagesLeft(choice.opened);
 }
 
 /** Why the ticked pages cannot be opened in one go, or null when they can. */
