@@ -43,12 +43,12 @@ jobs:
       - run: pnpm test:e2e
 
       # The interface for map image downloads, in a build with them.
-      - name: Web build with downloads, and its download tests
+      - name: Web build with downloads, and its download and wiki tests
         env:
           ATLAS_ENABLE_DOWNLOADS: '1'
         run: |
           pnpm build
-          pnpm --filter @atlas/web test:e2e e2e/downloads.spec.ts
+          pnpm --filter @atlas/web test:e2e e2e/downloads.spec.ts e2e/wiki.spec.ts
 
       - name: Upload Playwright results
         if: failure()

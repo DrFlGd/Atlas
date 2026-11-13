@@ -91,6 +91,14 @@ const UI_PATHS = {
   arrowDown: 'M10 4v12M5 11l5 5l5-5',
   heading: 'M5 4v12M15 4v12M5 10h10',
   sparkle: 'M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6z',
+  library: 'M3 4.5h4v11H3zM8.5 4.5h4v11h-4zM14 6l3 .8l-2.4 9.4l-3-.8',
+  settings:
+    'M10 7.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0-5.2zM10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6',
+  camera: 'M3 6.5h3l1.5-2h5l1.5 2h3v9H3zM10 8a2.8 2.8 0 1 1 0 5.6a2.8 2.8 0 1 1 0-5.6z',
+  picture: 'M3 4h14v12H3zM3 13l4-4l3 3l3-3l4 4M7 6.3a1.2 1.2 0 1 1 0 2.4a1.2 1.2 0 1 1 0-2.4z',
+  pinPlace:
+    'M10 17s5-4.6 5-8.5a5 5 0 0 0-10 0C5 12.4 10 17 10 17zM10 6.7a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6z',
+  pause: 'M7 4.5v11M13 4.5v11',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { ActivityLogDialog } from './components/ActivityLogDialog';
-import { AddMapDialog } from './components/AddMapDialog';
 import { ChecklistsPane } from './components/ChecklistsPane';
 import { DetailsPane } from './components/DetailsPane';
 import { FilterPane } from './components/FilterPane';
@@ -19,6 +18,7 @@ import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
 import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
+import { useLibrary } from './state/libraryView';
 import { loadOwnPages } from './state/ownPages';
 import { loadOwnLists } from './state/ownLists';
 import { sweepOwnPicturesOnOpen } from './state/ownPictures';
@@ -41,6 +41,11 @@ const SaveDialog = lazy(() =>
 // Only the desktop app writes and reads map pack files: their dialog is
 // loaded the first time it opens, so the bundle every browser loads stays
 // as it was.
+// The desktop app's Library, over the whole window in this layout.
+const LibraryScreen = lazy(() =>
+  import('./library/LibraryScreen').then((module) => ({ default: module.LibraryScreen })),
+);
+
 const PackFileDialog = lazy(() =>
   import('./components/PackFileDialog').then((module) => ({ default: module.PackFileDialog })),
 );
@@ -140,6 +145,7 @@ function Shell() {
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
   const persistent = useAtlas((s) => s.persistent);
   const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
+  const libraryOpen = useLibrary((s) => s.windowOpen);
   const pageViews = useAtlas(downloadsOffered);
   return (
     <div
@@ -195,8 +201,12 @@ function Shell() {
           <SaveDialog />
         </Suspense>
       ) : null}
+      {libraryOpen ? (
+        <Suspense fallback={null}>
+          <LibraryScreen mode="window" />
+        </Suspense>
+      ) : null}
       <MapsDialog />
-      <AddMapDialog />
       <ActivityLogDialog />
       <PhotoViewer />
       {packFileOpen ? (

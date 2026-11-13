@@ -678,10 +678,24 @@ export interface ImportSuccess {
    * `checklistId` and `guideId` is given.
    */
   guideId?: string;
+  /**
+   * Optional, for a page that became a guide: the addresses of the other
+   * pages of the same site that the page links to, so the app can offer
+   * the ones not read yet ("Found on this page, not read"). Each is a page
+   * the importer can read ({@link AtlasImporter.matches}), without its
+   * fragment. The app keeps at most {@link MAX_PAGE_LINKS}, on the same
+   * site as the page, each once; it leaves out the others, and never opens
+   * one unless the person ticks it and starts a go. Apps that do not know
+   * this field leave it out.
+   */
+  links?: string[];
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
 }
+
+/** Links of one page that the app keeps at most (see {@link ImportSuccess.links}). */
+export const MAX_PAGE_LINKS = 1000;
 
 export interface ImportFailure {
   ok: false;
@@ -1028,6 +1042,10 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     mapId: idOf('map').optional(),
     checklistId: idOf('checklist').optional(),
     guideId: idOf('guide').optional(),
+    links: z
+      .array(z.string().max(MAX_ADDRESS_CHARS))
+      .max(MAX_PAGE_LINKS * 4)
+      .optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
@@ -1039,13 +1057,38 @@ const outcomeSchema = z.discriminatedUnion('ok', [
 ]);
 
 /**
+ * The links of a page as the app keeps them (see {@link ImportSuccess.links}):
+ * web addresses on the same site as `pageUrl`, without their fragment, each
+ * page once and not the page itself, at most {@link MAX_PAGE_LINKS}. Without
+ * `pageUrl`, none.
+ */
+export function pageLinks(links: readonly string[] | undefined, pageUrl?: string): string[] {
+  if (!links || !pageUrl) return [];
+  const seen = new Set([pageKey(pageUrl)]);
+  const kept: string[] = [];
+  for (const link of links) {
+    if (kept.length >= MAX_PAGE_LINKS) break;
+    if (!isAllowedPageUrl(link) || !sameSite(pageUrl, link)) continue;
+    const url = new URL(link.trim());
+    url.hash = '';
+    const key = pageKey(url.href);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(url.href);
+  }
+  return kept;
+}
+
+/**
  * Checks what an importer's `convert` returned: the outcome's shape, and for
  * a success the pack against the pack schema and its integrity rules. Returns
  * a failure with a readable message when anything is wrong. The pack is about
  * to be written, so it is checked strictly: an unknown key is an error here,
- * although the app skips one when it reads a pack.
+ * although the app skips one when it reads a pack. A success's `links` are
+ * kept as {@link pageLinks} gives them for `pageUrl`, the page read (none
+ * without it), and left out when there are none.
  */
-export function checkOutcome(value: unknown): ImportOutcome {
+export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   const outcome = outcomeSchema.safeParse(value);
   if (!outcome.success) {
     return {
@@ -1096,7 +1139,9 @@ export function checkOutcome(value: unknown): ImportOutcome {
   if (success.guideId !== undefined && !pack.data.guides.some((g) => g.id === success.guideId)) {
     return { ok: false, message: 'The importer named a guide that is not in its pack.' };
   }
-  return { ...success, pack: pack.data };
+  const { links: given, ...rest } = success;
+  const links = pageLinks(given, pageUrl);
+  return { ...rest, ...(links.length > 0 ? { links } : {}), pack: pack.data };
 }
 
 // ---------------------------------------------------------------------------

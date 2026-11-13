@@ -3,74 +3,78 @@ import { expect, test } from './layout';
 import { mock, realErrors, setUp, url } from './fakeShell';
 
 /**
- * The desktop app's own tools in the standard layout, against the stand-in
- * shell of `fakeShell.ts`: they are the classic layout's dialogs, reached
- * from Games (Add a map, Maps, the activity log) and the rail. The flows
- * inside each dialog are covered by the classic specs (addMaps, addGame,
- * packFiles, downloads, saves); this checks that each is reachable here
- * and works.
+ * The desktop app's own sections in the standard layout, against the
+ * stand-in shell of `fakeShell.ts`: the Library (the games, adding a map
+ * or a wiki, each game's More) and Settings (the maps folder, the
+ * activity log, the keys). The flows of adding are covered by the classic
+ * specs (addMaps, addGame, packFiles, downloads, saves), which reach the
+ * same Library over the whole window; this checks that each is reachable
+ * here and works.
  */
 
 test.use({ layout: 'standard' });
 
-test('adds a map from Games, then finds it in Maps and in the list of games', async ({ page }) => {
+test('adds a map in the Library, then finds it in the list of games', async ({ page }) => {
   const errors = collectErrors(page);
   await setUp(page);
   await expect(page.locator('.touch')).toHaveAttribute('data-input', 'mouse');
-  await page.getByTestId('section-games').click();
-  const tools = page.getByTestId('library-tools');
-  await expect(tools.getByTestId('add-map-button')).toContainText('Add a map');
+  // The desktop app has a Library and Settings, and no Games.
+  await expect(page.getByTestId('section-games')).toHaveCount(0);
+  await page.getByTestId('section-library').click();
+  const library = page.getByTestId('library');
+  await expect(library.getByTestId('library-add-box')).toBeVisible();
 
-  // Add a map: the same dialog as the classic top bar's.
-  await tools.getByTestId('add-map-button').click();
-  const dialog = page.getByTestId('add-map-dialog');
-  await expect(dialog).toBeVisible();
+  // Add a map or a wiki: the box on the left, the steps on the right.
   await page.getByTestId('add-map-url').fill(url('test-valley', 'east-field'));
   await page.getByTestId('add-map-url').press('Enter');
-  await expect(dialog).toHaveAttribute('data-phase', 'done');
+  const flow = page.getByTestId('library-flow');
+  await expect(flow).toHaveAttribute('data-phase', 'done');
   await expect(page.getByTestId('add-map-game')).toHaveText('Test Valley');
   expect((await mock(page)).reports.map((r) => r.outcome)).toEqual(['added']);
-  await dialog.getByRole('button', { name: 'Close' }).click();
-  await expect(dialog).toBeHidden();
+  await flow.getByTestId('library-flow-close').click();
+  await expect(flow).toBeHidden();
 
-  // The new game is on the list of games, and shown.
-  const games = page.getByTestId('games-screen');
-  const row = games.locator('[data-testid="game-row"][data-pack="test-valley"]');
+  // The new game is on the list of games; opening it shows what it is.
+  const row = library.locator('[data-testid="library-game"][data-pack="test-valley"]');
   await expect(row).toBeVisible();
+  await expect(row).toContainText('Maps');
+  await row.click();
+  const pane = page.getByTestId('library-game-pane');
+  await expect(pane).toHaveAttribute('data-pack', 'test-valley');
+  await expect(pane.getByTestId('library-facts')).toContainText('1 map');
 
-  // Maps: the folder, the packs, updating from the site.
-  await tools.getByTestId('maps-button').click();
-  const maps = page.getByTestId('maps-dialog');
-  await expect(maps).toBeVisible();
-  await expect(maps.getByTestId('app-version')).toHaveText('Atlas 0.0.0');
-  await expect(maps.getByTestId('maps-folder-path')).toBeVisible();
-  const pack = maps.locator('[data-testid="pack-row"][data-pack="test-valley"]');
-  await expect(pack.getByTestId('update-pack')).toBeVisible();
-  await expect(pack.getByTestId('export-pack')).toBeVisible();
-  // Esc closes the dialog, then nothing else is closed with it.
-  await page.keyboard.press('Escape');
-  await expect(maps).toBeHidden();
-  await expect(page.locator('.touch')).toHaveAttribute('data-section', 'games');
+  // More: each thing it does, with a sentence.
+  await pane.getByTestId('library-more').click();
+  const more = page.getByTestId('library-more-menu');
+  await expect(more.getByTestId('update-pack')).toContainText('Check the site for changes');
+  await expect(more.getByTestId('update-pack')).toContainText('Nothing changes until you choose');
+  await expect(more.getByTestId('export-pack')).toBeVisible();
 
-  // Update from the site… opens Add a map on the game's pages.
-  await tools.getByTestId('maps-button').click();
-  await pack.getByTestId('update-pack').click();
-  await expect(dialog).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
+  // Check the site for changes: the game's pages to choose from.
+  await more.getByTestId('update-pack').click();
+  await expect(more).toBeHidden();
+  await expect(flow).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
   await expect(page.getByTestId('add-map-choose')).toHaveAttribute('data-mode', 'update');
-  await dialog.getByRole('button', { name: 'Close' }).click();
-  await expect(dialog).toBeHidden();
+  await flow.getByTestId('library-flow-close').click();
+  await expect(flow).toBeHidden();
 
-  // Switch games from the list.
-  await row.locator('.touch-game-main').click();
-  await expect(row).toHaveAttribute('data-current', 'true');
+  // Show the map: shows the game and leaves the Library for its map.
+  await row.click();
+  await pane.getByTestId('library-show').click();
+  await expect(page.locator('.touch')).toHaveAttribute('data-section', 'map');
+  await expect(page.getByTestId('library')).toBeHidden();
   expect(realErrors(errors)).toEqual([]);
 });
 
-test('the activity log and the list of keys, from Games', async ({ page }) => {
+test('Settings: the maps folder, the activity log and the list of keys', async ({ page }) => {
   const errors = collectErrors(page);
   await setUp(page);
-  await page.getByTestId('section-games').click();
-  await page.getByTestId('open-activity-log').click();
+  await page.getByTestId('section-settings').click();
+  const settings = page.getByTestId('settings-screen');
+  await expect(settings.getByTestId('app-version')).toHaveText('Atlas 0.0.0');
+  await expect(settings.getByTestId('maps-folder-path')).toBeVisible();
+  await expect(settings.getByTestId('settings-locations')).toContainText('Map packs elsewhere');
+  await settings.getByTestId('open-activity-log').click();
   const log = page.getByTestId('log-dialog');
   await expect(log).toBeVisible();
   await page.keyboard.press('Escape');

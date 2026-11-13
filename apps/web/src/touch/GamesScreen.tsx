@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
 import { UiIcon } from '../components/icons';
-import { PackSummary } from '../components/MapsDialog';
+import { PackSummary } from '../components/PackSummary';
 import { PackDetailsView } from '../components/PackFacts';
 import { desktop, type PackDetails } from '../desktop';
 import { copiesPickedFiles, foldersOffered, layoutChoiceOffered } from '../features';
@@ -10,7 +10,7 @@ import { openActivityLog } from '../state/activityLog';
 import { ownGamesOffered } from '../state/ownGames';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
-import { LibraryTools, ProgressTools } from './DesktopTools';
+import { ProgressTools } from './DesktopTools';
 import { NewGameButton, OwnGameActions } from './OwnGames';
 import { setKeepScreenOn, setKeysOpen, useKeyHints, useTouch } from './state';
 import { GroupTitle, SwitchTrack } from './widgets';
@@ -33,7 +33,6 @@ export function GamesScreen() {
         <h1 className="touch-page-title">Games</h1>
       </header>
       <div className="touch-scroll touch-page-body" data-scroll-root>
-        <LibraryTools />
         <section aria-labelledby="games-heading">
           <GroupTitle id="games-heading">Games on this device</GroupTitle>
           <ul className="touch-plain-list" data-testid="game-list">
@@ -207,7 +206,12 @@ function GameDetails({ id }: { id: string }) {
   );
 }
 
-function Settings() {
+/**
+ * The app's settings: theme, layout, keeping the screen on, the list of
+ * keys, and (with `withLog`) the activity log and the app's version. The
+ * desktop app shows them on its Settings page, with the maps folder.
+ */
+export function Settings({ withLog = true }: { withLog?: boolean }) {
   const theme = useAtlas((s) => s.theme);
   const app = useAtlas((s) => s.app);
   const keepOn = useTouch((s) => s.keepScreenOn);
@@ -217,11 +221,16 @@ function Settings() {
   return (
     <section aria-labelledby="settings-heading" className="touch-settings">
       <GroupTitle id="settings-heading">Settings</GroupTitle>
-      <div className="touch-setting-row">
+      <div className="touch-setting-row touch-setting-row-noted">
         <span className="touch-setting-label" id="theme-label">
           Theme
         </span>
-        <div className="touch-segmented" role="group" aria-labelledby="theme-label">
+        <div
+          className="touch-segmented"
+          role="group"
+          aria-labelledby="theme-label"
+          aria-describedby="theme-note"
+        >
           {(['dark', 'light'] as const).map((value) => (
             <button
               key={value}
@@ -236,6 +245,9 @@ function Settings() {
             </button>
           ))}
         </div>
+        <span className="touch-switch-note touch-setting-note" id="theme-note">
+          Dark or light colours for the whole app, the map included.
+        </span>
       </div>
       {layoutOffered ? (
         <div className="touch-setting-row touch-setting-row-noted" data-testid="layout-setting">
@@ -307,7 +319,7 @@ function Settings() {
           </span>
         </button>
       ) : null}
-      {desktop ? (
+      {desktop && withLog ? (
         <button
           type="button"
           className="touch-row touch-row-button"
@@ -327,10 +339,12 @@ function Settings() {
           </span>
         </button>
       ) : null}
-      <p className="touch-app-version" data-testid="app-version">
-        {app?.name ?? 'Atlas'}
-        {app?.version ? ` ${app.version}` : ''}
-      </p>
+      {withLog ? (
+        <p className="touch-app-version" data-testid="app-version">
+          {app?.name ?? 'Atlas'}
+          {app?.version ? ` ${app.version}` : ''}
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -18,8 +18,8 @@ import {
 } from '../state/actions';
 import { checklistScreenTitle, toggleLeftTab } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
-import { setAddMapOpen } from '../state/importing';
 import { setMapsDialogOpen } from '../state/library';
+import { libraryOffered, openLibrary, showLibraryAdd } from '../state/libraryView';
 import { saveReaderOf, setSaveDialogOpen } from '../state/saves';
 import { useAtlas } from '../state/store';
 import { UiIcon } from './icons';
@@ -200,43 +200,49 @@ function GameSwitcher() {
 }
 
 /**
- * "Add a map" (in desktop builds with importers) and "Maps" (in the desktop
- * and Android apps; on Android without folder choices). The Android app has
- * no import window, so no "Add a map".
+ * "Add a map or a wiki" (in desktop builds with importers) and "Library"
+ * (in the desktop app), which open the Library over the whole window. The
+ * Android app keeps its "Maps" dialog, and has no import window.
  */
 function LibraryButtons() {
   const importers = useAtlas((s) => s.config?.importers.length ?? 0);
   const imports = useAtlas(importsOffered);
   const maps = useAtlas(mapsOffered);
-  const folders = useAtlas(foldersOffered);
+  const library = useAtlas(libraryOffered);
   if (!desktop) return null;
   return (
     <>
-      {importers > 0 && imports ? (
+      {importers > 0 && imports && library ? (
         <button
           type="button"
           className="icon-button"
-          aria-label="Add a map"
-          title="Add a map from a web page"
-          aria-haspopup="dialog"
+          aria-label="Add a map or a wiki"
+          title="Add a map or a wiki from a web page, in the Library"
           data-testid="add-map-button"
-          onClick={() => {
-            setAddMapOpen(true);
-          }}
+          onClick={showLibraryAdd}
         >
           <UiIcon name="mapPlus" />
         </button>
       ) : null}
-      {maps ? (
+      {library ? (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Library"
+          title="Library: the games on this computer, adding and downloading, and the settings"
+          data-testid="maps-button"
+          onClick={() => {
+            openLibrary();
+          }}
+        >
+          <UiIcon name="folder" />
+        </button>
+      ) : maps ? (
         <button
           type="button"
           className="icon-button"
           aria-label="Maps"
-          title={
-            folders
-              ? 'Maps: where they are kept, and packs from other folders'
-              : 'Maps: the games on this device, and importing map pack files'
-          }
+          title="Maps: the games on this device, and importing map pack files"
           aria-haspopup="dialog"
           data-testid="maps-button"
           onClick={() => {

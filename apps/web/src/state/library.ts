@@ -56,6 +56,7 @@ export function applyListing(listing: Listing): void {
   }
 }
 
+/** The Android app's Maps dialog. */
 export function setMapsDialogOpen(open: boolean): void {
   set({ mapsDialogOpen: open });
   if (open) {

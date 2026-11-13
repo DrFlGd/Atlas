@@ -102,4 +102,12 @@ export const SETTINGS = {
   catalogue: (importerId: string) => `catalogue:${importerId}`,
   /** Pages chosen to read that did not fit in one go, by game, for an importer that keeps them. */
   pageQueue: (importerId: string) => `pageQueue:${importerId}`,
+  /** A wiki's contents as last read, by the page key of its address (see `wikiNotes.ts`). */
+  wikiContents: (importerId: string) => `wikiContents:${importerId}`,
+  /** Pages of a wiki that could not be read, with why. */
+  wikiFailed: (importerId: string) => `wikiFailed:${importerId}`,
+  /** The pages of the same wiki each page read links to. */
+  wikiLinks: (importerId: string) => `wikiLinks:${importerId}`,
+  /** Pages of a wiki the person left out. */
+  wikiLeftOut: (importerId: string) => `wikiLeftOut:${importerId}`,
 } as const;

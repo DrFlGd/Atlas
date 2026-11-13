@@ -39,7 +39,7 @@ use crate::{
 use crate::{
     settings::DownloadSettings,
     tiles::{
-        manager::{PlanInfo, Snapshot},
+        manager::{JobEntry, PlanInfo, Snapshot},
         measure::{MeasureRequest, Measured},
         DownloadManager,
     },
@@ -701,6 +701,28 @@ pub async fn photos_snapshot(
     pack_id: String,
 ) -> Result<Option<Snapshot>, String> {
     Ok(manager.photos_snapshot(&pack_id))
+}
+
+// ---------------------------------------------------------------------------
+// The Downloads panel: every job of this app, and the order of the queue
+
+/// Every map image and photo job of this session, the one downloading
+/// first, then the queue in order, then paused ones, then those over.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn downloads_jobs(manager: Manager<'_>) -> Result<Vec<JobEntry>, String> {
+    Ok(manager.jobs())
+}
+
+/// Moves a job waiting its turn one place earlier or later in the queue.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn downloads_move(
+    manager: Manager<'_>,
+    key: String,
+    earlier: bool,
+) -> Result<(), String> {
+    manager.move_job(&key, earlier)
 }
 
 // ---------------------------------------------------------------------------

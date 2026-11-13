@@ -231,3 +231,23 @@ export const ownListsText = JSON.stringify({
     },
   ],
 });
+
+/**
+ * Opens a game in the Library: the folder button (classic layout) or the
+ * Library section (standard layout) first, unless the Library is open.
+ */
+export async function openLibraryGame(page: Page, packId: string) {
+  if (!(await page.getByTestId('library').isVisible())) {
+    const section = page.getByTestId('section-library');
+    if ((await section.count()) > 0) await section.click();
+    else await page.getByTestId('maps-button').click();
+  }
+  await page.locator(`[data-testid="library-game"][data-pack="${packId}"]`).click();
+  await expect(page.getByTestId('library-game-pane')).toHaveAttribute('data-pack', packId);
+}
+
+/** One row of the open game's More menu. */
+export async function libraryMore(page: Page, action: string) {
+  await page.getByTestId('library-more').click();
+  await page.getByTestId('library-more-menu').getByTestId(action).click();
+}

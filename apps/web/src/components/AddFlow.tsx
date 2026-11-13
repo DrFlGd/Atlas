@@ -2,19 +2,18 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
 import { downloadsOffered } from '../features';
-import { setDownloadPanelOpen } from '../state/downloads';
 import {
   STILL_WAITING_SECONDS,
   browseGames,
   cancelImport,
   catalogueImporters,
+  closeAdding,
   confirmChecked,
   continueQueue,
   forgetQueue,
   pictureText,
   queuedGames,
   resetImport,
-  setAddMapOpen,
   setDraft,
   stopRun,
   submitAddresses,
@@ -22,6 +21,13 @@ import {
   type ImportPhase,
   type QueuedGame,
 } from '../state/importing';
+import {
+  focusAddBox,
+  leaveLibrary,
+  openLibraryGame,
+  showLibraryAdd,
+  useLibrary,
+} from '../state/libraryView';
 import {
   MAX_FETCHED_RUN_PAGES,
   MAX_RUN_ADDRESSES,
@@ -38,129 +44,68 @@ import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
 
 /**
- * "Add a map", in desktop builds that include importers: paste the address
- * of a map page, or several, wait while each page loads in its own window,
- * and see what was added. A game's address, or a site's list of games,
- * first lists what there is to choose from (see `GameChoice.tsx`).
+ * "Add a map or a wiki", in desktop builds that include importers: the
+ * address box on the left of the Library ({@link AddBox}), and the steps
+ * of adding on its right ({@link AddFlow}): waiting while each page loads
+ * in its own window or is read, and what was added. A game's address, a
+ * wiki's start page or a site's list of games first lists what there is
+ * to choose from (see `GameChoice.tsx`).
  */
-export function AddMapDialog() {
-  const open = useAtlas((s) => s.addMapOpen);
-  const phase = useImport((s) => s.phase);
-  const ref = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
-  }, [open]);
-
-  const busy = phase.kind === 'waiting' || phase.kind === 'converting';
-  const running =
-    (phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running';
-  const close = () => {
-    // Closing while waiting stops the import, and a run; while converting it finishes.
-    if (phase.kind === 'waiting' || running) void cancelImport();
-    setAddMapOpen(false);
-  };
-
-  return (
-    <dialog
-      ref={ref}
-      className="dialog add-map-dialog"
-      aria-labelledby={titleId}
-      data-testid="add-map-dialog"
-      data-phase={phase.kind}
-      data-run={phase.kind === 'run' || phase.kind === 'listing' ? phase.run.status : undefined}
-      onCancel={(event) => {
-        if (phase.kind === 'converting') event.preventDefault();
-      }}
-      onClose={close}
-    >
-      {open ? (
-        <div className="dialog-body">
-          <header className="dialog-head">
-            <h2 id={titleId}>Add a map</h2>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Close"
-              disabled={phase.kind === 'converting'}
-              onClick={close}
-            >
-              <UiIcon name="close" />
-            </button>
-          </header>
-          {phase.kind === 'idle' || phase.kind === 'failed' ? (
-            <AddressForm failure={phase.kind === 'failed' ? phase.message : null} />
-          ) : null}
-          {phase.kind === 'check' ? <Check phase={phase} /> : null}
-          {busy ? <Progress phase={phase} /> : null}
-          {phase.kind === 'done' ? <Result phase={phase} /> : null}
-          {phase.kind === 'run' ? (
-            <Run run={phase.run} shownPackId={phase.shownPackId} update={phase.update} />
-          ) : null}
-          {phase.kind === 'listing' ? (
-            <Listing run={phase.run} purpose={phase.purpose} PageState={PageState} />
-          ) : null}
-          {phase.kind === 'catalogue' ? <CataloguePick pick={phase.pick} /> : null}
-          {phase.kind === 'update-games' ? <UpdateGames phase={phase} /> : null}
-          {phase.kind === 'choose' ? <ChoosePages choice={phase.choice} /> : null}
-        </div>
-      ) : null}
-    </dialog>
-  );
-}
-
-function AddressForm({ failure }: { failure: string | null }) {
-  const importers = useAtlas((s) => s.config?.importers ?? []);
+/** The address box: one address or several, Add, and the sites' lists of games. */
+export function AddBox() {
   const address = useImport((s) => s.draft);
+  const phase = useImport((s) => s.phase);
+  const focus = useLibrary((s) => s.addFocus);
+  const input = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
   const hintId = useId();
   const { addresses } = parseAddresses(address);
   const count = addresses.length;
+  const busy =
+    phase.kind === 'waiting' ||
+    phase.kind === 'converting' ||
+    ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running');
+  useEffect(() => {
+    if (focus > 0) input.current?.focus();
+  }, [focus]);
   const submit = () => {
-    if (count > 0) void submitAddresses(address);
+    if (count === 0 || busy) return;
+    showLibraryAdd();
+    void submitAddresses(address);
   };
   return (
     <form
-      className="dialog-section add-map-form"
+      className="library-add"
+      aria-labelledby={`${inputId}-label`}
+      data-testid="library-add-box"
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
-      <p className="muted small" id={hintId}>
-        Paste the address of a map page. The page opens in a window of its own; if it asks you to
-        sign in or to confirm you are a person, do that there. This app reads the map data once the
-        page shows it, and then closes the window. To add several maps, paste one address per line
-        (up to {MAX_RUN_ADDRESSES}): this app opens the pages one at a time, in that order, with a
-        short pause between them. When typing, Shift+Enter starts a new line and Enter adds.
-      </p>
-      <p className="muted small">
-        You can also paste the address of a game’s own page, where the site lists its maps: this app
-        reads that page and lists the maps for you to choose from.
-      </p>
-      <label htmlFor={inputId} className="field-label">
-        Map page addresses
+      <label htmlFor={inputId} id={`${inputId}-label`} className="library-add-title">
+        Add a map or a wiki
       </label>
-      <div className="inline-form add-map-inputs">
+      <div className="library-add-row">
         <textarea
+          ref={input}
           id={inputId}
-          className="text-input add-map-addresses"
-          rows={count > 1 ? Math.min(8, count + 1) : 2}
+          className="library-input"
+          rows={count > 1 ? Math.min(6, count + 1) : 1}
           inputMode="url"
           autoComplete="off"
           spellCheck={false}
-          placeholder="https://"
+          placeholder="Paste a page address"
           aria-describedby={hintId}
           data-testid="add-map-url"
           value={address}
-          autoFocus
+          onFocus={() => {
+            if (useLibrary.getState().pane !== 'add') showLibraryAdd();
+          }}
           onChange={(event) => {
             setDraft(event.target.value);
-            if (failure) resetImport();
+            if (useImport.getState().phase.kind === 'failed') resetImport();
           }}
           onKeyDown={(event) => {
             // Enter adds, as in a one-line field; Shift+Enter starts a new line.
@@ -174,22 +119,94 @@ function AddressForm({ failure }: { failure: string | null }) {
           type="submit"
           className="button button-primary"
           data-testid="add-map-start"
-          disabled={count === 0}
+          disabled={count === 0 || busy}
         >
           {count > 1 ? `Add ${count} maps` : 'Add'}
         </button>
       </div>
+      <p className="library-hint" id={hintId}>
+        A map page, a game’s page that lists its maps, or a wiki’s start page. For several map
+        pages, one address per line (up to {MAX_RUN_ADDRESSES}). Add opens or reads them one at a
+        time.
+      </p>
       {__ATLAS_DOWNLOADS__ ? <MeasureFromPage urls={addresses} /> : null}
-      {failure ? (
-        <p className="download-error" role="alert" data-testid="add-map-error">
-          {failure}
-        </p>
-      ) : null}
       <BrowseGames />
+    </form>
+  );
+}
+
+/** The steps of adding, on the right of the Library. */
+export function AddFlow() {
+  const phase = useImport((s) => s.phase);
+  const busy = phase.kind === 'waiting' || phase.kind === 'converting';
+  const running =
+    (phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running';
+  return (
+    <section
+      className="library-pane library-flow"
+      aria-label="Adding"
+      data-testid="library-flow"
+      data-phase={phase.kind}
+      data-run={phase.kind === 'run' || phase.kind === 'listing' ? phase.run.status : undefined}
+    >
+      <header className="library-pane-head">
+        <div className="library-pane-title">
+          <h2>Add a map or a wiki</h2>
+          <p className="library-facts">
+            {busy || running
+              ? 'Pages are read one at a time. You can open another game meanwhile; the strip at the bottom shows how far it is.'
+              : 'Nothing is read until you press Add, and each page only once.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="button"
+          data-testid="library-flow-close"
+          disabled={phase.kind === 'converting'}
+          onClick={closeAdding}
+        >
+          {busy || running ? 'Back to the game' : 'Close'}
+        </button>
+      </header>
+      <div className="library-pane-body touch-scroll" data-scroll-root>
+        {phase.kind === 'idle' ? <AddHelp /> : null}
+        {phase.kind === 'failed' ? <Failure message={phase.message} /> : null}
+        {phase.kind === 'check' ? <Check phase={phase} /> : null}
+        {busy ? <Progress phase={phase} /> : null}
+        {phase.kind === 'done' ? <Result phase={phase} /> : null}
+        {phase.kind === 'run' ? (
+          <Run run={phase.run} shownPackId={phase.shownPackId} update={phase.update} />
+        ) : null}
+        {phase.kind === 'listing' ? (
+          <Listing run={phase.run} purpose={phase.purpose} PageState={PageState} />
+        ) : null}
+        {phase.kind === 'catalogue' ? <CataloguePick pick={phase.pick} /> : null}
+        {phase.kind === 'update-games' ? <UpdateGames phase={phase} /> : null}
+        {phase.kind === 'choose' ? <ChoosePages choice={phase.choice} /> : null}
+      </div>
+    </section>
+  );
+}
+
+/** Before anything is added: how adding works, pages kept from earlier, and the sites this app reads. */
+function AddHelp() {
+  const importers = useAtlas((s) => s.config?.importers ?? []);
+  return (
+    <div className="dialog-section" data-testid="add-map-help">
+      <p>
+        Paste the address of a map page in the box on the left and press Add. The page opens in a
+        window of its own; if it asks you to sign in or to confirm you are a person, do that there.
+        This app reads the map data once the page shows it, and then closes the window.
+      </p>
+      <p className="muted small">
+        A game’s own page, where the site lists its maps, or a wiki’s start page lists its pages for
+        you to choose from. Several map pages are opened one at a time, in the order given, with a
+        short pause between them.
+      </p>
       <QueuedPages />
       {importers.length > 0 ? (
         <div className="muted small">
-          <p>This app can add maps from:</p>
+          <p>This app can add maps and pages from:</p>
           <ul className="importer-list">
             {importers.map((importer) => (
               <li key={importer.id}>
@@ -200,11 +217,23 @@ function AddressForm({ failure }: { failure: string | null }) {
           </ul>
         </div>
       ) : null}
-    </form>
+    </div>
   );
 }
 
-/** "Browse games…": one button for each importer that offers a list of games. */
+/** Why nothing was added, with the way back to the address box. */
+function Failure({ message }: { message: string }) {
+  return (
+    <div className="dialog-section">
+      <p className="download-error" role="alert" data-testid="add-map-error">
+        {message}
+      </p>
+      <p className="muted small">Change the address in the box on the left and press Add again.</p>
+    </div>
+  );
+}
+
+/** "Browse a site's list of games": one button for each importer that offers one. */
 function BrowseGames() {
   const [entries, setEntries] = useState<Awaited<ReturnType<typeof catalogueImporters>>>([]);
   useEffect(() => {
@@ -221,26 +250,30 @@ function BrowseGames() {
   }, []);
   if (entries.length === 0) return null;
   return (
-    <div className="add-map-browse" data-testid="add-map-browse">
-      <p className="muted small">
-        Or choose games from a site’s list of games. This app opens the list in a window of its own,
-        and you tick the games to add.
-      </p>
-      <div className="row-actions wrap">
-        {entries.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className="button"
-            data-testid="add-map-browse-games"
-            data-importer={entry.id}
-            title={entry.address}
-            onClick={() => void browseGames(entry.id)}
-          >
-            {entry.label}…
-          </button>
-        ))}
-      </div>
+    <div className="library-browse" data-testid="add-map-browse">
+      {entries.map((entry) => (
+        <button
+          key={entry.id}
+          type="button"
+          className="library-button-row"
+          data-testid="add-map-browse-games"
+          data-importer={entry.id}
+          title={entry.address}
+          onClick={() => {
+            showLibraryAdd();
+            void browseGames(entry.id);
+          }}
+        >
+          <UiIcon name="search" size={18} />
+          <span>
+            {entries.length === 1 ? 'Browse a site’s list of games' : entry.label}
+            <span className="library-button-note">
+              {entries.length === 1 ? `${entry.label}. ` : ''}Tick the games to add; the list opens
+              in a window of its own the first time.
+            </span>
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -266,7 +299,8 @@ function QueuedPages() {
     <div className="add-map-browse" data-testid="add-map-queued">
       <p className="muted small">
         Pages you chose earlier that were not read: the go was stopped, or the site asked this app
-        to wait.
+        to wait. Read the next reads them now, one at a time with a pause. Forget them drops the
+        list; nothing that was read is deleted.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
@@ -288,7 +322,7 @@ function QueuedPages() {
               </button>
               <button
                 type="button"
-                className="link-button"
+                className="button"
                 onClick={() => void forgetQueue(game.importerId, game.key)}
               >
                 Forget them
@@ -472,11 +506,12 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
             className="button button-primary"
             onClick={() => {
               const id = phase.guideId;
-              setAddMapOpen(false);
+              closeAdding();
+              leaveLibrary();
               if (id) openGuide(id);
             }}
           >
-            Read it
+            Read it in Guides
           </button>
         ) : null}
         {__ATLAS_DOWNLOADS__ && downloadable ? (
@@ -485,8 +520,8 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
             className="button button-primary"
             data-testid="add-map-download"
             onClick={() => {
-              setAddMapOpen(false);
-              setDownloadPanelOpen(true);
+              closeAdding();
+              openLibraryGame(phase.packId);
             }}
           >
             <UiIcon name="download" size={16} /> Download map images…
@@ -498,18 +533,21 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
           onClick={() => {
             setDraft('');
             resetImport();
+            focusAddBox();
           }}
         >
-          Add another map
+          Add another
         </button>
         <button
           type="button"
           className="button"
+          data-testid="add-map-done"
           onClick={() => {
-            setAddMapOpen(false);
+            closeAdding();
+            openLibraryGame(phase.packId);
           }}
         >
-          Done
+          Open {summary.game}
         </button>
       </div>
     </section>
@@ -683,6 +721,11 @@ function Run({
   const done = run.pages.filter(
     ({ state }) => state.kind === 'added' || state.kind === 'failed',
   ).length;
+  // The game Open opens: the one shown, else the last one a page was added to.
+  const lastAdded = run.pages.findLast(({ state }) => state.kind === 'added')?.state;
+  const openId = shownPackId ?? (lastAdded?.kind === 'added' ? lastAdded.packId : null);
+  const openTitle = openId ? games.get(openId) : undefined;
+  const guides = run.pages.some(({ state }) => state.kind === 'added' && state.guide);
   return (
     <section
       className="dialog-section"
@@ -737,7 +780,7 @@ function Run({
       {!running && run.pages.some(({ state }) => state.kind === 'added' && state.pictures) ? (
         <p className="muted small" data-testid="add-map-pictures-note">
           The pictures of these pages are downloading now, one at a time, and show on the pages as
-          they arrive. Maps, then Location photos… shows how far it is.
+          they arrive. The strip at the bottom of the Library shows how far it is.
         </p>
       ) : null}
       {!running && run.pages.some(({ state }) => state.kind === 'added' && !state.guide) ? (
@@ -745,12 +788,23 @@ function Run({
           {__ATLAS_DOWNLOADS__ && downloadable
             ? games.size === 1
               ? `Map images of ${shownGame} are not downloaded yet, so the markers show on a blank map until you download them.`
-              : `Map images are not downloaded with the maps. ${shownGame} is shown now; to download the images of another game, choose that game in the top bar and download them there.`
+              : `Map images are not downloaded with the maps. ${shownGame} is shown now; to download the images of another game, open that game in the Library.`
             : games.size === 1
               ? 'Its map images are not installed, so the markers show on a plain background.'
               : 'Their map images are not installed, so the markers show on a plain background.'}
         </p>
       ) : null}
+      <p className="muted small">
+        {running
+          ? 'Stop ends the run after the page that is open now; the pages done stay added.'
+          : `Add more empties the address box.${
+              openTitle
+                ? guides
+                  ? ` Open ${openTitle} shows its pages here in the Library, to tick and read more of them.`
+                  : ` Open ${openTitle} shows the game here in the Library.`
+                : ' Done goes back to the Library.'
+            }`}
+      </p>
       <div className="row-actions wrap">
         {running ? (
           <button
@@ -772,8 +826,8 @@ function Run({
                 className="button button-primary"
                 data-testid="add-map-download"
                 onClick={() => {
-                  setAddMapOpen(false);
-                  setDownloadPanelOpen(true);
+                  closeAdding();
+                  if (shownPackId) openLibraryGame(shownPackId);
                 }}
               >
                 <UiIcon name="download" size={16} />{' '}
@@ -786,18 +840,21 @@ function Run({
               onClick={() => {
                 setDraft('');
                 resetImport();
+                focusAddBox();
               }}
             >
-              Add more maps
+              Add more
             </button>
             <button
               type="button"
               className="button"
+              data-testid="add-map-done"
               onClick={() => {
-                setAddMapOpen(false);
+                closeAdding();
+                if (openId) openLibraryGame(openId);
               }}
             >
-              Done
+              {openTitle ? `Open ${openTitle}` : 'Done'}
             </button>
           </>
         )}

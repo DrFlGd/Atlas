@@ -129,7 +129,7 @@ jobs:
           commit="$(git rev-parse --short HEAD)"
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas $VERSION for Windows: an offline map, checklist and guide viewer. It comes with a small demo world, and shows map packs from its maps folder and from any folder you choose (Maps button, then "Open a map pack…" or "Choose maps folder…").
+          Atlas $VERSION for Windows: an offline map, checklist and guide viewer. It comes with a small demo world, and shows map packs from its maps folder and from any folder you choose (**Settings**, then **Map packs elsewhere**).
 
           ## How to install
 
@@ -138,6 +138,14 @@ jobs:
           3. Follow the installer, then start **Atlas** from the Start menu.
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
+
+          ## New in 0.6.0
+
+          - **The Library.** The games on this computer now have a screen of their own, **Library**, the first section in the strip at the side. Pick a game on the left to see what it holds, with **Show the map** or **Read the guides** at the top. **More** holds what is used less often (export to a file, import a map pack file, open its folder, delete), each with a sentence on what it does. **New game…** is under the list of games. In the Classic layout the folder icon opens the same screen.
+          - **Settings.** A new **Settings** section holds the theme, the layout, where maps are saved and the map packs shown from other folders.
+          - **Edit guide pages.** In **Guides**, **Edit the page** opens a page editor. Edit a page as it looks (**Formatted**), with headings, lists, tables, pictures, links to locations and other pages, and text hidden until tapped, or as text (**Markdown**), which covers everything a page can hold. Add pages and sections of your own, hide pages, and arrange the contents. The game's own pages are never changed: your version is kept beside the game, and **Go back to the wiki's version** undoes it. When a page you changed is changed in the game later, your version stays and Atlas says so.
+          - **Small pictures in the line of text.** A picture a page gives a small size (an icon or a badge) now stands in the line of text at that size, with no caption.
+          - **Export.** The tick box for your own content now covers the pages you changed or wrote. A file that carries them needs Atlas 0.6.0 or later to import.
 
           ## New since 0.4.4
 

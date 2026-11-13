@@ -11,25 +11,10 @@ import {
   startDownload,
 } from '../state/downloads';
 import { useAtlas } from '../state/store';
-import { downloadPercent, formatBytes, roughDuration } from './downloadFormat';
-import { DownloadSettingsSection } from './DownloadSettings';
+import { DETAILS, downloadPercent, formatBytes, roughDuration } from './downloadFormat';
+import { openSettings } from '../state/libraryView';
 import { UiIcon } from './icons';
 import { StopDetails, ViewLogButton } from './StopDetails';
-
-const DETAILS: Record<Detail, { label: string; description: string }> = {
-  overview: {
-    label: 'Overview',
-    description: 'Quickest. Good for finding your way; blurry when zoomed in close.',
-  },
-  standard: {
-    label: 'Standard',
-    description: 'Sharp at most zoom levels, at about a quarter of the full download.',
-  },
-  full: {
-    label: 'Full detail',
-    description: 'Every level, sharpest when zoomed in close. The largest download.',
-  },
-};
 
 const active = isActive;
 
@@ -299,8 +284,33 @@ function ChooseView({
           Not now
         </button>
       </div>
-      <DownloadSettingsSection running={false} />
+      <SpeedInSettings />
     </div>
+  );
+}
+
+/**
+ * Where the download speed is set: in Settings, once for every download
+ * of every Atlas app on this computer (it was repeated here before).
+ */
+function SpeedInSettings({ running = false }: { running?: boolean }) {
+  return (
+    <p className="muted small download-speed-note">
+      {running
+        ? 'A running download follows a new download speed at once. '
+        : 'How fast images are fetched is set once for every Atlas app on this computer. '}
+      <button
+        type="button"
+        className="link-button"
+        data-testid="download-speed-settings"
+        onClick={() => {
+          setDownloadPanelOpen(false);
+          openSettings();
+        }}
+      >
+        Change the download speed in Settings
+      </button>
+    </p>
   );
 }
 
@@ -466,7 +476,7 @@ function JobView({
           ) : null}
         </div>
       )}
-      {active(job) ? <DownloadSettingsSection running /> : null}
+      {active(job) ? <SpeedInSettings running /> : null}
     </div>
   );
 }

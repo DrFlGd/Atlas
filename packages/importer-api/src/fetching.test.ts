@@ -1,9 +1,11 @@
 import { makeGuidesFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
+import exampleWiki from '../demo/example-wiki-importer.js';
 import {
   ALLOW_ALL,
   DISALLOW_ALL,
   MAX_PAGE_FETCHES,
+  MAX_PAGE_LINKS,
   asImporter,
   checkOutcome,
   fetchAddresses,
@@ -191,11 +193,106 @@ describe('a page that became a guide', () => {
     ).toBe(false);
   });
 
+  it('keeps the links to other pages of the same site, each once, without fragments', () => {
+    const page = 'https://wiki.example.org/wiki/Start';
+    const outcome = checkOutcome(
+      {
+        ...success,
+        guideId: 'pages:guide:start',
+        links: [
+          'https://wiki.example.org/wiki/Bells#Where',
+          'https://wiki.example.org/wiki/Bells/',
+          'https://www.wiki.example.org/wiki/Gates',
+          'https://wiki.example.org/wiki/Start#Top',
+          'https://elsewhere.example.com/wiki/Bells',
+          'http://wiki.example.org/wiki/Plain',
+          'not an address',
+        ],
+      },
+      page,
+    );
+    expect(outcome.ok && outcome.links).toEqual([
+      'https://wiki.example.org/wiki/Bells',
+      'https://www.wiki.example.org/wiki/Gates',
+    ]);
+    // Without the page's address, or with no links left, the outcome has none.
+    const unplaced = checkOutcome({
+      ...success,
+      guideId: 'pages:guide:start',
+      links: ['https://wiki.example.org/wiki/Bells'],
+    });
+    expect(unplaced.ok && 'links' in unplaced).toBe(false);
+    const none = checkOutcome(
+      { ...success, guideId: 'pages:guide:start', links: ['https://elsewhere.example.com/x'] },
+      page,
+    );
+    expect(none.ok && 'links' in none).toBe(false);
+    // Kept up to the cap.
+    const many = Array.from({ length: MAX_PAGE_LINKS + 5 }, (_, i) => `${page}-${i}`);
+    const capped = checkOutcome({ ...success, guideId: 'pages:guide:start', links: many }, page);
+    expect(capped.ok && capped.links?.length).toBe(MAX_PAGE_LINKS);
+    // Not a list of text: refused, as any wrong shape is.
+    expect(checkOutcome({ ...success, guideId: 'pages:guide:start', links: [1] }, page).ok).toBe(
+      false,
+    );
+  });
+
   it('may stop the go when the page asked to confirm the reader is a person', () => {
     expect(checkOutcome({ ok: false, message: 'Asked to confirm.', stop: true })).toEqual({
       ok: false,
       message: 'Asked to confirm.',
       stop: true,
     });
+  });
+});
+
+describe('the made-up Example Wiki importer', () => {
+  const answer = (url: string, status: number, body: unknown) => ({
+    fetched: [
+      { url, finalUrl: url, status, contentType: 'application/json', text: JSON.stringify(body) },
+    ],
+  });
+  const page = 'https://wiki.example.org/wiki/Bells';
+
+  it('is an importer that fetches its pages, and lists its contents by heading', async () => {
+    const importer = asImporter(exampleWiki);
+    expect(importer.fetch?.addresses(page)).toEqual([page]);
+    expect(importer.matches('https://wiki.example.org/wiki/Contents')).toBe(false);
+    const contents = 'https://wiki.example.org/wiki/Contents';
+    const listed = await importer.games!.convert(
+      answer(contents, 200, {
+        headings: [{ title: 'Basics', pages: [{ slug: 'Bells', title: 'Bells' }] }],
+      }),
+      { url: contents, app: { name: 'Atlas', version: '1.0.0' } },
+    );
+    expect(listed).toEqual({
+      ok: true,
+      game: 'Example Wiki',
+      pages: [{ url: page, title: 'Bells', kind: 'page', group: 'Basics' }],
+    });
+  });
+
+  it('turns a page into a guide under its heading, with the pages it links to', async () => {
+    const outcome = checkOutcome(
+      await exampleWiki.convert(
+        answer(page, 200, { title: 'Bells', body: 'Ring them.', links: ['Gates', 'Bells'] }),
+        {
+          url: page,
+          importedAt: '2026-11-13T10:00:00Z',
+          app: { name: 'Atlas', version: '1.0.0' },
+          listed: { title: 'Bells', group: 'Basics' },
+          savedSources: () => Promise.resolve([]),
+          existingPack: () => Promise.resolve(null),
+          isBundled: () => false,
+        },
+      ),
+      page,
+    );
+    if (!outcome.ok) throw new Error(outcome.message);
+    expect(outcome.guideId).toBe('example-wiki:guide:bells');
+    expect(outcome.links).toEqual(['https://wiki.example.org/wiki/Gates']);
+    expect(outcome.pack.sections).toEqual([
+      { id: 'example-wiki:section:basics', title: 'Basics', items: ['example-wiki:guide:bells'] },
+    ]);
   });
 });

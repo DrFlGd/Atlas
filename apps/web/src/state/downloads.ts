@@ -105,7 +105,8 @@ export function setDownloadPanelOpen(panelOpen: boolean): void {
   }
 }
 
-async function loadDownloadSettings(): Promise<void> {
+/** Reads the download settings shared by every Atlas app, for the panel and the settings page. */
+export async function loadDownloadSettings(): Promise<void> {
   if (!desktop) return;
   try {
     update({ settings: await desktop.tiles.settings() });

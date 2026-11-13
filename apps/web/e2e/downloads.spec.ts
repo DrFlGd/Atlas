@@ -3,7 +3,7 @@ import { deflateSync } from 'node:zlib';
 import type { Page } from '@playwright/test';
 import { expect, test } from './layout';
 import { downloadsEnabled } from '../tooling/buildFlags.ts';
-import { collectErrors, selectByName } from './helpers';
+import { collectErrors, openLibraryGame, selectByName } from './helpers';
 
 /**
  * The "Download map images" interface, against a stand-in for the desktop
@@ -148,6 +148,7 @@ function tilePng(): Buffer {
 function installFakeShell(downloads: boolean) {
   interface Job {
     packId: string;
+    title: string;
     detail: string;
     state: string;
     reason: string | null;
@@ -254,6 +255,27 @@ function installFakeShell(downloads: boolean) {
     switch (command) {
       case 'tiles_plan':
         return Promise.resolve(plan());
+      case 'downloads_jobs': {
+        // The shell's one queue: what moves first, then paused, then what is over.
+        advance();
+        const order = ['running', 'queued', 'waiting', 'paused', 'stopped', 'done', 'cancelled'];
+        const entries = [
+          shell.job ? { key: 'remote', packId: 'remote', kind: 'images', job: shell.job } : null,
+          shell.photos
+            ? { key: 'remote#photos', packId: 'remote', kind: 'photos', job: shell.photos }
+            : null,
+        ]
+          .filter((entry) => entry !== null)
+          .map((entry) => {
+            const over = ['stopped', 'done', 'cancelled'].includes(entry.job.state);
+            return structuredClone({
+              ...entry,
+              job: { ...entry.job, finishedAt: over ? Date.now() : null },
+            });
+          });
+        entries.sort((a, b) => order.indexOf(a.job.state) - order.indexOf(b.job.state));
+        return Promise.resolve(entries);
+      }
       case 'tiles_snapshot':
         advance();
         return Promise.resolve(snapshot());
@@ -262,6 +284,7 @@ function installFakeShell(downloads: boolean) {
         const [island, cave] = totals[detail]!;
         shell.job = {
           packId: 'remote',
+          title: 'Remote test pack',
           detail,
           state: 'running',
           reason: null,
@@ -308,6 +331,7 @@ function installFakeShell(downloads: boolean) {
       case 'photos_start':
         shell.photos = {
           packId: 'remote#photos',
+          title: 'Location photos of Remote test pack',
           detail: 'full',
           state: 'running',
           reason: null,
@@ -348,6 +372,42 @@ function installFakeShell(downloads: boolean) {
       case 'desktop_info':
         return Promise.resolve({ name: 'Atlas', version: '0.0.0', platform: 'test', downloads });
       // The pack comes from the index, as a bundled pack would; no other folders.
+      case 'library_pack_details':
+        return Promise.resolve({
+          pack: {
+            id: args.id,
+            title: 'Remote test pack',
+            packVersion: '1.0.0',
+            schemaVersion: 1,
+            attribution: [],
+          },
+          source: { kind: 'app', pages: [] },
+          contents: {
+            maps: 1,
+            layers: 1,
+            locations: 2,
+            categories: 1,
+            regions: 0,
+            checklists: 0,
+            guides: 0,
+          },
+          layers: [
+            {
+              id: 'remote:layer',
+              name: 'Surface',
+              mapName: 'World',
+              minZoom: 0,
+              maxZoom: 2,
+              downloadable: true,
+              levels: [],
+              downloadedAt: null,
+            },
+          ],
+          detail: null,
+          imagesAt: null,
+          archive: false,
+          packFile: null,
+        });
       case 'library_list':
         return Promise.resolve({
           mapsFolder: { path: '/maps', isDefault: true, exists: true },
@@ -616,12 +676,12 @@ test('shows map images saved while browsing a map page without a restart', async
   const notice = page.getByTestId('tile-notice');
   await expect(notice).toContainText('Map image not installed');
 
-  // Open the map page with saving on, from the Maps dialog.
-  await page.getByTestId('maps-button').click();
-  const row = page.locator('[data-testid="pack-row"][data-pack="remote"]');
+  // Open the map page with saving on, from the game in the Library.
+  await openLibraryGame(page, 'remote');
+  const row = page.getByTestId('library-game-pane');
   await row.getByText('Map page…').click();
   await row.getByTestId('map-page-save').click();
-  await expect(page.getByTestId('maps-dialog')).toBeHidden();
+  await expect(page.getByTestId('library')).toBeHidden();
 
   const savedMore = () =>
     page.evaluate(() => {
@@ -698,16 +758,16 @@ test.describe('location photos', () => {
     await expect(missing).toHaveText('Photo not downloaded');
     expect((await shellCalls(page)).filter((call) => call.startsWith('photos_'))).toEqual([]);
 
-    // The Maps dialog offers it per game; nothing is fetched until asked.
-    await page.getByTestId('maps-button').click();
-    const row = page.locator('[data-testid="pack-row"][data-pack="remote"]');
-    const photos = row.getByTestId('photo-download');
-    await photos.getByText('Location photos…').click();
-    await expect(photos.getByTestId('photo-download-plan')).toHaveText(
-      '2 photos listed, 2 not on this device yet.',
+    // The game's Location photos card offers them; nothing is fetched until asked.
+    await openLibraryGame(page, 'remote');
+    const photos = page.getByTestId('library-photos-card');
+    const state = photos.getByTestId('library-photos-state');
+    await expect(state).toHaveText('0 of 2 photos on this computer.');
+    await expect(photos).toContainText('From photos.example.com,');
+    await expect(photos).toContainText(
+      'For your own use. An exported file leaves them out unless you tick that box.',
     );
-    await expect(photos).toContainText('From photos.example.com.');
-    const start = photos.getByTestId('download-photos');
+    const start = photos.getByTestId('library-photos-start');
     await expect(start).toHaveText('Download location photos');
     await page.screenshot({ path: `${PHOTO_SHOTS}/7-download-photos.png` });
     expect(await shellCalls(page)).not.toContain('photos_start');
@@ -718,19 +778,16 @@ test.describe('location photos', () => {
     });
     photosThere = true;
     await start.click();
-    await expect(photos.getByTestId('photo-job')).toHaveAttribute('data-state', 'running');
-    await photos.getByTestId('photos-pause').click();
-    await expect(photos.getByTestId('photo-job')).toHaveAttribute('data-state', 'paused');
-    await expect(photos).toContainText('Paused. Nothing is downloaded until you resume.');
+    await expect(photos).toHaveAttribute('data-state', 'running');
+    await photos.getByTestId('library-photos-pause').click();
+    await expect(photos).toHaveAttribute('data-state', 'paused');
+    await expect(state).toContainText('Nothing is downloaded until you resume.');
     await page.evaluate(() => {
       (window as unknown as { __mockShell: { hold: boolean } }).__mockShell.hold = false;
     });
-    await photos.getByTestId('photos-resume').click();
-    await expect(photos.getByTestId('photo-job')).toHaveAttribute('data-state', 'done');
-    await expect(photos.getByTestId('photo-download-summary')).toContainText('2 photos downloaded');
-    await expect(photos.getByTestId('photo-download-plan')).toHaveText(
-      '2 photos listed, all on this device.',
-    );
+    await photos.getByTestId('library-photos-resume').click();
+    await expect(photos).toHaveAttribute('data-state', 'done');
+    await expect(state).toHaveText('All 2 photos are on this computer.');
     await expect(start).toHaveCount(0);
     await page.screenshot({ path: `${PHOTO_SHOTS}/8-download-photos-done.png` });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -738,7 +795,7 @@ test.describe('location photos', () => {
     await page.setViewportSize({ width: 1280, height: 800 });
 
     // The location card shows the photo now, without a restart.
-    await page.keyboard.press('Escape');
+    await page.getByTestId('library-close').click();
     await expect(missing).toHaveCount(0);
     const img = page.getByTestId('photo').locator('img');
     await expect(img).toHaveAttribute('alt', 'Beacon 1 at noon');
@@ -781,16 +838,16 @@ test('a build without downloads offers none, even in a shell that has them', asy
   await page.goto('./');
   await expectNoDownloads(page);
   // No "Download location photos" either.
-  await page.getByTestId('maps-button').click();
-  await expect(page.locator('[data-testid="pack-row"][data-pack="remote"]')).toBeVisible();
-  await expect(page.getByTestId('photo-download')).toHaveCount(0);
+  await openLibraryGame(page, 'remote');
+  await expect(page.getByTestId('library-contents-card')).toBeVisible();
+  await expect(page.getByTestId('library-photos-card')).toHaveCount(0);
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
 });
 
 test.describe('in the standard layout', () => {
   test.use({ layout: 'standard' });
 
-  test('downloads map images, and saves them from a map page opened from Games', async ({
+  test('downloads map images, and saves them from a map page opened from the Library', async ({
     page,
   }) => {
     test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads map images');
@@ -802,6 +859,9 @@ test.describe('in the standard layout', () => {
     await servePack(page, () => null);
     await page.goto('./');
     await expect(page.locator('.touch')).toHaveAttribute('data-input', 'mouse');
+    // An app that downloads opens on the Library.
+    await expect(page.locator('.touch')).toHaveAttribute('data-section', 'library');
+    await page.getByTestId('section-map').click();
 
     // The notice over the map offers the download; the panel is the classic one.
     await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
@@ -821,13 +881,12 @@ test.describe('in the standard layout', () => {
     await expect(panel).toBeVisible();
     await panel.getByRole('button', { name: 'Close' }).click();
 
-    // "View map page and save images as I browse", in the Maps dialog from Games.
-    await page.getByTestId('section-games').click();
-    await page.getByTestId('maps-button').click();
-    const row = page.locator('[data-testid="pack-row"][data-pack="remote"]');
+    // "View map page and save images as I browse", on the game in the Library.
+    await openLibraryGame(page, 'remote');
+    const row = page.getByTestId('library-game-pane');
     await row.getByText('Map page…').click();
     await row.getByTestId('map-page-save').click();
-    await expect(page.getByTestId('maps-dialog')).toBeHidden();
+    await expect(page.getByTestId('library')).toBeHidden();
     await expect(page.getByTestId('map-page-status')).toBeVisible();
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
@@ -850,10 +909,94 @@ test.describe('in the standard layout', () => {
     await page.goto('./');
     await expect(page.locator('.touch')).toBeVisible();
     await expectNoDownloads(page);
-    await page.getByTestId('section-games').click();
-    await page.getByTestId('maps-button').click();
-    await expect(page.getByTestId('maps-dialog')).toBeVisible();
-    await expect(page.getByTestId('map-page')).toHaveCount(0);
+    await openLibraryGame(page, 'remote');
+    await expect(page.getByTestId('library-contents-card')).toBeVisible();
+    await expect(page.getByTestId('map-page-details')).toHaveCount(0);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+});
+
+test.describe('the Library', () => {
+  const LIBRARY_SHOTS = process.env.ATLAS_LIBRARY_SHOTS ?? 'test-results/library';
+  const setShell = (page: Page, patch: Record<string, unknown>) =>
+    page.evaluate((patch) => {
+      Object.assign((window as unknown as { __mockShell: object }).__mockShell, patch);
+    }, patch);
+
+  test('downloads map images from the game’s card, and follows them in Downloads', async ({
+    page,
+  }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads map images');
+    await mkdir(LIBRARY_SHOTS, { recursive: true });
+    const errors = collectErrors(page);
+    await page.addInitScript(() => {
+      (window as unknown as { __listRemote: boolean }).__listRemote = true;
+    });
+    await page.addInitScript(installFakeShell, true);
+    await servePack(page, () => null);
+    await page.goto('./');
+    await openLibraryGame(page, 'remote');
+
+    // The card says what is on this computer, and offers the detail to download.
+    const card = page.getByTestId('library-images-card');
+    await expect(card.getByTestId('library-images-state')).toContainText(
+      'No map images on this computer yet',
+    );
+    await card.getByTestId('library-images-choose').click();
+    await expect(card.getByTestId('library-detail-chooser')).toContainText('Recommended');
+    await page.screenshot({ path: `${LIBRARY_SHOTS}/images-card-choose.png` });
+    await setShell(page, { hold: true });
+    await card.getByTestId('library-images-start').click();
+    await expect(card).toHaveAttribute('data-state', 'running');
+    await expect(page.getByTestId('library-strip-now')).toContainText(
+      'Downloading map images of Remote test pack',
+    );
+    await expect(
+      page.locator(
+        '[data-testid="library-game"][data-pack="remote"] [data-testid="library-status"]',
+      ),
+    ).toContainText('Downloading map images');
+
+    // All downloads: now, with Pause and Stop.
+    await page.getByTestId('all-downloads').click();
+    const panel = page.getByTestId('downloads-panel');
+    await expect(panel.getByTestId('downloads-now')).toContainText(
+      'Map images of Remote test pack',
+    );
+    await expect(panel.getByTestId('downloads-pace')).toContainText(
+      'Pages are always read one at a time.',
+    );
+    await page.screenshot({ path: `${LIBRARY_SHOTS}/downloads-now.png` });
+
+    // Pause everything: the job waits, paused, until resumed.
+    await page.getByTestId('pause-everything').click();
+    const next = panel.getByTestId('downloads-next');
+    await expect(next.getByTestId('downloads-job')).toHaveAttribute('data-state', 'paused');
+    await expect(card).toHaveAttribute('data-state', 'paused');
+    await next.getByTestId('downloads-resume').click();
+    await expect(panel.getByTestId('downloads-now')).toBeVisible();
+
+    // A refusal stops it: it needs the person, with why, and Try again.
+    await setShell(page, { hold: false, failNext: 'The server refused access (403).' });
+    const needs = panel.getByTestId('downloads-needs-you');
+    await expect(needs.getByTestId('downloads-reason')).toHaveText(
+      'The server refused access (403).',
+    );
+    await expect(
+      page.locator(
+        '[data-testid="library-game"][data-pack="remote"] [data-testid="library-status"]',
+      ),
+    ).toHaveText('A download stopped: it needs you');
+    await page.screenshot({ path: `${LIBRARY_SHOTS}/downloads-needs-you.png` });
+    await needs.getByTestId('downloads-retry').click();
+    await expect(panel.getByTestId('downloads-today')).toContainText('downloaded', {
+      timeout: 30_000,
+    });
+    await expect(panel.getByTestId('downloads-needs-you')).toHaveCount(0);
+    // Esc closes the panel, and only it.
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(page.getByTestId('library')).toBeVisible();
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
 });

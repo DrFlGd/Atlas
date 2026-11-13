@@ -1,6 +1,13 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './layout';
-import { collectErrors, ownLocationsText, ownListsText, selectByName } from './helpers';
+import {
+  collectErrors,
+  libraryMore,
+  openLibraryGame,
+  ownLocationsText,
+  ownListsText,
+  selectByName,
+} from './helpers';
 
 /**
  * Map pack files in the desktop app: "Export…" and "Details" on a game in
@@ -408,9 +415,8 @@ test.beforeEach(async ({ page }) => {
 
 test('exports a game at a chosen detail, with progress beside it when asked', async ({ page }) => {
   const errors = collectErrors(page);
-  await page.getByTestId('maps-button').click();
-  const row = page.locator('[data-testid="pack-row"][data-pack="demo"]');
-  await row.getByTestId('export-pack').click();
+  await openLibraryGame(page, 'demo');
+  await libraryMore(page, 'export-pack');
 
   const dialog = page.getByTestId('pack-file-dialog');
   await expect(dialog.getByRole('heading')).toHaveText('Export Atlas demo world');
@@ -461,11 +467,11 @@ test('exports a game at a chosen detail, with progress beside it when asked', as
 
   await dialog.getByRole('button', { name: 'Done' }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByTestId('maps-dialog')).toBeVisible();
+  await expect(page.getByTestId('library')).toBeVisible();
 
   // When the progress cannot be saved, the map pack file still is.
   await setShell(page, { progressFails: true });
-  await row.getByTestId('export-pack').click();
+  await libraryMore(page, 'export-pack');
   await dialog.getByTestId('export-with-progress').check();
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
@@ -479,12 +485,12 @@ test('imports a map pack file, saying which is newer and asking before using old
   page,
 }) => {
   const errors = collectErrors(page);
-  await page.getByTestId('maps-button').click();
+  await openLibraryGame(page, 'demo');
   const dialog = page.getByTestId('pack-file-dialog');
 
   // Older than the game installed: keeping it is the first choice.
   await setShell(page, { pick: pickedFile('2026-10-20T10:00:00.000Z') });
-  await page.getByTestId('import-pack-file').click();
+  await libraryMore(page, 'import-pack-file');
   await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
   await expect(dialog.getByTestId('import-summary')).toHaveText(
     'Atlas demo world, version 1.0.0: 2 maps, 5,000 locations, 1 checklist, 1 guide. 340 map images at standard detail.',
@@ -509,7 +515,7 @@ test('imports a map pack file, saying which is newer and asking before using old
 
   // Newer: imported at once, into the maps folder, and shown.
   await setShell(page, { pick: pickedFile('2026-11-08T10:00:00.000Z') });
-  await page.getByTestId('import-pack-file').click();
+  await libraryMore(page, 'import-pack-file');
   await expect(verdict).toHaveAttribute('data-verdict', 'file-newer');
   await expect(verdict).toContainText(
     'This file is newer: its data was read from the game’s pages on',
@@ -526,9 +532,9 @@ test('imports a map pack file, saying which is newer and asking before using old
   ]);
   await dialog.getByRole('button', { name: 'Done' }).click();
 
-  // The Maps dialog lists it in the maps folder, with where it came from.
-  const row = page.locator('[data-testid="pack-row"][data-pack="demo"]');
-  await expect(row).toContainText('Maps folder');
+  // The Library lists it, with where it came from.
+  const row = page.getByTestId('library-game-pane');
+  await expect(row.getByTestId('library-facts')).toContainText('In the maps folder');
   await row.getByTestId('pack-details-toggle').click();
   const details = row.getByTestId('pack-details');
   await expect(details).toContainText('Read from 1 web page with Demo map site.');
@@ -543,19 +549,18 @@ test('offers the photos downloaded for one’s own use in a map pack file, and o
   page,
 }) => {
   const errors = collectErrors(page);
-  await page.getByTestId('maps-button').click();
-  const row = page.locator('[data-testid="pack-row"][data-pack="demo"]');
+  await openLibraryGame(page, 'demo');
   const dialog = page.getByTestId('pack-file-dialog');
 
   // A game with no such photos: nothing to offer.
-  await row.getByTestId('export-pack').click();
+  await libraryMore(page, 'export-pack');
   await expect(dialog.getByTestId('export-start')).toBeEnabled();
   await expect(dialog.getByTestId('export-with-photos')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
   // With photos downloaded: offered, off until ticked, with how many and how large.
   await setShell(page, { ownUse: { pictures: 1280, bytes: 96_000_000 } });
-  await row.getByTestId('export-pack').click();
+  await libraryMore(page, 'export-pack');
   const withPhotos = dialog.getByTestId('export-with-photos');
   await expect(withPhotos).toHaveAccessibleName('Include downloaded photos');
   await expect(withPhotos).toHaveAccessibleDescription(
@@ -567,7 +572,7 @@ test('offers the photos downloaded for one’s own use in a map pack file, and o
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
   await dialog.getByRole('button', { name: 'Done' }).click();
 
-  await row.getByTestId('export-pack').click();
+  await libraryMore(page, 'export-pack');
   await withPhotos.check();
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
@@ -579,12 +584,11 @@ test('carries one’s own lists, locations and types in a map pack file only whe
   page,
 }) => {
   const errors = collectErrors(page);
-  await page.getByTestId('maps-button').click();
-  const row = page.locator('[data-testid="pack-row"][data-pack="demo"]');
+  await openLibraryGame(page, 'demo');
   const dialog = page.getByTestId('pack-file-dialog');
 
   // A game not made in the app: one's own things are left out unless asked for.
-  await row.getByTestId('export-pack').click();
+  await libraryMore(page, 'export-pack');
   const withMine = dialog.getByTestId('export-with-mine');
   await expect(withMine).toHaveAccessibleName('Include my lists, locations, types and photos');
   await expect(withMine).not.toBeChecked();
@@ -593,7 +597,7 @@ test('carries one’s own lists, locations and types in a map pack file only whe
   await expect(dialog.getByTestId('export-mine')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Done' }).click();
 
-  await row.getByTestId('export-pack').click();
+  await libraryMore(page, 'export-pack');
   await withMine.check();
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-mine')).toHaveText(
@@ -616,8 +620,8 @@ test('carries one’s own lists, locations and types in a map pack file only whe
     },
     importMine: { ownLists: ownListsText, ownLocations: ownLocationsText },
   });
-  await page.getByTestId('maps-button').click();
-  await page.getByTestId('import-pack-file').click();
+  await openLibraryGame(page, 'demo');
+  await libraryMore(page, 'import-pack-file');
   await expect(dialog.getByTestId('import-has-mine')).toContainText(
     'It also holds someone’s own 1 list, 2 locations and 1 type.',
   );
@@ -670,8 +674,8 @@ test('restores the photos of one’s own locations from a map pack file', async 
       ownPictures: [{ file: 'own.cove1.png', data: png.toString('base64') }],
     },
   });
-  await page.getByTestId('maps-button').click();
-  await page.getByTestId('import-pack-file').click();
+  await openLibraryGame(page, 'demo');
+  await libraryMore(page, 'import-pack-file');
   const dialog = page.getByTestId('pack-file-dialog');
   await expect(dialog.getByTestId('import-has-mine')).toContainText(
     'It also holds someone’s own 2 locations, 1 type and 1 photo.',
@@ -696,17 +700,13 @@ test('restores the photos of one’s own locations from a map pack file', async 
 test.describe('in the standard layout', () => {
   test.use({ layout: 'standard' });
 
-  test('exports from Maps and imports from Games', async ({ page }) => {
+  test('exports and imports from the Library', async ({ page }) => {
     const errors = collectErrors(page);
-    await page.getByTestId('section-games').click();
-    const games = page.getByTestId('games-screen');
+    await page.getByTestId('section-library').click();
 
-    // Export…, in the Maps dialog opened from Games.
-    await games.getByTestId('maps-button').click();
-    await page
-      .locator('[data-testid="pack-row"][data-pack="demo"]')
-      .getByTestId('export-pack')
-      .click();
+    // Export to a file, in the game's More.
+    await openLibraryGame(page, 'demo');
+    await libraryMore(page, 'export-pack');
     const dialog = page.getByTestId('pack-file-dialog');
     await expect(dialog.getByRole('heading')).toHaveText('Export Atlas demo world');
     await dialog.getByTestId('export-start').click();
@@ -715,13 +715,12 @@ test.describe('in the standard layout', () => {
     );
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(dialog).toBeHidden();
-    await page.keyboard.press('Escape');
-    await expect(page.getByTestId('maps-dialog')).toBeHidden();
+    await expect(page.getByTestId('library')).toBeVisible();
     expect((await packShell(page)).exports.map((e) => e.detail)).toEqual(['standard']);
 
-    // Import map pack file…, on the Games screen itself.
+    // Import a map pack file, in the same More.
     await setShell(page, { pick: pickedFile('2026-11-08T10:00:00.000Z') });
-    await games.getByTestId('import-pack-file').click();
+    await libraryMore(page, 'import-pack-file');
     await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
     await expect(dialog.getByTestId('import-verdict')).toHaveAttribute(
       'data-verdict',

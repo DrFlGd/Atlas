@@ -2,7 +2,7 @@ import type { PackDetails } from '../desktop';
 import { contentsText, installedImagesText, localDate, sourceText } from './packFileText';
 
 /**
- * Facts about a game's pack, shared by the Maps dialog's "Details" and the
+ * Facts about a game's pack, shared by the Library's "What this game holds" and the
  * map pack file dialog: dates are shown in local time, with the exact time
  * in UTC as their tooltip.
  */

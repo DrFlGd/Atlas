@@ -89,8 +89,10 @@ import {
 } from './gameChoice';
 import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
+import { showLibraryAdd, showLibraryGame } from './libraryView';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
+import { leftOutKeys, noteWikiContents, noteWikiFailed, noteWikiRead } from './wikiNotes';
 
 /**
  * "Add a map": the person pastes a page address, an importer that
@@ -141,6 +143,8 @@ export type ImportPhase =
       mapId: string | null;
       /** The guide the page became, when it became one. */
       guideId?: string;
+      /** The pages of the same site it links to, when the importer gave them. */
+      links?: string[];
       title: string;
       summary: ImportSummary;
       rebuilt: boolean;
@@ -804,7 +808,11 @@ async function startRun(
           if (read.state === 'cancelled') {
             report({ importerId: importer.id, outcome: 'cancelled' });
           }
-          return outcomeOf(read);
+          const result = outcomeOf(read);
+          if (importer.fetch && read.state !== 'cancelled' && read.state !== 'closed') {
+            void noteWikiFailed(importer.id, url, result.message);
+          }
+          return result;
         }
         update({ kind: 'converting' });
         const outcome = await convertAndSave(
@@ -823,6 +831,11 @@ async function startRun(
           },
         );
         reportPhase(importer.id, outcome);
+        if (importer.fetch && outcome.kind === 'done') {
+          void noteWikiRead(importer.id, url, outcome.links ?? []);
+        } else if (importer.fetch && outcome.kind === 'failed') {
+          void noteWikiFailed(importer.id, url, outcome.message);
+        }
         if (outcome.kind === 'done') {
           return {
             kind: 'added',
@@ -1089,7 +1102,7 @@ async function convertAndSave(
       message: `The importer stopped with an error, so nothing was added: ${errorText(error)}`,
     };
   }
-  const outcome = checkOutcome(returned);
+  const outcome = checkOutcome(returned, page.url);
   if (!outcome.ok) {
     return { kind: 'failed', message: outcome.message, ...(outcome.stop ? { refused: true } : {}) };
   }
@@ -1164,6 +1177,7 @@ async function convertAndSave(
     packId: outcome.packId,
     mapId: outcome.mapId ?? null,
     ...(outcome.guideId ? { guideId: outcome.guideId } : {}),
+    ...(outcome.links ? { links: outcome.links } : {}),
     title: outcome.summary.game,
     summary: outcome.summary,
     rebuilt,
@@ -1207,7 +1221,7 @@ export async function rebuildPack(packId: string): Promise<void> {
       return;
     }
     setPhase({ kind: 'converting', url: last.url, importer: importer.title });
-    useAtlas.setState({ addMapOpen: true, mapsDialogOpen: false });
+    showLibraryAdd();
     const outcome = await convertAndSave(
       importer,
       { url: last.url, pageData: last.data, importedAt: last.importedAt },
@@ -1221,13 +1235,16 @@ export async function rebuildPack(packId: string): Promise<void> {
   }
 }
 
-export function setAddMapOpen(open: boolean): void {
-  useAtlas.setState({ addMapOpen: open });
-  if (!open) {
-    resetImport();
-    setDraft('');
-    setMeasureFromPage(false);
-  }
+/**
+ * Leaves the steps of adding for the game open in the Library: back to an
+ * empty address box. A run or a page that is open goes on (the strip at the
+ * bottom of the Library shows it, with Stop).
+ */
+export function closeAdding(): void {
+  resetImport();
+  setDraft('');
+  setMeasureFromPage(false);
+  showLibraryGame();
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,6 +1388,10 @@ async function readListings(
         const result = await convertListing(item, read.data);
         results[index] = result;
         reportListing(item, result);
+        // A wiki's contents, kept for the Library's wiki screen.
+        if (item.importer.fetch && result.ok && 'pages' in result) {
+          await noteWikiContents(item.importer.id, url, result.game, result.pages);
+        }
         if (!result.ok) return { kind: 'failed', message: result.message };
         if ('pages' in result) {
           const count = result.pages.filter((page) => canAdd(item.importer, page.url)).length;
@@ -1424,17 +1445,19 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
     return;
   }
   const packId = packForListing(importer.id, result);
-  const game = choiceGame({
-    key: url,
-    title: result.game,
-    importer,
-    packId,
-    listed: result.pages,
-    recorded: recordedPages(packId),
-    queues: importer.fetch !== undefined,
-    // Its pages open in a window, when the importer says so of the game's own address.
-    inWindow: readsInWindow(importer.fetch, url),
-  });
+  const game = await withoutLeftOut(
+    choiceGame({
+      key: url,
+      title: result.game,
+      importer,
+      packId,
+      listed: result.pages,
+      recorded: recordedPages(packId),
+      queues: importer.fetch !== undefined,
+      // Its pages open in a window, when the importer says so of the game's own address.
+      inWindow: readsInWindow(importer.fetch, url),
+    }),
+  );
   setPhase({ kind: 'choose', choice: newChoice('add', [game], openedIn(read.run)) });
 }
 
@@ -1648,7 +1671,7 @@ export async function updatableGames(packIds?: readonly string[]): Promise<Updat
 
 /** "Update from the site…" for one game: reads its game page at once. */
 export async function updateGame(packId: string): Promise<void> {
-  useAtlas.setState({ addMapOpen: true, mapsDialogOpen: false });
+  showLibraryAdd();
   const games = await updatableGames([packId]);
   if (games.length === 0) {
     setPhase({
@@ -1660,9 +1683,84 @@ export async function updateGame(packId: string): Promise<void> {
   await startUpdate(games);
 }
 
+/** The wiki a game was read from, for the Library's wiki screen: its importer and the address of its contents. */
+export interface WikiSource {
+  importerId: string;
+  importerTitle: string;
+  /** The address of the wiki's contents; null when the importer gives none. */
+  address: string | null;
+  /** A page's pictures are downloaded with it. */
+  pictures: boolean;
+}
+
+/** The wiki a game was read from, when an importer that fetches its pages made it; null otherwise. */
+export async function wikiSourceOf(packId: string): Promise<WikiSource | null> {
+  const importers = await loadImporters().catch((): AtlasImporter[] => []);
+  const [game] = await updatableGames([packId]);
+  const importer = importers.find((i) => i.id === game?.importerId);
+  if (!game || !importer?.fetch) return null;
+  return {
+    importerId: game.importerId,
+    importerTitle: game.importerTitle,
+    address: importer.games ? game.address : null,
+    pictures: importer.picturesWithPages === true,
+  };
+}
+
+/**
+ * "Read the contents again": reads the wiki's contents page, one page, and
+ * keeps what it lists (see `wikiNotes.ts`); nothing else is read. Returns
+ * why it could not be read, or null.
+ */
+export async function readWikiContents(source: WikiSource): Promise<string | null> {
+  if (!source.address) return 'This wiki’s importer gives no contents page.';
+  const importer = (await loadImporters()).find((i) => i.id === source.importerId);
+  if (!importer?.games) return 'The importer of this wiki is not in this app any more.';
+  const read = await readListings([{ url: source.address, importer, reading: 'game' }], 'update');
+  if (!read) return null;
+  const result = read.results[0];
+  if (result?.ok && 'pages' in result) {
+    setPhase({ kind: 'idle' });
+    return null;
+  }
+  return listingFailure(read.run, result);
+}
+
+/**
+ * "Read n pages" on the wiki screen: the pages go to the front of the
+ * wiki's pages kept to read, and a go reads them now, one at a time with
+ * the pause, as "Read the next…" does. Pages left out are not read.
+ */
+export async function readWikiPages(
+  source: WikiSource,
+  game: string,
+  pages: readonly QueuedPage[],
+): Promise<void> {
+  const key = source.address ?? pages[0]?.url;
+  const importer = (await loadImporters()).find((i) => i.id === source.importerId);
+  if (!key || !importer) return;
+  const leftOut = await leftOutKeys(importer.id).catch(() => new Set<string>());
+  const reading = pages.filter((page) => !leftOut.has(pageKey(page.url)));
+  if (reading.length === 0) return;
+  // Pages kept for later that are read now are off that list.
+  const games = await readQueue(importer.id);
+  const kept = games.find((g) => g.key === key);
+  if (kept) {
+    const now = new Set(reading.map((page) => pageKey(page.url)));
+    await writeQueue(importer.id, [
+      ...games.filter((g) => g.key !== key),
+      { ...kept, pages: kept.pages.filter((page) => !now.has(pageKey(page.url))) },
+    ]);
+  }
+  await readChosen(importer, key, game, reading.slice(0, MAX_FETCHED_RUN_PAGES));
+  // Those that did not fit in one go wait at the front of the list.
+  const later = reading.slice(MAX_FETCHED_RUN_PAGES);
+  if (later.length > 0) await queuePages(importer.id, key, game, later, true);
+}
+
 /** "Update all…": lists the games to update, all ticked, before anything opens. */
 export async function updateAll(): Promise<void> {
-  useAtlas.setState({ addMapOpen: true, mapsDialogOpen: false });
+  showLibraryAdd();
   const games = await updatableGames();
   setPhase({ kind: 'update-games', games, ticked: games.map((game) => game.packId) });
 }
@@ -1740,10 +1838,23 @@ async function startUpdate(games: readonly UpdateGame[]): Promise<void> {
       }),
     ];
   });
+  const kept = await Promise.all(choice.map(withoutLeftOut));
   setPhase({
     kind: 'choose',
-    choice: newChoice('update', choice, read.run ? openedIn(read.run) : 0),
+    choice: newChoice('update', kept, read.run ? openedIn(read.run) : 0),
   });
+}
+
+/** A game's pages to choose from, with the pages the person left out unticked (see `wikiNotes.ts`). */
+async function withoutLeftOut(game: ChoiceGame): Promise<ChoiceGame> {
+  const leftOut = await leftOutKeys(game.importerId).catch(() => new Set<string>());
+  if (leftOut.size === 0) return game;
+  return {
+    ...game,
+    pages: game.pages.map((page) =>
+      leftOut.has(pageKey(page.url)) ? { ...page, checked: false } : page,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1896,15 +2007,29 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
   const games = await readQueue(importerId);
   const game = games.find((g) => g.key === key);
   if (!importer || !game || game.pages.length === 0) return;
-  const now = game.pages.slice(0, MAX_FETCHED_RUN_PAGES);
+  // Pages the person left out since they were kept are not read.
+  const leftOut = await leftOutKeys(importerId).catch(() => new Set<string>());
+  const pages = game.pages.filter((page) => !leftOut.has(pageKey(page.url)));
+  const now = pages.slice(0, MAX_FETCHED_RUN_PAGES);
   await writeQueue(importerId, [
     ...games.filter((g) => g.key !== key),
-    { ...game, pages: game.pages.slice(now.length) },
+    { ...game, pages: pages.slice(now.length) },
   ]);
-  const chosen: ChosenPage[] = now.map((page) => ({
+  if (now.length === 0) return;
+  await readChosen(importer, key, game.game, now);
+}
+
+/** Reads pages of a game that keeps pages for later, as one go; those it did not read are kept. */
+async function readChosen(
+  importer: AtlasImporter,
+  key: string,
+  game: string,
+  pages: readonly QueuedPage[],
+): Promise<void> {
+  const chosen: ChosenPage[] = pages.map((page) => ({
     url: page.url,
-    importerId,
-    game: game.game,
+    importerId: importer.id,
+    game,
     gameKey: key,
     title: page.title,
     ...(page.group ? { group: page.group } : {}),

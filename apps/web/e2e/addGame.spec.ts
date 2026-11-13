@@ -23,7 +23,7 @@ test.beforeAll(async () => {
 });
 
 const choicePages = (page: Page) => page.getByTestId('add-map-choose-page');
-const dialog = (page: Page) => page.getByTestId('add-map-dialog');
+const dialog = (page: Page) => page.getByTestId('library-flow');
 
 /** Each page in the choice: its title, kind, state and whether it is ticked. */
 async function choiceRows(page: Page) {
@@ -103,14 +103,18 @@ test('adds the maps and checklist of a game from its game page, and updates it l
 
   // Later the site has a new map. "Update from the site…" reads the game page again.
   await setMock(page, { extra: { 'test-valley': { 'north-lake': 'North Lake' } } });
-  await page.getByRole('button', { name: 'Done' }).click();
-  await page.getByTestId('maps-button').click();
-  // The dialog's foot and the app's name say which app and version this is.
+  // Open Test Valley: the game, in the Library.
+  await page.getByTestId('add-map-done').click();
+  await expect(page.getByTestId('library-game-pane')).toHaveAttribute('data-pack', 'test-valley');
+  // The Library's Settings and the app's name say which app and version this is.
+  await page.getByTestId('library-settings').click();
   await expect(page.getByTestId('app-version')).toHaveText('Atlas 0.0.0');
   await expect(page.locator('.brand')).toHaveAttribute('title', 'Atlas 0.0.0');
-  const row = page.locator('[data-testid="pack-row"][data-pack="test-valley"]');
+  const row = page.locator('[data-testid="library-game"][data-pack="test-valley"]');
   await expect(page.getByTestId('update-all')).toBeVisible();
-  await row.getByTestId('update-pack').click();
+  await row.click();
+  await page.getByTestId('library-more').click();
+  await page.getByTestId('update-pack').click();
   await expect(dialog(page)).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
   await expect(page.getByTestId('add-map-choose')).toHaveAttribute('data-mode', 'update');
   expect(await choiceRows(page)).toEqual([
@@ -149,7 +153,8 @@ test('lists the games of the site to tick, then their maps', async ({ page }) =>
   await setUp(page);
   await page.getByTestId('add-map-button').click();
   const browse = page.getByTestId('add-map-browse-games');
-  await expect(browse).toHaveText('All worlds of the demo map site…');
+  await expect(browse).toContainText('Browse a site’s list of games');
+  await expect(browse).toContainText('All worlds of the demo map site');
   await browse.click();
 
   await expect(dialog(page)).toHaveAttribute('data-phase', 'catalogue', { timeout: 30_000 });
@@ -205,7 +210,7 @@ test('lists the games of the site to tick, then their maps', async ({ page }) =>
 
   // Opening it again shows the kept list at once, without opening the site,
   // and marks the games that are in the maps folder now.
-  await page.getByRole('button', { name: 'Add more maps' }).click();
+  await page.getByRole('button', { name: 'Add more', exact: true }).click();
   await page.getByTestId('add-map-browse-games').click();
   await expect(dialog(page)).toHaveAttribute('data-phase', 'catalogue', { timeout: 30_000 });
   await expect(page.getByTestId('add-map-catalogue-kept')).toContainText(
@@ -238,9 +243,8 @@ test('"Update all" lists the games added from web pages, and reads each game pag
   await paste(page, `${url('test-valley', 'east-field')}\n${url('test-hills', 'high-pass')}`);
   await page.getByTestId('add-map-start').click();
   await expect(dialog(page)).toHaveAttribute('data-run', 'finished', { timeout: 30_000 });
-  await page.getByRole('button', { name: 'Done' }).click();
+  await page.getByTestId('add-map-done').click();
 
-  await page.getByTestId('maps-button').click();
   await page.getByTestId('update-all').click();
   await expect(dialog(page)).toHaveAttribute('data-phase', 'update-games');
   const games = page.getByTestId('add-map-update-game');

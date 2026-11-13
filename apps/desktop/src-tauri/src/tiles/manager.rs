@@ -149,6 +149,9 @@ pub struct Snapshot {
     pub seconds_left: Option<f64>,
     /// Increases whenever a status file changes, so the map knows to look.
     pub status_revision: u64,
+    /// When the job ended (done, cancelled or stopped), in milliseconds
+    /// since 1970; none while it is not over.
+    pub finished_at: Option<u64>,
 }
 
 struct Progress {
@@ -318,6 +321,34 @@ pub struct Unfinished {
     pub detail: Detail,
     pub reason: Option<String>,
     pub stop_detail: Option<StopDetail>,
+}
+
+/// What a job downloads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JobKind {
+    Images,
+    Photos,
+}
+
+/// A job of this app, for the Downloads panel (see [`DownloadManager::jobs`]).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobEntry {
+    /// The key that steers it: the pack id, or the pack id and `#photos`.
+    pub key: String,
+    pub pack_id: String,
+    pub kind: JobKind,
+    pub job: Snapshot,
+}
+
+/// Milliseconds since 1970, for when a job ended.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// A download of this app that is not over, in queue order.
@@ -637,6 +668,57 @@ impl DownloadManager {
             .collect()
     }
 
+    /// Every job of this app in this session, for the Downloads panel: the
+    /// one downloading, then the queue in order, then paused ones, then
+    /// those that are over, the latest first.
+    pub fn jobs(&self) -> Vec<JobEntry> {
+        let schedule = lock(&self.schedule);
+        let entry = |job: &Job| JobEntry {
+            key: job.pack_id.clone(),
+            pack_id: pack_of_key(&job.pack_id).to_owned(),
+            kind: if job.photos {
+                JobKind::Photos
+            } else {
+                JobKind::Images
+            },
+            job: Self::snapshot_in(&schedule, job),
+        };
+        let mut going: Vec<JobEntry> = Self::queue_entries(&schedule)
+            .iter()
+            .filter_map(|queued| schedule.jobs.get(&queued.pack_id))
+            .map(entry)
+            .collect();
+        let mut over: Vec<JobEntry> = schedule
+            .jobs
+            .values()
+            .filter(|job| job.finished)
+            .map(entry)
+            .collect();
+        over.sort_by_key(|entry| std::cmp::Reverse(entry.job.finished_at));
+        going.append(&mut over);
+        going
+    }
+
+    /// Moves a job waiting its turn one place earlier (`earlier`) or later
+    /// in the queue. The job downloading now keeps its turn.
+    pub fn move_job(&self, key: &str, earlier: bool) -> Result<(), String> {
+        let mut schedule = lock(&self.schedule);
+        let index = schedule
+            .queue
+            .iter()
+            .position(|id| id == key)
+            .ok_or_else(|| "That download is not waiting its turn.".to_owned())?;
+        let other = if earlier {
+            index.checked_sub(1)
+        } else {
+            Some(index + 1).filter(|next| *next < schedule.queue.len())
+        };
+        if let Some(other) = other {
+            schedule.queue.swap(index, other);
+        }
+        Ok(())
+    }
+
     /// The detail options of a pack with their sizes, and any job.
     /// Blocking: it lists every folder of tiles on disk.
     pub fn plan_info(&self, pack_id: &str) -> Result<PlanInfo, String> {
@@ -815,6 +897,7 @@ impl DownloadManager {
                 bytes_per_second: 0.0,
                 seconds_left: Some(estimate_seconds(&pace, total, typical_bytes)),
                 status_revision,
+                finished_at: None,
             },
             layer_maps,
             recent: VecDeque::new(),
@@ -1185,6 +1268,7 @@ impl DownloadManager {
         snapshot.seconds_left = None;
         snapshot.tiles_per_second = 0.0;
         snapshot.bytes_per_second = 0.0;
+        snapshot.finished_at = Some(now_millis());
         let line = match &result {
             Ok(()) => {
                 snapshot.state = JobState::Done;
@@ -2287,6 +2371,47 @@ mod tests {
         let log = logged(&dir);
         assert!(log.contains("Download of two (two) is queued, number 1 in line, behind one"));
         assert!(log.contains("has its turn and downloads now (it was queued for"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lists_every_job_in_order_and_moves_queued_ones() {
+        ensure_crypto();
+        let dir = TempDir::new("manager-jobs");
+        let server = MockServer::start(slow_tiles(Duration::from_millis(20))).await;
+        let manager = two_packs(&dir, &server, "data");
+        manager.start("one", Detail::Full).unwrap();
+        manager.start("two", Detail::Full).unwrap();
+        let listed: Vec<(String, JobKind, JobState)> = manager
+            .jobs()
+            .into_iter()
+            .map(|entry| (entry.key, entry.kind, entry.job.state))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("one".to_owned(), JobKind::Images, JobState::Running),
+                ("two".to_owned(), JobKind::Images, JobState::Queued),
+            ]
+        );
+        // Only a job waiting its turn moves; at either end it stays.
+        assert!(manager.move_job("one", false).is_err());
+        manager.move_job("two", true).unwrap();
+        manager.move_job("two", false).unwrap();
+        assert_eq!(manager.snapshot("two").unwrap().queue_position, Some(1));
+        assert!(manager
+            .jobs()
+            .iter()
+            .all(|entry| entry.job.finished_at.is_none()));
+
+        wait_for(&manager, "one").await;
+        wait_for(&manager, "two").await;
+        let over = manager.jobs();
+        assert_eq!(over.len(), 2);
+        assert!(over.iter().all(|entry| entry.job.state == JobState::Done));
+        // The latest first.
+        assert_eq!(over[0].key, "two");
+        assert!(over[0].job.finished_at >= over[1].job.finished_at);
+        assert!(over[1].job.finished_at.is_some());
     }
 
     #[tokio::test(flavor = "multi_thread")]

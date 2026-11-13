@@ -1,6 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { expect, test } from './layout';
-import { collectErrors } from './helpers';
+import { collectErrors, libraryMore } from './helpers';
 
 /**
  * A game of one's own in the desktop app: "New game…" on the Games screen
@@ -272,8 +272,8 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
 
-  // New game, on the Games screen.
-  await page.getByTestId('section-games').click();
+  // New game, in the Library.
+  await page.getByTestId('section-library').click();
   await page.getByTestId('new-game').click();
   const dialog = page.getByTestId('picture-dialog');
   await expect(dialog).toBeVisible();
@@ -316,8 +316,11 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
   await page.getByTestId('picture-make').click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId('marker-count')).toHaveText('0');
-  const row = page.locator('[data-testid="game-row"][data-pack="cloud-isles"]');
-  await expect(row).toHaveAttribute('data-current', 'true');
+  const listRow = page.locator('[data-testid="library-game"][data-pack="cloud-isles"]');
+  await expect(listRow).toContainText('Shown');
+  await expect(listRow).toContainText('Made here');
+  const row = page.getByTestId('library-game-pane');
+  await expect(row).toHaveAttribute('data-pack', 'cloud-isles');
   await expect(row).toContainText('Made in this app');
   const create = (await ownShell(page)).calls.filter((c) => c.command === 'own_game_create');
   expect(create.at(-1)!.args).toEqual({
@@ -347,7 +350,7 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
   await page.getByTestId('locations-done').click();
 
   // Add map.
-  await page.getByTestId('section-games').click();
+  await page.getByTestId('section-library').click();
   game.maps.push({ id: 'cloud-isles:map:sea-caves', name: 'Sea caves', width: 4096, height: 4096 });
   game.layers.push(layerOf('sea-caves', 'Main level'));
   await setShell(page, { pictures: [picture('caves.png', 4096, 4096, null)] });
@@ -383,10 +386,10 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
   });
 
   // Deleting the game offers to delete one's own locations and types too.
-  await row.getByTestId('delete-pack').click();
+  await libraryMore(page, 'delete-pack');
   await page.getByTestId('delete-pack-locations').check();
   await page.getByTestId('confirm-delete-pack').click();
-  await expect(row).toHaveCount(0);
+  await expect(listRow).toHaveCount(0);
   expect((await ownShell(page)).files['locations:cloud-isles']).toBeUndefined();
   // Optional pack files the stand-in does not serve are the only 404s.
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
