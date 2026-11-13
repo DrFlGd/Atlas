@@ -33,6 +33,12 @@ describe('a game with no map', () => {
     expect(packDataSchema.safeParse(pack).success).toBe(true);
     expect(checkPackIntegrity(pack)).toEqual([]);
   });
+
+  it('reads an empty contents or list of pictures as none', () => {
+    const parsed = packDataSchema.parse({ ...makeFixturePack(), sections: [], pictures: [] });
+    expect(parsed.sections).toBeUndefined();
+    expect(parsed.pictures).toBeUndefined();
+  });
 });
 
 describe("a guide's source", () => {

@@ -138,6 +138,10 @@ export type CollectionName = keyof typeof PACK_COLLECTIONS;
 
 export const COLLECTION_NAMES = Object.keys(PACK_COLLECTIONS) as CollectionName[];
 
+function noneWhenEmpty<T>(items: T[]): T[] | undefined {
+  return items.length > 0 ? items : undefined;
+}
+
 /** The full, parsed contents of a pack, checked strictly: for packs being written. */
 export const packDataSchema = z.strictObject({
   manifest: manifestSchema,
@@ -153,9 +157,10 @@ export const packDataSchema = z.strictObject({
   guides: PACK_COLLECTIONS.guides.schema,
   links: PACK_COLLECTIONS.links.schema,
   presets: PACK_COLLECTIONS.presets.schema,
-  // Optional, so packs made before them stay valid as they are.
-  sections: PACK_COLLECTIONS.sections.schema.optional(),
-  pictures: PACK_COLLECTIONS.pictures.schema.optional(),
+  // Optional, so packs made before them stay valid as they are; an empty
+  // file reads as none, so a pack written with one reads back the same.
+  sections: PACK_COLLECTIONS.sections.schema.transform(noneWhenEmpty).optional(),
+  pictures: PACK_COLLECTIONS.pictures.schema.transform(noneWhenEmpty).optional(),
 });
 
 /**

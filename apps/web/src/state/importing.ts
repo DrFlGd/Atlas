@@ -889,8 +889,9 @@ export function packFiles(pack: PackData): Record<string, string> {
   const files: Record<string, string> = {
     [MANIFEST_FILE]: `${JSON.stringify(pack.manifest, null, 2)}\n`,
   };
+  // Every file, an optional collection the pack leaves out as an empty one.
   for (const name of COLLECTION_NAMES) {
-    files[PACK_COLLECTIONS[name].file] = `${JSON.stringify(pack[name], null, 2)}\n`;
+    files[PACK_COLLECTIONS[name].file] = `${JSON.stringify(pack[name] ?? [], null, 2)}\n`;
   }
   return files;
 }
