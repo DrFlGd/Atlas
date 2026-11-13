@@ -57,6 +57,21 @@ export interface ReadGuide {
 /** Pages read but under no heading of the contents. */
 export const OTHER_PAGES = 'Other pages';
 
+/**
+ * Page keys of addresses seen before: the rows are worked out again after
+ * every page of a go, over every link of every page read (thousands).
+ */
+const keys = new Map<string, string>();
+function keyOf(url: string): string {
+  let key = keys.get(url);
+  if (key === undefined) {
+    if (keys.size >= 50_000) keys.clear();
+    key = pageKey(url);
+    keys.set(url, key);
+  }
+  return key;
+}
+
 export function wikiGroups(options: {
   contents: WikiContents | null;
   read: readonly { url: string; importedAt?: string | undefined }[];
@@ -65,13 +80,13 @@ export function wikiGroups(options: {
 }): WikiGroup[] {
   const { contents, notes } = options;
   const leftOut = new Set(notes.leftOut);
-  const read = new Map(options.read.map((page) => [pageKey(page.url), page]));
-  const guides = new Map(options.guides.map((guide) => [pageKey(guide.url), guide]));
+  const read = new Map(options.read.map((page) => [keyOf(page.url), page]));
+  const guides = new Map(options.guides.map((guide) => [keyOf(guide.url), guide]));
   const groups = new Map<string, WikiGroup>();
   const seen = new Set<string>();
 
   const row = (url: string, title: string | null, group: string | null, listed: boolean) => {
-    const key = pageKey(url);
+    const key = keyOf(url);
     const page = read.get(key);
     const guide = guides.get(key);
     const failure = notes.failed[key] ?? null;
@@ -107,15 +122,15 @@ export function wikiGroups(options: {
   };
 
   for (const page of contents?.pages ?? []) {
-    if (seen.has(pageKey(page.url))) continue;
+    if (seen.has(keyOf(page.url))) continue;
     add(row(page.url, page.title, page.group ?? null, true));
   }
   // Pages read that the contents do not list (or before the contents were read).
   for (const guide of options.guides) {
-    if (!seen.has(pageKey(guide.url))) add(row(guide.url, guide.title, null, false));
+    if (!seen.has(keyOf(guide.url))) add(row(guide.url, guide.title, null, false));
   }
   for (const page of options.read) {
-    if (!seen.has(pageKey(page.url))) add(row(page.url, null, null, false));
+    if (!seen.has(keyOf(page.url))) add(row(page.url, null, null, false));
   }
   // The pages each read page links to that are neither listed nor read: found there.
   for (const group of groups.values()) {
@@ -123,7 +138,7 @@ export function wikiGroups(options: {
       if (from.links.length === 0) continue;
       const pages: WikiRow[] = [];
       for (const link of from.links) {
-        const key = pageKey(link);
+        const key = keyOf(link);
         if (seen.has(key)) continue;
         seen.add(key);
         pages.push({ ...row(link, null, group.title, false), group: group.title });

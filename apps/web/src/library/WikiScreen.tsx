@@ -16,7 +16,7 @@ import {
   useImport,
   type WikiSource,
 } from '../state/importing';
-import { foundText } from '../state/importRun';
+import { MAX_FETCHED_RUN_PAGES, foundText } from '../state/importRun';
 import { hasLibraryHost, openPageForEditing } from '../state/libraryView';
 import { canChangeOwnPages, changeOwnPages, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -335,7 +335,7 @@ export function WikiScreen({
                     : ''
                 }. Stop ends it after the page open now.`
               : tickedRows.length > 0
-                ? `${readingTime(tickedRows.length)} for the pages ticked, one page at a time with a pause.${source.pictures ? ' Pictures come with each page.' : ''} ${FOLLOW_SENTENCE[notes.follow]}`
+                ? `${estimate(tickedRows.length, notes.follow)}${source.pictures ? ' Pictures come with each page.' : ''}`
                 : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
           </span>
         </div>
@@ -384,12 +384,22 @@ export function WikiScreen({
   );
 }
 
-/** What a go reads besides the pages ticked, after how long those take. */
-const FOLLOW_SENTENCE: Record<FollowLinks, string> = {
-  ticked: 'Nothing else is read.',
-  linked: 'Then the pages they link to are read in the same go, which takes longer.',
-  all: 'Then every page their links lead to is read in the same go, which can take much longer.',
-};
+/**
+ * What a go reads, before it starts: a time only when it reads the pages
+ * ticked alone; with links, how many pages there are is known only as
+ * they are read.
+ */
+function estimate(ticked: number, follow: FollowLinks): string {
+  const pages = plural(ticked, 'page');
+  switch (follow) {
+    case 'ticked':
+      return `${readingTime(ticked)}, one page at a time with a pause. Nothing else is read.`;
+    case 'linked':
+      return `${pages} ticked, plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.`;
+    case 'all':
+      return `${pages} ticked, plus every page their links lead to, up to ${MAX_FETCHED_RUN_PAGES.toLocaleString('en')} pages in all: how many is known only as they are read, so this go may take long. One page at a time with a pause.`;
+  }
+}
 
 /**
  * Hides pages read from Guides, or shows them again, among the person's

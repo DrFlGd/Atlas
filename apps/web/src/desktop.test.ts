@@ -169,6 +169,8 @@ describe('desktop bridge', () => {
     await bridge.library.reveal({ kind: 'pack', id: 'demo' });
     await bridge.library.applyMapsFolder(true);
     await bridge.library.importSources('demo', 'demo-maps');
+    await bridge.library.importSourceList('demo', 'demo-maps');
+    await bridge.library.importSource('demo', 'demo-maps', 'east-field');
     await bridge.library.imagesInfo('my-game');
     await bridge.library.deleteImages('my-game');
     await bridge.library.deletePack('my-game');
@@ -223,6 +225,8 @@ describe('desktop bridge', () => {
       ['library_reveal', { target: { kind: 'pack', id: 'demo' } }],
       ['library_apply_maps_folder', { movePacks: true }],
       ['library_import_sources', { packId: 'demo', importerId: 'demo-maps' }],
+      ['library_import_source_list', { packId: 'demo', importerId: 'demo-maps' }],
+      ['library_import_source', { packId: 'demo', importerId: 'demo-maps', key: 'east-field' }],
       ['library_images_info', { id: 'my-game' }],
       ['library_delete_images', { id: 'my-game' }],
       ['library_delete_pack', { id: 'my-game' }],

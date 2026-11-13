@@ -53,7 +53,7 @@ import {
 } from '@atlas/schema';
 import { create } from 'zustand';
 import type { ImporterEntry } from '../config';
-import { desktop, type ImportReport, type Listing, type StoredSource } from '../desktop';
+import { desktop, type ImportReport, type Listing, type StoredPage } from '../desktop';
 import { downloadsOffered } from '../features';
 import { loadGame, notify } from './actions';
 import {
@@ -96,6 +96,7 @@ import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
 import {
   leftOutKeys,
+  flushWikiNotes,
   loadWikiNotes,
   NO_WIKI_NOTES,
   noteWikiContents,
@@ -954,6 +955,8 @@ async function startRun(
   });
   const final = await run.run();
   if (currentRun === run) currentRun = null;
+  // The links of the pages read, written every few seconds during the go, are all written now.
+  void flushWikiNotes();
   // The pictures of the pages added, once the pages are all read: one download a game.
   const withPictures = new Set(
     final.pages.flatMap(({ state }) =>
@@ -1079,6 +1082,20 @@ export function importContext(
           : [{ key: source.key, url: source.url, importedAt: source.importedAt, data }];
       });
     },
+    // The same pages one at a time, for an importer that goes through many of them.
+    async savedPages(packId) {
+      if (!desktop) return [];
+      const stored = await desktop.library.importSourceList(packId, importerId).catch(() => []);
+      return stored.map(({ key, url, importedAt }) => ({ key, url, importedAt }));
+    },
+    async savedSource(packId, key) {
+      if (!desktop) return null;
+      const source = await desktop.library.importSource(packId, importerId, key).catch(() => null);
+      const data = source ? parse(source.data) : undefined;
+      return source && data !== undefined
+        ? { key: source.key, url: source.url, importedAt: source.importedAt, data }
+        : null;
+    },
     async existingPack(packId) {
       // A pack in the maps folder, else one that comes with the app (to refresh it).
       const url =
@@ -1106,7 +1123,7 @@ export function importContext(
 /** The `source` block of the manifest: every page the pack was made from. */
 function packSource(
   importer: AtlasImporter,
-  stored: readonly StoredSource[],
+  stored: readonly StoredPage[],
   current: { key: string; url: string; mapId: string | undefined; importedAt: string },
 ): PackSource {
   const pages = stored
@@ -1205,9 +1222,10 @@ async function convertAndSave(
       };
     }
   }
+  // The pages kept with it, without their data: a wiki's can be many, and large.
   const stored = await shell.library
-    .importSources(outcome.packId, importer.id)
-    .catch((): StoredSource[] => []);
+    .importSourceList(outcome.packId, importer.id)
+    .catch((): StoredPage[] => []);
   const app = useAtlas.getState().app;
   const manifest = describePack(outcome.pack, {
     ...(existing?.manifest.schemaVersion === 2 && existing.manifest.created
@@ -1293,8 +1311,11 @@ export async function rebuildPack(packId: string): Promise<void> {
   const id = ++session;
   try {
     const importer = await loadImporter(entry);
-    const stored = await shell.library.importSources(packId, importer.id);
-    const last = stored.at(-1);
+    // The last page kept, read alone: the importer reads the others itself when it needs them.
+    const listedLast = (await shell.library.importSourceList(packId, importer.id)).at(-1);
+    const last = listedLast
+      ? await shell.library.importSource(packId, importer.id, listedLast.key)
+      : null;
     if (!last) {
       notify(`No page data is kept with ${listed.title}, so it cannot be rebuilt.`, 'error');
       return;
@@ -1312,7 +1333,9 @@ export async function rebuildPack(packId: string): Promise<void> {
       await noteWikiLinks(importer.id, [
         { url: last.url, links: outcome.links ?? [] },
         ...(outcome.writtenAgain ?? []),
-      ]).catch(() => undefined);
+      ])
+        .then(flushWikiNotes)
+        .catch(() => undefined);
     }
     if (id === session) setPhase(outcome);
   } catch (error) {

@@ -307,6 +307,12 @@ function installFakeShell({
         return null;
       case 'library_import_sources':
         return (sources[args.packId as string] ?? []).map((source) => ({ ...source }));
+      case 'library_import_source_list':
+        return (sources[args.packId as string] ?? []).map(({ data: _, ...page }) => page);
+      case 'library_import_source': {
+        const one = (sources[args.packId as string] ?? []).find((s) => s.key === args.key);
+        return one ? { ...one } : null;
+      }
       case 'library_save_import': {
         const request = args.request as {
           packId: string;

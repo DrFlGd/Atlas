@@ -71,6 +71,9 @@ export interface SavedSource {
   data: unknown;
 }
 
+/** A page an importer stored with a pack, without its data (see {@link ImportContext.savedPages}). */
+export type SavedPage = Omit<SavedSource, 'data'>;
+
 export interface ImportContext {
   /** The page URL the person entered. */
   url: string;
@@ -84,6 +87,21 @@ export interface ImportContext {
    * this importer.
    */
   savedSources(packId: string): Promise<SavedSource[]>;
+  /**
+   * Optional: the pages this importer stored with the pack `packId`, as
+   * {@link savedSources} gives them but without their data, oldest first.
+   * With {@link savedSource}, for an importer that goes through many kept
+   * pages (a wiki's, say), so it holds one page's data at a time rather
+   * than every page's. An app that offers one offers both; an importer must
+   * check that they are there and use `savedSources` otherwise.
+   */
+  savedPages?(packId: string): Promise<SavedPage[]>;
+  /**
+   * Optional, with {@link savedPages}: the data of one page stored with the
+   * pack, by its key; null when there is no such page or its data cannot
+   * be read.
+   */
+  savedSource?(packId: string, key: string): Promise<SavedSource | null>;
   /**
    * The pack the import would replace, if one with that id is in the maps
    * folder: for example to keep each location's `since` version.

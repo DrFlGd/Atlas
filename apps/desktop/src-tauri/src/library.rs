@@ -273,6 +273,18 @@ struct SourceEntry {
     file: String,
 }
 
+/// A page kept with an imported pack, without its data: what
+/// `library_import_source_list` lists, so an importer can read the pages
+/// one at a time (`library_import_source`) rather than all at once.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSourceEntry {
+    pub key: String,
+    pub url: String,
+    pub imported_at: String,
+    pub map_id: Option<String>,
+}
+
 /// Page data kept with an imported pack.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -995,40 +1007,87 @@ impl Library {
     // -----------------------------------------------------------------------
     // Imports
 
-    /// Page data an importer stored with a pack.
+    /// The pack's folder and the pages its importer stored with it, when
+    /// `importer_id` made it.
+    fn import_entries(&self, pack_id: &str, importer_id: &str) -> Option<(PathBuf, ImportIndex)> {
+        let dir = self.pack_folder(pack_id)?;
+        let index = read_import_index(&dir)?;
+        (index.importer.id == importer_id).then_some((dir, index))
+    }
+
+    /// The data of one stored page, unless it is gone or too large.
+    fn read_source(dir: &Path, entry: SourceEntry) -> Option<SavedSource> {
+        let path = dir.join(IMPORT_DIR).join(&entry.file);
+        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
+        if size > MAX_PAGE_DATA_BYTES as u64 {
+            return None;
+        }
+        let data = fs::read_to_string(&path).ok()?;
+        Some(SavedSource {
+            key: entry.key,
+            url: entry.url,
+            imported_at: entry.imported_at,
+            map_id: entry.map_id,
+            data,
+        })
+    }
+
+    /// Page data an importer stored with a pack, every page at once.
     pub fn saved_sources(
         &self,
         pack_id: &str,
         importer_id: &str,
     ) -> Result<Vec<SavedSource>, String> {
-        let Some(dir) = self.pack_folder(pack_id) else {
+        let Some((dir, index)) = self.import_entries(pack_id, importer_id) else {
             return Ok(Vec::new());
         };
-        let Some(index) = read_import_index(&dir) else {
+        Ok(index
+            .sources
+            .into_iter()
+            .filter_map(|entry| Self::read_source(&dir, entry))
+            .collect())
+    }
+
+    /// The pages an importer stored with a pack, in the order stored, without their data.
+    pub fn saved_source_list(
+        &self,
+        pack_id: &str,
+        importer_id: &str,
+    ) -> Result<Vec<SavedSourceEntry>, String> {
+        let Some((_, index)) = self.import_entries(pack_id, importer_id) else {
             return Ok(Vec::new());
         };
-        if index.importer.id != importer_id {
-            return Ok(Vec::new());
-        }
-        let mut sources = Vec::new();
-        for entry in index.sources {
-            let path = dir.join(IMPORT_DIR).join(&entry.file);
-            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
-            if size > MAX_PAGE_DATA_BYTES as u64 {
-                continue;
-            }
-            let Ok(data) = fs::read_to_string(&path) else {
-                continue;
-            };
-            sources.push(SavedSource {
+        Ok(index
+            .sources
+            .into_iter()
+            .map(|entry| SavedSourceEntry {
                 key: entry.key,
                 url: entry.url,
                 imported_at: entry.imported_at,
                 map_id: entry.map_id,
-                data,
-            });
+            })
+            .collect())
+    }
+
+    /// One page an importer stored with a pack, by its key; none when there
+    /// is no such page, or its data is gone or too large.
+    pub fn saved_source(
+        &self,
+        pack_id: &str,
+        importer_id: &str,
+        key: &str,
+    ) -> Result<Option<SavedSource>, String> {
+        if !is_slug(key) {
+            return Ok(None);
         }
-        Ok(sources)
+        let Some((dir, index)) = self.import_entries(pack_id, importer_id) else {
+            return Ok(None);
+        };
+        Ok(index
+            .sources
+            .into_iter()
+            .find(|entry| entry.key == key)
+            .and_then(|entry| Self::read_source(&dir, entry)))
     }
 
     /// Writes an imported pack: into the folder of the pack with that id if
@@ -2334,6 +2393,44 @@ mod tests {
         assert!(s
             .library
             .saved_sources("valley", "other")
+            .unwrap()
+            .is_empty());
+        // The same pages listed without their data, and read one at a time by key.
+        let listed = s.library.saved_source_list("valley", "demo-maps").unwrap();
+        assert_eq!(
+            listed.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+            ["east", "west"]
+        );
+        assert_eq!(listed[0].url, sources[0].url);
+        assert_eq!(listed[0].map_id, sources[0].map_id);
+        let west = s
+            .library
+            .saved_source("valley", "demo-maps", "west")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (west.key.as_str(), west.data.as_str()),
+            ("west", sources[1].data.as_str())
+        );
+        for (importer, key) in [
+            ("demo-maps", "north"),
+            ("demo-maps", "../east"),
+            ("other", "east"),
+        ] {
+            assert!(s
+                .library
+                .saved_source("valley", importer, key)
+                .unwrap()
+                .is_none());
+        }
+        assert!(s
+            .library
+            .saved_source_list("valley", "other")
+            .unwrap()
+            .is_empty());
+        assert!(s
+            .library
+            .saved_source_list("nowhere", "demo-maps")
             .unwrap()
             .is_empty());
         let listing = s.library.scan();

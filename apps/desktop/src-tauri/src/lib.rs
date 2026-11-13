@@ -90,6 +90,8 @@ macro_rules! viewer_commands {
             commands::library_images_info,
             commands::library_delete_images,
             commands::library_import_sources,
+            commands::library_import_source_list,
+            commands::library_import_source,
             commands::library_save_import,
             commands::import_open,
             commands::import_poll,

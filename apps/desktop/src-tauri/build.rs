@@ -17,6 +17,8 @@ const COMMANDS: &[&str] = &[
     "library_images_info",
     "library_delete_images",
     "library_import_sources",
+    "library_import_source_list",
+    "library_import_source",
     "library_save_import",
     "import_open",
     "import_poll",
