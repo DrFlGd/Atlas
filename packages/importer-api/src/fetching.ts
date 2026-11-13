@@ -7,7 +7,8 @@
  * - The app asks only when the person asked for the pages, one page at a
  *   time, with a pause between requests ({@link FETCH_PAUSE_MS}) and
  *   between pages. A go reads the pages the person ticked (a section, or
- *   a small wiki); the app sets its own upper limit.
+ *   a whole wiki), and the pages they link to when the person chose that,
+ *   with no page limit: the person watches the count and stops it.
  * - Every request names the app (`Atlas/<version>`) and carries no cookies
  *   and no sign-in; the app never pretends to be a browser.
  * - The site's `robots.txt` is read first, once per site in a go, and an

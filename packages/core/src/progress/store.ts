@@ -38,6 +38,13 @@ export interface ProgressStore {
   listPresets(gameId: string, options?: ListOptions): Promise<UserPreset[]>;
   getSetting(key: string): Promise<unknown>;
   putSetting(key: string, value: unknown): Promise<void>;
+  /**
+   * Every setting whose key starts with `prefix`, in key order: for notes
+   * kept one record per item (a wiki's pages), so a change writes one item.
+   */
+  listSettings(prefix: string): Promise<{ key: string; value: unknown }[]>;
+  /** Writes several settings atomically. */
+  putSettings(entries: readonly { key: string; value: unknown }[]): Promise<void>;
   /** Writes every record in the batch atomically. */
   write(batch: WriteBatch): Promise<void>;
   /** Every profile, progress row and preset, tombstones included. */

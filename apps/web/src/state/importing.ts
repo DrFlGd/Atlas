@@ -95,7 +95,7 @@ import {
   type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
-import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
+import { RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
 import { SETTINGS, progressStore } from './services';
@@ -713,7 +713,7 @@ const outcomeOf = (
  * `importRun.ts`), then shows the game of the last map added. In a go of
  * pages an importer fetches, `follow` says per importer how far the links
  * of the pages read are followed (see `followLinks.ts`): the pages found
- * are added to the go, after the others, while it has room.
+ * are added to the go, after the others: a go has no page limit.
  */
 async function startRun(
   checked: readonly CheckedAddress<AtlasImporter>[],
@@ -847,7 +847,6 @@ async function startRun(
       inGo,
       read: recordedKeys(),
       leftOut: new Set(notes?.leftOut ?? []),
-      room: MAX_FETCHED_RUN_PAGES - run.state.pages.length,
     });
     if (add.length === 0 || id !== session || run.state.stopRequested) return;
     // A page the wiki's contents list is filed under its heading there.
@@ -1769,7 +1768,7 @@ export async function readWikiContents(source: WikiSource): Promise<string | nul
 /**
  * "Read n pages" on the wiki screen: the pages go to the front of the
  * wiki's pages kept to read, and a go reads them now, one at a time with
- * the pause, as "Read the next…" does, following their links as far as
+ * the pause, as "Read them" does, following their links as far as
  * `follow` says. Pages left out are not read.
  */
 export async function readWikiPages(
@@ -1794,10 +1793,8 @@ export async function readWikiPages(
       { ...kept, pages: kept.pages.filter((page) => !now.has(pageKey(page.url))) },
     ]);
   }
-  await readChosen(importer, key, game, reading.slice(0, MAX_FETCHED_RUN_PAGES), follow);
-  // Those that did not fit in one go wait at the front of the list.
-  const later = reading.slice(MAX_FETCHED_RUN_PAGES);
-  if (later.length > 0) await queuePages(importer.id, key, game, later, true);
+  // Every page in one go: a go of these pages has no limit.
+  await readChosen(importer, key, game, reading, follow);
 }
 
 /** "Update all…": lists the games to update, all ticked, before anything opens. */
@@ -2049,7 +2046,7 @@ export async function queuedGames(): Promise<QueuedGame[]> {
   return games;
 }
 
-/** Reads the next pages kept for a game: as many as one go opens. */
+/** Reads the pages kept for a game, all in one go: a go of them has no limit. */
 export async function continueQueue(importerId: string, key: string): Promise<void> {
   const importers = await loadImporters();
   const importer = importers.find((i) => i.id === importerId);
@@ -2059,11 +2056,8 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
   // Pages the person left out since they were kept are not read.
   const leftOut = await leftOutKeys(importerId).catch(() => new Set<string>());
   const pages = game.pages.filter((page) => !leftOut.has(pageKey(page.url)));
-  const now = pages.slice(0, MAX_FETCHED_RUN_PAGES);
-  await writeQueue(importerId, [
-    ...games.filter((g) => g.key !== key),
-    { ...game, pages: pages.slice(now.length) },
-  ]);
+  const now = pages;
+  await writeQueue(importerId, [...games.filter((g) => g.key !== key), { ...game, pages: [] }]);
   if (now.length === 0) return;
   await readChosen(importer, key, game.game, now, await followOf(importerId));
 }

@@ -65,7 +65,7 @@ const keys = new Map<string, string>();
 function keyOf(url: string): string {
   let key = keys.get(url);
   if (key === undefined) {
-    if (keys.size >= 50_000) keys.clear();
+    if (keys.size >= 500_000) keys.clear();
     key = pageKey(url);
     keys.set(url, key);
   }

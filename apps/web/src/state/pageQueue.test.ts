@@ -10,14 +10,7 @@ import {
   tickFrom,
   toggleGroup,
 } from './gameChoice';
-import {
-  MAX_FETCHED_RUN_PAGES,
-  MAX_RUN_ADDRESSES,
-  checkAddresses,
-  newRun,
-  settlePage,
-  stopReasonText,
-} from './importRun';
+import { MAX_RUN_ADDRESSES, checkAddresses, newRun, settlePage, stopReasonText } from './importRun';
 
 /**
  * Reading a made-up wiki's pages: an importer that fetches pages keeps
@@ -73,7 +66,7 @@ describe('choosing the pages of a wiki', () => {
     const chosen = tickFrom(choice(), `${SITE}/wiki/Contents`, pages[0]!.url);
     expect(overCap(chosen)).toBeNull();
     expect(pages.length).toBeGreaterThan(MAX_RUN_ADDRESSES);
-    expect(goRoom(chosen)).toBe(MAX_FETCHED_RUN_PAGES);
+    expect(goRoom(chosen)).toBe(Number.POSITIVE_INFINITY);
     const { now, later } = splitChosen(chosen);
     expect(now.map((p) => p.url)).toEqual(pages.map((p) => p.url));
     expect(later).toEqual([]);
@@ -103,7 +96,7 @@ describe('pages their site shows only to a person', () => {
     const chosen = tickFrom(windowed(), `${SITE}/wiki/Contents`, pages[0]!.url);
     expect(overCap(chosen)).toBeNull();
     // The windows open one at a time, so the cap of pages opened does not hold.
-    expect(goRoom(chosen)).toBe(MAX_FETCHED_RUN_PAGES);
+    expect(goRoom(chosen)).toBe(Number.POSITIVE_INFINITY);
     const { now, later } = splitChosen(chosen);
     expect(now.map((p) => p.url)).toEqual(pages.map((p) => p.url));
     expect(now.every((p) => p.inWindow === true)).toBe(true);

@@ -55,6 +55,15 @@ export function createDexieStore(
     async putSetting(key, value) {
       await db.settings.put({ key, value, updatedAt: Date.now() });
     },
+    async listSettings(prefix) {
+      const rows = await db.settings.where('key').startsWith(prefix).toArray();
+      return rows.map(({ key, value }) => ({ key, value }));
+    },
+    async putSettings(entries) {
+      if (entries.length === 0) return;
+      const updatedAt = Date.now();
+      await db.settings.bulkPut(entries.map(({ key, value }) => ({ key, value, updatedAt })));
+    },
     async write(batch) {
       await db.transaction('rw', [db.profiles, db.progress, db.presets], async () => {
         if (batch.profiles?.length) await db.profiles.bulkPut([...batch.profiles]);

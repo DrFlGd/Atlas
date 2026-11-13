@@ -11,9 +11,10 @@ import { canAddPage, pageKey, refusalFor, type AtlasImporter } from '@atlas/impo
  *
  * Links are only followed inside a go the person started, and only to
  * pages of the same importer that are not left out, not read before, not
- * in the go already (so a page that could not be read is not tried again),
- * and while the go has room. Pages that do not fit stay listed on the
- * wiki's screen as "Found on <page>, not read".
+ * in the go already (so a page that could not be read is not tried again).
+ * A go has no page limit: "And every page those lead to" goes on until no
+ * new page is found or the person stops it. Pages found and not reached
+ * stay listed on the wiki's screen as "Found on <page>, not read".
  */
 
 /** How far a go follows links: not at all, one step from the pages ticked, or as far as they lead. */
@@ -39,7 +40,7 @@ export const FOLLOW_CHOICES: readonly { id: FollowLinks; label: string; sentence
     id: 'all',
     label: 'And every page those lead to',
     sentence:
-      'Keeps following the links of every page read, until no new page is found or the go reaches its limit.',
+      'Keeps following the links of every page read, until no new page is found or you stop the go.',
   },
 ];
 
@@ -54,8 +55,7 @@ export function followsFrom(follow: FollowLinks, depth: number): boolean {
 /**
  * The pages a go adds when a page it read at `depth` links to `links`:
  * each a page the importer reads and does not refuse, not left out, not
- * read before and not in the go already, each once, in the order linked,
- * as many as `room` allows. `over` counts those that did not fit.
+ * read before and not in the go already, each once, in the order linked.
  */
 export function pagesToFollow(options: {
   follow: FollowLinks;
@@ -67,21 +67,17 @@ export function pagesToFollow(options: {
   /** Page keys of the pages read before (in the game). */
   read: ReadonlySet<string>;
   leftOut: ReadonlySet<string>;
-  /** Pages the go may still add. */
-  room: number;
-}): { add: string[]; over: number } {
+}): { add: string[] } {
   const { importer, inGo, read, leftOut } = options;
-  if (!followsFrom(options.follow, options.depth)) return { add: [], over: 0 };
+  if (!followsFrom(options.follow, options.depth)) return { add: [] };
   const seen = new Set<string>();
   const add: string[] = [];
-  let over = 0;
   for (const url of options.links) {
     const key = pageKey(url);
     if (seen.has(key) || inGo.has(key) || read.has(key) || leftOut.has(key)) continue;
     seen.add(key);
     if (!canAddPage(importer, url) || refusalFor([importer], url) !== null) continue;
-    if (add.length < options.room) add.push(url);
-    else over++;
+    add.push(url);
   }
-  return { add, over };
+  return { add };
 }

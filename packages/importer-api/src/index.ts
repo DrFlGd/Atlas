@@ -733,8 +733,13 @@ export interface WrittenAgain {
   links: string[];
 }
 
-/** Pages written again whose links the app keeps at most (see {@link ImportSuccess.writtenAgain}). */
-export const MAX_WRITTEN_AGAIN = 2000;
+/**
+ * Pages written again whose links the app keeps at most (see {@link
+ * ImportSuccess.writtenAgain}): far above the pages of a large wiki (tens
+ * of thousands), since a go of such pages has no page limit, and there
+ * only so that an importer that goes wrong cannot hand over without end.
+ */
+export const MAX_WRITTEN_AGAIN = 100_000;
 
 export interface ImportFailure {
   ok: false;

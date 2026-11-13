@@ -16,7 +16,7 @@ import {
   useImport,
   type WikiSource,
 } from '../state/importing';
-import { MAX_FETCHED_RUN_PAGES, foundText, waitingForPerson } from '../state/importRun';
+import { foundText, waitingForPerson } from '../state/importRun';
 import { hasLibraryHost, openPageForEditing } from '../state/libraryView';
 import { canChangeOwnPages, changeOwnPages, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -410,7 +410,7 @@ function estimate(ticked: number, follow: FollowLinks): string {
     case 'linked':
       return 'Plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.';
     case 'all':
-      return `Plus every page their links lead to, up to ${MAX_FETCHED_RUN_PAGES.toLocaleString('en')} pages in all: how many is known only as they are read, so this go may take long. One page at a time with a pause.`;
+      return 'Plus every page their links lead to, until no new page is found or you stop the go: how many is known only as they are read, so this go may take long, and the bar shows the count as it grows. One page at a time with a pause.';
   }
 }
 
@@ -533,6 +533,13 @@ function Group({
   const tickable = headingPages(group);
   const box = headingTick(tickable, ticked);
   const tickedHere = headingPages(whole).filter((row) => ticked.has(row.key)).length;
+  // A heading of thousands of pages shows them a step at a time, so the screen stays quick.
+  const [shown, setShown] = useState(ROWS_STEP);
+  const rowKeys = useMemo(() => new Set(group.rows.map((row) => row.key)), [group.rows]);
+  const foundOn = useMemo(
+    () => new Map(group.found.map((found) => [found.from.key, found])),
+    [group.found],
+  );
   return (
     <section className="wiki-group" data-testid="wiki-group" data-group={group.title}>
       <div className="wiki-group-head">
@@ -572,19 +579,19 @@ function Group({
       </div>
       {open ? (
         <ul className="wiki-rows">
-          {group.rows.map((row) => (
-            <li key={row.key}>
-              <PageRow
-                row={row}
-                ticked={ticked.has(row.key)}
-                chosen={chosen === row.key}
-                state={stateText(row, inRun)}
-                onTick={onTick}
-                onChoose={onChoose}
-              />
-              {group.found
-                .filter((found) => found.from.key === row.key)
-                .map((found) => (
+          {group.rows.slice(0, shown).map((row) => {
+            const found = foundOn.get(row.key);
+            return (
+              <li key={row.key}>
+                <PageRow
+                  row={row}
+                  ticked={ticked.has(row.key)}
+                  chosen={chosen === row.key}
+                  state={stateText(row, inRun)}
+                  onTick={onTick}
+                  onChoose={onChoose}
+                />
+                {found ? (
                   <FoundRow
                     key={`found-${row.key}`}
                     found={found}
@@ -593,12 +600,28 @@ function Group({
                     onTick={onTick}
                     onChoose={onChoose}
                   />
-                ))}
+                ) : null}
+              </li>
+            );
+          })}
+          {group.rows.length > shown ? (
+            <li>
+              <button
+                type="button"
+                className="button button-small wiki-rows-more"
+                data-testid="wiki-rows-more"
+                onClick={() => {
+                  setShown((before) => before + ROWS_STEP);
+                }}
+              >
+                Show {Math.min(ROWS_STEP, group.rows.length - shown).toLocaleString('en')} more of{' '}
+                {(group.rows.length - shown).toLocaleString('en')} not shown
+              </button>
             </li>
-          ))}
+          ) : null}
           {/* Pages found on a page this filter hides. */}
           {group.found
-            .filter((found) => !group.rows.some((row) => row.key === found.from.key))
+            .filter((found) => !rowKeys.has(found.from.key))
             .map((found) => (
               <li key={`found-${found.from.key}`}>
                 <FoundRow
@@ -665,6 +688,9 @@ function PageRow({
     </div>
   );
 }
+
+/** Pages a heading shows at first, and how many more each "Show more" adds. */
+const ROWS_STEP = 200;
 
 /** "Daggers, Straight Swords and 94 more: Found on Weapons, not read". */
 function FoundRow({

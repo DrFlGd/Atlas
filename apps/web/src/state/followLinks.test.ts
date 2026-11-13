@@ -9,7 +9,6 @@ import {
 } from './followLinks';
 import {
   ImportRun,
-  MAX_FETCHED_RUN_PAGES,
   foundByLinks,
   foundText,
   runSummary,
@@ -39,7 +38,6 @@ const follow = (options: Partial<Parameters<typeof pagesToFollow>[0]> = {}) =>
     inGo: new Set(),
     read: new Set(),
     leftOut: new Set(),
-    room: 100,
     ...options,
   });
 
@@ -65,7 +63,7 @@ describe('the choice', () => {
 
 describe('the pages a go adds', () => {
   it('adds pages of the same importer, each once, in the order linked', () => {
-    const { add, over } = follow({
+    const { add } = follow({
       links: [
         at('Bells'),
         `${at('Bells')}/`,
@@ -76,7 +74,6 @@ describe('the pages a go adds', () => {
       ],
     });
     expect(add).toEqual([at('Bells'), at('Gates')]);
-    expect(over).toBe(0);
   });
 
   it('never adds a page left out, read before or in the go already', () => {
@@ -90,11 +87,12 @@ describe('the pages a go adds', () => {
     expect(add).toEqual([at('New')]);
   });
 
-  it('adds only what fits; the rest is counted', () => {
-    const { add, over } = follow({ links: [at('A'), at('B'), at('C')], room: 1 });
-    expect(add).toEqual([at('A')]);
-    expect(over).toBe(2);
-    expect(follow({ links: [at('A')], room: 0 })).toEqual({ add: [], over: 1 });
+  it('adds every page found: a go has no page limit', () => {
+    const many = Array.from({ length: 5000 }, (_, i) => at(`Page_${i}`));
+    expect(
+      follow({ links: many, inGo: keys(...Array.from({ length: 3000 }, (_, i) => `Other_${i}`)) })
+        .add,
+    ).toEqual(many);
   });
 
   it('adds nothing beyond the depth the choice allows', () => {
@@ -121,11 +119,9 @@ async function go(
   mode: FollowLinks,
   ticked: string[],
   {
-    room = MAX_FETCHED_RUN_PAGES,
     outcome,
     onPage,
   }: {
-    room?: number;
     outcome?: (slug: string) => PageOutcome | null;
     onPage?: (slug: string, run: ImportRun) => void;
   } = {},
@@ -154,7 +150,6 @@ async function go(
           inGo,
           read: keys('Welcome'),
           leftOut: keys('Dock'),
-          room: room - run.state.pages.length,
         });
         if (!run.state.stopRequested) {
           for (const found of add) {
@@ -210,10 +205,11 @@ describe('a go that follows links', () => {
     ]);
   });
 
-  it('stays within the go’s limit', async () => {
-    const { read, final } = await go('all', ['Harbour'], { room: 3 });
-    expect(read).toEqual(['Harbour', 'Boats', 'Oars']);
-    expect(final.pages).toHaveLength(3);
+  it('has no page limit: it goes on until no new page is found', async () => {
+    const { read, final } = await go('all', ['Harbour']);
+    expect(final.status).toBe('finished');
+    expect(final.pages).toHaveLength(read.length);
+    expect(new Set(read).size).toBe(read.length);
   });
 
   it('a page that could not be read is not tried again in the same go', async () => {

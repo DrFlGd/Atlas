@@ -22,16 +22,17 @@ import {
  * opening the rest.
  */
 
-/** Addresses one run takes at most, of pages opened in the import window. */
-export const MAX_RUN_ADDRESSES = 25;
 /**
- * Pages one run reads at most when the app fetches them itself, with no
- * window (an importer with `fetch`: a wiki's pages, say): a whole section,
- * or a small wiki, in one go. They are still read one at a time with the
- * pause between requests, never against the site's `robots.txt`, and the
- * run stops at once on a refusal; what is left is kept for later.
+ * Addresses one run takes at most, of pages opened in the import window
+ * (map pages of an importer without `fetch`). A go of the pages an importer
+ * with `fetch` names (a wiki's pages, fetched or opened in a window through
+ * `fetch.inWindow`) has no such limit: the person watches the count and
+ * stops it when they choose. Its pages are still read one at a time with
+ * the pause, never against the site's `robots.txt`, and the go stops at
+ * once on a refusal and after two pages in a row without data; what it
+ * did not reach is kept for later.
  */
-export const MAX_FETCHED_RUN_PAGES = 2000;
+export const MAX_RUN_ADDRESSES = 25;
 /**
  * The pause after one page has been read and before the next page opens:
  * after its window closes, or, in a go whose window is kept for its pages

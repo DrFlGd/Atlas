@@ -29,7 +29,6 @@ import {
   useLibrary,
 } from '../state/libraryView';
 import {
-  MAX_FETCHED_RUN_PAGES,
   MAX_RUN_ADDRESSES,
   foundByLinks,
   foundText,
@@ -281,7 +280,7 @@ function BrowseGames() {
   );
 }
 
-/** Pages chosen in an earlier go that did not fit: continue reading them, or forget them. */
+/** Pages chosen in an earlier go that it did not reach: read them, or forget them. */
 function QueuedPages() {
   const version = useImport((s) => s.queueVersion);
   const [games, setGames] = useState<QueuedGame[]>([]);
@@ -302,8 +301,8 @@ function QueuedPages() {
     <div className="add-map-browse" data-testid="add-map-queued">
       <p className="muted small">
         Pages you chose earlier that were not read: the go was stopped, or the site asked this app
-        to wait. Read the next reads them now, one at a time with a pause. Forget them drops the
-        list; nothing that was read is deleted.
+        to wait. Read them reads them all now, in one go, one at a time with a pause. Forget them
+        drops the list; nothing that was read is deleted.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
@@ -321,7 +320,9 @@ function QueuedPages() {
                 data-testid="add-map-queued-continue"
                 onClick={() => void continueQueue(game.importerId, game.key)}
               >
-                Read the next {Math.min(MAX_FETCHED_RUN_PAGES, game.pages.length)}
+                {game.pages.length === 1
+                  ? 'Read it'
+                  : `Read them (${game.pages.length.toLocaleString('en')})`}
               </button>
               <button
                 type="button"
