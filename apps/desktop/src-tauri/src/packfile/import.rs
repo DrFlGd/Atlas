@@ -6,7 +6,7 @@
 //! path or drive letter, no hidden segment such as `.atlas`, no `\`), and
 //! one of the pack's JSON files, a layer's status file, or a map image at
 //! a place one of the pack's own layer templates gives (or its "not on the
-//! server" marker); no symbolic links; sizes within limits; the manifest's
+//! server" marker), or a picture its `pictures.json` lists; no symbolic links; sizes within limits; the manifest's
 //! pack id the header's. Then there must be room on the disk for all of it.
 //! The pack is unpacked into a hidden folder in the maps folder and moved
 //! into place only when complete, so a failure or a cancel leaves nothing
@@ -23,8 +23,9 @@ use serde_json::Value;
 use zip::ZipArchive;
 
 use super::{
-    parse_header, parse_layers, space, Header, ImportedRecord, LayerInfo, Progress, Stop, TileKind,
-    HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES,
+    is_picture_path, parse_header, parse_layers, space, Header, ImportedRecord, LayerInfo,
+    Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES, MAX_PICTURE_BYTES,
+    PICTURES_FILE,
 };
 use crate::{
     library::{packs_in, PackLock, MAX_PACK_BYTES, MAX_PACK_FILE_BYTES, META_DIR, PACK_FILES},
@@ -189,7 +190,7 @@ pub(crate) fn import_with(
     // Map images first, then the status files, the pack files and the
     // manifest last, so the folder is a pack only once it is complete.
     let order = |kind: &Kind| match kind {
-        Kind::Image | Kind::Marker => 0,
+        Kind::Image | Kind::Marker | Kind::Picture => 0,
         Kind::Status(_) => 1,
         Kind::PackFile => 2,
     };
@@ -295,6 +296,8 @@ enum Kind {
     Status(usize),
     Image,
     Marker,
+    /// A picture that `pictures.json` lists.
+    Picture,
 }
 
 struct Checked {
@@ -383,9 +386,31 @@ fn check_entries<R: Read + io::Seek>(
         )?)
         .map_err(|_| refuse(format!("The {name} in this map pack file is not text.")))
     };
-    let maps = text_of(archive, "maps.json")?;
-    let layers_text = text_of(archive, "layers.json")?;
-    let layers = parse_layers(&maps, &layers_text).map_err(refuse)?;
+    // A game with no map has neither file.
+    let layers =
+        if index_of(archive, "maps.json").is_none() && index_of(archive, "layers.json").is_none() {
+            Vec::new()
+        } else {
+            let maps = text_of(archive, "maps.json")?;
+            let layers_text = text_of(archive, "layers.json")?;
+            parse_layers(&maps, &layers_text).map_err(refuse)?
+        };
+    // The pictures it lists, the only ones it may hold.
+    let pictures: HashSet<String> = if index_of(archive, PICTURES_FILE).is_some() {
+        let text = text_of(archive, PICTURES_FILE)?;
+        let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
+            refuse(format!(
+                "The {PICTURES_FILE} in this map pack file is not a list."
+            ))
+        })?;
+        list.iter()
+            .filter_map(|picture| picture.get("file").and_then(Value::as_str))
+            .filter(|file| is_picture_path(file))
+            .map(str::to_owned)
+            .collect()
+    } else {
+        HashSet::new()
+    };
     if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
         return Err(refuse(
             "The game in this map pack file keeps its map images in one archive file, which a map pack file does not carry.",
@@ -441,7 +466,7 @@ fn check_entries<R: Read + io::Seek>(
                 }
                 continue;
             }
-            let kind = classify(&name, &layers, &templates).ok_or_else(|| {
+            let kind = classify(&name, &layers, &templates, &pictures).ok_or_else(|| {
                 refuse(format!(
                     "This map pack file holds a file that is not part of a map pack ({shown}), so it was not imported."
                 ))
@@ -459,6 +484,7 @@ fn check_entries<R: Read + io::Seek>(
             Kind::Status(_) => size > MAX_STATUS_BYTES,
             Kind::Image => size > MAX_IMAGE_BYTES,
             Kind::Marker => size > 0,
+            Kind::Picture => size > MAX_PICTURE_BYTES,
         };
         if too_large {
             return Err(refuse(format!(
@@ -492,7 +518,7 @@ fn check_entries<R: Read + io::Seek>(
                 }
                 Some(data)
             }
-            Kind::Image | Kind::Marker => None,
+            Kind::Image | Kind::Marker | Kind::Picture => None,
         };
         bytes = bytes.saturating_add(size);
         entries.push(Checked {
@@ -507,7 +533,12 @@ fn check_entries<R: Read + io::Seek>(
 }
 
 /// What an entry is, or none when it has no place in a map pack.
-fn classify(name: &str, layers: &[LayerInfo], templates: &[Template]) -> Option<Kind> {
+fn classify(
+    name: &str,
+    layers: &[LayerInfo],
+    templates: &[Template],
+    pictures: &HashSet<String>,
+) -> Option<Kind> {
     // A plain relative path: no `..`, nothing absolute, no drive letter, no
     // hidden segment (`.atlas`), no `\`.
     if name.starts_with('/') || relative_path(name).is_none() {
@@ -515,6 +546,9 @@ fn classify(name: &str, layers: &[LayerInfo], templates: &[Template]) -> Option<
     }
     if PACK_FILES.contains(&name) {
         return Some(Kind::PackFile);
+    }
+    if pictures.contains(name) {
+        return Some(Kind::Picture);
     }
     if let Some(file) = name.strip_prefix(&format!("{STATUS_DIR}/")) {
         return layers

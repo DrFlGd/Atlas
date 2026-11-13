@@ -70,6 +70,9 @@ pub const PACK_FILES: &[&str] = &[
     "guides.json",
     "links.json",
     "presets.json",
+    // Guides read as pages: their contents, and the list of their pictures.
+    "sections.json",
+    "pictures.json",
 ];
 pub const MAX_PACK_FILE_BYTES: usize = 64 << 20;
 pub const MAX_PACK_BYTES: usize = 256 << 20;
@@ -2229,6 +2232,38 @@ mod tests {
             .into(),
             refresh_bundled: false,
         }
+    }
+
+    #[test]
+    fn keeps_a_game_with_no_map_read_from_pages() {
+        let s = setup("library-pages", Vec::new());
+        let mut request = import("pages", "start");
+        request.map_id = None;
+        request.files.remove("maps.json");
+        request.files.insert(
+            "guides.json".into(),
+            r#"[{"id":"pages:guide:start","title":"Start","body":"Hello","locationIds":[]}]"#
+                .into(),
+        );
+        request.files.insert(
+            "sections.json".into(),
+            r#"[{"id":"pages:section:a","title":"A","items":["pages:guide:start"]}]"#.into(),
+        );
+        request.files.insert("pictures.json".into(), "[]".into());
+        let dir = s.library.save_import(&request).unwrap();
+        assert!(dir.join("sections.json").exists() && dir.join("pictures.json").exists());
+        assert!(!dir.join("maps.json").exists());
+        assert_eq!(ids(&s.library.scan()), ["pages"]);
+        let details = crate::packfile::pack_details(&crate::packfile::PackSource {
+            pack_id: "pages".into(),
+            root: dir.clone(),
+            images: dir.clone(),
+            lock: false,
+            comes_with_app: false,
+        })
+        .unwrap();
+        assert_eq!((details.contents.maps, details.contents.guides), (0, 1));
+        assert!(details.layers.is_empty() && details.detail.is_none());
     }
 
     #[test]
