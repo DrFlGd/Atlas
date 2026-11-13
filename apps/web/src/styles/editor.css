@@ -1549,3 +1549,81 @@
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--atlas-border-strong);
 }
+
+/* ---------------------------------------------------------------------------
+ * Games made in the app: New game, Add map and Add level (a name and a
+ * picture, then how far the cut is), Rename and Delete map on the Games
+ * screen (touch/OwnGames.tsx). */
+
+.own-game-dialog {
+  width: min(540px, calc(100vw - 32px));
+}
+
+.own-game-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.own-game-picture {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px 8px 8px 14px;
+  border: 1px dashed var(--atlas-border-strong);
+  border-radius: 12px;
+}
+
+.own-game-picture-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.own-game-picture-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.own-game-picture-detail,
+.own-game-picture-none {
+  color: var(--atlas-muted);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.own-game-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.own-game-actions {
+  flex-wrap: wrap;
+}
+
+.own-game-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.own-game-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.own-game-form-row .own-input {
+  flex: 1 1 220px;
+  width: auto;
+}
