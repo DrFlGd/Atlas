@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
 import { useGuideLinks } from '../state/guideLinks';
+import { useOwnPages } from '../state/ownPages';
+import { useOwnPictures } from '../state/ownPictures';
 import { useAtlas } from '../state/store';
 
 /**
@@ -13,6 +15,10 @@ export function MarkdownBody({ source, className }: { source: string; className:
   const game = useAtlas((s) => s.game);
   // Pages of other games read with this one can be linked to, once loaded.
   const others = useGuideLinks((s) => s.others);
+  // The person's own pages and photos, as they change and as photos are read.
+  const own = useOwnPages((s) => s.own);
+  const draftPictures = useOwnPages((s) => s.draftPictures);
+  const ownPictures = useOwnPictures((s) => s.files);
   const ref = useRef<HTMLDivElement>(null);
   // A picture whose file is not here (one to be downloaded later) shows
   // what it is in words; it is tried again when new images are saved.
@@ -48,7 +54,7 @@ export function MarkdownBody({ source, className }: { source: string; className:
   const html = useMemo(
     () => renderGuideMarkdown(source, game ? markdownOptionsFor(game) : {}),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, game, others],
+    [source, game, others, own, draftPictures, ownPictures],
   );
   return (
     <div

@@ -1,5 +1,6 @@
 //! The commands for games made in the app (see `owngame.rs`) and for a
-//! person's own locations, types and areas of any game (see `ownlists.rs`):
+//! person's own locations, types and areas and own guide pages of any game
+//! (see `ownlists.rs`):
 //! choosing a picture, making a game, adding a map or a level, how far a
 //! cut is and stopping it, renaming a game and deleting one of its maps.
 //!
@@ -23,7 +24,7 @@ use crate::{
     commands::{blocking, desktop_only, short, LibraryState},
     library::{Library, Listing},
     owngame::{self, Added},
-    ownlists::LOCATIONS,
+    ownlists::{OwnFile, LOCATIONS, PAGES},
 };
 
 // ---------------------------------------------------------------------------
@@ -483,6 +484,78 @@ pub async fn own_locations_delete(
             activity::info(
                 Area::Library,
                 format!("Deleted the own locations of {game_id}, as asked with the game"),
+            );
+        }
+        Ok(deleted)
+    })
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Own guide pages
+
+/// Writes one own file of a game, saying in the activity log when a copy
+/// of the old file was kept.
+fn write_own_file(
+    kind: OwnFile,
+    maps: &std::path::Path,
+    game_id: &str,
+    contents: &str,
+    keep_copy: Option<&str>,
+) -> Result<Option<String>, String> {
+    let kept = kind.write(maps, game_id, contents, keep_copy)?;
+    if let Some(name) = &kept {
+        activity::info(
+            Area::Library,
+            format!(
+                "Kept a copy of the own {} of {game_id} as {name} before saving them",
+                kind.what
+            ),
+        );
+    }
+    Ok(kept)
+}
+
+/// A person's own guide pages and changes to the pack's pages of a game,
+/// from their file beside the game's folder (see `ownlists::PAGES`); `None`
+/// when there is none yet. Not on Android, where the web app keeps them
+/// itself.
+#[tauri::command]
+pub async fn own_pages_read(
+    library: LibraryState<'_>,
+    game_id: String,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || PAGES.read(&maps, &game_id)).await
+}
+
+/// Writes a person's own pages of a game, whole and at once; with
+/// `keep_copy` (a time), the file as it was is kept beside it first.
+#[tauri::command]
+pub async fn own_pages_write(
+    library: LibraryState<'_>,
+    game_id: String,
+    contents: String,
+    keep_copy: Option<String>,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || write_own_file(PAGES, &maps, &game_id, &contents, keep_copy.as_deref())).await
+}
+
+/// Deletes a person's own pages of a game, when they ask for it as they
+/// delete the game. Whether there were any.
+#[tauri::command]
+pub async fn own_pages_delete(library: LibraryState<'_>, game_id: String) -> Result<bool, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || {
+        let deleted = PAGES.delete(&maps, &game_id)?;
+        if deleted {
+            activity::info(
+                Area::Library,
+                format!("Deleted the own pages of {game_id}, as asked with the game"),
             );
         }
         Ok(deleted)

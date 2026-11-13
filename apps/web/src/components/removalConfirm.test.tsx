@@ -39,7 +39,9 @@ describe('DeletePackConfirmView', () => {
   it('offers to delete the person’s own lists too, unticked', () => {
     expect(text(view())).not.toContain('Also delete my lists and guides');
     const offered = view({ onWithLists: noop });
-    expect(text(offered)).toContain('Also delete my lists, guides and guide links for this game');
+    expect(text(offered)).toContain(
+      'Also delete my lists, guides, guide links and pages for this game',
+    );
     expect(offered).not.toMatch(/data-testid="delete-pack-lists"[^>]*checked/);
     expect(view({ onWithLists: noop, withLists: true })).toMatch(
       /data-testid="delete-pack-lists" checked=""/,

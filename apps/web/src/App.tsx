@@ -19,6 +19,7 @@ import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
 import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
+import { loadOwnPages } from './state/ownPages';
 import { loadOwnLists } from './state/ownLists';
 import { sweepOwnPicturesOnOpen } from './state/ownPictures';
 import { initSaves } from './state/saves';
@@ -83,6 +84,11 @@ export function App() {
     if (!game) return;
     void loadGuideLinks(game);
     void lookForGuideGames(game);
+  }, [game]);
+  // Their own guide pages and changes to the pack's pages.
+  useEffect(() => {
+    if (!game) return;
+    void loadOwnPages(game);
   }, [game]);
 
   useViewHashSync();

@@ -422,7 +422,7 @@ function LocationField({ game, item }: { game: LoadedGame; item: ChecklistItem }
 }
 
 /** A field to find a location by name, with what matches under it. */
-function LocationFinder({
+export function LocationFinder({
   game,
   label,
   hint,
@@ -497,14 +497,16 @@ function LocationFinder({
 }
 
 /** "Link a guide": the pages of the Guides section by title and text, to link one in a note. */
-function GuideFinder({
+export function GuideFinder({
   game,
   onChoose,
   onCancel,
+  hint = 'A guide page opens in Guides when the list is used.',
 }: {
   game: LoadedGame;
   onChoose: (guideId: string) => void;
   onCancel: () => void;
+  hint?: string;
 }) {
   const [query, setQuery] = useState('');
   const input = useRef<HTMLInputElement>(null);
@@ -544,7 +546,7 @@ function GuideFinder({
           }
         }}
       />
-      <p className="editor-side-line">A guide page opens in Guides when the list is used.</p>
+      <p className="editor-side-line">{hint}</p>
       {hits.length > 0 ? (
         <ul className="touch-plain-list editor-finder-hits">
           {hits.map((hit) => (

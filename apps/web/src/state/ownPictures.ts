@@ -7,6 +7,7 @@ import {
   ownPicture,
   readOwnListsFile,
   readOwnLocationsFile,
+  readOwnPagesFile,
   ownPictureFile,
   ownPictureType,
   type OwnPictureType,
@@ -24,7 +25,7 @@ import { useAtlas } from './store';
 
 /**
  * A person's own photos: the screenshots they add to steps of their own
- * lists and to their own locations. The records are kept with the list or
+ * lists, to their own locations and to guide pages. The records are kept with the list or
  * the own locations (see `ownPictures.ts` in the schema package); this
  * keeps their files:
  *
@@ -163,6 +164,42 @@ function forget(gameId: string, files: readonly string[]): void {
   useOwnPictures.setState({ files: now });
 }
 
+/** Reads an own picture's file once, to show it (see `useOwnPictures`). */
+function ask(gameId: string, file: string): void {
+  const key = keyOf(gameId, file);
+  if (asking.has(key)) return;
+  asking.add(key);
+  void ownPicturesBackend()
+    .read(gameId, file)
+    .then(
+      (bytes) => {
+        remember(gameId, file, bytes && bytes.length > 0 ? bytes : null);
+      },
+      () => {
+        remember(gameId, file, null);
+      },
+    )
+    .finally(() => {
+      asking.delete(key);
+    });
+}
+
+/**
+ * Where an own picture is shown from now, outside React: a URL once its
+ * file is read, null while it is read (it is asked for), `missing` when it
+ * is not there. Follow `useOwnPictures` to see it arrive.
+ */
+export function ownPictureUrl(gameId: string, picture: Picture): string | null {
+  const file = ownPictureFile(picture);
+  if (!file) return 'missing';
+  const loaded = useOwnPictures.getState().files[keyOf(gameId, file)];
+  if (!loaded) {
+    ask(gameId, file);
+    return null;
+  }
+  return 'url' in loaded ? loaded.url : 'missing';
+}
+
 /**
  * Where an own picture is shown from: a URL once its file is read, null
  * while it is read, `missing` when it is not there. Asks for it once.
@@ -172,29 +209,31 @@ export function useOwnPictureUrl(gameId: string, picture: Picture | undefined): 
   const loaded = useOwnPictures((s) => (file ? s.files[keyOf(gameId, file)] : undefined));
   if (!file) return 'missing';
   if (!loaded) {
-    const key = keyOf(gameId, file);
-    if (!asking.has(key)) {
-      asking.add(key);
-      void ownPicturesBackend()
-        .read(gameId, file)
-        .then(
-          (bytes) => {
-            remember(gameId, file, bytes && bytes.length > 0 ? bytes : null);
-          },
-          () => {
-            remember(gameId, file, null);
-          },
-        )
-        .finally(() => {
-          asking.delete(key);
-        });
-    }
+    ask(gameId, file);
     return null;
   }
   return 'url' in loaded ? loaded.url : 'missing';
 }
 
-/** The own pictures of the game shown: those of its own lists and of its own locations. */
+/**
+ * Other own records of a game that show own photos (own pages): what they
+ * name, so a photo is never taken for one nothing names.
+ */
+export interface OwnPictureSource {
+  /** Whether the records of this game are read, can be changed, and so name every photo they show. */
+  ready(gameId: string): boolean;
+  /** The pictures they name now, Undo and what is being edited included. */
+  pictures(): readonly Picture[];
+}
+
+const sources: OwnPictureSource[] = [];
+
+/** Adds a kind of own record that shows own photos (see `OwnPictureSource`). */
+export function addOwnPictureSource(source: OwnPictureSource): void {
+  if (!sources.includes(source)) sources.push(source);
+}
+
+/** The own pictures of the game shown: those of its own lists, locations and pages. */
 export function ownPicturesOfGame(): Map<string, Picture> {
   const pictures = new Map<string, Picture>();
   for (const list of useOwnLists.getState().lists) {
@@ -202,6 +241,9 @@ export function ownPicturesOfGame(): Map<string, Picture> {
   }
   for (const picture of useOwnLocations.getState().own.pictures ?? []) {
     pictures.set(picture.id, picture);
+  }
+  for (const source of sources) {
+    for (const picture of source.pictures()) pictures.set(picture.id, picture);
   }
   return pictures;
 }
@@ -409,7 +451,8 @@ function allRead(gameId: string): boolean {
     lists.readOnly === null &&
     locations.gameId === gameId &&
     locations.status === 'ready' &&
-    locations.readOnly === null
+    locations.readOnly === null &&
+    sources.every((source) => source.ready(gameId))
   );
 }
 
@@ -426,6 +469,7 @@ function namedFiles(): Set<string> {
   const locations = useOwnLocations.getState();
   add(locations.own.pictures);
   for (const step of locations.undo) add(step.before.pictures);
+  for (const source of sources) add(source.pictures());
   return named;
 }
 
@@ -477,8 +521,11 @@ export async function deleteOwnPictures(
   return ownPicturesBackend().remove(gameId, files);
 }
 
-/** The own pictures an own lists or own locations file names, from its text. */
-export function picturesInFile(text: string | null, kind: 'lists' | 'locations'): Picture[] {
+/** The own pictures an own lists, locations or pages file names, from its text. */
+export function picturesInFile(
+  text: string | null,
+  kind: 'lists' | 'locations' | 'pages',
+): Picture[] {
   if (text === null) return [];
   let value: unknown;
   try {
@@ -489,6 +536,10 @@ export function picturesInFile(text: string | null, kind: 'lists' | 'locations')
   if (kind === 'lists') {
     const read = readOwnListsFile(value);
     return read.ok ? read.file.lists.flatMap((list) => list.pictures ?? []) : [];
+  }
+  if (kind === 'pages') {
+    const read = readOwnPagesFile(value);
+    return read.ok ? (read.file.own.pictures ?? []) : [];
   }
   const read = readOwnLocationsFile(value);
   return read.ok ? (read.file.own.pictures ?? []) : [];
