@@ -9,10 +9,12 @@ import {
   answerLicence,
   confirmHow,
   setHowWay,
+  stopBrowse,
   useImport,
   type ImportPhase,
   type LicenceAsk,
 } from '../state/importing';
+import { showLibraryAdd, useLibrary } from '../state/libraryView';
 import { WAY_LABELS, WAY_TEXTS } from '../state/readingWays';
 import { loadWikiNotes, setSiteLicence, setSiteWay, useWikiNotes } from '../state/wikiNotes';
 
@@ -100,7 +102,7 @@ export function HowStep({ phase }: { phase: Extract<ImportPhase, { kind: 'how' }
           data-testid="add-how-go"
           onClick={() => void confirmHow()}
         >
-          Read it
+          {phase.way === 'browse' ? 'Start browsing' : 'Read it'}
         </button>
       </div>
     </div>
@@ -232,5 +234,95 @@ export function WikiReading({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Browse and keep, while the person browses a site in the app's window:
+ * the page kept last, how many, what happened last, and Stop browsing. The
+ * app opens no page by itself; closing the window ends it too.
+ */
+export function BrowseKeep({ phase }: { phase: Extract<ImportPhase, { kind: 'browse' }> }) {
+  const last = phase.kept.at(-1);
+  const count = phase.kept.length;
+  return (
+    <div
+      className="dialog-section browse-keep"
+      data-testid="browse-keep"
+      data-state={phase.ended ? 'ended' : 'browsing'}
+      data-kept={count}
+    >
+      <p>
+        <strong>{phase.ended ? `Browsing ${phase.site} ended` : `Browsing ${phase.site}`}</strong>,
+        kept with {phase.importer}.
+      </p>
+      <p className="muted small">
+        {phase.ended
+          ? 'The window is closed. The pages kept are on the wiki’s screen in the Library and in Guides.'
+          : 'Browse the wiki in the window this app opened. Each article page you open is kept once it has loaded, once; this app never opens a page by itself, and pages a page links to are listed as found, not read. If the site asks you to confirm you are a person, answer it there: nothing is read while it asks.'}
+      </p>
+      <p className="browse-keep-status" role="status" data-testid="browse-keep-status">
+        {last ? `Kept: ${last.title}` : 'No page kept yet.'}
+        {' · '}
+        <span className="muted">
+          {count === 1 ? '1 page kept' : `${count.toLocaleString('en')} pages kept`}
+        </span>
+      </p>
+      {phase.note ? (
+        <p className="muted small" data-testid="browse-keep-note">
+          {phase.note}
+        </p>
+      ) : null}
+      {count > 0 ? (
+        <ul className="browse-keep-pages" data-testid="browse-keep-pages">
+          {phase.kept
+            .slice(-8)
+            .reverse()
+            .map((page) => (
+              <li key={page.url}>{page.title}</li>
+            ))}
+        </ul>
+      ) : null}
+      {phase.ended ? null : (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="button"
+            data-testid="browse-keep-stop"
+            onClick={() => void stopBrowse()}
+          >
+            Stop browsing
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The strip while the person browses a wiki and its pages are kept: the last kept, the count, Stop browsing. */
+export function BrowseStrip({ phase }: { phase: Extract<ImportPhase, { kind: 'browse' }> }) {
+  const pane = useLibrary((s) => s.pane);
+  const last = phase.kept.at(-1);
+  const count = phase.kept.length;
+  return (
+    <footer className="library-strip" data-testid="library-strip" aria-label="Now">
+      <span className="library-strip-now" data-testid="library-strip-now">
+        <strong>Now:</strong> browsing {phase.site}
+        {last ? `. Kept: ${last.title}` : ''}, {count === 1 ? '1 page kept' : `${count} pages kept`}
+      </span>
+      {pane !== 'add' ? (
+        <button type="button" className="button button-small" onClick={showLibraryAdd}>
+          See the pages
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="button button-small"
+        data-testid="library-strip-stop-browsing"
+        onClick={() => void stopBrowse()}
+      >
+        Stop browsing
+      </button>
+    </footer>
   );
 }

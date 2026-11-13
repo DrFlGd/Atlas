@@ -429,6 +429,12 @@ export interface SaveImportRequest {
   files: Record<string, string>;
   /** The pack refreshes one that comes with the app (its importer allows that). */
   refreshBundled?: boolean;
+  /**
+   * Pictures the page showed as the person browsed it (`pictureFiles` of
+   * the import outcome): each picture file of the pack with its bytes in
+   * base64, written into the pack folder with the pack.
+   */
+  pictures?: Record<string, string>;
 }
 
 /** What the shell found when it looked at the import window. */
@@ -843,7 +849,7 @@ export interface DesktopBridge {
     open(
       url: string,
       reader: string,
-      importer?: { id: string; waitSeconds: number },
+      importer?: { id: string; waitSeconds?: number },
       /** What is read, for the activity log: a map page (default), a game page, or a list of games. */
       purpose?: 'map' | 'game' | 'catalogue',
       /**
@@ -858,6 +864,12 @@ export interface DesktopBridge {
        * through `fetch.inWindow`, never with `measure`.
        */
       keep?: boolean,
+      /**
+       * Browse and keep: the person browses the site in the window, which
+       * the app never moves, and each page they open is handed over once,
+       * with its address, once it has loaded.
+       */
+      browse?: boolean,
     ): Promise<void>;
     /**
      * Moves the window kept for a go to its next page on the same site,
@@ -1110,14 +1122,22 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       saveImport: (request) => call('library_save_import', { request }),
     },
     importWindow: {
-      open: (url, reader, importer, purpose, measure, keep) =>
+      open: (url, reader, importer, purpose, measure, keep, browse) =>
         call('import_open', {
           url,
           reader,
-          ...(importer ? { importerId: importer.id, waitSeconds: importer.waitSeconds } : {}),
+          ...(importer
+            ? {
+                importerId: importer.id,
+                ...(importer.waitSeconds !== undefined
+                  ? { waitSeconds: importer.waitSeconds }
+                  : {}),
+              }
+            : {}),
           ...(purpose && purpose !== 'map' ? { purpose } : {}),
           ...(measure ? { measure } : {}),
           ...(keep ? { keep: true } : {}),
+          ...(browse ? { browse: true } : {}),
         }),
       navigate: (url, reader, importer) =>
         call('import_navigate', {

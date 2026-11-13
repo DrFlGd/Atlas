@@ -23,6 +23,7 @@ import {
   refusalOf,
   robotsAllows,
   rulesFromAnswer,
+  sameSite,
   type AtlasImporter,
   type ConfirmedLicence,
   type FetchedPage,
@@ -70,6 +71,7 @@ import {
 } from './importRun';
 import { pagesToFollow, type FollowLinks } from './followLinks';
 import {
+  KEPT_POLL_MS,
   PageWindows,
   closedMessage,
   type PageRead,
@@ -194,6 +196,24 @@ export type ImportPhase =
       importer: string;
       site: SiteInfo;
       way: ReadingWay;
+    }
+  /**
+   * Browse and keep: the person browses a site in the app's window, and
+   * each page they open is kept (see {@link startBrowse}). `ended` once the
+   * window was closed or browsing was stopped.
+   */
+  | {
+      kind: 'browse';
+      url: string;
+      importerId: string;
+      importer: string;
+      /** The site's key, for the person. */
+      site: string;
+      /** The pages kept, in the order they were opened. */
+      kept: { url: string; title: string }[];
+      /** What happened last, in a sentence. */
+      note: string | null;
+      ended: boolean;
     }
   /** Several addresses, some of which no importer recognises: shown before the run. */
   | {
@@ -424,6 +444,8 @@ async function readPage(
   /** The way the person chose for the site, for an importer that offers ways (`siteInfo`). */
   way?: ReadingWay,
 ): Promise<PageRead> {
+  // A site read only as the person browses it: nothing is opened or fetched by itself.
+  if (way === 'browse') return { state: 'failed', message: BROWSE_ONLY };
   const fetcher = fetcherFor(importer, reading, url, way);
   if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
   const { pageReader, waitSeconds } = readerFor(importer, reading);
@@ -696,6 +718,7 @@ export function resetImport(): void {
   const { phase } = useImport.getState();
   if (
     phase.kind === 'waiting' ||
+    (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running')
   ) {
     return;
@@ -781,7 +804,10 @@ export async function submitAddresses(text: string): Promise<void> {
 /** Reads one address the person added: a page, a game's page, or a site's list of games. */
 async function addAddress(url: string, importers: readonly AtlasImporter[]): Promise<void> {
   const reader = findReader(importers, url);
-  if (reader?.kind === 'game') await startGameAddress(url, reader.importer);
+  // A site read as the person browses it: browsing starts at the address.
+  const site = reader ? await readingOf(reader.importer, url) : undefined;
+  if (reader && site?.way === 'browse') await startBrowse(url, reader.importer, site);
+  else if (reader?.kind === 'game') await startGameAddress(url, reader.importer);
   else if (reader?.kind === 'catalogue') await startCatalogue(url, reader.importer);
   else await startImport(url);
 }
@@ -1391,6 +1417,10 @@ async function convertAndSave(
       pageData: page.pageData,
       files: packFiles({ ...outcome.pack, manifest }),
       ...(bundled ? { refreshBundled: true } : {}),
+      // Pictures a page showed as the person browsed it, read from the page as it loaded them.
+      ...(page.way === 'browse' && outcome.pictureFiles
+        ? { pictures: Object.fromEntries(outcome.pictureFiles.map((p) => [p.file, p.data])) }
+        : {}),
     });
   } catch (error) {
     return { kind: 'failed', message: errorText(error) };
@@ -1418,6 +1448,158 @@ async function convertAndSave(
     rebuilt,
     ...(pictures ? { pictures: true } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Browse and keep
+
+/** A page of a site read only as the person browses it, asked for in a go or by fetching. */
+export const BROWSE_ONLY =
+  'This wiki is read only as you browse it, so this app does not open or fetch its pages by itself. Start browsing on its screen in the Library, or add its address again, and each page you open in the window is kept.';
+
+/**
+ * Browse and keep: opens `url` in the app's window, browsing, and keeps
+ * each page the person opens there that the importer's browse reader reads
+ * (an article page), once a page has finished loading: converted and saved
+ * like any page, but never more than once while browsing, and never with
+ * a pause or a go. The app never opens, moves to or fetches a page itself;
+ * the window stays on its site. The pages a kept page links to are kept as
+ * found, not read. It ends when the person closes the window or presses
+ * Stop browsing ({@link stopBrowse}).
+ */
+async function startBrowse(
+  url: string,
+  importer: AtlasImporter,
+  site: SiteReading | undefined,
+): Promise<void> {
+  const shell = desktop;
+  if (!shell || !importer.browseReader) return;
+  currentRun?.cancel();
+  const id = ++session;
+  await closeWindow(shell);
+  currentImporter = importer.id;
+  let state: Extract<ImportPhase, { kind: 'browse' }> = {
+    kind: 'browse',
+    url,
+    importerId: importer.id,
+    importer: importer.title,
+    site: site?.info.key ?? new URL(url).hostname,
+    kept: [],
+    note: null,
+    ended: false,
+  };
+  const show = (change: Partial<typeof state>) => {
+    state = { ...state, ...change };
+    if (id === session) setPhase(state);
+  };
+  show({});
+  try {
+    await shell.importWindow.open(
+      url,
+      importer.browseReader,
+      { id: importer.id },
+      'map',
+      undefined,
+      false,
+      true,
+    );
+  } catch (error) {
+    show({ ended: true, note: `The window could not be opened: ${errorText(error)}` });
+    return;
+  }
+  // Pages read while browsing, by page key: each once.
+  const seen = new Set<string>();
+  while (id === session) {
+    await sleep(KEPT_POLL_MS);
+    if (id !== session) break;
+    let result: Awaited<ReturnType<typeof shell.importWindow.poll>>;
+    try {
+      result = await shell.importWindow.poll();
+    } catch {
+      continue;
+    }
+    if (result.state === 'closed') break;
+    if (result.state === 'failed') {
+      if (result.message === 'No page is open.') break;
+      show({ note: result.message });
+      continue;
+    }
+    if (result.state !== 'ready') continue;
+    const address = result.address ?? url;
+    // By the whole address but its fragment: a wiki may tell its pages apart by the query.
+    const key = address.split('#')[0] ?? address;
+    if (!sameSite(url, address) || seen.has(key)) continue;
+    seen.add(key);
+    const kept = await keepBrowsed(importer, address, result.data);
+    if (id !== session) break;
+    if (kept.title) {
+      show({ kept: [...state.kept, { url: address, title: kept.title }], note: null });
+    } else if (kept.note) {
+      show({ note: kept.note });
+    }
+    if (kept.stop) break;
+  }
+  await shell.importWindow.close().catch(() => undefined);
+  void flushWikiNotes();
+  if (id === session) show({ ended: true });
+}
+
+/** Keeps one page the person opened while browsing: its title once kept, or what happened. */
+async function keepBrowsed(
+  importer: AtlasImporter,
+  url: string,
+  data: string,
+): Promise<{ title?: string; note?: string; stop?: boolean }> {
+  // The wiki's contents, when the person opened them: kept as its contents, not as a page.
+  const games = importer.games;
+  if (games && safely(() => games.matches(url))) {
+    const result = await convertListing({ url, importer, reading: 'game' }, data);
+    if (result.ok && 'pages' in result) {
+      await noteWikiContents(importer.id, url, result.game, result.pages);
+      return { note: `The wiki’s contents were read: ${result.pages.length} pages listed.` };
+    }
+    if (!canAdd(importer, url)) return {};
+  }
+  if (!canAdd(importer, url)) return {};
+  const outcome = await convertAndSave(
+    importer,
+    { url, pageData: data, importedAt: new Date().toISOString(), way: 'browse' },
+    false,
+    false,
+  );
+  reportPhase(importer.id, outcome);
+  if (outcome.kind === 'done') {
+    await noteWikiRead(importer.id, url, outcome.links ?? []).catch(() => undefined);
+    await noteWikiLinks(importer.id, outcome.writtenAgain ?? []).catch(() => undefined);
+    return { title: outcome.summary.map || url };
+  }
+  if (outcome.kind === 'failed') {
+    void noteWikiFailed(importer.id, url, outcome.message);
+    return { note: outcome.message, ...(outcome.declined ? { stop: true } : {}) };
+  }
+  return {};
+}
+
+/** What an importer's function answers, or false when it throws. */
+const safely = (answer: () => boolean) => {
+  try {
+    return answer();
+  } catch {
+    return false;
+  }
+};
+
+/** Stop browsing: closes the window; what was kept stays. */
+export async function stopBrowse(): Promise<void> {
+  if (desktop) await desktop.importWindow.close().catch(() => undefined);
+}
+
+/** Starts browsing a wiki from its screen in the Library, at `url` (its contents or a page). */
+export async function browseWiki(source: WikiSource, url: string): Promise<void> {
+  const importer = (await loadImporters()).find((i) => i.id === source.importerId);
+  if (!importer) return;
+  showLibraryAdd();
+  await startBrowse(url, importer, await readingOf(importer, url));
 }
 
 /** A page whose site's licence the person did not confirm. */
@@ -1979,6 +2161,8 @@ export interface WikiSource {
   pictures: boolean;
   /** Its pages are read in a window kept for a go (`fetch.inWindow`, or as the person chose), with that window's shorter pause. */
   inWindow: boolean;
+  /** Where browsing it starts: its contents, else the last page read. */
+  start: string;
   /** The site as its importer describes it, when it offers ways to read its sites (`siteInfo`). */
   site: SiteInfo | null;
 }
@@ -1997,6 +2181,7 @@ export async function wikiSourceOf(packId: string): Promise<WikiSource | null> {
     address: importer.games ? game.address : null,
     pictures: importer.picturesWithPages === true,
     inWindow: site ? site.way === 'window' : readsInWindow(importer.fetch, at),
+    start: game.address ?? game.recorded.at(-1)?.url ?? at,
     site: site?.info ?? null,
   };
 }
@@ -2092,9 +2277,20 @@ async function startUpdate(games: readonly UpdateGame[]): Promise<void> {
     games: games.length,
     pages: withAddress.map((game) => game.address!),
   });
+  // A wiki read only as the person browses it is never read by an update.
+  const browsed = new Set<string>();
+  for (const game of games) {
+    const importer = importers.find((i) => i.id === game.importerId);
+    const at = game.address ?? game.recorded[0]?.url;
+    if (importer && at && (await readingOf(importer, at))?.way === 'browse') {
+      browsed.add(game.packId);
+    }
+  }
   const items = withAddress.flatMap((game): ListingItem[] => {
     const importer = importers.find((i) => i.id === game.importerId);
-    return importer ? [{ url: game.address!, importer, reading: 'game' }] : [];
+    return importer && !browsed.has(game.packId)
+      ? [{ url: game.address!, importer, reading: 'game' }]
+      : [];
   });
   const read = items.length > 0 ? await readListings(items, 'update') : { run: null, results: [] };
   if (!read) return;
@@ -2111,6 +2307,9 @@ async function startUpdate(games: readonly UpdateGame[]): Promise<void> {
       recorded: game.recorded,
     };
     if (result?.ok && 'pages' in result) return [choiceGame({ ...base, listed: result.pages })];
+    if (browsed.has(game.packId)) {
+      return [choiceGame({ ...base, listed: null, tick: false, note: BROWSE_ONLY })];
+    }
     if (index < 0) {
       return [
         choiceGame({

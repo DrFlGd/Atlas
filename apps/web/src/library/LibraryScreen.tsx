@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AddBox, AddFlow } from '../components/AddFlow';
+import { BrowseStrip } from '../components/SiteReading';
 import { UiIcon } from '../components/icons';
 import { downloadsOffered, importsOffered } from '../features';
 import {
@@ -289,6 +290,7 @@ function LibraryStrip() {
   const phase = useImport((s) => s.phase);
   const licence = useImport((s) => s.licenceAsk !== null);
   const pane = useLibrary((s) => s.pane);
+  if (phase.kind === 'browse' && !phase.ended) return <BrowseStrip phase={phase} />;
   if ((phase.kind !== 'run' && phase.kind !== 'listing') || phase.run.status !== 'running') {
     return null;
   }

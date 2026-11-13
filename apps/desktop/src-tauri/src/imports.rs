@@ -48,6 +48,16 @@
 //! focus and without being un-minimized. Map pages, and pages whose map
 //! picture is measured, are never kept.
 //!
+//! "Browse and keep" opens the window *browsing*: the person browses the
+//! site in it themselves, and the app keeps each page they open. The shell
+//! never moves such a window (`navigate` refuses), notices each page the
+//! person goes to from the window's own page loads, and runs the reader
+//! once a page has finished loading, once per page: a page read is not read
+//! again until the person goes to another page (a reload is the same
+//! page). The data counts only when it comes from the page the window shows
+//! now. It never asks for attention; the window stays on its site as every
+//! import window does.
+//!
 //! There is no import window on Android, where a second window would
 //! replace the app's screen and a private session is not available.
 
@@ -160,6 +170,8 @@ struct Visit {
     read: Option<Url>,
     /// The person's attention was asked for, for this page.
     attention: bool,
+    /// The person browses: each page they go to is a new visit, read once.
+    browse: bool,
 }
 
 #[cfg_attr(mobile, allow(dead_code))]
@@ -173,6 +185,15 @@ impl Visit {
             finished: None,
             read: None,
             attention: false,
+            browse: false,
+        }
+    }
+
+    /// A window the person browses, from `start`.
+    fn browsing(start: Url) -> Self {
+        Visit {
+            browse: true,
+            ..Visit::new(start)
         }
     }
 
@@ -192,6 +213,7 @@ impl Visit {
             finished: None,
             read: None,
             attention: false,
+            browse: self.browse,
         };
     }
 
@@ -202,13 +224,17 @@ impl Visit {
         matches!(address.scheme(), "http" | "https")
             && same_site(&self.start, address)
             && (same_page(address, &self.asked)
-                || !self.before.iter().any(|before| same_page(address, before)))
+                || (!self.browse && !self.before.iter().any(|before| same_page(address, before))))
     }
 
     /// A page load event of the window. Only loads of the page asked for
     /// (or where the site led from it) count; a load that starts again (a
     /// check that reloads the page, say) waits for its own end.
     fn page_load(&mut self, started: bool, url: &Url, now: Instant) {
+        if self.browse {
+            self.browsed(started, url, now);
+            return;
+        }
         if !self.address_ok(url) {
             return;
         }
@@ -220,16 +246,43 @@ impl Visit {
         }
     }
 
-    /// The page asked for has finished loading: the reader may run.
+    /// A page load event of a window the person browses: a load of another
+    /// page of the site is the person going there, a new visit; a load of
+    /// the same page (a reload) is the same visit, so a page read is not
+    /// read again.
+    fn browsed(&mut self, started: bool, url: &Url, now: Instant) {
+        if !matches!(url.scheme(), "http" | "https") || !same_site(&self.start, url) {
+            return;
+        }
+        if !same_page(url, &self.asked) {
+            self.before = vec![self.asked.clone()];
+            self.asked = url.clone();
+            self.read = None;
+            self.started = false;
+            self.finished = None;
+        }
+        if started {
+            self.started = true;
+            self.finished = None;
+        } else {
+            // A page the site led to finishes without its own start.
+            self.started = true;
+            self.finished = Some(now);
+        }
+    }
+
+    /// The page asked for has finished loading: the reader may run. A page
+    /// the person browsed to is read once.
     fn readable(&self) -> bool {
-        self.finished.is_some()
+        self.finished.is_some() && !(self.browse && self.read.is_some())
     }
 
     /// Whether to ask for the person's attention now: the page finished
     /// loading [`ATTENTION_AFTER`] ago and gave no data, and it was not
     /// asked for this page before. Notes that it is asked.
     fn attention_due(&mut self, now: Instant) -> bool {
-        let due = !self.attention
+        let due = !self.browse
+            && !self.attention
             && self
                 .finished
                 .is_some_and(|at| now.saturating_duration_since(at) >= ATTENTION_AFTER);
@@ -426,6 +479,7 @@ impl Imports {
         _reader: String,
         _measure: Option<String>,
         _keep: bool,
+        _browse: bool,
     ) -> Result<(), String> {
         Err("Maps cannot be added from web pages on this device.".to_owned())
     }
@@ -445,7 +499,9 @@ impl Imports {
     /// `measure`, the importer's page measuring step, the map's picture is
     /// measured from the page once its data has been read. With `keep`, the
     /// window is kept for the next page of a go on the same site
-    /// ([`Imports::navigate`]); a page that is measured cannot be kept.
+    /// ([`Imports::navigate`]); a page that is measured cannot be kept. With
+    /// `browse`, the person browses the site in the window and each page they
+    /// open is read once (see the module's notes); the window is never moved.
     #[cfg(desktop)]
     pub fn open<R: Runtime>(
         &self,
@@ -454,11 +510,12 @@ impl Imports {
         reader: String,
         measure: Option<String>,
         keep: bool,
+        browse: bool,
     ) -> Result<(), String> {
         let start = allowed_page_url(url)
             .ok_or_else(|| "Only https web addresses can be imported from.".to_owned())?;
         check_reader(&reader)?;
-        if keep && measure.is_some() {
+        if (keep || browse) && measure.is_some() {
             return Err(
                 "A page whose map picture is measured cannot be kept open for the next page."
                     .to_owned(),
@@ -500,13 +557,22 @@ impl Imports {
             }),
             #[cfg(feature = "downloads")]
             id,
-            kept: keep.then(|| Visit::new(start.clone())),
+            kept: if browse {
+                Some(Visit::browsing(start.clone()))
+            } else {
+                keep.then(|| Visit::new(start.clone()))
+            },
         });
 
         let navigation_start = start.clone();
         let session = Arc::clone(&self.session);
         let title = format!(
-            "Add a map \u{2013} {}",
+            "{} \u{2013} {}",
+            if browse {
+                "Browse and keep"
+            } else {
+                "Add a map"
+            },
             start.host_str().unwrap_or_default()
         );
         let builder = WebviewWindowBuilder::new(app, IMPORT_WINDOW, WebviewUrl::External(start))
@@ -588,6 +654,12 @@ impl Imports {
                 .kept
                 .as_mut()
                 .ok_or_else(|| "The page window is not kept for the next page.".to_owned())?;
+            // The person browses: the app never moves the window.
+            if visit.browse {
+                return Err(
+                    "The person browses in this window, so this app does not move it.".to_owned(),
+                );
+            }
             // The window stays on its site; another site gets a window of its own.
             if !same_site(&visit.start, &next) {
                 return Err(
@@ -624,22 +696,27 @@ impl Imports {
                 }
             };
         };
-        let Some((reader, key, loading, kept)) = lock(&self.session).as_ref().map(|session| {
-            (
-                session.reader.clone(),
-                session.key.clone(),
-                session.loading,
-                session.kept.is_some(),
-            )
-        }) else {
+        let Some((reader, key, loading, kept, browse)) =
+            lock(&self.session).as_ref().map(|session| {
+                (
+                    session.reader.clone(),
+                    session.key.clone(),
+                    session.loading,
+                    session.kept.is_some(),
+                    session.kept.as_ref().is_some_and(|visit| visit.browse),
+                )
+            })
+        else {
             return PollResult::Failed {
                 message: "No page is open.".to_owned(),
             };
         };
-        // A kept window is read only once the page asked for has loaded.
+        // A kept window is read only once the page asked for has loaded; a
+        // page the person browsed to, only once.
         if kept && !self.kept_readable() {
             return PollResult::Waiting {
-                loading: true,
+                // A browsed page read waits for the person, not for a load.
+                loading: !browse || loading,
                 note: None,
                 attention: false,
             };
@@ -1131,6 +1208,46 @@ mod tests {
         visit.next(url("https://wiki.example.org/wiki/C"));
         assert!(!visit.attention);
         assert_eq!(visit.before, vec![url(B)]);
+    }
+
+    #[test]
+    fn a_browsed_window_reads_each_page_the_person_opens_once() {
+        let at = Instant::now();
+        let mut visit = Visit::browsing(url(A));
+        assert!(!visit.readable());
+        visit.page_load(true, &url(A), at);
+        assert!(!visit.readable());
+        visit.page_load(false, &url(A), at);
+        assert!(visit.readable());
+        assert!(visit.address_ok(&url(A)));
+        visit.read = Some(url(A));
+        // Read once: not again, not even when the page loads again.
+        assert!(!visit.readable());
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        assert!(!visit.readable());
+        // The person goes to B: a new visit, read once its load has finished.
+        visit.page_load(true, &url(B), at);
+        assert_eq!(visit.asked, url(B));
+        assert!(!visit.readable());
+        // A's data never counts for B.
+        assert!(!visit.address_ok(&url(A)));
+        visit.page_load(false, &url(B), at);
+        assert!(visit.readable());
+        assert!(visit.address_ok(&url("https://wiki.example.org/wiki/B#Notes")));
+        visit.read = Some(url(B));
+        // Back to A: a new visit of A, read again in this visit.
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        assert!(visit.readable());
+        // A page the site led to finishes without a start of its own.
+        visit.read = Some(url(A));
+        visit.page_load(false, &url("https://wiki.example.org/wiki/C"), at);
+        assert!(visit.readable());
+        // Never another site, and never attention: the person is there.
+        visit.page_load(true, &url("https://other.example.net/wiki/D"), at);
+        assert_eq!(visit.asked, url("https://wiki.example.org/wiki/C"));
+        assert!(!visit.attention_due(at + ATTENTION_AFTER * 2));
     }
 
     #[test]

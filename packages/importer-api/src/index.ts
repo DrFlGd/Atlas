@@ -735,9 +735,71 @@ export interface ImportSuccess {
    * It records the links only; nothing is read because of them.
    */
   writtenAgain?: WrittenAgain[];
+  /**
+   * Optional, for a page read as the person browsed (`ImportContext.reading`
+   * `browse`): the files of pictures the page showed, read from the page as
+   * it loaded them (never fetched), for the app to write into the pack's
+   * folder with the pack. Each `file` is the `file` of a picture of `pack`
+   * (`pictures/<name>.png`, `.jpg`, `.jpeg` or `.webp`), and `data` its
+   * bytes in base64, of the type its name says, at most {@link
+   * MAX_PICTURE_FILE_BYTES}; at most {@link MAX_PICTURE_FILES} of them and
+   * {@link MAX_PICTURE_FILES_BYTES} in all. The app leaves out any other
+   * entry, and checks the bytes again before writing them. Such pictures
+   * have no `remote`: the app's own picture download never runs for them.
+   */
+  pictureFiles?: PictureFile[];
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
+}
+
+/** A picture file a page showed, with its bytes (see {@link ImportSuccess.pictureFiles}). */
+export interface PictureFile {
+  file: string;
+  /** Its bytes, in base64. */
+  data: string;
+}
+
+/** The bytes of one picture file of a page the app takes at most (see {@link ImportSuccess.pictureFiles}). */
+export const MAX_PICTURE_FILE_BYTES = 4 * 1024 * 1024;
+/** Picture files of one page the app takes at most. */
+export const MAX_PICTURE_FILES = 100;
+/** The bytes of all picture files of one page the app takes at most. */
+export const MAX_PICTURE_FILES_BYTES = 24 * 1024 * 1024;
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+const PICTURE_FILE = /^pictures\/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.(png|jpe?g|webp)$/;
+
+/** How many bytes a base64 text holds. */
+const base64Bytes = (data: string) =>
+  Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+
+/**
+ * The picture files of a page as the app takes them (see {@link
+ * ImportSuccess.pictureFiles}): each the file of a picture of `pack`, of a
+ * type the app writes, in base64, within the limits, each file once, in
+ * the order given; anything else is left out.
+ */
+export function pictureFilesOf(value: unknown, pack: PackData): PictureFile[] {
+  if (!Array.isArray(value)) return [];
+  const listed = new Set((pack.pictures ?? []).map((picture) => picture.file));
+  const kept: PictureFile[] = [];
+  let total = 0;
+  for (const entry of value as unknown[]) {
+    if (kept.length >= MAX_PICTURE_FILES) break;
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { file, data } = entry as { file?: unknown; data?: unknown };
+    if (typeof file !== 'string' || typeof data !== 'string') continue;
+    if (!PICTURE_FILE.test(file) || !listed.has(file) || kept.some((k) => k.file === file)) {
+      continue;
+    }
+    if (data.length === 0 || data.length % 4 !== 0 || !BASE64.test(data)) continue;
+    const bytes = base64Bytes(data);
+    if (bytes > MAX_PICTURE_FILE_BYTES || total + bytes > MAX_PICTURE_FILES_BYTES) continue;
+    total += bytes;
+    kept.push({ file, data });
+  }
+  return kept;
 }
 
 /** Links of one page that the app keeps at most (see {@link ImportSuccess.links}). */
@@ -942,6 +1004,20 @@ export interface AtlasImporter {
    */
   pageReader?: string;
   /**
+   * Optional: the reader of "browse and keep" (the reading way `browse`,
+   * see `fetching.ts`), a function's source like {@link pageReader}, run
+   * in the app's window on each page the person opens there themselves,
+   * once the page has finished loading. It returns `null` for a page not
+   * to keep (not an article, or a page that asks to confirm the reader is a
+   * person: the app never reads past such a check) and otherwise the page's
+   * data for `convert`, which gets `ImportContext.reading` `browse`. It must
+   * not change the page or make any request; it may read the pictures the
+   * page already shows, as they loaded, within the page data's size limit
+   * (see {@link ImportSuccess.pictureFiles}). Without it, `browse` is not
+   * offered.
+   */
+  browseReader?: string;
+  /**
    * Optional: measuring a map's picture from the page, when the person asks
    * for it (see {@link PageMeasure}). An app without it never runs it.
    */
@@ -1034,6 +1110,7 @@ export const importerSchema = z
     siteInfo: z.custom<NonNullable<AtlasImporter['siteInfo']>>(isFunction).optional(),
     fetch: fetchSchema.optional(),
     pageReader: z.string().min(1).max(MAX_READER_CHARS).optional(),
+    browseReader: readerSchema.optional(),
     pageMeasure: z
       .object({
         matches: z.custom<NonNullable<PageMeasure['matches']>>(isFunction).optional(),
@@ -1180,6 +1257,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
       .optional(),
     // Checked entry by entry, and entries that are not in shape are left out.
     writtenAgain: z.unknown().optional(),
+    // Checked against the pack, entry by entry (`pictureFilesOf`).
+    pictureFiles: z.unknown().optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
@@ -1306,13 +1385,15 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   if (success.guideId !== undefined && !pack.data.guides.some((g) => g.id === success.guideId)) {
     return { ok: false, message: 'The importer named a guide that is not in its pack.' };
   }
-  const { links: given, writtenAgain: again, ...rest } = success;
+  const { links: given, writtenAgain: again, pictureFiles: files, ...rest } = success;
   const links = pageLinks(given, pageUrl);
   const writtenAgain = writtenAgainLinks(again, pageUrl);
+  const pictureFiles = pictureFilesOf(files, pack.data);
   return {
     ...rest,
     ...(links.length > 0 ? { links } : {}),
     ...(writtenAgain.length > 0 ? { writtenAgain } : {}),
+    ...(pictureFiles.length > 0 ? { pictureFiles } : {}),
     pack: pack.data,
   };
 }

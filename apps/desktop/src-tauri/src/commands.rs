@@ -1996,10 +1996,12 @@ pub async fn import_open<R: Runtime>(
     purpose: Option<String>,
     measure: Option<String>,
     keep: Option<bool>,
+    browse: Option<bool>,
 ) -> Result<(), String> {
     desktop_only()?;
     *lock_poll() = None;
     let keep = keep.unwrap_or(false);
+    let browse = browse.unwrap_or(false);
     // Only for the log: what is read from the page. Nothing about the window changes.
     let listing = matches!(purpose.as_deref(), Some("game" | "catalogue"));
     *lock_listing() = listing;
@@ -2022,12 +2024,14 @@ pub async fn import_open<R: Runtime>(
     } else {
         ""
     };
-    let kept = if keep {
+    let kept = if browse {
+        "; the person browses the site in it, and each page they open is read once (browse and keep): this app never moves the window"
+    } else if keep {
         "; the window is kept for the next pages of the go on the same site"
     } else {
         ""
     };
-    match imports.open(&app, &url, reader, measure, keep) {
+    match imports.open(&app, &url, reader, measure, keep, browse) {
         Ok(()) => {
             activity::info(
                 Area::Import,

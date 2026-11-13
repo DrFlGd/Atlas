@@ -11,8 +11,10 @@ import { notify, switchGame } from '../state/actions';
 import type { FollowLinks } from '../state/followLinks';
 import { guidesOf } from '../state/guides';
 import {
+  browseWiki,
   readWikiContents,
   readWikiPages,
+  stopBrowse,
   stopRun,
   useImport,
   type WikiSource,
@@ -137,10 +139,12 @@ export function WikiScreen({
       : null;
 
   const tickedRows = rows.filter((row) => ticked.has(row.key) && canTick(row));
-  // Read in a window as the person chose for the site, when its importer offers ways.
-  const inWindow = source.site
-    ? readingWayOf(source.site, notes.sites[source.site.key]?.way) === 'window'
-    : source.inWindow;
+  // Read as the person chose for the site, when its importer offers ways.
+  const way = source.site ? readingWayOf(source.site, notes.sites[source.site.key]?.way) : null;
+  const inWindow = way ? way === 'window' : source.inWindow;
+  // Read only as the person browses it: no go, no contents read by this app.
+  const browsing = way === 'browse';
+  const browseOn = phase.kind === 'browse' && !phase.ended;
   const counts = Object.fromEntries(
     WIKI_FILTERS.map((f) => [f.id, rows.filter((row) => matchesFilter(row, f.id)).length]),
   ) as Record<WikiFilter, number>;
@@ -232,7 +236,11 @@ export function WikiScreen({
         <div className="wiki-list touch-scroll" data-testid="wiki-list" data-scroll-root>
           <LicenceQuestion />
           {source.site ? (
-            <WikiReading importerId={source.importerId} site={source.site} disabled={running} />
+            <WikiReading
+              importerId={source.importerId}
+              site={source.site}
+              disabled={running || browseOn}
+            />
           ) : null}
           {contents ? null : (
             <div className="wiki-no-contents" data-testid="wiki-no-contents">
@@ -270,7 +278,7 @@ export function WikiScreen({
               />
             ))
           )}
-          {source.address ? (
+          {source.address && !browsing ? (
             <div className="wiki-contents-again">
               <button
                 type="button"
@@ -347,19 +355,23 @@ export function WikiScreen({
               : `${tickedRows.length.toLocaleString('en')} ${tickedRows.length === 1 ? 'page' : 'pages'} ticked`}
           </strong>
           <span className="muted small" data-testid="wiki-foot-sentence">
-            {running
-              ? `A go is reading pages now, one at a time with a pause${
-                  progress
-                    ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
-                    : ''
-                }.${
-                  progress?.waiting
-                    ? ' The page window is waiting for you: if the page asks you to confirm you are a person, answer it there. This app does not answer it for you.'
-                    : ''
-                } Stop ends it after the page open now.`
-              : tickedRows.length > 0
-                ? `${estimate(tickedRows.length, notes.follow, inWindow)}${source.pictures ? ' Pictures come with each page.' : ''}`
-                : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
+            {browsing
+              ? browseOn
+                ? 'You are browsing in the window this app opened: each article page you open is kept, once. Close the window or stop browsing to end it.'
+                : 'This wiki is read as you browse it: Start browsing opens it in a window of this app, where each article page you open is kept, once. This app opens no page by itself.'
+              : running
+                ? `A go is reading pages now, one at a time with a pause${
+                    progress
+                      ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
+                      : ''
+                  }.${
+                    progress?.waiting
+                      ? ' The page window is waiting for you: if the page asks you to confirm you are a person, answer it there. This app does not answer it for you.'
+                      : ''
+                  } Stop ends it after the page open now.`
+                : tickedRows.length > 0
+                  ? `${estimate(tickedRows.length, notes.follow, inWindow)}${source.pictures ? ' Pictures come with each page.' : ''}`
+                  : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
           </span>
         </div>
         <button
@@ -376,7 +388,28 @@ export function WikiScreen({
         >
           Tick every page not read
         </button>
-        {running ? (
+        {browsing ? (
+          browseOn ? (
+            <button
+              type="button"
+              className="button"
+              data-testid="wiki-stop-browsing"
+              onClick={() => void stopBrowse()}
+            >
+              Stop browsing
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="button button-primary"
+              data-testid="wiki-browse"
+              disabled={running}
+              onClick={() => void browseWiki(source, source.start)}
+            >
+              Start browsing
+            </button>
+          )
+        ) : running ? (
           <button
             type="button"
             className="button"

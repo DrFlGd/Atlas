@@ -43,7 +43,17 @@ export interface WikiSite {
    * to; for a wiki the "Other wikis" importer reads, the deed of the licence
    * the page states, if any.
    */
-  pages: Record<string, { title: string; body: string; links?: string[]; licence?: string }>;
+  pages: Record<
+    string,
+    {
+      title: string;
+      body: string;
+      links?: string[];
+      licence?: string;
+      /** A picture the page shows as the person browses it (its alternative text), on the wiki's own site. */
+      picture?: string;
+    }
+  >;
   /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
   busy?: string[];
   /**
@@ -124,13 +134,18 @@ export const WORLDS: Record<string, World> = {
 };
 
 interface ShellEvent {
-  /** `read`: a poll that handed over the page's data. */
-  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch';
+  /**
+   * `read`: a poll that handed over the page's data. `browse`: the person
+   * went to a page in a window opened for browsing ({@link browseTo}).
+   */
+  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch' | 'browse';
   url: string | null;
   at: number;
   purpose?: string;
   /** The window was opened kept for the go's next pages. */
   keep?: boolean;
+  /** The window was opened for the person to browse (browse and keep). */
+  browse?: boolean;
 }
 
 export interface MockShell {
@@ -149,6 +164,8 @@ export interface MockShell {
   lag: boolean;
   /** Maps the site has added since, by world: their game page lists them too. */
   extra: Record<string, Record<string, string>>;
+  /** The picture files the app asked to write with a pack, by pack id. */
+  pictures: Record<string, string[]>;
   reports: {
     outcome: string;
     message?: string;
@@ -184,13 +201,28 @@ function installFakeShell({
     check: [],
     lag: false,
     extra: {},
+    pictures: {},
     reports: [],
   };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
   const write = (
     window as unknown as { __writePack: (id: string, files: unknown) => Promise<void> }
   ).__writePack;
-  let current: { url: string; polls: number; keep: boolean; previous: string | null } | null = null;
+  let current: {
+    url: string;
+    polls: number;
+    keep: boolean;
+    previous: string | null;
+    /** Opened for the person to browse: each page they go to is handed over once. */
+    browse?: boolean;
+    read?: boolean;
+  } | null = null;
+  // The person goes to another page in a window opened for browsing (see `browseTo`).
+  (window as unknown as { __browseTo: (url: string) => void }).__browseTo = (url) => {
+    if (!current?.browse) throw new Error('No window is open for browsing.');
+    current = { ...current, url, polls: 0, read: false };
+    shell.events.push({ what: 'browse', url, at: Date.now() });
+  };
   const packs: Record<string, unknown>[] = [];
   const sources: Record<
     string,
@@ -327,6 +359,22 @@ function installFakeShell({
     const { retryAfter: _, ...page } = answer;
     return { fetched: [page] };
   };
+  /** A made-up PNG's bytes in base64: the PNG signature and a few bytes. */
+  const PNG = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3));
+  /**
+   * A page as the browse reader would read it from a window the person
+   * browses: an article page of a wiki, with the picture it shows; null for
+   * anything else (a page the wiki does not have), as the reader returns.
+   */
+  const browsedData = (address: string) => {
+    const data = wikiWindowData(address);
+    const at = new URL(address);
+    const site = others[at.hostname] ?? (at.origin === 'https://wiki.example.org' ? wiki : null);
+    const slug = at.pathname.replace(/^\/wiki\//, '');
+    if (!data || data.fetched[0]?.status !== 200) return null;
+    const picture = site?.pages[slug]?.picture;
+    return picture ? { ...data, shown: [{ alt: picture, type: 'image/png', data: PNG }] } : data;
+  };
   const invoke = async (command: string, args: Record<string, unknown> = {}) => {
     switch (command) {
       case 'desktop_info':
@@ -334,18 +382,29 @@ function installFakeShell({
       case 'library_list':
         return listing();
       case 'import_open':
-        current = { url: args.url as string, polls: 0, keep: args.keep === true, previous: null };
+        current = {
+          url: args.url as string,
+          polls: 0,
+          keep: args.keep === true,
+          previous: null,
+          ...(args.browse === true ? { browse: true, read: false } : {}),
+        };
         shell.events.push({
           what: 'open',
           url: current.url,
           at: Date.now(),
           ...(typeof args.purpose === 'string' ? { purpose: args.purpose } : {}),
           ...(current.keep ? { keep: true } : {}),
+          ...(current.browse ? { browse: true } : {}),
         });
         return null;
       case 'import_navigate': {
         // The person closed the window: nothing is opened.
         if (!current) return 'closed';
+        if (current.browse) {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'The person browses in this window, so this app does not move it.';
+        }
         if (!current.keep) {
           // eslint-disable-next-line @typescript-eslint/only-throw-error
           throw 'The page window is not kept for the next page.';
@@ -362,6 +421,16 @@ function installFakeShell({
         if (shell.close.includes(slug)) {
           current = null;
           return { state: 'closed' };
+        }
+        if (current.browse) {
+          // Each page the person opens, once it has loaded, once; never while it shows a check.
+          const browsed = browsedData(current.url);
+          if (current.read || current.polls < 2 || shell.check.includes(slug) || !browsed) {
+            return { state: 'waiting', loading: current.polls < 2, note: null };
+          }
+          current.read = true;
+          shell.events.push({ what: 'read', url: current.url, at: Date.now() });
+          return { state: 'ready', data: JSON.stringify(browsed), address: current.url };
         }
         if (shell.lag && current.previous && current.polls === 1) {
           // Still the page before, handed over as if it were the new one.
@@ -421,8 +490,12 @@ function installFakeShell({
           mapId?: string;
           pageData: string;
           files: Record<string, string>;
+          pictures?: Record<string, string>;
         };
         await write(request.packId, request.files);
+        if (request.pictures) {
+          (shell.pictures[request.packId] ??= []).push(...Object.keys(request.pictures));
+        }
         const kept = (sources[request.packId] ??= []);
         const at = kept.findIndex((source) => source.key === request.sourceKey);
         const source = {
@@ -622,6 +695,12 @@ function windowedWikiImporter(source: string): string {
   pageReader: '() => null',`,
   );
 }
+
+/** The person goes to `url` in the window opened for browsing, as they would by a link. */
+export const browseTo = (page: Page, url: string) =>
+  page.evaluate((url) => {
+    (window as unknown as { __browseTo: (url: string) => void }).__browseTo(url);
+  }, url);
 
 export const setMock = (
   page: Page,

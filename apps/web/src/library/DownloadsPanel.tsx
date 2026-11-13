@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { downloadPercent, formatBytes, roughDuration } from '../components/downloadFormat';
 import { UiIcon } from '../components/icons';
+import { BrowseStrip } from '../components/SiteReading';
 import type { JobEntry } from '../desktop';
 import { numberFormat } from '../state/derived';
 import { loadDownloadSettings } from '../state/downloads';
@@ -62,6 +63,8 @@ export function DownloadsStrip() {
   const open = useLibrary((s) => s.downloads);
   const pane = useLibrary((s) => s.pane);
   const run = runningRun(phase);
+  // Browsing a wiki whose pages are kept: its own strip, with Stop browsing.
+  if (phase.kind === 'browse' && !phase.ended) return <BrowseStrip phase={phase} />;
   const now = jobs.find((entry) => entry.job.state === 'running');
   const next = jobs.find((entry) => entry.job.state === 'queued' || entry.job.state === 'waiting');
   const stopped = jobs.filter((entry) => entry.job.state === 'stopped').length;

@@ -61,11 +61,16 @@ export interface PageFetch {
  * - `window`, "In a window of this app": each page is opened in the app's
  *   visible window, kept for a go, and read there by the importer's
  *   `pageReader`, for a site that shows its pages only to a person.
+ * - `browse`, "As I browse" ("browse and keep"): the app opens one page in
+ *   its window and the person browses the site there themselves; the app
+ *   keeps each page they open that the importer's `browseReader` reads
+ *   (an article page), once, and never opens or fetches a page by itself.
+ *   There is no go and no pause: the person goes from page to page.
  */
-export type ReadingWay = 'fetch' | 'window';
+export type ReadingWay = 'fetch' | 'window' | 'browse';
 
 /** Every way of reading, in the order the app offers them. */
-export const READING_WAYS: readonly ReadingWay[] = ['fetch', 'window'];
+export const READING_WAYS: readonly ReadingWay[] = ['fetch', 'window', 'browse'];
 
 export const isReadingWay = (value: unknown): value is ReadingWay =>
   typeof value === 'string' && (READING_WAYS as readonly string[]).includes(value);

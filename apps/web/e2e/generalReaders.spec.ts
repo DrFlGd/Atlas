@@ -6,8 +6,10 @@ import {
   DOWNLOADS_BUILD,
   EXAMPLE_WIKI,
   WIKI,
+  browseTo,
   mock,
   realErrors,
+  setMock,
   setUp,
   type WikiSite,
 } from './fakeShell';
@@ -47,7 +49,26 @@ const MARSH: WikiSite = {
 };
 const MARSH_HOST = 'wiki.marsh.example';
 const MARSH_WIKI = `https://${MARSH_HOST}/wiki`;
-const OTHERS = { [MARSH_HOST]: MARSH, 'wiki.dunes.example': MARSH };
+/** A wiki of a made-up farm whose terms allow no programs: read only as the person browses it. */
+const ROOM: WikiSite = {
+  headings: [{ title: 'Isle', pages: ['Welcome', 'Boats'] }],
+  pages: {
+    Welcome: {
+      title: 'Welcome',
+      body: 'The isle has boats.',
+      links: ['Boats', 'Harbour'],
+      licence: BY_SA_3,
+      picture: 'A reed boat',
+    },
+    Boats: { title: 'Boats', body: 'Two oars each.', links: ['Welcome'], licence: BY_SA_3 },
+    Harbour: { title: 'Harbour', body: 'Boats leave at dawn.', licence: BY_SA_3 },
+    Gate: { title: 'Gate', body: 'Behind a check.', licence: BY_SA_3 },
+  },
+};
+const ROOM_HOST = 'wiki.isle.reading-room.example';
+const ROOM_WIKI = `https://${ROOM_HOST}/wiki`;
+const ROOM_PACK = 'wiki-isle-reading-room-example-wiki';
+const OTHERS = { [MARSH_HOST]: MARSH, 'wiki.dunes.example': MARSH, [ROOM_HOST]: ROOM };
 
 /** The app's own requests and windows, from the fake shell. */
 async function events(page: Page, what: 'fetch' | 'open' | 'navigate' | 'read') {
@@ -92,6 +113,7 @@ test('a wiki no importer knows: the person chooses how it is read, and it is rea
   await expect(how.getByTestId('site-ways')).toHaveAttribute('data-way', 'fetch');
   await expect(how.getByTestId('site-way-fetch')).toContainText('By itself');
   await expect(how.getByTestId('site-way-window')).toContainText('In a window of this app');
+  await expect(how.getByTestId('site-way-browse')).toContainText('As I browse');
   expect(await events(page, 'fetch')).toEqual(known);
   expect(await events(page, 'open')).toEqual([]);
   await mkdir(SHOTS, { recursive: true });
@@ -216,5 +238,84 @@ test('a page that states no licence is kept only once the person confirms one, w
   await page.locator('[data-testid="library-game"][data-pack="wiki-marsh-example-wiki"]').click();
   await page.getByTestId('wiki-licence-forget').click();
   await expect(page.getByTestId('wiki-licence')).toHaveCount(0);
+  expect(realErrors(errors)).toEqual([]);
+});
+
+test('browse and keep: each page the person opens is kept once; the app never opens a page itself, and stops when the window closes', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  await setUp(page, true, { others: OTHERS });
+  const flow = page.getByTestId('library-flow');
+
+  // A wiki read only as the person browses it: its notice, one way, and Start browsing.
+  await add(page, `${ROOM_WIKI}/Contents`);
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(flow.getByTestId('site-notice')).toContainText('do not allow programs');
+  await expect(flow.getByTestId('site-ways')).toHaveCount(0);
+  await flow.getByTestId('add-how-go').click();
+  await expect(flow.getByTestId('add-how-go')).toHaveCount(0);
+  await expect(flow).toHaveAttribute('data-phase', 'browse');
+  const keep = flow.getByTestId('browse-keep');
+  await expect(keep).toHaveAttribute('data-state', 'browsing');
+  // The window opens where the person asked, to browse; nothing is fetched.
+  expect((await mock(page)).events.filter((e) => e.what === 'open')).toEqual([
+    expect.objectContaining({ url: `${ROOM_WIKI}/Contents`, browse: true }),
+  ]);
+
+  // The person opens pages: each is kept once it has loaded.
+  await browseTo(page, `${ROOM_WIKI}/Welcome`);
+  await expect(keep).toHaveAttribute('data-kept', '1', { timeout: 30_000 });
+  await expect(keep.getByTestId('browse-keep-status')).toContainText('Kept: Welcome');
+  await browseTo(page, `${ROOM_WIKI}/Boats`);
+  await expect(keep).toHaveAttribute('data-kept', '2', { timeout: 30_000 });
+  await expect(keep.getByTestId('browse-keep-status')).toContainText('Kept: Boats');
+  await expect(page.getByTestId('library-strip-now')).toContainText(
+    `browsing ${ROOM_HOST}. Kept: Boats, 2 pages kept`,
+  );
+  await page.screenshot({ path: `${SHOTS}/browse-in-progress.png` });
+
+  // Back to a page kept before, a page the wiki does not have, a page behind a check: none is kept again.
+  await setMock(page, { check: ['Gate'] });
+  for (const slug of ['Welcome', 'Nowhere', 'Gate']) await browseTo(page, `${ROOM_WIKI}/${slug}`);
+  await page.clock.runFor(5_000);
+  await expect(keep).toHaveAttribute('data-kept', '2');
+  const saved = (await mock(page)).reports.filter(
+    (r) => r.outcome === 'added' || r.outcome === 'updated',
+  );
+  expect(saved).toHaveLength(2);
+  // The picture Welcome showed was kept with it, from the page; nothing was fetched or moved.
+  const shell = await mock(page);
+  expect(shell.pictures[ROOM_PACK]).toEqual(['pictures/welcome-1.png']);
+  expect(shell.events.filter((e) => e.what === 'fetch' || e.what === 'navigate')).toEqual([]);
+
+  // The person closes the window: browsing ends, what was kept stays.
+  await setMock(page, { close: ['Boats'] });
+  await browseTo(page, `${ROOM_WIKI}/Boats`);
+  await expect(keep).toHaveAttribute('data-state', 'ended', { timeout: 30_000 });
+  await expect(keep).toHaveAttribute('data-kept', '2');
+
+  // Its screen: Start browsing instead of a go; the contents are not read by this app;
+  // the pages the kept pages link to are found, not read.
+  await flow.getByTestId('library-flow-close').click();
+  await page.locator(`[data-testid="library-game"][data-pack="${ROOM_PACK}"]`).click();
+  const screen = page.getByTestId('wiki-screen');
+  await expect(screen.getByTestId('wiki-browse')).toBeVisible();
+  await expect(screen.getByTestId('wiki-read')).toHaveCount(0);
+  await expect(screen.getByTestId('wiki-read-contents')).toHaveCount(0);
+  await expect(screen.getByTestId('wiki-foot-sentence')).toContainText('read as you browse it');
+  await expect(screen.getByTestId('wiki-found')).toContainText('Harbour');
+  expect((await mock(page)).events.filter((e) => e.what === 'fetch')).toEqual([]);
+
+  // Start browsing from its screen: the window opens again, browsing; Stop browsing ends it.
+  await screen.getByTestId('wiki-browse').click();
+  await expect(flow).toHaveAttribute('data-phase', 'browse');
+  await expect(flow.getByTestId('browse-keep')).toHaveAttribute('data-state', 'browsing');
+  await page.getByTestId('library-strip-stop-browsing').click();
+  await expect(flow.getByTestId('browse-keep')).toHaveAttribute('data-state', 'ended', {
+    timeout: 30_000,
+  });
+  expect((await mock(page)).events.filter((e) => e.what === 'close').length).toBeGreaterThan(0);
   expect(realErrors(errors)).toEqual([]);
 });

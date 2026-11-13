@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONFIRMABLE_LICENCES,
+  MAX_PICTURE_FILES,
+  MAX_PICTURE_FILE_BYTES,
   asImporter,
   checkOutcome,
   findGameImporter,
   findImporter,
   findReader,
   isConfirmedLicence,
+  pictureFilesOf,
   readingWayOf,
   siteInfoOf,
   type AtlasImporter,
@@ -134,6 +137,16 @@ describe('what an importer says about a site', () => {
     };
     // No page reader: it cannot read in a window.
     expect(siteInfoOf(odd, 'https://a.example/wiki/A').ways).toEqual(['fetch']);
+    // Browsing needs the importer's browse reader.
+    const browsing: AtlasImporter = {
+      ...wikis,
+      siteInfo: () => ({ key: 'a.example', ways: ['browse', 'fetch'] }),
+    };
+    expect(siteInfoOf(browsing, 'https://a.example/wiki/A').ways).toEqual(['fetch']);
+    expect(
+      siteInfoOf({ ...browsing, browseReader: '() => null' }, 'https://a.example/wiki/A').ways,
+    ).toEqual(['browse', 'fetch']);
+    expect(() => asImporter({ ...wikis, browseReader: '' })).toThrow(/browseReader/);
   });
 
   it('falls back to the host and the one way the importer reads in, as before', () => {
@@ -211,5 +224,46 @@ describe('licences the person confirms', () => {
     expect(
       (checkOutcome({ ok: false, message: 'x', askLicence: 'yes' }) as { message: string }).message,
     ).toMatch(/unexpected/);
+  });
+});
+
+describe('pictures a page showed, as the person browsed', () => {
+  const pack = {
+    pictures: [
+      { id: 'w:picture:a', file: 'pictures/a.png', shareable: true },
+      { id: 'w:picture:b', file: 'pictures/b.jpg', shareable: true },
+      { id: 'w:picture:c', file: 'pictures/c.gif', shareable: true },
+    ],
+  } as unknown as Parameters<typeof pictureFilesOf>[1];
+  const png = btoa('\x89PNG\r\n\x1a\nmade up');
+
+  it('are the files of the pack’s pictures, in base64, each once, within the limits', () => {
+    expect(
+      pictureFilesOf(
+        [
+          { file: 'pictures/a.png', data: png },
+          { file: 'pictures/a.png', data: png },
+          { file: 'pictures/b.jpg', data: 'not base64!' },
+          { file: 'pictures/c.gif', data: png },
+          { file: 'pictures/other.png', data: png },
+          { file: '../a.png', data: png },
+          { file: 'pictures/b.jpg', data: btoa('x'.repeat(MAX_PICTURE_FILE_BYTES + 1)) },
+          'pictures/b.jpg',
+        ],
+        pack,
+      ),
+    ).toEqual([{ file: 'pictures/a.png', data: png }]);
+    expect(pictureFilesOf('pictures/a.png', pack)).toEqual([]);
+    const many = Array.from({ length: MAX_PICTURE_FILES + 5 }, (_, i) => ({
+      id: `w:picture:p${i}`,
+      file: `pictures/p${i}.png`,
+      shareable: true,
+    }));
+    expect(
+      pictureFilesOf(
+        many.map((p) => ({ file: p.file, data: png })),
+        { pictures: many } as unknown as Parameters<typeof pictureFilesOf>[1],
+      ),
+    ).toHaveLength(MAX_PICTURE_FILES);
   });
 });

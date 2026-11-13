@@ -91,21 +91,31 @@ function hostKey(url: string): string {
 }
 
 /** Whether the importer can read a page the way `way` says. */
-function canRead(importer: Pick<AtlasImporter, 'fetch' | 'pageReader'>, way: ReadingWay): boolean {
-  return way === 'fetch' ? importer.fetch !== undefined : importer.pageReader !== undefined;
+function canRead(
+  importer: Pick<AtlasImporter, 'fetch' | 'pageReader' | 'browseReader'>,
+  way: ReadingWay,
+): boolean {
+  switch (way) {
+    case 'fetch':
+      return importer.fetch !== undefined;
+    case 'window':
+      return importer.pageReader !== undefined;
+    case 'browse':
+      return importer.browseReader !== undefined;
+  }
 }
 
 /**
  * What the importer says about the site of `url`, checked: a usable key,
  * the ways it offers that it can read in (it has `fetch` for `fetch`, a
- * `pageReader` for `window`), each once, and its notice trimmed. Without
+ * `pageReader` for `window`, a `browseReader` for `browse`), each once, and its notice trimmed. Without
  * {@link AtlasImporter.siteInfo}, or when it gives nothing usable, the site
  * is its host and has one way, as before: `window` for a page that
  * `fetch.inWindow` opens in a window or an importer without `fetch`, else
  * `fetch`. Must not throw; an importer that throws counts as saying nothing.
  */
 export function siteInfoOf(
-  importer: Pick<AtlasImporter, 'siteInfo' | 'fetch' | 'pageReader'>,
+  importer: Pick<AtlasImporter, 'siteInfo' | 'fetch' | 'pageReader' | 'browseReader'>,
   url: string,
 ): SiteInfo {
   const fallback: SiteInfo = {

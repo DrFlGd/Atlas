@@ -11,6 +11,13 @@
  * - Each wiki is a site of its own (its host is its key), read by the app
  *   ("By itself") or in a window of the app, as the person chooses; a
  *   notice says the importer does not know the site.
+ * - Each wiki can also be read as the person browses it ("As I browse",
+ *   `browseReader`). The wikis of a made-up wiki farm whose terms allow no
+ *   programs (`<name>.reading-room.example`) are read only that way: the
+ *   app never fetches them or reads them in a go. A page read as the person
+ *   browsed may come with the pictures it showed (`shown`: each `{ "alt",
+ *   "type", "data" }`, its bytes in base64, as the page loaded them), which
+ *   become the page's pictures with their files (`pictureFiles`).
  * - A page answers `{ "title", "body", "links", "licence" }` as the Example
  *   Wiki's do (`example-wiki-importer.js`), with `licence` the address of a
  *   Creative Commons deed when the page states one. A page that states none
@@ -41,6 +48,11 @@ const LICENCES = {
 
 const NOTICE =
   'This app does not know this wiki: it reads its pages as it reads the wikis it knows, and asks you to confirm the wiki’s licence when its pages do not state one.';
+
+/** The made-up wiki farm whose terms allow no programs: read only as the person browses. */
+const BROWSE_ONLY = /\.reading-room\.example$/;
+const BROWSE_NOTICE =
+  'The terms of this wiki farm do not allow programs to read its wikis, so this app keeps only the pages you open yourself as you browse; pictures it cannot take from the page stay words.';
 
 /** The host and slug of a wiki page address, or null. */
 function partsOf(/** @type {string} */ text) {
@@ -91,6 +103,22 @@ function json(/** @type {string} */ text) {
   } catch {
     return null;
   }
+}
+
+/** The pictures a page read as the person browsed showed: `shown` of its data. */
+function shownPictures(/** @type {unknown} */ pageData) {
+  const shown = /** @type {{ shown?: unknown }} */ (pageData)?.shown;
+  if (!Array.isArray(shown)) return [];
+  return shown.flatMap((entry) => {
+    const { alt, type, data } = /** @type {{ alt?: unknown, type?: unknown, data?: unknown }} */ (
+      entry ?? {}
+    );
+    return typeof alt === 'string' &&
+      (type === 'image/png' || type === 'image/jpeg') &&
+      typeof data === 'string'
+      ? [{ alt, type, data }]
+      : [];
+  });
 }
 
 /** The pack of a wiki with one page added or read again. */
@@ -147,11 +175,15 @@ const importer = {
   general: () => true,
   siteInfo(url) {
     const parts = partsOf(url);
-    return parts ? { key: parts.host, ways: ['fetch', 'window'], notice: NOTICE } : null;
+    if (!parts) return null;
+    return BROWSE_ONLY.test(parts.host)
+      ? { key: parts.host, ways: ['browse'], notice: BROWSE_NOTICE }
+      : { key: parts.host, ways: ['fetch', 'window', 'browse'], notice: NOTICE };
   },
   fetch: { addresses: (url) => (isPage(url) ? [url.trim()] : []) },
   // A window shows the page itself; the tests' shell hands over what the site answers.
   pageReader: '() => null',
+  browseReader: '() => null',
 
   async convert(pageData, context) {
     const answer = answerOf(pageData);
@@ -196,8 +228,27 @@ const importer = {
         ...(confirmed ? { licenseConfirmed: true } : {}),
       },
     };
+    // The pictures the page showed as the person browsed it, with their files.
+    const shown = context.reading === 'browse' ? shownPictures(pageData) : [];
+    /** @type {{ id: string, file: string, alt: string, data: string }[]} */
+    const pictures = shown.map((picture, index) => ({
+      id: `${packId}:picture:${local(parts.slug)}-${index + 1}`,
+      file: `pictures/${local(parts.slug)}-${index + 1}.${picture.type === 'image/jpeg' ? 'jpg' : 'png'}`,
+      alt: picture.alt,
+      data: picture.data,
+    }));
+    if (pictures.length > 0) {
+      guide.body += `\n\n${pictures.map((p) => `![${p.alt}](${p.id})`).join('\n\n')}`;
+    }
     const existing = await context.existingPack(packId);
     const { pack, refreshed } = withPage(parts.host, existing, guide, licence.name);
+    const others = (pack.pictures ?? []).filter((p) => !pictures.some((q) => q.id === p.id));
+    if (pictures.length > 0 || pack.pictures) {
+      pack.pictures = [
+        ...others,
+        ...pictures.map((p) => ({ id: p.id, file: p.file, caption: p.alt, shareable: true })),
+      ];
+    }
     const links = Array.isArray(page.links)
       ? page.links
           .filter((link) => typeof link === 'string')
@@ -209,6 +260,9 @@ const importer = {
       sourceKey: local(parts.slug),
       guideId: guide.id,
       links,
+      ...(pictures.length > 0
+        ? { pictureFiles: pictures.map((p) => ({ file: p.file, data: p.data })) }
+        : {}),
       pack,
       summary: {
         game: `${nameOf(parts.host)} Wiki`,

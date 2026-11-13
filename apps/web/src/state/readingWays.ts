@@ -65,6 +65,7 @@ export async function wayFor(
 export const WAY_LABELS: Record<ReadingWay, string> = {
   fetch: 'By itself',
   window: 'In a window of this app',
+  browse: 'As I browse',
 };
 
 /** What each way does, in a sentence. */
@@ -73,6 +74,8 @@ export const WAY_TEXTS: Record<ReadingWay, string> = {
     'This app asks the site for each page itself, one at a time with a pause, as its robots.txt allows. A site that asks to confirm you are a person stops it.',
   window:
     'Each page opens in a window of this app, one at a time with a pause, where you answer the site’s check yourself if it shows one. This app never answers it for you.',
+  browse:
+    'You browse the wiki yourself in a window of this app, and each article page you open is kept, once. This app never opens or fetches a page by itself.',
 };
 
 /** The sentence added to a refusal when the site can also be read in a window of this app. */

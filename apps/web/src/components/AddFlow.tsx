@@ -45,7 +45,7 @@ import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
-import { HowStep, LicenceQuestion } from './SiteReading';
+import { BrowseKeep, HowStep, LicenceQuestion } from './SiteReading';
 
 /**
  * "Add a map or a wiki", in desktop builds that include importers: the
@@ -69,6 +69,7 @@ export function AddBox() {
   const busy =
     phase.kind === 'waiting' ||
     phase.kind === 'converting' ||
+    (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running');
   useEffect(() => {
     if (focus > 0) input.current?.focus();
@@ -145,7 +146,8 @@ export function AddFlow() {
   const asking = useImport((s) => s.licenceAsk !== null);
   const busy = phase.kind === 'waiting' || phase.kind === 'converting';
   const running =
-    (phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running';
+    ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running') ||
+    (phase.kind === 'browse' && !phase.ended);
   return (
     <section
       className="library-pane library-flow"
@@ -177,6 +179,7 @@ export function AddFlow() {
         <LicenceQuestion />
         {phase.kind === 'idle' ? <AddHelp /> : null}
         {phase.kind === 'how' ? <HowStep phase={phase} /> : null}
+        {phase.kind === 'browse' ? <BrowseKeep phase={phase} /> : null}
         {phase.kind === 'failed' ? <Failure message={phase.message} how={phase.how} /> : null}
         {phase.kind === 'check' ? <Check phase={phase} /> : null}
         {busy && !asking ? <Progress phase={phase} /> : null}
