@@ -1466,6 +1466,83 @@ label.tree-row:hover,
   outline-offset: 1px;
 }
 
+/* A table of a page sorts by a heading pressed: the heading is the button, quiet until used. */
+.table-sort {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  box-sizing: border-box;
+  width: calc(100% + 20px);
+  min-height: 100%;
+  margin: -6px -10px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.table-sort.table-sort-beside {
+  display: inline-flex;
+  width: auto;
+  min-height: 0;
+  margin: 0 0 0 4px;
+  padding: 0 4px;
+}
+
+.table-sort:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: -2px;
+}
+
+.table-sort-arrow {
+  flex: none;
+  width: 0.8em;
+  margin-left: auto;
+  color: var(--atlas-muted);
+  font-size: 0.85em;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.table-sort-beside .table-sort-arrow {
+  margin-left: 0;
+  opacity: 0.6;
+}
+
+.table-sort-arrow::after {
+  content: '↕';
+}
+
+th:hover .table-sort-arrow,
+.table-sort:focus-visible .table-sort-arrow {
+  opacity: 1;
+}
+
+th[aria-sort] .table-sort-arrow {
+  color: var(--atlas-accent);
+  opacity: 1;
+}
+
+th[aria-sort='ascending'] .table-sort-arrow::after {
+  content: '▲';
+}
+
+th[aria-sort='descending'] .table-sort-arrow::after {
+  content: '▼';
+}
+
+/* With a finger nothing is pointed at: a faint arrow says a heading sorts. */
+@media (hover: none) {
+  .table-sort-arrow {
+    opacity: 0.45;
+  }
+}
+
 .also-in {
   margin-top: 16px;
   padding-top: 14px;

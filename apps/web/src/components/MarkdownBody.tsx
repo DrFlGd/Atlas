@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
+import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
 import { useGuideLinks } from '../state/guideLinks';
 import { useOwnPages } from '../state/ownPages';
@@ -15,6 +16,9 @@ export const UNREAD_PAGE = 'This page has not been read yet';
  * outside the app as before. Hidden text shows when its button is pressed.
  * On a guide page (`page`) of a game read from a site, a link to a page of
  * it that was not read yet says so (see `MarkdownOptions.unreadPage`).
+ * On a page, its tables sort by a column the reader presses (see
+ * `tableSort.ts`): the order chosen stays while the page is shown, as it
+ * is shown anew when pictures arrive, and goes with another page.
  */
 export function MarkdownBody({
   source,
@@ -37,6 +41,13 @@ export function MarkdownBody({
   // what it is in words; it is tried again when new images are saved.
   const revision = useAtlas((s) => s.tileRevision);
   const [missingAt, setMissingAt] = useState<number | null>(null);
+  const sorts = useRef<{ source: string; tables: PageSorts }>({ source, tables: new Map() });
+  // After every render: the page shown anew has its tables sorted as chosen
+  // (another page, or the page's text changed, starts in its own order).
+  useLayoutEffect(() => {
+    if (sorts.current.source !== source) sorts.current = { source, tables: new Map() };
+    if (page && ref.current) enhanceTables(ref.current, sorts.current.tables);
+  });
   useEffect(() => {
     const root = ref.current;
     if (!root) return;
@@ -86,6 +97,10 @@ export function MarkdownBody({
       key={missingAt === null || missingAt === revision ? 'shown' : revision}
       className={className}
       onClick={(event) => {
+        if (page && sortTableAt(event.target, event.currentTarget, sorts.current.tables)) {
+          event.preventDefault();
+          return;
+        }
         // "Show hidden text": shown in place, until the text is rendered again.
         if (revealHiddenText(event.target, event.currentTarget)) {
           event.preventDefault();
