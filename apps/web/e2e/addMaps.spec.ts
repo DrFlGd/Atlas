@@ -58,7 +58,7 @@ test('adds several maps one after another, with a state for each and a summary',
   // The second page holds on to its data for a while.
   await setMock(page, { hold: ['west-ridge'] });
   await page.getByTestId('add-map-confirm').click();
-  const dialog = page.getByTestId('add-map-dialog');
+  const dialog = page.getByTestId('library-flow');
   await expect(dialog).toHaveAttribute('data-phase', 'run');
   await expect(dialog).toHaveAttribute('data-run', 'running');
   await expect(rows(page).nth(0)).toHaveAttribute('data-state', 'added');
@@ -128,7 +128,7 @@ test('adds several maps one after another, with a state for each and a summary',
   });
 
   // Adding a page of it again refreshes it.
-  await page.getByRole('button', { name: 'Add more maps' }).click();
+  await page.getByRole('button', { name: 'Add more', exact: true }).click();
   await page
     .getByTestId('add-map-url')
     .fill(`${url('test-valley', 'west-ridge')}\n${url('test-hills', 'high-pass')}`);
@@ -152,7 +152,7 @@ test('stops after two pages in a row without data', async ({ page }) => {
     ].join('\n'),
   );
   await page.getByTestId('add-map-start').click();
-  const dialog = page.getByTestId('add-map-dialog');
+  const dialog = page.getByTestId('library-flow');
   await expect(rows(page).nth(0)).toHaveAttribute('data-state', 'open');
   // The demo importer waits 30 seconds for each page.
   await page.clock.fastForward(31_000);
@@ -202,7 +202,7 @@ test('Stop ends the run after the open page, and closing the page window ends it
   );
   await expect(page.getByTestId('add-map-stop')).toBeDisabled();
   await setMock(page, { hold: [] });
-  const dialog = page.getByTestId('add-map-dialog');
+  const dialog = page.getByTestId('library-flow');
   await expect(dialog).toHaveAttribute('data-run', 'stopped');
   await expectStates(page, ['added', 'not-started', 'not-started']);
   await expect(page.getByTestId('add-map-stopped')).toHaveText(
@@ -214,7 +214,7 @@ test('Stop ends the run after the open page, and closing the page window ends it
   ).toHaveValue('test-valley');
 
   // The person closes the window of the second page: the run stops there.
-  await page.getByRole('button', { name: 'Add more maps' }).click();
+  await page.getByRole('button', { name: 'Add more', exact: true }).click();
   await setMock(page, { close: ['west-ridge'] });
   await page.getByTestId('add-map-url').fill(three.join(', '));
   await page.getByTestId('add-map-start').click();
@@ -239,13 +239,13 @@ test('one address works as before, and too many are refused', async ({ page }) =
   await paste(page, ` ${url('test-valley', 'east-field')} `);
   await expect(page.getByTestId('add-map-start')).toHaveText('Add');
   await page.getByTestId('add-map-url').press('Enter');
-  const dialog = page.getByTestId('add-map-dialog');
+  const dialog = page.getByTestId('library-flow');
   await expect(dialog).toHaveAttribute('data-phase', 'done');
   await expect(page.getByTestId('add-map-game')).toHaveText('Test Valley');
   await expect(page.getByTestId('add-map-run')).toHaveCount(0);
   expect((await mock(page)).reports.map((r) => r.outcome)).toEqual(['added']);
 
-  await page.getByRole('button', { name: 'Add another map' }).click();
+  await page.getByRole('button', { name: 'Add another', exact: true }).click();
   await expect(page.getByTestId('add-map-url')).toHaveValue('');
   await page
     .getByTestId('add-map-url')

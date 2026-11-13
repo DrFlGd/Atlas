@@ -9,7 +9,8 @@
  * left does Back leave the app.
  */
 
-export type Section = 'map' | 'lists' | 'progress' | 'games' | 'guides';
+/** `library` and `settings` are the desktop app's (it has no `games`). */
+export type Section = 'map' | 'lists' | 'progress' | 'games' | 'guides' | 'library' | 'settings';
 
 /** What can be open, as the person sees it now. */
 export interface BackState {

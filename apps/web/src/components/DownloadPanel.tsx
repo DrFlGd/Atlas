@@ -11,25 +11,10 @@ import {
   startDownload,
 } from '../state/downloads';
 import { useAtlas } from '../state/store';
-import { downloadPercent, formatBytes, roughDuration } from './downloadFormat';
+import { DETAILS, downloadPercent, formatBytes, roughDuration } from './downloadFormat';
 import { DownloadSettingsSection } from './DownloadSettings';
 import { UiIcon } from './icons';
 import { StopDetails, ViewLogButton } from './StopDetails';
-
-const DETAILS: Record<Detail, { label: string; description: string }> = {
-  overview: {
-    label: 'Overview',
-    description: 'Quickest. Good for finding your way; blurry when zoomed in close.',
-  },
-  standard: {
-    label: 'Standard',
-    description: 'Sharp at most zoom levels, at about a quarter of the full download.',
-  },
-  full: {
-    label: 'Full detail',
-    description: 'Every level, sharpest when zoomed in close. The largest download.',
-  },
-};
 
 const active = isActive;
 

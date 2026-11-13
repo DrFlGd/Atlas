@@ -8,13 +8,20 @@ import { useAtlas } from '../state/store';
  * request, and optional caps on requests per minute and on speed. Kept
  * within bounds that stay considerate to the image servers.
  */
-export function DownloadSettingsSection({ running }: { running: boolean }) {
+export function DownloadSettingsSection({
+  running,
+  open = false,
+}: {
+  running: boolean;
+  /** Shown open, as on the settings page. */
+  open?: boolean;
+}) {
   const info = useAtlas((s) => s.downloads.settings);
   const pending = useAtlas((s) => s.downloads.pending);
   const [saved, setSaved] = useState(false);
   if (!info) return null;
   return (
-    <details className="download-settings" data-testid="download-settings">
+    <details className="download-settings" data-testid="download-settings" open={open}>
       <summary>Download settings</summary>
       <SettingsForm
         // Starts again from the saved settings whenever they change.

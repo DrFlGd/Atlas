@@ -184,8 +184,8 @@ export interface AtlasState {
   app: DesktopInfo | null;
   /** Where the desktop app finds packs; null in a browser. */
   library: Listing | null;
+  /** The Maps dialog of the Android app (the desktop app has the Library instead). */
   mapsDialogOpen: boolean;
-  addMapOpen: boolean;
   /** The activity log dialog, with the area it opened on; null when closed. */
   logViewer: { area: LogArea | 'all' } | null;
   saveDialogOpen: boolean;
@@ -271,7 +271,6 @@ export const useAtlas = create<AtlasState>()(() => ({
   app: null,
   library: null,
   mapsDialogOpen: false,
-  addMapOpen: false,
   logViewer: null,
   saveDialogOpen: false,
   save: NO_SAVE,

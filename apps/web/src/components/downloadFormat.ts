@@ -1,4 +1,4 @@
-import type { DownloadSnapshot } from '../desktop';
+import type { Detail, DownloadSnapshot } from '../desktop';
 
 /** Whole percent of a job's tiles dealt with. */
 export function downloadPercent(job: Pick<DownloadSnapshot, 'done' | 'total'>): number {
@@ -34,3 +34,19 @@ export function roughDuration(seconds: number): string {
   const text = formatDuration(seconds);
   return text === 'less than a minute' || text === 'unknown' ? text : `about ${text}`;
 }
+
+/** The levels of detail of a map image download, in words. */
+export const DETAILS: Record<Detail, { label: string; description: string }> = {
+  overview: {
+    label: 'Overview',
+    description: 'Quickest. Good for finding your way; blurry when zoomed in close.',
+  },
+  standard: {
+    label: 'Standard',
+    description: 'Sharp at most zoom levels, at about a quarter of the full download.',
+  },
+  full: {
+    label: 'Full detail',
+    description: 'Every level, sharpest when zoomed in close. The largest download.',
+  },
+};

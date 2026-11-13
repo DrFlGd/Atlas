@@ -9,7 +9,7 @@ import {
 } from '../pageViewBridge';
 import { notify } from './actions';
 import { numberFormat } from './derived';
-import { setMapsDialogOpen } from './library';
+import { showGame } from './libraryView';
 import { useAtlas } from './store';
 
 /**
@@ -177,7 +177,8 @@ export async function openMapPage(packId: string, url: string, save: boolean): P
     receiveStatus(await bridge.open(packId, url, save));
   });
   if (opened) {
-    setMapsDialogOpen(false);
+    // Its card over the map counts what is saved: the game is shown, out of the Library.
+    void showGame(packId);
     notify(
       save
         ? 'The map page is open in its own window. Pan and zoom it as you like; the map images it shows are saved.'

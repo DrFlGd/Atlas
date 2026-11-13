@@ -21,6 +21,7 @@ import {
   usePageView,
 } from './pageView';
 import { useAtlas } from './store';
+import { useLibrary } from './libraryView';
 
 const status = (patch: Partial<ViewStatus> = {}): ViewStatus => ({
   open: true,
@@ -197,7 +198,8 @@ describe('map page state', () => {
 
   it('opens a page, polls while it is open and shows the counts after it closes', async () => {
     vi.useFakeTimers();
-    useAtlas.setState({ mapsDialogOpen: true, tileRevision: 0 });
+    useAtlas.setState({ tileRevision: 0 });
+    useLibrary.setState({ windowOpen: true });
     const saved = status({
       revision: 1,
       counts: {
@@ -215,7 +217,7 @@ describe('map page state', () => {
     setPageViewShell(bridge);
 
     expect(await openMapPage('my-game', 'https://maps.example.com/my-game/world', true)).toBe(true);
-    expect(useAtlas.getState().mapsDialogOpen).toBe(false);
+    expect(useLibrary.getState().windowOpen).toBe(false);
     expect(usePageView.getState().status?.saving).toBe(true);
 
     await vi.advanceTimersByTimeAsync(1000);

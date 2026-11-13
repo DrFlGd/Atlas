@@ -2,7 +2,6 @@ import { percent } from '@atlas/core';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { keepScreenOn } from '../androidBars';
 import { ActivityLogDialog } from '../components/ActivityLogDialog';
-import { AddMapDialog } from '../components/AddMapDialog';
 import { PhotoViewer } from '../components/Photos';
 import { UiIcon, type UiIconName } from '../components/icons';
 import { MapPageStatus } from '../components/MapPageStatus';
@@ -16,6 +15,9 @@ import { checklistScreenTitle, setGuideReader } from '../state/checklists';
 import { guidesOf, hasListsSection, hasMap, useGuidesSection } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
 import { useOwnLists } from '../state/ownLists';
+import { libraryOffered, setLibraryHost } from '../state/libraryView';
+import { LibraryScreen } from '../library/LibraryScreen';
+import { SettingsScreen } from '../library/SettingsScreen';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
 import type { Section } from './backStack';
@@ -52,6 +54,7 @@ import {
   setFiltersOpen,
   setKeysOpen,
   setMapsMenuOpen,
+  homeSection,
   setPlaceExpanded,
   showSection,
   toggleLists,
@@ -119,7 +122,11 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
   const packFileOpen = useAtlas((s) => s.packFileDialog !== null);
   const saveDialogOpen = useAtlas((s) => s.saveDialogOpen);
   const pageViews = useAtlas(downloadsOffered);
+  const library = useAtlas(libraryOffered);
   useTouchEffects(wide, room);
+  useLibraryHost(library);
+  // The Library and Settings cover the map and its panel.
+  const page = section === 'library' || section === 'settings';
 
   useEffect(() => {
     if (!hasLists && section === 'lists') showSection(mapShown ? 'map' : 'guides');
@@ -145,7 +152,8 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
 
   // The card stays off the Guides screen, which covers the map when wide.
   const placeShown =
-    selected && ((wide && section !== 'guides') || (section === 'map' && !search && !filters));
+    selected &&
+    ((wide && section !== 'guides' && !page) || (section === 'map' && !search && !filters));
   const map = mapShown ? (
     <main className="touch-map" aria-label="Map">
       <MapPane touch={mapOptions} />
@@ -177,8 +185,12 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
     >
       {wide ? (
         <>
-          <Rail shown={sections} />
-          {section === 'guides' && editorMode === null && !locating ? (
+          <Rail shown={sections} library={library} />
+          {page ? (
+            <div className="library-section">
+              <SectionContent section={section} />
+            </div>
+          ) : section === 'guides' && editorMode === null && !locating ? (
             <GuidesScreen wide />
           ) : (
             <aside
@@ -219,13 +231,13 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
               <SectionContent section={section} />
             </div>
           ) : null}
-          <BottomBar shown={sections} />
+          <BottomBar shown={sections} library={library} />
           {search ? <SearchScreen /> : null}
           {filters ? <FiltersSheet /> : null}
         </>
       )}
       {placeShown ? <PlaceSheet wide={wide} /> : null}
-      {wide && editorMode !== 'edit' && !locating ? <NextUpCard /> : null}
+      {wide && editorMode !== 'edit' && !locating && !page ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
       <TouchToast wide={wide} />
       <ProfileDialog />
@@ -235,7 +247,6 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
         </Suspense>
       ) : null}
       <MapsDialog />
-      <AddMapDialog />
       <ActivityLogDialog />
       {packFileOpen ? (
         <Suspense fallback={null}>
@@ -255,6 +266,8 @@ const PANEL_LABEL: Record<Section | 'search', string> = {
   progress: 'Progress',
   games: 'Games',
   guides: 'Guides',
+  library: 'Library',
+  settings: 'Settings',
 };
 
 function SectionContent({ section }: { section: Section }) {
@@ -267,6 +280,10 @@ function SectionContent({ section }: { section: Section }) {
       return <GamesScreen />;
     case 'guides':
       return <GuidesScreen wide={false} />;
+    case 'library':
+      return <LibraryScreen mode="section" />;
+    case 'settings':
+      return <SettingsScreen general />;
     case 'map':
       return null;
   }
@@ -353,7 +370,10 @@ function useTouchEffects(wide: boolean, room: boolean) {
   useEffect(() => {
     resetReader();
     const shown = useAtlas.getState().game;
-    if (shown && !hasMap(shown)) showSection('guides');
+    const { section } = useTouch.getState();
+    if (shown && !hasMap(shown) && section !== 'library' && section !== 'settings') {
+      showSection('guides');
+    }
   }, [gameEntry]);
   useEffect(() => {
     setGuideReader((id) => {
@@ -515,51 +535,105 @@ const SECTIONS: { id: Section; label: string; icon: UiIconName }[] = [
   { id: 'games', label: 'Games', icon: 'folder' },
 ];
 
+/** The desktop app's sections: the Library first and Settings last, and no Games. */
+const LIBRARY_SECTIONS: { id: Section; label: string; icon: UiIconName }[] = [
+  { id: 'library', label: 'Library', icon: 'library' },
+  ...SECTIONS.filter((s) => s.id !== 'games'),
+  { id: 'settings', label: 'Settings', icon: 'settings' },
+];
+
+/** Whether the desktop app started on the Library already (once a run). */
+let startedOnLibrary = false;
+
+/**
+ * Tells the Library how this layout shows it and leaves it, while this
+ * layout is shown. An app that downloads opens on the Library at start.
+ */
+function useLibraryHost(library: boolean) {
+  useEffect(() => {
+    if (!library) return;
+    setLibraryHost({
+      show: () => {
+        showSection('library');
+      },
+      leave: () => {
+        showSection(homeSection());
+      },
+      settings: () => {
+        showSection('settings');
+      },
+    });
+    if (__ATLAS_DOWNLOADS__ && !startedOnLibrary) {
+      startedOnLibrary = true;
+      if (downloadsOffered(useAtlas.getState())) showSection('library');
+    }
+    return () => {
+      setLibraryHost(null);
+    };
+  }, [library]);
+  // Without the Library (Android, a browser) its sections are not there.
+  useEffect(() => {
+    const { section } = useTouch.getState();
+    if (!library && (section === 'library' || section === 'settings')) showSection(homeSection());
+    if (library && section === 'games') showSection('library');
+  }, [library]);
+}
+
 /** The sections a game may not have, and whether it has them. */
 type Shown = Record<'lists' | 'map' | 'guides', boolean>;
 
-function SectionButtons({ shown, className }: { shown: Shown; className: string }) {
+function SectionButtons({
+  shown,
+  className,
+  library,
+}: {
+  shown: Shown;
+  className: string;
+  library: boolean;
+}) {
   const section = useTouch((s) => s.section);
   const hints = useKeyHints();
   const listsName = useAtlas((s) => (s.game ? checklistScreenTitle(s.game) : 'Lists'));
-  return SECTIONS.filter((s) => !(s.id in shown) || shown[s.id as keyof Shown]).map((s) => (
-    <button
-      key={s.id}
-      type="button"
-      className={className}
-      aria-current={s.id === section ? 'page' : undefined}
-      title={hints ? (s.id === 'lists' ? withKey(listsName, 'C', true) : s.label) : undefined}
-      aria-keyshortcuts={hints && s.id === 'lists' ? 'C' : undefined}
-      data-testid={`section-${s.id}`}
-      onClick={() => {
-        if (s.id === section && s.id === 'lists') {
-          // Lists again: back to the list of lists.
-          useAtlas.setState({ checklistPages: [] });
-        }
-        showSection(s.id);
-      }}
-    >
-      <span className="touch-section-icon">
-        <UiIcon name={s.icon} size={22} />
-      </span>
-      {s.label}
-    </button>
-  ));
+  return (library ? LIBRARY_SECTIONS : SECTIONS)
+    .filter((s) => !(s.id in shown) || shown[s.id as keyof Shown])
+    .map((s) => (
+      <button
+        key={s.id}
+        type="button"
+        className={className}
+        aria-current={s.id === section ? 'page' : undefined}
+        title={hints ? (s.id === 'lists' ? withKey(listsName, 'C', true) : s.label) : undefined}
+        aria-keyshortcuts={hints && s.id === 'lists' ? 'C' : undefined}
+        data-testid={`section-${s.id}`}
+        onClick={() => {
+          if (s.id === section && s.id === 'lists') {
+            // Lists again: back to the list of lists.
+            useAtlas.setState({ checklistPages: [] });
+          }
+          showSection(s.id);
+        }}
+      >
+        <span className="touch-section-icon">
+          <UiIcon name={s.icon} size={22} />
+        </span>
+        {s.label}
+      </button>
+    ));
 }
 
-function BottomBar({ shown }: { shown: Shown }) {
+function BottomBar({ shown, library }: { shown: Shown; library: boolean }) {
   return (
     <nav className="touch-bar" aria-label="Sections">
-      <SectionButtons shown={shown} className="touch-bar-button" />
+      <SectionButtons shown={shown} className="touch-bar-button" library={library} />
     </nav>
   );
 }
 
-function Rail({ shown }: { shown: Shown }) {
+function Rail({ shown, library }: { shown: Shown; library: boolean }) {
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   return (
     <nav className="touch-rail" aria-label="Sections">
-      <SectionButtons shown={shown} className="touch-rail-button" />
+      <SectionButtons shown={shown} className="touch-rail-button" library={library} />
       <span className="touch-rail-space" />
       <KeysButton />
       <SaveButton />

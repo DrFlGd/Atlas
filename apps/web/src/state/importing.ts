@@ -89,6 +89,7 @@ import {
 } from './gameChoice';
 import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
+import { showLibraryAdd, showLibraryGame } from './libraryView';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
 
@@ -1207,7 +1208,7 @@ export async function rebuildPack(packId: string): Promise<void> {
       return;
     }
     setPhase({ kind: 'converting', url: last.url, importer: importer.title });
-    useAtlas.setState({ addMapOpen: true, mapsDialogOpen: false });
+    showLibraryAdd();
     const outcome = await convertAndSave(
       importer,
       { url: last.url, pageData: last.data, importedAt: last.importedAt },
@@ -1221,13 +1222,16 @@ export async function rebuildPack(packId: string): Promise<void> {
   }
 }
 
-export function setAddMapOpen(open: boolean): void {
-  useAtlas.setState({ addMapOpen: open });
-  if (!open) {
-    resetImport();
-    setDraft('');
-    setMeasureFromPage(false);
-  }
+/**
+ * Leaves the steps of adding for the game open in the Library: back to an
+ * empty address box. A run or a page that is open goes on (the strip at the
+ * bottom of the Library shows it, with Stop).
+ */
+export function closeAdding(): void {
+  resetImport();
+  setDraft('');
+  setMeasureFromPage(false);
+  showLibraryGame();
 }
 
 // ---------------------------------------------------------------------------
@@ -1648,7 +1652,7 @@ export async function updatableGames(packIds?: readonly string[]): Promise<Updat
 
 /** "Update from the site…" for one game: reads its game page at once. */
 export async function updateGame(packId: string): Promise<void> {
-  useAtlas.setState({ addMapOpen: true, mapsDialogOpen: false });
+  showLibraryAdd();
   const games = await updatableGames([packId]);
   if (games.length === 0) {
     setPhase({
@@ -1662,7 +1666,7 @@ export async function updateGame(packId: string): Promise<void> {
 
 /** "Update all…": lists the games to update, all ticked, before anything opens. */
 export async function updateAll(): Promise<void> {
-  useAtlas.setState({ addMapOpen: true, mapsDialogOpen: false });
+  showLibraryAdd();
   const games = await updatableGames();
   setPhase({ kind: 'update-games', games, ticked: games.map((game) => game.packId) });
 }

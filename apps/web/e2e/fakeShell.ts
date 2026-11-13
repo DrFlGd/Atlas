@@ -106,6 +106,8 @@ function installFakeShell({
     string,
     { key: string; url: string; importedAt: string; mapId?: string; data: string }[]
   > = {};
+  // What each pack written holds, for the Library's facts.
+  const contents: Record<string, Record<string, number>> = {};
   const listing = () => ({
     mapsFolder: { path: '/maps', isDefault: true, exists: true },
     packs: structuredClone(packs),
@@ -274,10 +276,48 @@ function installFakeShell({
             mapId: page.mapId ?? null,
           })),
         };
+        const count = (file: string) => {
+          try {
+            return (JSON.parse(request.files[file] ?? '[]') as unknown[]).length;
+          } catch {
+            return 0;
+          }
+        };
+        contents[request.packId] = {
+          maps: count('maps.json'),
+          layers: count('layers.json'),
+          locations: count('locations.json'),
+          categories: count('categories.json'),
+          regions: count('regions.json'),
+          checklists: count('checklists.json'),
+          guides: count('guides.json'),
+        };
         const index = packs.findIndex((pack) => pack.id === request.packId);
         if (index >= 0) packs[index] = listed;
         else packs.push(listed);
         return listing();
+      }
+      case 'library_pack_details': {
+        // The demo pack that comes with the app, or a pack written here.
+        const id = args.id as string;
+        return {
+          pack: { id, title: id, packVersion: '1.0.0', schemaVersion: 1, attribution: [] },
+          source: { kind: 'app', pages: [] },
+          contents: contents[id] ?? {
+            maps: 2,
+            layers: 3,
+            locations: 5000,
+            categories: 4,
+            regions: 0,
+            checklists: 1,
+            guides: 1,
+          },
+          layers: [],
+          detail: null,
+          imagesAt: null,
+          archive: false,
+          packFile: null,
+        };
       }
       default:
         // Tauri rejects with the command's error value, a string.

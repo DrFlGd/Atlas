@@ -1,18 +1,15 @@
 import { UiIcon, type UiIconName } from '../components/icons';
-import { desktop } from '../desktop';
-import { foldersOffered, importsOffered, mapsOffered, touchUiOffered } from '../features';
+import { foldersOffered, touchUiOffered } from '../features';
 import { setProfileDialogOpen } from '../state/actions';
-import { setAddMapOpen } from '../state/importing';
-import { setMapsDialogOpen } from '../state/library';
 import { saveReaderOf, setSaveDialogOpen } from '../state/saves';
 import { useAtlas } from '../state/store';
 import { setKeysOpen, useKeyHints } from './state';
 
 /**
  * The desktop app's tools in the standard layout: the same dialogs as the
- * classic layout's top bar opens (Add a map, Maps, Game save, profiles),
- * with the same names, so what the help and the release notes say still
- * leads there.
+ * classic layout's top bar opens (Game save, profiles), with the same
+ * names, so what the help and the release notes say still leads there.
+ * The Library and Settings are sections of their own.
  */
 
 /** Whether the game shown has saves Atlas can read here (as the classic top bar's "Game save"). */
@@ -73,7 +70,7 @@ export function KeysButton() {
   );
 }
 
-/** One tool as a row of the Games screen. */
+/** One tool as a row of the Games screen or the Settings page. */
 function ToolRow({
   icon,
   title,
@@ -106,52 +103,6 @@ function ToolRow({
         <UiIcon name="chevron" size={18} strokeWidth={1.8} />
       </span>
     </button>
-  );
-}
-
-/**
- * "Add a map" (in builds with importers, not in the Android app) and
- * "Maps" (the maps folder, other folders, updates from the site, exports,
- * deleting), at the top of Games in the desktop app.
- */
-export function LibraryTools() {
-  const importers = useAtlas((s) => s.config?.importers.length ?? 0);
-  const imports = useAtlas(importsOffered);
-  const maps = useAtlas(mapsOffered);
-  const folders = useAtlas(foldersOffered);
-  const android = useAtlas(touchUiOffered);
-  // The Android app keeps its own Games screen as it was: no Maps dialog
-  // there, since this screen already lists its games and imports files.
-  if (!desktop || android) return null;
-  return (
-    <div className="touch-tools" data-testid="library-tools">
-      {importers > 0 && imports ? (
-        <ToolRow
-          icon="mapPlus"
-          title="Add a map"
-          detail="From a map page on the web, or a whole game"
-          testId="add-map-button"
-          onClick={() => {
-            setAddMapOpen(true);
-          }}
-        />
-      ) : null}
-      {maps ? (
-        <ToolRow
-          icon="folder"
-          title="Maps"
-          detail={
-            folders
-              ? 'Where maps are kept, packs from other folders, updates, export and delete'
-              : 'The games on this device, and importing map pack files'
-          }
-          testId="maps-button"
-          onClick={() => {
-            setMapsDialogOpen(true);
-          }}
-        />
-      ) : null}
-    </div>
   );
 }
 
