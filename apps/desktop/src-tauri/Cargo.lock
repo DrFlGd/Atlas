@@ -211,6 +211,7 @@ dependencies = [
  "libc",
  "lz4_flex",
  "percent-encoding",
+ "png",
  "reqwest",
  "rustls",
  "serde",
