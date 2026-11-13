@@ -33,6 +33,8 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
     ['guides', pack.guides],
     ['links', pack.links],
     ['presets', pack.presets],
+    ['sections', pack.sections ?? []],
+    ['pictures', pack.pictures ?? []],
   ] as const;
 
   for (const [name, items] of collections) {
@@ -183,6 +185,8 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
     refs(preset.categoryIds, categories, `presets[${i}].categoryIds`, 'category');
   });
 
+  checkContents(pack, guides, report);
+
   for (const [from, to] of Object.entries(pack.manifest.idMigrations)) {
     const path = `manifest.idMigrations["${from}"]`;
     expect(!allIds.has(from), path, `migrated id ${from} is still in use`);
@@ -190,4 +194,53 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
   }
 
   return issues;
+}
+
+/**
+ * The contents and the pictures: every item of a section is a guide or a
+ * section of the pack, a section is listed by one section at most and never
+ * inside itself, and no two pictures share a file (also not by case, so the
+ * pack folder works on every system).
+ */
+function checkContents(
+  pack: PackData,
+  guides: ReadonlySet<string>,
+  report: (path: string, message: string) => void,
+): void {
+  const sections = pack.sections ?? [];
+  const byId = new Map(sections.map((section) => [section.id, section]));
+  const parentOf = new Map<string, string>();
+  sections.forEach((section, i) => {
+    section.items.forEach((item, k) => {
+      const path = `sections[${i}].items[${k}]`;
+      if (parseId(item)?.kind === 'guide') {
+        if (!guides.has(item)) report(path, `unknown guide ${item}`);
+        return;
+      }
+      if (!byId.has(item)) report(path, `unknown section ${item}`);
+      else if (parentOf.has(item))
+        report(path, `section ${item} is listed by more than one section`);
+      else parentOf.set(item, section.id);
+    });
+  });
+  // A section inside itself, however deep, is never reached from the top.
+  sections.forEach((section, i) => {
+    const seen = new Set<string>([section.id]);
+    for (let at = parentOf.get(section.id); at !== undefined; at = parentOf.get(at)) {
+      if (seen.has(at)) {
+        report(`sections[${i}]`, `section ${section.id} is inside itself`);
+        return;
+      }
+      seen.add(at);
+    }
+  });
+
+  const files = new Map<string, number>();
+  (pack.pictures ?? []).forEach((picture, i) => {
+    const key = picture.file.toLowerCase();
+    const first = files.get(key);
+    if (first !== undefined) {
+      report(`pictures[${i}].file`, `${picture.file} is also the file of pictures[${first}]`);
+    } else files.set(key, i);
+  });
 }

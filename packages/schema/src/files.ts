@@ -12,14 +12,21 @@ import {
   manifestSchema,
   mapSchema,
   packReadSchemas as read,
+  pictureSchema,
   presetSchema,
   regionSchema,
+  sectionSchema,
 } from './entities';
 
 /**
  * Every collection a pack can hold, the JSON file it lives in (relative to the
  * pack root) and whether the file must be present. Optional files that are
  * missing load as empty collections.
+ *
+ * A game with no map, which holds guides and lists only, may leave out the
+ * required map files ({@link MAP_COLLECTIONS}), but only all of them
+ * together; they then load as empty. Atlas 0.4.4 and earlier refuse such a
+ * pack, so writers keep writing them, empty.
  *
  * `schema` is the strict one packs are written and checked with;
  * `readSchema` is the tolerant one the app reads them with (see
@@ -98,9 +105,34 @@ export const PACK_COLLECTIONS = {
     schema: z.array(presetSchema),
     readSchema: z.array(read.presetSchema),
   },
+  // Guides read as pages: their contents, and the pictures they show.
+  sections: {
+    file: 'sections.json',
+    required: false,
+    schema: z.array(sectionSchema),
+    readSchema: z.array(read.sectionSchema),
+  },
+  pictures: {
+    file: 'pictures.json',
+    required: false,
+    schema: z.array(pictureSchema),
+    readSchema: z.array(read.pictureSchema),
+  },
 } as const;
 
+/** The folder that holds a pack's pictures (see `pictures.json`). */
+export const PICTURES_DIR = 'pictures';
+
 export const MANIFEST_FILE = 'manifest.json';
+
+/** The required files that a game with no map may leave out, all of them together. */
+export const MAP_COLLECTIONS = [
+  'maps',
+  'layers',
+  'categoryGroups',
+  'categories',
+  'locations',
+] as const satisfies readonly (keyof typeof PACK_COLLECTIONS)[];
 
 export type CollectionName = keyof typeof PACK_COLLECTIONS;
 
@@ -121,6 +153,9 @@ export const packDataSchema = z.strictObject({
   guides: PACK_COLLECTIONS.guides.schema,
   links: PACK_COLLECTIONS.links.schema,
   presets: PACK_COLLECTIONS.presets.schema,
+  // Optional, so packs made before them stay valid as they are.
+  sections: PACK_COLLECTIONS.sections.schema.optional(),
+  pictures: PACK_COLLECTIONS.pictures.schema.optional(),
 });
 
 /**
@@ -141,6 +176,8 @@ export const packDataReadSchema = z.object({
   guides: PACK_COLLECTIONS.guides.readSchema,
   links: PACK_COLLECTIONS.links.readSchema,
   presets: PACK_COLLECTIONS.presets.readSchema,
+  sections: PACK_COLLECTIONS.sections.readSchema.optional(),
+  pictures: PACK_COLLECTIONS.pictures.readSchema.optional(),
 });
 
 export type PackData = z.infer<typeof packDataSchema>;

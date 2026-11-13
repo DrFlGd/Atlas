@@ -123,3 +123,95 @@ export function makeFixturePack(): PackData {
     presets: [{ id: 'demo:preset:herbs', name: 'Herbs only', categoryIds: ['demo:cat:herb'] }],
   };
 }
+
+/**
+ * A small, valid pack of a game with no map: guides read from a made-up
+ * wiki, with their contents and a picture, and a list.
+ */
+export function makeGuidesFixturePack(): PackData {
+  const source = (page: string) => ({
+    url: `https://wiki.example.org/wiki/${page}`,
+    site: 'Example Wiki',
+    license: {
+      name: 'CC BY-SA 4.0',
+      url: 'https://creativecommons.org/licenses/by-sa/4.0/',
+    },
+    credit: 'Example Wiki contributors',
+    readAt: '2026-11-13T10:00:00Z',
+    adapted: true,
+  });
+  return {
+    manifest: {
+      schemaVersion: 2,
+      gameId: 'pages',
+      title: 'Pages only',
+      packVersion: '1.0.0',
+      gamePatch: '1.0',
+      attribution: [
+        {
+          name: 'Example Wiki',
+          url: 'https://wiki.example.org/',
+          license: 'CC BY-SA 4.0',
+        },
+      ],
+      idMigrations: {},
+    },
+    maps: [],
+    layers: [],
+    regions: [],
+    categoryGroups: [],
+    categories: [],
+    locations: [],
+    entities: [],
+    checklists: [{ id: 'pages:checklist:bells', name: 'Bells', order: 0 }],
+    checklistItems: [
+      {
+        id: 'pages:checkitem:first',
+        checklistId: 'pages:checklist:bells',
+        name: 'Ring the first bell',
+        order: 0,
+        locationIds: [],
+        entityIds: [],
+      },
+    ],
+    guides: [
+      {
+        id: 'pages:guide:start',
+        title: 'Getting started',
+        body: 'Read [the bells](pages:guide:bells) first.\n\n![A gate](pages:picture:gate)',
+        locationIds: [],
+        order: 0,
+        source: source('Getting_started'),
+      },
+      {
+        id: 'pages:guide:bells',
+        title: 'Bells',
+        body: '| Bell | Where |\n| --- | --- |\n| First | Tower |\n\nThe last one is ||under the bridge||.',
+        locationIds: [],
+        order: 1,
+        source: source('Bells'),
+      },
+    ],
+    links: [],
+    presets: [],
+    sections: [
+      {
+        id: 'pages:section:basics',
+        title: 'Basics',
+        items: ['pages:guide:start', 'pages:section:more'],
+      },
+      { id: 'pages:section:more', title: 'More', items: ['pages:guide:bells'] },
+    ],
+    pictures: [
+      {
+        id: 'pages:picture:gate',
+        file: 'pictures/gate.png',
+        caption: 'The gate at dawn',
+        credit: 'Example Wiki contributors',
+        license: { name: 'CC BY-SA 4.0', url: 'https://creativecommons.org/licenses/by-sa/4.0/' },
+        source: 'https://wiki.example.org/files/gate.png',
+        shareable: false,
+      },
+    ],
+  };
+}

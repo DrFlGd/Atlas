@@ -32,6 +32,20 @@ export const isAllowedRemoteUrl = (url: string) =>
 
 const isoTime = z.iso.datetime({ offset: true });
 
+/** A web address (`http` or `https`), such as a page a guide was read from. */
+const webUrl = z
+  .string()
+  .trim()
+  .max(2048)
+  .regex(/^https?:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/i, 'must be a web address');
+
+/** Where a picture lives in a pack: a file directly in its `pictures/` folder. */
+export const PICTURE_PATH_PATTERN =
+  /^pictures\/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.(?:png|jpe?g|webp|gif)$/;
+const picturePath = z
+  .string()
+  .regex(PICTURE_PATH_PATTERN, 'must be pictures/<name>.png, .jpg, .jpeg, .webp or .gif');
+
 /**
  * Descriptive fields are informational: a value that does not have the
  * expected shape is dropped rather than making the whole pack unreadable,
@@ -470,13 +484,79 @@ function packSchemas(mode: SchemaMode) {
     note: z.string().optional(),
   });
 
+  // ---------------------------------------------------------------------------
+  // Guides read as pages: where a guide was read, the contents, pictures
+
+  /** A licence by name, with the address of its text. */
+  const licenseSchema = record({
+    name: nonEmpty.max(200),
+    url: webUrl.optional(),
+  });
+
+  /**
+   * Where a guide's text was read: a page of a wiki or another site whose
+   * licence allows it. Shown as the credit under the page.
+   */
+  const guideSourceSchema = record({
+    /** The original page. */
+    url: webUrl,
+    /** The site's own name, such as "Example Wiki". */
+    site: nonEmpty.max(200),
+    license: licenseSchema,
+    /** The credit line the site asks for, such as "By the Example Wiki's contributors". */
+    credit: nonEmpty.max(500).optional(),
+    /** When the page was read: a date (`2026-11-13`) or a time. */
+    readAt: z.union([z.iso.date(), isoTime]),
+    /** The text was changed from the original (for example converted to Markdown). */
+    adapted: z.boolean().optional(),
+  });
+
+  /**
+   * A section of the pack's contents: guides and further sections, in the
+   * order the source lists them. A section that no other section lists is
+   * at the top of the contents, in file order. A section is listed by one
+   * section at most; a guide may be listed by several.
+   */
+  const sectionSchema = record({
+    id: idOf('section'),
+    title: nonEmpty.max(200),
+    /** The ids of the guides and sections in it, in order. */
+    items: z.array(z.union([idOf('guide'), idOf('section')])),
+  });
+
+  /**
+   * A picture in the pack's `pictures/` folder. Guide Markdown shows one by
+   * its id (`![what it shows](demo:picture:gate)`); nothing else is ever
+   * loaded as a picture. Made general so that other content can name
+   * pictures later.
+   */
+  const pictureSchema = record({
+    id: idOf('picture'),
+    /** `pictures/<name>.<png|jpg|jpeg|webp|gif>`, relative to the pack root. */
+    file: picturePath,
+    caption: z.string().trim().max(500).optional(),
+    /** Who made the picture. */
+    credit: nonEmpty.max(500).optional(),
+    license: licenseSchema.optional(),
+    /** Where the picture was taken from. */
+    source: webUrl.optional(),
+    /**
+     * Whether the picture may be passed on: `false` for one kept for the
+     * person's own use, which a map pack file leaves out.
+     */
+    shareable: z.boolean(),
+    width: z.int().positive().optional(),
+    height: z.int().positive().optional(),
+  });
+
   /**
    * A guide in Markdown. A guide that belongs to exactly one location is that
    * location's note; any other guide (a walkthrough page, a chapter) is listed
    * on its own.
    *
    * `order` is optional and was added without a schema version change; Atlas
-   * 0.3.3 and earlier refuse a pack whose guides have it.
+   * 0.3.3 and earlier refuse a pack whose guides have it. So is `source`;
+   * Atlas 0.4.4 and earlier refuse a pack whose guides have it.
    */
   const guideEntrySchema = record({
     id: idOf('guide'),
@@ -486,6 +566,8 @@ function packSchemas(mode: SchemaMode) {
     locationIds: z.array(idOf('loc')),
     /** Place in the list of guides, ascending; guides without one follow, by title. */
     order: z.int().optional(),
+    /** Where the text was read, for a guide taken from a site under an open licence. */
+    source: guideSourceSchema.optional(),
   });
 
   /** A directed relation between two pieces of content, e.g. a portal between two locations. */
@@ -530,6 +612,10 @@ function packSchemas(mode: SchemaMode) {
     guideEntrySchema,
     linkSchema,
     presetSchema,
+    licenseSchema,
+    guideSourceSchema,
+    sectionSchema,
+    pictureSchema,
   };
 }
 
@@ -559,6 +645,10 @@ export const {
   guideEntrySchema,
   linkSchema,
   presetSchema,
+  licenseSchema,
+  guideSourceSchema,
+  sectionSchema,
+  pictureSchema,
 } = packSchemas('write');
 
 /**
@@ -593,3 +683,7 @@ export type GuideEntry = z.infer<typeof guideEntrySchema>;
 export type Link = z.infer<typeof linkSchema>;
 export type Preset = z.infer<typeof presetSchema>;
 export type Point = z.infer<typeof pointSchema>;
+export type License = z.infer<typeof licenseSchema>;
+export type GuideSource = z.infer<typeof guideSourceSchema>;
+export type Section = z.infer<typeof sectionSchema>;
+export type Picture = z.infer<typeof pictureSchema>;

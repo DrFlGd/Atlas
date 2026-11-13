@@ -18,6 +18,9 @@ export const ID_KINDS = {
   guide: 'guide',
   link: 'link',
   preset: 'preset',
+  // Guides read as pages: the sections of their contents, and their pictures.
+  section: 'section',
+  picture: 'picture',
 } as const;
 
 export type IdKind = (typeof ID_KINDS)[keyof typeof ID_KINDS];

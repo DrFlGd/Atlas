@@ -265,7 +265,7 @@ describe('reading tolerantly, writing strictly', () => {
     const paths = result.error!.issues.map((issue) => issue.path.join('.'));
     expect(paths).toEqual(expect.arrayContaining(['manifest', 'maps.0', 'checklists.0.type']));
     for (const name of COLLECTION_NAMES) {
-      const records = withUnknownKeys()[name];
+      const records = withUnknownKeys()[name] ?? [];
       if (records.length === 0) continue;
       expect(PACK_COLLECTIONS[name].schema.safeParse(records).success, name).toBe(false);
       expect(PACK_COLLECTIONS[name].readSchema.safeParse(records).success, name).toBe(true);
