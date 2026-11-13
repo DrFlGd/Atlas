@@ -139,7 +139,7 @@ fn thousands(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -288,9 +288,9 @@ impl PngRows {
             .map_err(|error| Stop::Failed(format!("Could not open the picture: {error}")))?;
         let mut decoder = png::Decoder::new(BufReader::with_capacity(1 << 20, file));
         decoder.set_transformations(png::Transformations::normalize_to_color8());
-        let mut limits = png::Limits::default();
-        limits.bytes = usize::try_from(MAX_DECODE_BYTES).unwrap_or(usize::MAX);
-        decoder.set_limits(limits);
+        decoder.set_limits(png::Limits {
+            bytes: usize::try_from(MAX_DECODE_BYTES).unwrap_or(usize::MAX),
+        });
         let reader = decoder
             .read_info()
             .map_err(|error| Stop::Failed(format!("This PNG picture cannot be read: {error}")))?;
@@ -404,15 +404,11 @@ fn halve_band(band: &[u8], width: u32, rows: u32, channels: usize, out: &mut Vec
             if channels == 4 {
                 let alpha: u32 = cells.iter().map(|&at| u32::from(band[at + 3])).sum();
                 for c in 0..3 {
-                    let value = if alpha == 0 {
-                        0
-                    } else {
-                        let weighed: u32 = cells
-                            .iter()
-                            .map(|&at| u32::from(band[at + c]) * u32::from(band[at + 3]))
-                            .sum();
-                        (weighed + alpha / 2) / alpha
-                    };
+                    let weighed: u32 = cells
+                        .iter()
+                        .map(|&at| u32::from(band[at + c]) * u32::from(band[at + 3]))
+                        .sum();
+                    let value = (weighed + alpha / 2).checked_div(alpha).unwrap_or(0);
                     out.push(value as u8);
                 }
                 out.push(((alpha + count as u32 / 2) / count as u32) as u8);

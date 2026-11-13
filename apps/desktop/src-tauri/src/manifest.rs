@@ -32,6 +32,9 @@ pub struct ManifestHead {
     /// The web pages the pack was made from (`source.pages`), as far as
     /// they are usable: web addresses, at most [`MAX_SOURCE_PAGES`].
     pub pages: Vec<SourcePage>,
+    /// The game was made in the app from pictures (`madeInApp`, see
+    /// `owngame.rs`).
+    pub made_in_app: bool,
 }
 
 /// A page an imported pack was made from.
@@ -55,6 +58,9 @@ struct RawHead {
     pack_version: String,
     #[serde(default)]
     source: Option<RawSource>,
+    /// Read loosely: anything but `true` is false.
+    #[serde(default)]
+    made_in_app: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +138,7 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
             .and_then(|source| source.importer)
             .map(|importer| (importer.id, importer.title)),
         pages,
+        made_in_app: raw.made_in_app == Some(Value::Bool(true)),
     })
 }
 

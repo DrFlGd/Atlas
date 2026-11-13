@@ -26,6 +26,8 @@ pub mod gamefiles;
 mod imports;
 pub mod library;
 pub mod manifest;
+pub mod owngame;
+mod owngame_commands;
 pub mod ownlists;
 pub mod packfile;
 mod packs;
@@ -119,6 +121,17 @@ macro_rules! viewer_commands {
             commands::own_lists_read,
             commands::own_lists_write,
             commands::own_lists_delete,
+            owngame_commands::map_picture_pick,
+            owngame_commands::own_game_create,
+            owngame_commands::own_game_add_map,
+            owngame_commands::own_game_add_level,
+            owngame_commands::own_game_progress,
+            owngame_commands::own_game_cancel,
+            owngame_commands::own_game_rename,
+            owngame_commands::own_game_delete_map,
+            owngame_commands::own_locations_read,
+            owngame_commands::own_locations_write,
+            owngame_commands::own_locations_delete,
             commands::list_file_save,
             commands::list_file_open,
             $($more)*
@@ -167,7 +180,8 @@ pub fn run() {
         .manage(registry)
         .manage(imports::Imports::default())
         .manage(commands::PackFileJobs::default())
-        .manage(commands::PickedPackFiles::default());
+        .manage(commands::PickedPackFiles::default())
+        .manage(owngame_commands::CutJobs::default());
     // On Android, files the system's dialogs give as `content://` addresses
     // are opened through the fs plugin, from Rust only: no capability grants
     // the web app any of its commands.

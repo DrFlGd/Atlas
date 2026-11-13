@@ -176,6 +176,8 @@ pub struct ListedPack {
     pub imported: Option<ImportedFrom>,
     /// The web pages the pack was made from, as its manifest records them.
     pub pages: Vec<SourcePage>,
+    /// The game was made in the app from pictures (see `owngame.rs`).
+    pub made_in_app: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -575,6 +577,7 @@ impl Library {
                 path: Some(path),
                 pack_version: head.pack_version,
                 pages: head.pages,
+                made_in_app: head.made_in_app,
             });
             true
         };
