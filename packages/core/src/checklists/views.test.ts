@@ -291,6 +291,11 @@ it('makes a note plain text', () => {
     'Start near the first waystone.',
   );
   expect(plainNote('## Heading\n**Bold** and `code` _here_')).toBe('Heading Bold and code here');
+  expect(
+    plainNote(
+      'A [red]{color=#c33} key, [[a page]{color=#c33}](demo:loc:1) and [[b](demo:loc:2)]{color=#f80}',
+    ),
+  ).toBe('A red key, a page and b');
 });
 
 describe('hidden text in notes', () => {

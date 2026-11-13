@@ -14,6 +14,7 @@ import {
   type InlineContext,
 } from '../../markdownEdit/inline';
 import { useOwnPictures } from '../../state/ownPictures';
+import { showTextColours } from '../../textColour';
 import { PictureContext } from './pictureContext';
 import {
   choosePicture,
@@ -95,6 +96,7 @@ export function InlineField({
     const focused = element.ownerDocument.activeElement === element;
     const selection = focused ? selectionIn(element) : null;
     element.innerHTML = piecesToHtml(pieces, pictureOf);
+    showTextColours(element);
     shown.current = pieces;
     if (focused && selection) selectIn(element, ...clamp(selection, pieces));
   }, [pieces, pictureOf]);
@@ -107,6 +109,7 @@ export function InlineField({
     const focused = element.ownerDocument.activeElement === element;
     const selection = focused ? selectionIn(element) : null;
     element.innerHTML = piecesToHtml(pieces, pictureOf);
+    showTextColours(element);
     if (focused && selection) selectIn(element, ...clamp(selection, pieces));
   }, [ownFiles, pieces, pictureOf]);
 
@@ -114,6 +117,7 @@ export function InlineField({
     const element = ref.current;
     if (!element) return;
     element.innerHTML = piecesToHtml(next, pictureOf);
+    showTextColours(element);
     shown.current = next;
     latest.current.onChange(next, false);
     if (select) {

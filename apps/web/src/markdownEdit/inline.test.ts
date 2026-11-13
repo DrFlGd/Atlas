@@ -54,6 +54,9 @@ describe('inline Markdown, read and written', () => {
     'Raised^DLC^ and lowered H~2~O, a mark^\\[a\\]^ and ^two\\ words^.',
     'Inside: **^bold^**, ~`code`~, [^a\\ page^](demo:guide:walk), ||hidden^up^|| and ||^up^||.',
     'Not marks: x^2 + y^2, \\^a\\^, \\~b\\~ and ~ c ~.',
+    'Coloured: a [relic]{color=#b8714a}, [two words]{color=#ff8800} **[bold]{color=#ff8800}** and Cellar^[AB]{color=#82c936}^.',
+    'In a link: [[a page]{color=#cc3333}](demo:guide:walk), and ||[hidden]{color=#123456}||.',
+    'Not colours: \\[x\\]{color=#fff}, [x] {color=#fff} and [x]{color=red}.',
   ])('%s', (markdown) => {
     roundTrip(markdown);
   });
@@ -140,6 +143,27 @@ describe('inline Markdown, read and written', () => {
     const bold = toggleMark(pieces, 0, 7, 'strong');
     expect(writeInline(bold)).toBe('**Vale^DLC^** here');
     expect(writeInline(toggleMark(bold, 0, 7, 'strong'))).toBe('Vale^DLC^ here');
+  });
+
+  it('writes coloured words inside a link and inside other marks, and keeps their colour as they are edited', () => {
+    // As written by hand or by an importer, around a link: the same, written the editor's way.
+    const around = parseInline('[[a page](demo:guide:walk) and more]{color=#c33}');
+    expect(writeInline(around)).toBe(
+      '[[a page]{color=#cc3333}](demo:guide:walk)[ and more]{color=#cc3333}',
+    );
+    expect(writeInline(parseInline('[**bold**]{color=#123}'))).toBe('**[bold]{color=#112233}**');
+    expect(writeInline(parseInline('[^up^]{color=#123}'))).toBe('^[up]{color=#112233}^');
+    const pieces = parseInline('A [relic]{color=#b8714a} here');
+    const bold = toggleMark(pieces, 2, 7, 'strong');
+    expect(writeInline(bold)).toBe('A **[relic]{color=#b8714a}** here');
+    expect(writeInline(insertInline(bold, 4, 4, [text('X', bold[1]!.marks)]))).toBe(
+      'A **[reXlic]{color=#b8714a}** here',
+    );
+    // Two colours side by side stay two.
+    expect(writeInline([text('a', { colour: '#111111' }), text('b', { colour: '#222222' })])).toBe(
+      '[a]{color=#111111}[b]{color=#222222}',
+    );
+    expect(writeInline([text('a b', { colour: '#111111' })], 'cell')).toBe('[a b]{color=#111111}');
   });
 
   it('writes a line break in a table cell as <br>', () => {

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
 import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
+import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
 import { useGuideLinks } from '../state/guideLinks';
 import { useOwnPages } from '../state/ownPages';
@@ -42,9 +43,11 @@ export function MarkdownBody({
   const revision = useAtlas((s) => s.tileRevision);
   const [missingAt, setMissingAt] = useState<number | null>(null);
   const sorts = useRef<{ source: string; tables: PageSorts }>({ source, tables: new Map() });
-  // After every render: the page shown anew has its tables sorted as chosen
-  // (another page, or the page's text changed, starts in its own order).
+  // After every render: coloured words show their colours, and the page
+  // shown anew has its tables sorted as chosen (another page, or the
+  // page's text changed, starts in its own order).
   useLayoutEffect(() => {
+    if (ref.current) showTextColours(ref.current);
     if (sorts.current.source !== source) sorts.current = { source, tables: new Map() };
     if (page && ref.current) enhanceTables(ref.current, sorts.current.tables);
   });

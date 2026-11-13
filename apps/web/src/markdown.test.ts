@@ -261,6 +261,58 @@ describe('raised and lowered text, and line breaks in table cells', () => {
   });
 });
 
+describe('coloured words', () => {
+  it('colours [words]{color=#hex} with only the colour as an attribute, never a style', () => {
+    expect(renderGuideMarkdown('A [relic]{color=#B8714A} and [two words]{color=#f80}.')).toBe(
+      '<p>A <span class="text-colour" data-text-colour="#b8714a">relic</span> and <span class="text-colour" data-text-colour="#ff8800">two words</span>.</p>\n',
+    );
+  });
+
+  it('holds other marks and links, and stands in a link or raised text', () => {
+    expect(renderGuideMarkdown('[**b** [a page](https://example.org)]{color=#c33}')).toBe(
+      '<p><span class="text-colour" data-text-colour="#cc3333"><strong>b</strong> <a href="https://example.org" target="_blank" rel="noopener noreferrer">a page</a></span></p>\n',
+    );
+    expect(renderGuideMarkdown('[[a page]{color=#c33}](https://example.org)')).toBe(
+      '<p><a href="https://example.org" target="_blank" rel="noopener noreferrer"><span class="text-colour" data-text-colour="#cc3333">a page</span></a></p>\n',
+    );
+    expect(renderGuideMarkdown('Cellar^[AB]{color=#82c936}^')).toBe(
+      '<p>Cellar<sup><span class="text-colour" data-text-colour="#82c936">AB</span></sup></p>\n',
+    );
+    const cell = renderGuideMarkdown(
+      '| A |\n| - |\n| [x y]{color=#0f0}<br>\\|\\|[z]{color=#00f}\\|\\| |',
+    );
+    expect(cell).toContain(
+      '<td><span class="text-colour" data-text-colour="#00ff00">x y</span><br>\n<button type="button" class="hidden-text-show" data-hidden-show="1">Show hidden text</button><span class="hidden-text" data-hidden-part="1" hidden=""><span class="text-colour" data-text-colour="#0000ff">z</span></span></td>',
+    );
+    expect(guideSearchText('[x y]{color=#0f0} and ||[z]{color=#00f}||')).toBe('x y and');
+  });
+
+  it('takes nothing but # and three or six hexadecimal digits right after the words', () => {
+    for (const text of [
+      '[x]{color=red}',
+      '[x] {color=#fff}',
+      '[x]{color=#ffff}',
+      '[x]{ color=#fff}',
+      '[x]{color=#fff;background:red}',
+      '[x]{style="color:red"}',
+      '[]{color=#fff}',
+      '\\[x]{color=#fff}',
+      '`[x]{color=#fff}`',
+    ]) {
+      expect(renderGuideMarkdown(text), text).not.toContain('text-colour');
+    }
+  });
+
+  it('stays safe: no attribute, style or tag gets in through a colour', () => {
+    const html = renderGuideMarkdown(
+      '[x]{color=#f00" onmouseover="alert(1)} [y]{color=#f00 style=x} [<img src=x onerror=alert(1)>]{color=#123} [[z](javascript:alert(1))]{color=#123}',
+    );
+    // Only the tags and attributes the renderer makes; the rest is text.
+    expect(html).not.toMatch(/<img|<[^>]*\s(?:on\w+|style)=|href="javascript/);
+    expect(html).toContain('<span class="text-colour" data-text-colour="#112233">&lt;img');
+  });
+});
+
 describe('pictures', () => {
   const pictures = new Map([
     [

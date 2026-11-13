@@ -1,4 +1,5 @@
 import type { MarkdownIt, StateCore, StateInline, Token } from 'markdown-it';
+import { parseColour, TEXT_COLOUR_ATTRIBUTE } from './textColour';
 
 /**
  * Marks a guide's Markdown has beyond CommonMark and tables, read the same
@@ -13,6 +14,14 @@ import type { MarkdownIt, StateCore, StateInline, Token } from 'markdown-it';
  * - A line break inside a table cell, where Markdown has none: the exact
  *   text `<br>`. It is the only HTML a guide can hold, and only there; any
  *   other `<…>`, and `<br>` anywhere else, stays text, as raw HTML does.
+ * - Coloured words: `[like this]{color=#b8714a}`, the colour `#` and three
+ *   or six hexadecimal digits and nothing else, right after the closing
+ *   bracket. The words may hold any other mark, a link among them, and a
+ *   link's words may be coloured: `[[a page](url)]{color=#c33}`,
+ *   `[[a page]{color=#c33}](url)`. Anything else in the braces, or a space
+ *   before them, is no colour and stays text. The renderer writes the
+ *   colour only as an attribute (see `textColour.ts`), which the page shows
+ *   readable in both themes.
  */
 
 const CARET = 0x5e;
@@ -90,6 +99,38 @@ function scriptRule(marker: number, name: 'sup' | 'sub') {
   };
 }
 
+/** What follows the words of a coloured part: its colour. */
+const COLOUR = /^\{color=(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})\}/u;
+
+/** Coloured words, `[like this]{color=#b8714a}`. */
+function colourRule(state: StateInline, silent: boolean): boolean {
+  const start = state.pos;
+  if (state.src.charCodeAt(start) !== BRACKET) return false;
+  // Not in validation mode either: a link's words are checked for links
+  // inside them that way, and coloured words may stand in a link's words.
+  if (silent) return false;
+  const labelEnd = state.md.helpers.parseLinkLabel(state, start, false);
+  if (labelEnd < 0 || labelEnd === start + 1) return false;
+  const match = COLOUR.exec(state.src.slice(labelEnd + 1, state.posMax));
+  const colour = match ? parseColour(match[1]!) : null;
+  if (!match || !colour) return false;
+  const max = state.posMax;
+  state.pos = start + 1;
+  state.posMax = labelEnd;
+  const open = state.push('colour_open', 'span', 1);
+  open.markup = '[';
+  open.meta = { colour };
+  state.md.inline.tokenize(state);
+  const close = state.push('colour_close', 'span', -1);
+  close.markup = `]${match[0]}`;
+  state.pos = labelEnd + 1 + match[0].length;
+  state.posMax = max;
+  return true;
+}
+
+/** The colour of a `colour_open` token, as `#rrggbb`. */
+export const colourOf = (token: Token): string => (token.meta as { colour: string }).colour;
+
 /** The exact text that is a line break in a table cell. */
 export const CELL_BREAK = '<br>';
 
@@ -138,8 +179,15 @@ function cellBreaks(state: StateCore): void {
   });
 }
 
-/** Adds the marks above to a parser. Core rules run before `text_join`, where there is one. */
+/**
+ * Adds the marks above to a parser, and how the colour is rendered. Core
+ * rules run before `text_join`, where there is one.
+ */
 export function markdownMarks(md: MarkdownIt): void {
+  md.inline.ruler.before('link', 'colour', colourRule);
+  md.renderer.rules.colour_open = (tokens, index) =>
+    `<span class="text-colour" ${TEXT_COLOUR_ATTRIBUTE}="${colourOf(tokens[index]!)}">`;
+  md.renderer.rules.colour_close = () => '</span>';
   md.inline.ruler.after('emphasis', 'sup', scriptRule(CARET, 'sup'));
   md.inline.ruler.after('sup', 'sub', scriptRule(TILDE, 'sub'));
   md.core.ruler.after('inline', 'atlas_script_spaces', scriptSpaces);

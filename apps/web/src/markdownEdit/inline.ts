@@ -1,5 +1,5 @@
 import MarkdownIt, { type Token } from 'markdown-it';
-import { CELL_BREAK, markdownMarks } from '../markdownMarks';
+import { CELL_BREAK, colourOf, markdownMarks } from '../markdownMarks';
 
 /**
  * The text of one part of a page (a paragraph, a heading, a list item, a
@@ -9,8 +9,9 @@ import { CELL_BREAK, markdownMarks } from '../markdownMarks';
  *
  * Every inline feature the view shows has a piece or a mark here: bold
  * (`**`, `__`), italic (`*`, `_`), strikethrough (`~~`), raised and lowered
- * text (`^`, `~`), code, links (to the web, to a page or a location by its
- * id, `<autolinks>`), pictures by id, hidden text (`||like this||`) and
+ * text (`^`, `~`), coloured words (`[like this]{color=#b8714a}`), code,
+ * links (to the web, to a page or a location by its id, `<autolinks>`),
+ * pictures by id, hidden text (`||like this||`) and
  * line breaks, soft (a line end) and hard (a backslash or two spaces at a
  * line end; `<br>` in a table cell). Character references and
  * backslash escapes are read as the characters they stand for, and written
@@ -44,6 +45,8 @@ export interface Marks {
   /** Raised (`^`) or lowered (`~`): a note's mark, a small tag, a formula. */
   sup?: true;
   sub?: true;
+  /** Coloured, `#rrggbb`: kept as the page has it; the editor has no tool to colour words. */
+  colour?: string;
   link?: LinkMark;
 }
 
@@ -140,6 +143,12 @@ export function inlineFromTokens(
       case 'sub_close':
         delete marks.sub;
         break;
+      case 'colour_open':
+        marks.colour = colourOf(token);
+        break;
+      case 'colour_close':
+        delete marks.colour;
+        break;
       case 'link_open': {
         const href = String(token.attrGet('href') ?? '');
         const title = token.attrGet('title');
@@ -199,6 +208,7 @@ export function sameMarks(a: Marks, b: Marks): boolean {
     !a.hidden === !b.hidden &&
     !a.sup === !b.sup &&
     !a.sub === !b.sub &&
+    a.colour === b.colour &&
     sameLink(a.link, b.link)
   );
 }
@@ -353,18 +363,20 @@ const writeTitle = (title: string | undefined) =>
 /** Plain text for inside `[…]` or `![…]`. */
 const escapeLabel = (text: string) => escapeText(text.replace(/\s*\n\s*/g, ' '), false);
 
-type MarkName = 'link' | 'strong' | 'em' | 's' | 'sup' | 'sub';
+type MarkName = 'link' | 'strong' | 'em' | 's' | 'sup' | 'sub' | 'colour';
 /**
  * Outermost first: a link holds bold, bold holds italic, italic holds
- * strikethrough, which holds raised and lowered text.
+ * strikethrough, which holds raised and lowered text, which hold coloured
+ * words, as a page's coloured words most often stand.
  */
-const ORDER: readonly MarkName[] = ['link', 'strong', 'em', 's', 'sup', 'sub'];
+const ORDER: readonly MarkName[] = ['link', 'strong', 'em', 's', 'sup', 'sub', 'colour'];
 
 interface Open {
   name: MarkName;
   /** What opened it: its delimiter, or the link. */
   delimiter: string;
   link?: LinkMark;
+  colour?: string;
 }
 
 const hasMark = (marks: Marks, name: MarkName): boolean =>
@@ -376,9 +388,10 @@ const hasMark = (marks: Marks, name: MarkName): boolean =>
  */
 function spacesOutside(pieces: readonly Inline[]): Inline[] {
   const out: Inline[] = [];
-  // Spaces may stand inside raised and lowered text (escaped), so they keep those.
+  // Spaces may stand inside coloured words, and raised and lowered text (escaped), so they keep those.
   const kept = (a: Marks): Marks => ({
     ...(a.hidden ? { hidden: true } : {}),
+    ...(a.colour ? { colour: a.colour } : {}),
     ...(a.sup ? { sup: true } : {}),
     ...(a.sub ? { sub: true } : {}),
   });
@@ -434,6 +447,8 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
     if (open.name === 'link') {
       const link = open.link!;
       out += `](${writeDestination(link.href)}${writeTitle(link.title)})`;
+    } else if (open.name === 'colour') {
+      out += `]{color=${open.colour!}}`;
     } else {
       out += open.delimiter;
     }
@@ -455,7 +470,11 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
     while (keep < stack.length) {
       const open = stack[keep]!;
       const still =
-        open.name === 'link' ? sameLink(open.link, marks.link) : hasMark(marks, open.name);
+        open.name === 'link'
+          ? sameLink(open.link, marks.link)
+          : open.name === 'colour'
+            ? open.colour === marks.colour
+            : hasMark(marks, open.name);
       if (!still) break;
       keep++;
     }
@@ -470,6 +489,11 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
       if (name === 'link') {
         out += '[';
         stack.push({ name, delimiter: '[', link: marks.link! });
+        continue;
+      }
+      if (name === 'colour') {
+        out += '[';
+        stack.push({ name, delimiter: '[', colour: marks.colour! });
         continue;
       }
       out += delimiterFor(name, marks, lastChar());
@@ -544,7 +568,11 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
  * delimiter never follows another of the same character, where the two
  * would read as one.
  */
-function delimiterFor(name: Exclude<MarkName, 'link'>, marks: Marks, before: string | undefined) {
+function delimiterFor(
+  name: Exclude<MarkName, 'link' | 'colour'>,
+  marks: Marks,
+  before: string | undefined,
+) {
   if (name === 's') return '~~';
   if (name === 'sup') return '^';
   if (name === 'sub') return '~';
@@ -699,6 +727,7 @@ function tidyMarks(marks: Marks): Marks {
   if (marks.hidden) out.hidden = true;
   if (marks.sup) out.sup = true;
   if (marks.sub) out.sub = true;
+  if (marks.colour) out.colour = marks.colour;
   if (marks.link) out.link = marks.link;
   return out;
 }

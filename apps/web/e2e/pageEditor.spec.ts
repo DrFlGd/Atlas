@@ -139,13 +139,16 @@ test('switches to Markdown and back; a page opened and saved unchanged stays the
   expect((await stored(page))?.pages ?? []).toEqual([]);
 });
 
-/** A page as the wiki importer writes one: raised text, a note, line breaks in a cell, a hidden table. */
+/**
+ * A page as the wiki importer writes one: raised and coloured text, a note,
+ * line breaks in a cell, a hidden table.
+ */
 const MARKED = [
-  'Wolves^\\[a\\]^ hunt in packs of 3~to~5 in the woods.',
+  'Wolves^\\[a\\]^ hunt in packs of 3~to~5 in the [woods]{color=#f0d60d}.',
   '',
   '| Pack | Where | When |',
   '| --- | --- | --- |',
-  '| 3^DLC^ | Woods<br>edge | Day |',
+  '| 3^[DLC]{color=#82c936}^ | Woods<br>edge | Day |',
   '| \\|\\|5\\|\\| | Deep woods | Night |',
   '',
   '||',
@@ -173,7 +176,7 @@ async function serveWolves(page: Page, body: string): Promise<void> {
   });
 }
 
-test('keeps raised text, line breaks in cells and a hidden table as the page is edited', async ({
+test('keeps raised and coloured text, line breaks in cells and a hidden table as the page is edited', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -185,16 +188,36 @@ test('keeps raised text, line breaks in cells and a hidden table as the page is 
   await expect(shown.locator('p sub')).toHaveText('to');
   await expect(shown.locator('td').filter({ hasText: 'Woods' }).locator('br')).toHaveCount(1);
   await expect(shown.locator('table').nth(1)).toBeHidden();
+  // Coloured words: as written where they read (bright words on the dark theme), darker on the light one.
+  const woods = shown.locator('p .text-colour');
+  await expect(woods).toHaveText('woods');
+  await expect(woods).toHaveCSS('color', 'rgb(240, 214, 13)');
+  await page.evaluate(() => {
+    document.documentElement.setAttribute('data-theme', 'light');
+  });
+  await expect(woods).toHaveCSS('color', 'rgb(119, 106, 6)');
+  await page.evaluate(() => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  });
+  await expect(shown.locator('td sup .text-colour')).toHaveCSS('color', 'rgb(130, 201, 54)');
   await editPage(page);
 
   // The text tools show the marks as they read, and the hidden table as Markdown.
   await expect(page.getByTestId('paragraph-field').first().locator('sup')).toHaveText('[a]');
+  await expect(page.getByTestId('paragraph-field').first().locator('.text-colour')).toHaveCSS(
+    'color',
+    'rgb(240, 214, 13)',
+  );
   await expect(page.getByTestId('table-cell').filter({ hasText: '3' }).locator('sup')).toHaveText(
     'DLC',
   );
   await expect(page.getByTestId('markdown-block')).toHaveValue(
     '||\n\n| History |\n| --- |\n| 1.2: added |\n\n||',
   );
+  // The paragraph typed in: written anew, its marks and colour kept.
+  await page.getByTestId('paragraph-field').first().click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' Beware.');
   // A cell edited, and a line break typed in another (Shift+Enter): those rows are written anew.
   await page.getByTestId('table-cell').filter({ hasText: /^Day$/ }).click();
   await page.keyboard.press('End');
@@ -207,10 +230,9 @@ test('keeps raised text, line breaks in cells and a hidden table as the page is 
   await page.keyboard.press('Shift+Enter');
   await page.keyboard.type('late');
   // The Markdown view has the page as it now is, marks and all.
-  const expected = MARKED.replace('| Day |', '| Day too |').replace(
-    '| Night |',
-    '| Night<br>late |',
-  );
+  const expected = MARKED.replace('| Day |', '| Day too |')
+    .replace('| Night |', '| Night<br>late |')
+    .replace('{color=#f0d60d}.', '{color=#f0d60d}. Beware.');
   await page.getByTestId('mode-markdown').click();
   await expect(page.getByTestId('markdown-text')).toHaveValue(expected);
   await page.getByTestId('mode-formatted').click();
@@ -219,6 +241,7 @@ test('keeps raised text, line breaks in cells and a hidden table as the page is 
   await expect.poll(async () => (await stored(page))?.pages[0]?.body).toBe(expected);
   await expect(shown.locator('td').filter({ hasText: 'late' }).locator('br')).toHaveCount(1);
   await expect(shown.locator('td sup')).toHaveText('DLC');
+  await expect(shown.locator('td sup .text-colour')).toHaveCSS('color', 'rgb(130, 201, 54)');
   expect(errors).toEqual([]);
 });
 

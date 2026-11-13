@@ -115,11 +115,11 @@ Text after.
 `;
 
 /** A page as the wiki importer writes one: raised text, notes, cells with line breaks, a hidden table. */
-const FROM_A_WIKI = `The Vale^\\[a\\]^ is reached by boat.
+const FROM_A_WIKI = `The [Vale]{color=#b8714a}^\\[a\\]^ is reached by boat.
 
 | Area | Level | Damage |
 | --- | --- | --- |
-| Old Vale^DLC^ | 2 | 82 DPS<br>16.4 a hit |
+| Old Vale^[DLC]{color=#82c936}^ | 2 | 82 DPS<br>16.4 a hit |
 | \\|\\|Hidden Hall^DLC^\\|\\| | \\|\\|7\\|\\| | 1<br>2<br>3 |
 
 > A quote with a break  
@@ -281,13 +281,17 @@ describe('a page from a wiki', () => {
     expect(blocks[3]!.source).toBe('||\n\n| History |\n| --- |\n| 1.2: changed |\n\n||');
   });
 
-  it('keeps raised text and line breaks of a table row it writes anew', () => {
+  it('keeps raised and coloured text and line breaks of a table row it writes anew', () => {
     const source = splitBlocks(FROM_A_WIKI).blocks[1]!.source;
     const table = readBlock(source) as TableModel;
     table.rows[0]![1] = [{ kind: 'text', text: '3', marks: {} }];
     const written = writeBlock(table, source);
-    expect(written.split('\n')[2]).toBe('| Old Vale^DLC^ | 3 | 82 DPS<br>16.4 a hit |');
-    expect(render(written)).toContain('<td>Old Vale<sup>DLC</sup></td>');
+    expect(written.split('\n')[2]).toBe(
+      '| Old Vale^[DLC]{color=#82c936}^ | 3 | 82 DPS<br>16.4 a hit |',
+    );
+    expect(render(written)).toContain(
+      '<td>Old Vale<sup><span class="text-colour" data-text-colour="#82c936">DLC</span></sup></td>',
+    );
     expect(render(written)).toContain('<td>82 DPS<br>\n16.4 a hit</td>');
   });
 });

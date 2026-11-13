@@ -1423,6 +1423,19 @@ label.tree-row:hover,
   cursor: help;
 }
 
+/*
+ * Coloured words of a guide ([like this]{color=#b8714a}): each theme's
+ * colour is set by the page, made readable on its backgrounds (see
+ * textColour.ts); until then, the text's own colour.
+ */
+.text-colour {
+  color: var(--text-colour-dark, currentColor);
+}
+
+:root[data-theme='light'] .text-colour {
+  color: var(--text-colour-light, currentColor);
+}
+
 /* Hidden text (||like this||): a button where it begins, until pressed. */
 .hidden-text-show {
   display: inline-block;

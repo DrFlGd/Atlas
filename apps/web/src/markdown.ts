@@ -38,6 +38,11 @@ import { markdownMarks } from './markdownMarks';
  *   break in a table cell, the exact text `<br>` (see `markdownMarks.ts`):
  *   the renderer makes the tags, as for any other mark; the text holds no
  *   HTML of its own.
+ * - Coloured words, `[like this]{color=#b8714a}` (see `markdownMarks.ts`):
+ *   a `span` whose one attribute of the text's own is the colour, checked
+ *   to be `#` and six hexadecimal digits, as `data-text-colour`; the page
+ *   shows it readable in both themes (see `textColour.ts`). No `style`
+ *   attribute is ever written.
  */
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: true });
 markdown.use(markdownMarks);
