@@ -8,8 +8,11 @@ import MarkdownIt, { type Token } from 'markdown-it';
  *   through, so the output contains only tags the renderer itself creates.
  * - markdown-it's link validation drops `javascript:`, `vbscript:`, `file:`
  *   and `data:` link targets.
- * - Images are not rendered (their alt text is kept), so a guide cannot make
- *   the app fetch remote content.
+ * - A picture is shown only when its target is the id of a picture of the
+ *   pack (`![the gate](demo:picture:gate)`, see
+ *   {@link MarkdownOptions.picture}), from the pack's own folder. Any other
+ *   image is shown as its alternative text, so a guide cannot make the app
+ *   fetch remote content.
  * - Links open in a new tab with `rel="noopener noreferrer"`.
  * - A link whose target is a content id, such as `[the old well](demo:loc:0412)`,
  *   is an in-app link (see {@link MarkdownOptions.isAppTarget}): it becomes a
@@ -25,11 +28,22 @@ import MarkdownIt, { type Token } from 'markdown-it';
  *   partner, bars in code and escaped bars stay plain text.
  */
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: true });
-markdown.disable('image');
+
+/** A picture of the pack, as a guide shows it. */
+export interface GuidePicture {
+  /** Where the app loads it: in the pack's own folder. */
+  url: string;
+  caption?: string;
+  credit?: string;
+  width?: number;
+  height?: number;
+}
 
 export interface MarkdownOptions {
   /** Whether an in-app link to this content id can be followed. */
   isAppTarget?: (id: string) => boolean;
+  /** The pack's picture with this id, or null when the pack has none. */
+  picture?: (id: string) => GuidePicture | null;
 }
 
 interface AppLinkMeta {
@@ -69,6 +83,51 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Pictures: only the pack's own, by id
+
+interface PictureMeta {
+  alt: string;
+  picture: GuidePicture | null;
+}
+
+markdown.core.ruler.push('atlas_pictures', (state) => {
+  const pictureOf = (state.env as MarkdownOptions | undefined)?.picture;
+  for (const block of state.tokens) {
+    if (block.type !== 'inline' || !block.children) continue;
+    for (const token of block.children) {
+      if (token.type !== 'image') continue;
+      const src = String(token.attrGet('src') ?? '');
+      const alt = token.children ? altText(token.children) : token.content;
+      const picture = parseId(src)?.kind === 'picture' ? (pictureOf?.(src) ?? null) : null;
+      token.type = 'atlas_picture';
+      token.meta = { alt, picture } satisfies PictureMeta;
+      token.children = null;
+    }
+  }
+});
+
+function altText(tokens: readonly Token[]): string {
+  return tokens.map((token) => (token.children ? altText(token.children) : token.content)).join('');
+}
+
+markdown.renderer.rules.atlas_picture = (tokens, index) => {
+  const { alt, picture } = tokens[index]!.meta as unknown as PictureMeta;
+  const escape = markdown.utils.escapeHtml;
+  if (!picture) {
+    // Never fetched: what the picture shows, in words.
+    return alt ? `<span class="picture-alt">${escape(alt)}</span>` : '';
+  }
+  const size =
+    picture.width && picture.height ? ` width="${picture.width}" height="${picture.height}"` : '';
+  const note = [picture.caption, picture.credit].filter(Boolean).join(' · ');
+  return (
+    `<span class="guide-picture"><img src="${escape(picture.url)}" alt="${escape(alt)}"${size} loading="lazy" decoding="async">` +
+    (note ? `<span class="guide-picture-note">${escape(note)}</span>` : '') +
+    '</span>'
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Hidden text: ||like this||
@@ -268,6 +327,44 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
 /** HTML for a guide body. Safe to insert with `innerHTML`. */
 export function renderGuideMarkdown(source: string, options: MarkdownOptions = {}): string {
   return markdown.render(source, { ...options });
+}
+
+/**
+ * The words of a guide body as it reads before anything hidden is shown,
+ * read with the renderer itself, so hidden text is left out exactly as the
+ * page hides it: for searching pages and quoting a line of them.
+ */
+export function guideSearchText(source: string): string {
+  const words: string[] = [];
+  let hiddenBlocks = 0;
+  for (const block of markdown.parse(source, {})) {
+    if (hiddenBlocks > 0) {
+      hiddenBlocks += block.nesting;
+      continue;
+    }
+    if (block.attrGet('hidden') !== null) {
+      // A whole block inside a hidden part; its close comes with it.
+      hiddenBlocks = block.nesting === 1 ? 1 : 0;
+      continue;
+    }
+    if (block.type === 'fence' || block.type === 'code_block') {
+      if (metaOf(block).hiddenPart === undefined) words.push(block.content);
+      continue;
+    }
+    if (block.type !== 'inline' || !block.children) continue;
+    let hidden = 0;
+    for (const token of block.children) {
+      if (token.type === 'hidden_text_open') hidden++;
+      else if (token.type === 'hidden_text_close') hidden--;
+      else if (hidden > 0) continue;
+      else if (token.type === 'text' || token.type === 'code_inline') words.push(token.content);
+      else if (token.type === 'atlas_picture')
+        words.push((token.meta as unknown as PictureMeta).alt);
+      else if (token.type === 'softbreak' || token.type === 'hardbreak') words.push(' ');
+    }
+    words.push(' ');
+  }
+  return words.join('').replace(/\s+/g, ' ').trim();
 }
 
 /**

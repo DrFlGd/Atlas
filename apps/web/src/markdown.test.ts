@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderGuideMarkdown } from './markdown';
+import { guideSearchText, renderGuideMarkdown } from './markdown';
 
 describe('renderGuideMarkdown', () => {
   it('renders ordinary Markdown', () => {
@@ -172,5 +172,74 @@ describe('hidden text', () => {
     );
     expect(html).not.toMatch(/<img|href="javascript|onerror="/);
     expect(html).toContain('&lt;img');
+  });
+});
+
+describe('pictures', () => {
+  const pictures = new Map([
+    [
+      'demo:picture:gate',
+      { url: 'https://app.test/packs/demo/pictures/gate.png', caption: 'The gate', credit: 'Ann' },
+    ],
+  ]);
+  const options = { picture: (id: string) => pictures.get(id) ?? null };
+
+  it('shows a picture of the pack by its id, with its caption and credit', () => {
+    const html = renderGuideMarkdown('See ![the old gate](demo:picture:gate).', options);
+    expect(html).toContain(
+      '<img src="https://app.test/packs/demo/pictures/gate.png" alt="the old gate" loading="lazy" decoding="async">',
+    );
+    expect(html).toContain('<span class="guide-picture-note">The gate · Ann</span>');
+  });
+
+  it('never loads any other picture: it shows what it shows in words', () => {
+    const html = renderGuideMarkdown(
+      '![a tracking pixel](https://example.test/p.png) ![gone](demo:picture:gone) ![](demo:picture:none) ![a map](demo:loc:0412) ![*x*](//example.test/p.png "t")',
+      options,
+    );
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('example.test');
+    expect(html).toContain('<span class="picture-alt">a tracking pixel</span>');
+    expect(html).toContain('<span class="picture-alt">gone</span>');
+    expect(html).toContain('<span class="picture-alt">a map</span>');
+    expect(html).toContain('<span class="picture-alt">x</span>');
+  });
+
+  it('shows nothing but words without the pack’s pictures', () => {
+    expect(renderGuideMarkdown('![the old gate](demo:picture:gate)')).toBe(
+      '<p><span class="picture-alt">the old gate</span></p>\n',
+    );
+  });
+
+  it('escapes what it writes', () => {
+    const odd = {
+      picture: () => ({ url: 'x" onerror="alert(1)', caption: '<b>c</b>' }),
+    };
+    const html = renderGuideMarkdown('![a"b](demo:picture:gate)', odd);
+    expect(html).not.toContain('onerror="alert');
+    expect(html).toContain('alt="a&quot;b"');
+    expect(html).toContain('&lt;b&gt;c&lt;/b&gt;');
+  });
+
+  it('hides a picture inside hidden text with it', () => {
+    const html = renderGuideMarkdown('Look: ||![the gate](demo:picture:gate)||', options);
+    expect(html).toMatch(
+      /<span class="hidden-text" data-hidden-part="1" hidden=""><span class="guide-picture"><img/,
+    );
+  });
+});
+
+describe('guideSearchText', () => {
+  it('reads the words as shown, without hidden text, targets or marks', () => {
+    expect(
+      guideSearchText(
+        '## Tower\n\nClimb [the stairs](demo:loc:1) ![a bell](demo:picture:bell) and `code`.\n\n| A | B |\n| - | - |\n| one | ||two|| |\n\n||Whole\n\nparagraphs||\n\n    indented || code\n\nend ||secret||',
+      ),
+    ).toBe('Tower Climb the stairs a bell and code. A B one indented || code end');
+  });
+
+  it('pairs bars as the page does', () => {
+    expect(guideSearchText('a ||b|| c || d')).toBe('a c || d');
+    expect(guideSearchText('```\n||\n```\n\n||secret|| shown')).toBe('|| shown');
   });
 });
