@@ -14,6 +14,7 @@ export * from './checklists/checklists';
 export * from './checklists/facets';
 export * from './checklists/views';
 export * from './checklists/listTypes';
+export * from './checklists/ownLists';
 export * from './progress/records';
 export * from './progress/store';
 export * from './progress/memoryStore';

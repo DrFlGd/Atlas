@@ -151,9 +151,15 @@ export interface GroupTally {
 }
 
 function tallyOf(key: string, indices: readonly number[], states: readonly ItemState[]) {
+  // An optional step does not count, as in the list's own figure.
   let found = 0;
-  for (const i of indices) if (states[i]!.done) found++;
-  return { key, found, total: indices.length };
+  let total = 0;
+  for (const i of indices) {
+    if (states[i]!.optional) continue;
+    total++;
+    if (states[i]!.done) found++;
+  }
+  return { key, found, total };
 }
 
 /** The tally of each area, in the order of `areas.keys`. */
@@ -371,15 +377,19 @@ export function stageOf(stages: readonly Stage[], index: number): Stage | undefi
 /**
  * The step to do next: the first one not done at or after `from`, going
  * round to the start; null when every step is done. `from` moves on when a
- * step is skipped.
+ * step is skipped. An optional step is passed over: it never holds the
+ * route up, so a list whose steps left are all optional has none.
  */
-export function nextStep(states: readonly Pick<ItemState, 'done'>[], from = 0): number | null {
+export function nextStep(
+  states: readonly Pick<ItemState, 'done' | 'optional'>[],
+  from = 0,
+): number | null {
   const n = states.length;
   if (n === 0) return null;
   const start = ((from % n) + n) % n;
   for (let step = 0; step < n; step++) {
     const index = (start + step) % n;
-    if (!states[index]!.done) return index;
+    if (!states[index]!.done && !states[index]!.optional) return index;
   }
   return null;
 }
@@ -439,7 +449,7 @@ export interface OrderOptions {
  * highlighted step's stage, or first when it has none.
  */
 export function orderRows(
-  states: readonly Pick<ItemState, 'done'>[],
+  states: readonly Pick<ItemState, 'done' | 'optional'>[],
   stages: readonly Stage[],
   options: OrderOptions,
 ): OrderRow[] {
@@ -486,10 +496,15 @@ export function orderRows(
   return rows;
 }
 
-function stageTally(stage: Stage, states: readonly Pick<ItemState, 'done'>[]) {
+function stageTally(stage: Stage, states: readonly Pick<ItemState, 'done' | 'optional'>[]) {
   let done = 0;
-  for (let i = stage.start; i < stage.end; i++) if (states[i]!.done) done++;
-  return { done, total: stage.end - stage.start };
+  let total = 0;
+  for (let i = stage.start; i < stage.end; i++) {
+    if (states[i]!.optional) continue;
+    total++;
+    if (states[i]!.done) done++;
+  }
+  return { done, total };
 }
 
 /** What a hidden part of a note reads as where the note is one plain line. */
