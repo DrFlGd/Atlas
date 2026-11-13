@@ -131,7 +131,7 @@ export function ProgressTools() {
       <ToolRow
         icon="user"
         title="Profiles, export and import"
-        detail={`Shown: ${profileName}`}
+        detail={`Progress kept apart for each playthrough, to export or import. Shown: ${profileName}`}
         testId="profiles-row"
         onClick={() => {
           setProfileDialogOpen(true);

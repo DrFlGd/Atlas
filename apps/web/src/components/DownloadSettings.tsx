@@ -143,6 +143,12 @@ function SettingsForm({
           }}
         />
       </div>
+      <p className="muted small">
+        Parallel downloads is how many images are fetched at the same time. Pause after each image
+        is how long each one waits before the next request. A ticked At most limits the images a
+        minute, or the kilobytes a second. Save settings keeps them for every Atlas app on this
+        computer.
+      </p>
       <div className="row-actions">
         <button
           type="submit"

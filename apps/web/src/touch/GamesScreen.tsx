@@ -221,11 +221,16 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
   return (
     <section aria-labelledby="settings-heading" className="touch-settings">
       <GroupTitle id="settings-heading">Settings</GroupTitle>
-      <div className="touch-setting-row">
+      <div className="touch-setting-row touch-setting-row-noted">
         <span className="touch-setting-label" id="theme-label">
           Theme
         </span>
-        <div className="touch-segmented" role="group" aria-labelledby="theme-label">
+        <div
+          className="touch-segmented"
+          role="group"
+          aria-labelledby="theme-label"
+          aria-describedby="theme-note"
+        >
           {(['dark', 'light'] as const).map((value) => (
             <button
               key={value}
@@ -240,6 +245,9 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
             </button>
           ))}
         </div>
+        <span className="touch-switch-note touch-setting-note" id="theme-note">
+          Dark or light colours for the whole app, the map included.
+        </span>
       </div>
       {layoutOffered ? (
         <div className="touch-setting-row touch-setting-row-noted" data-testid="layout-setting">
