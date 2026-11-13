@@ -17,6 +17,7 @@ import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
+import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
 import { loadOwnLists } from './state/ownLists';
 import { initSaves } from './state/saves';
 import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
@@ -70,6 +71,12 @@ export function App() {
   // The person's own lists of the game, read when the game opens.
   useEffect(() => {
     if (game) void loadOwnLists(game);
+  }, [game]);
+  // Their links between guide pages and the map, and other games with pages to read with it.
+  useEffect(() => {
+    if (!game) return;
+    void loadGuideLinks(game);
+    void lookForGuideGames(game);
   }, [game]);
 
   useViewHashSync();

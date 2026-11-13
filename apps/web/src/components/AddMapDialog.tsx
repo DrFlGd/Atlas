@@ -726,6 +726,8 @@ function Run({
             : `${run.leftOut} addresses were left out, because this app cannot add maps from them.`}
         </p>
       ) : null}
+      {/* Pages chosen beyond this go: how many are left, and the next go. */}
+      {!running ? <QueuedPages /> : null}
       {!running && games.size > 0 ? (
         <p className="muted small" data-testid="add-map-images-note">
           {__ATLAS_DOWNLOADS__ && downloadable

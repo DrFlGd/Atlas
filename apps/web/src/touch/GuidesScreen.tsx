@@ -3,8 +3,13 @@ import type { GuideEntry, GuideSource, Section } from '@atlas/schema';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
-import { guidesOf } from '../state/guides';
+import { useGuideLinks } from '../state/guideLinks';
+import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
+import { guidesOf, hasMap } from '../state/guides';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { GuideLinksReview } from './GuideLinksReview';
+import { GuidesFromGames } from './GuidesFromGames';
+import { showPageOnMap } from './listViews';
 import {
   canGoBack,
   canGoForward,
@@ -55,6 +60,8 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
 
 function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
   const reader = useReader();
+  // Pages of other games, and the links, change what is shown.
+  useGuideLinks((s) => s.others);
   const place = currentPlace(reader);
   const body = useRef<HTMLDivElement>(null);
   const { contents } = guidesOf(game);
@@ -129,7 +136,9 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
             <SearchField game={game} />
           ) : null}
           {place.kind === 'page' ? (
-            <Page guide={contents.guide(place.guideId)} />
+            <Page game={game} guide={contents.guide(place.guideId)} />
+          ) : place.kind === 'links' ? (
+            <GuideLinksReview game={game} />
           ) : place.kind === 'search' ? (
             <SearchResults game={game} query={place.query} />
           ) : (
@@ -141,6 +150,8 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
   );
 }
 
+const LINKS_TITLE = 'Link pages to the map';
+
 function placeTitle(game: LoadedGame, place: ReaderPlace): string {
   const { contents } = guidesOf(game);
   switch (place.kind) {
@@ -148,6 +159,8 @@ function placeTitle(game: LoadedGame, place: ReaderPlace): string {
       return contents.guide(place.guideId)?.title ?? 'Page';
     case 'search':
       return 'Search';
+    case 'links':
+      return LINKS_TITLE;
     case 'contents':
       return place.sectionId
         ? (contents.section(place.sectionId)?.title ?? 'Contents')
@@ -169,9 +182,11 @@ function Breadcrumbs({ game, place }: { game: LoadedGame; place: ReaderPlace }) 
   const here =
     place.kind === 'search'
       ? 'Search'
-      : place.kind === 'contents' && place.sectionId
-        ? (contents.section(place.sectionId)?.title ?? null)
-        : null;
+      : place.kind === 'links'
+        ? LINKS_TITLE
+        : place.kind === 'contents' && place.sectionId
+          ? (contents.section(place.sectionId)?.title ?? null)
+          : null;
   return (
     <nav className="guides-crumbs" aria-label="Where this is">
       {atTop ? (
@@ -228,8 +243,22 @@ function ContentsPlace({ game, sectionId }: { game: LoadedGame; sectionId: strin
     <div className="guides-contents" data-testid="guides-contents">
       <h1 className="guides-title">{section ? section.title : game.pack.manifest.title}</h1>
       {section ? null : <p className="guides-lead">Contents</p>}
+      {!section && canLinkPages(game) ? (
+        <button
+          type="button"
+          className="touch-button guides-link-button"
+          data-testid="open-guide-links"
+          onClick={() => {
+            openPlace({ kind: 'links' });
+          }}
+        >
+          <UiIcon name="pin" size={18} strokeWidth={1.8} />
+          {LINKS_TITLE}
+        </button>
+      ) : null}
       {entries.length === 0 ? <p className="touch-empty">Nothing here yet.</p> : null}
       <EntryList entries={entries} />
+      {!section && hasMap(game) ? <GuidesFromGames game={game} /> : null}
     </div>
   );
 }
@@ -364,14 +393,68 @@ function TreeLevel({
 // ---------------------------------------------------------------------------
 // A page
 
-function Page({ guide }: { guide: GuideEntry | undefined }) {
+function Page({ game, guide }: { game: LoadedGame; guide: GuideEntry | undefined }) {
   if (!guide) return <p className="touch-empty">This page is not in this game any more.</p>;
   return (
     <article className="guides-page" data-testid="guides-page" data-guide={guide.id}>
       <h1 className="guides-title">{guide.title}</h1>
+      {guide.source && hasMap(game) ? <OnTheMap game={game} guide={guide} /> : null}
       <MarkdownBody source={guide.body} className="guide-body guides-page-body" />
       {guide.source ? <Credit source={guide.source} title={guide.title} /> : null}
     </article>
+  );
+}
+
+/**
+ * What a page is linked to on the map ("On the map: 44 locations"), with
+ * "Show on the map"; or, for a page not linked yet, the way to link it.
+ */
+function OnTheMap({ game, guide }: { game: LoadedGame; guide: GuideEntry }) {
+  const choice = useGuideLinks((s) =>
+    s.gameId === game.pack.manifest.gameId ? s.links.choices[guide.id] : undefined,
+  );
+  const targets = linkedTargets(game, choice);
+  if (choice?.state !== 'linked' || targets.length === 0) {
+    if (choice?.state === 'skipped') return null;
+    return (
+      <p className="guides-on-map guides-on-map-none" data-testid="guides-on-map">
+        Not linked to the map.{' '}
+        <button
+          type="button"
+          className="guides-inline-button"
+          onClick={() => {
+            openPlace({ kind: 'links' });
+          }}
+        >
+          {LINKS_TITLE}
+        </button>
+      </p>
+    );
+  }
+  const count = new Set(targets.flatMap((t) => t.locations)).size;
+  return (
+    <div className="guides-on-map" data-testid="guides-on-map">
+      <p className="guides-on-map-text">
+        <UiIcon name="pin" size={18} strokeWidth={1.8} />
+        <span>
+          <strong>On the map: {locationsText(count)}</strong>
+          <span className="muted"> · {targets.map(targetText).join(', ')}</span>
+        </span>
+      </p>
+      {count > 0 ? (
+        <button
+          type="button"
+          className="touch-button guides-on-map-button"
+          data-testid="show-page-on-map"
+          onClick={() => {
+            showPageOnMap(game, guide.id, guide.title);
+          }}
+        >
+          <UiIcon name="map" size={18} />
+          Show on the map
+        </button>
+      ) : null}
+    </div>
   );
 }
 

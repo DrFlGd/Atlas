@@ -66,6 +66,8 @@ const COMMANDS: &[&str] = &[
     "own_locations_delete",
     "list_file_save",
     "list_file_open",
+    "guide_links_read",
+    "guide_links_write",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

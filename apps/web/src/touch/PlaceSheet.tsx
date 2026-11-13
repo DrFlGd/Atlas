@@ -5,7 +5,10 @@ import { MarkdownBody } from '../components/MarkdownBody';
 import { goToLocation, jumpToNearestUnfound, notify, select } from '../state/actions';
 import { openChecklistItem, openGuide, showItemPlace } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
+import { pagesAt } from '../state/guideMatches';
+import { useGuideLinks } from '../state/guideLinks';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { FromTheWiki } from './FromTheWiki';
 import { listById } from './listViews';
 import { nextOnList } from './ordering';
 import { markFound, setPlaceExpanded, useKeyHints, useTouch } from './state';
@@ -236,9 +239,13 @@ function DetailsSummary({ game, locationId }: { game: LoadedGame; locationId: st
   const items = checklists.itemsAt(locationId);
   const lists = new Set(items.map((i) => checklists.checklistOf(i.item.id)?.checklist.id)).size;
   const guides = checklists.guidesAt(locationId).filter((g) => g.id !== guide?.id).length;
+  // Pages linked to the map (see `FromTheWiki`).
+  useGuideLinks((s) => s.links.choices);
+  const wiki = pagesAt(game, locationId).length > 0;
   const more = [
     lists > 0 ? `on ${lists === 1 ? '1 checklist' : `${lists} checklists`}` : null,
     guides > 0 ? `in ${guides === 1 ? '1 guide' : `${guides} guides`}` : null,
+    wiki ? 'from the wiki' : null,
   ].filter((part) => part !== null);
   return (
     <>
@@ -288,6 +295,7 @@ function PlaceDetails({
           />
         </section>
       ) : null}
+      <FromTheWiki game={game} locationId={locationId} />
       {items.length > 0 || guides.length > 0 ? (
         <ul className="touch-plain-list place-lists" data-testid="place-lists">
           {items.map((entry) => {

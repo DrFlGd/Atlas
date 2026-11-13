@@ -1,7 +1,8 @@
-import { GuideContents, GuideSearch, type LoadedPack } from '@atlas/core';
-import type { GuideEntry } from '@atlas/schema';
+import { GuideContents, GuideSearch, guidesTogether, type LoadedPack } from '@atlas/core';
+import type { GuideEntry, Picture } from '@atlas/schema';
 import type { GuidePicture } from '../markdown';
 import { guideSearchText } from '../markdown';
+import { useGuideLinks, useGuideGamesOffered, type OtherGuides } from './guideLinks';
 import type { LoadedGame } from './store';
 
 /**
@@ -15,34 +16,70 @@ export interface GameGuides {
   pictures: ReadonlyMap<string, GuidePicture>;
 }
 
-const known = new WeakMap<LoadedPack, GameGuides>();
+const known = new WeakMap<LoadedPack, { others: readonly OtherGuides[]; guides: GameGuides }>();
+const NO_OTHERS: readonly OtherGuides[] = [];
+
+/**
+ * The other games whose guides are read with this game's (see
+ * `guideLinks.ts`): none until the game's links are read.
+ */
+export function otherGuidesOf(game: LoadedGame): readonly OtherGuides[] {
+  const links = useGuideLinks.getState();
+  return links.gameId === game.pack.manifest.gameId ? links.others : NO_OTHERS;
+}
+
+const pictureOfPack = (pack: LoadedPack, picture: Picture): [string, GuidePicture] => [
+  picture.id,
+  {
+    url: pack.resolveUrl(picture.file),
+    ...(picture.caption ? { caption: picture.caption } : {}),
+    ...(picture.credit ? { credit: picture.credit } : {}),
+    ...(picture.width && picture.height ? { width: picture.width, height: picture.height } : {}),
+  },
+];
 
 export function guidesOf(game: LoadedGame): GameGuides {
-  let guides = known.get(game.pack);
-  if (!guides) {
-    const contents = new GuideContents(game.pack);
-    const pictures = new Map(
-      (game.pack.data.pictures ?? []).map((picture) => [
-        picture.id,
-        {
-          url: game.pack.resolveUrl(picture.file),
-          ...(picture.caption ? { caption: picture.caption } : {}),
-          ...(picture.credit ? { credit: picture.credit } : {}),
-          ...(picture.width && picture.height
-            ? { width: picture.width, height: picture.height }
-            : {}),
-        },
-      ]),
-    );
-    // Read with the renderer itself, so hidden text is never found or quoted.
-    guides = {
-      contents,
-      search: new GuideSearch(contents.browsable ? contents.pages() : [], guideSearchText),
-      pictures,
-    };
-    known.set(game.pack, guides);
-  }
+  const others = otherGuidesOf(game);
+  const cached = known.get(game.pack);
+  if (cached?.others === others) return cached.guides;
+  const contents = new GuideContents(
+    guidesTogether(
+      game.pack,
+      others.map((other) => ({
+        gameId: other.gameId,
+        title: other.title,
+        data: other.pack.data,
+      })),
+    ),
+  );
+  // Each picture from its own pack's folder.
+  const pictures = new Map([
+    ...(game.pack.data.pictures ?? []).map((picture) => pictureOfPack(game.pack, picture)),
+    ...others.flatMap((other) =>
+      (other.pack.data.pictures ?? []).map((picture) => pictureOfPack(other.pack, picture)),
+    ),
+  ]);
+  // Read with the renderer itself, so hidden text is never found or quoted.
+  const guides: GameGuides = {
+    contents,
+    search: new GuideSearch(contents.browsable ? contents.pages() : [], guideSearchText),
+    pictures,
+  };
+  known.set(game.pack, { others, guides });
   return guides;
+}
+
+/**
+ * Whether the Guides section is there: the game's guides can be read as
+ * pages, or (a game with a map) other games on this device have pages to
+ * read with it. Follows the guides of other games as they load.
+ */
+export function useGuidesSection(game: LoadedGame | null): boolean {
+  useGuideLinks((s) => s.others);
+  const offered = useGuideGamesOffered(
+    (s) => game !== null && s.gameId === game.pack.manifest.gameId && s.offered,
+  );
+  return hasGuidePages(game) || (offered && hasMap(game));
 }
 
 /** Whether a game has a map: a game of guides and lists only has none. */
