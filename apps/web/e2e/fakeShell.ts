@@ -27,6 +27,10 @@ const WIKI_IMPORTER = new URL(
   '../../../packages/importer-api/demo/example-wiki-importer.js',
   import.meta.url,
 );
+const OTHER_WIKIS_IMPORTER = new URL(
+  '../../../packages/importer-api/demo/other-wikis-importer.js',
+  import.meta.url,
+);
 
 /** The made-up Example Wiki that `example-wiki-importer.js` reads, answered by `import_fetch`. */
 export const WIKI = 'https://wiki.example.org/wiki';
@@ -34,8 +38,12 @@ export const WIKI = 'https://wiki.example.org/wiki';
 export interface WikiSite {
   /** The contents: each heading's pages, by slug. */
   headings: { title: string; pages: string[] }[];
-  /** Every page there is, by slug: its title, its text and the slugs it links to. */
-  pages: Record<string, { title: string; body: string; links?: string[] }>;
+  /**
+   * Every page there is, by slug: its title, its text and the slugs it links
+   * to; for a wiki the "Other wikis" importer reads, the deed of the licence
+   * the page states, if any.
+   */
+  pages: Record<string, { title: string; body: string; links?: string[]; licence?: string }>;
   /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
   busy?: string[];
   /**
@@ -162,10 +170,12 @@ function installFakeShell({
   worlds,
   downloads,
   wiki,
+  others,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
   wiki: WikiSite | null;
+  others: Record<string, WikiSite>;
 }) {
   const shell: MockShell = {
     events: [],
@@ -290,22 +300,24 @@ function installFakeShell({
       retryAfter: null,
     });
     const at = new URL(address);
-    if (!wiki || at.origin !== 'https://wiki.example.org') return null;
+    // The Example Wiki, or a wiki only the "Other wikis" importer reads.
+    const site = at.origin === 'https://wiki.example.org' ? wiki : (others[at.hostname] ?? null);
+    if (!site || at.protocol !== 'https:') return null;
     if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nDisallow: /private/');
     const slug = at.pathname.replace(/^\/wiki\//, '');
     if (slug === 'Contents') {
       return answer(200, {
-        headings: wiki.headings.map((heading) => ({
+        headings: site.headings.map((heading) => ({
           title: heading.title,
           pages: heading.pages.map((page) => ({
             slug: page,
-            title: wiki.pages[page]?.title ?? page.replaceAll('_', ' '),
+            title: site.pages[page]?.title ?? page.replaceAll('_', ' '),
           })),
         })),
       });
     }
-    if (wiki.busy?.includes(slug)) return answer(503, 'Busy');
-    const page = wiki.pages[slug];
+    if (site.busy?.includes(slug)) return answer(503, 'Busy');
+    const page = site.pages[slug];
     return page ? answer(200, page) : answer(404, 'Not found');
   };
   /** A wiki page as a window shows it: what its reader would read, in the shape of a fetched page. */
@@ -500,7 +512,14 @@ function installFakeShell({
 export async function setUp(
   page: Page,
   downloads = DOWNLOADS_BUILD,
-  { wiki = null }: { wiki?: WikiSite | null } = {},
+  {
+    wiki = null,
+    others = null,
+  }: {
+    wiki?: WikiSite | null;
+    /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
+    others?: Record<string, WikiSite> | null;
+  } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
   await page.exposeFunction('__writePack', (id: string, files: Record<string, string>) => {
@@ -510,6 +529,7 @@ export async function setUp(
   const wikiImporter = wiki?.inWindow
     ? windowedWikiImporter(await readFile(WIKI_IMPORTER, 'utf8'))
     : await readFile(WIKI_IMPORTER, 'utf8');
+  const otherWikis = await readFile(OTHER_WIKIS_IMPORTER, 'utf8');
   await page.route('**/config.json', async (route) => {
     const response = await route.fetch();
     const config = (await response.json()) as Record<string, unknown>;
@@ -535,6 +555,17 @@ export async function setUp(
                 },
               ]
             : []),
+          ...(others
+            ? [
+                {
+                  id: 'other-wikis',
+                  title: 'Other wikis',
+                  description: 'Reads made-up wikis this app does not know.',
+                  version: '1.0.0',
+                  module: 'importers/other-wikis.js',
+                },
+              ]
+            : []),
         ],
       },
     });
@@ -544,6 +575,9 @@ export async function setUp(
   );
   await page.route('**/importers/example-wiki.js', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: wikiImporter }),
+  );
+  await page.route('**/importers/other-wikis.js', (route) =>
+    route.fulfill({ contentType: 'text/javascript', body: otherWikis }),
   );
   await page.route(`${PACKS}**`, (route) => {
     const [, id = '', name = ''] =
@@ -555,7 +589,12 @@ export async function setUp(
       : route.fulfill({ headers, contentType: 'application/json', body });
   });
   await page.clock.install();
-  await page.addInitScript(installFakeShell, { worlds: WORLDS, downloads, wiki });
+  await page.addInitScript(installFakeShell, {
+    worlds: WORLDS,
+    downloads,
+    wiki,
+    others: others ?? {},
+  });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
 }

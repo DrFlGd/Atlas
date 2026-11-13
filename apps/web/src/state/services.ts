@@ -121,4 +121,6 @@ export const SETTINGS = {
   wikiLeftOut: (importerId: string) => `wikiLeftOut:${importerId}`,
   /** How far a go follows the links of a wiki's pages, as last chosen (see `followLinks.ts`). */
   wikiFollow: (importerId: string) => `wikiFollow:${importerId}`,
+  /** The person's choices for each site of an importer's wikis, by its key: how it is read, the licence they confirmed (see `wikiNotes.ts`). */
+  wikiSites: (importerId: string) => `wikiSites:${importerId}`,
 } as const;

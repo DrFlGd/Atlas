@@ -1,4 +1,12 @@
-import { MAX_PAGE_LINKS, pageKey } from '@atlas/importer-api';
+import {
+  MAX_PAGE_LINKS,
+  MAX_SITE_KEY_CHARS,
+  isConfirmedLicence,
+  isReadingWay,
+  pageKey,
+  type ConfirmedLicence,
+  type ReadingWay,
+} from '@atlas/importer-api';
 import { create } from 'zustand';
 import { DEFAULT_FOLLOW, isFollowLinks, type FollowLinks } from './followLinks';
 import { SETTINGS, progressStore } from './services';
@@ -27,6 +35,12 @@ import { SETTINGS, progressStore } from './services';
  *   before is also hidden from Guides, among the person's own pages.
  * - `wikiFollow:<importer id>`: how far a go follows the links of the
  *   pages it reads (`followLinks.ts`), as the person last chose.
+ * - `wikiSites:<importer id>`: the person's choices for each site of the
+ *   importer, by the key the importer gives the site (`siteInfo` of the
+ *   contract): how its pages are read, among the ways the importer offers
+ *   (`way`), and the Creative Commons licence the person confirmed for a
+ *   site whose pages state none (`licence`). A choice stays until the
+ *   person changes it; the app never changes it by itself.
  *
  * Nothing here is fetched: these are notes on what the person read.
  */
@@ -57,12 +71,21 @@ export interface WikiFailure {
   at: string;
 }
 
+/** The person's choices for one site of an importer. */
+export interface SiteChoices {
+  /** How its pages are read, as the person chose; the importer's first way until then. */
+  way?: ReadingWay;
+  /** The licence the person confirmed for it, when its pages state none. */
+  licence?: ConfirmedLicence;
+}
+
 export interface WikiNotes {
   contents: Record<string, WikiContents>;
   failed: Record<string, WikiFailure>;
   links: Record<string, string[]>;
   leftOut: string[];
   follow: FollowLinks;
+  sites: Record<string, SiteChoices>;
 }
 
 export const NO_WIKI_NOTES: WikiNotes = {
@@ -71,6 +94,7 @@ export const NO_WIKI_NOTES: WikiNotes = {
   links: {},
   leftOut: [],
   follow: DEFAULT_FOLLOW,
+  sites: {},
 };
 
 /**
@@ -84,6 +108,8 @@ const MAX_CONTENTS = 50;
 export const MAX_FAILED = 100_000;
 export const MAX_LINKED_PAGES = 100_000;
 export const MAX_LEFT_OUT = 100_000;
+/** Sites with choices kept, per importer. */
+export const MAX_SITES = 1_000;
 
 export const useWikiNotes = create<{ byImporter: Record<string, WikiNotes> }>()(() => ({
   byImporter: {},
@@ -139,6 +165,28 @@ function readLinks(value: unknown): Record<string, string[]> {
   return kept;
 }
 
+function readSites(value: unknown): Record<string, SiteChoices> {
+  if (!isRecord(value)) return {};
+  const kept: Record<string, SiteChoices> = {};
+  for (const [key, entry] of Object.entries(value).slice(-MAX_SITES)) {
+    if (!isRecord(entry) || key.length > MAX_SITE_KEY_CHARS) continue;
+    const choices: SiteChoices = {
+      ...(isReadingWay(entry.way) ? { way: entry.way } : {}),
+      ...(isConfirmedLicence(entry.licence)
+        ? {
+            licence: {
+              name: entry.licence.name,
+              url: entry.licence.url,
+              confirmedAt: entry.licence.confirmedAt,
+            },
+          }
+        : {}),
+    };
+    if (choices.way || choices.licence) kept[key] = choices;
+  }
+  return kept;
+}
+
 const readLeftOut = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter(isText).slice(0, MAX_LEFT_OUT) : [];
 
@@ -154,13 +202,14 @@ export function loadWikiNotes(importerId: string): Promise<WikiNotes> {
       const store = progressStore();
       const get = (key: string) => store.getSetting(key).catch((): unknown => undefined);
       const prefix = SETTINGS.wikiPageLinksOf(importerId);
-      const [contents, failed, oldLinks, pageLinks, leftOut, follow] = await Promise.all([
+      const [contents, failed, oldLinks, pageLinks, leftOut, follow, sites] = await Promise.all([
         get(SETTINGS.wikiContents(importerId)),
         get(SETTINGS.wikiFailed(importerId)),
         get(SETTINGS.wikiLinks(importerId)),
         store.listSettings(prefix).catch((): { key: string; value: unknown }[] => []),
         get(SETTINGS.wikiLeftOut(importerId)),
         get(SETTINGS.wikiFollow(importerId)),
+        get(SETTINGS.wikiSites(importerId)),
       ]);
       // The record of 0.6.1 first; a record per page, newer, wins.
       const byPage = new Map(Object.entries(readLinks(oldLinks)));
@@ -179,6 +228,7 @@ export function loadWikiNotes(importerId: string): Promise<WikiNotes> {
         links,
         leftOut: readLeftOut(leftOut),
         follow: isFollowLinks(follow) ? follow : DEFAULT_FOLLOW,
+        sites: readSites(sites),
       };
       // The links of 0.6.1 move to a record per page, once, and their old record is emptied.
       if (oldLinks !== undefined && oldLinks !== null) {
@@ -210,6 +260,7 @@ const settingOf = (importerId: string, part: Exclude<keyof WikiNotes, 'links'>) 
     failed: SETTINGS.wikiFailed,
     leftOut: SETTINGS.wikiLeftOut,
     follow: SETTINGS.wikiFollow,
+    sites: SETTINGS.wikiSites,
   })[part](importerId);
 
 /** Pages whose links changed since they were last written, by importer. */
@@ -454,6 +505,41 @@ export function setWikiLeftOut(
 /** Keeps how far a go follows links, as the person chose it for this importer's wikis. */
 export function setWikiFollow(importerId: string, follow: FollowLinks): Promise<void> {
   return change(importerId, 'follow', (notes) => ({ ...notes, follow }));
+}
+
+/** Changes the person's choices for one site of an importer, and keeps them. */
+function changeSite(
+  importerId: string,
+  key: string,
+  next: (choices: SiteChoices) => SiteChoices,
+): Promise<void> {
+  return change(importerId, 'sites', (notes) => {
+    const choices = next(notes.sites[key] ?? {});
+    const { [key]: _old, ...others } = notes.sites;
+    const kept = choices.way || choices.licence ? { ...others, [key]: choices } : others;
+    return { ...notes, sites: Object.fromEntries(Object.entries(kept).slice(-MAX_SITES)) };
+  });
+}
+
+/** Keeps how the person chose to read a site's pages. */
+export function setSiteWay(importerId: string, key: string, way: ReadingWay): Promise<void> {
+  return changeSite(importerId, key, (choices) => ({ ...choices, way }));
+}
+
+/** Keeps the licence the person confirmed for a site, or forgets it (null). */
+export function setSiteLicence(
+  importerId: string,
+  key: string,
+  licence: ConfirmedLicence | null,
+): Promise<void> {
+  return changeSite(importerId, key, ({ licence: _old, ...choices }) =>
+    licence ? { ...choices, licence } : choices,
+  );
+}
+
+/** The person's choices for a site of an importer, as kept. */
+export async function siteChoices(importerId: string, key: string): Promise<SiteChoices> {
+  return (await loadWikiNotes(importerId)).sites[key] ?? {};
 }
 
 /** The page keys the person left out, of an importer's wikis. */

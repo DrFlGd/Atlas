@@ -112,7 +112,7 @@ export function siteInfoOf(
     key: hostKey(url),
     ways: [importer.fetch && !readsInWindow(importer.fetch, url) ? 'fetch' : 'window'],
   };
-  let given: unknown = null;
+  let given: unknown;
   try {
     given = importer.siteInfo ? importer.siteInfo(url.trim()) : null;
   } catch {

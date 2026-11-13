@@ -287,6 +287,7 @@ function SideTools({ updatable }: { updatable: boolean }) {
  */
 function LibraryStrip() {
   const phase = useImport((s) => s.phase);
+  const licence = useImport((s) => s.licenceAsk !== null);
   const pane = useLibrary((s) => s.pane);
   if ((phase.kind !== 'run' && phase.kind !== 'listing') || phase.run.status !== 'running') {
     return null;
@@ -307,6 +308,7 @@ function LibraryStrip() {
         {found ? `, ${found}` : ''}
         {phase.run.stopRequested ? ', stopping after this page' : ''}
         {waitingForPerson(phase.run) ? '. The page window is waiting for you' : ''}
+        {licence ? '. A page waits for you to confirm the wiki’s licence' : ''}
       </span>
       <span className="meter meter-small library-strip-meter" aria-hidden="true">
         <span className="meter-fill" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} />

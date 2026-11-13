@@ -10,9 +10,8 @@ import {
   checkOutcome,
   checkPictureTiles,
   fetchAddresses,
-  findCatalogueImporter,
-  findGameImporter,
   findImporter,
+  findReader,
   gameAddressOf,
   isAllowedPageUrl,
   isPictureRequest,
@@ -25,6 +24,7 @@ import {
   robotsAllows,
   rulesFromAnswer,
   type AtlasImporter,
+  type ConfirmedLicence,
   type FetchedPage,
   type PageFetch,
   type RobotsRules,
@@ -38,7 +38,9 @@ import {
   type PictureSummary,
   type PictureTiles,
   type PictureTilesRequest,
+  type ReadingWay,
   type SavedSource,
+  type SiteInfo,
   type WrittenAgain,
 } from '@atlas/importer-api';
 import {
@@ -98,6 +100,7 @@ import {
 import { RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
+import { asksHow, siteReading, WINDOW_HINT, type SiteReading } from './readingWays';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
 import {
@@ -109,6 +112,8 @@ import {
   noteWikiFailed,
   noteWikiLinks,
   noteWikiRead,
+  setSiteLicence,
+  setSiteWay,
 } from './wikiNotes';
 
 /**
@@ -170,8 +175,26 @@ export type ImportPhase =
       /** Its pictures are being fetched now (see `pagePictures.ts`). */
       pictures?: boolean;
     }
-  /** `refused`: the site refused or asked to confirm the reader is a person; a run stops. */
-  | { kind: 'failed'; message: string; refused?: boolean }
+  /**
+   * `refused`: the site refused or asked to confirm the reader is a person;
+   * a run stops. `how`: the address of a site that can be read another way,
+   * for the person to choose it. `declined`: the person did not confirm the
+   * site's licence; a run stops.
+   */
+  | { kind: 'failed'; message: string; refused?: boolean; how?: string; declined?: boolean }
+  /**
+   * Before reading a site whose importer offers more than one way to read
+   * it, or says something about it: the ways, the importer's notice, and
+   * the way ticked now. Nothing has been read.
+   */
+  | {
+      kind: 'how';
+      url: string;
+      importerId: string;
+      importer: string;
+      site: SiteInfo;
+      way: ReadingWay;
+    }
   /** Several addresses, some of which no importer recognises: shown before the run. */
   | {
       kind: 'check';
@@ -218,12 +241,31 @@ export const useImport = create<{
   measureFromPage: boolean;
   /** Changes whenever pages kept for later change, for the list of them to read again. */
   queueVersion: number;
+  /** A page read waits for the person to confirm its site's licence (see {@link LicenceAsk}). */
+  licenceAsk: LicenceAsk | null;
 }>()(() => ({
   phase: { kind: 'idle' },
   draft: '',
   measureFromPage: false,
   queueVersion: 0,
+  licenceAsk: null,
 }));
+
+/**
+ * A page of a site whose pages state no licence, read and waiting: its
+ * importer asked the person to confirm the site's licence
+ * (`askLicence` of the outcome). Nothing of it is kept until they do.
+ */
+export interface LicenceAsk {
+  importerId: string;
+  importer: string;
+  /** The site's key, as its importer gives it: the licence is kept for the site. */
+  siteKey: string;
+  /** The page read. */
+  url: string;
+  /** What the importer said, in its words. */
+  message: string;
+}
 
 const setPhase = (phase: ImportPhase) => {
   useImport.setState({ phase });
@@ -379,8 +421,10 @@ async function readPage(
   /** The importer's page measuring step, when the map picture is to be measured from the page. */
   measure: string | null = null,
   keepFor: number | null = null,
+  /** The way the person chose for the site, for an importer that offers ways (`siteInfo`). */
+  way?: ReadingWay,
 ): Promise<PageRead> {
-  const fetcher = fetcherFor(importer, reading, url);
+  const fetcher = fetcherFor(importer, reading, url, way);
   if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
   const { pageReader, waitSeconds } = readerFor(importer, reading);
   return pageWindows.read(
@@ -390,19 +434,51 @@ async function readPage(
   );
 }
 
-/** Whether a page of a go is one an importer opens in a window through `fetch.inWindow`, whose window the go keeps. */
-const keptInWindow = (importer: AtlasImporter, url: string) =>
-  importer.fetch !== undefined && readsInWindow(importer.fetch, url);
+/**
+ * Whether a page of a go is one an importer that fetches opens in a window
+ * (through `fetch.inWindow`, or because the person chose to read the site
+ * in a window), whose window the go keeps.
+ */
+const keptInWindow = (importer: AtlasImporter, url: string, way?: ReadingWay) =>
+  importer.fetch !== undefined &&
+  (way === undefined ? readsInWindow(importer.fetch, url) : way === 'window');
 
 // ---------------------------------------------------------------------------
 // Reading a page by fetching it (see `fetching.ts` in the importer contract)
 
-/** How an importer has a page of this reading fetched, if it reads that way. */
-function fetcherFor(importer: AtlasImporter, reading: Reading, url: string): PageFetch | null {
+/**
+ * How an importer has a page of this reading fetched, if it reads that way:
+ * as the person chose for the site (`way`), or for an importer that offers
+ * no choice, unless it opens the page in a window (`fetch.inWindow`).
+ */
+function fetcherFor(
+  importer: AtlasImporter,
+  reading: Reading,
+  url: string,
+  way?: ReadingWay,
+): PageFetch | null {
   if (reading === 'catalogue') return null;
   const fetch = (reading === 'game' ? importer.games?.fetch : importer.fetch) ?? null;
+  if (!fetch) return null;
+  if (way !== undefined) return way === 'fetch' ? fetch : null;
   // A page its site shows only to a person is opened in a window, where the person answers.
-  return fetch && !readsInWindow(fetch, url) ? fetch : null;
+  return readsInWindow(fetch, url) ? null : fetch;
+}
+
+/** The site of a page with the person's choices, for an importer that offers ways to read its sites. */
+const readingOf = (importer: AtlasImporter, url: string): Promise<SiteReading | undefined> =>
+  importer.siteInfo
+    ? siteReading(importer, url).catch(() => undefined)
+    : Promise.resolve(undefined);
+
+/**
+ * A refusal, with a sentence that the site can be read in a window of this
+ * app instead, when it was fetched and its importer offers that way.
+ */
+function withWindowHint(message: string, site: SiteReading | undefined): string {
+  return site?.way === 'fetch' && site.info.ways.includes('window')
+    ? `${message} ${WINDOW_HINT}`
+    : message;
 }
 
 /** When the app last asked a site for a page. */
@@ -534,6 +610,7 @@ export async function startImport(text: string): Promise<void> {
     return;
   }
   currentImporter = importer.id;
+  const site = await readingOf(importer, url);
   const read = await readPage(
     shell,
     url,
@@ -544,16 +621,30 @@ export async function startImport(text: string): Promise<void> {
     },
     'map',
     measureStep(importer, url),
+    null,
+    site?.way,
   );
   if (read.state === 'cancelled') return;
   if (read.state !== 'ready') {
-    if (id === session) setPhase({ kind: 'failed', message: read.message });
+    if (id === session) {
+      setPhase(
+        read.state === 'refused'
+          ? refusedPhase(read.message, url, site)
+          : failedPhase(read.message),
+      );
+    }
     return;
   }
   setPhase({ kind: 'converting', url, importer: importer.title });
   const outcome = await convertAndSave(
     importer,
-    { url, pageData: read.data, importedAt: new Date().toISOString(), observations: read.page },
+    {
+      url,
+      pageData: read.data,
+      importedAt: new Date().toISOString(),
+      observations: read.page,
+      ...(site ? { way: site.way } : {}),
+    },
     false,
     true,
     () => {
@@ -563,7 +654,25 @@ export async function startImport(text: string): Promise<void> {
     },
   );
   reportPhase(importer.id, outcome);
-  if (id === session) setPhase(outcome);
+  if (id !== session) return;
+  setPhase(
+    outcome.kind === 'failed' && outcome.refused
+      ? refusedPhase(outcome.message, url, site)
+      : outcome,
+  );
+}
+
+const failedPhase = (message: string): ImportPhase => ({ kind: 'failed', message });
+
+/** A page the site refused, with a way to read the site in a window instead when it offers one. */
+function refusedPhase(message: string, url: string, site: SiteReading | undefined): ImportPhase {
+  const hint = withWindowHint(message, site);
+  return {
+    kind: 'failed',
+    message: hint,
+    refused: true,
+    ...(hint !== message ? { how: url } : {}),
+  };
 }
 
 /** Stops waiting and closes the page window; a run stops with it. */
@@ -573,6 +682,7 @@ export async function cancelImport(): Promise<void> {
   }
   currentRun?.cancel();
   session++;
+  answerLicence(null);
   setPhase({ kind: 'idle' });
   if (__ATLAS_DOWNLOADS__ && desktop && downloadsOffered(useAtlas.getState())) {
     // A page of a run may be measuring its map's picture.
@@ -612,15 +722,12 @@ export async function submitAddresses(text: string): Promise<void> {
   const { addresses, tooMany } = parseAddresses(text);
   if (addresses.length === 0) return;
   const importers = await loadImporters();
-  // A map page first; then a game's page, or a site's list of games.
-  const listing = (url: string) =>
-    findImporter(importers, url)
-      ? null
-      : findGameImporter(importers, url)
-        ? 'game'
-        : findCatalogueImporter(importers, url)
-          ? 'catalogue'
-          : null;
+  // A map page first; then a game's page, or a site's list of games: of an importer that
+  // knows the address before one that would read it only as a general reader.
+  const listing = (url: string) => {
+    const reader = findReader(importers, url);
+    return reader && reader.kind !== 'page' ? reader.kind : null;
+  };
   if (addresses.length === 1) {
     const url = addresses[0]!;
     // An address an importer refuses is never opened or fetched.
@@ -630,11 +737,21 @@ export async function submitAddresses(text: string): Promise<void> {
       setPhase({ kind: 'failed', message: refusal });
       return;
     }
-    const kind = listing(url);
-    if (kind === 'game') await startGameAddress(url, findGameImporter(importers, url)!);
-    else if (kind === 'catalogue')
-      await startCatalogue(url, findCatalogueImporter(importers, url)!);
-    else await startImport(url);
+    // A site that can be read more than one way: the person chooses first, once.
+    const reader = findReader(importers, url);
+    const site = reader ? await readingOf(reader.importer, url) : undefined;
+    if (reader && site && asksHow(site)) {
+      setPhase({
+        kind: 'how',
+        url,
+        importerId: reader.importer.id,
+        importer: reader.importer.title,
+        site: site.info,
+        way: site.way,
+      });
+      return;
+    }
+    await addAddress(url, importers);
     return;
   }
   if (addresses.some((url) => listing(url) !== null)) {
@@ -659,6 +776,47 @@ export async function submitAddresses(text: string): Promise<void> {
     return;
   }
   await startRun(checked, 0);
+}
+
+/** Reads one address the person added: a page, a game's page, or a site's list of games. */
+async function addAddress(url: string, importers: readonly AtlasImporter[]): Promise<void> {
+  const reader = findReader(importers, url);
+  if (reader?.kind === 'game') await startGameAddress(url, reader.importer);
+  else if (reader?.kind === 'catalogue') await startCatalogue(url, reader.importer);
+  else await startImport(url);
+}
+
+/**
+ * Shows how the site of `url` can be read, with the way chosen now ticked,
+ * for the person to change it (after a refusal, say). Nothing is read.
+ */
+export async function chooseHow(url: string): Promise<void> {
+  const importers = await loadImporters();
+  const reader = findReader(importers, url);
+  const site = reader ? await readingOf(reader.importer, url) : undefined;
+  if (!reader || !site) return;
+  setPhase({
+    kind: 'how',
+    url,
+    importerId: reader.importer.id,
+    importer: reader.importer.title,
+    site: site.info,
+    way: site.way,
+  });
+}
+
+/** Ticks a way in the step that asks how a site is read. */
+export function setHowWay(way: ReadingWay): void {
+  const { phase } = useImport.getState();
+  if (phase.kind === 'how' && phase.site.ways.includes(way)) setPhase({ ...phase, way });
+}
+
+/** Keeps the way ticked for the site, then reads the address as the person added it. */
+export async function confirmHow(): Promise<void> {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'how') return;
+  await setSiteWay(phase.importerId, phase.site.key, phase.way).catch(() => undefined);
+  await addAddress(phase.url, await loadImporters());
 }
 
 /** After the check: adds the addresses that can be added and leaves out the rest. */
@@ -737,6 +895,8 @@ async function startRun(
   }[] = checked.flatMap(({ url, importer, listed }) =>
     importer ? [{ url, importer, listed }] : [],
   );
+  // How each page is read, as the person chose for its site (fixed for the go).
+  const sites = await Promise.all(pages.map((page) => readingOf(page.importer, page.url)));
   // How many links away from a page ticked each page is (0: ticked), and every page of the go.
   const depths = pages.map(() => 0);
   const inGo = new Set(pages.map((page) => pageKey(page.url)));
@@ -752,6 +912,7 @@ async function startRun(
       },
       async importPage(index, url, update) {
         const { importer, listed } = pages[index]!;
+        const site = sites[index];
         currentImporter = importer.id;
         const read = await readPage(
           shell,
@@ -763,13 +924,15 @@ async function startRun(
           },
           'map',
           measureStep(importer, url),
-          keptInWindow(importer, url) ? id : null,
+          keptInWindow(importer, url, site?.way) ? id : null,
+          site?.way,
         );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
             report({ importerId: importer.id, outcome: 'cancelled' });
           }
           const result = outcomeOf(read);
+          if (result.kind === 'refused') result.message = withWindowHint(result.message, site);
           if (importer.fetch && read.state !== 'cancelled' && read.state !== 'closed') {
             void noteWikiFailed(importer.id, url, result.message);
           }
@@ -784,6 +947,7 @@ async function startRun(
             importedAt: new Date().toISOString(),
             observations: read.page,
             listed,
+            ...(site ? { way: site.way } : {}),
           },
           false,
           false,
@@ -791,6 +955,8 @@ async function startRun(
             update({ kind: 'converting', measuring: true });
           },
         );
+        // The person did not confirm the site's licence: nothing more is read.
+        if (outcome.kind === 'failed' && outcome.declined) run.stop();
         reportPhase(importer.id, outcome);
         if (importer.fetch && outcome.kind === 'done') {
           const { links = [], writtenAgain = [] } = outcome;
@@ -819,7 +985,7 @@ async function startRun(
           };
         }
         if (outcome.kind === 'failed' && outcome.refused) {
-          return { kind: 'refused', message: outcome.message };
+          return { kind: 'refused', message: withWindowHint(outcome.message, site) };
         }
         return {
           kind: 'failed',
@@ -830,7 +996,7 @@ async function startRun(
     // A page read in the window kept from the page before follows after a shorter pause.
     (index) => {
       const next = pages[index];
-      return next && keptInWindow(next.importer, next.url)
+      return next && keptInWindow(next.importer, next.url, sites[index]?.way)
         ? pageWindows.pauseBefore(id, next.importer.id, next.url)
         : RUN_PAUSE_MS;
     },
@@ -870,6 +1036,7 @@ async function startRun(
           ? { listed: { title: listed.title, ...(listed.group ? { group: listed.group } : {}) } }
           : {}),
       });
+      sites.push(await readingOf(importer, found));
       depths.push(depth + 1);
       inGo.add(pageKey(found));
     }
@@ -997,6 +1164,8 @@ export function importContext(
   onMeasuring?: () => void,
   observations?: PageObservations,
   listed?: ImportContext['listed'],
+  /** How the page was read, and the licence the person confirmed for its site. */
+  site: { reading?: ReadingWay; confirmedLicence?: ConfirmedLicence } = {},
 ): ImportContext {
   const state = useAtlas.getState();
   const listing = state.library;
@@ -1046,6 +1215,8 @@ export function importContext(
     },
     isBundled: (packId) => bundled.has(packId),
     ...(listed ? { listed } : {}),
+    ...(site.reading ? { reading: site.reading } : {}),
+    ...(site.confirmedLicence ? { confirmedLicence: site.confirmedLicence } : {}),
     ...(__ATLAS_DOWNLOADS__ && downloadsOffered(state)
       ? {
           pictureTiles: (request: PictureTilesRequest) =>
@@ -1101,6 +1272,8 @@ async function convertAndSave(
     importedAt: string;
     observations?: PageObservations;
     listed?: ImportContext['listed'];
+    /** How it was read, as the person chose for its site. */
+    way?: ReadingWay;
   },
   rebuilt = false,
   show = true,
@@ -1115,25 +1288,54 @@ async function convertAndSave(
   if (data === undefined) {
     return { kind: 'failed', message: 'The page data was not in the expected shape.' };
   }
-  const context = importContext(
-    page.url,
-    page.importedAt,
-    importer.id,
-    rebuilt,
-    onMeasuring,
-    page.observations,
-    page.listed,
-  );
-  let returned: unknown;
-  try {
-    returned = await importer.convert(data, context);
-  } catch (error) {
-    return {
-      kind: 'failed',
-      message: `The importer stopped with an error, so nothing was added: ${errorText(error)}`,
-    };
+  // The licence the person confirmed for the site, as kept now: a page before may just have asked.
+  const site = await readingOf(importer, page.url);
+  const contextWith = (confirmedLicence: ConfirmedLicence | undefined) =>
+    importContext(
+      page.url,
+      page.importedAt,
+      importer.id,
+      rebuilt,
+      onMeasuring,
+      page.observations,
+      page.listed,
+      {
+        ...(page.way ? { reading: page.way } : {}),
+        ...(confirmedLicence ? { confirmedLicence } : {}),
+      },
+    );
+  let context = contextWith(site?.licence);
+  const convert = async () => {
+    try {
+      return checkOutcome(await importer.convert(data, context), page.url);
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: `The importer stopped with an error, so nothing was added: ${errorText(error)}`,
+      };
+    }
+  };
+  let outcome = await convert();
+  // A site whose pages state no licence: the person confirms one, once, and the page is read with it.
+  if (!outcome.ok && outcome.askLicence && site && !context.confirmedLicence) {
+    const licence = await askLicence({
+      importerId: importer.id,
+      importer: importer.title,
+      siteKey: site.info.key,
+      url: page.url,
+      message: outcome.message,
+    });
+    if (!licence) {
+      return {
+        kind: 'failed',
+        message: LICENCE_NOT_CONFIRMED,
+        declined: true,
+      };
+    }
+    await setSiteLicence(importer.id, site.info.key, licence).catch(() => undefined);
+    context = contextWith(licence);
+    outcome = await convert();
   }
-  const outcome = checkOutcome(returned, page.url);
   if (!outcome.ok) {
     return { kind: 'failed', message: outcome.message, ...(outcome.stop ? { refused: true } : {}) };
   }
@@ -1216,6 +1418,35 @@ async function convertAndSave(
     rebuilt,
     ...(pictures ? { pictures: true } : {}),
   };
+}
+
+/** A page whose site's licence the person did not confirm. */
+export const LICENCE_NOT_CONFIRMED =
+  'The wiki’s licence was not confirmed, so nothing was added from this page and no more pages were read.';
+
+/** The answer to the licence question now asked, when it is answered. */
+let licenceAnswer: ((licence: ConfirmedLicence | null) => void) | null = null;
+
+/**
+ * Asks the person to confirm the licence of a page's site, and waits for
+ * the answer: a licence of `CONFIRMABLE_LICENCES`, or null for none. One
+ * question at a time; a run waits on its page meanwhile.
+ */
+function askLicence(ask: LicenceAsk): Promise<ConfirmedLicence | null> {
+  answerLicence(null);
+  useImport.setState({ licenceAsk: ask });
+  notify(`${ask.importer}: confirm the wiki’s licence in the Library to read this page.`, 'info');
+  return new Promise((resolve) => {
+    licenceAnswer = resolve;
+  });
+}
+
+/** The person's answer to the licence question: the licence they confirmed, or null (not now). */
+export function answerLicence(licence: { name: string; url: string } | null): void {
+  const answer = licenceAnswer;
+  licenceAnswer = null;
+  if (useImport.getState().licenceAsk) useImport.setState({ licenceAsk: null });
+  answer?.(licence ? { ...licence, confirmedAt: new Date().toISOString() } : null);
 }
 
 /** Loads a game and shows one of its maps. */
@@ -1411,6 +1642,7 @@ async function readListings(
       async importPage(index, url, update) {
         const item = items[index]!;
         currentImporter = item.importer.id;
+        const site = await readingOf(item.importer, url);
         const read = await readPage(
           shell,
           url,
@@ -1420,12 +1652,16 @@ async function readListings(
             update({ kind: 'open', ...waiting });
           },
           item.reading,
+          null,
+          null,
+          site?.way,
         );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
             report({ importerId: item.importer.id, outcome: 'cancelled' });
           }
           const outcome = outcomeOf(read);
+          if (outcome.kind === 'refused') outcome.message = withWindowHint(outcome.message, site);
           results[index] = { ok: false, message: outcome.message };
           return outcome;
         }
@@ -1486,7 +1722,12 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
   if (!read) return;
   const result = read.results[0];
   if (!result?.ok || !('pages' in result)) {
-    setPhase({ kind: 'failed', message: listingFailure(read.run, result) });
+    const message = listingFailure(read.run, result);
+    setPhase({
+      kind: 'failed',
+      message,
+      ...(message.endsWith(WINDOW_HINT) ? { refused: true, how: url } : {}),
+    });
     return;
   }
   const packId = packForListing(importer.id, result);
@@ -1736,8 +1977,10 @@ export interface WikiSource {
   address: string | null;
   /** A page's pictures are downloaded with it. */
   pictures: boolean;
-  /** Its pages are read in a window kept for a go (`fetch.inWindow`), with that window's shorter pause. */
+  /** Its pages are read in a window kept for a go (`fetch.inWindow`, or as the person chose), with that window's shorter pause. */
   inWindow: boolean;
+  /** The site as its importer describes it, when it offers ways to read its sites (`siteInfo`). */
+  site: SiteInfo | null;
 }
 
 /** The wiki a game was read from, when an importer that fetches its pages made it; null otherwise. */
@@ -1746,12 +1989,15 @@ export async function wikiSourceOf(packId: string): Promise<WikiSource | null> {
   const [game] = await updatableGames([packId]);
   const importer = importers.find((i) => i.id === game?.importerId);
   if (!game || !importer?.fetch) return null;
+  const at = game.address ?? game.recorded[0]?.url ?? '';
+  const site = await readingOf(importer, at);
   return {
     importerId: game.importerId,
     importerTitle: game.importerTitle,
     address: importer.games ? game.address : null,
     pictures: importer.picturesWithPages === true,
-    inWindow: readsInWindow(importer.fetch, game.address ?? game.recorded[0]?.url ?? ''),
+    inWindow: site ? site.way === 'window' : readsInWindow(importer.fetch, at),
+    site: site?.info ?? null,
   };
 }
 

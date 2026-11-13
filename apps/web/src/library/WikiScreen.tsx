@@ -1,10 +1,11 @@
 import { pageChange, setPageHidden } from '@atlas/core';
-import { pageKey } from '@atlas/importer-api';
+import { pageKey, readingWayOf } from '@atlas/importer-api';
 import type { OwnPages } from '@atlas/schema';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { FollowLinksChoice } from '../components/FollowLinks';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
+import { LicenceQuestion, WikiReading } from '../components/SiteReading';
 import type { ListedPack, PackDetails } from '../desktop';
 import { notify, switchGame } from '../state/actions';
 import type { FollowLinks } from '../state/followLinks';
@@ -136,6 +137,10 @@ export function WikiScreen({
       : null;
 
   const tickedRows = rows.filter((row) => ticked.has(row.key) && canTick(row));
+  // Read in a window as the person chose for the site, when its importer offers ways.
+  const inWindow = source.site
+    ? readingWayOf(source.site, notes.sites[source.site.key]?.way) === 'window'
+    : source.inWindow;
   const counts = Object.fromEntries(
     WIKI_FILTERS.map((f) => [f.id, rows.filter((row) => matchesFilter(row, f.id)).length]),
   ) as Record<WikiFilter, number>;
@@ -225,6 +230,10 @@ export function WikiScreen({
       </div>
       <div className="wiki-body">
         <div className="wiki-list touch-scroll" data-testid="wiki-list" data-scroll-root>
+          <LicenceQuestion />
+          {source.site ? (
+            <WikiReading importerId={source.importerId} site={source.site} disabled={running} />
+          ) : null}
           {contents ? null : (
             <div className="wiki-no-contents" data-testid="wiki-no-contents">
               <p>
@@ -349,7 +358,7 @@ export function WikiScreen({
                     : ''
                 } Stop ends it after the page open now.`
               : tickedRows.length > 0
-                ? `${estimate(tickedRows.length, notes.follow, source.inWindow)}${source.pictures ? ' Pictures come with each page.' : ''}`
+                ? `${estimate(tickedRows.length, notes.follow, inWindow)}${source.pictures ? ' Pictures come with each page.' : ''}`
                 : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
           </span>
         </div>

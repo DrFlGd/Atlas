@@ -7,6 +7,7 @@ import {
   browseGames,
   cancelImport,
   catalogueImporters,
+  chooseHow,
   closeAdding,
   confirmChecked,
   continueQueue,
@@ -44,6 +45,7 @@ import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
+import { HowStep, LicenceQuestion } from './SiteReading';
 
 /**
  * "Add a map or a wiki", in desktop builds that include importers: the
@@ -140,6 +142,7 @@ export function AddBox() {
 /** The steps of adding, on the right of the Library. */
 export function AddFlow() {
   const phase = useImport((s) => s.phase);
+  const asking = useImport((s) => s.licenceAsk !== null);
   const busy = phase.kind === 'waiting' || phase.kind === 'converting';
   const running =
     (phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running';
@@ -171,10 +174,12 @@ export function AddFlow() {
         </button>
       </header>
       <div className="library-pane-body touch-scroll" data-scroll-root>
+        <LicenceQuestion />
         {phase.kind === 'idle' ? <AddHelp /> : null}
-        {phase.kind === 'failed' ? <Failure message={phase.message} /> : null}
+        {phase.kind === 'how' ? <HowStep phase={phase} /> : null}
+        {phase.kind === 'failed' ? <Failure message={phase.message} how={phase.how} /> : null}
         {phase.kind === 'check' ? <Check phase={phase} /> : null}
-        {busy ? <Progress phase={phase} /> : null}
+        {busy && !asking ? <Progress phase={phase} /> : null}
         {phase.kind === 'done' ? <Result phase={phase} /> : null}
         {phase.kind === 'run' ? (
           <Run run={phase.run} shownPackId={phase.shownPackId} update={phase.update} />
@@ -224,13 +229,28 @@ function AddHelp() {
 }
 
 /** Why nothing was added, with the way back to the address box. */
-function Failure({ message }: { message: string }) {
+function Failure({ message, how }: { message: string; how?: string | undefined }) {
   return (
     <div className="dialog-section">
       <p className="download-error" role="alert" data-testid="add-map-error">
         {message}
       </p>
-      <p className="muted small">Change the address in the box on the left and press Add again.</p>
+      {how ? (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="button"
+            data-testid="add-map-how"
+            onClick={() => void chooseHow(how)}
+          >
+            Choose how this wiki is read
+          </button>
+        </div>
+      ) : (
+        <p className="muted small">
+          Change the address in the box on the left and press Add again.
+        </p>
+      )}
     </div>
   );
 }

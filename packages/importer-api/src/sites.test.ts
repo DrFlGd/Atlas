@@ -110,8 +110,8 @@ describe('general readers', () => {
   });
 
   it('pass the app’s check of an importer', () => {
-    expect(asImporter(wikis).general).toBeTypeOf('function');
-    expect(asImporter(wikis).siteInfo).toBeTypeOf('function');
+    expect(typeof asImporter(wikis).general).toBe('function');
+    expect(typeof asImporter(wikis).siteInfo).toBe('function');
     expect(() => asImporter({ ...wikis, general: 'yes' })).toThrow(/general/);
   });
 });

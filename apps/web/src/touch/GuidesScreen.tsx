@@ -701,6 +701,7 @@ function Credit({ source, title }: { source: GuideSource; title: string }) {
         ) : (
           source.license.name
         )}
+        {source.licenseConfirmed ? ' (confirmed by you: the page states no licence)' : ''}
         {source.credit ? <> · {source.credit}</> : null}
       </p>
     </footer>
