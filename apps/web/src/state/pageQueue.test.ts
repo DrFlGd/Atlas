@@ -29,7 +29,7 @@ const page = (n: number, group: string): ListedPage => ({
   title: `Page ${n}`,
   group,
 });
-const pages = Array.from({ length: 40 }, (_, i) => page(i, i < 30 ? 'Places' : 'People'));
+const pages = Array.from({ length: 40 }, (_, i) => page(i, i < 30 ? 'Areas' : 'People'));
 
 const choice = () =>
   newChoice(
