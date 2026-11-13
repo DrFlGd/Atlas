@@ -664,6 +664,8 @@ describe("listing a game's pages and a site's games", () => {
       asImporter({ ...demo, catalogue: { ...demo.catalogue, address: 'ftp://x/' } }),
     ).toThrow();
     expect(() => asImporter({ ...demo, refreshesBundledGames: 'yes' })).toThrow();
+    expect(() => asImporter({ ...demo, picturesWithPages: 'yes' })).toThrow();
+    expect(asImporter({ ...demo, picturesWithPages: true }).picturesWithPages).toBe(true);
     // Importers without them keep working.
     const { games: _g, catalogue: _c, refreshesBundledGames: _r, ...plain } = demo;
     expect(asImporter(plain).games).toBeUndefined();

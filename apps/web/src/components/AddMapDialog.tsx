@@ -457,6 +457,7 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
       {phase.guideId && !phase.rebuilt ? (
         <p className="muted" data-testid="add-map-guide">
           It is a page of the game’s guides now, with the credit of the site it came from.
+          {phase.pictures ? ` ${PICTURES_COMING}` : ''}
         </p>
       ) : summary.checklist && !phase.rebuilt ? (
         <ChecklistResult checklist={summary.checklist} />
@@ -513,6 +514,10 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
     </section>
   );
 }
+
+/** Said when the pictures of pages just added are being fetched (see `pagePictures.ts`). */
+const PICTURES_COMING =
+  'Its pictures are downloading now, one at a time, and show on the page as they arrive.';
 
 /** The figures of a map that was added. */
 function MapFigures({
@@ -728,7 +733,13 @@ function Run({
       ) : null}
       {/* Pages chosen beyond this go: how many are left, and the next go. */}
       {!running ? <QueuedPages /> : null}
-      {!running && games.size > 0 ? (
+      {!running && run.pages.some(({ state }) => state.kind === 'added' && state.pictures) ? (
+        <p className="muted small" data-testid="add-map-pictures-note">
+          The pictures of these pages are downloading now, one at a time, and show on the pages as
+          they arrive. Maps, then Location photos… shows how far it is.
+        </p>
+      ) : null}
+      {!running && run.pages.some(({ state }) => state.kind === 'added' && !state.guide) ? (
         <p className="muted small" data-testid="add-map-images-note">
           {__ATLAS_DOWNLOADS__ && downloadable
             ? games.size === 1

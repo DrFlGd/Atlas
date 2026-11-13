@@ -138,6 +138,8 @@ export type RunPageState =
       picture?: PictureSummary;
       /** The page became a guide, read as a page. */
       guide?: boolean;
+      /** Its pictures are fetched when the run is over (see `pagePictures.ts`). */
+      pictures?: boolean;
     }
   /** A page that lists pages (a game page) or games was read. */
   | { kind: 'listed'; game: string; count: number; other: number }
@@ -189,6 +191,8 @@ export type PageOutcome =
       picture?: PictureSummary;
       /** The page became a guide, read as a page. */
       guide?: boolean;
+      /** Its pictures are fetched when the run is over (see `pagePictures.ts`). */
+      pictures?: boolean;
     }
   /** A list was read: `count` pages (or games) the app can add, `other` it cannot yet. */
   | { kind: 'listed'; game: string; count: number; other: number }

@@ -65,6 +65,7 @@ import {
   type PageOutcome,
   type RunState,
 } from './importRun';
+import { fetchPagePictures } from './pagePictures';
 import {
   choiceGame,
   keptCatalogue,
@@ -142,6 +143,8 @@ export type ImportPhase =
       title: string;
       summary: ImportSummary;
       rebuilt: boolean;
+      /** Its pictures are being fetched now (see `pagePictures.ts`). */
+      pictures?: boolean;
     }
   /** `refused`: the site refused or asked to confirm the reader is a person; a run stops. */
   | { kind: 'failed'; message: string; refused?: boolean }
@@ -829,6 +832,7 @@ async function startRun(
             ...(outcome.summary.checklist ? { checklist: outcome.summary.checklist } : {}),
             ...(outcome.summary.picture ? { picture: outcome.summary.picture } : {}),
             ...(outcome.guideId ? { guide: true } : {}),
+            ...(outcome.pictures ? { pictures: true } : {}),
           };
         }
         if (outcome.kind === 'failed' && outcome.refused) {
@@ -853,6 +857,13 @@ async function startRun(
   });
   const final = await run.run();
   if (currentRun === run) currentRun = null;
+  // The pictures of the pages added, once the pages are all read: one download a game.
+  const withPictures = new Set(
+    final.pages.flatMap(({ state }) =>
+      state.kind === 'added' && state.pictures ? [state.packId] : [],
+    ),
+  );
+  for (const packId of withPictures) fetchPagePictures(packId);
   const counts = runCounts(final);
   if (final.stopReason) {
     report({
@@ -1136,6 +1147,12 @@ async function convertAndSave(
   // Load the new pack and show the imported map; a run does that at its end.
   if (entry && show && outcome.mapId) await showMap(entry, outcome.mapId);
   else if (entry && show) await loadGame(entry);
+  // Pages that come with their pictures: fetched now; a run does that at its end.
+  const pictures =
+    __ATLAS_DOWNLOADS__ &&
+    importer.picturesWithPages === true &&
+    (outcome.pack.pictures ?? []).some((picture) => picture.remote !== undefined);
+  if (pictures && show) fetchPagePictures(outcome.packId);
   return {
     kind: 'done',
     packId: outcome.packId,
@@ -1144,6 +1161,7 @@ async function convertAndSave(
     title: outcome.summary.game,
     summary: outcome.summary,
     rebuilt,
+    ...(pictures ? { pictures: true } : {}),
   };
 }
 
