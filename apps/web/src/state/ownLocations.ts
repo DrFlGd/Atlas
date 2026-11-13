@@ -528,15 +528,20 @@ export function deleteOwnArea(id: string): boolean {
   return apply(removeOwnArea(get().own, id, new Date()), `Deleted the area “${area.name}”`);
 }
 
-/** Forgets the person's own records on a map that was deleted. */
+/** Forgets the person's own records on a map that was deleted; that cannot be undone. */
 export function forgetOwnOfMap(mapId: string): void {
-  const next = removeOwnOfMap(get().own, mapId);
+  if (!canChangeOwnLocations()) return;
+  const { own } = get();
+  const next = removeOwnOfMap(own, mapId);
   if (
-    next.locations.length !== get().own.locations.length ||
-    next.regions.length !== get().own.regions.length
+    next.locations.length === own.locations.length &&
+    next.regions.length === own.regions.length
   ) {
-    apply(next, 'Map deleted');
+    return;
   }
+  set({ own: next, undo: [] });
+  scheduleSave();
+  remakeGame();
 }
 
 /** The colours offered for a type. */
@@ -572,16 +577,19 @@ export async function hasOwnLocations(gameId: string): Promise<boolean> {
 /**
  * Adds the own locations, types and areas a map pack file carried to the
  * person's of that game: a record with the same id is replaced by the
- * file's. Returns how many records the file had.
+ * file's. Returns how many locations, types and areas the file had.
  */
-export async function addImportedOwnLocations(gameId: string, text: string): Promise<number> {
+export async function addImportedOwnLocations(
+  gameId: string,
+  text: string,
+): Promise<{ locations: number; types: number; areas: number }> {
   const incoming = parseOwnLocations(gameId, text);
   if (!incoming.ok) throw new Error(incoming.error);
   if (get().gameId === gameId && get().status === 'ready') {
     if (!canChangeOwnLocations()) throw new Error(get().readOnly ?? 'They cannot be changed now.');
     apply(mergeOwnFiles(get().own, incoming.own), 'Locations imported');
     await flushOwnLocations();
-    return countOwnLocations(incoming.own);
+    return importedCounts(incoming.own);
   }
   const backend = ownLocationsBackend();
   const before = await backend.read(gameId);
@@ -599,8 +607,14 @@ export async function addImportedOwnLocations(gameId: string, text: string): Pro
     writeOwnLocationsFile(gameId, merged, new Date()),
     before !== null ? new Date().toISOString() : undefined,
   );
-  return countOwnLocations(incoming.own);
+  return importedCounts(incoming.own);
 }
+
+const importedCounts = (own: OwnLocations) => ({
+  locations: own.locations.length,
+  types: own.categories.length,
+  areas: own.regions.length,
+});
 
 // ---------------------------------------------------------------------------
 // Saving when the page goes

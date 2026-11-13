@@ -170,3 +170,64 @@ export async function selectByName(page: Page, name: string): Promise<void> {
 export async function categoryCount(page: Page, categoryId: string): Promise<string> {
   return (await page.getByTestId(`category-${categoryId}`).locator('.count').textContent()) ?? '';
 }
+
+/** One's own files of the demo game, as a map pack file would give them back. */
+const ownAt = '2026-11-12T09:00:00.000Z';
+export const ownLocationsText = JSON.stringify({
+  format: 'atlas-own-locations',
+  version: 1,
+  gameId: 'demo',
+  updatedAt: ownAt,
+  categoryGroups: [{ id: 'demo:catgroup:own.mine', name: 'My types', order: 100 }],
+  categories: [
+    {
+      id: 'demo:cat:own.well',
+      groupId: 'demo:catgroup:own.mine',
+      name: 'Well',
+      icon: 'pin',
+      color: '#2f80ed',
+      trackable: true,
+      defaultVisible: true,
+    },
+  ],
+  regions: [],
+  locations: [
+    ['own.a', 'Old well', 1200],
+    ['own.b', 'Stone well', 1400],
+  ].map(([local, name, x]) => ({
+    id: `demo:loc:${local}`,
+    mapId: 'demo:map:world',
+    layerId: 'demo:layer:surface',
+    x,
+    y: 900,
+    categoryId: 'demo:cat:own.well',
+    regionId: null,
+    name,
+    createdAt: ownAt,
+    updatedAt: ownAt,
+  })),
+});
+export const ownListsText = JSON.stringify({
+  format: 'atlas-own-lists',
+  version: 1,
+  gameId: 'demo',
+  updatedAt: ownAt,
+  lists: [
+    {
+      checklist: { id: 'demo:checklist:own.wells', name: 'Wells to visit', order: 0 },
+      items: [
+        {
+          id: 'demo:checkitem:own.first',
+          checklistId: 'demo:checklist:own.wells',
+          name: 'Old well',
+          order: 0,
+          locationIds: ['demo:loc:own.a'],
+          entityIds: [],
+        },
+      ],
+      headings: [],
+      createdAt: ownAt,
+      updatedAt: ownAt,
+    },
+  ],
+});

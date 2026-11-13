@@ -6,7 +6,15 @@ import {
   shellCalls,
   useAndroidShell,
 } from './androidShell';
-import { collectErrors, demoLocations, openMap, reloadSaved, storedSetting } from './helpers';
+import {
+  collectErrors,
+  demoLocations,
+  openMap,
+  ownListsText,
+  ownLocationsText,
+  reloadSaved,
+  storedSetting,
+} from './helpers';
 import { back, choosePlace, expectFound } from './touch';
 
 /**
@@ -160,6 +168,33 @@ test('imports a map pack file from the picker, copying it into the app first', a
   await expect(row).toContainText('Comes with the app');
   await expect(row.getByTestId('delete-pack')).toHaveCount(0);
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+  await expectNoDesktopOnlyCalls(page);
+  expect(errors).toEqual([]);
+});
+
+test('keeps the own lists, locations and types a map pack file carries', async ({ page }) => {
+  const errors = collectErrors(page);
+  await openMap(page);
+  await setShell(page, {
+    pick: { fileName: 'Atlas demo world (standard).atlaspack', size: 2_100_000 },
+    importMine: { ownLists: ownListsText, ownLocations: ownLocationsText },
+  });
+  await page.getByTestId('section-games').click();
+  await page.getByTestId('games-screen').getByTestId('import-pack-file').click();
+  const dialog = page.getByTestId('pack-file-dialog');
+  await dialog.getByTestId('import-start').click();
+  await expect(dialog.getByTestId('import-mine')).toHaveText(
+    'Your own 1 list, 2 locations and 1 type from the file were added to yours.',
+  );
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByTestId('marker-count')).toHaveText('5,002');
+
+  // Kept in the app's own store, as the Android app keeps them, and still there after a restart.
+  const own = (await storedSetting(page, 'ownLocations:demo')) as string;
+  expect((JSON.parse(own) as { locations: unknown[] }).locations).toHaveLength(2);
+  expect(await storedSetting(page, 'ownLists:demo')).toContain('Wells to visit');
+  await page.reload();
+  await expect(page.getByTestId('marker-count')).toHaveText('5,002');
   await expectNoDesktopOnlyCalls(page);
   expect(errors).toEqual([]);
 });
