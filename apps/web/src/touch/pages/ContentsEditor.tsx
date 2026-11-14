@@ -111,6 +111,8 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
   const canChange = useOwnPages((s) => canChangeOwnPages(s));
   const layout = shownContentsOf(game).layout;
   const editing = usePageEditor((s) => s.guideId);
+  // The home page is not in the contents: it is above them, the page Guides opens on.
+  const home = game.pack.homePage;
   const [drag, setDrag] = useState<{ id: string; drop: Drop | null } | null>(null);
   // Pages with pages under them are folded, but the way to the page edited; and as the person chose.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -293,6 +295,28 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
           <UiIcon name="folder" size={14} /> New section
         </button>
       </div>
+      {home ? (
+        <div
+          className={`pe-tree-row pe-tree-home${editing === home ? ' pe-tree-current' : ''}`}
+          data-testid="contents-home"
+        >
+          <span className="pe-tree-home-mark" aria-hidden="true">
+            <UiIcon name="home" size={16} />
+          </span>
+          <button
+            type="button"
+            className="pe-tree-name"
+            aria-current={editing === home ? 'page' : undefined}
+            data-testid="contents-home-page"
+            onClick={() => {
+              openPageEditor(home);
+            }}
+          >
+            {titleOf(game, home)}
+          </button>
+          <span className="pe-tag">Home page</span>
+        </div>
+      ) : null}
       <ul className="touch-plain-list pe-tree" data-testid="contents-tree">
         {level('', layout.top, 0)}
       </ul>

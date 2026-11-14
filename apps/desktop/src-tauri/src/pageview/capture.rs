@@ -40,7 +40,9 @@ use crate::{
     manifest::{update_images, ImagesUpdate},
     tiles::{
         downscale::downscale,
-        pyramid::{fill_template, relative_path, LayerPlan, PackPlan},
+        pyramid::{
+            fill_template, relative_path, row_from_other_end, LayerPlan, PackPlan, ROW_FROM_BOTTOM,
+        },
         status::{add_levels, read_levels},
         store::{TileStore, MISSING_SUFFIX, PART_SUFFIX},
     },
@@ -77,8 +79,13 @@ pub fn standard_url(text: &str) -> Option<String> {
 }
 
 /// Splits a remote URL template, in standard form, into text and numbers.
+/// A row counted from the bottom (`{-y}`) is the row's number like `{y}`:
+/// [`TileMatcher::find`] counts it from the top again.
 fn parse_template(template: &str) -> Option<Vec<Part>> {
-    let mut marked = template.to_owned();
+    if template.contains(ROW_FROM_BOTTOM) && template.contains("{y}") {
+        return None;
+    }
+    let mut marked = template.replace(ROW_FROM_BOTTOM, "{y}");
     for (placeholder, marker) in PLACEHOLDERS.iter().zip(MARKERS) {
         marked = marked.replace(placeholder, marker);
     }
@@ -166,6 +173,8 @@ pub struct TileHit {
 pub struct TileMatcher {
     plan: PackPlan,
     patterns: Vec<Option<Vec<Part>>>,
+    /// The layers whose remote URLs count rows from the bottom.
+    from_bottom: Vec<bool>,
 }
 
 impl TileMatcher {
@@ -175,7 +184,16 @@ impl TileMatcher {
             .iter()
             .map(|layer| parse_template(&layer.url_template))
             .collect();
-        Self { plan, patterns }
+        let from_bottom = plan
+            .layers
+            .iter()
+            .map(|layer| layer.url_template.contains(ROW_FROM_BOTTOM))
+            .collect();
+        Self {
+            plan,
+            patterns,
+            from_bottom,
+        }
     }
 
     pub fn plan(&self) -> &PackPlan {
@@ -207,8 +225,14 @@ impl TileMatcher {
         for (index, (layer, parts)) in self.plan.layers.iter().zip(&self.patterns).enumerate() {
             let Some(parts) = parts else { continue };
             let mut found = None;
+            let from_bottom = self.from_bottom[index];
             match_parts(parts, &url, &mut [None; 3], &mut |[z, x, y]| {
-                found = locate(layer, z, x, y);
+                let row = if from_bottom {
+                    row_from_other_end(z, y)
+                } else {
+                    Some(y)
+                };
+                found = row.and_then(|y| locate(layer, z, x, y));
                 found.is_some()
             });
             if let Some((z, x, y)) = found {
@@ -703,6 +727,38 @@ mod tests {
             layers: templates.iter().map(|t| layer(t)).collect(),
             maps: vec![],
         })
+    }
+
+    #[test]
+    fn matches_rows_counted_from_the_bottom() {
+        // Remote zoom 12 has 4,096 rows: row 402 from the top is 3,693 from the bottom.
+        for template in [
+            "https://tiles.example.com/w/{z}/{x}/{-y}.png",
+            "https://tiles.example.com/w/{z}/{-y}/{x}.png",
+        ] {
+            let m = matcher(&[template]);
+            let level = m.plan().layers[0].levels[1];
+            let asked = m.plan().layers[0].remote_url(&level, 3, 2);
+            assert!(asked.contains("3693") && !asked.contains("402"), "{asked}");
+            assert_eq!(
+                m.find(&asked),
+                Some(TileHit {
+                    layer: 0,
+                    z: 2,
+                    x: 3,
+                    y: 2
+                }),
+                "{template}"
+            );
+            // The same numbers counted from the top are another tile, outside the layer.
+            assert_eq!(m.find(&asked.replace("3693", "402")), None);
+        }
+        // Both ways of counting in one template is no template.
+        let both = matcher(&["https://tiles.example.com/w/{z}/{x}/{y}/{-y}.png"]);
+        assert_eq!(
+            both.find("https://tiles.example.com/w/12/203/402/3693.png"),
+            None
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { buildRowAt, enhanceBuildRows, type RowThing } from '../buildRows';
-import { appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
+import { appLinkSection, appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
 import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
@@ -14,7 +14,8 @@ export const UNREAD_PAGE = 'This page has not been read yet';
 
 /**
  * Guide Markdown from the pack, rendered safely (see `renderGuideMarkdown`).
- * In-app links are buttons; pressing one acts in the app. Web links open
+ * In-app links are buttons; pressing one acts in the app (a link to a
+ * section of a page opens the page there). Web links open
  * outside the app as before. Hidden text shows when its button is pressed.
  * On a guide page (`page`) of a game read from a site, a link to a page of
  * it that was not read yet says so (see `MarkdownOptions.unreadPage`).
@@ -86,10 +87,24 @@ export function MarkdownBody({
       img.replaceWith(words);
       setMissingAt(revision);
     };
-    // An image's error does not bubble; it is seen on the way down.
+    // A picture shown at twice its own size or more keeps sharp pixels (see the guide styles).
+    const markUpscaled = (img: HTMLImageElement) => {
+      if (img.naturalWidth > 0 && img.width >= img.naturalWidth * 2) {
+        img.setAttribute('data-upscaled', '');
+      }
+    };
+    const onLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement) markUpscaled(event.target);
+    };
+    for (const img of root.querySelectorAll('.guide-picture img')) {
+      if (img instanceof HTMLImageElement && img.complete) markUpscaled(img);
+    }
+    // An image's error and load do not bubble; they are seen on the way down.
     root.addEventListener('error', onError, true);
+    root.addEventListener('load', onLoad, true);
     return () => {
       root.removeEventListener('error', onError, true);
+      root.removeEventListener('load', onLoad, true);
     };
   });
   const html = useMemo(
@@ -134,7 +149,7 @@ export function MarkdownBody({
         const id = appLinkTarget(event.target);
         if (!id) return;
         event.preventDefault();
-        followAppLink(id);
+        followAppLink(id, appLinkSection(event.target));
       }}
       // markdown-it runs with raw HTML disabled, so this holds only renderer-made tags.
       dangerouslySetInnerHTML={{ __html: html }}

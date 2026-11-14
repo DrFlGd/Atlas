@@ -62,6 +62,38 @@ describe('loadPack', () => {
     expect(pack.currentId('demo:loc:0002')).toBe('demo:loc:0002');
   });
 
+  it('says the section another name of a page leads to', async () => {
+    const pack = makeFixturePack();
+    pack.manifest.idMigrations = {
+      ...pack.manifest.idMigrations,
+      'demo:guide:herb-lore': 'demo:guide:herbs',
+      'demo:guide:old-herbs': 'demo:guide:herbs',
+    };
+    pack.manifest.idSections = { 'demo:guide:herb-lore': 'where-to-find' };
+    const { fetchFn } = servePack(packFiles(pack));
+    const loaded = await loadPack(BASE, { fetch: fetchFn });
+    expect(loaded.currentId('demo:guide:herb-lore')).toBe('demo:guide:herbs');
+    expect(loaded.sectionOf('demo:guide:herb-lore')).toBe('where-to-find');
+    expect(loaded.sectionOf('demo:guide:old-herbs')).toBeNull();
+    expect(loaded.sectionOf('demo:guide:herbs')).toBeNull();
+  });
+
+  it('says the home page, by its current id, and opens a pack whose home page is gone', async () => {
+    const pack = makeFixturePack();
+    pack.manifest.idMigrations = { ...pack.manifest.idMigrations };
+    pack.manifest.homePage = 'demo:guide:herbs';
+    const { fetchFn } = servePack(packFiles(pack));
+    expect((await loadPack(BASE, { fetch: fetchFn })).homePage).toBe('demo:guide:herbs');
+    // A home page the pack does not have is not used, and the pack still opens.
+    pack.manifest.homePage = 'demo:guide:nowhere';
+    const lost = await loadPack(BASE, { fetch: servePack(packFiles(pack)).fetchFn });
+    expect(lost.homePage).toBeNull();
+    expect(lost.manifest.homePage).toBeUndefined();
+    // None, as before.
+    const none = await loadPack(BASE, { fetch: servePack(packFiles(makeFixturePack())).fetchFn });
+    expect(none.homePage).toBeNull();
+  });
+
   it('accepts a pack URL without a trailing slash', async () => {
     const { fetchFn, requested } = servePack(packFiles(makeFixturePack()));
     await loadPack(BASE.slice(0, -1), { fetch: fetchFn });

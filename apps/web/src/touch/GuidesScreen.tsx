@@ -1,7 +1,7 @@
-import type { ContentsEntry, ContentsStep, GuideHit } from '@atlas/core';
+import type { ContentsEntry, ContentsStep, GuideHit, LandingGroup, LandingTile } from '@atlas/core';
 import type { GuideEntry, GuideSource } from '@atlas/schema';
 import { parseId } from '@atlas/schema';
-import { keepOwnVersion, pageChange, revertPage } from '@atlas/core';
+import { findSection, keepOwnVersion, madeLanding, pageChange, revertPage } from '@atlas/core';
 import {
   lazy,
   Suspense,
@@ -12,11 +12,14 @@ import {
   useRef,
   useState,
 } from 'react';
+import { create } from 'zustand';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
+import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
-import { guidesOf, hasMap } from '../state/guides';
+import { useTitleOf } from '../state/gameGroups';
+import { guidesOf, hasMap, pictureOf } from '../state/guides';
 import { canChangeOwnPages, changeContents, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { AddToBuildBar, AddToBuildButton } from './AddToBuild';
@@ -25,6 +28,7 @@ import { GuideLinksReview } from './GuideLinksReview';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
 import { showPageOnMap } from './listViews';
 import {
+  arrivedAtSection,
   canGoBack,
   canGoForward,
   currentPlace,
@@ -33,11 +37,13 @@ import {
   readerForward,
   rememberScroll,
   useReader,
+  waitsForSection,
   type ReaderPlace,
 } from './reader';
 import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
 import { useTouch } from './state';
 import '../styles/guides.css';
+import '../styles/landing.css';
 
 /**
  * Guides: a game's guides read as pages, as a wiki is read. The contents
@@ -50,6 +56,16 @@ import '../styles/guides.css';
  * compact (a phone), the contents are a place of their own, as the pages
  * are, and a page lists the pages under it at its foot. Above the page,
  * the way to it: every section and page it is under, each a link.
+ *
+ * A page with a few headings lists them at its top, "On this page", each
+ * a link to its section; a link to a section of a page opens the page
+ * there (see `reader.ts`).
+ *
+ * The guides open on a landing page, named after the game: the wiki's own
+ * home page when the pack has one (`homePage`), else one made from the top
+ * of the contents, its sections as groups of tiles. The game's name leads
+ * back to it from the top of the contents and the start of the way above
+ * every page. "Contents" names only the list a phone opens from its button.
  */
 const PageEditor = lazy(() => import('./pages/PageEditor'));
 
@@ -80,6 +96,7 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
         <aside className="guides-side" aria-label="Contents">
           <SearchField game={game} />
           <nav className="guides-tree touch-scroll" aria-label="Contents" data-scroll-root>
+            <TreeHome game={game} />
             <ContentsTree game={game} />
           </nav>
         </aside>
@@ -100,13 +117,30 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
   const body = useRef<HTMLDivElement>(null);
   const { contents } = guidesOf(game);
 
-  // Each place opens where it was scrolled to when it was left.
+  // Each place opens where it was scrolled to when it was left; a page
+  // opened at a section, at that section's heading (its top when no
+  // heading fits).
   const scroll = reader.visits[reader.at]?.scroll ?? 0;
+  const toSection = waitsForSection(reader);
   useLayoutEffect(() => {
-    if (body.current) body.current.scrollTop = scroll;
+    const root = body.current;
+    if (!root) return;
+    if (toSection) {
+      const heading =
+        place.kind === 'page' && place.section ? headingOf(root, place.section) : null;
+      root.scrollTop = heading ? offsetIn(root, heading) - SECTION_MARGIN : 0;
+      if (heading) {
+        // Read on from the heading, also with the keyboard.
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+      arrivedAtSection(root.scrollTop);
+      return;
+    }
+    root.scrollTop = scroll;
     // Only when the place changes, not while it is scrolled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reader.at, reader.visits.length, place]);
+  }, [reader.at, reader.visits.length, place, toSection]);
 
   const frame = useRef(0);
   const onScroll = () => {
@@ -116,7 +150,9 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
     });
   };
 
-  const title = placeTitle(game, place);
+  const name = useGameName(game);
+  const atHome = isLanding(game, place);
+  const title = placeTitle(game, place, name);
   return (
     <section className="guides-reader" aria-label={title}>
       <header className="guides-head">
@@ -142,7 +178,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         >
           <UiIcon name="forward" size={20} />
         </button>
-        <Breadcrumbs game={game} place={place} />
+        <Breadcrumbs game={game} place={place} name={name} />
         {wide ? null : (
           <button
             type="button"
@@ -166,17 +202,24 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         onScroll={onScroll}
       >
         <div className="guides-column">
-          {!wide && (place.kind === 'search' || (place.kind === 'contents' && !place.sectionId)) ? (
+          {!wide &&
+          (atHome || place.kind === 'search' || (place.kind === 'contents' && !place.sectionId)) ? (
             <SearchField game={game} />
           ) : null}
-          {place.kind === 'page' ? (
+          {atHome ? (
+            <Landing game={game} wide={wide} name={name} />
+          ) : place.kind === 'page' ? (
             <Page game={game} guide={contents.guide(place.guideId)} wide={wide} />
           ) : place.kind === 'links' ? (
             <GuideLinksReview game={game} />
           ) : place.kind === 'search' ? (
             <SearchResults game={game} query={place.query} />
           ) : (
-            <ContentsPlace game={game} sectionId={place.sectionId} />
+            <ContentsPlace
+              game={game}
+              sectionId={place.kind === 'contents' ? place.sectionId : null}
+              name={name}
+            />
           )}
         </div>
       </div>
@@ -186,9 +229,50 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
 
 const LINKS_TITLE = 'Link pages to the map';
 
-function placeTitle(game: LoadedGame, place: ReaderPlace): string {
+/** The room left above a heading scrolled to. */
+const SECTION_MARGIN = 12;
+
+/** The heading of the page shown that a section names, or null when none fits or it is hidden. */
+function headingOf(root: HTMLElement, section: string): HTMLElement | null {
+  const headings = [
+    ...root.querySelectorAll<HTMLElement>('.guides-page-body [data-section]'),
+  ].filter((heading) => /^H[1-6]$/u.test(heading.tagName));
+  const index = findSection(
+    section,
+    headings.map((heading) => heading.dataset.section ?? ''),
+  );
+  const heading = index >= 0 ? headings[index]! : null;
+  return heading && !heading.closest('[hidden]') ? heading : null;
+}
+
+/** How far down a scrolled element an element inside it stands. */
+function offsetIn(root: HTMLElement, element: HTMLElement): number {
+  return element.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+}
+
+/**
+ * The name the guides of a game go by: the title it is shown under with
+ * other games (see `gameGroups.ts`), else its own.
+ */
+function useGameName(game: LoadedGame): string {
+  const group = useTitleOf(game.pack.manifest.gameId);
+  return group?.title ?? game.pack.manifest.title;
+}
+
+/** Whether a place is the landing page: itself, or the home page opened by a link. */
+function isLanding(game: LoadedGame, place: ReaderPlace): boolean {
+  return (
+    place.kind === 'home' ||
+    (place.kind === 'page' && guidesOf(game).contents.isHomePage(place.guideId))
+  );
+}
+
+function placeTitle(game: LoadedGame, place: ReaderPlace, name: string): string {
   const { contents } = guidesOf(game);
+  if (isLanding(game, place)) return name;
   switch (place.kind) {
+    case 'home':
+      return name;
     case 'page':
       return contents.guide(place.guideId)?.title ?? 'Page';
     case 'search':
@@ -203,29 +287,43 @@ function placeTitle(game: LoadedGame, place: ReaderPlace): string {
 }
 
 /**
- * Where the place is in the contents: Contents › Section › Page › … ›
- * the place itself. A section opens its contents; a page opens the page.
+ * Where the place is in the contents: the game's name (the landing page) ›
+ * Section › Page › … › the place itself. The game's name opens the
+ * landing page, a section its contents, a page the page.
  */
-function Breadcrumbs({ game, place }: { game: LoadedGame; place: ReaderPlace }) {
+function Breadcrumbs({
+  game,
+  place,
+  name,
+}: {
+  game: LoadedGame;
+  place: ReaderPlace;
+  name: string;
+}) {
   const { contents } = guidesOf(game);
   const line = useRef<HTMLElement>(null);
-  const path: ContentsStep[] =
-    place.kind === 'page'
+  const atHome = isLanding(game, place);
+  const path: ContentsStep[] = atHome
+    ? []
+    : place.kind === 'page'
       ? contents.trail(place.guideId)
       : place.kind === 'contents' && place.sectionId
         ? contents.trail(place.sectionId)
         : [];
-  const atTop = place.kind === 'contents' && place.sectionId === null;
-  const here =
-    place.kind === 'search'
+  const here = atHome
+    ? null
+    : place.kind === 'search'
       ? 'Search'
       : place.kind === 'links'
         ? LINKS_TITLE
         : place.kind === 'page'
           ? (contents.guide(place.guideId)?.title ?? null)
-          : place.sectionId
+          : place.kind === 'contents' && place.sectionId
             ? (contents.section(place.sectionId)?.title ?? null)
-            : null;
+            : place.kind === 'contents'
+              ? // The list a phone opens from its "Contents" button.
+                'Contents'
+              : null;
   // A long way scrolls sideways, its end (the place itself) in view.
   useLayoutEffect(() => {
     const element = line.current;
@@ -233,17 +331,24 @@ function Breadcrumbs({ game, place }: { game: LoadedGame; place: ReaderPlace }) 
   }, [place, path.length]);
   return (
     <nav ref={line} className="guides-crumbs" aria-label="Where this is">
-      {atTop ? (
-        <span className="guides-crumb guides-crumb-here">Contents</span>
+      {atHome ? (
+        <span
+          className="guides-crumb guides-crumb-here"
+          aria-current="page"
+          data-testid="guides-crumb-game"
+        >
+          {name}
+        </span>
       ) : (
         <button
           type="button"
           className="guides-crumb"
+          data-testid="guides-crumb-game"
           onClick={() => {
-            openPlace({ kind: 'contents', sectionId: null });
+            openPlace({ kind: 'home' });
           }}
         >
-          Contents
+          {name}
         </button>
       )}
       {path.map((step) => {
@@ -288,15 +393,46 @@ function Breadcrumbs({ game, place }: { game: LoadedGame; place: ReaderPlace }) 
 // ---------------------------------------------------------------------------
 // Contents
 
-function ContentsPlace({ game, sectionId }: { game: LoadedGame; sectionId: string | null }) {
+/**
+ * A section's contents; or, with none, the top of the contents as a list,
+ * headed with the game's name: what a phone opens from its "Contents"
+ * button, the home page first when there is one.
+ */
+function ContentsPlace({
+  game,
+  sectionId,
+  name,
+}: {
+  game: LoadedGame;
+  sectionId: string | null;
+  name: string;
+}) {
   const { contents } = guidesOf(game);
   const section = sectionId ? contents.section(sectionId) : undefined;
   const entries = section ? contents.items(section.id) : contents.top();
+  const home = section ? null : contents.homePage();
   return (
     <div className="guides-contents" data-testid="guides-contents">
-      <h1 className="guides-title">{section ? section.title : game.pack.manifest.title}</h1>
-      {section ? null : <p className="guides-lead">Contents</p>}
+      <h1 className="guides-title">{section ? section.title : name}</h1>
       {!section ? <EditPagesButton label="Edit the pages" guideId={null} /> : null}
+      {home ? (
+        <ul className="touch-plain-list guides-entries guides-entries-home">
+          <li>
+            <button
+              type="button"
+              className="guides-entry guides-entry-home"
+              data-testid="guides-home-link"
+              onClick={() => {
+                openPlace({ kind: 'home' });
+              }}
+            >
+              <UiIcon name="home" size={20} />
+              <span className="guides-entry-name">Home page</span>
+              <UiIcon name="chevron" size={16} />
+            </button>
+          </li>
+        </ul>
+      ) : null}
       {!section && canLinkPages(game) ? (
         <button
           type="button"
@@ -448,6 +584,27 @@ function ContentsTree({ game }: { game: LoadedGame }) {
   );
 }
 
+/** At the top of the contents beside the page: the game's name, which opens the landing page. */
+function TreeHome({ game }: { game: LoadedGame }) {
+  const place = useReader(currentPlace);
+  const name = useGameName(game);
+  const here = isLanding(game, place);
+  return (
+    <button
+      type="button"
+      className="guides-tree-row guides-tree-home"
+      aria-current={here ? 'page' : undefined}
+      data-testid="guides-tree-home"
+      onClick={() => {
+        openPlace({ kind: 'home' });
+      }}
+    >
+      <UiIcon name="home" size={16} />
+      <span>{name}</span>
+    </button>
+  );
+}
+
 interface TreeState {
   game: LoadedGame;
   place: ReaderPlace;
@@ -579,6 +736,226 @@ function TreePage({
 }
 
 // ---------------------------------------------------------------------------
+// The landing page
+
+/**
+ * The landing page: the wiki's own home page, read as any page and
+ * editable as one; or, for guides with no home page, one made from the
+ * top of the contents (see `landing.ts` in the core package), which is no
+ * stored page. Below either, what the top of the contents offers: linking
+ * the pages to the map, and guides of other games.
+ */
+function Landing({ game, wide, name }: { game: LoadedGame; wide: boolean; name: string }) {
+  const { contents } = guidesOf(game);
+  const home = contents.homePage();
+  if (!home) return <MadeLanding game={game} name={name} />;
+  return (
+    <div className="guides-landing" data-testid="guides-home" data-landing="page">
+      <Page game={game} guide={home} wide={wide} home={name} />
+      <LandingFoot game={game} />
+    </div>
+  );
+}
+
+/** Under the landing page: linking the pages to the map, and guides of other games. */
+function LandingFoot({ game }: { game: LoadedGame }) {
+  return (
+    <>
+      {canLinkPages(game) ? (
+        <button
+          type="button"
+          className="touch-button guides-link-button"
+          data-testid="open-guide-links"
+          onClick={() => {
+            openPlace({ kind: 'links' });
+          }}
+        >
+          <UiIcon name="pin" size={18} strokeWidth={1.8} />
+          {LINKS_TITLE}
+        </button>
+      ) : null}
+      {hasMap(game) ? <GuidesFromGames game={game} /> : <TitleMaps game={game} />}
+    </>
+  );
+}
+
+/** The landing page made from the top of the contents: each section a group of tiles. */
+function MadeLanding({ game, name }: { game: LoadedGame; name: string }) {
+  const { contents } = guidesOf(game);
+  const groups = useMemo(() => madeLanding(contents), [contents]);
+  const pages = contents.pages();
+  // Pages read from a site whose own home page was not kept with them.
+  const fromSite = pages.some((page) => page.source !== undefined);
+  return (
+    <div
+      className="guides-landing guides-landing-made"
+      data-testid="guides-home"
+      data-landing="made"
+    >
+      <h1 className="guides-title">{name}</h1>
+      <p className="guides-lead">{pagesText(pages.length)}</p>
+      <EditPagesButton label="Edit the pages" guideId={null} />
+      {groups.length === 0 ? <p className="touch-empty">Nothing here yet.</p> : null}
+      {groups.map((group, index) => (
+        <LandingGroupView
+          key={group.section?.id ?? `pages-${index}`}
+          game={game}
+          group={group}
+          name={name}
+        />
+      ))}
+      {fromSite ? (
+        <p className="guides-landing-note" data-testid="guides-landing-note">
+          The site’s own home page has not been read, so this page is made from the contents. Read
+          the home page, and it is shown here.
+        </p>
+      ) : null}
+      <LandingFoot game={game} />
+    </div>
+  );
+}
+
+/** A section of the made landing page and its tiles; or the pages at the top of the contents. */
+function LandingGroupView({
+  game,
+  group,
+  name,
+}: {
+  game: LoadedGame;
+  group: LandingGroup;
+  name: string;
+}) {
+  const { section } = group;
+  const withPictures = group.tiles.some((tile) => tile.picture !== null);
+  const openGroup = () => {
+    openPlace(
+      section ? { kind: 'contents', sectionId: section.id } : { kind: 'contents', sectionId: null },
+    );
+  };
+  return (
+    <section
+      className="guides-landing-group"
+      aria-label={section ? section.title : `Pages of ${name}`}
+      data-testid="guides-landing-group"
+    >
+      {section ? (
+        <h2 className="guides-landing-heading">
+          <button
+            type="button"
+            className="guides-landing-section"
+            data-testid="guides-landing-section"
+            onClick={openGroup}
+          >
+            <span>{section.title}</span>
+            <UiIcon name="chevron" size={16} strokeWidth={2} />
+          </button>
+          <span className="touch-figure">{pagesText(group.pages)}</span>
+        </h2>
+      ) : null}
+      <ul
+        className={`touch-plain-list guides-tiles${withPictures ? ' guides-tiles-pictures' : ''}`}
+      >
+        {group.tiles.map((tile) => (
+          <li key={tile.entry.kind === 'section' ? tile.entry.section.id : tile.entry.guide.id}>
+            <Tile game={game} tile={tile} withPicture={withPictures} />
+          </li>
+        ))}
+      </ul>
+      {group.more > 0 ? (
+        <button
+          type="button"
+          className="guides-inline-button guides-landing-more"
+          data-testid="guides-landing-more"
+          onClick={openGroup}
+        >
+          {section
+            ? `All ${(group.tiles.length + group.more).toLocaleString('en')} in “${section.title}”`
+            : `and ${group.more.toLocaleString('en')} more`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+/** A section or a page on the made landing page: its picture, when a group has pictures, and its name. */
+function Tile({
+  game,
+  tile,
+  withPicture,
+}: {
+  game: LoadedGame;
+  tile: LandingTile;
+  withPicture: boolean;
+}) {
+  const { entry } = tile;
+  const section = entry.kind === 'section';
+  const title = section ? entry.section.title : entry.guide.title;
+  const count = section
+    ? pagesText(entry.pages)
+    : entry.pages > 0
+      ? `${pagesText(entry.pages)} under it`
+      : null;
+  return (
+    <button
+      type="button"
+      className="guides-tile"
+      data-testid="guides-tile"
+      data-kind={entry.kind}
+      onClick={() => {
+        openPlace(
+          section
+            ? { kind: 'contents', sectionId: entry.section.id }
+            : { kind: 'page', guideId: entry.guide.id },
+        );
+      }}
+    >
+      {withPicture ? (
+        <TilePicture game={game} id={tile.picture} icon={section ? 'folder' : 'book'} />
+      ) : null}
+      <span className="guides-tile-name">
+        {withPicture ? null : <UiIcon name={section ? 'folder' : 'book'} size={18} />}
+        <span>{title}</span>
+      </span>
+      {count ? <span className="touch-figure guides-tile-count">{count}</span> : null}
+    </button>
+  );
+}
+
+/** A tile's picture, or its icon where it has none or its file cannot be shown. */
+function TilePicture({
+  game,
+  id,
+  icon,
+}: {
+  game: LoadedGame;
+  id: string | null;
+  icon: 'folder' | 'book';
+}) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const picture = id ? pictureOf(game, id) : null;
+  if (!picture || failed === picture.url) {
+    return (
+      <span className="guides-tile-picture guides-tile-none" aria-hidden="true">
+        <UiIcon name={icon} size={28} />
+      </span>
+    );
+  }
+  return (
+    <span className="guides-tile-picture">
+      <img
+        src={picture.url}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={() => {
+          setFailed(picture.url);
+        }}
+      />
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // A page
 
 /** "Edit the page" (or the pages): the page editor, where pages can be changed here. */
@@ -604,10 +981,17 @@ function Page({
   game,
   guide,
   wide,
+  home,
 }: {
   game: LoadedGame;
   guide: GuideEntry | undefined;
   wide: boolean;
+  /**
+   * The game's name, for the home page shown as the landing page: its
+   * heading, with nothing of a page in the contents (the way to the map,
+   * building, the pages under it, what else links to it).
+   */
+  home?: string;
 }) {
   const own = useOwnPages((s) => s.own);
   const [showWiki, setShowWiki] = useState(false);
@@ -620,9 +1004,14 @@ function Page({
   );
   const shown = showWiki && pack ? pack : guide;
   return (
-    <article className="guides-page" data-testid="guides-page" data-guide={guide.id}>
+    <article
+      className="guides-page"
+      data-testid="guides-page"
+      data-guide={guide.id}
+      data-home={home !== undefined ? 'true' : undefined}
+    >
       <div className="guides-page-head">
-        <h1 className="guides-title">{shown.title}</h1>
+        <h1 className="guides-title">{home ?? shown.title}</h1>
         {/* A page of another game read with this one is changed in that game. */}
         {parseId(guide.id)?.gameId === game.pack.manifest.gameId ? (
           <EditPagesButton label="Edit the page" guideId={guide.id} />
@@ -639,8 +1028,13 @@ function Page({
           }}
         />
       ) : null}
-      <AddToBuildBar build={build} thing={{ name: guide.title, guideId: guide.id }} />
-      {guide.source && hasMap(game) ? <OnTheMap game={game} guide={guide} /> : null}
+      {home === undefined ? (
+        <AddToBuildBar build={build} thing={{ name: guide.title, guideId: guide.id }} />
+      ) : null}
+      {guide.source && hasMap(game) && home === undefined ? (
+        <OnTheMap game={game} guide={guide} />
+      ) : null}
+      <OnThisPage guideId={guide.id} body={shown.body} wide={wide} />
       <MarkdownBody
         source={shown.body}
         className="guide-body guides-page-body"
@@ -661,10 +1055,83 @@ function Page({
       ) : change.own ? (
         <p className="guides-changed">A page of your own.</p>
       ) : null}
-      {wide ? null : <PagesUnder game={game} guideId={guide.id} />}
-      <AlsoLinkedFrom key={guide.id} game={game} guideId={guide.id} />
+      {wide || home !== undefined ? null : <PagesUnder game={game} guideId={guide.id} />}
+      {home === undefined ? <AlsoLinkedFrom key={guide.id} game={game} guideId={guide.id} /> : null}
       {guide.source ? <Credit source={guide.source} title={guide.title} /> : null}
     </article>
+  );
+}
+
+/** A page lists its headings when it has at least this many shown. */
+export const ON_THIS_PAGE_FROM = 3;
+
+/** How far in a heading is listed under the one above it, at most. */
+const MOST_INDENT = 3;
+
+/**
+ * Whether "On this page" is open, as the person last chose for the layout
+ * while the app is open: at first open beside the contents (wide) and
+ * folded on a phone, where it would push the page down.
+ */
+const useOnThisPage = create<{ wide: boolean | null; compact: boolean | null }>()(() => ({
+  wide: null,
+  compact: null,
+}));
+
+/**
+ * "On this page": the page's headings, sub-headings in under their
+ * heading, each a link to its section, in place of a wiki's own box of
+ * contents. On a page with {@link ON_THIS_PAGE_FROM} headings or more;
+ * headings inside hidden text are left out until it is shown.
+ */
+function OnThisPage({ guideId, body, wide }: { guideId: string; body: string; wide: boolean }) {
+  const listId = useId();
+  const layout = wide ? 'wide' : 'compact';
+  const chosen = useOnThisPage((s) => s[layout]);
+  const open = chosen ?? wide;
+  const headings = useMemo(
+    () => guideHeadings(body).filter((heading) => !heading.hidden && heading.words !== ''),
+    [body],
+  );
+  if (headings.length < ON_THIS_PAGE_FROM) return null;
+  const top = Math.min(...headings.map((heading) => heading.level));
+  return (
+    <nav className="guides-toc" aria-label="On this page" data-testid="on-this-page">
+      <button
+        type="button"
+        className="guides-toc-toggle"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        data-testid="on-this-page-toggle"
+        onClick={() => {
+          useOnThisPage.setState({ [layout]: !open });
+        }}
+      >
+        <UiIcon name={open ? 'chevronDown' : 'chevron'} size={14} strokeWidth={2} />
+        <span className="guides-toc-title">On this page</span>
+        <span className="touch-figure">{headings.length}</span>
+      </button>
+      {open ? (
+        <ul id={listId} className="touch-plain-list guides-toc-list">
+          {headings.map((heading) => (
+            <li key={heading.name}>
+              <button
+                type="button"
+                className="guides-tree-row guides-toc-row"
+                style={{ paddingLeft: 10 + Math.min(heading.level - top, MOST_INDENT) * 14 }}
+                data-testid="on-this-page-entry"
+                data-target-section={heading.name}
+                onClick={() => {
+                  openPlace({ kind: 'page', guideId, section: heading.name });
+                }}
+              >
+                {heading.words}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </nav>
   );
 }
 

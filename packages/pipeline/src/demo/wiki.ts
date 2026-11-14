@@ -17,7 +17,16 @@ import { DEMO_GAME_ID } from './content';
  * pack looks like: a contents of sections, a table wider than a phone,
  * links between pages, hidden text, a picture, and the credit of each page.
  * Its gear pages say where things are in the ways wikis do (a heading, a
- * table column, a box of facts), for the build planner.
+ * table column, a box of facts), for the build planner; the maul's page
+ * has its box of facts beside its text, as wikis show one, with a picture,
+ * a caption and sub-headings. "Getting around"
+ * has headings enough for "On this page", a link to a section of its own
+ * and one to a section of another page; `wiki-ferry` is another name of it
+ * that leads to its section "By boat", as a wiki forwards a name, and the
+ * regions link to that name. Its home page (`WIKI_HOME`, the manifest's
+ * `homePage`) is a wiki's main page: a welcome line, a picture that leads
+ * to a page, and groups of links to the main areas; it is in no section,
+ * as Guides shows it on its own.
  */
 
 const id = (kind: Parameters<typeof makeId>[1], local: string) => makeId(DEMO_GAME_ID, kind, local);
@@ -43,6 +52,19 @@ export const WIKI_PAGES = {
   charm: id('guide', 'wiki-tidecaller-charm'),
 } as const;
 
+/** The wiki's home page, its main page: in no section of the contents. */
+export const WIKI_HOME = id('guide', 'wiki-main-page');
+
+/**
+ * Another name of a page, as a wiki forwards a name to a part of a page:
+ * the page it is a name of, and the section it leads to there.
+ */
+export const WIKI_OTHER_NAME = {
+  id: id('guide', 'wiki-ferry'),
+  page: WIKI_PAGES.travel,
+  section: 'by-boat',
+} as const;
+
 /** The sections of its contents. */
 export const WIKI_SECTIONS = {
   basics: id('section', 'wiki-basics'),
@@ -54,6 +76,10 @@ export const WIKI_SECTIONS = {
 export const WIKI_PICTURE = id('picture', 'wiki-waystone');
 const PICTURE_FILE = 'pictures/wiki-waystone.png';
 const PICTURE_SIZE = { width: 640, height: 400 } as const;
+/** The maul's picture, in its box of facts. */
+export const WIKI_MAUL_PICTURE = id('picture', 'wiki-maul');
+const MAUL_FILE = 'pictures/wiki-maul.png';
+const MAUL_SIZE = { width: 320, height: 320 } as const;
 
 const source = (path: string): GuideSource => ({
   url: `${WIKI_URL}wiki/${path}`,
@@ -74,6 +100,41 @@ const page = (key: keyof typeof WIKI_PAGES, title: string, path: string, body: s
   }) satisfies GuideEntry;
 
 const to = (key: keyof typeof WIKI_PAGES, text: string) => `[${text}](${WIKI_PAGES[key]})`;
+/** A link to a section of a page, which its title names. */
+const toSection = (key: keyof typeof WIKI_PAGES, section: string, text: string) =>
+  `[${text}](${WIKI_PAGES[key]} "#${section}")`;
+
+/** The wiki's home page: a welcome, a picture that leads to a page, and the main areas. */
+export function wikiHomePage(): GuideEntry {
+  return {
+    id: WIKI_HOME,
+    title: 'Main Page',
+    body: `
+Welcome to the **Example Wiki**, the made-up wiki of the Sundered Isle that anyone can edit.
+Pick an area below, or start with ${to('welcome', 'the welcome page')}.
+
+[![Waystones](${WIKI_PICTURE} "=320x200")](${WIKI_PAGES.waystones})
+
+## The isle
+
+- ${to('regions', 'Regions')}: from the landing outwards
+- ${to('waystones', 'Waystones')}: waking them and travelling between them
+- ${to('travel', 'Getting around')}: on foot, by boat and by waystone
+
+## Foes
+
+- ${to('wardens', 'Stone wardens')}
+- ${to('wolves', 'Wolves')}
+
+## Gear
+
+- ${to('blades', 'Blades')}: ${to('emberBlade', 'Ember blade')}, ${to('maul', 'Stonebreaker maul')}
+- ${to('charm', 'Tidecaller charm')}
+`.trim(),
+    locationIds: [],
+    source: source('Main_Page'),
+  };
+}
 
 /**
  * The wiki's pages, with their sources. Regions are named after the pack's
@@ -117,17 +178,25 @@ Nothing in this wiki is about a real game. It exists to show how Atlas reads one
 Most of the isle is walked. The ${to('waystones', 'waystones')} let you travel
 between the ones you have woken, and every region has at least one.
 
-### On foot
+## On foot
 
 1. Follow the river south from the landing.
 2. Cross at the ford; the bridge is down.
 3. Climb to the first waystone and touch it.
 
-### By boat
-
-The ferry runs between the two largest regions. It does not run at night.
+### At night
 
 > Tip: the ${to('wolves', 'wolves')} of the northern woods hunt along the paths, not the river.
+
+## By boat
+
+The ferry runs between the two largest regions. It does not run at night, so
+${toSection('travel', 'on-foot', 'walk')} after dark.
+
+## By waystone
+
+Touch a woken stone to travel to any other woken one.
+${toSection('waystones', 'waking-a-waystone', 'Wake each one you pass')}.
 
 See also: ${to('regions', 'Regions')}.
 `,
@@ -145,7 +214,8 @@ suggest, not rules.
 ${rows.join('\n')}
 
 Each region has its own ${to('wardens', 'warden')}. Travel between them is
-described under ${to('travel', 'Getting around')}.
+described under ${to('travel', 'Getting around')}; the two largest are also
+joined [by boat](${WIKI_OTHER_NAME.id}).
 `,
     ),
     page(
@@ -247,13 +317,35 @@ To temper it at a forge:
       'Stonebreaker maul',
       'Stonebreaker_maul',
       `
-| Stonebreaker maul | |
+| Stonebreaker maul | {box} |
 | --- | --- |
-| Damage | 55 |
+| ![A stone maul with a bound grip](${WIKI_MAUL_PICTURE} "=160x160") |  |
+| *Cut from the arm of a fallen warden.* |  |
+| Type | Heavy weapon |
 | Weight | Heavy |
+| Price | 1250 [gold]{color=#c9a227} |
+| **Damage** |  |
+| Damage | 55 |
+| Slam | 80^\\[a\\]^ |
+| Combo | Two swings<br>then a slam |
+| **Where** |  |
 | Found in | ${to('wardens', 'Stone wardens')} |
 
-A maul too heavy for most. Stone wardens carry it, and drop it when beaten.
+The **Stonebreaker maul** is a weapon too heavy for most. Stone wardens carry it,
+and drop it when beaten.
+
+## Using it
+
+Swing it only when a foe is open: a swing takes a long time, and nothing stops it
+once it starts. The slam at the end of a combo breaks shields and stuns small foes.
+
+- Pair it with a light blade for quick foes.
+- Its slam reaches foes behind a low wall.
+
+## Notes
+
+- \\[a\\] The slam deals more against stone foes.
+- A maul dropped by a warden of the northern woods is no heavier than any other.
 `,
     ),
     page(
@@ -309,6 +401,16 @@ export function wikiPictures(): Picture[] {
       shareable: true,
       ...PICTURE_SIZE,
     },
+    {
+      id: WIKI_MAUL_PICTURE,
+      file: MAUL_FILE,
+      caption: 'A stone maul',
+      credit: 'Drawn by the Atlas pipeline',
+      license: { ...WIKI_LICENSE },
+      source: `${WIKI_URL}wiki/File:Stonebreaker_maul.png`,
+      shareable: true,
+      ...MAUL_SIZE,
+    },
   ];
 }
 
@@ -325,8 +427,16 @@ export function addWiki(data: PackData): PackData {
         ...data.manifest.attribution,
         { name: WIKI_SITE, url: WIKI_URL, license: WIKI_LICENSE.name },
       ],
+      // The other name of a page, and the section it leads to.
+      idMigrations: { ...data.manifest.idMigrations, [WIKI_OTHER_NAME.id]: WIKI_OTHER_NAME.page },
+      idSections: {
+        ...data.manifest.idSections,
+        [WIKI_OTHER_NAME.id]: WIKI_OTHER_NAME.section,
+      },
+      // The page Guides opens on.
+      homePage: WIKI_HOME,
     },
-    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine)],
+    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine), wikiHomePage()],
     sections: [...(data.sections ?? []), ...wikiSections()],
     pictures: [...(data.pictures ?? []), ...wikiPictures()],
   };
@@ -357,5 +467,33 @@ export async function wikiPictureFiles(): Promise<Map<string, Buffer>> {
   <ellipse cx="320" cy="302" rx="70" ry="10" fill="#1f2f1d" opacity="0.7"/>
 </svg>`;
   const png = await sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
-  return new Map([[PICTURE_FILE, png]]);
+  return new Map([
+    [PICTURE_FILE, png],
+    [MAUL_FILE, await maulPicture()],
+  ]);
+}
+
+/** The maul of the maul's page: a stone head on a bound haft, on a dark ground. */
+async function maulPicture(): Promise<Buffer> {
+  const { width, height } = MAUL_SIZE;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 320">
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.6">
+      <stop offset="0" stop-color="#3b3350"/><stop offset="1" stop-color="#16141f"/>
+    </radialGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9aa1ab"/><stop offset="1" stop-color="#4b515b"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="320" fill="url(#glow)"/>
+  <g transform="rotate(-35 160 160)">
+    <rect x="150" y="110" width="20" height="170" rx="6" fill="#6b4a2f"/>
+    <rect x="148" y="210" width="24" height="10" rx="3" fill="#c9a227"/>
+    <rect x="148" y="232" width="24" height="10" rx="3" fill="#c9a227"/>
+    <path d="M92 70 L228 70 L240 96 L228 130 L92 130 L80 96 Z" fill="url(#head)"/>
+    <path d="M110 84 L130 116 M150 80 L160 120 M196 82 L184 118" stroke="#2b2f36" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="160" cy="100" r="9" fill="#9fe3ff"/>
+  </g>
+</svg>`;
+  return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
 }

@@ -94,6 +94,26 @@ describe('entity schemas', () => {
         tiles: { type: 'pmtiles', url: 'tiles/a.pmtiles', remote },
       }).success,
     ).toBe(false);
+    // The row counted from the bottom ({-y}) in place of the row from the top, never both;
+    // only in the remote address, never in the layer's own.
+    for (const urlTemplate of [
+      'https://tiles.example.com/world/{z}/{x}/{-y}.jpg',
+      'https://tiles.example.com/world/{z}/{-y}/{x}.jpg',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(true);
+    }
+    for (const urlTemplate of [
+      'https://tiles.example.com/world/{z}/{x}/{y}/{-y}.jpg',
+      'https://tiles.example.com/world/{z}/{x}.jpg',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(false);
+    }
+    expect(
+      layerSchema.safeParse({
+        ...layer,
+        tiles: { type: 'xyz', url: 'tiles/a/{z}/{x}/{y}/{-y}.jpg', remote },
+      }).success,
+    ).toBe(false);
     // Plain http only to this computer, for tests and local mirrors.
     for (const urlTemplate of [
       'http://127.0.0.1:4431/{z}/{x}/{y}.png',
@@ -281,6 +301,43 @@ describe('reading tolerantly, writing strictly', () => {
     // A value of the wrong shape is still an error.
     expect(read.safeParse({ ...checklist, type: 3 }).success).toBe(false);
     expect(read.safeParse({ ...checklist, type: null }).success).toBe(false);
+  });
+
+  it('writes and reads the sections other names of pages lead to', () => {
+    const pack = makeFixturePack();
+    const manifest = {
+      ...pack.manifest,
+      idMigrations: { 'demo:guide:old-herbs': 'demo:guide:herbs' },
+      idSections: { 'demo:guide:old-herbs': 'where-to-find' },
+    };
+    expect(manifestSchema.parse(manifest).idSections).toEqual(manifest.idSections);
+    expect(packReadSchemas.manifestSchema.parse(manifest).idSections).toEqual(manifest.idSections);
+    // Only for pages, and never empty.
+    for (const idSections of [{ 'demo:loc:0001': 'x' }, { 'demo:guide:old-herbs': ' ' }]) {
+      expect(manifestSchema.safeParse({ ...manifest, idSections }).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      const read = packReadSchemas.manifestSchema.parse({ ...manifest, idSections });
+      expect(read.idSections).toBeUndefined();
+    }
+  });
+
+  it('writes and reads the home page', () => {
+    const pack = makeFixturePack();
+    const manifest = { ...pack.manifest, homePage: 'demo:guide:herbs' };
+    expect(manifestSchema.parse(manifest).homePage).toBe('demo:guide:herbs');
+    expect(packReadSchemas.manifestSchema.parse(manifest).homePage).toBe('demo:guide:herbs');
+    // Only a page.
+    for (const homePage of ['demo:loc:0001', '', 42]) {
+      expect(manifestSchema.safeParse({ ...manifest, homePage }).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      expect(packReadSchemas.manifestSchema.parse({ ...manifest, homePage }).homePage).toBe(
+        undefined,
+      );
+    }
+    // A pack's checks name one that is no guide of the pack.
+    const lost = { ...pack, manifest: { ...pack.manifest, homePage: 'demo:guide:nowhere' } };
+    expect(checkPackIntegrity(lost).map((issue) => issue.path)).toEqual(['manifest.homePage']);
+    expect(checkPackIntegrity({ ...pack, manifest })).toEqual([]);
   });
 
   it('still refuses what is wrong rather than new when reading', () => {

@@ -1,4 +1,5 @@
 import {
+  HOME_PAGE_KIND,
   MAP_KIND,
   canAddPage,
   checkCatalogue,
@@ -132,7 +133,9 @@ export function choiceGame(options: {
       group: page.group ?? null,
       supported,
       added: recorded.has(pageKey(page.url)),
-      checked: supported && tick,
+      // The site's home page is ticked at first: it is the page its guides open on.
+      checked:
+        supported && (tick || (page.kind === HOME_PAGE_KIND && !recorded.has(pageKey(page.url)))),
       unlisted: false,
     });
   }

@@ -97,11 +97,15 @@ export function cellKey(cell: Element): string {
 
 const ARROW = 'table-sort-arrow';
 
-/** The tables of `root` that can be sorted: a heading row and two rows or more under it. */
+/**
+ * The tables of `root` that can be sorted: a heading row and two rows or
+ * more under it, and not a box of facts, whose rows are in their order.
+ */
 function sortableTables(root: Element): HTMLTableElement[] {
   return [...root.querySelectorAll('table')].filter((table) => {
     const head = table.tHead?.rows[0];
     return (
+      table.closest('[data-box]') === null &&
       head !== undefined &&
       head.querySelector('th') !== null &&
       (table.tBodies[0]?.rows.length ?? 0) >= 2

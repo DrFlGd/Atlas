@@ -30,8 +30,18 @@ function fakeWindow() {
     /** After a move, the first poll hands over the page shown before, as a shell without its own check might. */
     lagging: false,
     previous: null as string | null,
+    /** Where the document of the page read before was, when not at its own address. */
+    previousAt: null as string | null,
     navigateFails: false,
+    /**
+     * Names the site shows at another page's address: the name's address,
+     * then the address its document has. The shell says `forwarded` when
+     * that is a page shown before, unless `vouches` is off.
+     */
+    forwards: new Map<string, string>(),
+    vouches: true,
   };
+  const pageOf = (address: string) => address.split('#')[0]!;
   const shell: WindowShell = {
     open(url, _reader, _importer, _purpose, measure, keep) {
       log.push(`${clock} open ${url}${keep ? ' keep' : ''}${measure ? ' measure' : ''}`);
@@ -43,6 +53,7 @@ function fakeWindow() {
       if (!open) return Promise.resolve('closed' as const);
       log.push(`${clock} navigate ${url}`);
       state.previous = open.url;
+      state.previousAt = state.forwards.get(open.url) ?? null;
       open = { ...open, url, polls: 0 };
       return Promise.resolve('navigated' as const);
     },
@@ -72,10 +83,15 @@ function fakeWindow() {
       }
       if (open.polls < 2) return Promise.resolve({ state: 'waiting', loading: true, note: null });
       log.push(`${clock} read ${url}`);
+      const address = state.forwards.get(url) ?? url;
+      const before = [state.previous, state.previousAt].filter((at) => at !== null).map(pageOf);
+      const forwarded =
+        state.vouches && pageOf(address) !== pageOf(url) && before.includes(pageOf(address));
       return Promise.resolve({
         state: 'ready',
         data: JSON.stringify({ page: url }),
-        ...(open.keep ? { address: url } : {}),
+        ...(open.keep ? { address } : {}),
+        ...(open.keep && forwarded ? { forwarded: true } : {}),
       });
     },
     close() {
@@ -216,6 +232,29 @@ describe('a go of pages read in a window kept for it', () => {
     const { final } = await go(fake, urls, () => true);
     // Each page got its own data, though the first poll after each move answered with the page before.
     expect(final.pages.map((p) => (p.state.kind === 'added' ? p.state.map : null))).toEqual(urls);
+  });
+
+  it('reads a name the site shows at the address of the page before', async () => {
+    const fake = fakeWindow();
+    // Bells and Gates are other names of parts of Welcome; Rooms is a page of its own.
+    fake.state.forwards.set(page('Bells'), `${page('Welcome')}#Bells`);
+    fake.state.forwards.set(page('Gates'), `${page('Welcome')}#Gates`);
+    const urls = [page('Welcome'), page('Bells'), page('Gates'), page('Rooms'), page('Welcome')];
+    const { final, reads } = await go(fake, urls, () => true);
+    expect(final.pages.map((p) => (p.state.kind === 'added' ? p.state.map : null))).toEqual(urls);
+    expect(reads.map((read) => read.state)).toEqual(urls.map(() => 'ready'));
+    // One window for all of them, each read once, none waited out.
+    expect(fake.log.filter((line) => line.includes(' open '))).toHaveLength(1);
+    expect(fake.log.filter((line) => line.includes(' read '))).toHaveLength(urls.length);
+  });
+
+  it('still refuses the address of the page before when the shell does not vouch for it', async () => {
+    const fake = fakeWindow();
+    fake.state.forwards.set(page('Bells'), `${page('Welcome')}#Bells`);
+    fake.state.vouches = false;
+    const { final, reads } = await go(fake, [page('Welcome'), page('Bells')], () => true);
+    expect(reads.map((read) => read.state)).toEqual(['ready', 'timed-out']);
+    expect(final.pages.map((p) => p.state.kind)).toEqual(['added', 'failed']);
   });
 
   it('stops the go when the person closes the window, opening nothing more', async () => {

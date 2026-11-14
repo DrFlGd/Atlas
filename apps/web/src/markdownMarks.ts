@@ -22,6 +22,13 @@ import { parseColour, TEXT_COLOUR_ATTRIBUTE } from './textColour';
  *   before them, is no colour and stays text. The renderer writes the
  *   colour only as an attribute (see `textColour.ts`), which the page shows
  *   readable in both themes.
+ * - A box of facts: a table of two columns whose first row is the box's
+ *   title and the exact text `{box}` (see {@link isBoxMark}), as
+ *   `| Ember blade | {box} |`. Its other rows are a label and its value,
+ *   or, with nothing in the second cell, a line across the box (a picture,
+ *   a caption), which is a sub-heading of the box when its words are all
+ *   bold. The view shows it as a box beside the text (`markdown.ts`); the
+ *   page editor edits it as the table it is.
  */
 
 const CARET = 0x5e;
@@ -130,6 +137,12 @@ function colourRule(state: StateInline, silent: boolean): boolean {
 
 /** The colour of a `colour_open` token, as `#rrggbb`. */
 export const colourOf = (token: Token): string => (token.meta as { colour: string }).colour;
+
+/** The mark that makes a table a box of facts, in the second cell of its first row. */
+export const BOX_MARK = '{box}';
+
+/** Whether the text of a table's second heading cell is the mark of a box of facts. */
+export const isBoxMark = (text: string): boolean => text.trim() === BOX_MARK;
 
 /** The exact text that is a line break in a table cell. */
 export const CELL_BREAK = '<br>';

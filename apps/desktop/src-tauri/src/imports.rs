@@ -149,10 +149,19 @@ fn same_page(a: &Url, b: &Url) -> bool {
 /// The reader may run only once a page load that started after the window
 /// was told to go to `asked` has finished ([`Visit::readable`]), and the
 /// data counts only when the document it came from is `asked` or a page of
-/// the same site the site led to from it, but never one of the addresses
-/// of the page shown before ([`Visit::address_ok`]). So a poll right after
-/// the window was told to move, while it still shows the page before, never
-/// reads that page.
+/// the same site the site led to from it, but never the document of the
+/// page shown before ([`Visit::data_ok`]). So a poll right after the window
+/// was told to move, while it still shows the page before, never reads
+/// that page.
+///
+/// A site may lead from the page asked for to the very page shown before:
+/// a second name of that page, say, which the site shows at the page's own
+/// address. Until a load of the page asked for has started, an address of
+/// the page before is the page before ([`Visit::address_ok`]); once one
+/// has, the window holds another document, and the data counts there too.
+/// Each document also says when it was made (its time origin), which is
+/// kept for the page before, so that its document is never read again
+/// whatever its address.
 #[derive(Debug)]
 #[cfg_attr(mobile, allow(dead_code))]
 struct Visit {
@@ -168,6 +177,11 @@ struct Visit {
     finished: Option<Instant>,
     /// The document address the data was last read from.
     read: Option<Url>,
+    /// When the document the reader last answered from was made, as the
+    /// document says it (its time origin): one document, one value.
+    origin: Option<f64>,
+    /// That of the page before: its document is never read as this page.
+    before_origin: Option<f64>,
     /// The person's attention was asked for, for this page.
     attention: bool,
     /// The person browses: each page they go to is a new visit, read once.
@@ -184,6 +198,8 @@ impl Visit {
             started: false,
             finished: None,
             read: None,
+            origin: None,
+            before_origin: None,
             attention: false,
             browse: false,
         }
@@ -212,6 +228,8 @@ impl Visit {
             started: false,
             finished: None,
             read: None,
+            origin: None,
+            before_origin: self.origin.or(self.before_origin),
             attention: false,
             browse: self.browse,
         };
@@ -227,15 +245,42 @@ impl Visit {
                 || (!self.browse && !self.before.iter().any(|before| same_page(address, before))))
     }
 
+    /// Whether `address` is a web page of the window's site.
+    fn on_site(&self, address: &Url) -> bool {
+        matches!(address.scheme(), "http" | "https") && same_site(&self.start, address)
+    }
+
+    /// Whether data read from the document at `address`, made at `origin`
+    /// (see [`Visit::origin`]), counts as the page asked for: at an address
+    /// that may be that page ([`Visit::address_ok`]), or, once a load of
+    /// the page asked for has started, at an address of the page before
+    /// too, where the site led from the page asked for. Never the document
+    /// the page before was read from.
+    fn data_ok(&self, address: &Url, origin: Option<f64>) -> bool {
+        if self.address_ok(address) {
+            return true;
+        }
+        let same_document = matches!(
+            (origin, self.before_origin),
+            (Some(now), Some(before)) if now == before
+        );
+        !self.browse && self.started && self.on_site(address) && !same_document
+    }
+
     /// A page load event of the window. Only loads of the page asked for
     /// (or where the site led from it) count; a load that starts again (a
     /// check that reloads the page, say) waits for its own end.
+    ///
+    /// A load at an address of the page before counts only once a load of
+    /// the page asked for has started: the window then holds another
+    /// document, which the site shows at the address of the page before (a
+    /// second name of that page). Before that, it is the page before.
     fn page_load(&mut self, started: bool, url: &Url, now: Instant) {
         if self.browse {
             self.browsed(started, url, now);
             return;
         }
-        if !self.address_ok(url) {
+        if !self.address_ok(url) && !(self.started && self.on_site(url)) {
             return;
         }
         if started {
@@ -320,6 +365,12 @@ pub enum PollResult {
         /// In a kept window, the address of the document the data was read from.
         #[serde(skip_serializing_if = "Option::is_none")]
         address: Option<String>,
+        /// In a kept window: that address is one of the page shown before,
+        /// where the site led from the page asked for (a second name of
+        /// that page), and the document is not the one that page was read
+        /// from ([`Visit::data_ok`]). Left out when it is not so.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        forwarded: bool,
     },
     /// The person closed the window.
     Closed,
@@ -392,20 +443,24 @@ pub(crate) async fn evaluate<R: Runtime>(
 
 /// The script that runs the reader. It always returns a JSON string,
 /// because exceptions do not come back from every platform's webview. With
-/// the data, it gives the address of the document it was read from.
+/// the data, it gives the address of the document it was read from; and
+/// with every answer of a document, when that document was made (its time
+/// origin, which no two documents of a window share).
 fn reader_script(reader: &str, key: &str) -> String {
     format!(
         r#"(function () {{
+  var origin = null;
+  try {{ if (typeof performance.timeOrigin === 'number' && isFinite(performance.timeOrigin)) origin = performance.timeOrigin; }} catch (error) {{}}
   try {{
     var value = ({reader})();
-    if (value === undefined || value === null) return JSON.stringify({{ state: 'waiting' }});
+    if (value === undefined || value === null) return JSON.stringify({{ state: 'waiting', origin: origin }});
     var text = JSON.stringify(value);
     if (typeof text !== 'string') return JSON.stringify({{ state: 'failed', message: 'not JSON' }});
     if (text.length > {max}) return JSON.stringify({{ state: 'failed', message: 'too large' }});
     Object.defineProperty(window, {key:?}, {{ value: text, configurable: true, enumerable: false, writable: true }});
-    return JSON.stringify({{ state: 'ready', length: text.length, address: String(location.href) }});
+    return JSON.stringify({{ state: 'ready', length: text.length, address: String(location.href), origin: origin }});
   }} catch (error) {{
-    return JSON.stringify({{ state: 'waiting', note: String(error && error.message || error).slice(0, 200) }});
+    return JSON.stringify({{ state: 'waiting', note: String(error && error.message || error).slice(0, 200), origin: origin }});
   }}
 }})()"#,
         max = MAX_PAGE_DATA_BYTES,
@@ -431,11 +486,15 @@ fn slice_script(key: &str, start: usize) -> String {
 enum ReaderAnswer {
     Waiting {
         note: Option<String>,
+        #[serde(default)]
+        origin: Option<f64>,
     },
     Ready {
         length: usize,
         #[serde(default)]
         address: Option<String>,
+        #[serde(default)]
+        origin: Option<f64>,
     },
     Failed {
         message: String,
@@ -725,9 +784,12 @@ impl Imports {
             .await
             .and_then(|result| decode_string(&result))
             .and_then(|text| serde_json::from_str::<ReaderAnswer>(&text).ok());
-        let (length, address) = match answer {
+        let (length, address, origin) = match answer {
             None => return self.waiting(&window, loading, None),
-            Some(ReaderAnswer::Waiting { note }) => return self.waiting(&window, loading, note),
+            Some(ReaderAnswer::Waiting { note, origin }) => {
+                self.answered_from(origin);
+                return self.waiting(&window, loading, note);
+            }
             Some(ReaderAnswer::Failed { message }) => {
                 return PollResult::Failed {
                     message: if message == "too large" {
@@ -737,10 +799,14 @@ impl Imports {
                     },
                 }
             }
-            Some(ReaderAnswer::Ready { length, address }) => (length, address),
+            Some(ReaderAnswer::Ready {
+                length,
+                address,
+                origin,
+            }) => (length, address, origin),
         };
         // A kept window's data counts only from the page asked for.
-        let address = if kept {
+        let (address, forwarded) = if kept {
             let mut guard = lock(&self.session);
             let Some(visit) = guard.as_mut().and_then(|session| session.kept.as_mut()) else {
                 return PollResult::Failed {
@@ -749,9 +815,11 @@ impl Imports {
             };
             let parsed = address.as_deref().and_then(|text| Url::parse(text).ok());
             match parsed {
-                Some(parsed) if visit.readable() && visit.address_ok(&parsed) => {
+                Some(parsed) if visit.readable() && visit.data_ok(&parsed, origin) => {
+                    let forwarded = !visit.address_ok(&parsed);
                     visit.read = Some(parsed);
-                    address
+                    visit.origin = origin.or(visit.origin);
+                    (address, forwarded)
                 }
                 _ => {
                     let _ = window.eval(format!("delete window[{key:?}];"));
@@ -763,7 +831,7 @@ impl Imports {
                 }
             }
         } else {
-            None
+            (None, false)
         };
         let mut data = String::with_capacity(length.min(MAX_PAGE_DATA_BYTES));
         let mut start = 0;
@@ -816,6 +884,21 @@ impl Imports {
             data,
             page: None,
             address,
+            forwarded,
+        }
+    }
+
+    /// Notes the document a kept window's reader answered from with no
+    /// data yet, by when it was made, when it is not the page before's: the
+    /// next page is then never read from it.
+    fn answered_from(&self, origin: Option<f64>) {
+        if let Some(visit) = lock(&self.session)
+            .as_mut()
+            .and_then(|session| session.kept.as_mut())
+        {
+            if origin.is_some() && origin != visit.before_origin && visit.readable() {
+                visit.origin = origin;
+            }
         }
     }
 
@@ -875,6 +958,7 @@ impl Imports {
                 data,
                 page: Some(measure.measuring.closed(now)),
                 address: None,
+                forwarded: false,
             });
         };
         let size = window.inner_size().ok().map(|size| {
@@ -890,6 +974,7 @@ impl Imports {
                 data,
                 page: Some(observations),
                 address: None,
+                forwarded: false,
             }),
             Progress::Measuring { steps, presses } => {
                 if let Some(current) = lock(&self.session)
@@ -1023,7 +1108,8 @@ mod tests {
     #[test]
     fn builds_scripts_that_always_return_strings() {
         let script = reader_script("function () { return 1; }", "__atlasImport1");
-        assert!(script.contains("JSON.stringify({ state: 'waiting' })"));
+        assert!(script.contains("JSON.stringify({ state: 'waiting', origin: origin })"));
+        assert!(script.contains("performance.timeOrigin"));
         assert!(script.contains("\"__atlasImport1\""));
         assert!(script.contains("catch (error)"));
         let slice = slice_script("__atlasImport1", 5);
@@ -1043,14 +1129,32 @@ mod tests {
             serde_json::from_str::<ReaderAnswer>(r#"{"state":"ready","length":5}"#),
             Ok(ReaderAnswer::Ready {
                 length: 5,
-                address: None
+                address: None,
+                origin: None
             })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<ReaderAnswer>(
+                r#"{"state":"ready","length":5,"address":null,"origin":1731594012345.5}"#
+            ),
+            Ok(ReaderAnswer::Ready { origin: Some(origin), .. }) if origin == 1_731_594_012_345.5
+        ));
+        assert!(matches!(
+            serde_json::from_str::<ReaderAnswer>(r#"{"state":"waiting","origin":null}"#),
+            Ok(ReaderAnswer::Waiting {
+                note: None,
+                origin: None
+            })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<ReaderAnswer>(r#"{"state":"waiting","note":"x","origin":7}"#),
+            Ok(ReaderAnswer::Waiting { note: Some(_), origin: Some(origin) }) if origin == 7.0
         ));
         assert!(matches!(
             serde_json::from_str::<ReaderAnswer>(
                 r#"{"state":"ready","length":5,"address":"https://wiki.example.org/wiki/A"}"#
             ),
-            Ok(ReaderAnswer::Ready { length: 5, address: Some(address) })
+            Ok(ReaderAnswer::Ready { length: 5, address: Some(address), origin: None })
                 if address == "https://wiki.example.org/wiki/A"
         ));
         assert!(serde_json::from_str::<ReaderAnswer>(r#"{"state":"pwned"}"#).is_err());
@@ -1073,6 +1177,7 @@ mod tests {
             data: "{}".to_owned(),
             page: None,
             address: None,
+            forwarded: false,
         };
         assert_eq!(
             serde_json::to_value(ready).unwrap(),
@@ -1082,10 +1187,21 @@ mod tests {
             data: "{}".to_owned(),
             page: None,
             address: Some("https://wiki.example.org/wiki/B".to_owned()),
+            forwarded: false,
         };
         assert_eq!(
             serde_json::to_value(kept).unwrap(),
             serde_json::json!({ "state": "ready", "data": "{}", "address": "https://wiki.example.org/wiki/B" })
+        );
+        let forwarded = PollResult::Ready {
+            data: "{}".to_owned(),
+            page: None,
+            address: Some("https://wiki.example.org/wiki/A#B".to_owned()),
+            forwarded: true,
+        };
+        assert_eq!(
+            serde_json::to_value(forwarded).unwrap(),
+            serde_json::json!({ "state": "ready", "data": "{}", "address": "https://wiki.example.org/wiki/A#B", "forwarded": true })
         );
         assert_eq!(
             serde_json::to_value(Navigated::Navigated).unwrap(),
@@ -1108,6 +1224,17 @@ mod tests {
         assert!(visit.readable());
         visit.read = Some(url(A));
         visit.next(url(B));
+        visit
+    }
+
+    /// A kept window that read page A from the document made at `origin`.
+    fn read_a_made_at(origin: f64, at: Instant) -> Visit {
+        let mut visit = Visit::new(url(A));
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        assert!(visit.data_ok(&url(A), Some(origin)));
+        visit.read = Some(url(A));
+        visit.origin = Some(origin);
         visit
     }
 
@@ -1146,6 +1273,86 @@ mod tests {
         assert!(visit.readable());
         assert!(visit.address_ok(&url(B)));
         assert!(visit.address_ok(&url("https://wiki.example.org/wiki/B#History")));
+    }
+
+    #[test]
+    fn reads_a_name_the_site_shows_at_the_address_of_the_page_before() {
+        let at = Instant::now();
+        // A was read from the document made at 100; the window is told to go
+        // to B, a second name of A, which the site shows at A's address.
+        let section = url("https://wiki.example.org/wiki/A#B");
+        let mut visit = read_a_made_at(100.0, at);
+        visit.next(url(B));
+        assert_eq!(visit.before_origin, Some(100.0));
+        // Until a load of B has started, A's address is A: its late events
+        // do not count, and nothing read there does, whatever the document.
+        visit.page_load(false, &section, at);
+        assert!(!visit.readable());
+        assert!(!visit.data_ok(&section, Some(100.0)));
+        assert!(!visit.data_ok(&section, Some(200.0)));
+        assert!(!visit.data_ok(&section, None));
+        // B's load starts at its own address and ends at A's, where the
+        // page has moved the address to.
+        visit.page_load(true, &url(B), at);
+        assert!(!visit.readable());
+        visit.page_load(false, &section, at);
+        assert!(visit.readable());
+        // The new document counts at A's address; A's own document never.
+        assert!(visit.data_ok(&section, Some(200.0)));
+        assert!(visit.data_ok(&url(A), Some(200.0)));
+        assert!(visit.data_ok(&section, None));
+        assert!(!visit.data_ok(&section, Some(100.0)));
+        assert!(!visit.data_ok(&url(A), Some(100.0)));
+        // Still never another site, nor anything but a web page.
+        assert!(!visit.data_ok(&url("https://other.example.net/wiki/A"), Some(200.0)));
+        assert!(!visit.data_ok(&url("about:blank"), Some(200.0)));
+        // A check that loads the page again at A's address waits for its end.
+        visit.page_load(true, &section, at);
+        assert!(!visit.readable());
+        visit.page_load(false, &section, at + Duration::from_secs(1));
+        assert!(visit.readable());
+        // Asked for attention like any page that gives no data.
+        assert!(visit.attention_due(at + Duration::from_secs(1) + ATTENTION_AFTER));
+    }
+
+    #[test]
+    fn reads_the_page_before_asked_for_again_under_another_name_and_back() {
+        let at = Instant::now();
+        // A, then its second name B (read at A's address), then A itself.
+        let section = url("https://wiki.example.org/wiki/A#B");
+        let mut visit = read_a_made_at(100.0, at);
+        visit.next(url(B));
+        visit.page_load(true, &url(B), at);
+        visit.page_load(false, &section, at);
+        assert!(visit.data_ok(&section, Some(200.0)));
+        visit.read = Some(section.clone());
+        visit.origin = Some(200.0);
+        visit.next(url(A));
+        assert_eq!(visit.before, vec![url(B), section.clone()]);
+        assert_eq!(visit.before_origin, Some(200.0));
+        // The page asked for is A, so A's address is right, but not from
+        // the document B was read from.
+        assert!(visit.address_ok(&url(A)));
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        assert!(visit.readable());
+        assert!(visit.data_ok(&url(A), Some(300.0)));
+        // A page that never answered keeps the document before it in mind.
+        visit.next(url("https://wiki.example.org/wiki/C"));
+        assert_eq!(visit.before_origin, Some(200.0));
+    }
+
+    #[test]
+    fn a_browsed_window_never_counts_the_page_before() {
+        let at = Instant::now();
+        let mut visit = Visit::browsing(url(A));
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        visit.read = Some(url(A));
+        visit.page_load(true, &url(B), at);
+        visit.page_load(false, &url(B), at);
+        assert!(visit.data_ok(&url(B), Some(200.0)));
+        assert!(!visit.data_ok(&url(A), Some(200.0)));
     }
 
     #[test]

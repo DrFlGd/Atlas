@@ -64,7 +64,10 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
-use super::{downscale::looks_like_image, store::TileStore};
+use super::{
+    downscale::{looks_like_gif, looks_like_image, looks_like_svg},
+    store::TileStore,
+};
 use crate::activity::{self, ActivityLog, Area};
 
 /// The User-Agent of every tile request.
@@ -1378,7 +1381,12 @@ impl Downloader {
                 Err(error) => return Ok(Err(network_error(&error))),
             }
         }
-        if looks_like_image(&body) {
+        // An SVG drawing is a picture, not a web page: a job that makes its
+        // pictures ready itself (pictures of pages) gets it to draw, and a
+        // GIF picture to keep its first frame; a map image cannot be either.
+        let drawing = !content_type.contains("html") && looks_like_svg(&body);
+        let other_picture = drawing || looks_like_gif(&body);
+        if looks_like_image(&body) || (other_picture && self.transform.is_some()) {
             let body = match &self.transform {
                 None => body,
                 Some(transform) => {
@@ -1405,6 +1413,18 @@ impl Downloader {
                 Stop::Disk(error.to_string())
             })?;
             return Ok(Ok(Outcome::Saved(body.len() as u64)));
+        }
+        if drawing {
+            self.log.warn(
+                Area::Download,
+                format!(
+                    "The answer for {} is an SVG drawing, not a map image; the image counts as failed",
+                    task.url
+                ),
+            );
+            return Ok(Ok(Outcome::Failed(
+                "the answer is an SVG drawing, not a map image".to_owned(),
+            )));
         }
         let starts_like_markup = body
             .iter()
@@ -2046,6 +2066,46 @@ pub mod tests {
         let server = MockServer::start(Arc::new(|_, _| Reply {
             headers: vec![("Content-Type", "image/png".to_owned())],
             body: b"  <html></html>".to_vec(),
+            ..Reply::status(200)
+        }))
+        .await;
+        let run = downloader(&dir, fast());
+        assert_eq!(run.run(tasks(&server, 5)).await, Err(Stop::WebPage));
+    }
+
+    #[tokio::test]
+    async fn a_drawing_is_not_a_web_page_and_does_not_stop_the_job() {
+        ensure_crypto();
+        let dir = TempDir::new("svg");
+        let server = MockServer::start(Arc::new(|path: &str, _| match path {
+            "/t/1.png" => Reply {
+                headers: vec![("Content-Type", "image/svg+xml".to_owned())],
+                body: b"<?xml version=\"1.0\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"/>".to_vec(),
+                ..Reply::status(200)
+            },
+            _ => Reply::image(png()),
+        }))
+        .await;
+        let run = downloader(&dir, fast());
+        assert_eq!(run.run(tasks(&server, 4)).await, Ok(()));
+        let outcomes = run.outcomes();
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, Outcome::Saved(_)))
+                .count(),
+            3
+        );
+        assert!(outcomes.contains(&Outcome::Failed(
+            "the answer is an SVG drawing, not a map image".to_owned()
+        )));
+        assert!(!dir.0.join("overlay/t/1.png").exists());
+        assert!(dir.0.join("overlay/t/2.png").exists());
+
+        // A web page that holds a drawing, or says it is one, is a web page.
+        let server = MockServer::start(Arc::new(|_, _| Reply {
+            headers: vec![("Content-Type", "text/html".to_owned())],
+            body: b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),
             ..Reply::status(200)
         }))
         .await;

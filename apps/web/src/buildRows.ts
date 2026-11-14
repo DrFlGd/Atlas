@@ -62,7 +62,14 @@ function headedTable(table: HTMLTableElement): boolean {
  */
 export function enhanceBuildRows(root: Element): void {
   for (const table of root.querySelectorAll('table')) {
-    if (table.hasAttribute('data-build-rows') || !headedTable(table)) continue;
+    // A box of facts is about one thing, the page's: its rows name no things of their own.
+    if (
+      table.hasAttribute('data-build-rows') ||
+      table.closest('[data-box]') ||
+      !headedTable(table)
+    ) {
+      continue;
+    }
     table.setAttribute('data-build-rows', '');
     for (const row of table.tBodies[0]?.rows ?? []) {
       const thing = rowThing(row);

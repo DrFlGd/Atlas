@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import type { Page, Route } from '@playwright/test';
-import { collectErrors, storedSetting } from './helpers';
+import { collectErrors, openGuidesSection, storedSetting } from './helpers';
 import { expect, test } from './layout';
 import { DOWNLOADS_BUILD, mock, paste, realErrors, setUp, url } from './fakeShell';
 
@@ -272,8 +272,8 @@ test.describe('in Games', () => {
 
     // Guides: the wiki's pages, under its heading, said to come with the title.
     await page.getByTestId('section-guides').click();
-    const sections = page.getByTestId('guides-contents').getByTestId('guides-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
+    const sections = page.locator('.guides-side .guides-tree-section');
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki/]);
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
     await expect(page.getByTestId('guides-from-title')).toHaveText('With this title');
     await shot(page, '4-guides-wiki-of-the-title');
@@ -288,7 +288,12 @@ test.describe('in Games', () => {
       .click();
     await expect(page.getByTestId('map-chip')).toContainText('Second map site');
     await page.getByTestId('section-guides').click();
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
+    await expect(page.locator('.guides-side .guides-tree-section')).toHaveText([
+      /Basics/,
+      /The isle/,
+      /Gear/,
+      /Isle Wiki/,
+    ]);
     expect(await storedSetting(page, 'guideLinks:isles-two')).toBeUndefined();
 
     // The wiki itself: the maps of its title, a tap away.
@@ -334,8 +339,8 @@ test.describe('in Games', () => {
     await stored(page, { 'Atlas demo world': ['demo', 'isle-wiki'] });
 
     await page.getByTestId('section-guides').click();
-    await page.getByTestId('guides-section').filter({ hasText: 'Isle Wiki' }).click();
-    await page.getByTestId('guides-section').filter({ hasText: 'Gear' }).click();
+    await openGuidesSection(page, 'Isle Wiki');
+    await openGuidesSection(page, 'Gear');
     await page.getByTestId('guides-page-link').filter({ hasText: 'Ember blade' }).click();
     const shown = page.getByTestId('guides-page');
     await expect(page.locator('.guides-crumbs')).toHaveText(/Isle Wiki\s*›\s*Gear/);

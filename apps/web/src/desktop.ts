@@ -460,9 +460,12 @@ export type PollResult =
   /**
    * The page data, and when the page was measured, what it loaded
    * (`PageObservations`, unchecked). In a kept window, the address of the
-   * document it was read from.
+   * document it was read from; `forwarded` when that address is one of the
+   * page shown before, where the site led from the page asked for (a second
+   * name of that page), and the shell has checked that the document is not
+   * the one that page was read from.
    */
-  | { state: 'ready'; data: string; page?: unknown; address?: string }
+  | { state: 'ready'; data: string; page?: unknown; address?: string; forwarded?: boolean }
   | { state: 'closed' }
   | { state: 'failed'; message: string };
 

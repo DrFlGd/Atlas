@@ -172,6 +172,7 @@ describe('collecting', () => {
   it('reads the page of a step only from a link its note starts with', () => {
     expect(stepPageId({ note: `[Ring](${page('ring')}) and more` })).toBe(page('ring'));
     expect(stepPageId({ note: `See [Ring](${page('ring')})` })).toBeNull();
+    expect(stepPageId({ note: `[Ring](${page('ring')} "#where-to-find")` })).toBe(page('ring'));
     expect(stepPageId({ note: '[A location](isle:loc:gate)' })).toBeNull();
     expect(stepPageId({ note: '[Web](https://example.org/)' })).toBeNull();
     expect(stepPageId({})).toBeNull();
@@ -241,6 +242,15 @@ describe('where a page says a thing is', () => {
     expect(locationParts(PAGES[page('ring')]!)).toMatchObject({
       links: ['isle:loc:gate'],
       texts: ['from the chest behind the gate.'],
+    });
+    // A box of facts as a page read from a wiki writes one: titled, with sub-headings.
+    expect(
+      locationParts(
+        `| Warden's maul | {box} |\n| --- | --- |\n| **Where** |  |\n| Location | [Stone wardens](${page('wardens')}), Sunken shrine 3 |\n\nA maul.`,
+      ),
+    ).toMatchObject({
+      links: [page('wardens')],
+      texts: ['Stone wardens, Sunken shrine 3'],
     });
   });
 

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { guideSearchText, isInlinePicture, renderGuideMarkdown, shownSize } from './markdown';
+import {
+  guideHeadings,
+  guideSearchText,
+  isInlinePicture,
+  renderGuideMarkdown,
+  shownSize,
+  withoutBoxes,
+} from './markdown';
 
 describe('renderGuideMarkdown', () => {
   it('renders ordinary Markdown', () => {
@@ -407,5 +414,186 @@ describe('guideSearchText', () => {
   it('pairs bars as the page does', () => {
     expect(guideSearchText('a ||b|| c || d')).toBe('a c || d');
     expect(guideSearchText('```\n||\n```\n\n||secret|| shown')).toBe('|| shown');
+  });
+});
+
+describe('sections', () => {
+  const known = new Set(['demo:guide:walk', 'demo:loc:0412']);
+  const options = { isAppTarget: (id: string) => known.has(id) };
+
+  it('gives every heading a name from its words, a repeated one numbered', () => {
+    const html = renderGuideMarkdown(
+      '## Where to find\n\nText.\n\n### The *old* `well`\n\n## Where to find\n\n# Notes',
+    );
+    expect(html).toContain('<h2 data-section="where-to-find">Where to find</h2>');
+    expect(html).toContain('<h3 data-section="the-old-well">');
+    expect(html).toContain('<h2 data-section="where-to-find-2">Where to find</h2>');
+    expect(html).toContain('<h1 data-section="notes">Notes</h1>');
+  });
+
+  it('lists the headings with their names and levels, the same as the page', () => {
+    const source =
+      '## Getting there ![a gate](demo:picture:gate)\n\n### On [foot](demo:guide:walk)\n\n||\n\n## The secret\n\n||\n\n## Getting there';
+    expect(guideHeadings(source)).toEqual([
+      { level: 2, words: 'Getting there', name: 'getting-there', hidden: false },
+      { level: 3, words: 'On foot', name: 'on-foot', hidden: false },
+      { level: 2, words: 'The secret', name: 'the-secret', hidden: true },
+      { level: 2, words: 'Getting there', name: 'getting-there-2', hidden: false },
+    ]);
+    expect(renderGuideMarkdown(source)).toContain('data-section="getting-there-2"');
+    expect(guideHeadings('No heading here.')).toEqual([]);
+  });
+
+  it('carries the section a link names, and does not show it as a tooltip', () => {
+    const html = renderGuideMarkdown(
+      '[by boat](demo:guide:walk "#By boat") and [the well](demo:guide:walk "Part 2")',
+      options,
+    );
+    expect(html).toContain(
+      '<button type="button" class="app-link" data-atlas-target="demo:guide:walk" data-atlas-section="by-boat">by boat</button>',
+    );
+    expect(html).toContain('title="Part 2">the well</button>');
+    expect(html).not.toContain('title="#');
+  });
+
+  it('names a section only for a page', () => {
+    const html = renderGuideMarkdown('[the well](demo:loc:0412 "#top")', options);
+    expect(html).not.toContain('data-atlas-section');
+    expect(html).toContain('title="#top"');
+  });
+
+  it('keeps saying a page was not read yet when its link names a section', () => {
+    const html = renderGuideMarkdown('[runes](demo:guide:unread "#runes")', {
+      ...options,
+      unreadPage: 'This page has not been read yet',
+    });
+    expect(html).toContain('data-unread="" title="This page has not been read yet"');
+    expect(html).not.toContain('#runes');
+  });
+});
+
+describe('boxes of facts', () => {
+  const BOX = [
+    '| Ember blade | {box} |',
+    '| --- | --- |',
+    '| ![Ember blade](demo:picture:ember "=120x120") |  |',
+    '| A short sword that **glows**. |  |',
+    '| Type | [Swords](demo:guide:swords) |',
+    '| **Damage** |  |',
+    '| Base | 40 ([48]{color=#cc3300})^\\[1\\]^<br>a hit |',
+    '|  |  |',
+    '| Found in | \\|\\|Sunken shrine\\|\\| |',
+  ].join('\n');
+  const options = {
+    isAppTarget: (id: string) => id === 'demo:guide:swords',
+    picture: (id: string) =>
+      id === 'demo:picture:ember' ? { url: 'https://app.test/ember.png', caption: 'Ember' } : null,
+  };
+
+  it('shows a table titled with {box} as a box: a title, lines across it, labels and values', () => {
+    const html = renderGuideMarkdown(`${BOX}\n\nThe text beside it.`, options);
+    expect(html).toContain('<aside class="guide-box" data-box="" aria-label="Ember blade">');
+    expect(html).toContain(
+      '<th colspan="2" class="guide-box-title" scope="colgroup">Ember blade</th>',
+    );
+    // The mark is no words of the page.
+    expect(html).not.toContain('{box}');
+    expect(html).toContain(
+      '<td colspan="2" class="guide-box-wide"><span class="guide-picture sized">',
+    );
+    expect(html).toContain(
+      '<td colspan="2" class="guide-box-wide">A short sword that <strong>glows</strong>.</td>',
+    );
+    expect(html).toContain(
+      '<th scope="row" class="guide-box-label">Type</th>\n<td class="guide-box-value"><button type="button" class="app-link" data-atlas-target="demo:guide:swords">Swords</button></td>',
+    );
+    expect(html).toContain(
+      '<th colspan="2" class="guide-box-heading" scope="colgroup"><strong>Damage</strong></th>',
+    );
+    // Colours, raised text and line breaks stay in a value; hidden text stays hidden.
+    expect(html).toContain('<span class="text-colour" data-text-colour="#cc3300">48</span>');
+    expect(html).toContain('<sup>[1]</sup><br>');
+    expect(html).toContain('class="hidden-text-show"');
+    // An empty row goes.
+    expect(html.match(/<tr>/g)).toHaveLength(7);
+    expect(html).toContain('</table>\n</aside>\n<p>The text beside it.</p>');
+  });
+
+  it('gives its labels no place among the headings, and its words to search', () => {
+    expect(guideHeadings(`${BOX}\n\n## Details\n\nText`).map((h) => h.words)).toEqual(['Details']);
+    expect(guideSearchText(BOX)).toBe(
+      'Ember blade Ember blade A short sword that glows. Type Swords Damage Base 40 (48)[1] a hit Found in',
+    );
+  });
+
+  it('leaves out the first row of a box without a title, and keeps any other table a table', () => {
+    const untitled = renderGuideMarkdown('|  | {box} |\n| --- | --- |\n| Weight | 4 |');
+    expect(untitled).not.toContain('<thead>');
+    expect(untitled).not.toContain('aria-label');
+    expect(untitled).toContain('<th scope="row" class="guide-box-label">Weight</th>');
+    for (const table of [
+      '| Ember blade | box |\n| --- | --- |\n| Type | Sword |',
+      '| Ember blade | {box} | More |\n| --- | --- | --- |\n| Type | Sword | x |',
+      '| {box} | Ember blade |\n| --- | --- |\n| Type | Sword |',
+      '| Ember blade | `{box}` |\n| --- | --- |\n| Type | Sword |',
+    ]) {
+      expect(renderGuideMarkdown(table)).not.toContain('guide-box');
+    }
+  });
+
+  it('hides a whole box between bars, and stays safe', () => {
+    const hidden = renderGuideMarkdown(`||\n\n${BOX.split('\n').slice(0, -1).join('\n')}\n\n||`);
+    expect(hidden).toMatch(
+      /<aside class="guide-box" data-box="" aria-label="Ember blade" data-hidden-part="1" hidden="">/,
+    );
+    const unsafe = renderGuideMarkdown(
+      '| <script>"x"</script> | {box} |\n| --- | --- |\n| <b onclick=x> | <img src=x> |',
+    );
+    expect(unsafe).toContain('aria-label="&lt;script&gt;“x”&lt;/script&gt;"');
+    expect(unsafe).not.toMatch(/<(script|b|img)\b/);
+  });
+
+  it('can be left out of a page’s text, line by line', () => {
+    expect(withoutBoxes(`${BOX}\n\nThe text.\n\n| A | B |\n| - | - |\n| 1 | 2 |`)).toBe(
+      '\nThe text.\n\n| A | B |\n| - | - |\n| 1 | 2 |',
+    );
+  });
+});
+
+describe('tiles', () => {
+  const options = {
+    isAppTarget: (id: string) => id.startsWith('demo:guide:'),
+    picture: (id: string) => ({ url: `https://app.test/${id}.png`, caption: 'A caption' }),
+  };
+
+  it('shows a list of pictures each with a name as a grid of tiles, the name under the picture', () => {
+    const html = renderGuideMarkdown(
+      [
+        '- [![Gear](demo:picture:gear "=100x100")](demo:guide:gear) [Gear](demo:guide:gear)',
+        '- ![Bosses](demo:picture:bosses)Bosses',
+        '- ![Maps](demo:picture:maps "=178x100")',
+      ].join('\n'),
+      options,
+    );
+    expect(html).toMatch(/^<ul class="guide-tiles">/);
+    expect(html).toContain(
+      '</button><span class="guide-tile-words"> <button type="button" class="app-link" data-atlas-target="demo:guide:gear">Gear</button></span></li>',
+    );
+    expect(html).toContain('<span class="guide-tile-words">Bosses</span></li>');
+    expect(html.match(/guide-tile-words/g)).toHaveLength(2);
+  });
+
+  it('keeps any other list a list: small pictures, more than a name, one item, hidden text', () => {
+    for (const list of [
+      '- ![a](demo:picture:a "=20x20") Gear\n- ![b](demo:picture:b "=20x20") Bosses',
+      `- ![a](demo:picture:a) Gear\n- ![b](demo:picture:b) ${'many words '.repeat(8)}`,
+      '- ![a](demo:picture:a) Gear',
+      '- ![a](demo:picture:a) Gear\n- Bosses',
+      '- ![a](demo:picture:a) ||Gear||\n- ![b](demo:picture:b) Bosses',
+      '- ![a](demo:picture:a) Gear\n  - inner\n- ![b](demo:picture:b) Bosses',
+      '1. ![a](demo:picture:a) Gear\n2. ![b](demo:picture:b) Bosses',
+    ]) {
+      expect(renderGuideMarkdown(list, options)).not.toContain('guide-tiles');
+    }
   });
 });

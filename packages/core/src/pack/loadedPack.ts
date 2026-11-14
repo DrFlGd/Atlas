@@ -35,6 +35,17 @@ export interface LoadedPack {
    * pack. Ids that were never migrated are returned unchanged.
    */
   readonly currentId: (id: string) => string;
+  /**
+   * The section of its page an id leads to on the way to the current id
+   * (the manifest's `idSections`, for another name of a page that a site
+   * forwards to a part of the page), or null when it names none.
+   */
+  readonly sectionOf: (id: string) => string | null;
+  /**
+   * The pack's home page (the manifest's `homePage`, a wiki's main page),
+   * by its current id, when the pack has that guide; otherwise null.
+   */
+  readonly homePage: string | null;
 }
 
 const byId = <T extends { id: string }>(items: readonly T[]) =>
@@ -49,6 +60,16 @@ export function indexPack(data: PackData, baseUrl: URL): LoadedPack {
     else locationsByLayer.set(location.layerId, [location]);
   }
   const migrations = data.manifest.idMigrations;
+  const sections = data.manifest.idSections ?? {};
+  const currentId = (id: string) => {
+    let current = id;
+    // Bounded so a migration cycle in a hand-written pack cannot hang the app.
+    for (let hops = 0; hops < 32 && migrations[current] !== undefined; hops++) {
+      current = migrations[current]!;
+    }
+    return current;
+  };
+  const home = data.manifest.homePage ? currentId(data.manifest.homePage) : null;
 
   return {
     baseUrl,
@@ -64,13 +85,16 @@ export function indexPack(data: PackData, baseUrl: URL): LoadedPack {
     locationsOn: (layerId) => locationsByLayer.get(layerId) ?? [],
     resolveUrl: (relative) =>
       new URL(relative, baseUrl).href.replace(/%7B/gi, '{').replace(/%7D/gi, '}'),
-    currentId: (id) => {
+    currentId,
+    sectionOf: (id) => {
       let current = id;
-      // Bounded so a migration cycle in a hand-written pack cannot hang the app.
       for (let hops = 0; hops < 32 && migrations[current] !== undefined; hops++) {
+        const section = sections[current];
+        if (section) return section;
         current = migrations[current]!;
       }
-      return current;
+      return null;
     },
+    homePage: home !== null && data.guides.some((guide) => guide.id === home) ? home : null,
   };
 }

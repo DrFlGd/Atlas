@@ -38,6 +38,7 @@ describe('inline Markdown, read and written', () => {
     '**bold with *italic* inside** and *italic with **bold** inside*.',
     'Code: `a | b`, ``with ` a backtick``, and ` `` ` .',
     'Links: [a page](demo:guide:walk), [a location](demo:loc:0412 "The old well"), [the web](https://example.org/a_(b)).',
+    'Sections: [by boat](demo:guide:walk "#by-boat"), [**the** notes](<demo:guide:walk> "#Notes and tips").',
     '[**every** stone](demo:checklist:waystones) and <demo:loc:0412> and <https://example.org>.',
     'A bare address https://example.org/a_b and www.example.org in text.',
     '![A gate](demo:picture:gate) and ![a gate "with" title](demo:picture:gate "At dawn").',

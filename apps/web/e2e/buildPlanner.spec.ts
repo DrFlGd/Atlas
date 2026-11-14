@@ -1,5 +1,11 @@
 import { devices, type Page } from '@playwright/test';
-import { collectErrors, demoLocations, reloadSaved, storedSetting } from './helpers';
+import {
+  collectErrors,
+  demoLocations,
+  openGuidesSection,
+  reloadSaved,
+  storedSetting,
+} from './helpers';
 import { expect, test } from './layout';
 import { choosePlace } from './touch';
 
@@ -25,11 +31,7 @@ const toast = (page: Page) => page.getByTestId('toast');
 /** Opens a page of the demo wiki's Gear section in Guides. */
 async function openGearPage(page: Page, title: string): Promise<void> {
   await page.getByTestId('section-guides').click();
-  const crumbs = page.locator('.guides-crumbs');
-  if ((await crumbs.locator('button', { hasText: 'Contents' }).count()) > 0) {
-    await crumbs.locator('button', { hasText: 'Contents' }).click();
-  }
-  await body(page).getByTestId('guides-section').filter({ hasText: 'Gear' }).click();
+  await openGuidesSection(page, 'Gear');
   await body(page).getByTestId('guides-page-link').filter({ hasText: title }).click();
   await expect(shownPage(page).locator('h1')).toHaveText(title);
 }
@@ -259,7 +261,7 @@ test.describe('on a phone', () => {
     const errors = collectErrors(page);
     await page.goto('./');
     await page.getByTestId('section-guides').click();
-    await body(page).getByTestId('guides-section').filter({ hasText: 'Gear' }).click();
+    await openGuidesSection(page, 'Gear');
     await body(page).getByTestId('guides-page-link').filter({ hasText: 'Ember blade' }).click();
     await shownPage(page).getByTestId('add-to-build').click();
     await startBuild(page, 'Pocket build');

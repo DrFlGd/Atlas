@@ -1,3 +1,4 @@
+import { isBoxMark } from '../markdownMarks';
 import type { Align, ListItemModel, ListModel, TableModel } from './blocks';
 import type { Inline } from './inline';
 
@@ -141,6 +142,20 @@ export function listTexts(list: ListModel): Inline[][] {
 
 // ---------------------------------------------------------------------------
 // Tables
+
+/**
+ * Whether a table is a box of facts: two columns, the second heading the
+ * mark `{box}` (see `markdownMarks.ts`). It is edited as the table it is.
+ */
+export function isBoxTable(table: TableModel): boolean {
+  const mark = table.header[1];
+  return (
+    table.header.length === 2 &&
+    mark !== undefined &&
+    mark.every((piece) => piece.kind === 'text') &&
+    isBoxMark(mark.map((piece) => piece.text).join(''))
+  );
+}
 
 export function cellAt(table: TableModel, row: number, column: number): Inline[] {
   return (row === 0 ? table.header : table.rows[row - 1])?.[column] ?? [];

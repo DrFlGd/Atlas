@@ -8,6 +8,9 @@ import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
  */
 export const SCHEMA_VERSION = 2;
 
+/** The longest section another name of a page may lead to (`idSections` of the manifest). */
+export const MAX_ID_SECTION_LENGTH = 200;
+
 /** Every pack schema version this package reads. */
 export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2];
 
@@ -22,7 +25,14 @@ const semver = z
 export const pointSchema = z.tuple([z.number(), z.number()]);
 
 const hasTileTemplate = (url: string) =>
-  url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
+  url.includes('{z}') && url.includes('{x}') && url.includes('{y}') && !url.includes('{-y}');
+
+/**
+ * A remote tile template: `{z}`, `{x}`, and the row as `{y}` (counted from
+ * the top) or as `{-y}` (counted from the bottom), never both.
+ */
+const hasRemoteTileTemplate = (url: string) =>
+  url.includes('{z}') && url.includes('{x}') && url.includes('{y}') !== url.includes('{-y}');
 
 const LOOPBACK_HTTP = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//;
 
@@ -161,6 +171,29 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    */
   const idMigrationsSchema = z.record(anyIdSchema, anyIdSchema);
 
+  /**
+   * Where another name of a page leads inside the page: by a guide id of
+   * `idMigrations`, the section of the page it opens at (a heading's name,
+   * see `sections.ts` in `@atlas/core`), as a site forwards a name to a
+   * part of a page. A name `idMigrations` does not have is never reached.
+   * Optional; an app that does not know it opens the page at its top. Read
+   * leniently: one that cannot be read is left out.
+   */
+  const idSectionsSchema = z.record(
+    idOf('guide'),
+    z.string().trim().min(1).max(MAX_ID_SECTION_LENGTH),
+  );
+
+  /**
+   * The pack's home page: the guide that is the site's own home page (a
+   * wiki's main page), from which its main areas branch off. Guides opens
+   * on it, and the top of the contents branches from it (see `pageTree.ts`
+   * in `@atlas/core`). Optional; an app that does not know it opens on the
+   * contents. Read leniently: a value that cannot be read is left out, and
+   * one that names no guide of the pack is not used.
+   */
+  const homePageSchema = idOf('guide');
+
   const manifestBase = {
     gameId: gameIdSchema,
     /** Display name of the pack. */
@@ -170,6 +203,8 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     gamePatch: nonEmpty,
     attribution: z.array(attributionSchema),
     idMigrations: idMigrationsSchema,
+    idSections: reading ? descriptive(idSectionsSchema) : idSectionsSchema.optional(),
+    homePage: reading ? descriptive(homePageSchema) : homePageSchema.optional(),
   };
 
   /** The program that wrote a pack: an app or a command-line tool, and its version. */
@@ -307,14 +342,18 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     /**
      * `https` URL template of the remote tiles, with `{z}`, `{x}` (column) and
      * `{y}` (row) in whatever order the source uses: `{z}/{y}/{x}` for one that
-     * names the row first. Plain `http` is accepted only for this computer
-     * (`127.0.0.1` or `localhost`), for tests and local mirrors.
+     * names the row first. A source that counts its rows from the bottom of
+     * the zoom's whole grid of 2^z rows (often called TMS) has `{-y}` in place
+     * of `{y}`: the row 2^z - 1 - y. The layer's own tiles, and everything
+     * else in a pack, count rows from the top. Plain `http` is accepted only
+     * for this computer (`127.0.0.1` or `localhost`), for tests and local
+     * mirrors.
      */
     urlTemplate: z
       .string()
       .trim()
       .refine(isAllowedRemoteUrl, 'must be an https URL')
-      .refine(hasTileTemplate, 'must contain {z}, {x} and {y}'),
+      .refine(hasRemoteTileTemplate, 'must contain {z}, {x} and one of {y} and {-y}'),
     /**
      * The pyramid levels that are remote tiles under other numbers: the layer's
      * tile (z, x, y) is the remote tile (sourceZ, x + offsetX, y + offsetY).
@@ -690,6 +729,8 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   return {
     attributionSchema,
     idMigrationsSchema,
+    idSectionsSchema,
+    homePageSchema,
     writtenBySchema,
     packSourceSchema,
     layerImagesSchema,
@@ -724,6 +765,8 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
 export const {
   attributionSchema,
   idMigrationsSchema,
+  idSectionsSchema,
+  homePageSchema,
   writtenBySchema,
   packSourceSchema,
   layerImagesSchema,
