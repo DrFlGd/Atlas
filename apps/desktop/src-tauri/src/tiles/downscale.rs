@@ -173,6 +173,48 @@ pub fn looks_like_image(data: &[u8]) -> bool {
         || (data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP")
 }
 
+/// Whether bytes are an SVG drawing: XML whose outermost element is `svg`,
+/// after the XML line, comments and a document type of `svg`. A web page
+/// that holds a drawing is not one.
+pub fn looks_like_svg(data: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&data[..data.len().min(8192)]);
+    let mut rest = head.trim_start_matches('\u{feff}').trim_start();
+    loop {
+        let (after, end) = if let Some(after) = rest.strip_prefix("<?") {
+            (after, "?>")
+        } else if let Some(after) = rest.strip_prefix("<!--") {
+            (after, "-->")
+        } else if rest
+            .get(..9)
+            .is_some_and(|start| start.eq_ignore_ascii_case("<!doctype"))
+        {
+            let after = rest[9..].trim_start();
+            if !after.starts_with("svg") {
+                return false;
+            }
+            // A document type may hold declarations of its own in brackets.
+            let close = after.find('>').unwrap_or(after.len());
+            (
+                after,
+                if after[..close].contains('[') {
+                    "]>"
+                } else {
+                    ">"
+                },
+            )
+        } else {
+            break;
+        };
+        match after.find(end) {
+            Some(at) => rest = after[at + end.len()..].trim_start(),
+            None => return false,
+        }
+    }
+    rest.strip_prefix("<svg").is_some_and(|after| {
+        after.starts_with(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +223,33 @@ mod tests {
     fn tile(color: [u8; 3], size: u32, format: TileFormat) -> Vec<u8> {
         let image = RgbImage::from_pixel(size, size, Rgb(color));
         encode(&DynamicImage::ImageRgb8(image), format).unwrap()
+    }
+
+    #[test]
+    fn tells_a_drawing_from_a_web_page() {
+        for drawing in [
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+            "<svg>",
+            "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- Made by hand -->\n<svg width=\"4\">",
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"x.dtd\">\n<svg\n viewBox=\"0 0 1 1\">",
+            "<!DOCTYPE svg [ <!ENTITY a \"b\"> ]>\n<svg version=\"1.1\">",
+        ] {
+            assert!(looks_like_svg(drawing.as_bytes()), "{drawing}");
+        }
+        for other in [
+            "",
+            "<",
+            "<svgs>",
+            "<!DOCTYPE html><html><body><svg></svg></body></html>",
+            "<html><svg/></html>",
+            "<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code></Error>",
+            "<?xml version=\"1.0\"",
+            "<!-- <svg> ",
+            "plain text <svg>",
+        ] {
+            assert!(!looks_like_svg(other.as_bytes()), "{other}");
+        }
+        assert!(!looks_like_svg(&[0x89, b'P', b'N', b'G']));
     }
 
     fn pixel(bytes: &[u8], x: u32, y: u32) -> [u8; 3] {

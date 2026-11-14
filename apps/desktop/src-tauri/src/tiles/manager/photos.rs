@@ -19,20 +19,28 @@
 //! The job is kept in the download manager under its own key,
 //! `<pack id>#photos` ([`photos_key`]), next to the pack's map image job.
 
-use std::{io::Cursor, path::Path, sync::Arc};
+use std::{
+    io::Cursor,
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 
 use image::{
     codecs::{jpeg::JpegEncoder, png::PngEncoder, webp::WebPEncoder},
     imageops::FilterType,
-    DynamicImage, ImageEncoder, ImageFormat, ImageReader, Limits,
+    DynamicImage, ImageEncoder, ImageFormat, ImageReader, Limits, Rgba, RgbaImage,
 };
+use resvg::{tiny_skia, usvg};
 use serde_json::Value;
 
 use super::*;
 use crate::{
     library::MAX_PACK_FILE_BYTES,
     packfile::is_picture_path,
-    tiles::download::{Task, Transform},
+    tiles::{
+        download::{Task, Transform},
+        downscale::looks_like_svg,
+    },
 };
 
 /// The key of a pack's photo job among the download jobs.
@@ -56,6 +64,15 @@ const MAX_DECODE_BYTES: u64 = 256 << 20;
 /// The widest or tallest picture decoded.
 const MAX_SIDE: u32 = 16_384;
 const JPEG_QUALITY: u8 = 85;
+/// The largest SVG drawing drawn.
+const MAX_DRAWING_BYTES: usize = 4 << 20;
+/// A drawing has no pixels of its own: it is drawn at this many times the
+/// size it states, so that it stays sharp where a page shows it larger.
+const DRAWING_SCALE: f32 = 4.0;
+/// The longer side of a drawn drawing is never less and never more than
+/// these, in pixels.
+const DRAWING_MIN_SIDE: f32 = 64.0;
+const DRAWING_MAX_SIDE: f32 = 1024.0;
 /// The line the photos of a job are counted under.
 const PHOTOS_NAME: &str = "Location photos";
 
@@ -129,10 +146,79 @@ pub fn photo_tasks(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     Ok(tasks)
 }
 
+/// The computer's fonts, for the text of a drawing: read once, the first
+/// time a drawing with text is drawn.
+fn fonts() -> Arc<usvg::fontdb::Database> {
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    Arc::clone(FONTS.get_or_init(|| {
+        let mut fonts = usvg::fontdb::Database::new();
+        fonts.load_system_fonts();
+        Arc::new(fonts)
+    }))
+}
+
+/// An SVG drawing drawn as a picture: [`DRAWING_SCALE`] times the size it
+/// states, its longer side between [`DRAWING_MIN_SIDE`] and
+/// [`DRAWING_MAX_SIDE`] pixels, its shape kept. Nothing outside the drawing
+/// is read: a file or address it names for a picture inside it is left
+/// out, and nothing in it is run.
+pub fn draw_svg(bytes: &[u8]) -> Result<DynamicImage, String> {
+    if bytes.len() > MAX_DRAWING_BYTES {
+        return Err("it is too large a drawing".to_owned());
+    }
+    let mut options = usvg::Options {
+        resources_dir: None,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    if bytes.windows(5).any(|part| part == b"<text") {
+        options.fontdb = fonts();
+    }
+    let tree = usvg::Tree::from_data(bytes, &options)
+        .map_err(|error| format!("it could not be read as a drawing: {error}"))?;
+    let size = tree.size();
+    let longer = size.width().max(size.height());
+    let scale = (longer * DRAWING_SCALE).clamp(DRAWING_MIN_SIDE, DRAWING_MAX_SIDE) / longer;
+    let side = |length: f32| ((length * scale).ceil() as u32).clamp(1, DRAWING_MAX_SIDE as u32);
+    let (width, height) = (side(size.width()), side(size.height()));
+    let mut pixmap =
+        tiny_skia::Pixmap::new(width, height).ok_or_else(|| "it could not be drawn".to_owned())?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let mut image = RgbaImage::new(width, height);
+    for (to, from) in image.pixels_mut().zip(pixmap.pixels()) {
+        let colour = from.demultiply();
+        *to = Rgba([colour.red(), colour.green(), colour.blue(), colour.alpha()]);
+    }
+    Ok(DynamicImage::ImageRgba8(image))
+}
+
+/// A picture with see-through parts laid on white, for a kind of file that
+/// has none (JPEG).
+fn on_white(image: &DynamicImage) -> DynamicImage {
+    let mut image = image.to_rgba8();
+    for pixel in image.pixels_mut() {
+        let alpha = u32::from(pixel.0[3]);
+        for channel in &mut pixel.0[..3] {
+            *channel = ((u32::from(*channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        }
+        pixel.0[3] = 255;
+    }
+    DynamicImage::ImageRgba8(image)
+}
+
 /// A downloaded picture made ready to keep: at most [`PHOTO_WIDTH`] pixels
 /// wide, its shape kept, never made larger, in the kind its file name says
 /// (JPEG, PNG, or lossless WebP). One that is narrow enough and already of
-/// that kind is kept as it came.
+/// that kind is kept as it came. An SVG drawing is drawn as a picture of
+/// that kind ([`draw_svg`]), on white where the kind has no see-through
+/// parts.
 pub fn shrink_photo(bytes: Vec<u8>, file: &Path) -> Result<Vec<u8>, String> {
     let wanted = match file
         .extension()
@@ -145,6 +231,14 @@ pub fn shrink_photo(bytes: Vec<u8>, file: &Path) -> Result<Vec<u8>, String> {
         Some("webp") => ImageFormat::WebP,
         _ => return Err("its file is not a JPEG, PNG or WebP picture".to_owned()),
     };
+    if looks_like_svg(&bytes) {
+        let drawn = draw_svg(&bytes)?;
+        return if wanted == ImageFormat::Jpeg {
+            encode(&on_white(&drawn), wanted)
+        } else {
+            encode(&drawn, wanted)
+        };
+    }
     let mut reader = ImageReader::new(Cursor::new(&bytes))
         .with_guessed_format()
         .map_err(|error| format!("it could not be read: {error}"))?;
@@ -639,6 +733,85 @@ mod tests {
         assert_eq!(manager.photos_plan("t").unwrap().remaining, 0);
         // No job record is left for a photo job.
         assert!(!pack_dir.join(META_DIR).join(JOB_FILE).exists());
+    }
+
+    const DRAWING: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10" viewBox="0 0 20 10">
+  <rect width="10" height="10" fill="#ff0000"/>
+  <image href="https://pictures.example.com/inside.png" width="5" height="5"/>
+  <image href="/etc/hostname" width="5" height="5"/>
+</svg>"##;
+
+    #[test]
+    fn draws_a_drawing_as_a_picture() {
+        // Four times its stated size; the left half red, the right see-through.
+        let drawn = draw_svg(DRAWING.as_bytes()).unwrap().to_rgba8();
+        assert_eq!((drawn.width(), drawn.height()), (80, 40));
+        assert_eq!(drawn.get_pixel(10, 20).0, [255, 0, 0, 255]);
+        assert_eq!(drawn.get_pixel(70, 20).0[3], 0);
+        // A small one is drawn large enough, a large one no larger than the limit.
+        let small = r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>"#;
+        let drawn = draw_svg(small.as_bytes()).unwrap();
+        assert_eq!((drawn.width(), drawn.height()), (64, 32));
+        let large = r#"<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="60000"/>"#;
+        let drawn = draw_svg(large.as_bytes()).unwrap();
+        assert_eq!((drawn.width(), drawn.height()), (52, 1024));
+        // One with text is drawn too, with whatever fonts the computer has.
+        let text = r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><text x="2" y="15">Ab</text></svg>"#;
+        assert_eq!(draw_svg(text.as_bytes()).unwrap().width(), 160);
+        // Not a drawing, and one too large to draw.
+        assert!(draw_svg(b"<svg").is_err());
+        let mut huge = small.as_bytes().to_vec();
+        huge.resize(MAX_DRAWING_BYTES + 1, b' ');
+        assert!(draw_svg(&huge).is_err());
+
+        // Kept in the kind its file says: see-through as PNG, on white as JPEG.
+        let png = shrink_photo(DRAWING.as_bytes().to_vec(), Path::new("pictures/a.png")).unwrap();
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert_eq!(size_of(&png), (80, 40));
+        let jpeg = shrink_photo(DRAWING.as_bytes().to_vec(), Path::new("pictures/a.jpg")).unwrap();
+        assert!(jpeg.starts_with(&[0xff, 0xd8, 0xff]));
+        let pixels = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        let right = pixels.get_pixel(70, 20).0;
+        assert!(right.iter().all(|channel| *channel > 240), "{right:?}");
+        let left = pixels.get_pixel(10, 20).0;
+        assert!(left[0] > 200 && left[1] < 60 && left[2] < 60, "{left:?}");
+    }
+
+    #[tokio::test]
+    async fn keeps_a_drawing_among_the_pictures_and_goes_on() {
+        ensure_crypto();
+        let png = picture(20, 20, ImageFormat::Png);
+        let server = MockServer::start(Arc::new(move |path: &str, _| match path {
+            "/media/a.png" => Reply {
+                headers: vec![("Content-Type", "image/svg+xml".to_owned())],
+                body: DRAWING.as_bytes().to_vec(),
+                ..Reply::status(200)
+            },
+            // A drawing that cannot be read counts as failed, no more.
+            "/media/b.png" => Reply {
+                headers: vec![("Content-Type", "image/svg+xml".to_owned())],
+                body: b"<svg xmlns=\"http://www.w3.org/2000/svg\"><g></svg>".to_vec(),
+                ..Reply::status(200)
+            },
+            _ => Reply::image(png.clone()),
+        }))
+        .await;
+        let dir = TempDir::new("photo-drawing");
+        let pack_dir = dir.0.join("pack");
+        pack(&pack_dir, &server);
+        let manager = manager(&dir, &pack_dir);
+        manager.start_photos("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        assert_eq!((done.saved, done.failed), (2, 1));
+        let a = fs::read(pack_dir.join("pictures/a.jpg")).unwrap();
+        assert!(a.starts_with(&[0xff, 0xd8, 0xff]));
+        assert_eq!(size_of(&a), (80, 40));
+        assert!(!pack_dir.join("pictures/b.jpg").exists());
+        assert!(pack_dir.join("pictures/c.png").exists());
+        // Nothing the drawing names was asked for.
+        assert_eq!(server.seen().len(), 3);
     }
 
     #[tokio::test]
