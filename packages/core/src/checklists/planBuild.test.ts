@@ -243,6 +243,15 @@ describe('where a page says a thing is', () => {
       links: ['isle:loc:gate'],
       texts: ['from the chest behind the gate.'],
     });
+    // A box of facts as a page read from a wiki writes one: titled, with sub-headings.
+    expect(
+      locationParts(
+        `| Warden's maul | {box} |\n| --- | --- |\n| **Where** |  |\n| Location | [Stone wardens](${page('wardens')}), Sunken shrine 3 |\n\nA maul.`,
+      ),
+    ).toMatchObject({
+      links: [page('wardens')],
+      texts: ['Stone wardens, Sunken shrine 3'],
+    });
   });
 
   it('leaves hidden text out, so nothing found gives an answer away', () => {

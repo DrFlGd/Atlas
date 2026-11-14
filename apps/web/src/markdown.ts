@@ -1,7 +1,7 @@
 import { headingNames, sectionOfTitle } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import MarkdownIt, { type StateCore, type Token } from 'markdown-it';
-import { markdownMarks } from './markdownMarks';
+import { isBoxMark, markdownMarks } from './markdownMarks';
 
 /**
  * Renders guide Markdown from a pack, which is untrusted content.
@@ -51,6 +51,15 @@ import { markdownMarks } from './markdownMarks';
  *   to be `#` and six hexadecimal digits, as `data-text-colour`; the page
  *   shows it readable in both themes (see `textColour.ts`). No `style`
  *   attribute is ever written.
+ * - A box of facts, a table whose first row is its title and `{box}` (see
+ *   `markdownMarks.ts` and {@link boxes}): an `aside` named by its title,
+ *   holding the table, its title across it, a label beside each value, and
+ *   the rows with an empty second cell across it. The page shows it beside
+ *   the text where there is room, and across the page where there is not.
+ * - A list of tiles (see {@link tiles}): a bulleted list whose every item
+ *   is a picture shown on its own and at most a name, as a wiki's gallery
+ *   or a home page's grid of linked pictures, is shown as a grid of
+ *   tiles, each name under its picture. Its Markdown is a list as any.
  */
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: true });
 markdown.use(markdownMarks);
@@ -199,6 +208,207 @@ export function guideHeadings(source: string): GuideHeading[] {
 }
 
 // ---------------------------------------------------------------------------
+// Boxes of facts: | Title | {box} |
+
+interface BoxMeta {
+  /** On a box's `table_open` and `table_close`: its title in words, for the box's name. */
+  box?: string;
+}
+
+/** The index of the token that closes the one at `open`, by nesting. */
+function closing(tokens: readonly Token[], open: number): number {
+  let depth = 0;
+  for (let i = open; i < tokens.length; i++) {
+    depth += tokens[i]!.nesting;
+    if (depth === 0) return i;
+  }
+  return tokens.length - 1;
+}
+
+/** Whether a cell's words are all bold: one bold part from its start to its end. */
+function allBold(inline: Token): boolean {
+  const parts = (inline.children ?? []).filter(
+    (token) => !(token.type === 'text' && token.content.trim() === ''),
+  );
+  if (parts[0]?.type !== 'strong_open' || parts.at(-1)?.type !== 'strong_close') return false;
+  let depth = 0;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]!.type === 'strong_open') depth++;
+    else if (parts[i]!.type === 'strong_close') depth--;
+    if (depth === 0 && i < parts.length - 1) return false;
+  }
+  return true;
+}
+
+/** A cell's tokens made the given tag, with only the given attributes. */
+function cellAs(cell: readonly Token[], tag: 'th' | 'td', attrs: [string, string][]): Token[] {
+  cell[0]!.tag = tag;
+  cell[2]!.tag = tag;
+  cell[0]!.attrs = attrs;
+  return [...cell];
+}
+
+/**
+ * Makes each box of facts of the parsed text a box: the `{box}` cell goes,
+ * the title spans the table (or the first row goes, when the box has no
+ * title), a row with an empty second cell spans it too (a sub-heading when
+ * its words are all bold), an empty row goes, and every other row is a
+ * label (a heading cell for its row) and its value. Alignment is not kept.
+ */
+function boxes(state: StateCore): void {
+  const tokens = state.tokens;
+  for (let start = 0; start < tokens.length; start++) {
+    if (tokens[start]!.type !== 'table_open') continue;
+    const end = closing(tokens, start);
+    // The first row: thead, tr, two cells of three tokens each, tr close.
+    const [theadOpen, trOpen] = [tokens[start + 1], tokens[start + 2]];
+    const title = tokens.slice(start + 3, start + 6);
+    const mark = tokens.slice(start + 6, start + 9);
+    const trClose = tokens[start + 9];
+    if (
+      theadOpen?.type !== 'thead_open' ||
+      trClose?.type !== 'tr_close' ||
+      mark[1]?.type !== 'inline' ||
+      !isBoxMark(mark[1].content)
+    ) {
+      continue;
+    }
+    const words = title[1]?.children ? wordsOf(title[1].children) : '';
+    const table = tokens[start]!;
+    (table.meta as (BoxMeta & HiddenMeta) | null) = { ...metaOf(table), box: words };
+    tokens[end]!.meta = { box: words } satisfies BoxMeta;
+    const out: Token[] = [table];
+    const theadClose = closing(tokens, start + 1);
+    // The title across the box; no first row for a box without one.
+    if ((title[1]?.content.trim() ?? '') !== '') {
+      out.push(
+        theadOpen,
+        trOpen!,
+        ...cellAs(title, 'th', [
+          ['colspan', '2'],
+          ['class', 'guide-box-title'],
+          ['scope', 'colgroup'],
+        ]),
+        trClose,
+        tokens[theadClose]!,
+      );
+    }
+    for (let i = theadClose + 1; i < end; i++) {
+      const token = tokens[i]!;
+      if (token.type !== 'tr_open') {
+        out.push(token);
+        continue;
+      }
+      const rowEnd = closing(tokens, i);
+      // A cell is three tokens: its open, its inline content, its close.
+      const label = tokens.slice(i + 1, i + 4);
+      const value = tokens.slice(i + 4, i + 7);
+      const [open, close] = [token, tokens[rowEnd]!];
+      i = rowEnd;
+      const empty = (cell: readonly Token[]) => (cell[1]?.content.trim() ?? '') === '';
+      if (label.length < 3 || empty(label)) {
+        // Only a value: across the box; nothing: no row.
+        if (value.length === 3 && !empty(value)) {
+          out.push(
+            open,
+            ...cellAs(value, 'td', [
+              ['colspan', '2'],
+              ['class', 'guide-box-wide'],
+            ]),
+            close,
+          );
+        }
+        continue;
+      }
+      if (value.length < 3 || empty(value)) {
+        const heading = allBold(label[1]!);
+        out.push(
+          open,
+          ...(heading
+            ? cellAs(label, 'th', [
+                ['colspan', '2'],
+                ['class', 'guide-box-heading'],
+                ['scope', 'colgroup'],
+              ])
+            : cellAs(label, 'td', [
+                ['colspan', '2'],
+                ['class', 'guide-box-wide'],
+              ])),
+          close,
+        );
+        continue;
+      }
+      out.push(
+        open,
+        ...cellAs(label, 'th', [
+          ['scope', 'row'],
+          ['class', 'guide-box-label'],
+        ]),
+        ...cellAs(value, 'td', [['class', 'guide-box-value']]),
+        close,
+      );
+    }
+    out.push(tokens[end]!);
+    tokens.splice(start, end - start + 1, ...out);
+    start += out.length - 1;
+  }
+}
+
+markdown.core.ruler.push('atlas_boxes', boxes);
+
+/** The first row of a box of facts, as written: `| Title | {box} |`. */
+const BOX_ROW = /^ {0,3}\|?[^\n]*\|[ \t]*\{box\}[ \t]*\|?[ \t]*$/u;
+const TABLE_RULE = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/u;
+
+/**
+ * A guide's Markdown without its boxes of facts, read line by line: for
+ * the lines that begin a page as its text does (a box usually stands
+ * first, beside the text).
+ */
+export function withoutBoxes(source: string): string {
+  const lines = source.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (BOX_ROW.test(lines[i]!) && TABLE_RULE.test(lines[i + 1] ?? '')) {
+      i += 2;
+      while (i < lines.length && lines[i]!.includes('|') && lines[i]!.trim() !== '') i++;
+      i--;
+      continue;
+    }
+    out.push(lines[i]!);
+  }
+  return out.join('\n');
+}
+
+const renderDefault: NonNullable<(typeof markdown.renderer.rules)['table_open']> = (
+  tokens,
+  index,
+  options,
+  _env,
+  self,
+) => self.renderToken(tokens, index, options);
+const defaultTableOpen = markdown.renderer.rules.table_open ?? renderDefault;
+const defaultTableClose = markdown.renderer.rules.table_close ?? renderDefault;
+
+markdown.renderer.rules.table_open = (tokens, index, options, env, self) => {
+  const token = tokens[index]!;
+  const title = (token.meta as BoxMeta | null)?.box;
+  if (title === undefined) return defaultTableOpen(tokens, index, options, env, self);
+  // The box carries what the table would (hidden as a whole, say); the table itself is plain.
+  const escape = markdown.utils.escapeHtml;
+  const attrs = (token.attrs ?? [])
+    .map(([name, value]) => ` ${escape(name)}="${escape(String(value))}"`)
+    .join('');
+  const name = title ? ` aria-label="${escape(title)}"` : '';
+  return `<aside class="guide-box" data-box=""${name}${attrs}>\n<table>\n`;
+};
+
+markdown.renderer.rules.table_close = (tokens, index, options, env, self) =>
+  (tokens[index]!.meta as BoxMeta | null)?.box === undefined
+    ? defaultTableClose(tokens, index, options, env, self)
+    : '</table>\n</aside>\n';
+
+// ---------------------------------------------------------------------------
 // Pictures: only the pack's own, by id
 
 interface PictureMeta {
@@ -282,6 +492,87 @@ markdown.renderer.rules.atlas_picture = (tokens, index) => {
     '</span>'
   );
 };
+
+// ---------------------------------------------------------------------------
+// Tiles: a list of pictures, each with a name
+
+/** Words under a tile's picture are at most this long: a name, not a text. */
+const TILE_WORDS = 60;
+
+/**
+ * The part of a list item's line after its picture, when the item is a
+ * tile: a picture shown on its own (not one in the line of text), alone
+ * or as a link's only content, then at most a name's words, no other
+ * picture and no hidden text. Null for any other item.
+ */
+function tileWordsFrom(inline: Token): number | null {
+  const children = inline.children ?? [];
+  let at = 0;
+  while (children[at]?.type === 'text' && children[at]!.content.trim() === '') at++;
+  const linked = children[at]?.type === 'link_open';
+  const picture = children[linked ? at + 1 : at];
+  if (picture?.type !== 'atlas_picture') return null;
+  if (isInlinePicture((picture.meta as unknown as PictureMeta).shown)) return null;
+  if (linked && children[at + 2]?.type !== 'link_close') return null;
+  const rest = children.slice(linked ? at + 3 : at + 1);
+  if (
+    rest.some((token) => token.type === 'atlas_picture' || token.type.startsWith('hidden_text'))
+  ) {
+    return null;
+  }
+  return wordsOf(rest).length <= TILE_WORDS ? children.length - rest.length : null;
+}
+
+/**
+ * A bulleted list of two items or more, each only a tile (see
+ * {@link tileWordsFrom}), is a grid of tiles: the list gets the class
+ * `guide-tiles`, and the words of each tile stand in a span of their own,
+ * under its picture.
+ */
+function tiles(state: StateCore): void {
+  const tokens = state.tokens;
+  for (let open = 0; open < tokens.length; open++) {
+    if (tokens[open]!.type !== 'bullet_list_open') continue;
+    const close = closing(tokens, open);
+    // Each item: its open, a paragraph (open, line, close), its close; nothing nested.
+    const items: Token[] = [];
+    let plain = true;
+    for (let i = open + 1; i < close; i += 5) {
+      const [item, paragraph, inline, end, itemEnd] = tokens.slice(i, i + 5);
+      if (
+        item?.type !== 'list_item_open' ||
+        paragraph?.type !== 'paragraph_open' ||
+        inline?.type !== 'inline' ||
+        end?.type !== 'paragraph_close' ||
+        itemEnd?.type !== 'list_item_close'
+      ) {
+        plain = false;
+        break;
+      }
+      items.push(inline);
+    }
+    if (!plain || items.length < 2) continue;
+    const starts = items.map(tileWordsFrom);
+    if (starts.some((start) => start === null)) continue;
+    tokens[open]!.attrJoin('class', 'guide-tiles');
+    items.forEach((inline, i) => {
+      const children = inline.children!;
+      const start = starts[i]!;
+      if (wordsOf(children.slice(start)) === '') return;
+      const words = new state.Token('tile_words_open', 'span', 1);
+      words.attrs = [['class', 'guide-tile-words']];
+      inline.children = [
+        ...children.slice(0, start),
+        words,
+        ...children.slice(start),
+        new state.Token('tile_words_close', 'span', -1),
+      ];
+    });
+    open = close;
+  }
+}
+
+markdown.core.ruler.push('atlas_tiles', tiles);
 
 // ---------------------------------------------------------------------------
 // Hidden text: ||like this||

@@ -14,6 +14,7 @@ import {
   type TableModel,
 } from './blocks';
 import { parseInline, writeInline, type Inline } from './inline';
+import { isBoxTable } from './structure';
 
 const options = {
   isAppTarget: (id: string) => /^(demo|pages):/.test(id),
@@ -138,6 +139,17 @@ const FROM_A_WIKI = `The [Vale]{color=#b8714a}^\\[a\\]^ is reached by boat.
 - \\[a\\] Only by boat, and only at night^\\[1\\]^.
 `;
 
+const A_BOX = `| Ember blade | {box} |
+| --- | --- |
+| ![Ember blade](demo:picture:gate "=120x120") |  |
+| A short sword that **glows**. |  |
+| Type | [Swords](demo:guide:walk) |
+| **Damage** |  |
+| Base | 40 ([48]{color=#cc3300})^\\[1\\]^<br>a hit |
+
+The text beside it.
+`;
+
 const fixtures = (): [string, string][] => {
   const pages: [string, string][] = [
     ['everything', EVERYTHING],
@@ -151,6 +163,7 @@ const fixtures = (): [string, string][] => {
     ['hidden across list items', '- one ||two\n- three|| four\n'],
     ['a last bar alone', 'Open || never closed\n\nNext paragraph'],
     ['a page from a wiki', FROM_A_WIKI],
+    ['a box of facts', A_BOX],
   ];
   const guides: GuideEntry[] = [...makeGuidesFixturePack().guides, ...makeFixturePack().guides];
   for (const guide of guides) pages.push([guide.id, guide.body]);
@@ -293,6 +306,29 @@ describe('a page from a wiki', () => {
       '<td>Old Vale<sup><span class="text-colour" data-text-colour="#82c936">DLC</span></sup></td>',
     );
     expect(render(written)).toContain('<td>82 DPS<br>\n16.4 a hit</td>');
+  });
+});
+
+describe('a box of facts', () => {
+  it('is edited as the table it is, and stays a box when a cell changes', () => {
+    const source = splitBlocks(A_BOX).blocks[0]!.source;
+    const table = readBlock(source) as TableModel;
+    expect(table.kind).toBe('table');
+    expect(isBoxTable(table)).toBe(true);
+    table.rows[2]![1] = [{ kind: 'text', text: 'Sword', marks: {} }];
+    const written = writeBlock(table, source);
+    const lines = written.split('\n');
+    expect(lines[0]).toBe('| Ember blade | {box} |');
+    expect(lines[5]).toBe('| **Damage** |  |');
+    expect(lines[4]).toBe('| Type | Sword |');
+    expect(render(written)).toContain('<aside class="guide-box"');
+    expect(render(written)).toContain('<td class="guide-box-value">Sword</td>');
+    // A row added in the text tools, and a whole box written anew, keep the box.
+    const fresh = writeBlock({ ...table, rows: [...table.rows, [[], []]] });
+    expect(fresh.split('\n')[0]).toBe('| Ember blade | {box} |');
+    expect(fresh.split('\n').at(-1)).toBe('| | |');
+    expect(render(fresh)).toContain('<aside class="guide-box"');
+    expect(isBoxTable(newTable(2, 1))).toBe(false);
   });
 });
 

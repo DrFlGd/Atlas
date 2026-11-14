@@ -328,8 +328,10 @@ button.guides-crumb:hover {
   color: var(--atlas-text);
 }
 
-/* A page */
+/* A page. It holds its box of facts (floated beside its text), and its width decides where the box goes. */
 .guides-page-body {
+  display: flow-root;
+  container-type: inline-size;
   font-size: 15.5px;
   line-height: 1.6;
 }
@@ -347,6 +349,8 @@ button.guides-crumb:hover {
 }
 
 .guides-page-body h2 {
+  /* Beside a box of facts, its line stops at the box. */
+  display: flow-root;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--atlas-border);
   font-size: 19px;
@@ -435,6 +439,87 @@ button.guides-crumb:hover {
   background: var(--atlas-surface-raised);
 }
 
+/*
+ * A box of facts: across the page above the text where the page is narrow
+ * (a phone), beside the text at the right where it is wide.
+ */
+.guide-box {
+  margin: 0 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+@container (min-width: 620px) {
+  .guide-box {
+    float: right;
+    clear: right;
+    width: min(320px, 42%);
+    margin: 0 0 16px 20px;
+  }
+}
+
+.guides-page-body .guide-box table,
+.guide-box table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  overflow: visible;
+  border-collapse: collapse;
+  font-size: inherit;
+}
+
+.guides-page-body .guide-box th,
+.guides-page-body .guide-box td,
+.guide-box th,
+.guide-box td {
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.guide-box tbody tr + tr > * {
+  border-top: 1px solid var(--atlas-border);
+}
+
+.guides-page-body .guide-box .guide-box-title {
+  padding: 10px 12px;
+  background: var(--atlas-surface-raised);
+  font-size: 16px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.guides-page-body .guide-box .guide-box-heading {
+  background: var(--atlas-surface-raised);
+  text-align: center;
+}
+
+.guides-page-body .guide-box .guide-box-wide {
+  text-align: center;
+}
+
+.guides-page-body .guide-box .guide-box-label {
+  width: 42%;
+  font-weight: 600;
+}
+
+/* A picture of the box shows the box's own caption under it, not its words again. */
+.guide-box .guide-picture-note {
+  display: none;
+}
+
+.guide-box .guide-picture:not(.inline) {
+  align-items: center;
+  margin: 2px 0;
+}
+
 .guides-page-body pre {
   max-width: 100%;
   overflow-x: auto;
@@ -478,6 +563,49 @@ button.guides-crumb:hover {
   margin-top: 4px;
   color: var(--atlas-muted);
   font-size: 13px;
+}
+
+/* A picture shown at twice its own size or more (a small icon a wiki draws larger) keeps sharp pixels. */
+.guide-picture img[data-upscaled] {
+  image-rendering: pixelated;
+}
+
+/* A list of tiles: pictures side by side, each name under its picture. */
+.guide-body ul.guide-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 12px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-tiles > li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min-content;
+  min-width: 88px;
+  max-width: 100%;
+  margin: 0;
+  text-align: center;
+}
+
+.guide-tiles .guide-picture {
+  align-items: center;
+  margin: 0;
+}
+
+.guide-tiles .guide-picture-note {
+  display: none;
+}
+
+.guide-tile-words {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .picture-alt {
