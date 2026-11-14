@@ -1,4 +1,5 @@
 import type { Detail, PackDetails, PackFileHeader, SourceFacts } from '../desktop';
+import { formatBytes } from './downloadFormat';
 
 /**
  * Words for map pack files: which of a file and the installed game is
@@ -202,4 +203,17 @@ export function contentsText(contents: PackFileHeader['contents']): string {
   if (contents.checklists > 0) parts.push(part(contents.checklists, 'checklist', 'checklists'));
   if (contents.guides > 0) parts.push(part(contents.guides, 'guide', 'guides'));
   return parts.join(', ');
+}
+
+/**
+ * The style sheets kept from a wiki's pages, in words: "4, 1.2 MB in all."
+ * (they are kept for later and not used yet); null when there are none.
+ */
+export function stylesText(styles: PackDetails['styles']): string | null {
+  if (!styles || styles.sheets === 0) return null;
+  const text = `${numberFormat.format(styles.sheets)}, ${formatBytes(styles.bytes)} in all.`;
+  if (styles.leftOut === 0) return text;
+  const more =
+    styles.leftOut === 1 ? '1 more was' : `${numberFormat.format(styles.leftOut)} more were`;
+  return `${text} ${more} not kept; the activity log says why.`;
 }

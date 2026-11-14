@@ -10,6 +10,7 @@ import {
   installedImagesText,
   photosHint,
   sourceText,
+  stylesText,
 } from './packFileText';
 
 const contents = {
@@ -231,5 +232,14 @@ describe('map pack file facts in words', () => {
         installed({ detail: null, layers: [{ ...installed().layers[0]!, downloadable: false }] }),
       ),
     ).toBe('They come with the game’s pack.');
+  });
+
+  it('counts the style sheets kept from a wiki’s pages, when there are any', () => {
+    expect(stylesText(undefined)).toBeNull();
+    expect(stylesText({ sheets: 0, bytes: 0, leftOut: 2 })).toBeNull();
+    expect(stylesText({ sheets: 4, bytes: 1_200_000, leftOut: 0 })).toBe('4, 1.2 MB in all.');
+    expect(stylesText({ sheets: 1, bytes: 2_400, leftOut: 1 })).toBe(
+      '1, 2.4 KB in all. 1 more was not kept; the activity log says why.',
+    );
   });
 });

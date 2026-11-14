@@ -1,5 +1,11 @@
 import type { PackDetails } from '../desktop';
-import { contentsText, installedImagesText, localDate, sourceText } from './packFileText';
+import {
+  contentsText,
+  installedImagesText,
+  localDate,
+  sourceText,
+  stylesText,
+} from './packFileText';
 
 /**
  * Facts about a game's pack, shared by the Library's "What this game holds" and the
@@ -19,6 +25,7 @@ export function When({ iso }: { iso: string }) {
 /** What is known about an installed game: where its data came from and when, and its map images. */
 export function PackDetailsView({ details }: { details: PackDetails }) {
   const { pack, source } = details;
+  const styles = stylesText(details.styles);
   return (
     <dl className="pack-details" data-testid="pack-details">
       <dt>Source</dt>
@@ -54,6 +61,12 @@ export function PackDetailsView({ details }: { details: PackDetails }) {
           </>
         ) : null}
       </dd>
+      {styles ? (
+        <>
+          <dt>Style sheets kept</dt>
+          <dd data-testid="pack-details-styles">{styles}</dd>
+        </>
+      ) : null}
       {details.packFile ? (
         <>
           <dt>Map pack file</dt>
