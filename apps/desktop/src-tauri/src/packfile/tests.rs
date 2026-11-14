@@ -222,6 +222,17 @@ fn write_pack(dir: &Path, version: &str) {
                              "importedAt": "2026-11-11T09:00:00.000Z", "mapId": format!("{ID}:map:east"), "file": "east-field.json"}]}),
     );
     put(&dir.join("import/east-field.json"), b"{\"page\":1}");
+    // Style sheets kept from the pages it was read from: never in a map pack file.
+    put_json(
+        &dir.join("import/styles/index.json"),
+        &json!({"format": "atlas-styles", "version": 1,
+                "sheets": [{"address": "http://127.0.0.1:4432/demo-maps/look.css", "file": "0123456789abcdef0123456789abcdef.css",
+                            "bytes": 22, "keptAt": "2026-11-11T09:00:00Z", "way": "window", "mark": "22-x"}]}),
+    );
+    put(
+        &dir.join("import/styles/0123456789abcdef0123456789abcdef.css"),
+        b".box { float: right; }",
+    );
     put(&dir.join(".atlas/download-job.json"), b"{}");
 }
 
@@ -466,6 +477,16 @@ fn exports_and_imports_at_each_detail() {
         // What the Maps dialog shows about it.
         let details = pack_details(&folder_source(&imported.folder)).unwrap();
         assert_eq!(details.detail, Some(detail));
+        // The style sheets kept with the pack stayed behind.
+        assert_eq!(details.styles, None);
+        assert_eq!(
+            pack_details(&source).unwrap().styles,
+            Some(crate::styles::StylesFacts {
+                sheets: 1,
+                bytes: 22,
+                left_out: 0
+            })
+        );
         assert_eq!(details.pack_file.as_ref().unwrap().header, header);
         assert_eq!(details.pack_file.as_ref().unwrap().file_name, name);
     }

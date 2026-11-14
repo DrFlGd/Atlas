@@ -44,6 +44,7 @@ import type { ConfirmedLicence, SiteInfo } from './sites';
 
 export * from './fetching';
 export * from './sites';
+export * from './styles';
 
 /** The contract version described here. */
 export const IMPORTER_API_VERSION = 1;
@@ -1064,6 +1065,25 @@ export interface AtlasImporter {
    */
   browseReader?: string;
   /**
+   * Optional: the style sheets of the site's pages are kept with the game
+   * (see `styles.ts`), and this is how the page hands them over: the source
+   * of a function taking one argument, evaluated in the page as
+   * `(<styleReader>)(<marks>)`, where `<marks>` is the list of marks
+   * (`PageStyleSheet.mark` in `styles.ts`) of the sheets the app has kept for the
+   * game already. The app runs it once on a page read in its window (the
+   * ways `window` and `browse`), right after the page's data has been read,
+   * on the same page, and only for an importer that reads pages as guides.
+   * It returns `PageStyles` (`styles.ts`): each sheet the page uses (its
+   * `document.styleSheets`, a `<style>` block of the page too), with the
+   * text of a sheet whose mark is not among `<marks>`, and only the address
+   * of a sheet from another address, whose rules the page cannot hand over.
+   * Like a reader, it must be synchronous, change nothing in the page
+   * (no storage, no document) and make no request; an exception counts as
+   * no answer. With it, an app that fetches the importer's pages (`fetch`)
+   * also keeps the sheets those pages name. Without it, nothing is kept.
+   */
+  styleReader?: string;
+  /**
    * Optional: measuring a map's picture from the page, when the person asks
    * for it (see {@link PageMeasure}). An app without it never runs it.
    */
@@ -1157,6 +1177,7 @@ export const importerSchema = z
     fetch: fetchSchema.optional(),
     pageReader: z.string().min(1).max(MAX_READER_CHARS).optional(),
     browseReader: readerSchema.optional(),
+    styleReader: readerSchema.optional(),
     pageMeasure: z
       .object({
         matches: z.custom<NonNullable<PageMeasure['matches']>>(isFunction).optional(),

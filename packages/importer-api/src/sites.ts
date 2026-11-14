@@ -37,11 +37,25 @@ export interface SiteInfo {
    * the site's terms say. At most {@link MAX_NOTICE_CHARS} characters.
    */
   notice?: string;
+  /**
+   * Optional: the hosts besides the site's own that its pages load their
+   * files from (its engine's file host, say), each a lowercase host name,
+   * at most {@link MAX_FILE_HOSTS}. A style sheet that a page read in a
+   * window loaded from one of them, which the page cannot hand over, may be
+   * fetched by an app that downloads and keeps the site's style sheets
+   * (see `styles.ts`), with the rules of pages it fetches; one on any other
+   * host is not. An app that does not know it leaves it out.
+   */
+  fileHosts?: string[];
 }
 
 export const MAX_SITE_KEY_CHARS = 200;
 export const MAX_NOTICE_CHARS = 500;
+export const MAX_FILE_HOSTS = 20;
 const SITE_KEY = /^[a-z0-9][a-z0-9.:/_-]*$/;
+/** A host name: lowercase labels of letters, digits and inner hyphens, with at least one dot. */
+const HOST_NAME =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 /** A Creative Commons licence the person confirmed for a site whose pages state none. */
 export interface ConfirmedLicence {
@@ -108,7 +122,8 @@ function canRead(
 /**
  * What the importer says about the site of `url`, checked: a usable key,
  * the ways it offers that it can read in (it has `fetch` for `fetch`, a
- * `pageReader` for `window`, a `browseReader` for `browse`), each once, and its notice trimmed. Without
+ * `pageReader` for `window`, a `browseReader` for `browse`), each once, its notice trimmed,
+ * and its file hosts that are host names, each once. Without
  * {@link AtlasImporter.siteInfo}, or when it gives nothing usable, the site
  * is its host and has one way, as before: `window` for a page that
  * `fetch.inWindow` opens in a window or an importer without `fetch`, else
@@ -129,7 +144,7 @@ export function siteInfoOf(
     given = null;
   }
   if (typeof given !== 'object' || given === null) return fallback;
-  const { key, ways, notice } = given as Record<string, unknown>;
+  const { key, ways, notice, fileHosts } = given as Record<string, unknown>;
   if (typeof key !== 'string' || key.length > MAX_SITE_KEY_CHARS || !SITE_KEY.test(key)) {
     return fallback;
   }
@@ -139,10 +154,16 @@ export function siteInfoOf(
   }
   if (offered.length === 0) return fallback;
   const text = typeof notice === 'string' ? notice.trim() : '';
+  const hosts: string[] = [];
+  for (const host of Array.isArray(fileHosts) ? (fileHosts as unknown[]) : []) {
+    if (hosts.length >= MAX_FILE_HOSTS) break;
+    if (typeof host === 'string' && HOST_NAME.test(host) && !hosts.includes(host)) hosts.push(host);
+  }
   return {
     key,
     ways: offered,
     ...(text ? { notice: text.slice(0, MAX_NOTICE_CHARS) } : {}),
+    ...(hosts.length > 0 ? { fileHosts: hosts } : {}),
   };
 }
 

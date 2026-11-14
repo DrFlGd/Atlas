@@ -446,6 +446,9 @@ struct Session {
     /// The window is kept for the next page of the go: where it is going.
     /// None for every other import window, which works as it always has.
     kept: Option<Visit>,
+    /// The document the page data was last read from, by its time origin:
+    /// the only one [`Imports::run_once`] runs in.
+    read_origin: Option<f64>,
 }
 
 /// Measuring the map's picture from the page: the page data, once read, waits here.
@@ -572,6 +575,79 @@ fn decode_string(result: &str) -> Option<String> {
     serde_json::from_str::<String>(result).ok()
 }
 
+/// Why a text the page put aside could not be pulled out.
+enum Pulled {
+    /// The page changed while it was read.
+    Changed,
+    /// It is larger than the page data may be.
+    TooLarge,
+}
+
+/// Pulls the text of `length` UTF-16 units a script put aside in the page
+/// under `key` out of it, in slices.
+async fn pull<R: Runtime>(
+    window: &WebviewWindow<R>,
+    key: &str,
+    length: usize,
+) -> Result<String, Pulled> {
+    let mut data = String::with_capacity(length.min(MAX_PAGE_DATA_BYTES));
+    let mut start = 0;
+    while start < length {
+        let slice = evaluate(window, slice_script(key, start))
+            .await
+            .and_then(|result| decode_string(&result))
+            .and_then(|text| serde_json::from_str::<Slice>(&text).ok());
+        let Some(slice) = slice.filter(|slice| slice.next > start && slice.next <= length) else {
+            return Err(Pulled::Changed);
+        };
+        data.push_str(&slice.text);
+        if data.len() > MAX_PAGE_DATA_BYTES {
+            return Err(Pulled::TooLarge);
+        }
+        start = slice.next;
+    }
+    Ok(data)
+}
+
+/// An argument for [`Imports::run_once`] longer than this, as JSON, is refused.
+const MAX_ARGUMENT_CHARS: usize = 256 * 1024;
+
+/// The script that runs a function once with one argument, in the document
+/// made at `origin` only. Like [`reader_script`], it always returns a JSON
+/// string, and puts the answer aside under `key` to be pulled out in slices.
+fn once_script(script: &str, argument: &str, origin: f64, key: &str) -> String {
+    format!(
+        r#"(function () {{
+  var origin = null;
+  try {{ if (typeof performance.timeOrigin === 'number' && isFinite(performance.timeOrigin)) origin = performance.timeOrigin; }} catch (error) {{}}
+  if (origin !== {origin}) return JSON.stringify({{ state: 'other' }});
+  try {{
+    var value = ({script})({argument});
+    if (value === undefined || value === null) return JSON.stringify({{ state: 'none' }});
+    var text = JSON.stringify(value);
+    if (typeof text !== 'string' || text.length > {max}) return JSON.stringify({{ state: 'none' }});
+    Object.defineProperty(window, {key:?}, {{ value: text, configurable: true, enumerable: false, writable: true }});
+    return JSON.stringify({{ state: 'ready', length: text.length }});
+  }} catch (error) {{
+    return JSON.stringify({{ state: 'none' }});
+  }}
+}})()"#,
+        max = MAX_PAGE_DATA_BYTES,
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+enum OnceAnswer {
+    /// The window shows another document than the one read.
+    Other,
+    /// The script gave nothing, threw, or gave too much.
+    None,
+    Ready {
+        length: usize,
+    },
+}
+
 impl Imports {
     /// The import window is not available on Android.
     #[cfg(mobile)]
@@ -665,6 +741,7 @@ impl Imports {
             } else {
                 keep.then(|| Visit::new(start.clone()))
             },
+            read_origin: None,
         });
 
         let navigation_start = start.clone();
@@ -774,6 +851,7 @@ impl Imports {
             session.reader = reader;
             session.key = format!("__atlasImport{:016x}", rand_u64());
             session.loading = true;
+            session.read_origin = None;
         }
         // Asking for the person's attention ends with the page it was for.
         stop_attention(&window);
@@ -879,34 +957,29 @@ impl Imports {
         } else {
             (None, false)
         };
-        let mut data = String::with_capacity(length.min(MAX_PAGE_DATA_BYTES));
-        let mut start = 0;
-        while start < length {
-            let slice = evaluate(&window, slice_script(&key, start))
-                .await
-                .and_then(|result| decode_string(&result))
-                .and_then(|text| serde_json::from_str::<Slice>(&text).ok());
-            let Some(slice) = slice.filter(|slice| slice.next > start && slice.next <= length)
-            else {
+        let data = match pull(&window, &key, length).await {
+            Ok(data) => data,
+            Err(Pulled::Changed) => {
                 return PollResult::Waiting {
                     loading,
                     note: Some("the page changed while it was read".to_owned()),
                     attention: false,
-                };
-            };
-            data.push_str(&slice.text);
-            if data.len() > MAX_PAGE_DATA_BYTES {
+                }
+            }
+            Err(Pulled::TooLarge) => {
                 return PollResult::Failed {
                     message: "The page holds more data than a map can have.".to_owned(),
-                };
+                }
             }
-            start = slice.next;
-        }
+        };
         let _ = window.eval(format!("delete window[{key:?}];"));
         if serde_json::from_str::<serde::de::IgnoredAny>(&data).is_err() {
             return PollResult::Failed {
                 message: "The page's data could not be read as JSON.".to_owned(),
             };
+        }
+        if let Some(session) = lock(&self.session).as_mut() {
+            session.read_origin = origin;
         }
         #[cfg(feature = "downloads")]
         {
@@ -1036,6 +1109,48 @@ impl Imports {
         }
     }
 
+    /// Runs `script`, the source of a function taking one argument, once
+    /// in the page whose data was read last, with `argument`, and returns
+    /// what the function returned as JSON text: for what an importer reads
+    /// from a page besides its data (its style sheets, `styleReader` in the
+    /// contract). It runs only while the window still shows the document
+    /// the data was read from (by its time origin, which no two documents
+    /// share); then, and when the function gives nothing, throws or gives
+    /// more than page data may be, the answer is none. Like a reader, it
+    /// cannot call the app, and the page cannot call it.
+    pub async fn run_once<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        script: &str,
+        argument: &serde_json::Value,
+    ) -> Result<Option<String>, String> {
+        check_reader(script)?;
+        let argument = serde_json::to_string(argument).map_err(|error| error.to_string())?;
+        if argument.len() > MAX_ARGUMENT_CHARS {
+            return Err("The script's argument is too large.".to_owned());
+        }
+        let Some(window) = app.get_webview_window(IMPORT_WINDOW) else {
+            return Ok(None);
+        };
+        let Some(origin) = lock(&self.session)
+            .as_ref()
+            .and_then(|session| session.read_origin)
+        else {
+            return Ok(None);
+        };
+        let key = format!("__atlasOnce{:016x}", rand_u64());
+        let answer = evaluate(&window, once_script(script, &argument, origin, &key))
+            .await
+            .and_then(|result| decode_string(&result))
+            .and_then(|text| serde_json::from_str::<OnceAnswer>(&text).ok());
+        let Some(OnceAnswer::Ready { length }) = answer else {
+            return Ok(None);
+        };
+        let data = pull(&window, &key, length).await.ok();
+        let _ = window.eval(format!("delete window[{key:?}];"));
+        Ok(data.filter(|data| serde_json::from_str::<serde::de::IgnoredAny>(data).is_ok()))
+    }
+
     /// Closes the import window, if it is open.
     pub fn close<R: Runtime>(&self, app: &AppHandle<R>) {
         lock(&self.session).take();
@@ -1161,6 +1276,32 @@ mod tests {
         assert!(script.contains("catch (error)"));
         let slice = slice_script("__atlasImport1", 5);
         assert!(slice.contains("text.slice(5, end)"));
+    }
+
+    #[test]
+    fn runs_a_script_once_only_in_the_document_read() {
+        let script = once_script(
+            "function (marks) { return marks; }",
+            r#"["12-a"]"#,
+            1_731_594_012_345.5,
+            "__atlasOnce1",
+        );
+        // Another document answers `other`, before the function runs.
+        assert!(script.contains(
+            "if (origin !== 1731594012345.5) return JSON.stringify({ state: 'other' });"
+        ));
+        assert!(script.contains(r#"(function (marks) { return marks; })(["12-a"])"#));
+        assert!(script.contains("\"__atlasOnce1\""));
+        assert!(script.contains("catch (error)"));
+        assert!(matches!(
+            serde_json::from_str::<OnceAnswer>(r#"{"state":"ready","length":9}"#),
+            Ok(OnceAnswer::Ready { length: 9 })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<OnceAnswer>(r#"{"state":"other"}"#),
+            Ok(OnceAnswer::Other)
+        ));
+        assert!(serde_json::from_str::<OnceAnswer>(r#"{"state":"pwned"}"#).is_err());
     }
 
     #[test]

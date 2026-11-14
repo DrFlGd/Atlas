@@ -97,6 +97,13 @@ export interface WindowRequest {
    */
   keepFor: number | null;
   onWaiting: (waiting: PageWaiting) => void;
+  /**
+   * Run once the page's data has been read, while the window still shows
+   * that page and before it is closed or moved on: for what the app reads
+   * from the page besides its data (its style sheets). Never fails the
+   * read: an error is ignored.
+   */
+  afterRead?: () => Promise<void>;
 }
 
 /** What reading in the window needs from the app. */
@@ -302,6 +309,9 @@ export class PageWindows {
         return { state: 'closed', message: closedMessage(reading) };
       }
       readFrom(result.state === 'ready' ? result.address : undefined);
+      if (result.state === 'ready' && request.afterRead && current()) {
+        await request.afterRead().catch(() => undefined);
+      }
       await letGo();
       if (result.state === 'failed') return { state: 'failed', message: result.message };
       // What the page loaded is handed on only when it was asked for and has the expected shape.

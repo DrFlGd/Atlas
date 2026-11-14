@@ -149,6 +149,24 @@ describe('what an importer says about a site', () => {
     expect(() => asImporter({ ...wikis, browseReader: '' })).toThrow(/browseReader/);
   });
 
+  it('may name the hosts its pages load their files from: host names only, each once', () => {
+    const hosts = (fileHosts: unknown) =>
+      siteInfoOf(
+        { ...wikis, siteInfo: () => ({ key: 'a.example', ways: ['fetch'], fileHosts }) as never },
+        'https://a.example/wiki/A',
+      ).fileHosts;
+    expect(hosts(['files.a.example', 'cdn.example.net', 'files.a.example'])).toEqual([
+      'files.a.example',
+      'cdn.example.net',
+    ]);
+    expect(
+      hosts(['Files.A.Example', 'localhost', 'https://x.example', 'a b.example', '', 7]),
+    ).toBeUndefined();
+    expect(hosts('files.a.example')).toBeUndefined();
+    expect(hosts(Array.from({ length: 30 }, (_, n) => `f${n}.example`))).toHaveLength(20);
+    expect(siteInfoOf(wikis, 'https://wiki.example.org/wiki/A').fileHosts).toBeUndefined();
+  });
+
   it('falls back to the host and the one way the importer reads in, as before', () => {
     expect(siteInfoOf(maps, 'https://www.maps.example.com/game/one')).toEqual({
       key: 'maps.example.com',

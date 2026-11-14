@@ -379,3 +379,50 @@ describe('pages read in a window of their own', () => {
     ]);
   });
 });
+
+describe('reading more from a page once its data is read', () => {
+  it('does it while the window still shows the page, before it is closed or moved, and never fails the read for it', async () => {
+    const fake = fakeWindow();
+    const windows = new PageWindows({ sleep: fake.sleep, now: fake.now, report: () => undefined });
+    const read = (url: string, keepFor: number | null, afterRead: () => Promise<void>) =>
+      windows.read(
+        fake.shell,
+        {
+          url,
+          importer: { id: 'example-wiki' },
+          pageReader: '() => null',
+          waitSeconds: 60,
+          reading: 'map',
+          measure: null,
+          keepFor,
+          onWaiting: () => undefined,
+          afterRead,
+        },
+        () => true,
+      );
+    const after = (url: string) => () => {
+      fake.log.push(`after ${url}`);
+      return Promise.resolve();
+    };
+    expect((await read(page('Welcome'), 1, after(page('Welcome')))).state).toBe('ready');
+    // It fails: the page is read all the same.
+    const failed = await read(page('Bells'), 1, () => Promise.reject(new Error('busy')));
+    expect(failed.state).toBe('ready');
+    expect((await read(page('Gates'), null, after(page('Gates')))).state).toBe('ready');
+    const steps = fake.log
+      .map((line) => line.replace(/^\d+ /, ''))
+      .filter((line) => /^(open|navigate|read|after) /.test(line) || line === 'close');
+    expect(steps).toEqual([
+      `open ${page('Welcome')} keep`,
+      `read ${page('Welcome')}`,
+      `after ${page('Welcome')}`,
+      `navigate ${page('Bells')}`,
+      `read ${page('Bells')}`,
+      // A window of its own, which the shell opens in place of the kept one.
+      `open ${page('Gates')}`,
+      `read ${page('Gates')}`,
+      `after ${page('Gates')}`,
+      'close',
+    ]);
+  });
+});
