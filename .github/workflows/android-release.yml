@@ -192,6 +192,14 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.9.0
+
+          - **Add to build.** Collect what you want for a build while you read. A guide page has **Add to build** at its head, a table row that names something has a small + button at the end of its first cell, each result of a search in Guides has one, and so does a location's card. The first time, Atlas asks which Build guide to add to, or starts a new one; after that, everything goes to the same list with one press, until you choose **Change**. A notice says what was added, with **Undo**, and a thing that is in the list already is not added twice. Each thing is a step: its name, a link to its page, and the location when you added it from a card. Adding works on a phone.
+          - **Find on the map.** A Build guide has **Find on the map**, for the steps that have no location yet. Atlas looks in the links of their pages to the map, at the location names that fit the step's name, and in the page itself (a "Where to find" part, a Location column, a box of facts). It then shows what it found in three groups: found, several possible (nearest first, each with its type and region and a **Show** button for the map), and not found. Nothing changes until you press **Put on the steps**, and that can be undone. Only saved pages are read; nothing is fetched.
+          - **Suggest an order** puts a Build guide's steps nearest next and draws the route on the map. It goes by straight lines, so it knows nothing of locked doors, story order, merchants or random drops.
+
+          Find on the map and Suggest an order need a wider screen: a tablet on its side. A list made this way is an ordinary list of your own, and opens in older versions of Atlas. Materials are not counted: add what you need as steps.
+
           ## New in 0.8.0
 
           - **One title for several sources.** When you have the same game from more than one place, such as two maps of it from different sources and a wiki, you can show them under one title. On a game in **Games**, choose **Show with another game under one title**, pick the other game and keep the title or type another. The title is one row that says **Sources: A, B**, and opening it opens the source you used last. The maps menu lists the maps of every source under its name, so you change source where you change map. A wiki under the title shows its pages in **Guides** with every source, and **Search wiki** on a location's card searches them.
