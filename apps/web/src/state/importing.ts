@@ -164,6 +164,10 @@ export type ImportPhase =
       measuring?: boolean;
       /** It waits for another step changing the same game (see `packTurns.ts`). */
       waiting?: boolean;
+      /** A game of pages is built again from this many saved pages: nothing is fetched. */
+      savedPages?: number;
+      /** How many of them are written again so far, once the importer says. */
+      savedDone?: number;
     }
   | {
       kind: 'done';
@@ -745,6 +749,9 @@ export function resetImport(): void {
 
 /** The run in progress, if any. */
 let currentRun: ImportRun | null = null;
+
+/** While a game is built again, how far it is is shown at most this often. */
+const REBUILD_PROGRESS_MS = 200;
 
 /** Games asked to be built again while a go was under way, built when it ends. */
 const rebuildAfterGo = new Set<string>();
@@ -1349,6 +1356,8 @@ async function convertAndSave(
     held?: string;
     /** Called when the page waits for another step changing the same pack. */
     onWaiting?: () => void;
+    /** Called as the importer says how far a long step is (see `ImportContext.progress`). */
+    onProgress?: (step: { done: number; total: number }) => void;
   } = {},
 ): Promise<ImportPhase> {
   const shell = desktop;
@@ -1384,6 +1393,18 @@ async function convertAndSave(
       readAt.set(packId, packSaves(packId));
       return given.existingPack(packId);
     },
+    ...(turn.onProgress
+      ? {
+          progress: (step: unknown) => {
+            // An importer's figures are shown only when they are whole counts that fit together.
+            const { done, total } = (step ?? {}) as { done?: unknown; total?: unknown };
+            if (typeof done !== 'number' || typeof total !== 'number') return;
+            if (!Number.isInteger(done) || !Number.isInteger(total)) return;
+            if (total < 1 || done < 0) return;
+            turn.onProgress?.({ done: Math.min(done, total), total });
+          },
+        }
+      : {}),
   });
   let context = noting(contextWith(site?.licence));
   const convert = async () => {
@@ -1783,7 +1804,8 @@ export async function rebuildPack(packId: string): Promise<void> {
     await turn.ready;
     const importer = await loadImporter(entry);
     // The last page kept, read alone: the importer reads the others itself when it needs them.
-    const listedLast = (await shell.library.importSourceList(packId, importer.id)).at(-1);
+    const kept = await shell.library.importSourceList(packId, importer.id);
+    const listedLast = kept.at(-1);
     const last = listedLast
       ? await shell.library.importSource(packId, importer.id, listedLast.key)
       : null;
@@ -1793,16 +1815,38 @@ export async function rebuildPack(packId: string): Promise<void> {
     }
     // A go started meanwhile keeps the screen.
     if (id === session) {
-      setPhase({ kind: 'converting', url: last.url, importer: importer.title });
+      setPhase({
+        kind: 'converting',
+        url: last.url,
+        importer: importer.title,
+        // A game of pages: every saved page is written again, which takes a while for many.
+        ...(importer.fetch ? { savedPages: kept.length } : {}),
+      });
       showLibraryAdd();
     }
+    let shownAt = 0;
     const outcome = await convertAndSave(
       importer,
       { url: last.url, pageData: last.data, importedAt: last.importedAt },
       true,
       true,
       undefined,
-      { held: packId },
+      {
+        held: packId,
+        // How far the saved pages are, shown a few times a second at most.
+        onProgress: ({ done, total }) => {
+          const now = Date.now();
+          if (id !== session || (done < total && now - shownAt < REBUILD_PROGRESS_MS)) return;
+          shownAt = now;
+          setPhase({
+            kind: 'converting',
+            url: last.url,
+            importer: importer.title,
+            savedPages: total,
+            savedDone: done,
+          });
+        },
+      },
     );
     reportPhase(importer.id, outcome);
     // The links of the pages written again, this one too, are kept; nothing else about them changes.
