@@ -25,7 +25,14 @@ const semver = z
 export const pointSchema = z.tuple([z.number(), z.number()]);
 
 const hasTileTemplate = (url: string) =>
-  url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
+  url.includes('{z}') && url.includes('{x}') && url.includes('{y}') && !url.includes('{-y}');
+
+/**
+ * A remote tile template: `{z}`, `{x}`, and the row as `{y}` (counted from
+ * the top) or as `{-y}` (counted from the bottom), never both.
+ */
+const hasRemoteTileTemplate = (url: string) =>
+  url.includes('{z}') && url.includes('{x}') && url.includes('{y}') !== url.includes('{-y}');
 
 const LOOPBACK_HTTP = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//;
 
@@ -324,14 +331,18 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     /**
      * `https` URL template of the remote tiles, with `{z}`, `{x}` (column) and
      * `{y}` (row) in whatever order the source uses: `{z}/{y}/{x}` for one that
-     * names the row first. Plain `http` is accepted only for this computer
-     * (`127.0.0.1` or `localhost`), for tests and local mirrors.
+     * names the row first. A source that counts its rows from the bottom of
+     * the zoom's whole grid of 2^z rows (often called TMS) has `{-y}` in place
+     * of `{y}`: the row 2^z - 1 - y. The layer's own tiles, and everything
+     * else in a pack, count rows from the top. Plain `http` is accepted only
+     * for this computer (`127.0.0.1` or `localhost`), for tests and local
+     * mirrors.
      */
     urlTemplate: z
       .string()
       .trim()
       .refine(isAllowedRemoteUrl, 'must be an https URL')
-      .refine(hasTileTemplate, 'must contain {z}, {x} and {y}'),
+      .refine(hasRemoteTileTemplate, 'must contain {z}, {x} and one of {y} and {-y}'),
     /**
      * The pyramid levels that are remote tiles under other numbers: the layer's
      * tile (z, x, y) is the remote tile (sourceZ, x + offsetX, y + offsetY).

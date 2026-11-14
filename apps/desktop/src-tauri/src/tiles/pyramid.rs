@@ -41,12 +41,32 @@ pub fn level_grid(width: u32, height: u32, tile_size: u32, max_zoom: u8, z: u8) 
     }
 }
 
-/// Fills `{z}`, `{x}` and `{y}` in a tile URL template.
+/// The placeholder of a remote URL template for the row counted from the
+/// bottom of the zoom's whole grid of 2^z rows (often called TMS).
+pub const ROW_FROM_BOTTOM: &str = "{-y}";
+
+/// Row `y` of zoom `z`, counted from the other end of the zoom's whole grid
+/// of 2^z rows: from the bottom when `y` is from the top, and back.
+pub fn row_from_other_end(z: u64, y: u64) -> Option<u64> {
+    let rows = u32::try_from(z).ok().and_then(|z| 1u64.checked_shl(z))?;
+    (rows - 1).checked_sub(y)
+}
+
+/// Fills `{z}`, `{x}` and `{y}` in a tile URL template, and `{-y}`
+/// ([`ROW_FROM_BOTTOM`]) with the row counted from the bottom (0 for a row
+/// the zoom's grid does not have).
 pub fn fill_template(template: &str, z: u64, x: u64, y: u64) -> String {
-    template
+    let filled = template
         .replace("{z}", &z.to_string())
         .replace("{x}", &x.to_string())
-        .replace("{y}", &y.to_string())
+        .replace("{y}", &y.to_string());
+    if !filled.contains(ROW_FROM_BOTTOM) {
+        return filled;
+    }
+    filled.replace(
+        ROW_FROM_BOTTOM,
+        &row_from_other_end(z, y).unwrap_or(0).to_string(),
+    )
 }
 
 /// Whether one segment of a pack-relative path is safe to use on disk: no
@@ -93,9 +113,9 @@ pub fn is_allowed_remote(template: &str) -> bool {
             return false;
         }
     }
-    ["{z}", "{x}", "{y}"]
-        .iter()
-        .all(|part| template.contains(part))
+    // The row is `{y}` or, counted from the bottom, `{-y}`: one of the two.
+    ["{z}", "{x}"].iter().all(|part| template.contains(part))
+        && template.contains("{y}") != template.contains(ROW_FROM_BOTTOM)
 }
 
 /// One level of a layer that is a copy of a remote level.
@@ -459,6 +479,7 @@ pub(crate) fn check_layer(layer: &LayerPlan) -> Result<(), String> {
         return fail("the remote URL must be https and contain {z}, {x} and {y}");
     }
     if relative_path(&fill_template(&layer.url, 0, 0, 0)).is_none()
+        || layer.url.contains(ROW_FROM_BOTTOM)
         || !["{z}", "{x}", "{y}"]
             .iter()
             .all(|part| layer.url.contains(part))
@@ -526,6 +547,32 @@ mod tests {
             "https://tiles.example.com/12/40/7.jpg"
         );
         assert_eq!(fill_template("{z}-{z}/{x}", 1, 2, 3), "1-1/2");
+        // A row counted from the bottom of the zoom's 2^z rows.
+        let bottom = "https://tiles.example.com/{z}/{x}/{-y}.jpg";
+        assert_eq!(
+            fill_template(bottom, 3, 5, 0),
+            "https://tiles.example.com/3/5/7.jpg"
+        );
+        assert_eq!(
+            fill_template(bottom, 3, 5, 7),
+            "https://tiles.example.com/3/5/0.jpg"
+        );
+        assert_eq!(
+            fill_template("https://tiles.example.com/{z}/{-y}/{x}.jpg", 1, 0, 1),
+            "https://tiles.example.com/1/0/0.jpg"
+        );
+        assert_eq!(
+            fill_template(bottom, 0, 0, 0),
+            "https://tiles.example.com/0/0/0.jpg"
+        );
+        assert_eq!(row_from_other_end(4, 3), Some(12));
+        assert_eq!(row_from_other_end(4, 16), None);
+        assert_eq!(row_from_other_end(64, 0), None);
+        assert!(is_allowed_remote(bottom));
+        assert!(!is_allowed_remote(
+            "https://tiles.example.com/{z}/{x}/{y}/{-y}.jpg"
+        ));
+        assert!(!is_allowed_remote("https://tiles.example.com/{z}/{x}.jpg"));
         assert_eq!(
             relative_path("tiles/world/3/1/2.jpg"),
             Some(

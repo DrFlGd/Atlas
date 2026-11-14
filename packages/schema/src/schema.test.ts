@@ -94,6 +94,26 @@ describe('entity schemas', () => {
         tiles: { type: 'pmtiles', url: 'tiles/a.pmtiles', remote },
       }).success,
     ).toBe(false);
+    // The row counted from the bottom ({-y}) in place of the row from the top, never both;
+    // only in the remote address, never in the layer's own.
+    for (const urlTemplate of [
+      'https://tiles.example.com/world/{z}/{x}/{-y}.jpg',
+      'https://tiles.example.com/world/{z}/{-y}/{x}.jpg',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(true);
+    }
+    for (const urlTemplate of [
+      'https://tiles.example.com/world/{z}/{x}/{y}/{-y}.jpg',
+      'https://tiles.example.com/world/{z}/{x}.jpg',
+    ]) {
+      expect(layerSchema.safeParse(xyz({ ...remote, urlTemplate })).success).toBe(false);
+    }
+    expect(
+      layerSchema.safeParse({
+        ...layer,
+        tiles: { type: 'xyz', url: 'tiles/a/{z}/{x}/{y}/{-y}.jpg', remote },
+      }).success,
+    ).toBe(false);
     // Plain http only to this computer, for tests and local mirrors.
     for (const urlTemplate of [
       'http://127.0.0.1:4431/{z}/{x}/{y}.png',
