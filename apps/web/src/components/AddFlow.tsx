@@ -43,6 +43,7 @@ import { titleFromAddress } from '../state/gameChoice';
 import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
+import { SameTitleOfferCard } from './GameTitles';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
 import { BrowseKeep, HowStep, LicenceQuestion } from './SiteReading';
@@ -557,6 +558,7 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
       ) : (
         <MapFigures phase={phase} downloadable={downloadable} />
       )}
+      <SameTitleOfferCard gameId={phase.packId} />
       <div className="row-actions wrap">
         {phase.guideId && !phase.rebuilt ? (
           <button
@@ -923,6 +925,9 @@ function Run({
       ) : null}
       {/* Pages chosen beyond this go: how many are left, and the next go. */}
       {!running ? <QueuedPages /> : null}
+      {!running
+        ? [...games.keys()].map((packId) => <SameTitleOfferCard key={packId} gameId={packId} />)
+        : null}
       {!running && run.pages.some(({ state }) => state.kind === 'added' && state.pictures) ? (
         <p className="muted small" data-testid="add-map-pictures-note">
           The pictures of these pages are downloading now, one at a time, and show on the pages as

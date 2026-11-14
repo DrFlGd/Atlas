@@ -9,6 +9,13 @@ import {
   type GuideGame,
   type OtherGuides,
 } from '../state/guideLinks';
+import {
+  presentMembers,
+  showSource,
+  useSourceFacts,
+  useSourceNames,
+  useTitleOf,
+} from '../state/gameGroups';
 import { useAtlas, type LoadedGame } from '../state/store';
 
 const NONE: readonly never[] = [];
@@ -20,7 +27,9 @@ const NONE: readonly never[] = [];
  * (a wiki read as a game of its own). Choosing one reads its pages here,
  * under its own heading; the other game stays as it is, and its pack is
  * never changed. The choice is kept with the person's links (see
- * `guideLinks.ts`).
+ * `guideLinks.ts`). The wikis of the game's title (see `gameGroups.ts`) are
+ * listed too, as shown with this title: they are not this game's choice,
+ * so they are not stopped from here.
  */
 export function GuidesFromGames({ game }: { game: LoadedGame }) {
   const gameId = game.pack.manifest.gameId;
@@ -56,7 +65,11 @@ export function GuidesFromGames({ game }: { game: LoadedGame }) {
               <li key={other.gameId} className="guides-from-row" data-testid="guides-from-game">
                 <UiIcon name="book" size={18} />
                 <span className="guides-from-name">{other.title}</span>
-                {editable ? (
+                {other.ofTitle ? (
+                  <span className="guides-from-note" data-testid="guides-from-title">
+                    With this title
+                  </span>
+                ) : editable ? (
                   <button
                     type="button"
                     className="touch-text-button"
@@ -146,6 +159,49 @@ export function GuidesFromGames({ game }: { game: LoadedGame }) {
           )}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * At the end of the contents of a game of pages with no map that is under
+ * one title with games that have maps (see `state/gameGroups.ts`): those
+ * sources, to show one's map. Where a game has a map, its maps menu does
+ * this.
+ */
+export function TitleMaps({ game }: { game: LoadedGame }) {
+  const gameId = game.pack.manifest.gameId;
+  const group = useTitleOf(gameId);
+  const facts = useSourceFacts(group);
+  const names = useSourceNames(group);
+  const catalog = useAtlas((s) => s.catalog);
+  if (!group) return null;
+  const withMaps = presentMembers(group, catalog).filter(
+    (entry) => entry.id !== gameId && (facts[entry.id]?.maps.length ?? 0) > 0,
+  );
+  if (withMaps.length === 0) return null;
+  return (
+    <section className="guides-from" aria-label={`Maps of ${group.title}`} data-testid="title-maps">
+      <h2 className="guide-links-group-title">Maps of {group.title}</h2>
+      <p className="guide-links-group-line">
+        These pages are a source of {group.title}. Its pages show in Guides with every source.
+      </p>
+      <ul className="touch-plain-list guides-from-list">
+        {withMaps.map((entry) => (
+          <li key={entry.id} className="guides-from-row">
+            <UiIcon name="map" size={18} />
+            <span className="guides-from-name">{names.get(entry.id) ?? entry.title}</span>
+            <button
+              type="button"
+              className="touch-text-button"
+              data-testid="title-maps-show"
+              onClick={() => void showSource(entry.id)}
+            >
+              Show its map
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

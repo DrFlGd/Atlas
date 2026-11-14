@@ -125,4 +125,13 @@ export const SETTINGS = {
   wikiFollow: (importerId: string) => `wikiFollow:${importerId}`,
   /** The person's choices for each site of an importer's wikis, by its key: how it is read, the licence they confirmed (see `wikiNotes.ts`). */
   wikiSites: (importerId: string) => `wikiSites:${importerId}`,
+  /**
+   * The games shown under one title, where the shell has no file for them
+   * (see `gameGroups.ts`): the text of the file, as the desktop app keeps it.
+   */
+  gameGroups: 'gameGroups',
+  /** The source last used under each title, by the title's id: this device's own. */
+  gameGroupsLast: 'gameGroupsLast',
+  /** Games the Importer offered to show with a game of the same title, once each. */
+  gameGroupsAsked: 'gameGroupsAsked',
 } as const;

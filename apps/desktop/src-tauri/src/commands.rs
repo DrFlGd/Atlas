@@ -91,6 +91,11 @@ pub struct DesktopInfo {
     /// a picture chosen with the system's dialog (`map_picture_pick`,
     /// `own_game_create`). False on Android.
     own_games: bool,
+    /// The games shown under one title are kept in one file in the maps
+    /// folder (`game_groups_read`, `game_groups_write`), shared by every
+    /// Atlas app on the computer. False on Android, whose web app keeps
+    /// them in its own storage.
+    game_groups_file: bool,
 }
 
 /// Whether this platform has what `DesktopInfo::folders` and
@@ -125,6 +130,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         own_list_files: DESKTOP_ONLY,
         own_location_files: DESKTOP_ONLY,
         own_games: DESKTOP_ONLY,
+        game_groups_file: DESKTOP_ONLY,
     }
 }
 
@@ -1823,6 +1829,9 @@ pub struct PackFileImported {
     own_pages: Option<String>,
     /// Their notes on the game's locations (the text of the file).
     own_notes: Option<String>,
+    /// The title the game is shown under with other games, and their ids
+    /// (the text of the file).
+    game_group: Option<String>,
     /// Their own photos: each file's name and bytes in base64.
     own_pictures: Vec<OwnPictureFile>,
 }
@@ -1941,6 +1950,7 @@ async fn import_pack_file(
             guide_links: imported.mine.guide_links,
             own_pages: imported.mine.pages,
             own_notes: imported.mine.notes,
+            game_group: imported.mine.group,
             own_pictures: imported
                 .mine
                 .pictures

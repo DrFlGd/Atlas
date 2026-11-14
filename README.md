@@ -237,6 +237,37 @@ The notes are the person's own and kept apart from the pack: in the desktop app 
 
 `notes` is keyed by location id, of this game's locations only (a location of one's own keeps its note itself); `name` is the location's name when the note was written, at most 200 characters, and `text` at most 20,000 characters of Markdown; a note has words or a photo. Notes are written in the order of their ids, so the file changes only where a note does. `pictures` are the person's own photos the notes show, kept with their own photos and never deleted as unused while a note shows them. The file is written strictly and read tolerantly, as the other own files are: a note that cannot be read is left out and counted (and a copy of the file is kept before it is next written), and a file a newer Atlas wrote is shown and not changed.
 
+### One title for several sources
+
+The same game can come from more than one source: a map read from one site, another read from a second site, a wiki read as a game of pages. **Show with another game under one title** puts them under one title. It is in Games (a browser, the Android app) on each game's row, and in the Library (the desktop app) under **More**. The person chooses the other game and the title: the first game's title is offered, and another can be typed. More games can join a title later (**Add another game…**), and a game already under a title brings that title's games along.
+
+A title is one row, with **Sources: A, B**. Opening it opens the source shown last under it on this device, or the first one with a map. **Sources…** lists the sources, to show one, take one out, rename the title or **Show separately again**. The maps menu is headed **Maps of** the title and lists the maps of each source under its name; choosing one shows that source at that map. A source with one map has the same menu, so the source can always be changed where the maps are. Guides of every source also show the pages of the title's games of pages (a wiki read as a game with no map) and of the games each source reads guides from, under **With this title**; this is worked out when Guides are shown and never written into a source's own choices. A game of pages under a title shows the title's maps at the top of its Guides.
+
+Each source stays a whole game: found marks, lists, own locations, notes and progress stay with the source they were made on, and Progress shows the source shown. Nothing is merged, so nothing is lost when a source is taken out or the title is undone (each change can be undone from its message). A source's name is its importer's title (the manifest's `source.importer.title`), else its pack's title, or **Your own** for a game made in the app; names that are the same get a number (**Example 1**, **Example 2**). The classic layout lists each game under its own title in its game menu and opens it as before; its Library shows the title rows.
+
+In the desktop app with downloads (the Importer), adding a game whose title is the same as one already here, without case, accents or punctuation, offers once to show them under one title; the person can change the title or keep them apart, and the game is never put under a title without asking.
+
+The titles are kept beside the games, not in them: in the desktop app as the file `game-groups.json` in the maps folder (carried over when the maps folder changes), in the browser and on Android in IndexedDB (the setting `gameGroups`; the source shown last under each title is the setting `gameGroupsLast`, and the games the Importer asked about `gameGroupsAsked`). Both hold the same JSON:
+
+```json
+{
+  "format": "atlas-game-groups",
+  "version": 1,
+  "updatedAt": "2026-11-14T10:00:00.000Z",
+  "groups": [
+    {
+      "id": "title-5c1e09a2b7d4",
+      "title": "Atlas demo world",
+      "members": [{ "gameId": "demo" }, { "gameId": "isle-wiki" }]
+    }
+  ]
+}
+```
+
+A title has 2 to 20 games and a name of at most 200 characters, and a game is under one title at most; there are at most 1,000 titles. A game that is not on this device is kept in its title and not shown (the title says how many are away), and a title with one game here shows as that game. Deleting a game takes it out of its title. A pack's id never changes (its folder, its profiles and the person's own files are kept under it), so a title names games by id and needs no `idMigrations`. The file is written strictly and read tolerantly: unknown fields are ignored, a title or game that cannot be read is left out (and a copy of the file is kept before it is next written), and a file a newer Atlas wrote is shown and not changed.
+
+A map pack file exported with **Include my lists, locations, types and photos** carries the game's title as `mine/game-group.json` (`{ "format": "atlas-game-group", "version": 1, "gameId", "updatedAt", "title", "members" }`), as version 6 of the format; importing it adds the title, or puts the game under the title already here that holds one of its games.
+
 ## The demo pack
 
 `packs/demo` is a fictional island generated entirely by code in `packages/pipeline`: an 8192 × 8192 px relief map drawn from seeded noise, cut into a 256 px WebP tile pyramid (zoom 0–5, 1,365 tiles), with ten regions, twelve categories in three groups and 5,000 locations. A second, smaller map, an underground cave system of 2048 × 2048 px with two layers and 240 locations on each, exercises the map and layer switchers. The pack also has entities, guides with Markdown, three presets, a note of its own for each lore tablet and chest on the surface, five lists (a checklist of every waystone, a story of steps without places, a long mixed list of 326 items with sections, a route of 2,015 places across both maps, and secrets: eight riddles of one name whose notes hide their answers) and three walkthrough guides that use in-app links. It has drawn photos too: three waystones with a photo each (the second a spoiler) and a Photo guide, "Views of the isle", of six views, each a card with a photo (the fourth a spoiler) and a note. It also has a small made-up wiki, "Example Wiki" under CC BY-SA 4.0: six pages in a contents of two sections (one inside the other), with a table, a drawn picture of a waystone (`pictures/wiki-waystone.png`), hidden text and links between the pages, each with its credit, read in the Guides section. The same seed always produces the same pack.

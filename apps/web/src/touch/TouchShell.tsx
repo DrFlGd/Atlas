@@ -14,6 +14,13 @@ import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/ac
 import { checklistScreenTitle, setGuideReader } from '../state/checklists';
 import { guidesOf, hasListsSection, hasMap, useGuidesSection } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
+import {
+  presentMembers,
+  showSource,
+  useSourceFacts,
+  useSourceNames,
+  useTitleOf,
+} from '../state/gameGroups';
 import { useOwnLists } from '../state/ownLists';
 import { libraryOffered, setLibraryHost } from '../state/libraryView';
 import { LibraryScreen } from '../library/LibraryScreen';
@@ -803,17 +810,42 @@ function NearestButton() {
   );
 }
 
-/** The map shown, and its level when it has several; opens the list of maps. */
+/**
+ * The other sources of the title the game shown is under (see
+ * `state/gameGroups.ts`) that have maps, with their names: the maps menu
+ * lists their maps too.
+ */
+function useOtherSources(gameId: string | null) {
+  const group = useTitleOf(gameId);
+  const facts = useSourceFacts(group);
+  const names = useSourceNames(group);
+  const catalog = useAtlas((s) => s.catalog);
+  const others = group
+    ? presentMembers(group, catalog).filter(
+        (entry) => entry.id !== gameId && (facts[entry.id]?.maps.length ?? 0) > 0,
+      )
+    : [];
+  return { group, facts, names, others };
+}
+
+/**
+ * The map shown, and its level when it has several; opens the list of
+ * maps. A game under one title shows the name of its source, and the chip
+ * is there whenever another source has maps, so the source can be changed.
+ */
 function MapChip() {
   const game = useAtlas((s) => s.game);
   const mapId = useAtlas((s) => s.mapId);
   const layerId = useAtlas((s) => s.layerId);
   const open = useTouch((s) => s.mapsMenu);
+  const gameId = game?.entry.id ?? null;
+  const { group, names, others } = useOtherSources(gameId);
   if (!game || !mapId) return null;
   const maps = game.pack.data.maps;
   const layers = game.pack.layersOf(mapId);
-  if (maps.length < 2 && layers.length < 2) return null;
+  if (maps.length < 2 && layers.length < 2 && others.length === 0) return null;
   const layer = layers.length > 1 ? game.pack.layers.get(layerId ?? '') : undefined;
+  const source = group && gameId ? names.get(gameId) : undefined;
   return (
     <button
       type="button"
@@ -827,6 +859,11 @@ function MapChip() {
     >
       <UiIcon name="layers" size={18} />
       <span className="touch-map-chip-name">
+        {source ? (
+          <span className="muted" data-testid="map-chip-source">
+            {source} ·{' '}
+          </span>
+        ) : null}
         {game.pack.maps.get(mapId)?.name}
         {layer ? <span className="muted"> · {layer.name}</span> : null}
       </span>
@@ -842,7 +879,11 @@ function MapsMenu({ wide }: { wide: boolean }) {
   const mapId = useAtlas((s) => s.mapId);
   const layerId = useAtlas((s) => s.layerId);
   const summary = useSummary();
+  const gameId = game?.entry.id ?? null;
+  const { group, facts, names, others } = useOtherSources(gameId);
   if (!open || !game || !mapId || !summary) return null;
+  // Under one title: the maps of each source under its name, the one shown first.
+  const sources = group && others.length > 0;
   const layers = game.pack.layersOf(mapId);
   const close = () => {
     setMapsMenuOpen(false);
@@ -886,11 +927,16 @@ function MapsMenu({ wide }: { wide: boolean }) {
         data-testid="maps-menu"
       >
         <div className="touch-sheet-head">
-          <h2 className="touch-sheet-title">Maps</h2>
+          <h2 className="touch-sheet-title">{sources ? `Maps of ${group.title}` : 'Maps'}</h2>
           <button type="button" className="touch-round-button" aria-label="Close" onClick={close}>
             <UiIcon name="close" size={18} strokeWidth={1.8} />
           </button>
         </div>
+        {sources ? (
+          <h3 className="touch-group-title" data-testid="maps-menu-source" data-pack={gameId}>
+            {names.get(gameId ?? '') ?? game.pack.manifest.title} · shown
+          </h3>
+        ) : null}
         <ul className="touch-plain-list">
           {game.pack.data.maps.map((map) =>
             row(map.id, map.name, summary.map(map.id), map.id === mapId, () => {
@@ -910,7 +956,34 @@ function MapsMenu({ wide }: { wide: boolean }) {
             </ul>
           </>
         ) : null}
+        {sources
+          ? others.map((entry) => (
+              <div key={entry.id}>
+                <h3
+                  className="touch-group-title"
+                  data-testid="maps-menu-source"
+                  data-pack={entry.id}
+                >
+                  {names.get(entry.id) ?? entry.title}
+                </h3>
+                <ul className="touch-plain-list">
+                  {(facts[entry.id]?.maps ?? []).map((map) =>
+                    row(`${entry.id} ${map.id}`, map.name, NO_TALLY, false, () => {
+                      void showSource(entry.id, map.id);
+                    }),
+                  )}
+                </ul>
+              </div>
+            ))
+          : null}
+        {sources ? (
+          <p className="touch-note touch-menu-note">
+            Each source keeps its own found marks, so its maps show their figures once shown.
+          </p>
+        ) : null}
       </section>
     </>
   );
 }
+
+const NO_TALLY = { found: 0, total: 0 };

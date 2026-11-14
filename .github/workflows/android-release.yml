@@ -192,6 +192,13 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.8.0
+
+          - **One title for several sources.** When you have the same game from more than one place, such as two maps of it from different sources and a wiki, you can show them under one title. On a game in **Games**, choose **Show with another game under one title**, pick the other game and keep the title or type another. The title is one row that says **Sources: A, B**, and opening it opens the source you used last. The maps menu lists the maps of every source under its name, so you change source where you change map. A wiki under the title shows its pages in **Guides** with every source, and **Search wiki** on a location's card searches them.
+          - **Nothing is merged.** Each source keeps its own found marks, lists, locations, notes and progress. **Show separately again** undoes the title, and **Take out** removes one source from it; nothing is lost either way.
+
+          A map pack file carries the title when you tick **Include my lists, locations, types and photos**; such a file needs Atlas 0.8.0 to open.
+
           ## New in 0.7.0
 
           - **My notes.** Every location's card has **Add a note**, on the locations that came with the game as well as your own. Write what you want to remember in plain text or Markdown, with photos. A location with a note has a small mark on the map, **With my notes** in the filters shows only those, and search finds the words of your notes after the names. Your notes are kept on the phone apart from the game, so updating the game never changes them. If an update takes a location away, its note is kept under **Notes without a location**, where you can copy or delete it. Notes travel in a map pack file when you tick **Include my lists, locations, types and photos**.

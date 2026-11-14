@@ -997,6 +997,13 @@ impl Library {
                 ),
             );
         }
+        // The games shown under one title: one file of the whole folder.
+        if crate::gamegroups::carry_over(&current, &target, move_packs && failure.is_none()) {
+            activity::info(
+                Area::Library,
+                "Carried the titles of the person's games to the new maps folder",
+            );
+        }
         // And the person's own photos, in a folder of each game's own.
         let photos =
             crate::ownpictures::carry_over(&current, &target, move_packs && failure.is_none());

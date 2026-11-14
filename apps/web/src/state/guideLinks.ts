@@ -12,6 +12,7 @@ import {
 import { create } from 'zustand';
 import { desktop } from '../desktop';
 import { notify } from './actions';
+import { titleOf, useGameGroups } from './gameGroups';
 import type { SaveState } from './ownLists';
 import { progressStore } from './services';
 import { useAtlas, type LoadedGame } from './store';
@@ -34,7 +35,10 @@ import { useAtlas, type LoadedGame } from './store';
  *
  * It also loads the guides of the other games the person chose to read
  * with this one (`guidesFrom`): their packs are read as they are, never
- * changed.
+ * changed. A game shown under one title with others (see `gameGroups.ts`)
+ * shows the wikis of the whole title too: those any game of the title
+ * reads, and the games of the title that are wikis themselves. They are
+ * worked out when shown and never written into any game's links.
  */
 
 /** Another game's pack whose guides are read with the game shown. */
@@ -42,6 +46,11 @@ export interface OtherGuides {
   gameId: string;
   title: string;
   pack: LoadedPack;
+  /**
+   * Shown because the game shown is under one title with games that read
+   * it, or with it: not chosen for this game, so not stopped from here.
+   */
+  ofTitle?: boolean;
 }
 
 export interface GuideLinksState {
@@ -213,31 +222,80 @@ function packAt(entry: PackEntry): Promise<LoadedPack> {
   return pack;
 }
 
-/** Loads the guides of the other games named in the links, those on this device. */
+/**
+ * Loads the guides of the other games named in the links, those on this
+ * device, then those of the game's title (see {@link titleWikis}).
+ */
 async function loadOthers(gameId: string): Promise<void> {
   const { catalog } = useAtlas.getState();
   const others: OtherGuides[] = [];
   const missing: string[] = [];
-  for (const id of get().links.guidesFrom) {
+  const chosen = get().links.guidesFrom;
+  const titled = (await titleWikis(gameId)).filter((id) => !chosen.includes(id));
+  for (const id of [...chosen, ...titled]) {
+    const ofTitle = !chosen.includes(id);
     const entry = catalog.find((p) => p.id === id);
     if (!entry) {
-      missing.push(id);
+      if (!ofTitle) missing.push(id);
       continue;
     }
     try {
       const pack = await packAt(entry);
       if (pack.manifest.gameId !== id) {
-        missing.push(id);
+        if (!ofTitle) missing.push(id);
         continue;
       }
-      others.push({ gameId: id, title: pack.manifest.title, pack });
+      others.push({
+        gameId: id,
+        title: pack.manifest.title,
+        pack,
+        ...(ofTitle ? { ofTitle } : {}),
+      });
     } catch {
-      missing.push(id);
+      if (!ofTitle) missing.push(id);
     }
   }
   if (get().gameId !== gameId) return;
   set({ others, othersMissing: missing });
 }
+
+/**
+ * The wikis of the title a game is shown under, other than the game: the
+ * games of pages with no map among its games, and the games every other
+ * game of the title reads its pages with ("Add guides from another game").
+ * Worked out each time; nothing is written.
+ */
+async function titleWikis(gameId: string): Promise<string[]> {
+  const group = titleOf(gameId);
+  if (!group) return [];
+  const { catalog } = useAtlas.getState();
+  const ids: string[] = [];
+  for (const { gameId: member } of group.members) {
+    const entry = catalog.find((p) => p.id === member);
+    if (member === gameId || !entry) continue;
+    if (await guideGameAt(entry)) ids.push(member);
+    const text = await backend()
+      .read(member)
+      .catch(() => null);
+    if (text === null) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    const read = readGuideLinksFile(value);
+    if (read.ok && read.file.gameId === member) ids.push(...read.file.guidesFrom);
+  }
+  return [...new Set(ids)].filter((id) => id !== gameId).slice(0, MAX_GUIDES_FROM);
+}
+
+// The title of the game shown changed: its wikis are worked out again.
+useGameGroups.subscribe((state, before) => {
+  if (state.groups === before.groups) return;
+  const { gameId, status } = get();
+  if (gameId && status === 'ready') void loadOthers(gameId);
+});
 
 /** Whether the links can be changed now. */
 export function canChangeGuideLinks(state: GuideLinksState = get()): boolean {

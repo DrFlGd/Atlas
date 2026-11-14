@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { GlyphBadge, UiIcon } from '../components/icons';
 import { goToRegion, setProfileDialogOpen, showMap } from '../state/actions';
 import { numberFormat, useSummary } from '../state/derived';
+import { useSourceNames, useTitleOf } from '../state/gameGroups';
 import { useAtlas } from '../state/store';
 import { showSection } from './state';
 import { GroupTitle, Meter, ProgressRing } from './widgets';
@@ -17,6 +18,8 @@ export function ProgressScreen() {
   const mapId = useAtlas((s) => s.mapId);
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   const summary = useSummary();
+  const group = useTitleOf(game.entry.id);
+  const names = useSourceNames(group);
   const regions = useMemo(() => {
     const onMap = game.pack.data.regions.filter((r) => r.mapId === mapId);
     const children = new Map<string | null, Region[]>();
@@ -64,6 +67,12 @@ export function ProgressScreen() {
         </button>
       </header>
       <div className="touch-scroll touch-page-body" data-scroll-root>
+        {group ? (
+          <p className="touch-note" data-testid="progress-source">
+            Progress of the source {names.get(game.entry.id) ?? game.pack.manifest.title} only. Each
+            source of {group.title} keeps its own found marks.
+          </p>
+        ) : null}
         <section className="touch-overall" aria-label="Everything in this game">
           <span className="touch-overall-ring">
             <ProgressRing value={value} size={92} stroke={4} />

@@ -1643,7 +1643,7 @@ fn carries_own_notes_as_version_5() {
     let file = dir.0.join("notes.atlaspack");
     let exported = export_mine(&source, &file, &mine).unwrap();
     // Only an app that knows notes reads it.
-    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(exported.header.version, VERSION_WITH_NOTES);
     assert_eq!(exported.header.mine.unwrap().notes, 2);
     assert!(entry_names(&file).contains_key("mine/my-notes.json"));
     let maps = dir.0.join("maps-notes");
@@ -1664,8 +1664,58 @@ fn carries_own_notes_as_version_5() {
         )),
         ..Mine::default()
     };
-    assert_eq!(links(2).version(), VERSION);
+    assert_eq!(links(2).version(), VERSION_WITH_NOTES);
     assert_eq!(links(1).version(), VERSION_WITH_PHOTOS);
+}
+
+#[test]
+fn carries_the_title_of_the_game_as_version_6() {
+    let dir = TempDir::new("packfile-mine-group");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let source = folder_source(&pack);
+    // The title it shares, read from the file of the maps folder.
+    let maps = dir.0.join("maps-here");
+    std::fs::create_dir_all(&maps).unwrap();
+    crate::gamegroups::write(
+        &maps,
+        &format!(
+            r#"{{"format":"atlas-game-groups","version":1,"groups":[{{"id":"g","title":"Isles","members":[{{"gameId":"other"}},{{"gameId":"{ID}"}}]}}]}}"#
+        ),
+        None,
+    )
+    .unwrap();
+    let mine = Mine::read(&maps, ID).unwrap();
+    let group = mine.group.clone().unwrap();
+    assert!(group.contains("\"format\": \"atlas-game-group\""));
+    assert_eq!(mine.version(), VERSION);
+    let file = dir.0.join("group.atlaspack");
+    let exported = export_mine(&source, &file, &mine).unwrap();
+    // Only an app that knows titles reads it.
+    assert_eq!(exported.header.version, VERSION);
+    assert!(exported.header.mine.unwrap().group);
+    assert!(entry_names(&file).contains_key("mine/game-group.json"));
+    let imported = run_import(&file, &dir.0.join("maps-there")).unwrap();
+    assert_eq!(imported.mine.group, Some(group.clone()));
+    // Another game's title is refused.
+    let other = Mine {
+        group: Some(group.replace(
+            &format!("\"gameId\": \"{ID}\",\n  \"updatedAt"),
+            "\"gameId\": \"other\",\n  \"updatedAt",
+        )),
+        ..Mine::default()
+    };
+    assert_ne!(other.group, mine.group);
+    assert!(export_mine(&source, &dir.0.join("other.atlaspack"), &other).is_err());
+    // Without a title, a file with notes stays version 5.
+    let notes = Mine {
+        notes: Some(format!(
+            r#"{{"format":"atlas-own-notes","version":1,"gameId":"{ID}","notes":{{}}}}"#
+        )),
+        ..Mine::default()
+    };
+    assert_eq!(notes.version(), VERSION_WITH_NOTES);
+    assert_eq!(Mine::default().version(), VERSION_WITH_MINE);
 }
 
 #[test]

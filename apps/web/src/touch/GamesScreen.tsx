@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import type { GameGroup } from '@atlas/schema';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
+import { ShowWithAnotherForm, SourcesLine, TitleSourcesPanel } from '../components/GameTitles';
 import { UiIcon } from '../components/icons';
 import { PackSummary } from '../components/PackSummary';
 import { PackDetailsView } from '../components/PackFacts';
@@ -7,6 +9,7 @@ import { desktop, type PackDetails } from '../desktop';
 import { copiesPickedFiles, foldersOffered, layoutChoiceOffered } from '../features';
 import { setLayout, setTheme, switchGame } from '../state/actions';
 import { openActivityLog } from '../state/activityLog';
+import { openTitle, showSource, useSourceNames, useTitleRows } from '../state/gameGroups';
 import { ownGamesOffered } from '../state/ownGames';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
@@ -18,9 +21,11 @@ import { GroupTitle, SwitchTrack } from './widgets';
 /**
  * Games: the games on this device (tap one to show it), importing a map
  * pack file, each game's details and delete, then the app's settings.
+ * Games shown under one title are one row (see `state/gameGroups.ts`).
  */
 export function GamesScreen() {
-  const catalog = useAtlas((s) => s.catalog);
+  const rows = useTitleRows();
+  const several = useAtlas((s) => s.catalog.length > 1);
   const library = useAtlas((s) => s.library);
   const shown = useAtlas((s) => s.game?.entry.id);
   const copies = useAtlas(copiesPickedFiles);
@@ -36,7 +41,11 @@ export function GamesScreen() {
         <section aria-labelledby="games-heading">
           <GroupTitle id="games-heading">Games on this device</GroupTitle>
           <ul className="touch-plain-list" data-testid="game-list">
-            {catalog.map((entry) => {
+            {rows.map((row) => {
+              if (row.kind === 'title') {
+                return <TitleRow key={row.group.id} group={row.group} shownId={shown ?? null} />;
+              }
+              const { entry } = row;
               const listed = library?.packs.find((p) => p.id === entry.id);
               return (
                 <GameRow
@@ -55,6 +64,7 @@ export function GamesScreen() {
                   listed={listed !== undefined}
                   deletable={listed?.origin === 'maps-folder' && !listed.bundled}
                   busy={library?.busy.includes(entry.id) ?? false}
+                  groupable={several}
                 />
               );
             })}
@@ -94,6 +104,7 @@ function GameRow({
   deletable,
   busy,
   ownGame = false,
+  groupable,
 }: {
   id: string;
   title: string;
@@ -104,9 +115,12 @@ function GameRow({
   busy: boolean;
   /** Made in this app: maps and levels can be added, and it can be renamed. */
   ownGame?: boolean;
+  /** Another game is here, so it can be shown with it under one title. */
+  groupable: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [details, setDetails] = useState(false);
+  const [grouping, setGrouping] = useState(false);
   return (
     <li className="touch-game" data-testid="game-row" data-pack={id} data-current={current}>
       <button
@@ -130,19 +144,34 @@ function GameRow({
           {current ? <UiIcon name="check" size={20} strokeWidth={2.2} /> : null}
         </span>
       </button>
-      {listed && desktop ? (
-        <div className="touch-game-actions">
-          <button
-            type="button"
-            className="touch-text-button"
-            aria-expanded={details}
-            data-testid="pack-details-toggle"
-            onClick={() => {
-              setDetails(!details);
-            }}
-          >
-            Details
-          </button>
+      {(listed && desktop) || groupable ? (
+        <div className="touch-game-actions touch-game-actions-wrap">
+          {listed && desktop ? (
+            <button
+              type="button"
+              className="touch-text-button"
+              aria-expanded={details}
+              data-testid="pack-details-toggle"
+              onClick={() => {
+                setDetails(!details);
+              }}
+            >
+              Details
+            </button>
+          ) : null}
+          {groupable ? (
+            <button
+              type="button"
+              className="touch-text-button"
+              aria-expanded={grouping}
+              data-testid="show-with-another"
+              onClick={() => {
+                setGrouping(!grouping);
+              }}
+            >
+              Show with another game…
+            </button>
+          ) : null}
           {deletable && !busy ? (
             <button
               type="button"
@@ -159,6 +188,16 @@ function GameRow({
       ) : null}
       {ownGame && !busy ? <OwnGameActions id={id} title={title} /> : null}
       {details ? <GameDetails id={id} /> : null}
+      {grouping ? (
+        <div className="touch-game-confirm">
+          <ShowWithAnotherForm
+            gameId={id}
+            onClose={() => {
+              setGrouping(false);
+            }}
+          />
+        </div>
+      ) : null}
       {confirming ? (
         <div className="touch-game-confirm">
           <DeletePackConfirm
@@ -167,6 +206,64 @@ function GameRow({
             onClose={() => {
               setConfirming(false);
             }}
+          />
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * A title with its sources on this device: a tap shows the source last
+ * shown under it; Sources lists them, to show one, take one out, rename
+ * the title or show them separately again.
+ */
+function TitleRow({ group, shownId }: { group: GameGroup; shownId: string | null }) {
+  const [open, setOpen] = useState(false);
+  const names = useSourceNames(group);
+  const current = group.members.some((member) => member.gameId === shownId);
+  return (
+    <li className="touch-game" data-testid="title-row" data-group={group.id} data-current={current}>
+      <button
+        type="button"
+        className="touch-game-main"
+        aria-current={current ? 'true' : undefined}
+        onClick={() => {
+          if (!current) void openTitle(group);
+        }}
+      >
+        <span className="touch-game-text">
+          <span className="touch-row-title">{group.title}</span>
+          <SourcesLine group={group} className="touch-row-detail" />
+          {current && shownId ? (
+            <span className="touch-row-detail" data-testid="title-shown">
+              Shown: {names.get(shownId) ?? shownId}
+            </span>
+          ) : null}
+        </span>
+        <span className="touch-row-end">
+          {current ? <UiIcon name="check" size={20} strokeWidth={2.2} /> : null}
+        </span>
+      </button>
+      <div className="touch-game-actions">
+        <button
+          type="button"
+          className="touch-text-button"
+          aria-expanded={open}
+          data-testid="title-sources-toggle"
+          onClick={() => {
+            setOpen(!open);
+          }}
+        >
+          Sources…
+        </button>
+      </div>
+      {open ? (
+        <div className="touch-game-confirm">
+          <TitleSourcesPanel
+            group={group}
+            shownId={shownId}
+            onOpen={(gameId) => void showSource(gameId)}
           />
         </div>
       ) : null}

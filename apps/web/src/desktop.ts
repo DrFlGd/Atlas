@@ -341,6 +341,13 @@ export interface DesktopInfo {
    * to them (`ownGames`): the desktop apps. Absent counts as false.
    */
   ownGames?: boolean;
+  /**
+   * The games shown under one title are kept in one file in the maps
+   * folder (`gameGroups`), shared by every Atlas app on the computer. False
+   * in the Android app; absent counts as false. Without it the web app keeps
+   * them in its own storage.
+   */
+  gameGroupsFile?: boolean;
 }
 
 /** Where a listed pack comes from. */
@@ -594,6 +601,8 @@ export interface PackFileHeader {
     sections?: number;
     /** Notes on the game's locations (version 5). */
     notes?: number;
+    /** The title the game is shown under with other games (version 6). */
+    group?: boolean;
   };
 }
 
@@ -703,6 +712,8 @@ export interface PackFileImported {
   ownPages?: string | null;
   /** The text of the own notes file the file carried, to add to the person's. */
   ownNotes?: string | null;
+  /** The title the game is shown under with other games, as the file carried it. */
+  gameGroup?: string | null;
   /** The person's own photos the file carried: their file names and bytes in base64. */
   ownPictures?: { file: string; data: string }[] | null;
 }
@@ -967,6 +978,16 @@ export interface DesktopBridge {
     delete(gameId: string): Promise<boolean>;
   };
   /**
+   * The games a person shows under one title, in one file in the maps
+   * folder (`game-groups.json`, see `gameGroupsFile`).
+   */
+  gameGroups: {
+    /** The file's text, or null when there is none yet. */
+    read(): Promise<string | null>;
+    /** Writes the file whole; with `keepCopy` (a time), keeps the old one beside it first. */
+    write(contents: string, keepCopy?: string): Promise<string | null>;
+  };
+  /**
    * A person's own photos of a game, in the folder of their own beside the
    * game's folder in the maps folder (`<game id>.my-pictures/`). Kept with
    * the own lists (see `ownListFiles`).
@@ -1215,6 +1236,11 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       write: (gameId, contents, keepCopy) =>
         call('own_notes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_notes_delete', { gameId }),
+    },
+    gameGroups: {
+      read: () => call('game_groups_read'),
+      write: (contents, keepCopy) =>
+        call('game_groups_write', { contents, keepCopy: keepCopy ?? null }),
     },
     ownPictures: {
       read: (gameId, file) => call<unknown>('own_pictures_read', { gameId, file }).then(bytesOf),

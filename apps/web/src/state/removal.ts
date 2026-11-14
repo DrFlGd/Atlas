@@ -4,6 +4,7 @@ import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
 import { deleteGuideLinksOf } from './guideLinks';
 import { deleteOwnNotesOf, ownNotesBackend } from './ownNotes';
+import { forgetDeletedGame } from './gameGroups';
 import { deleteOwnPagesOf, ownPagesBackend } from './ownPages';
 import { applyListing } from './library';
 import { deleteOwnListsOf, ownListsBackend } from './ownLists';
@@ -75,6 +76,8 @@ export async function deletePack(
     return { ok: false, error: plainError(error, `delete ${title}`) };
   }
   await refreshWithout(id);
+  // It leaves the title it was shown under; the title's other games stay together.
+  await forgetDeletedGame(id).catch(() => undefined);
   // Their photos go with them: all of them when both go, else those the one deleted names.
   if (deleteLists || deleteLocations) {
     try {
