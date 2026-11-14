@@ -732,6 +732,95 @@ button.guides-crumb:hover {
   margin-top: 4px;
 }
 
+/* "My note" on a location's card */
+
+.place-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border);
+  border-left: 3px solid var(--atlas-marker-note);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+}
+
+.place-note-empty {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.place-note-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
+.place-note-heading {
+  margin: 0 0 4px;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.place-note-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.place-note-actions .touch-text-button {
+  min-height: 36px;
+  padding: 0 8px;
+  font-size: 14px;
+}
+
+.place-note-delete {
+  color: var(--atlas-danger);
+}
+
+.place-note-add {
+  min-height: 44px;
+  padding: 0 4px;
+}
+
+.place-note-body {
+  color: var(--touch-text-soft, var(--atlas-text));
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.place-note-body > :last-child {
+  margin-bottom: 0;
+}
+
+.place-note .place-photos {
+  margin-top: 8px;
+}
+
+.place-note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.place-note-text {
+  min-height: 120px;
+}
+
+.place-note-hint,
+.place-note-why {
+  margin: 0;
+}
+
+.place-note-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* The reader: editing, and what the person changed */
 
 .guides-page-head {

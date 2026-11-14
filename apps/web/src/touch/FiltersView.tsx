@@ -8,10 +8,13 @@ import {
   saveUserPreset,
   setCategoriesVisible,
   setHideFound,
+  setNotesOnly,
 } from '../state/actions';
 import { numberFormat, useSummary, useVisibleCategories } from '../state/derived';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { ListOnlyChip } from './ListMapChips';
+import { NotesWithoutLocation } from './NotesWithoutLocation';
+import { useNotedLocations } from '../state/ownNotes';
 import { setFiltersOpen, soloKind, toggleSolo, useTouch } from './state';
 import { SwitchTrack } from './widgets';
 
@@ -58,6 +61,8 @@ export function ChipRow() {
   const game = useAtlas((s) => s.game)!;
   const mapId = useAtlas((s) => s.mapId);
   const hideFound = useAtlas((s) => s.hideFound);
+  const notesOnly = useAtlas((s) => s.notesOnly);
+  const noted = useNotedLocations(game)?.size ?? 0;
   const overrides = useAtlas((s) => s.overrides);
   const solo = useTouch((s) => soloKind(s, overrides));
   const hidden = useHiddenCount();
@@ -94,6 +99,20 @@ export function ChipRow() {
         <UiIcon name="foundCircle" size={18} />
         Hide found
       </button>
+      {noted > 0 || notesOnly ? (
+        <button
+          type="button"
+          className="touch-chip touch-chip-float"
+          aria-pressed={notesOnly}
+          data-testid="notes-only-chip"
+          onClick={() => {
+            setNotesOnly(!notesOnly);
+          }}
+        >
+          <UiIcon name="pencil" size={18} />
+          With my notes
+        </button>
+      ) : null}
       {kinds.map((category) => (
         <button
           key={category.id}
@@ -210,7 +229,10 @@ function HideAll({ groups }: { groups: KindGroups }) {
 }
 
 function FilterBody({ groups, showAll }: { groups: KindGroups; showAll?: React.ReactNode }) {
+  const game = useAtlas((s) => s.game)!;
   const hideFound = useAtlas((s) => s.hideFound);
+  const notesOnly = useAtlas((s) => s.notesOnly);
+  const noted = useNotedLocations(game)?.size ?? 0;
   return (
     <div className="touch-filters">
       <button
@@ -226,6 +248,29 @@ function FilterBody({ groups, showAll }: { groups: KindGroups; showAll?: React.R
         <span className="touch-switch-label">Hide what I have found</span>
         <SwitchTrack on={hideFound} />
       </button>
+      {noted > 0 || notesOnly ? (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={notesOnly}
+          className="touch-switch-card"
+          data-testid="notes-only-switch"
+          onClick={() => {
+            setNotesOnly(!notesOnly);
+          }}
+        >
+          <span className="touch-switch-label">
+            With my notes
+            <span className="touch-switch-note">
+              {notesOnly
+                ? `Only the ${noted === 1 ? 'location' : `${numberFormat.format(noted)} locations`} with a note of yours, whatever types are shown.`
+                : `Show only the ${noted === 1 ? 'location' : `${numberFormat.format(noted)} locations`} with a note of yours.`}
+            </span>
+          </span>
+          <SwitchTrack on={notesOnly} />
+        </button>
+      ) : null}
+      <NotesWithoutLocation game={game} />
       <Presets />
       {showAll ? (
         <div className="touch-group-head touch-kinds-head">

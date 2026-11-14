@@ -1,10 +1,19 @@
-import { checklistTally, type SearchEntry, type SearchHit, type SearchKind } from '@atlas/core';
+import {
+  checklistTally,
+  GuideSearch,
+  type NoteText,
+  type SearchEntry,
+  type SearchHit,
+  type SearchKind,
+} from '@atlas/core';
 import { useDeferredValue, useEffect, useId, useMemo, useRef } from 'react';
 import { GlyphBadge, UiIcon, type UiIconName } from '../components/icons';
 import { VirtualList } from '../components/VirtualList';
 import { goToLocation } from '../state/actions';
 import { openChecklist, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
+import { guideSearchText } from '../markdown';
+import { noteTextsOf, useNotesShown } from '../state/ownNotes';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { orderHits } from './ordering';
 import type { RecentRef } from './recent';
@@ -35,6 +44,65 @@ const SCOPES: { id: SearchScope; label: string }[] = [
 ];
 
 const PLACE_KINDS: readonly SearchKind[] = ['location', 'entity'];
+
+/** Where a match in a note of the person's own comes: after every match by name. */
+const NOTE_SCORE = 10;
+
+const noteSearches = new WeakMap<readonly NoteText[], GuideSearch>();
+
+/** A search over the person's notes, each as a page of its location. */
+function noteSearchOf(texts: readonly NoteText[]): GuideSearch {
+  let search = noteSearches.get(texts);
+  if (!search) {
+    search = new GuideSearch(
+      texts.map(({ locationId, text }) => ({
+        id: locationId,
+        title: '',
+        body: text,
+        locationIds: [locationId],
+      })),
+      guideSearchText,
+    );
+    noteSearches.set(texts, search);
+  }
+  return search;
+}
+
+/**
+ * The locations whose note (of the person's own) has the words, and not
+ * their name: each with the line of the note around them, by location.
+ */
+function noteHits(
+  game: LoadedGame,
+  texts: readonly NoteText[],
+  query: string,
+  named: readonly SearchHit[],
+): { hits: SearchHit[]; lines: Map<string, string> } {
+  const lines = new Map<string, string>();
+  const hits: SearchHit[] = [];
+  if (texts.length === 0) return { hits, lines };
+  const byName = new Set(
+    named.flatMap((hit) => (hit.entry.kind === 'location' ? [hit.entry.id] : [])),
+  );
+  for (const hit of noteSearchOf(texts).search(query, LIMIT)) {
+    const id = hit.guide.id;
+    const location = game.pack.locations.get(id);
+    if (!location || byName.has(id) || lines.has(id)) continue;
+    lines.set(id, hit.snippet);
+    hits.push({
+      entry: {
+        kind: 'location',
+        id,
+        title: location.name,
+        detail: '',
+        mapId: location.mapId,
+        locationIds: [id],
+      },
+      score: NOTE_SCORE,
+    });
+  }
+  return { hits, lines };
+}
 const LIST_KINDS: readonly SearchKind[] = ['checklist', 'checkitem', 'guide'];
 
 /** The last `/` key press that moved focus to a search field. */
@@ -162,14 +230,22 @@ function Results({ game, query }: { game: LoadedGame; query: string }) {
   const scope = useTouch((s) => s.scope);
   const mapId = useAtlas((s) => s.mapId);
   const hasLists = !game.checklists.isEmpty;
+  const shownNotes = useNotesShown(game);
 
-  // Ordered once per query: the list does not move while the map does.
-  const hits = useMemo(() => {
+  // Ordered once per query: the list does not move while the map does. The
+  // locations found by a word of a note of the person's own come after those
+  // found by name.
+  const { hits, noteLines } = useMemo(() => {
     const center = useAtlas.getState().view?.center ?? null;
-    return orderHits(game.search.search(query, LIMIT), mapId, center, (id) =>
-      game.pack.locations.get(id),
-    );
-  }, [game, query, mapId]);
+    const named = game.search.search(query, LIMIT);
+    const notes = noteHits(game, noteTextsOf(game, shownNotes), query, named);
+    return {
+      hits: orderHits([...named, ...notes.hits], mapId, center, (id) =>
+        game.pack.locations.get(id),
+      ),
+      noteLines: notes.lines,
+    };
+  }, [game, query, mapId, shownNotes]);
 
   // "Not found yet" is read when the scope or query changes, so a place
   // marked from its row stays in the list under the finger.
@@ -221,7 +297,13 @@ function Results({ game, query }: { game: LoadedGame; query: string }) {
             items={rows}
             getKey={hitKey}
             estimate={ROW_HEIGHT}
-            renderItem={(hit) => <ResultRow game={game} entry={hit.entry} />}
+            renderItem={(hit) => (
+              <ResultRow
+                game={game}
+                entry={hit.entry}
+                note={hit.score === NOTE_SCORE ? noteLines.get(hit.entry.id) : undefined}
+              />
+            )}
             className="touch-result-list"
             testId="search-results"
             visible
@@ -360,8 +442,17 @@ const KIND_ICON: Record<Exclude<SearchKind, 'location'>, UiIconName> = {
 };
 
 /** One result: a place with its tick, or a list, an entry or a guide that opens in Lists. */
-function ResultRow({ game, entry }: { game: LoadedGame; entry: SearchEntry }) {
-  if (entry.kind === 'location') return <PlaceRow game={game} entry={entry} />;
+function ResultRow({
+  game,
+  entry,
+  note,
+}: {
+  game: LoadedGame;
+  entry: SearchEntry;
+  /** The line of the person's note that has the words, for a location found by its note. */
+  note?: string | undefined;
+}) {
+  if (entry.kind === 'location') return <PlaceRow game={game} entry={entry} note={note} />;
   const opens =
     entry.kind === 'checklist' ||
     entry.kind === 'checkitem' ||
@@ -425,7 +516,15 @@ function ListDetail({ game, entry }: { game: LoadedGame; entry: SearchEntry }) {
   }
 }
 
-function PlaceRow({ game, entry }: { game: LoadedGame; entry: SearchEntry }) {
+function PlaceRow({
+  game,
+  entry,
+  note,
+}: {
+  game: LoadedGame;
+  entry: SearchEntry;
+  note?: string | undefined;
+}) {
   const found = useAtlas((s) => s.found.has(entry.id));
   const mapId = useAtlas((s) => s.mapId);
   const { pack } = game;
@@ -435,15 +534,19 @@ function PlaceRow({ game, entry }: { game: LoadedGame; entry: SearchEntry }) {
   const region = location.regionId ? pack.regions.get(location.regionId) : undefined;
   const otherMap = location.mapId !== mapId ? pack.maps.get(location.mapId)?.name : undefined;
   const trackable = game.counter.isTrackable(location.id);
-  const detail = [category?.name, region?.name, otherMap, found ? 'found' : undefined]
-    .filter(Boolean)
-    .join(' · ');
+  const detail =
+    note !== undefined
+      ? `My note: ${note}`
+      : [category?.name, region?.name, otherMap, found ? 'found' : undefined]
+          .filter(Boolean)
+          .join(' · ');
   return (
     <div
       className={found ? 'touch-row touch-row-found' : 'touch-row'}
       data-testid="search-result"
       data-kind="location"
       data-found={found}
+      data-by-note={note !== undefined ? '' : undefined}
     >
       <button
         type="button"

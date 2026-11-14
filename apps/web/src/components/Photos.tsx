@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { useOwnLists } from '../state/ownLists';
 import { useOwnLocations } from '../state/ownLocations';
+import { useOwnNotes } from '../state/ownNotes';
 import { useOwnPictureUrl } from '../state/ownPictures';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
@@ -28,7 +29,7 @@ function packPicture(pack: LoadedPack, id: string): Picture | undefined {
   return pictures.get(id) ?? pictures.get(pack.currentId(id));
 }
 
-/** An own picture of the game shown, from its own lists or own locations. */
+/** An own picture of the game shown, from its own lists, own locations or notes. */
 function useOwnPicture(id: string, own: boolean): Picture | undefined {
   const inLists = useOwnLists((s) => {
     if (!own) return undefined;
@@ -41,7 +42,14 @@ function useOwnPicture(id: string, own: boolean): Picture | undefined {
   const inLocations = useOwnLocations((s) =>
     own ? s.own.pictures?.find((picture) => picture.id === id) : undefined,
   );
-  return inLists ?? inLocations;
+  // Those of the notes, and of the note being written.
+  const inNotes = useOwnNotes((s) =>
+    own
+      ? (s.own.pictures?.find((picture) => picture.id === id) ??
+        s.draftPictures.find((picture) => picture.id === id))
+      : undefined,
+  );
+  return inLists ?? inLocations ?? inNotes;
 }
 
 /** Where a photo is shown from: a URL, null while it is read, or `missing`. */

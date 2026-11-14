@@ -34,6 +34,8 @@
   --atlas-map-backdrop: #1b2129;
   --atlas-marker-outline: rgba(9, 11, 15, 0.92);
   --atlas-marker-muted: #8a919c;
+  /* The mark of a location with a note of the person's own. */
+  --atlas-marker-note: #f4d35e;
   --atlas-cluster-fill: rgba(22, 26, 32, 0.92);
   --atlas-cluster-ring: #63cdb9;
   --atlas-cluster-text: #f2f4f7;
@@ -64,6 +66,7 @@
   --atlas-map-backdrop: #d9dee5;
   --atlas-marker-outline: rgba(255, 255, 255, 0.95);
   --atlas-marker-muted: #8b929c;
+  --atlas-marker-note: #c98a00;
   --atlas-cluster-fill: rgba(255, 255, 255, 0.94);
   --atlas-cluster-ring: #0b7a69;
   --atlas-cluster-text: #171c23;
