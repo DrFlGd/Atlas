@@ -70,6 +70,9 @@ export const DESKTOP_ONLY = [
   'own_pages_read',
   'own_pages_write',
   'own_pages_delete',
+  'own_notes_read',
+  'own_notes_write',
+  'own_notes_delete',
 ];
 
 export function installAndroidShell(desktopOnly: string[]) {

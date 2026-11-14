@@ -7,6 +7,7 @@ import {
   ownPicture,
   readOwnListsFile,
   readOwnLocationsFile,
+  readOwnNotesFile,
   readOwnPagesFile,
   ownPictureFile,
   ownPictureType,
@@ -521,10 +522,10 @@ export async function deleteOwnPictures(
   return ownPicturesBackend().remove(gameId, files);
 }
 
-/** The own pictures an own lists, locations or pages file names, from its text. */
+/** The own pictures an own lists, locations, pages or notes file names, from its text. */
 export function picturesInFile(
   text: string | null,
-  kind: 'lists' | 'locations' | 'pages',
+  kind: 'lists' | 'locations' | 'pages' | 'notes',
 ): Picture[] {
   if (text === null) return [];
   let value: unknown;
@@ -539,6 +540,10 @@ export function picturesInFile(
   }
   if (kind === 'pages') {
     const read = readOwnPagesFile(value);
+    return read.ok ? (read.file.own.pictures ?? []) : [];
+  }
+  if (kind === 'notes') {
+    const read = readOwnNotesFile(value);
     return read.ok ? (read.file.own.pictures ?? []) : [];
   }
   const read = readOwnLocationsFile(value);

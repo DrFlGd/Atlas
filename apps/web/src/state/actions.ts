@@ -399,8 +399,26 @@ export function jumpToNearestUnfound(): void {
   else notify('Every visible marker on this layer is found.');
 }
 
+/**
+ * The locations of a game with a note of the person's own (see
+ * `ownNotes.ts`, which gives it, so this file need not import it).
+ */
+let notedOf: (game: NonNullable<AtlasState['game']>) => ReadonlySet<string> = () => new Set();
+
+/** Says where the locations with a note of the person's own come from. */
+export function provideNotedLocations(
+  of: (game: NonNullable<AtlasState['game']>) => ReadonlySet<string>,
+): void {
+  notedOf = of;
+}
+
+/**
+ * What the map shows: the types shown, found ones hidden or not, a list's
+ * locations alone, and, with "With my notes", only the locations `noted`.
+ */
 export function markerFilter(
-  state: Pick<AtlasState, 'game' | 'overrides' | 'hideFound' | 'found' | 'listOnly'>,
+  state: Pick<AtlasState, 'game' | 'overrides' | 'hideFound' | 'found' | 'listOnly' | 'notesOnly'>,
+  noted: ReadonlySet<string> | null = state.game && state.notesOnly ? notedOf(state.game) : null,
 ) {
   const categories = state.game?.pack.data.categories ?? [];
   const found = state.found;
@@ -409,7 +427,13 @@ export function markerFilter(
     hideFound: state.hideFound,
     isFound: (id: string) => found.has(id),
     only: state.listOnly,
+    withNotes: state.notesOnly ? (noted ?? new Set<string>()) : null,
   };
+}
+
+/** Shows only the locations with a note of the person's own on the map, or every location again. */
+export function setNotesOnly(on: boolean): void {
+  set({ notesOnly: on });
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +574,7 @@ export function setOverrides(overrides: VisibilityOverrides): void {
 }
 
 export function resetFilters(): void {
-  set({ overrides: {} });
+  set({ overrides: {}, notesOnly: false });
   saveFilters();
 }
 

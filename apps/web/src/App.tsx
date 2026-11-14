@@ -19,6 +19,7 @@ import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { hasMap } from './state/guides';
 import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
 import { useLibrary } from './state/libraryView';
+import { loadOwnNotes } from './state/ownNotes';
 import { loadOwnPages } from './state/ownPages';
 import { loadOwnLists } from './state/ownLists';
 import { sweepOwnPicturesOnOpen } from './state/ownPictures';
@@ -94,6 +95,11 @@ export function App() {
   useEffect(() => {
     if (!game) return;
     void loadOwnPages(game);
+  }, [game]);
+  // Their own notes on the game's locations.
+  useEffect(() => {
+    if (!game) return;
+    void loadOwnNotes(game);
   }, [game]);
 
   useViewHashSync();

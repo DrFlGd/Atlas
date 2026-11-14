@@ -373,9 +373,9 @@ function ExportView({
               <span id={`${mineId}-name`}>Include my lists, locations, types and photos</span>
               <span id={`${mineId}-hint`} className="muted small pack-file-hint">
                 Your own lists and guides of this game, the locations, types and areas you added,
-                your photos of them, your links between guide pages and the map, and the pages you
-                changed or added, so they come with it on the other device. Found marks are never
-                included.
+                your photos of them, your links between guide pages and the map, the pages you
+                changed or added, and your notes on its locations, so they come with it on the other
+                device. Found marks are never included.
               </span>
             </span>
           </label>
@@ -528,6 +528,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
               result.mine.photos +
               result.mine.pages +
               result.mine.sections +
+              result.mine.notes +
               (result.mine.guideLinks ? 1 : 0) >
             0
               ? `Your own ${mineText(result.mine)} from the file were added to yours.`
@@ -760,6 +761,7 @@ function mineText(mine: {
   guideLinks?: boolean;
   pages?: number;
   sections?: number;
+  notes?: number;
 }): string {
   const count = (n: number, one: string, many: string) =>
     n === 1 ? `1 ${one}` : `${n.toLocaleString('en')} ${many}`;
@@ -772,6 +774,7 @@ function mineText(mine: {
     mine.guideLinks ? 'guide links' : null,
     (mine.pages ?? 0) > 0 ? count(mine.pages ?? 0, 'page', 'pages') : null,
     (mine.sections ?? 0) > 0 ? count(mine.sections ?? 0, 'section', 'sections') : null,
+    (mine.notes ?? 0) > 0 ? count(mine.notes ?? 0, 'note', 'notes') : null,
   ].filter((part): part is string => part !== null);
   if (parts.length === 0) return 'lists, locations and types (none)';
   return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;

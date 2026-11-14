@@ -139,6 +139,8 @@ export interface AtlasState {
    * null. It is set aside of `overrides`, which it never changes.
    */
   listOnly: ReadonlySet<string> | null;
+  /** Only the locations with a note of the person's own are on the map (see `ownNotes.ts`). */
+  notesOnly: boolean;
   userPresets: UserPreset[];
 
   profiles: Profile[];
@@ -245,6 +247,7 @@ export const useAtlas = create<AtlasState>()(() => ({
   overrides: {},
   hideFound: false,
   listOnly: null,
+  notesOnly: false,
   userPresets: [],
 
   profiles: [],

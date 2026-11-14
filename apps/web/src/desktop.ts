@@ -592,6 +592,8 @@ export interface PackFileHeader {
     /** Own guide pages and the pack's pages changed or hidden (version 4). */
     pages?: number;
     sections?: number;
+    /** Notes on the game's locations (version 5). */
+    notes?: number;
   };
 }
 
@@ -699,6 +701,8 @@ export interface PackFileImported {
   guideLinks?: string | null;
   /** The text of the own pages file the file carried, to add to the person's. */
   ownPages?: string | null;
+  /** The text of the own notes file the file carried, to add to the person's. */
+  ownNotes?: string | null;
   /** The person's own photos the file carried: their file names and bytes in base64. */
   ownPictures?: { file: string; data: string }[] | null;
 }
@@ -953,6 +957,16 @@ export interface DesktopBridge {
     delete(gameId: string): Promise<boolean>;
   };
   /**
+   * A person's own notes on the locations of a game, in their file in the
+   * maps folder (`<game id>.my-notes.json`), kept as own lists are (see
+   * `ownListFiles`).
+   */
+  ownNotes: {
+    read(gameId: string): Promise<string | null>;
+    write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    delete(gameId: string): Promise<boolean>;
+  };
+  /**
    * A person's own photos of a game, in the folder of their own beside the
    * game's folder in the maps folder (`<game id>.my-pictures/`). Kept with
    * the own lists (see `ownListFiles`).
@@ -1195,6 +1209,12 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       write: (gameId, contents, keepCopy) =>
         call('own_pages_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_pages_delete', { gameId }),
+    },
+    ownNotes: {
+      read: (gameId) => call('own_notes_read', { gameId }),
+      write: (gameId, contents, keepCopy) =>
+        call('own_notes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('own_notes_delete', { gameId }),
     },
     ownPictures: {
       read: (gameId, file) => call<unknown>('own_pictures_read', { gameId, file }).then(bytesOf),

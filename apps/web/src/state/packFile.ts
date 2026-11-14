@@ -10,6 +10,7 @@ import {
 } from '../desktop';
 import { exportProgress, loadGame, notify } from './actions';
 import { addImportedGuideLinks, flushGuideLinks } from './guideLinks';
+import { addImportedOwnNotes, flushOwnNotes } from './ownNotes';
 import { addImportedOwnPages, flushOwnPages } from './ownPages';
 import { applyListing } from './library';
 import { addImportedOwnLists, flushOwnLists } from './ownLists';
@@ -140,7 +141,13 @@ export async function exportPackFile(
     : undefined;
   // The shell reads them from their files: what was changed last is saved first.
   if (withMine) {
-    await Promise.all([flushOwnLists(), flushOwnLocations(), flushGuideLinks(), flushOwnPages()]);
+    await Promise.all([
+      flushOwnLists(),
+      flushOwnLocations(),
+      flushGuideLinks(),
+      flushOwnPages(),
+      flushOwnNotes(),
+    ]);
   }
   return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos);
 }
@@ -157,6 +164,8 @@ export interface MineRestored {
   /** Own guide pages and changed pages, and own sections, added. */
   pages: number;
   sections: number;
+  /** Notes on the game's locations added. */
+  notes: number;
   /** Why some could not be added, in plain words. */
   problem: string | null;
 }
@@ -169,6 +178,7 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     !imported.ownLocations &&
     !imported.guideLinks &&
     !imported.ownPages &&
+    !imported.ownNotes &&
     pictures.length === 0
   ) {
     return null;
@@ -182,6 +192,7 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     guideLinks: false,
     pages: 0,
     sections: 0,
+    notes: 0,
     problem: null,
   };
   const problems: string[] = [];
@@ -232,6 +243,13 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
       restored.sections = added.sections;
     } catch (error) {
       problems.push(`Your pages from the file could not be added: ${errorText(error)}`);
+    }
+  }
+  if (imported.ownNotes) {
+    try {
+      restored.notes = await addImportedOwnNotes(imported.packId, imported.ownNotes);
+    } catch (error) {
+      problems.push(`Your notes from the file could not be added: ${errorText(error)}`);
     }
   }
   restored.problem = problems.length > 0 ? problems.join(' ') : null;
