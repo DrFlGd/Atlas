@@ -10,3 +10,4 @@ export * from './ownLocations';
 export * from './ownPictures';
 export * from './ownPages';
 export * from './ownNotes';
+export * from './gameGroups';
