@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
+import { filingText } from './filingText';
 import { downloadsOffered } from '../features';
 import {
   STILL_WAITING_SECONDS,
@@ -603,6 +604,7 @@ export function Progress({
 
 function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
   const { summary } = phase;
+  const filed = phase.filing ? filingText(phase.filing) : null;
   const downloadable = useAtlas(
     (s) =>
       __ATLAS_DOWNLOADS__ &&
@@ -635,6 +637,13 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
             ? `Its ${numberFormat.format(phase.writtenAgain.length + 1)} saved pages were written again from what is kept on this computer.`
             : 'It was built again from what is kept on this computer.'}{' '}
           Nothing was downloaded.
+          {filed ? (
+            <>
+              {' '}
+              <span data-testid="add-map-filing">{filed}</span> Pages you moved yourself stay where
+              you put them.
+            </>
+          ) : null}
         </p>
       ) : (
         <MapFigures phase={phase} downloadable={downloadable} />

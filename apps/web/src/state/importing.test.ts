@@ -1,6 +1,6 @@
 import { packDataSchema, MANIFEST_FILE, PACK_COLLECTIONS, COLLECTION_NAMES } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
-import { packFiles, unrecognisedMessage } from './importing';
+import { packFiles, pagesFiling, unrecognisedMessage } from './importing';
 
 describe('import messages', () => {
   it('explains addresses that cannot be imported', () => {
@@ -49,5 +49,70 @@ describe('packFiles', () => {
       ]),
     ]) as unknown;
     expect(packDataSchema.parse(back)).toEqual(pack);
+  });
+});
+
+describe('pagesFiling', () => {
+  const g = (local: string) => `wiki:guide:${local}`;
+  const guide = (local: string, body = '') => ({
+    id: g(local),
+    title: local,
+    body,
+    locationIds: [],
+  });
+  const pack = (placeByLinks: boolean) =>
+    packDataSchema.parse({
+      manifest: {
+        schemaVersion: 1,
+        gameId: 'wiki',
+        title: 'Wiki',
+        packVersion: '1.0.0',
+        gamePatch: 'wiki',
+        attribution: [],
+        idMigrations: {},
+        homePage: g('home'),
+      },
+      maps: [],
+      layers: [],
+      regions: [],
+      categoryGroups: [],
+      categories: [],
+      locations: [],
+      entities: [],
+      checklists: [],
+      checklistItems: [],
+      guides: [
+        guide('home', `- [Weapons](${g('weapons')})`),
+        guide('weapons', ['a', 'b', 'c'].map((x) => `- [${x}](${g(x)})`).join('\n')),
+        guide('a', `Found in [the vale](${g('vale')}).`),
+        guide('b'),
+        guide('c'),
+        guide('vale'),
+        guide('rules'),
+      ],
+      links: [],
+      presets: [],
+      sections: [
+        { id: 'wiki:section:menu', title: 'Menu', items: [g('rules')] },
+        {
+          id: 'wiki:section:pages',
+          title: 'Pages',
+          items: ['weapons', 'a', 'b', 'c', 'vale'].map(g),
+          ...(placeByLinks ? { placeByLinks: true } : {}),
+        },
+      ],
+    });
+
+  it('counts the pages under a list page, in a section of the menu and in Pages', () => {
+    // Weapons is at the top, listed by the home page; the vale only mentioned.
+    expect(pagesFiling(pack(true))).toEqual({
+      pages: 6,
+      underListPage: 4,
+      inSection: 1,
+      inPagesSection: 1,
+      byHand: 0,
+      pagesTitle: 'Pages',
+    });
+    expect(pagesFiling(pack(false))).toBeNull();
   });
 });
