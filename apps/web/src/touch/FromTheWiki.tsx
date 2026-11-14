@@ -102,6 +102,7 @@ export function FromTheWiki({ game, locationId }: { game: LoadedGame; locationId
 /** Why a page is on this location's card, in words. */
 function about(page: LocationPage): string {
   switch (page.via.what) {
+    case 'location':
     case 'name':
       return 'about this location';
     case 'type':
