@@ -186,6 +186,23 @@ describe('pages placed by their links', () => {
     expect(contents.linkedFrom(g('ash-mail'))).toEqual([]);
   });
 
+  it('counts a link to another name of a page as a link to the page', () => {
+    // Armor links to "warden-plate-old", another name of Warden Plate.
+    const guides = base().map((guide) =>
+      guide.id === g('armor')
+        ? { ...guide, body: guide.body.replace(g('warden-plate'), g('warden-plate-old')) }
+        : guide,
+    );
+    const without = new GuideContents({ data: wiki(guides, menu, loose) });
+    expect(without.parentOf(g('warden-plate'))).toBe(g('longblade'));
+    const contents = new GuideContents({
+      data: wiki(guides, menu, loose),
+      aliases: { [g('warden-plate-old')]: g('warden-plate') },
+    });
+    expect(contents.parentOf(g('warden-plate'))).toBe(g('armor'));
+    expect(contents.linkedFrom(g('warden-plate')).map((x) => x.title)).toEqual(['Longblade']);
+  });
+
   it('leaves a pack without a section placed by links as it was', () => {
     const data = wiki(base(), menu, loose);
     data.sections = data.sections!.map(({ placeByLinks: _, ...section }) => section);

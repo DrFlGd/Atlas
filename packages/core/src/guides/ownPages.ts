@@ -10,8 +10,8 @@ import {
   type Section,
   type WikiChangeChoice,
 } from '@atlas/schema';
-import { sortGuides, type GuidePages } from './contents';
-import { guideLinks, guideLinksIn, placePagesByLinks } from './pageTree';
+import { aliasedId, linksThrough, sortGuides, type GuidePages } from './contents';
+import { guideLinksIn, placePagesByLinks } from './pageTree';
 
 /**
  * A person's own pages laid over a pack's (see `ownPages.ts` in the schema
@@ -243,7 +243,11 @@ export interface ShownContents {
  * person's layout has them), with the pages placed by their links as the
  * Guides section places them: the arrange tool shows this.
  */
-export function shownContentsFor(data: GuidePages['data'], own: OwnPages): ShownContents {
+export function shownContentsFor(
+  data: GuidePages['data'],
+  own: OwnPages,
+  aliases?: GuidePages['aliases'],
+): ShownContents {
   const layout = layoutFor(data, own);
   const guides = new Map(data.guides.map((guide) => [guide.id, guide]));
   const pages = new Map(own.pages.map((page) => [page.id, page]));
@@ -266,9 +270,8 @@ export function shownContentsFor(data: GuidePages['data'], own: OwnPages): Shown
     linksOf: (id) => {
       const guide = guides.get(id)!;
       const page = pages.get(id);
-      return page?.body === undefined
-        ? guideLinks(guide)
-        : guideLinksIn(shownBody(guide, page), id);
+      if (page?.body === undefined) return linksThrough(guide, aliases);
+      return guideLinksIn(shownBody(guide, page), id).map((link) => aliasedId(aliases, link));
     },
     leads: shownPack,
     movable: shownPack,

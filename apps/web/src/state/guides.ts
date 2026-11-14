@@ -5,7 +5,7 @@ import {
   guidesTogether,
   type LoadedPack,
 } from '@atlas/core';
-import type { GuideEntry, OwnPages, Picture } from '@atlas/schema';
+import { parseId, type GuideEntry, type OwnPages, type Picture } from '@atlas/schema';
 import type { GuidePicture } from '../markdown';
 import { guideSearchText } from '../markdown';
 import { useGuideLinks, useGuideGamesOffered, type OtherGuides } from './guideLinks';
@@ -59,16 +59,16 @@ export function guidesOf(game: LoadedGame): GameGuides {
   const own = ownPagesOf(game.pack.manifest.gameId);
   const cached = known.get(game.pack);
   if (cached?.others === others && cached.own === own) return cached.guides;
-  const contents = new GuideContents(
-    guidesTogether(
-      applyOwnPages(game.pack.data, own),
-      others.map((other) => ({
-        gameId: other.gameId,
-        title: other.title,
-        data: other.pack.data,
-      })),
-    ),
+  const together = guidesTogether(
+    applyOwnPages(game.pack.data, own),
+    others.map((other) => ({
+      gameId: other.gameId,
+      title: other.title,
+      data: other.pack.data,
+    })),
   );
+  const aliases = guideAliases([game.pack, ...others.map((other) => other.pack)]);
+  const contents = new GuideContents(aliases ? { ...together, aliases } : together);
   // Each picture from its own pack's folder.
   const pictures = new Map([
     ...(game.pack.data.pictures ?? []).map((picture) => pictureOfPack(game.pack, picture)),
@@ -84,6 +84,23 @@ export function guidesOf(game: LoadedGame): GameGuides {
   };
   known.set(game.pack, { others, own, guides });
   return guides;
+}
+
+/**
+ * Other names of guides, by the id each stands for now (the packs'
+ * `idMigrations` of guides): a page read under another name, say. Null
+ * when there are none.
+ */
+export function guideAliases(packs: readonly LoadedPack[]): Record<string, string> | null {
+  let aliases: Record<string, string> | null = null;
+  for (const pack of packs) {
+    for (const [from, to] of Object.entries(pack.manifest.idMigrations)) {
+      if (parseId(from)?.kind !== 'guide') continue;
+      aliases ??= {};
+      aliases[from] = to;
+    }
+  }
+  return aliases;
 }
 
 /**

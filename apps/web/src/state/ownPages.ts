@@ -20,6 +20,7 @@ import { create } from 'zustand';
 import { desktop } from '../desktop';
 import { notify } from './actions';
 import type { SaveState } from './ownLists';
+import { guideAliases } from './guides';
 import { addOwnPictureSource, sweepOwnPicturesLater } from './ownPictures';
 import { progressStore } from './services';
 import { useAtlas, type LoadedGame } from './store';
@@ -226,7 +227,7 @@ export function shownContentsOf(game: LoadedGame): ShownContents {
   const own = ownPagesOf(game.pack.manifest.gameId);
   const known = shownKnown.get(game.pack);
   if (known?.own === own) return known.shown;
-  const shown = shownContentsFor(game.pack.data, own);
+  const shown = shownContentsFor(game.pack.data, own, guideAliases([game.pack]) ?? undefined);
   shownKnown.set(game.pack, { own, shown });
   return shown;
 }
@@ -248,7 +249,7 @@ export function moveInContentsOf(
       moveShownEntry(
         own,
         layout,
-        shownContentsFor(data, own).layout,
+        shownContentsFor(data, own, guideAliases([game.pack]) ?? undefined).layout,
         id,
         to,
         before,

@@ -31,6 +31,39 @@ export interface GuidePages {
   data: Pick<LoadedPack['data'], 'guides' | 'sections' | 'maps'>;
   top?: readonly string[];
   under?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Other ids of guides, by the id that replaces each (a pack's
+   * `idMigrations`): a link to another name of a page is a link to the page.
+   */
+  aliases?: Readonly<Record<string, string>>;
+}
+
+/** The id a guide id stands for now, through `aliases` (a few steps at most). */
+export function aliasedId(aliases: Readonly<Record<string, string>> | undefined, id: string) {
+  let current = id;
+  for (let hops = 0; hops < 32 && aliases?.[current] !== undefined; hops++) {
+    current = aliases[current]!;
+  }
+  return current;
+}
+
+/** The pages a guide links to, through `aliases`, each once, never itself. */
+export function linksThrough(
+  guide: GuideEntry,
+  aliases: Readonly<Record<string, string>> | undefined,
+): readonly string[] {
+  const links = guideLinks(guide);
+  if (!aliases || Object.keys(aliases).length === 0) return links;
+  const out: string[] = [];
+  const seen = new Set<string>([guide.id]);
+  for (const link of links) {
+    const id = aliasedId(aliases, link);
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
 }
 
 /**
@@ -67,10 +100,12 @@ export class GuideContents {
   private byLinks: ReadonlyMap<string, string> = new Map();
   /** By page id, the pages of the contents that link to it, in contents order; when first asked. */
   private linkedTo: Map<string, string[]> | null = null;
+  private readonly aliases: Readonly<Record<string, string>> | undefined;
 
   constructor(pack: GuidePages) {
     const sections = pack.data.sections ?? [];
     const guides = sortGuides(pack.data.guides);
+    this.aliases = pack.aliases;
     this.sections = new Map(sections.map((s) => [s.id, s]));
     this.guides = new Map(guides.map((g) => [g.id, g]));
     const top = pack.top;
@@ -124,7 +159,7 @@ export class GuideContents {
       isSection: (id) => this.sections.has(id),
       isPage: (id) => this.guides.has(id),
       byLinks: this.byLinkSections,
-      linksOf: (id) => guideLinks(this.guides.get(id)!),
+      linksOf: (id) => linksThrough(this.guides.get(id)!, this.aliases),
       leads: shown,
       movable: shown,
     });
@@ -256,7 +291,7 @@ export class GuideContents {
     if (!this.linkedTo) {
       const linkedTo = new Map<string, string[]>();
       for (const page of this.pages()) {
-        for (const target of guideLinks(page)) {
+        for (const target of linksThrough(page, this.aliases)) {
           if (!this.listed.has(target)) continue;
           const from = linkedTo.get(target);
           if (from) from.push(page.id);
