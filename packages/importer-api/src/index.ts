@@ -1051,7 +1051,9 @@ export interface AtlasImporter {
    * Optional: the reader of "browse and keep" (the reading way `browse`,
    * see `fetching.ts`), a function's source like {@link pageReader}, run
    * in the app's window on each page the person opens there themselves,
-   * once the page has finished loading. It returns `null` for a page not
+   * once the page has finished loading, or has been loading for a while
+   * (a page may never finish what it loads besides its own document, so
+   * the reader says whether what it reads is there). It returns `null` for a page not
    * to keep (not an article, or a page that asks to confirm the reader is a
    * person: the app never reads past such a check) and otherwise the page's
    * data for `convert`, which gets `ImportContext.reading` `browse`. It must
