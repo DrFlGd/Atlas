@@ -57,7 +57,10 @@ describe('own notes file', () => {
   });
 
   it('refuses what is not valid when writing', () => {
-    const write = (notes: OwnNotes, game = 'demo') => () => writeOwnNotesFile(game, notes, NOW);
+    const write =
+      (notes: OwnNotes, game = 'demo') =>
+      () =>
+        writeOwnNotesFile(game, notes, NOW);
     const note = { text: 'x', name: 'Old well', updatedAt: T };
     // Another game's location, a location of one's own, a note with nothing in it.
     expect(write(own(), 'other')).toThrow();

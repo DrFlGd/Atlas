@@ -127,7 +127,10 @@ describe('guide links file', () => {
       file: { gameId: 'demo', version: 2, skipped: 0, ...withOne },
     });
     // Without such a target it is version 1 again, as Atlas 0.6.3 writes it.
-    const without = JSON.parse(writeGuideLinksFile('demo', links(), NOW)) as Record<string, unknown>;
+    const without = JSON.parse(writeGuideLinksFile('demo', links(), NOW)) as Record<
+      string,
+      unknown
+    >;
     expect(without.version).toBe(1);
     // The strict schema holds to that, and to the location being of this game.
     expect(guideLinksFileSchema.safeParse({ ...value, version: 1 }).success).toBe(false);
