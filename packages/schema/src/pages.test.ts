@@ -90,6 +90,18 @@ describe('the contents', () => {
     expect(sectionSchema.safeParse({ ...sections()[0], title: ' ' }).success).toBe(false);
   });
 
+  it('may say its pages are placed by their links', () => {
+    const section = { ...sections()[0]!, placeByLinks: true };
+    expect(sectionSchema.parse(section).placeByLinks).toBe(true);
+    // Written strictly: only `true`, never another value.
+    expect(sectionSchema.safeParse({ ...section, placeByLinks: false }).success).toBe(false);
+    expect(sectionSchema.safeParse({ ...section, placeByLinks: 'yes' }).success).toBe(false);
+    // Read tolerantly: a value that cannot be read counts as absent.
+    const read = packReadSchemas.sectionSchema;
+    expect(read.parse(section).placeByLinks).toBe(true);
+    expect(read.parse({ ...section, placeByLinks: 'yes' }).placeByLinks).toBeUndefined();
+  });
+
   it('reports unknown items, a section listed twice and a section inside itself', () => {
     const pack = makeGuidesFixturePack();
     pack.sections = [

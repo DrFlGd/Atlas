@@ -22,8 +22,11 @@ import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
  *   without asking: what happens then is the page's `whenWikiChanges`.
  * - `sections`: sections of their own, and new titles of the pack's.
  * - `contents`: the contents as the person arranged it (what is at the top,
- *   and what each section holds, in order), once they moved anything. A
- *   page or section the pack adds later goes where the pack puts it.
+ *   what each section holds, and the pages they put under a page, in
+ *   order), once they moved anything. A page or section the pack adds
+ *   later goes where the pack puts it. A page they left in a section whose
+ *   pages are placed by their links (`placeByLinks`) is still placed by
+ *   its links: only where they put a page by hand is kept as theirs.
  * - `pictures`: their own pictures the pages show (see `ownPictures.ts`).
  *
  * In the desktop app it is a file beside the game's folder in the maps
@@ -116,8 +119,12 @@ function ownPageSchemas(mode: SchemaMode) {
   const contentsSchema = record({
     /** What is at the top of the contents, in order: sections, and pages. */
     top: z.array(entryId),
-    /** What each section holds, in order, by section id. */
-    sections: z.record(idOf('section'), z.array(entryId)),
+    /**
+     * What each section holds, in order, by section id; and by page id, the
+     * pages the person put under that page. Apps before pages could hold
+     * pages leave out the lists by page id when reading.
+     */
+    sections: z.record(entryId, z.array(entryId)),
   });
 
   /** A person's own picture, named as `ownPictureFile` says. */
@@ -171,7 +178,10 @@ export interface OwnSection {
   title: string;
 }
 
-/** The contents as arranged: what is at the top, and what each section holds. */
+/**
+ * The contents as arranged: what is at the top, and what each section
+ * holds; and by a page's id, the pages under that page.
+ */
 export interface PagesLayout {
   top: string[];
   sections: Record<string, string[]>;
@@ -287,7 +297,7 @@ function readContents(value: unknown, ofGame: (id: string) => boolean): PagesLay
       : [];
   const sections: Record<string, string[]> = {};
   for (const [id, items] of Object.entries(shape.data.sections)) {
-    if (idOf('section').safeParse(id).success && ofGame(id)) sections[id] = ids(items);
+    if (entryId.safeParse(id).success && ofGame(id)) sections[id] = ids(items);
   }
   return { top: ids(shape.data.top), sections };
 }

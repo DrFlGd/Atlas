@@ -601,6 +601,16 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     title: nonEmpty.max(200),
     /** The ids of the guides and sections in it, in order. */
     items: z.array(z.union([idOf('guide'), idOf('section')])),
+    /**
+     * The pages in it are pages the source did not place: the app shows
+     * each under the page it is reached from by the fewest links from a
+     * page placed in another section (see `pageTree.ts` in the core
+     * package), and here only the pages no placed page leads to. Guide
+     * bodies link to other guides by id, so this is worked out from the
+     * pack alone. Added without a schema version change; apps before it
+     * drop it when reading and show the section as it is.
+     */
+    placeByLinks: reading ? z.boolean().optional().catch(undefined) : z.literal(true).optional(),
   });
 
   /**
