@@ -20,6 +20,13 @@ test.beforeAll(async () => {
   await mkdir(SHOTS, { recursive: true });
 });
 
+// A game's files may still be on their way when a test ends: what the copies
+// are served with (see `serveGames`) is taken off first, so a file cut short
+// by the page closing is not an error of the test.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 // Pictures for people to read: sharp on a screen of high density.
 test.use({ deviceScaleFactor: 2 });
 
