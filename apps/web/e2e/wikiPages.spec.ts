@@ -205,3 +205,41 @@ test('a page read while the wiki is built again from its saved pages is kept', a
   }
   expect(realErrors(errors)).toEqual([]);
 });
+
+test('building a wiki again says what it does and how far it is', async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  await setUp(page, true, {
+    wiki: { ...SITE, headings: [{ title: 'Basics', pages: ['Welcome', 'Bells', 'Boats'] }] },
+  });
+  await addWiki(page);
+  await row(page, 'Bells').getByTestId('wiki-row-tick').check();
+  await row(page, 'Boats').getByTestId('wiki-row-tick').check();
+  await page.getByTestId('wiki-foot').getByTestId('follow-links-ticked').click();
+  await readTicked(page, 'Boats');
+  await expect(row(page, 'Boats')).toHaveAttribute('data-state', 'read');
+
+  // A slow build again: each saved page takes two seconds to hand over.
+  const saves = async () => (await mock(page)).events.filter((e) => e.what === 'save').length;
+  const saved = await saves();
+  await setMock(page, { slowSources: 2000 });
+  await libraryMore(page, 'rebuild-pack');
+  // It says the saved pages are written again and nothing is downloaded, not that a map is built.
+  const building = page.getByTestId('add-map-saved-pages');
+  await expect(building).toContainText('Writing the saved pages again', { timeout: 30_000 });
+  await expect(building).toContainText('Nothing is downloaded');
+  await expect(page.getByTestId('add-map-progress')).not.toContainText('Building the map');
+  // And how far it is: a bar, and the pages done of all.
+  await expect(page.getByTestId('add-map-saved-pages-figure')).toHaveText(/^1 of 3 pages$/, {
+    timeout: 30_000,
+  });
+  await expect(building.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
+  await setMock(page, { slowSources: 0 });
+  await expect.poll(saves, { timeout: 30_000 }).toBe(saved + 1);
+  // When it is done, it says what was done to the pages, and gives no figures of a map.
+  const done = page.getByTestId('add-map-rebuilt-pages');
+  await expect(done).toContainText('3 saved pages were written again', { timeout: 30_000 });
+  await expect(done).toContainText('Nothing was downloaded');
+  await expect(page.getByTestId('add-map-locations')).toHaveCount(0);
+  expect(realErrors(errors)).toEqual([]);
+});

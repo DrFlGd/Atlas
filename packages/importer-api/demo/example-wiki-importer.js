@@ -203,7 +203,11 @@ const importer = {
     const writtenAgain = [];
     // Built again from the saved pages: each written again from its data, nothing fetched.
     if (context.rebuild && existing && context.savedPages && context.savedSource) {
-      for (const kept of await context.savedPages(PACK)) {
+      const keptPages = await context.savedPages(PACK);
+      let done = 0;
+      for (const kept of keptPages) {
+        // How far it is, for the app to show.
+        context.progress?.({ done: done++, total: keptPages.length });
         if (kept.key === sourceKey) continue;
         const source = await context.savedSource(PACK, kept.key);
         const keptAnswer = source ? answerOf(source.data) : null;
@@ -221,6 +225,7 @@ const importer = {
           ...(again.pageAddress ? { pageAddress: again.pageAddress } : {}),
         });
       }
+      context.progress?.({ done: keptPages.length, total: keptPages.length });
     }
     const { pack: added, refreshed } = withPage(existing, guide, context.listed?.group);
     const pack = withOtherName(added, other, guide.id);
