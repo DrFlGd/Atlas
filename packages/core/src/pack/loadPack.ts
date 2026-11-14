@@ -143,7 +143,10 @@ export async function loadPack(
     return [name, parsed] as const;
   });
   const collections = Object.fromEntries(entries) as { [K in CollectionName]: PackData[K] };
-  const data: PackData = { manifest, ...collections };
+  const data: PackData = {
+    manifest: withoutLostHomePage(manifest, collections.guides),
+    ...collections,
+  };
 
   const issues = checkPackIntegrity(data);
   if (issues.length > 0) {
@@ -167,4 +170,15 @@ function parseWith<S extends z.ZodType>(schema: S, value: unknown, file: string)
       .slice(0, MAX_LISTED_ISSUES)
       .map((issue) => `${issue.path.map(String).join('.') || '(root)'}: ${issue.message}`),
   );
+}
+
+/**
+ * The manifest without a home page that names no guide of the pack: read
+ * leniently, as a field the app could not use, so the pack still opens.
+ */
+function withoutLostHomePage(manifest: PackManifest, guides: PackData['guides']): PackManifest {
+  const home = manifest.homePage;
+  if (home === undefined || guides.some((guide) => guide.id === home)) return manifest;
+  const { homePage: _lost, ...rest } = manifest;
+  return rest;
 }

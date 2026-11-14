@@ -70,6 +70,17 @@ describe('pack descriptions (manifest version 2)', () => {
     ).toBe(false);
   });
 
+  it('keeps the home page', () => {
+    const pack = makeFixturePack();
+    pack.manifest.homePage = 'demo:guide:herbs';
+    const manifest = describePack(pack, { updated: '2026-11-10T12:00:00Z', writtenBy });
+    expect(manifest.homePage).toBe('demo:guide:herbs');
+    expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
+    expect(
+      'homePage' in describePack(makeFixturePack(), { updated: '2026-11-10T12:00:00Z', writtenBy }),
+    ).toBe(false);
+  });
+
   it('still reads version 1 manifests, without descriptive fields', () => {
     const { manifest } = makeFixturePack();
     expect(manifest.schemaVersion).toBe(1);

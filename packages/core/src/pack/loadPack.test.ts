@@ -78,6 +78,22 @@ describe('loadPack', () => {
     expect(loaded.sectionOf('demo:guide:herbs')).toBeNull();
   });
 
+  it('says the home page, by its current id, and opens a pack whose home page is gone', async () => {
+    const pack = makeFixturePack();
+    pack.manifest.idMigrations = { ...pack.manifest.idMigrations };
+    pack.manifest.homePage = 'demo:guide:herbs';
+    const { fetchFn } = servePack(packFiles(pack));
+    expect((await loadPack(BASE, { fetch: fetchFn })).homePage).toBe('demo:guide:herbs');
+    // A home page the pack does not have is not used, and the pack still opens.
+    pack.manifest.homePage = 'demo:guide:nowhere';
+    const lost = await loadPack(BASE, { fetch: servePack(packFiles(pack)).fetchFn });
+    expect(lost.homePage).toBeNull();
+    expect(lost.manifest.homePage).toBeUndefined();
+    // None, as before.
+    const none = await loadPack(BASE, { fetch: servePack(packFiles(makeFixturePack())).fetchFn });
+    expect(none.homePage).toBeNull();
+  });
+
   it('accepts a pack URL without a trailing slash', async () => {
     const { fetchFn, requested } = servePack(packFiles(makeFixturePack()));
     await loadPack(BASE.slice(0, -1), { fetch: fetchFn });

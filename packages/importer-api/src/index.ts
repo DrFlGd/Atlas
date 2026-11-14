@@ -198,6 +198,13 @@ export interface ImportContext {
    * true.
    */
   keepsIdSections?: boolean;
+  /**
+   * Optional: true when the app keeps the manifest's `homePage`, the guide
+   * that is the site's own home page (a wiki's main page). An app that does
+   * not say so refuses a pack that has it, as any field it does not know,
+   * so an importer writes it only when this is true.
+   */
+  keepsHomePage?: boolean;
 }
 
 // ---------------------------------------------------------------------------
