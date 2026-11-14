@@ -21,6 +21,11 @@ import type { GuideEntry, Section } from '@atlas/schema';
  *   locations and items.
  * - Notes no page links to.
  *
+ * With `filed`, the wiki also files pages itself (a guide's `filedUnder`,
+ * as its categories would): each weapon under Weapons, each character
+ * under the location it lives in (and a page not read), each note under
+ * the first note.
+ *
  * The same size always gives the same wiki.
  */
 
@@ -84,7 +89,10 @@ const titleOf = (local: string) =>
     .join(' ');
 
 /** Builds the made-up wiki. */
-export function madeUpWiki(size: MadeUpWikiSize = SMALL_WIKI): MadeUpWiki {
+export function madeUpWiki(
+  size: MadeUpWikiSize = SMALL_WIKI,
+  { filed = false }: { filed?: boolean } = {},
+): MadeUpWiki {
   const weapons = Array.from({ length: size.weapons }, (_, i) => `blade-${pad(i + 1)}`);
   const armour = Array.from({ length: size.armour }, (_, i) => `mail-${pad(i + 1)}`);
   const locations = Array.from({ length: size.locations }, (_, i) => `vale-${pad(i + 1)}`);
@@ -97,8 +105,14 @@ export function madeUpWiki(size: MadeUpWikiSize = SMALL_WIKI): MadeUpWiki {
   const locationOf = (i: number) => locations[(i * i + 3 * i) % Math.max(1, locations.length)]!;
   const characterOf = (i: number) => characters[(i * 7 + 1) % Math.max(1, characters.length)]!;
   const guides: GuideEntry[] = [];
-  const add = (local: string, body: string) =>
-    guides.push({ id: guideId(local), title: titleOf(local), body, locationIds: [] });
+  const add = (local: string, body: string, under: string[] = []) =>
+    guides.push({
+      id: guideId(local),
+      title: titleOf(local),
+      body,
+      locationIds: [],
+      ...(filed && under.length > 0 ? { filedUnder: under.map(guideId) } : {}),
+    });
 
   add(
     'main-page',
@@ -194,6 +208,7 @@ export function madeUpWiki(size: MadeUpWikiSize = SMALL_WIKI): MadeUpWiki {
         '',
         ...see.map((other) => `- ${link(other, titleOf(other))}`),
       ].join('\n'),
+      type === 'Weapon' ? ['weapons'] : [],
     );
   };
   weapons.forEach((local, i) => {
@@ -230,6 +245,7 @@ export function madeUpWiki(size: MadeUpWikiSize = SMALL_WIKI): MadeUpWiki {
         '',
         `${titleOf(local)} lives in ${link(home, titleOf(home))} and sells the ${link(weapons[i % Math.max(1, weapons.length)]!, titleOf(weapons[i % Math.max(1, weapons.length)]!))}.`,
       ].join('\n'),
+      ['not-read', home],
     );
   });
   enemies.forEach((local, i) => {
@@ -239,7 +255,7 @@ export function madeUpWiki(size: MadeUpWikiSize = SMALL_WIKI): MadeUpWiki {
       `An enemy of ${link(at, titleOf(at))}. It drops the ${link(armour[i % Math.max(1, armour.length)]!, titleOf(armour[i % Math.max(1, armour.length)]!))}.`,
     );
   });
-  notes.forEach((local) => add(local, 'A note no page lists.'));
+  notes.forEach((local) => add(local, 'A note no page lists.', [notes[0]!]));
 
   const loose = [
     ...weapons,

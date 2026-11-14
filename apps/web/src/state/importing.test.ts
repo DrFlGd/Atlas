@@ -60,7 +60,7 @@ describe('pagesFiling', () => {
     body,
     locationIds: [],
   });
-  const pack = (placeByLinks: boolean) =>
+  const pack = (placeByLinks: boolean, filed = false) =>
     packDataSchema.parse({
       manifest: {
         schemaVersion: 1,
@@ -87,7 +87,7 @@ describe('pagesFiling', () => {
         guide('a', `Found in [the vale](${g('vale')}).`),
         guide('b'),
         guide('c'),
-        guide('vale'),
+        { ...guide('vale'), ...(filed ? { filedUnder: [g('rules')] } : {}) },
         guide('rules'),
       ],
       links: [],
@@ -108,11 +108,23 @@ describe('pagesFiling', () => {
     expect(pagesFiling(pack(true))).toEqual({
       pages: 6,
       underListPage: 4,
+      underFiledPage: 0,
       inSection: 1,
       inPagesSection: 1,
       byHand: 0,
       pagesTitle: 'Pages',
     });
     expect(pagesFiling(pack(false))).toBeNull();
+  });
+
+  it('counts the pages under the page the site files them under', () => {
+    // The site files the vale under the rules, a page of the menu.
+    expect(pagesFiling(pack(true, true))).toMatchObject({
+      pages: 6,
+      underListPage: 4,
+      underFiledPage: 1,
+      inSection: 1,
+      inPagesSection: 0,
+    });
   });
 });

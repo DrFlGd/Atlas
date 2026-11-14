@@ -525,6 +525,92 @@ describe('the person over pages placed by links', () => {
   });
 });
 
+describe('pages the wiki files itself', () => {
+  /** The base pages, with `filed` saying which pages the wiki files each under. */
+  const filedData = (filed: Record<string, string[]>) =>
+    wiki(
+      base().map((guide) => {
+        const under = filed[guide.id.slice('wiki:guide:'.length)];
+        return under ? { ...guide, filedUnder: under.map(g) } : guide;
+      }),
+      menu,
+      loose,
+    );
+
+  it('go under the page the wiki files them under, before the list page that lists them', () => {
+    const data = filedData({ 'stone-hound': ['marsh'] });
+    const contents = new GuideContents({ data });
+    expect(trail(contents, g('stone-hound'))).toEqual(['The world', 'Regions', 'Marsh']);
+    expect(contents.placedByLinks(g('stone-hound'))).toBe(true);
+    expect(
+      contents.items(g('bestiary')).map((entry) => entry.kind === 'page' && entry.guide.title),
+    ).toEqual(['Marsh Toad', 'Cave Bat']);
+    expect(contents.filing()).toMatchObject({ underFiledPage: 1, inPagesSection: 2 });
+    // The arrange tool shows the same.
+    expect(shownContentsFor(data, NO_OWN_PAGES).placed.get(g('stone-hound'))).toBe(g('marsh'));
+  });
+
+  it('go under one of those pages that lists them, else the first the wiki names', () => {
+    let contents = new GuideContents({ data: filedData({ 'cave-bat': ['marsh', 'bestiary'] }) });
+    expect(contents.parentOf(g('cave-bat'))).toBe(g('bestiary'));
+    contents = new GuideContents({ data: filedData({ 'cave-bat': ['dunes', 'marsh'] }) });
+    expect(contents.parentOf(g('cave-bat'))).toBe(g('dunes'));
+  });
+
+  it('skip a page that is not read, hidden or the page itself, and follow another name', () => {
+    let contents = new GuideContents({
+      data: filedData({ 'cave-bat': ['not-read', 'cave-bat'] }),
+    });
+    expect(contents.parentOf(g('cave-bat'))).toBe(g('bestiary'));
+    contents = new GuideContents(
+      applyOwnPages(
+        filedData({ 'cave-bat': ['dunes'] }),
+        setPageHidden(NO_OWN_PAGES, g('dunes'), true, NOW),
+      ),
+    );
+    expect(contents.parentOf(g('cave-bat'))).toBe(g('bestiary'));
+    contents = new GuideContents({
+      data: filedData({ 'cave-bat': ['old-dunes'] }),
+      aliases: { [g('old-dunes')]: g('dunes') },
+    });
+    expect(contents.parentOf(g('cave-bat'))).toBe(g('dunes'));
+  });
+
+  it('never go under a page that is under them, in a circle of any length', () => {
+    const data = filedData({ dunes: ['peaks'], peaks: ['marsh'], marsh: ['dunes'] });
+    const contents = new GuideContents({ data });
+    const parents = ['dunes', 'peaks', 'marsh'].map((local) => contents.parentOf(g(local)));
+    // Two of them under the one before them, and one under Regions, which lists it.
+    expect(parents.filter((parent) => parent === g('regions'))).toHaveLength(1);
+    expect(contents.pages()).toHaveLength(base().length);
+    expect(new Set(contents.pages().map((guide) => guide.id)).size).toBe(base().length);
+  });
+
+  it('carry a page left in Pages, and with it the pages filed under it', () => {
+    const contents = new GuideContents({ data: filedData({ 'lost-note': ['stray'] }) });
+    expect(tree(contents).at(-1)).toEqual({ Pages: [{ Stray: ['Lost Note'] }] });
+  });
+
+  it('give way to where the person put a page', () => {
+    const data = filedData({ 'stone-hound': ['marsh'], 'cave-bat': ['stone-hound'] });
+    const own = moveShownEntry(
+      NO_OWN_PAGES,
+      layoutFor(data, NO_OWN_PAGES),
+      shownContentsFor(data, NO_OWN_PAGES).layout,
+      g('stone-hound'),
+      g('peaks'),
+      null,
+      looseSections(data),
+    );
+    const contents = new GuideContents(applyOwnPages(data, own));
+    expect(contents.parentOf(g('stone-hound'))).toBe(g('peaks'));
+    expect(contents.placedByLinks(g('stone-hound'))).toBe(false);
+    // What the wiki files under it follows it.
+    expect(contents.parentOf(g('cave-bat'))).toBe(g('stone-hound'));
+    expect(contents.filing()).toMatchObject({ byHand: 1, underFiledPage: 1 });
+  });
+});
+
 describe('on a made-up wiki of hundreds of pages', () => {
   const size = { weapons: 240, armour: 160, locations: 30, characters: 40, enemies: 30, notes: 5 };
   const contentsOf = (made: MadeUpWiki) =>
@@ -551,9 +637,57 @@ describe('on a made-up wiki of hundreds of pages', () => {
     }
     const counts = contents.filing();
     expect(counts.pages).toBe(made.guides.length - 1);
-    expect(counts.underListPage + counts.inSection + counts.inPagesSection + counts.byHand).toBe(
-      counts.pages,
-    );
+    expect(
+      counts.underListPage +
+        counts.underFiledPage +
+        counts.inSection +
+        counts.inPagesSection +
+        counts.byHand,
+    ).toBe(counts.pages);
+  });
+
+  it('shows every page once when the wiki files pages itself, and the same tree every time', () => {
+    const made = madeUpWiki(size, { filed: true });
+    const contents = contentsOf(made);
+    const shown = contents.pages().map((guide) => guide.id);
+    expect(shown).toHaveLength(made.guides.length);
+    expect(new Set(shown).size).toBe(made.guides.length);
+    const counts = contents.filing();
+    expect(counts.pages).toBe(made.guides.length - 1);
+    expect(
+      counts.underListPage +
+        counts.underFiledPage +
+        counts.inSection +
+        counts.inPagesSection +
+        counts.byHand,
+    ).toBe(counts.pages);
+    const outline = (c: GuideContents) =>
+      c.pages().map((guide) => `${guide.id}<${c.parentOf(guide.id) ?? ''}`);
+    expect(outline(contentsOf(madeUpWiki(size, { filed: true })))).toEqual(outline(contents));
+  });
+
+  it('files a page under the page the wiki files it under, before any list page', () => {
+    const made = madeUpWiki(size, { filed: true });
+    const contents = contentsOf(made);
+    // Weapons both files and lists its weapons.
+    expect(titles(contents, 'blade-0001')).toEqual(['Equipment', 'Weapons']);
+    // A character under the location it lives in, not under Characters; the page not read is skipped.
+    const home = made.guides.find((x) => x.id === guideId('smith-0001'))!.filedUnder![1]!;
+    expect(home).toMatch(/vale-/);
+    expect(contents.parentOf(guideId('smith-0001'))).toBe(home);
+    expect(titles(contents, 'smith-0001').slice(0, 2)).toEqual(['Pages', 'Locations']);
+    expect(contents.items(guideId('characters'))).toEqual([]);
+    // Notes under the first note, which files nothing under itself.
+    expect(contents.parentOf(guideId('note-0002'))).toBe(guideId('note-0001'));
+    expect(contents.parentOf(guideId('note-0001'))).toBe(PAGES_SECTION);
+    expect(contents.filing()).toEqual({
+      pages: 510,
+      underListPage: 500 - 240 - 40,
+      underFiledPage: 240 + 40 + 4,
+      inSection: 3,
+      inPagesSection: 3,
+      byHand: 0,
+    });
   });
 
   it('gives the same tree for the same pages, every time', () => {
@@ -580,6 +714,7 @@ describe('on a made-up wiki of hundreds of pages', () => {
     expect(contents.filing()).toEqual({
       pages: 510,
       underListPage: 500,
+      underFiledPage: 0,
       inSection: 3,
       inPagesSection: 7,
       byHand: 0,
