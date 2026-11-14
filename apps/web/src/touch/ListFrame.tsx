@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { useCanEdit } from './editor/canEdit';
-import { startEditing, useEditor } from './editor/editorState';
+import { startEditing, startFinding, useEditor } from './editor/editorState';
 import { AreasView } from './ListAreas';
 import { CardsView } from './ListCards';
 import { KindList, ShowChoice, type Show } from './ListGroups';
@@ -79,6 +79,7 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
   const stage = next === null ? undefined : stageOf(stages, next);
   const name = entry.checklist.name;
   const own = isOwnId(entry.checklist.id);
+  const build = own && entry.checklist.type === 'build';
   return (
     <div
       className="touch-page"
@@ -133,8 +134,28 @@ export function ListFrame({ game, entry }: { game: LoadedGame; entry: ChecklistE
       </header>
       {own && !room ? (
         <p className="touch-note own-phone-note own-frame-note" data-testid="own-lists-phone-note">
-          This list can be changed on a wider screen: a tablet on its side, or a computer.
+          {build
+            ? 'Find on the map and Suggest an order need a wider screen: a tablet on its side, or a computer. Here you can add to the list with Add to build.'
+            : 'This list can be changed on a wider screen: a tablet on its side, or a computer.'}
         </p>
+      ) : null}
+      {own && build && canEdit && !previewing ? (
+        <div className="own-frame-build">
+          <button
+            type="button"
+            className="own-pill-button"
+            data-testid="list-find-on-map"
+            disabled={entry.items.length === 0}
+            onClick={() => {
+              startEditing(entry.checklist.id);
+              startFinding();
+            }}
+          >
+            <UiIcon name="pin" size={18} strokeWidth={1.8} />
+            Find on the map
+          </button>
+          <span className="touch-note">Finds a location for the steps that have none.</span>
+        </div>
       ) : null}
       {views.length > 1 ? (
         <div
