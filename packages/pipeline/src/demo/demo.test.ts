@@ -8,7 +8,14 @@ import { createTerrain, elevationAt, renderTerrain } from './terrain';
 import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
 import { DEMO_PHOTO_GUIDE, addPhotos, photoFiles } from './photos';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
-import { WIKI_OTHER_NAME, WIKI_PAGES, WIKI_PICTURE, addWiki, wikiPictureFiles } from './wiki';
+import {
+  WIKI_MAUL_PICTURE,
+  WIKI_OTHER_NAME,
+  WIKI_PAGES,
+  WIKI_PICTURE,
+  addWiki,
+  wikiPictureFiles,
+} from './wiki';
 
 const SIZE = 2048;
 const SEED = 7;
@@ -333,6 +340,16 @@ describe('demo wiki', () => {
     );
     expect(targets.length).toBeGreaterThan(10);
     for (const target of targets) expect(pages.has(target), target).toBe(true);
+  });
+
+  it('has a page with a box of facts beside its text, with its own picture', async () => {
+    const maul = wiki.find((g) => g.id === WIKI_PAGES.maul)!;
+    expect(maul.body).toMatch(/^\| Stonebreaker maul \| \{box\} \|\n\| --- \| --- \|$/m);
+    expect(maul.body).toContain(`](${WIKI_MAUL_PICTURE} "=160x160")`);
+    expect(maul.body).toMatch(/^\| \*\*Damage\*\* \| {2}\|$/m);
+    const picture = pack.pictures?.find((p) => p.id === WIKI_MAUL_PICTURE);
+    const png = picture ? (await wikiPictureFiles()).get(picture.file) : undefined;
+    expect(png?.readUInt32BE(16)).toBe(picture?.width);
   });
 
   it('links to sections of its pages, and has another name that leads to one', () => {
