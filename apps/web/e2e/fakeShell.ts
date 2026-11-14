@@ -141,8 +141,19 @@ interface ShellEvent {
    * went to a page in a window opened for browsing ({@link browseTo}).
    * `source`: the app asked for a page kept with a pack (its address).
    * `save`: the app saved a pack, made from the page at that address.
+   * `delete`: the app deleted a pack (its id).
    */
-  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch' | 'browse' | 'source' | 'save';
+  what:
+    | 'open'
+    | 'navigate'
+    | 'close'
+    | 'poll'
+    | 'read'
+    | 'fetch'
+    | 'browse'
+    | 'source'
+    | 'save'
+    | 'delete';
   url: string | null;
   at: number;
   purpose?: string;
@@ -567,6 +578,22 @@ function installFakeShell({
         if (index >= 0) packs[index] = listed;
         else packs.push(listed);
         return listing();
+      }
+      case 'library_images_info':
+        return { files: 0, bytes: 0, downloading: false };
+      case 'library_delete_pack': {
+        // The pack and everything kept with it go.
+        const id = args.id as string;
+        shell.events.push({ what: 'delete', url: id, at: Date.now() });
+        const index = packs.findIndex((pack) => pack.id === id);
+        if (index >= 0) packs.splice(index, 1);
+        /* eslint-disable @typescript-eslint/no-dynamic-delete */
+        delete sources[id];
+        delete contents[id];
+        delete written[id];
+        delete shell.pictures[id];
+        /* eslint-enable @typescript-eslint/no-dynamic-delete */
+        return { complete: true };
       }
       case 'library_pack_details': {
         // The demo pack that comes with the app, or a pack written here.
