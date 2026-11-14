@@ -112,6 +112,14 @@ export interface ImportContext {
   /** Whether a pack with that id comes with the app; the app does not replace those. */
   isBundled(packId: string): boolean;
   /**
+   * Optional: the person asked to build the game again from the page data
+   * kept with it ("Build again from saved pages"), and this call is that:
+   * the importer may write every kept page again from its data, and bring
+   * back a kept page the pack lacks. Nothing is fetched for it. Absent for
+   * an ordinary read.
+   */
+  rebuild?: boolean;
+  /**
    * Optional: which tiles of one zoom of an image set exist on its server,
    * for an importer whose site does not say how large a map's picture is.
    * Only an app that downloads map images offers it; an importer must check
@@ -736,6 +744,16 @@ export interface ImportSuccess {
    */
   writtenAgain?: WrittenAgain[];
   /**
+   * Optional, for a page that became a guide: the page's own address, when
+   * the page was read from another address of the same site than the one
+   * asked (the site forwarded the address, or names the page otherwise).
+   * The address asked is then another name of this page: the app counts
+   * it as read, shows the page once under this address, and never reads
+   * the other name again. Left out when it is not on the same site as the
+   * address asked, or is the same page.
+   */
+  pageAddress?: string;
+  /**
    * Optional, for a page read as the person browsed (`ImportContext.reading`
    * `browse`): the files of pictures the page showed, read from the page as
    * it loaded them (never fetched), for the app to write into the pack's
@@ -807,8 +825,11 @@ export const MAX_PAGE_LINKS = 1000;
 
 /** A page written again in the same call, with the pages it links to (see {@link ImportSuccess.writtenAgain}). */
 export interface WrittenAgain {
+  /** The address its data was kept under: the one asked when it was read. */
   url: string;
   links: string[];
+  /** Its own address, when it differs from `url` (see {@link ImportSuccess.pageAddress}). */
+  pageAddress?: string;
 }
 
 /**
@@ -1257,6 +1278,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
       .optional(),
     // Checked entry by entry, and entries that are not in shape are left out.
     writtenAgain: z.unknown().optional(),
+    // Kept only on the site of the page read (`ownAddress`).
+    pageAddress: z.unknown().optional(),
     // Checked against the pack, entry by entry (`pictureFilesOf`).
     pictureFiles: z.unknown().optional(),
     pack: z.unknown(),
@@ -1319,9 +1342,27 @@ export function writtenAgainLinks(value: unknown, pageUrl?: string): WrittenAgai
     const texts = (links as unknown[])
       .filter((link): link is string => typeof link === 'string')
       .slice(0, MAX_PAGE_LINKS * 4);
-    kept.push({ url: url.href, links: pageLinks(texts, url.href) });
+    const own = ownAddress((entry as { pageAddress?: unknown }).pageAddress, url.href);
+    kept.push({
+      url: url.href,
+      links: pageLinks(texts, own ?? url.href),
+      ...(own ? { pageAddress: own } : {}),
+    });
   }
   return kept;
+}
+
+/**
+ * A page's own address as the app keeps it (see {@link
+ * ImportSuccess.pageAddress}): a web address on the same site as the
+ * address asked, without its fragment, that is not the same page; else null.
+ */
+export function ownAddress(value: unknown, asked: string | undefined): string | null {
+  if (typeof value !== 'string' || !asked || value.length > MAX_ADDRESS_CHARS) return null;
+  if (!isAllowedPageUrl(value) || !sameSite(asked, value)) return null;
+  const url = new URL(value.trim());
+  url.hash = '';
+  return pageKey(url.href) === pageKey(asked) ? null : url.href;
 }
 
 /**
@@ -1385,12 +1426,21 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   if (success.guideId !== undefined && !pack.data.guides.some((g) => g.id === success.guideId)) {
     return { ok: false, message: 'The importer named a guide that is not in its pack.' };
   }
-  const { links: given, writtenAgain: again, pictureFiles: files, ...rest } = success;
-  const links = pageLinks(given, pageUrl);
+  const {
+    links: given,
+    writtenAgain: again,
+    pictureFiles: files,
+    pageAddress: arrived,
+    ...rest
+  } = success;
+  const pageAddress = ownAddress(arrived, pageUrl);
+  // Links are kept as links of the page where it is.
+  const links = pageLinks(given, pageAddress ?? pageUrl);
   const writtenAgain = writtenAgainLinks(again, pageUrl);
   const pictureFiles = pictureFilesOf(files, pack.data);
   return {
     ...rest,
+    ...(pageAddress ? { pageAddress } : {}),
     ...(links.length > 0 ? { links } : {}),
     ...(writtenAgain.length > 0 ? { writtenAgain } : {}),
     ...(pictureFiles.length > 0 ? { pictureFiles } : {}),
