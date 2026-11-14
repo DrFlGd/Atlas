@@ -22,7 +22,8 @@ export const POLL_MS = 2000;
 /**
  * How often a page of a go read in the window kept for it is asked for its
  * data: it is read as soon as it has loaded. The shell reads it only once
- * the page asked for has finished loading.
+ * the page asked for has finished loading, or has been loading for a few
+ * seconds without finishing.
  */
 export const KEPT_POLL_MS = 500;
 /** After this long, the dialog explains what may be holding the page up. */

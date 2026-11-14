@@ -39,7 +39,9 @@
 //! focus it or bring it to the front, and the person may put it aside or
 //! minimize it. The window is the same private, visible window on the same
 //! site as before, and closing it still stops the go. In a kept window the
-//! reader runs only once the page asked for has finished loading, in a
+//! reader runs only once the page asked for has finished loading (or its
+//! load has gone on for [`UNFINISHED_AFTER`]: a page may never finish what
+//! it loads besides its own document, and the reader says what is there), in a
 //! load that started after the window was told to go there, and the data
 //! is handed over only when the document's address is that page or one the
 //! site led to from it, never the page shown before (see [`Visit`]). When a
@@ -52,7 +54,8 @@
 //! site in it themselves, and the app keeps each page they open. The shell
 //! never moves such a window (`navigate` refuses), notices each page the
 //! person goes to from the window's own page loads, and runs the reader
-//! once a page has finished loading, once per page: a page read is not read
+//! once a page has finished loading (or has been loading for
+//! [`BROWSE_UNFINISHED_AFTER`]), once per page: a page read is not read
 //! again until the person goes to another page (a reload is the same
 //! page). The data counts only when it comes from the page the window shows
 //! now. It never asks for attention; the window stays on its site as every
@@ -89,6 +92,14 @@ const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a page of a kept window may give no data, after it finished
 /// loading, before the window asks for the person's attention.
 pub const ATTENTION_AFTER: Duration = Duration::from_secs(8);
+/// How long a page of a kept window may take over its load before the
+/// reader runs although the load has not finished: a page may load things
+/// besides its own document (advertising, say) for minutes, or without
+/// end, and the reader is the one to say whether what it reads is there.
+pub const UNFINISHED_AFTER: Duration = Duration::from_secs(4);
+/// The same for a window the person browses: longer, since a page read is
+/// not read again and its reader may take what the page has loaded by then.
+pub const BROWSE_UNFINISHED_AFTER: Duration = Duration::from_secs(10);
 
 /// Whether the person may open `url` in the import window: `https`, or
 /// `http` to this computer for tests; no user names or passwords.
@@ -147,7 +158,8 @@ fn same_page(a: &Url, b: &Url) -> bool {
 /// it is tested on its own.
 ///
 /// The reader may run only once a page load that started after the window
-/// was told to go to `asked` has finished ([`Visit::readable`]), and the
+/// was told to go to `asked` has finished, or has gone on for a while
+/// without finishing ([`Visit::readable`]), and the
 /// data counts only when the document it came from is `asked` or a page of
 /// the same site the site led to from it, but never the document of the
 /// page shown before ([`Visit::data_ok`]). So a poll right after the window
@@ -173,6 +185,8 @@ struct Visit {
     before: Vec<Url>,
     /// A page load of this page has started since it was asked for.
     started: bool,
+    /// When the last such load started.
+    began: Option<Instant>,
     /// When that load finished, while no other has started since.
     finished: Option<Instant>,
     /// The document address the data was last read from.
@@ -196,6 +210,7 @@ impl Visit {
             start,
             before: Vec::new(),
             started: false,
+            began: None,
             finished: None,
             read: None,
             origin: None,
@@ -226,6 +241,7 @@ impl Visit {
             asked: next,
             before,
             started: false,
+            began: None,
             finished: None,
             read: None,
             origin: None,
@@ -285,6 +301,7 @@ impl Visit {
         }
         if started {
             self.started = true;
+            self.began = Some(now);
             self.finished = None;
         } else if self.started {
             self.finished = Some(now);
@@ -304,33 +321,60 @@ impl Visit {
             self.asked = url.clone();
             self.read = None;
             self.started = false;
+            self.began = None;
             self.finished = None;
         }
         if started {
             self.started = true;
+            self.began = Some(now);
             self.finished = None;
         } else {
             // A page the site led to finishes without its own start.
             self.started = true;
+            self.began.get_or_insert(now);
             self.finished = Some(now);
         }
     }
 
-    /// The page asked for has finished loading: the reader may run. A page
-    /// the person browsed to is read once.
-    fn readable(&self) -> bool {
-        self.finished.is_some() && !(self.browse && self.read.is_some())
+    /// How long a load of this window may go on before the reader runs
+    /// without its end.
+    fn unfinished_after(&self) -> Duration {
+        if self.browse {
+            BROWSE_UNFINISHED_AFTER
+        } else {
+            UNFINISHED_AFTER
+        }
     }
 
-    /// Whether to ask for the person's attention now: the page finished
-    /// loading [`ATTENTION_AFTER`] ago and gave no data, and it was not
-    /// asked for this page before. Notes that it is asked.
+    /// Since when the reader may run: the page asked for finished loading
+    /// then, or its load will have gone on long enough then.
+    fn readable_since(&self) -> Option<Instant> {
+        self.finished
+            .or_else(|| self.began.map(|at| at + self.unfinished_after()))
+    }
+
+    /// The reader may run: the page asked for has finished loading, or its
+    /// load has gone on for a while without finishing, as that of a page
+    /// that never stops loading things besides its own document does (the
+    /// reader then says whether what it reads is there). A page the person
+    /// browsed to is read once.
+    fn readable(&self, now: Instant) -> bool {
+        let loaded = self.finished.is_some()
+            || self
+                .began
+                .is_some_and(|at| now.saturating_duration_since(at) >= self.unfinished_after());
+        loaded && !(self.browse && self.read.is_some())
+    }
+
+    /// Whether to ask for the person's attention now: the reader could run
+    /// since [`ATTENTION_AFTER`] ago and the page gave no data, and it was
+    /// not asked for this page before. Notes that it is asked.
     fn attention_due(&mut self, now: Instant) -> bool {
         let due = !self.browse
             && !self.attention
-            && self
-                .finished
-                .is_some_and(|at| now.saturating_duration_since(at) >= ATTENTION_AFTER);
+            && self.readable_since().is_some_and(|at| {
+                now >= at && now.saturating_duration_since(at) >= ATTENTION_AFTER
+            });
         if due {
             self.attention = true;
         }
@@ -815,7 +859,9 @@ impl Imports {
             };
             let parsed = address.as_deref().and_then(|text| Url::parse(text).ok());
             match parsed {
-                Some(parsed) if visit.readable() && visit.data_ok(&parsed, origin) => {
+                Some(parsed)
+                    if visit.readable(Instant::now()) && visit.data_ok(&parsed, origin) =>
+                {
                     let forwarded = !visit.address_ok(&parsed);
                     visit.read = Some(parsed);
                     visit.origin = origin.or(visit.origin);
@@ -824,7 +870,7 @@ impl Imports {
                 _ => {
                     let _ = window.eval(format!("delete window[{key:?}];"));
                     return PollResult::Waiting {
-                        loading: !visit.readable(),
+                        loading: !visit.readable(Instant::now()),
                         note: Some("the window does not show the page asked for yet".to_owned()),
                         attention: visit.attention,
                     };
@@ -896,18 +942,19 @@ impl Imports {
             .as_mut()
             .and_then(|session| session.kept.as_mut())
         {
-            if origin.is_some() && origin != visit.before_origin && visit.readable() {
+            if origin.is_some() && origin != visit.before_origin && visit.readable(Instant::now()) {
                 visit.origin = origin;
             }
         }
     }
 
-    /// Whether the page a kept window was asked for has finished loading.
+    /// Whether the reader may run on the page a kept window was asked for.
     fn kept_readable(&self) -> bool {
+        let now = Instant::now();
         lock(&self.session)
             .as_ref()
             .and_then(|session| session.kept.as_ref())
-            .is_some_and(Visit::readable)
+            .is_some_and(|visit| visit.readable(now))
     }
 
     /// The data is not there yet. A kept window's page that has loaded and
@@ -1221,7 +1268,7 @@ mod tests {
         let mut visit = Visit::new(url(A));
         visit.page_load(true, &url(A), at);
         visit.page_load(false, &url(A), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         visit.read = Some(url(A));
         visit.next(url(B));
         visit
@@ -1242,14 +1289,14 @@ mod tests {
     fn reads_the_first_page_only_once_it_has_loaded() {
         let at = Instant::now();
         let mut visit = Visit::new(url(A));
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         // A load that ends without having started for this page does not count.
         visit.page_load(false, &url(A), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(true, &url(A), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(false, &url(A), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
     }
 
     #[test]
@@ -1257,20 +1304,20 @@ mod tests {
         let at = Instant::now();
         let mut visit = moved_to_b(at);
         // Straight after the move the window still shows A: not readable.
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         // A late end of A's load, or a new load of A, does not count for B.
         visit.page_load(false, &url(A), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(true, &url(A), at);
         visit.page_load(false, &url(A), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         assert!(!visit.address_ok(&url(A)));
         assert!(!visit.address_ok(&url("https://wiki.example.org/wiki/A#Section")));
         // B's own load.
         visit.page_load(true, &url(B), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(false, &url(B), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         assert!(visit.address_ok(&url(B)));
         assert!(visit.address_ok(&url("https://wiki.example.org/wiki/B#History")));
     }
@@ -1287,16 +1334,16 @@ mod tests {
         // Until a load of B has started, A's address is A: its late events
         // do not count, and nothing read there does, whatever the document.
         visit.page_load(false, &section, at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         assert!(!visit.data_ok(&section, Some(100.0)));
         assert!(!visit.data_ok(&section, Some(200.0)));
         assert!(!visit.data_ok(&section, None));
         // B's load starts at its own address and ends at A's, where the
         // page has moved the address to.
         visit.page_load(true, &url(B), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(false, &section, at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         // The new document counts at A's address; A's own document never.
         assert!(visit.data_ok(&section, Some(200.0)));
         assert!(visit.data_ok(&url(A), Some(200.0)));
@@ -1308,9 +1355,9 @@ mod tests {
         assert!(!visit.data_ok(&url("about:blank"), Some(200.0)));
         // A check that loads the page again at A's address waits for its end.
         visit.page_load(true, &section, at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(false, &section, at + Duration::from_secs(1));
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         // Asked for attention like any page that gives no data.
         assert!(visit.attention_due(at + Duration::from_secs(1) + ATTENTION_AFTER));
     }
@@ -1335,7 +1382,7 @@ mod tests {
         assert!(visit.address_ok(&url(A)));
         visit.page_load(true, &url(A), at);
         visit.page_load(false, &url(A), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         assert!(visit.data_ok(&url(A), Some(300.0)));
         // A page that never answered keeps the document before it in mind.
         visit.next(url("https://wiki.example.org/wiki/C"));
@@ -1363,7 +1410,7 @@ mod tests {
         let redirected = url("https://wiki.example.org/wiki/B_(page)");
         visit.page_load(true, &redirected, at);
         visit.page_load(false, &redirected, at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         assert!(visit.address_ok(&redirected));
         assert!(visit.address_ok(&url("https://www.wiki.example.org/wiki/Other")));
         // Never another site, and never anything but a web page.
@@ -1379,7 +1426,57 @@ mod tests {
         let mut other = moved_to_b(at);
         other.page_load(true, &url("https://other.example.net/wiki/B"), at);
         other.page_load(false, &url("https://other.example.net/wiki/B"), at);
-        assert!(!other.readable());
+        assert!(!other.readable(at + UNFINISHED_AFTER * 4));
+    }
+
+    #[test]
+    fn reads_a_page_whose_load_goes_on_without_finishing() {
+        let at = Instant::now();
+        let mut visit = moved_to_b(at);
+        // Never while the window still shows the page before: no load of B has started.
+        assert!(!visit.readable(at + UNFINISHED_AFTER * 100));
+        // B's document is there, and what it loads besides never ends.
+        visit.page_load(true, &url(B), at);
+        assert!(!visit.readable(at));
+        assert!(!visit.readable(at + UNFINISHED_AFTER - Duration::from_millis(1)));
+        assert!(visit.readable(at + UNFINISHED_AFTER));
+        assert!(visit.data_ok(&url(B), Some(2.0)));
+        // A page that gives nothing after that asks for attention, as a loaded one does.
+        assert!(!visit
+            .attention_due(at + UNFINISHED_AFTER + ATTENTION_AFTER - Duration::from_millis(1)));
+        assert!(visit.attention_due(at + UNFINISHED_AFTER + ATTENTION_AFTER));
+        // A load that starts again (a check that reloads the page) waits anew.
+        let again = at + UNFINISHED_AFTER * 2;
+        visit.page_load(true, &url(B), again);
+        assert!(!visit.readable(again + UNFINISHED_AFTER - Duration::from_millis(1)));
+        assert!(visit.readable(again + UNFINISHED_AFTER));
+        // A load that finishes is read at once.
+        let mut quick = moved_to_b(at);
+        quick.page_load(true, &url(B), at);
+        quick.page_load(false, &url(B), at + Duration::from_millis(300));
+        assert!(quick.readable(at + Duration::from_millis(300)));
+        // The next page starts afresh.
+        visit.read = Some(url(B));
+        visit.next(url("https://wiki.example.org/wiki/C"));
+        assert!(!visit.readable(again + UNFINISHED_AFTER * 100));
+    }
+
+    #[test]
+    fn a_browsed_page_whose_load_goes_on_is_read_once_after_a_longer_while() {
+        let at = Instant::now();
+        let mut visit = Visit::browsing(url(A));
+        visit.page_load(true, &url(A), at);
+        visit.page_load(false, &url(A), at);
+        visit.read = Some(url(A));
+        // The person goes to B, whose load never finishes.
+        visit.page_load(true, &url(B), at);
+        assert!(!visit.readable(at + UNFINISHED_AFTER));
+        assert!(!visit.readable(at + BROWSE_UNFINISHED_AFTER - Duration::from_millis(1)));
+        assert!(visit.readable(at + BROWSE_UNFINISHED_AFTER));
+        // Read once, and never attention: the person is there.
+        visit.read = Some(url(B));
+        assert!(!visit.readable(at + BROWSE_UNFINISHED_AFTER * 2));
+        assert!(!visit.attention_due(at + BROWSE_UNFINISHED_AFTER + ATTENTION_AFTER * 2));
     }
 
     #[test]
@@ -1388,12 +1485,12 @@ mod tests {
         let mut visit = moved_to_b(at);
         visit.page_load(true, &url(B), at);
         visit.page_load(false, &url(B), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         // The site's check reloads the page once the person has answered it.
         visit.page_load(true, &url(B), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(false, &url(B), at + Duration::from_secs(1));
-        assert!(visit.readable());
+        assert!(visit.readable(at));
     }
 
     #[test]
@@ -1421,36 +1518,36 @@ mod tests {
     fn a_browsed_window_reads_each_page_the_person_opens_once() {
         let at = Instant::now();
         let mut visit = Visit::browsing(url(A));
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(true, &url(A), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(false, &url(A), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         assert!(visit.address_ok(&url(A)));
         visit.read = Some(url(A));
         // Read once: not again, not even when the page loads again.
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         visit.page_load(true, &url(A), at);
         visit.page_load(false, &url(A), at);
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         // The person goes to B: a new visit, read once its load has finished.
         visit.page_load(true, &url(B), at);
         assert_eq!(visit.asked, url(B));
-        assert!(!visit.readable());
+        assert!(!visit.readable(at));
         // A's data never counts for B.
         assert!(!visit.address_ok(&url(A)));
         visit.page_load(false, &url(B), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         assert!(visit.address_ok(&url("https://wiki.example.org/wiki/B#Notes")));
         visit.read = Some(url(B));
         // Back to A: a new visit of A, read again in this visit.
         visit.page_load(true, &url(A), at);
         visit.page_load(false, &url(A), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         // A page the site led to finishes without a start of its own.
         visit.read = Some(url(A));
         visit.page_load(false, &url("https://wiki.example.org/wiki/C"), at);
-        assert!(visit.readable());
+        assert!(visit.readable(at));
         // Never another site, and never attention: the person is there.
         visit.page_load(true, &url("https://other.example.net/wiki/D"), at);
         assert_eq!(visit.asked, url("https://wiki.example.org/wiki/C"));
