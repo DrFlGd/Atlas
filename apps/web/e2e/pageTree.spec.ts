@@ -1,5 +1,5 @@
 import { devices, type Page } from '@playwright/test';
-import { collectErrors } from './helpers';
+import { collectErrors, storedSetting } from './helpers';
 import { expect, test } from './layout';
 import { servePageTree } from './pageTreePack';
 
@@ -14,6 +14,9 @@ import { servePageTree } from './pageTreePack';
 test.use({ layout: 'standard' });
 
 const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7'];
+
+/** Where the browser keeps the person's changes to the pages of the made-up wiki. */
+const OWN_PAGES = 'ownPages:demo';
 
 const shownPage = (page: Page) => page.getByTestId('guides-page');
 const side = (page: Page) => page.locator('.guides-side');
@@ -149,7 +152,8 @@ test('the arrange tool moves a page under another page, and it stays there', asy
   await dialog.getByTestId('move-under-choice').filter({ hasText: 'Bestiary' }).click();
   await page.getByTestId('cancel-edit').click();
   await expect(crumbs(page)).toHaveText(/The world\s*›\s*Bestiary\s*›\s*Stray Note/);
-  // Kept after a restart.
+  // Kept after a restart: once it is saved, which the app does a moment after a change.
+  await expect.poll(() => storedSetting(page, OWN_PAGES)).toContain('stray-note');
   await page.reload();
   await openBySearch(page, 'nothing links here', 'Stray Note');
   await expect(crumbs(page)).toHaveText(/The world\s*›\s*Bestiary\s*›\s*Stray Note/);
