@@ -571,6 +571,14 @@ mod tests {
         encode(&image, format).unwrap()
     }
 
+    fn gif_picture(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(width, height)
+            .write_to(&mut out, ImageFormat::Gif)
+            .unwrap();
+        out.into_inner()
+    }
+
     fn size_of(bytes: &[u8]) -> (u32, u32) {
         ImageReader::new(Cursor::new(bytes))
             .with_guessed_format()
@@ -765,6 +773,13 @@ mod tests {
         huge.resize(MAX_DRAWING_BYTES + 1, b' ');
         assert!(draw_svg(&huge).is_err());
 
+        // A GIF picture is kept as its first frame, in the kind its file says.
+        let gif = gif_picture(30, 20);
+        assert!(crate::tiles::downscale::looks_like_gif(&gif));
+        let kept = shrink_photo(gif, Path::new("pictures/g.png")).unwrap();
+        assert!(kept.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert_eq!(size_of(&kept), (30, 20));
+
         // Kept in the kind its file says: see-through as PNG, on white as JPEG.
         let png = shrink_photo(DRAWING.as_bytes().to_vec(), Path::new("pictures/a.png")).unwrap();
         assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
@@ -782,6 +797,7 @@ mod tests {
     async fn keeps_a_drawing_among_the_pictures_and_goes_on() {
         ensure_crypto();
         let png = picture(20, 20, ImageFormat::Png);
+        let gif = gif_picture(30, 20);
         let server = MockServer::start(Arc::new(move |path: &str, _| match path {
             "/media/a.png" => Reply {
                 headers: vec![("Content-Type", "image/svg+xml".to_owned())],
@@ -792,6 +808,11 @@ mod tests {
             "/media/b.png" => Reply {
                 headers: vec![("Content-Type", "image/svg+xml".to_owned())],
                 body: b"<svg xmlns=\"http://www.w3.org/2000/svg\"><g></svg>".to_vec(),
+                ..Reply::status(200)
+            },
+            "/media/c.png" => Reply {
+                headers: vec![("Content-Type", "image/gif".to_owned())],
+                body: gif.clone(),
                 ..Reply::status(200)
             },
             _ => Reply::image(png.clone()),
@@ -809,7 +830,10 @@ mod tests {
         assert!(a.starts_with(&[0xff, 0xd8, 0xff]));
         assert_eq!(size_of(&a), (80, 40));
         assert!(!pack_dir.join("pictures/b.jpg").exists());
-        assert!(pack_dir.join("pictures/c.png").exists());
+        // The GIF picture is kept as a PNG, as its file says.
+        let c = fs::read(pack_dir.join("pictures/c.png")).unwrap();
+        assert!(c.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert_eq!(size_of(&c), (30, 20));
         // Nothing the drawing names was asked for.
         assert_eq!(server.seen().len(), 3);
     }

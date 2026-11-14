@@ -173,6 +173,11 @@ pub fn looks_like_image(data: &[u8]) -> bool {
         || (data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP")
 }
 
+/// Whether bytes start like a GIF picture.
+pub fn looks_like_gif(data: &[u8]) -> bool {
+    data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")
+}
+
 /// Whether bytes are an SVG drawing: XML whose outermost element is `svg`,
 /// after the XML line, comments and a document type of `svg`. A web page
 /// that holds a drawing is not one.

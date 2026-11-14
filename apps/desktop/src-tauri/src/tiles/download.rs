@@ -65,7 +65,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
 use super::{
-    downscale::{looks_like_image, looks_like_svg},
+    downscale::{looks_like_gif, looks_like_image, looks_like_svg},
     store::TileStore,
 };
 use crate::activity::{self, ActivityLog, Area};
@@ -1382,10 +1382,11 @@ impl Downloader {
             }
         }
         // An SVG drawing is a picture, not a web page: a job that makes its
-        // pictures ready itself (pictures of pages) gets it to draw; a map
-        // image cannot be one.
+        // pictures ready itself (pictures of pages) gets it to draw, and a
+        // GIF picture to keep its first frame; a map image cannot be either.
         let drawing = !content_type.contains("html") && looks_like_svg(&body);
-        if looks_like_image(&body) || (drawing && self.transform.is_some()) {
+        let other_picture = drawing || looks_like_gif(&body);
+        if looks_like_image(&body) || (other_picture && self.transform.is_some()) {
             let body = match &self.transform {
                 None => body,
                 Some(transform) => {
