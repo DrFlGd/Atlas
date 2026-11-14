@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { buildRowAt, enhanceBuildRows, type RowThing } from '../buildRows';
 import { appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
 import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
@@ -19,16 +20,20 @@ export const UNREAD_PAGE = 'This page has not been read yet';
  * it that was not read yet says so (see `MarkdownOptions.unreadPage`).
  * On a page, its tables sort by a column the reader presses (see
  * `tableSort.ts`): the order chosen stays while the page is shown, as it
- * is shown anew when pictures arrive, and goes with another page.
+ * is shown anew when pictures arrive, and goes with another page. With
+ * `onAddRow`, a row of a page's table that names something has a button to
+ * add it to a build (see `buildRows.ts`).
  */
 export function MarkdownBody({
   source,
   className,
   page = false,
+  onAddRow,
 }: {
   source: string;
   className: string;
   page?: boolean;
+  onAddRow?: ((row: RowThing, button: HTMLElement) => void) | undefined;
 }) {
   const game = useAtlas((s) => s.game);
   // Pages of other games read with this one can be linked to, once loaded.
@@ -50,6 +55,15 @@ export function MarkdownBody({
     if (ref.current) showTextColours(ref.current);
     if (sorts.current.source !== source) sorts.current = { source, tables: new Map() };
     if (page && ref.current) enhanceTables(ref.current, sorts.current.tables);
+    if (page && ref.current) {
+      if (onAddRow) enhanceBuildRows(ref.current);
+      else {
+        for (const button of ref.current.querySelectorAll('[data-build-row]')) button.remove();
+        for (const table of ref.current.querySelectorAll('[data-build-rows]')) {
+          table.removeAttribute('data-build-rows');
+        }
+      }
+    }
   });
   useEffect(() => {
     const root = ref.current;
@@ -100,6 +114,13 @@ export function MarkdownBody({
       key={missingAt === null || missingAt === revision ? 'shown' : revision}
       className={className}
       onClick={(event) => {
+        const row = page && onAddRow ? buildRowAt(event.target, event.currentTarget) : null;
+        if (row && onAddRow) {
+          event.preventDefault();
+          const button = (event.target as Element).closest<HTMLElement>('[data-build-row]');
+          if (button) onAddRow(row, button);
+          return;
+        }
         if (page && sortTableAt(event.target, event.currentTarget, sorts.current.tables)) {
           event.preventDefault();
           return;

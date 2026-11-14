@@ -57,6 +57,7 @@ test.describe('on a desktop', () => {
     await expect(contents.getByTestId('guides-section')).toHaveText([
       /Basics\s*2 pages/,
       /The isle\s*4 pages/,
+      /Gear\s*4 pages/,
     ]);
     await expect(page.locator('.guides-side')).toContainText('The isle');
 
@@ -244,7 +245,7 @@ test.describe('a table sorted by a column', () => {
       .toEqual(['axe', 'Bow', 'Club', 'Secret Blade', 'Wolf Fang']);
 
     // Another page, and back: the page's own order.
-    await shownPage(page).getByRole('button', { name: 'Fang' }).click();
+    await shownPage(page).getByRole('button', { name: 'Fang', exact: true }).click();
     await expect(shownPage(page).locator('h1')).toHaveText('Wolves');
     await page.getByTestId('guides-back').click();
     await expect.poll(() => shownTexts(firstColumn)).toEqual(pageOrder);

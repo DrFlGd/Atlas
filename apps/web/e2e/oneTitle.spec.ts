@@ -273,7 +273,7 @@ test.describe('in Games', () => {
     // Guides: the wiki's pages, under its heading, said to come with the title.
     await page.getByTestId('section-guides').click();
     const sections = page.getByTestId('guides-contents').getByTestId('guides-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Isle Wiki\s*6 pages/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
     await expect(page.getByTestId('guides-from-title')).toHaveText('With this title');
     await shot(page, '4-guides-wiki-of-the-title');
@@ -288,7 +288,7 @@ test.describe('in Games', () => {
       .click();
     await expect(page.getByTestId('map-chip')).toContainText('Second map site');
     await page.getByTestId('section-guides').click();
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Isle Wiki\s*6 pages/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
     expect(await storedSetting(page, 'guideLinks:isles-two')).toBeUndefined();
 
     // The wiki itself: the maps of its title, a tap away.
@@ -318,7 +318,51 @@ test.describe('in Games', () => {
     await stored(page, { 'Atlas demo world': ['demo', 'isles-two'] });
     await reloadShown(page);
     await page.getByTestId('section-guides').click();
-    await expect(sections).toHaveText([/Basics/, /The isle/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/]);
+    expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
+  });
+
+  test('a page of the title’s wiki goes into a build of the open source, and is found', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveGames(page, [WIKI]);
+    await page.goto('./');
+    await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+    await showWithAnother(page, 'Isle Wiki');
+    await page.getByTestId('title-save').click();
+    await stored(page, { 'Atlas demo world': ['demo', 'isle-wiki'] });
+
+    await page.getByTestId('section-guides').click();
+    await page.getByTestId('guides-section').filter({ hasText: 'Isle Wiki' }).click();
+    await page.getByTestId('guides-section').filter({ hasText: 'Gear' }).click();
+    await page.getByTestId('guides-page-link').filter({ hasText: 'Ember blade' }).click();
+    const shown = page.getByTestId('guides-page');
+    await expect(page.locator('.guides-crumbs')).toHaveText(/Isle Wiki\s*›\s*Gear/);
+    await shown.getByTestId('add-to-build').click();
+    const dialog = page.getByTestId('build-list-dialog');
+    await dialog.getByTestId('build-list-name').fill('Wiki build');
+    await dialog.getByTestId('build-list-done').click();
+    await expect(page.getByTestId('toast')).toHaveText(/Added “Ember blade” to Wiki build\./);
+    // The list is the open source's, its step linked to the wiki's page.
+    await expect
+      .poll(async () => {
+        const text = (await storedSetting(page, 'ownLists:demo')) as string | undefined;
+        const lists = text
+          ? (JSON.parse(text) as { lists: { items: { note?: string }[] }[] }).lists
+          : [];
+        return lists[0]?.items.map((item) => item.note);
+      })
+      .toEqual(['[Ember blade](isle-wiki:guide:wiki-ember-blade)']);
+    expect(await storedSetting(page, 'ownLists:isle-wiki')).toBeUndefined();
+
+    // Found on the map from the wiki's page.
+    await page.getByTestId('section-lists').click();
+    await page.getByTestId('list-link').filter({ hasText: 'Wiki build' }).click();
+    await page.getByTestId('list-find-on-map').click();
+    const found = page.getByTestId('find-found').getByTestId('find-step');
+    await expect(found).toContainText('Ember blade');
+    await expect(found).toContainText('Named in its page');
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
   });
 

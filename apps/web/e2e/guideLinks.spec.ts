@@ -58,6 +58,10 @@ test.describe('on a computer', () => {
       'Welcome to the Sundered Isle',
       'Getting around',
       'Regions',
+      'Blades',
+      'Ember blade',
+      'Stonebreaker maul',
+      'Tidecaller charm',
     ]);
     await expect(page.getByTestId('links-done')).toHaveCount(0);
     // Each row says what it would link to, and how many locations.
@@ -335,7 +339,7 @@ test.describe('the pages of another game', () => {
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
     // Its contents, under its own heading, and its pages read here.
     const sections = page.getByTestId('guides-contents').getByTestId('guides-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Isle Wiki\s*6 pages/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
     await sections.filter({ hasText: 'Isle Wiki' }).click();
     await page.getByTestId('guides-section').filter({ hasText: 'The isle' }).click();
     await page.getByTestId('guides-section').filter({ hasText: 'Foes' }).click();

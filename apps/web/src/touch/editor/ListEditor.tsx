@@ -25,6 +25,7 @@ import { type LoadedGame } from '../../state/store';
 import { centreOn } from '../listViews';
 import { TemplateDialog } from '../OwnLists';
 import { AddPanel } from './AddPanel';
+import { FindPanel } from './FindPanel';
 import {
   addHeading,
   changeEditedTemplate,
@@ -36,6 +37,7 @@ import {
   renameEdited,
   setPicking,
   setPreview,
+  startFinding,
   stepNumber,
   stopEditing,
   suggestEditedOrder,
@@ -67,6 +69,7 @@ export function EditorSide({ game }: { game: LoadedGame }) {
   const list = useOwnLists((s) => s.lists.find((l) => l.checklist.id === listId));
   if (!list || !panel) return null;
   if (panel === 'add') return <AddPanel game={game} list={list} />;
+  if (panel === 'find') return <FindPanel game={game} />;
   const row = outlineOf(list).find((r) => rowId(r) === open);
   if (!row) return null;
   return row.kind === 'heading' ? (
@@ -92,6 +95,8 @@ export function EditorMapHint() {
       picking.purpose === 'link'
         ? 'Tap a location to link it in the note'
         : 'Tap a location for this step';
+  } else if (panel === 'find') {
+    text = 'Check what was found, then put it on the steps';
   } else if (panel === 'add' && tab === 'type') {
     text =
       picked === 0
@@ -110,7 +115,7 @@ export function EditorMapHint() {
   }
   return (
     <div className="touch-pill editor-map-hint" role="status" data-testid="editor-map-hint">
-      <UiIcon name={picking ? 'pin' : 'plus'} size={18} strokeWidth={1.9} />
+      <UiIcon name={picking || panel === 'find' ? 'pin' : 'plus'} size={18} strokeWidth={1.9} />
       <span className="editor-map-hint-text">{text}</span>
       {picking ? (
         <button
@@ -350,6 +355,25 @@ function Outline({ game, list }: { game: LoadedGame; list: OwnList }) {
           />
         ))}
       </ul>
+      {type === 'build' ? (
+        <div className="editor-build">
+          <button
+            type="button"
+            className="own-pill-button editor-find"
+            aria-pressed={panel === 'find'}
+            data-testid="editor-find"
+            disabled={steps === 0}
+            onClick={() => {
+              if (panel === 'find') closePanel();
+              else startFinding();
+            }}
+          >
+            <UiIcon name="pin" size={18} strokeWidth={1.8} />
+            Find on the map
+          </button>
+          <span className="editor-build-line">Finds a location for the steps that have none.</span>
+        </div>
+      ) : null}
       <footer className="editor-foot">
         <button
           ref={addButton}
@@ -382,6 +406,12 @@ function Outline({ game, list }: { game: LoadedGame; list: OwnList }) {
         >
           Suggest an order
         </button>
+        {type === 'build' ? (
+          <p className="editor-foot-note" data-testid="editor-order-note">
+            Nearest next, in a straight line: it knows nothing of locked doors, story order,
+            merchants or random drops.
+          </p>
+        ) : null}
       </footer>
       <p className="visually-hidden" role="status" aria-live="polite">
         {announce}

@@ -11,6 +11,7 @@ import { ProfileDialog } from '../components/ProfileDialog';
 import { downloadsOffered, keyboardHintsOffered } from '../features';
 import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
+import { loadBuildPrefs } from '../state/buildPlanner';
 import { checklistScreenTitle, setGuideReader } from '../state/checklists';
 import { guidesOf, hasListsSection, hasMap, useGuidesSection } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
@@ -370,6 +371,7 @@ function useTouchEffects(wide: boolean, room: boolean) {
     useTouch.setState({ solo: null });
     void loadRecent(shown);
     void loadListPrefs(shown);
+    void loadBuildPrefs(shown);
   }, [gameEntry]);
 
   // Guides: each game's reader starts at its contents; a game with no map
