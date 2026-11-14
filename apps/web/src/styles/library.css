@@ -270,6 +270,10 @@
   display: flex;
   flex-direction: column;
   width: min(420px, calc(100% - 48px));
+  /* Its last rows (deleting) stay reachable on a short window: the menu scrolls. */
+  max-height: calc(100dvh - 160px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border: 1px solid var(--atlas-border-strong);
   border-radius: var(--atlas-radius);
