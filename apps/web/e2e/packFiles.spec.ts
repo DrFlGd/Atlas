@@ -7,6 +7,7 @@ import {
   ownLocationsText,
   ownListsText,
   selectByName,
+  storedSetting,
 } from './helpers';
 
 /**
@@ -49,6 +50,7 @@ interface PackShell {
   importMine: {
     ownLists?: string;
     ownLocations?: string;
+    ownNotes?: string;
     ownPictures?: { file: string; data: string }[];
   } | null;
 }
@@ -694,6 +696,69 @@ test('restores the photos of one’s own locations from a map pack file', async 
   await expect
     .poll(() => img.evaluate((element: HTMLImageElement) => element.naturalWidth))
     .toBe(160);
+  expect(errors).toEqual([]);
+});
+
+test('adds the notes a map pack file carries, with their photos, to one’s own', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  const png = await page.screenshot({ clip: { x: 0, y: 0, width: 120, height: 80 } });
+  const at = '2026-11-14T10:00:00.000Z';
+  const notes = {
+    format: 'atlas-own-notes',
+    version: 1,
+    gameId: 'demo',
+    updatedAt: at,
+    notes: {
+      'demo:loc:4010': {
+        text: 'The ladder is behind the den.',
+        name: 'Wolf den 3',
+        photos: [{ picture: 'demo:picture:own.den1' }],
+        updatedAt: at,
+      },
+    },
+    pictures: [
+      {
+        id: 'demo:picture:own.den1',
+        file: 'pictures/own.den1.png',
+        shareable: true,
+        width: 120,
+        height: 80,
+      },
+    ],
+  };
+  const picked = pickedFile('2026-11-08T10:00:00.000Z');
+  await setShell(page, {
+    pick: {
+      ...picked,
+      header: {
+        ...picked.header,
+        version: 5,
+        mine: { lists: 0, locations: 0, types: 0, areas: 0, photos: 1, notes: 1 },
+      },
+    },
+    importMine: {
+      ownNotes: JSON.stringify(notes),
+      ownPictures: [{ file: 'own.den1.png', data: png.toString('base64') }],
+    },
+  });
+  await openLibraryGame(page, 'demo');
+  await libraryMore(page, 'import-pack-file');
+  const dialog = page.getByTestId('pack-file-dialog');
+  await expect(dialog.getByTestId('import-has-mine')).toContainText(
+    'It also holds someone’s own 1 photo and 1 note.',
+  );
+  await dialog.getByTestId('import-start').click();
+  await expect(dialog.getByTestId('import-mine')).toHaveText(
+    'Your own 1 photo and 1 note from the file were added to yours.',
+  );
+  await expect
+    .poll(async () => {
+      const text = (await storedSetting(page, 'ownNotes:demo')) as string | undefined;
+      return text ? Object.keys((JSON.parse(text) as typeof notes).notes) : [];
+    })
+    .toEqual(['demo:loc:4010']);
   expect(errors).toEqual([]);
 });
 
