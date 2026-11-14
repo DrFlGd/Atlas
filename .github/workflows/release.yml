@@ -139,6 +139,13 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.7.0
+
+          - **My notes.** Every location's card has **Add a note**, on the locations that came with the game as well as your own. Write what you want to remember in plain text or Markdown, with photos. A location with a note has a small mark on the map, **With my notes** in the filters shows only those, and search finds the words of your notes after the names. Your notes are kept in a file of their own beside the game, so updating the game never changes them. If an update takes a location away, its note is kept under **Notes without a location**, where you can copy or delete it. Notes travel in a map pack file when you tick **Include my lists, locations, types and photos**.
+          - **Search wiki.** A location's card can search the game's saved wiki pages for the location's name, the best first. Spelling, the order of the words, punctuation, plurals, a number at the end and words written together or apart do not have to match, and other names of a page count too. **Read** opens a page, and **This is the page** links it, for every location of that name or only this one. From then on the card shows the page under **From the wiki**. **Not this page** takes the link off, and **Search for another page** looks again. Only saved pages are searched; nothing is fetched.
+
+          A map pack file that carries notes, or a page linked to one location alone, needs Atlas 0.7.0 to open. An older Atlas uses links made in 0.7.0 without changing them.
+
           ## New in 0.6.3
 
           - **Pages under pages.** In Guides, a page that the game's contents does not place is now shown under the page that leads to it, by the fewest links from the contents, instead of in one long list under **Pages**. The contents at the side is a tree: it opens to the page you are reading and shows the pages beside it. **Pages** keeps only the pages that nothing in the contents leads to.
