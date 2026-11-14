@@ -87,10 +87,24 @@ export function MarkdownBody({
       img.replaceWith(words);
       setMissingAt(revision);
     };
-    // An image's error does not bubble; it is seen on the way down.
+    // A picture shown at twice its own size or more keeps sharp pixels (see the guide styles).
+    const markUpscaled = (img: HTMLImageElement) => {
+      if (img.naturalWidth > 0 && img.width >= img.naturalWidth * 2) {
+        img.setAttribute('data-upscaled', '');
+      }
+    };
+    const onLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement) markUpscaled(event.target);
+    };
+    for (const img of root.querySelectorAll('.guide-picture img')) {
+      if (img instanceof HTMLImageElement && img.complete) markUpscaled(img);
+    }
+    // An image's error and load do not bubble; they are seen on the way down.
     root.addEventListener('error', onError, true);
+    root.addEventListener('load', onLoad, true);
     return () => {
       root.removeEventListener('error', onError, true);
+      root.removeEventListener('load', onLoad, true);
     };
   });
   const html = useMemo(

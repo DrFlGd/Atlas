@@ -56,6 +56,10 @@ import { isBoxMark, markdownMarks } from './markdownMarks';
  *   holding the table, its title across it, a label beside each value, and
  *   the rows with an empty second cell across it. The page shows it beside
  *   the text where there is room, and across the page where there is not.
+ * - A list of tiles (see {@link tiles}): a bulleted list whose every item
+ *   is a picture shown on its own and at most a name, as a wiki's gallery
+ *   or a home page's grid of linked pictures, is shown as a grid of
+ *   tiles, each name under its picture. Its Markdown is a list as any.
  */
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: true });
 markdown.use(markdownMarks);
@@ -488,6 +492,87 @@ markdown.renderer.rules.atlas_picture = (tokens, index) => {
     '</span>'
   );
 };
+
+// ---------------------------------------------------------------------------
+// Tiles: a list of pictures, each with a name
+
+/** Words under a tile's picture are at most this long: a name, not a text. */
+const TILE_WORDS = 60;
+
+/**
+ * The part of a list item's line after its picture, when the item is a
+ * tile: a picture shown on its own (not one in the line of text), alone
+ * or as a link's only content, then at most a name's words, no other
+ * picture and no hidden text. Null for any other item.
+ */
+function tileWordsFrom(inline: Token): number | null {
+  const children = inline.children ?? [];
+  let at = 0;
+  while (children[at]?.type === 'text' && children[at]!.content.trim() === '') at++;
+  const linked = children[at]?.type === 'link_open';
+  const picture = children[linked ? at + 1 : at];
+  if (picture?.type !== 'atlas_picture') return null;
+  if (isInlinePicture((picture.meta as unknown as PictureMeta).shown)) return null;
+  if (linked && children[at + 2]?.type !== 'link_close') return null;
+  const rest = children.slice(linked ? at + 3 : at + 1);
+  if (
+    rest.some((token) => token.type === 'atlas_picture' || token.type.startsWith('hidden_text'))
+  ) {
+    return null;
+  }
+  return wordsOf(rest).length <= TILE_WORDS ? children.length - rest.length : null;
+}
+
+/**
+ * A bulleted list of two items or more, each only a tile (see
+ * {@link tileWordsFrom}), is a grid of tiles: the list gets the class
+ * `guide-tiles`, and the words of each tile stand in a span of their own,
+ * under its picture.
+ */
+function tiles(state: StateCore): void {
+  const tokens = state.tokens;
+  for (let open = 0; open < tokens.length; open++) {
+    if (tokens[open]!.type !== 'bullet_list_open') continue;
+    const close = closing(tokens, open);
+    // Each item: its open, a paragraph (open, line, close), its close; nothing nested.
+    const items: Token[] = [];
+    let plain = true;
+    for (let i = open + 1; i < close; i += 5) {
+      const [item, paragraph, inline, end, itemEnd] = tokens.slice(i, i + 5);
+      if (
+        item?.type !== 'list_item_open' ||
+        paragraph?.type !== 'paragraph_open' ||
+        inline?.type !== 'inline' ||
+        end?.type !== 'paragraph_close' ||
+        itemEnd?.type !== 'list_item_close'
+      ) {
+        plain = false;
+        break;
+      }
+      items.push(inline);
+    }
+    if (!plain || items.length < 2) continue;
+    const starts = items.map(tileWordsFrom);
+    if (starts.some((start) => start === null)) continue;
+    tokens[open]!.attrJoin('class', 'guide-tiles');
+    items.forEach((inline, i) => {
+      const children = inline.children!;
+      const start = starts[i]!;
+      if (wordsOf(children.slice(start)) === '') return;
+      const words = new state.Token('tile_words_open', 'span', 1);
+      words.attrs = [['class', 'guide-tile-words']];
+      inline.children = [
+        ...children.slice(0, start),
+        words,
+        ...children.slice(start),
+        new state.Token('tile_words_close', 'span', -1),
+      ];
+    });
+    open = close;
+  }
+}
+
+markdown.core.ruler.push('atlas_tiles', tiles);
 
 // ---------------------------------------------------------------------------
 // Hidden text: ||like this||

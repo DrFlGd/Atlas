@@ -559,3 +559,41 @@ describe('boxes of facts', () => {
     );
   });
 });
+
+describe('tiles', () => {
+  const options = {
+    isAppTarget: (id: string) => id.startsWith('demo:guide:'),
+    picture: (id: string) => ({ url: `https://app.test/${id}.png`, caption: 'A caption' }),
+  };
+
+  it('shows a list of pictures each with a name as a grid of tiles, the name under the picture', () => {
+    const html = renderGuideMarkdown(
+      [
+        '- [![Gear](demo:picture:gear "=100x100")](demo:guide:gear) [Gear](demo:guide:gear)',
+        '- ![Bosses](demo:picture:bosses)Bosses',
+        '- ![Maps](demo:picture:maps "=178x100")',
+      ].join('\n'),
+      options,
+    );
+    expect(html).toMatch(/^<ul class="guide-tiles">/);
+    expect(html).toContain(
+      '</button><span class="guide-tile-words"> <button type="button" class="app-link" data-atlas-target="demo:guide:gear">Gear</button></span></li>',
+    );
+    expect(html).toContain('<span class="guide-tile-words">Bosses</span></li>');
+    expect(html.match(/guide-tile-words/g)).toHaveLength(2);
+  });
+
+  it('keeps any other list a list: small pictures, more than a name, one item, hidden text', () => {
+    for (const list of [
+      '- ![a](demo:picture:a "=20x20") Gear\n- ![b](demo:picture:b "=20x20") Bosses',
+      `- ![a](demo:picture:a) Gear\n- ![b](demo:picture:b) ${'many words '.repeat(8)}`,
+      '- ![a](demo:picture:a) Gear',
+      '- ![a](demo:picture:a) Gear\n- Bosses',
+      '- ![a](demo:picture:a) ||Gear||\n- ![b](demo:picture:b) Bosses',
+      '- ![a](demo:picture:a) Gear\n  - inner\n- ![b](demo:picture:b) Bosses',
+      '1. ![a](demo:picture:a) Gear\n2. ![b](demo:picture:b) Bosses',
+    ]) {
+      expect(renderGuideMarkdown(list, options)).not.toContain('guide-tiles');
+    }
+  });
+});

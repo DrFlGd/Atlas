@@ -129,6 +129,15 @@ A box of facts (a wiki's "infobox": a thing's name, its picture, and rows of a l
 
 Every other row is a label and its value. A row whose second cell is empty runs across the box (a picture, a caption, a line of text), and is a heading of the box when its words are all bold (`| **Damage** |  |`); a row with both cells empty is left out, and so is the first row of a box with an empty title. A value holds what any table cell holds: links, pictures, raised text, coloured words, hidden text and line breaks (`<br>`). Anything else in the first row's second cell (`box`, `` `{box}` ``, a third column) makes an ordinary table. The page shows the box at the right of its text where the page is at least 620 pixels wide, the text flowing beside it, and across the page where it is narrower (a phone), where it stands in the text. Its labels and heading rows are no headings of the page: they are not in "On this page" and no link names them as a section. A box is never sorted and its rows have no "Add to build" buttons; "Find on the map" reads its rows as any table's (a row whose label says where, such as `Found in`, gives the rest of the row). The page editor edits a box as the table it is, with a line saying what makes it a box. An app before this shows an ordinary table whose second heading is `{box}`.
 
+A list of tiles is not a form of its own but a way of showing a list: a bulleted list of two items or more, each only a picture shown on its own (one larger than a picture in a line of text, or of no given size), alone or as a link's only content, followed by at most 60 characters of words (a name, which may be a link), with nothing nested, no other picture and no hidden text, is shown as a grid of tiles, each name under its picture, as a wiki's gallery or the grid of linked pictures on its home page:
+
+```
+- [![Gear](demo:picture:gear "=100x100")](demo:guide:gear) [Gear](demo:guide:gear)
+- [![Bosses](demo:picture:bosses "=100x100")](demo:guide:bosses) [Bosses](demo:guide:bosses)
+```
+
+Any other list is shown as before, and an app before this shows the list. A picture shown at twice its own size or more (a small icon a wiki draws larger) is drawn with sharp pixels rather than blurred.
+
 #### Pages linked to the map
 
 Pages read from a site (guides with a `source`) can be linked to the map. **Link pages to the map**, at the top of the contents, compares each page's title with the game's types, location names and regions (without case, accents, punctuation, a leading article or simple plurals; a location name is also tried without its number) and lists the pages in three groups: **Sure** (one clear match), **Unsure** (several matches, or only a near one) and **No match**. Each page can be confirmed, changed to another type, location name or region found by name, or skipped; **Confirm all sure** confirms the first group at once. Nothing is linked until the person confirms it. Linking is done on a larger screen (a tablet on its side or a computer); a phone uses the links and says so.

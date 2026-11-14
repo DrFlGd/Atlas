@@ -565,6 +565,49 @@ button.guides-crumb:hover {
   font-size: 13px;
 }
 
+/* A picture shown at twice its own size or more (a small icon a wiki draws larger) keeps sharp pixels. */
+.guide-picture img[data-upscaled] {
+  image-rendering: pixelated;
+}
+
+/* A list of tiles: pictures side by side, each name under its picture. */
+.guide-body ul.guide-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 12px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-tiles > li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min-content;
+  min-width: 88px;
+  max-width: 100%;
+  margin: 0;
+  text-align: center;
+}
+
+.guide-tiles .guide-picture {
+  align-items: center;
+  margin: 0;
+}
+
+.guide-tiles .guide-picture-note {
+  display: none;
+}
+
+.guide-tile-words {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .picture-alt {
   color: var(--atlas-muted);
   font-style: italic;
