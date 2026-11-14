@@ -13,6 +13,7 @@ import {
   stepInLayout,
   parentOf,
 } from './ownPages';
+import { guideFiling, isListPage } from './pageFiling';
 import { guideLinksIn } from './pageTree';
 import {
   PAGES_SECTION,
@@ -707,8 +708,17 @@ describe('on a made-up wiki of hundreds of pages', () => {
     // which no page lists, in Pages.
     expect(titles(contents, 'vale-0001')).toEqual(['Pages', 'Locations']);
     expect(titles(contents, 'smith-0002')).toEqual(['Pages', 'Characters']);
-    // Nothing is under a weapon.
-    for (const id of madeUpWiki(size).ids.weapons) expect(contents.items(guideId(id))).toEqual([]);
+    // No item page is a list page (its table of upgrades lists nothing), and nothing is under one.
+    const made = madeUpWiki(size);
+    const lists = new Set(
+      made.guides.filter((guide) => isListPage(guideFiling(guide))).map((guide) => guide.id),
+    );
+    for (const id of [...made.ids.weapons, ...made.ids.armour]) {
+      expect(lists.has(guideId(id)), id).toBe(false);
+      expect(contents.items(guideId(id))).toEqual([]);
+    }
+    expect(lists).toContain(guideId('locations'));
+    expect(lists).toContain(guideId('characters'));
     // A note mentioned in a sentence of the home page, and notes nothing lists, stay in Pages.
     expect(contents.parentOf(guideId('note-0001'))).toBe(PAGES_SECTION);
     expect(contents.filing()).toEqual({

@@ -10,18 +10,33 @@ import { guideLinks, guideLinksIn } from './pageTree';
  *
  * - the main link of a list item: the item starts with it (after a
  *   picture, bold or italic marks), and the item is short;
- * - in a table, the main link of a cell of the table's name column: the
- *   column whose cells start with links to the most different pages (of
- *   two such columns, the one further left), so a weapons table files the
- *   weapon of each row, not the location a later column names;
+ * - in a table, the main link of each line of a cell of the table's name
+ *   column: a row is about its first cell, so the name column is the
+ *   first column with content, past columns only of pictures (an icon,
+ *   linked or not). When its cells are no links (words, numbers, a level),
+ *   the table lists nothing, whatever later columns name: a weapons table
+ *   files the weapon of each row, never the location a later column names,
+ *   and an item's table of upgrades ("Level | Cost | Where") files nothing;
  * - a tile (an item of a list of tiles is a list item whose main link is
- *   its linked picture or its name).
+ *   its linked picture or its name);
+ * - an index written without a list: a line of a paragraph (the whole
+ *   paragraph, or one of its lines, split at hard line breaks and `<br>`)
+ *   that is one link, after at most a picture or marks, and after it
+ *   nothing, or a few words led by a dash, a colon or a bracket ("Gauntlet
+ *   – a short weapon"), or at most two words that end no sentence;
+ * - a run of links: a line (of a paragraph, a list item, or of a cell of
+ *   the name column) of two links or more with nothing but separators
+ *   between them (`·`, `•`, `|`, `/`, `,`, `;`, dashes, spaces);
+ * - a heading that is one link and nothing else (`### [Heavy](…)`).
  *
- * Every other link is a *mention*: a link in a sentence, a heading or a
- * quote; in a box of facts; in hidden text (`||…||`); in a list item or a
- * table cell that starts with words before the link ("Drops from …"), or
- * whose words run long enough to read as prose; in another column of a
- * table. A mention never files a page.
+ * Every other link is a *mention*: a link in a sentence or a quote; in a
+ * heading with words beside it; in a box of facts; in hidden text
+ * (`||…||`); in a list item, a line or a table cell that starts with words
+ * before the link ("Drops from …", "See also: …"), or whose words run long
+ * enough to read as prose; in a line of links with words between them, or
+ * other separators (a trail of the way, "Home › Weapons › Sword"); in the
+ * line right after a line that is only a picture (its caption); in
+ * another column of a table. A mention never files a page.
  *
  * A *list page* is a page that lists enough pages, and whose listing links
  * are a large share of the pages it links to (see the constants below).
@@ -75,6 +90,16 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 /** The address of a link or a picture, with its title: `](game:guide:x "#drops")`. */
 const ADDRESS = /\]\((?:<[^>]*>|[^()\s]*)(?:\s+"[^"]*")?\)/g;
 const TABLE_ROW = /^\s*\|/;
+const HEADING = /^\s{0,3}(#{1,6})(?:\s+|$)/;
+const QUOTE = /^\s{0,3}>/;
+/** Whether a line ends with a hard line break: two spaces or more, or a backslash. */
+const hardBreak = (line: string) => line.endsWith('  ') || line.endsWith('\\');
+/** What may stand between the links of a run: separators, spaces and marks. */
+const RUN_SEPARATORS = /^[\s·•|/,;\-–—*_~]*$/u;
+/** What may lead the words after a line's one link: a dash, a colon, a bracket. */
+const LEADS_WORDS = /^[\s*_~]*[-–—:([]/u;
+/** At most this many words after a line's one link, with no lead, end no sentence ("Cudgel Hammer"). */
+const PLAIN_WORDS_AFTER = 2;
 const DELIMITER_ROW = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const BOX_MARK = '{box}';
 
@@ -246,6 +271,82 @@ function mainLink(text: string, hiddenAtStart: boolean, escapedBars: boolean): s
   return first.guide;
 }
 
+/** The guide links of a line that is a run of them (see the top of this file); null when it is none. */
+function runOf(spans: readonly Span[], text: string): string[] | null {
+  const ids: string[] = [];
+  let at = 0;
+  for (const span of spans) {
+    const gap = text.slice(at, span.start);
+    if (at === 0 ? !noWords(gap) : !RUN_SEPARATORS.test(gap)) return null;
+    if (span.guide !== null) ids.push(span.guide);
+    at = span.end;
+  }
+  if (!RUN_SEPARATORS.test(text.slice(at))) return null;
+  return new Set(ids).size >= 2 ? ids : null;
+}
+
+/**
+ * The listing links of one line of a paragraph or a heading (see the top
+ * of this file): a run of links, or one link alone (in a heading, with
+ * nothing after it).
+ */
+function lineListing(text: string, heading: boolean): string[] {
+  // A line that starts with a word (most lines of a page) lists nothing.
+  if (!text.includes(':guide:') || text.includes('||') || WORD_START.test(text)) return [];
+  const spans = spansIn(text);
+  const guides = spans.filter((span) => span.guide !== null);
+  if (guides.length === 0) return [];
+  if (new Set(guides.map((span) => span.guide)).size >= 2) {
+    return heading ? [] : (runOf(spans, text) ?? []);
+  }
+  // One link (a tile's picture and name lead to the same page): only a picture or marks before it.
+  const first = guides[0]!;
+  const before = text.slice(0, first.start);
+  if (!noWords(before) && !noWords(wordsOf(before))) return [];
+  const after = text.slice(spans.at(-1)!.end);
+  const words = wordsOf(after);
+  if (noWords(words)) return [first.guide!];
+  if (heading) return [];
+  if (LEADS_WORDS.test(after)) {
+    return wordsOf(text).length > LISTING_WORDS_MAX ? [] : [first.guide!];
+  }
+  const plain = words.split(' ');
+  return plain.length <= PLAIN_WORDS_AFTER && !/[.!?]$/.test(words) ? [first.guide!] : [];
+}
+
+/** A line that starts with a picture, after marks. */
+const PICTURE_START = /^[\s*_~]*!\[/;
+
+/** Whether a line is only pictures (and marks): the line after it is their caption. */
+const onlyPictures = (text: string) => {
+  if (!PICTURE_START.test(text)) return false;
+  const spans = spansIn(text);
+  return spans.length > 0 && spans.every((span) => span.picture) && noWords(wordsOf(text));
+};
+
+/**
+ * The listing links of a list item or a cell: a run of links, else its
+ * main link (see {@link mainLink}).
+ */
+function itemListing(text: string, hiddenAtStart: boolean, escapedBars: boolean): string[] {
+  // A run has two links or more: most items have one, and are read for it alone.
+  const first = text.indexOf(':guide:');
+  if (
+    first >= 0 &&
+    text.includes(':guide:', first + 7) &&
+    !hiddenAtStart &&
+    !text.includes(escapedBars ? '\\|\\|' : '||')
+  ) {
+    const spans = spansIn(text);
+    if (spans.filter((span) => span.guide !== null).length >= 2) {
+      const run = runOf(spans, text);
+      if (run) return run;
+    }
+  }
+  const id = mainLink(text, hiddenAtStart, escapedBars);
+  return id === null ? [] : [id];
+}
+
 /** The cells of a table row, split at bars that are not escaped or in code. */
 function cellsOf(row: string): string[] {
   let text = row.trim();
@@ -269,27 +370,44 @@ function cellsOf(row: string): string[] {
   return cells;
 }
 
-/** The listing links of a table: the main links of its name column (none for a box of facts). */
+/** Whether a cell is empty, or only pictures (linked or not) and marks. */
+function emptyOrPictures(cell: string): boolean {
+  if (cell.replace(/<br>/g, '').trim() === '') return true;
+  if (!cell.includes('![')) return false;
+  if (!noWords(wordsOf(cell))) return false;
+  const spans = spansIn(cell);
+  return (
+    spans.length > 0 &&
+    spans.every(
+      (span) =>
+        span.picture || (span.inner.trimStart().startsWith('![') && noWords(wordsOf(span.inner))),
+    )
+  );
+}
+
+/**
+ * The listing links of a table: the main links of each line of the cells
+ * of its name column, the first column with more than pictures (none for
+ * a box of facts). A table whose name column holds no links lists nothing:
+ * when it is unsure what a table lists, the contents stays flat.
+ */
 function tableListing(rows: readonly string[], hidden: boolean): string[] {
-  if (hidden) return [];
+  if (hidden || !rows.some((row) => row.includes(':guide:'))) return [];
   if (rows[0]!.includes(BOX_MARK)) {
     const head = cellsOf(rows[0]!);
     if (head.length === 2 && head[1]!.trim() === BOX_MARK) return [];
   }
-  const leads = rows.map((row) =>
-    row.includes(':guide:') ? cellsOf(row).map((cell) => mainLink(cell, false, true)) : [],
-  );
-  const width = Math.max(0, ...leads.map((row) => row.length));
-  let column = -1;
-  let most = 0;
-  for (let c = 0; c < width; c++) {
-    const different = new Set(leads.map((row) => row[c]).filter((id) => id != null)).size;
-    if (different > most) {
-      most = different;
-      column = c;
-    }
-  }
-  return column < 0 ? [] : leads.flatMap((row) => row[column] ?? []);
+  // The rows under the heading row, by cell.
+  const cells = rows.slice(1).map(cellsOf);
+  const width = Math.max(0, ...cells.map((row) => row.length));
+  let column = 0;
+  while (column < width && cells.every((row) => emptyOrPictures(row[column] ?? ''))) column++;
+  if (column >= width) return [];
+  return cells.flatMap((row) => {
+    const cell = row[column];
+    if (!cell?.includes(':guide:')) return [];
+    return cell.split('<br>').flatMap((line) => itemListing(line, false, true));
+  });
 }
 
 /**
@@ -315,7 +433,11 @@ export function pageFilingIn(
   const passBars = (text: string) => {
     if (text.includes('||') && barsIn(text, false).length % 2 === 1) hidden = !hidden;
   };
+  /** Whether the line read now is outside hidden text (read anew: `passBars` changes it). */
+  const shown = () => !hidden;
   let fence: string | null = null;
+  /** The last paragraph line was only a picture: the next line is its caption. */
+  let afterPicture = false;
   for (let i = 0; i < lines.length;) {
     const line = lines[i]!;
     if (fence !== null) {
@@ -325,6 +447,7 @@ export function pageFilingIn(
     }
     const opens = FENCE.exec(line);
     if (opens) {
+      afterPicture = false;
       fence = opens[1]!;
       i++;
       continue;
@@ -335,6 +458,7 @@ export function pageFilingIn(
       let j = i + 2;
       while (j < lines.length && TABLE_ROW.test(lines[j]!)) rows.push(lines[j++]!);
       for (const id of tableListing(rows, hidden)) list(id);
+      afterPicture = false;
       i = j;
       continue;
     }
@@ -357,53 +481,106 @@ export function pageFilingIn(
           text += ` ${lines[j]!.trim()}`;
           j++;
         }
-        list(mainLink(text, hidden, false));
+        for (const id of itemListing(text, hidden, false)) list(id);
         passBars(text);
         // A blank line between items keeps the list going.
         let next = j;
         while (next < lines.length && lines[next]!.trim() === '') next++;
         if (next > j && next < lines.length && LIST_ITEM.test(lines[next]!)) j = next;
       }
+      afterPicture = false;
       i = j;
       continue;
     }
-    // Anything else (a paragraph, a heading, a quote): mentions only.
+    // A heading: one link alone in it is listed.
+    const heading = HEADING.exec(line);
+    if (heading) {
+      if (shown()) {
+        const text = line.slice(heading[0].length).replace(/\s+#+\s*$/, '');
+        for (const id of lineListing(text, true)) list(id);
+      }
+      passBars(line);
+      afterPicture = false;
+      i++;
+      continue;
+    }
+    // A paragraph: its lines, split at hard line breaks and `<br>`.
+    if (line.trim() !== '' && !QUOTE.test(line)) {
+      let j = i;
+      let text = '';
+      const pieces: string[] = [];
+      while (j < lines.length) {
+        const next = lines[j]!;
+        if (
+          next.trim() === '' ||
+          (j > i &&
+            (HEADING.test(next) ||
+              LIST_ITEM.test(next) ||
+              FENCE.test(next) ||
+              TABLE_ROW.test(next) ||
+              QUOTE.test(next)))
+        ) {
+          break;
+        }
+        text += (text ? ' ' : '') + next.trim().replace(/\\$/, '');
+        if (hardBreak(next)) {
+          pieces.push(text);
+          text = '';
+        }
+        j++;
+      }
+      if (text) pieces.push(text);
+      for (const piece of pieces.flatMap((piece) => piece.split('<br>'))) {
+        if (shown() && !afterPicture) for (const id of lineListing(piece, false)) list(id);
+        afterPicture = onlyPictures(piece);
+        passBars(piece);
+      }
+      i = j;
+      continue;
+    }
+    // Anything else (a quote, a blank line): mentions only.
     passBars(line);
+    if (line.trim() !== '') afterPicture = false;
     i++;
   }
   return { listing, linked };
 }
 
 /**
- * Whether a page may be a list page, by a quick look at its lines: a page
- * lists at most one page in each line that starts a list item or a table
- * row with a link, so a page with too few such lines for its links is no
- * list page, and need not be read closely (most pages of a wiki).
+ * Whether a page may be a list page, by a quick look at its lines: a line
+ * that starts with a word lists no page (it is a sentence, or a list item,
+ * a line or a heading that starts with words), and any other line lists at
+ * most the pages it links to. So a page with too few links in other lines
+ * is no list page, and need not be read closely (most pages of a wiki).
  */
 export function mayBeListPage(body: string, linked: number): boolean {
   if (linked < LIST_PAGE_MIN_LISTED) return false;
   const least = Math.max(LIST_PAGE_MIN_LISTED, LIST_PAGE_SHARE * linked);
-  let lines = 0;
+  let links = 0;
   // The next link to a guide, and the lines before it skipped at once.
   let link = body.indexOf(':guide:');
   while (link >= 0) {
     const start = body.lastIndexOf('\n', link) + 1;
+    let end = body.indexOf('\n', link);
+    if (end < 0) end = body.length;
     let at = start;
     while (body[at] === ' ' || body[at] === '\t') at++;
-    const c = body.charCodeAt(at);
-    // `|`, `-`, `*`, `+`, or a digit.
-    if (c === 0x7c || c === 0x2d || c === 0x2a || c === 0x2b || (c >= 0x30 && c <= 0x39)) {
-      if (LIST_START.test(body.slice(at, at + 12)) && ++lines >= least) return true;
+    if (!WORD_START.test(body[at] ?? '')) {
+      for (
+        let found = link;
+        found >= 0 && found < end;
+        found = body.indexOf(':guide:', found + 7)
+      ) {
+        if (++links >= least) return true;
+      }
     }
-    const end = body.indexOf('\n', link);
-    if (end < 0) break;
     link = body.indexOf(':guide:', end);
   }
   return false;
 }
 
-/** The start of a list item or a table row, at the first character of a line that is not a space. */
-const LIST_START = /^(?:\||[-*+][ \t]|\d{1,9}[.)][ \t])/;
+/** A letter: a line that starts with one starts with a word. */
+const WORD_START = /^\p{L}/u;
 
 /** The listing links of each guide object, read once: a guide is never changed in place. */
 const filingOfGuide = new WeakMap<GuideEntry, PageFiling>();

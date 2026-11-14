@@ -11,8 +11,11 @@ import type { GuideEntry, Section } from '@atlas/schema';
  *   (Enemies). The list pages of locations and of characters are in no
  *   section of the menu, and no list page lists them: Weapons mentions
  *   the first in a sentence.
- * - List pages: a table of a name, a type and the location (the location
- *   in a later column), or a bulleted list of a name and a few words.
+ * - List pages written in each shape an index takes: a table of a name, a
+ *   type and the location (the location in a later column); a heading
+ *   that is a link for each location, with a sentence under it that
+ *   mentions the next one; lines of links with a few words, under
+ *   headings of plain words (characters); a table of enemies.
  * - Item pages (weapons and armour) that mention a location and a
  *   character in a sentence, in a box of facts, in a later column of a
  *   table and in hidden text, and list two other items under "See also".
@@ -146,20 +149,36 @@ export function madeUpWiki(
   itemList('weapons', weapons, 'Weapon');
   itemList('armour', armour, 'Armour');
 
+  // A heading that is a link for each location, and a sentence under it.
   add(
     'locations',
     [
       'The locations of the world.',
-      '',
-      ...locations.map((local, i) => `- ${link(local, titleOf(local))}: region ${(i % 4) + 1}.`),
+      ...locations.flatMap((local, i) => {
+        const next = locations[(i + 1) % locations.length]!;
+        return [
+          '',
+          `### ${link(local, titleOf(local))}`,
+          '',
+          `In region ${(i % 4) + 1}, next to ${link(next, titleOf(next))}.`,
+        ];
+      }),
     ].join('\n'),
   );
+  // Lines of links with a few words, ten under each heading of plain words.
   add(
     'characters',
     [
       'The people you meet.',
-      '',
-      ...characters.map((local) => `- ${link(local, titleOf(local))} – sells things.`),
+      ...Array.from({ length: Math.ceil(characters.length / 10) }, (_, group) => [
+        '',
+        `## Group ${group + 1}`,
+        '',
+        characters
+          .slice(group * 10, group * 10 + 10)
+          .map((local) => `${link(local, titleOf(local))} – sells things.`)
+          .join('  \n'),
+      ]).flat(),
     ].join('\n'),
   );
   add(
