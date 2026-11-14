@@ -246,9 +246,13 @@ export class PageWindows {
         this.kept.before = [pageOf(url), ...(address ? [pageOf(address)] : [])];
       }
     };
-    // In a kept window, data from the page shown before is never taken for this one.
-    const stale = (address: string | undefined) =>
+    // In a kept window, data from the page shown before is never taken for
+    // this one. A site may show the page asked for at the address of the
+    // page before (a second name of that page): the shell, which alone can
+    // tell the two documents apart, says so with `forwarded`.
+    const stale = (address: string | undefined, forwarded: boolean) =>
       keep &&
+      !forwarded &&
       address !== undefined &&
       pageOf(address) !== pageOf(url) &&
       before.includes(pageOf(address));
@@ -273,7 +277,7 @@ export class PageWindows {
         result = { state: 'failed', message: errorText(error) };
       }
       if (!current()) return { state: 'cancelled' };
-      if (result.state === 'ready' && stale(result.address)) {
+      if (result.state === 'ready' && stale(result.address, result.forwarded === true)) {
         result = { state: 'waiting', loading: true, note: null };
       }
       if (result.state === 'waiting') {
