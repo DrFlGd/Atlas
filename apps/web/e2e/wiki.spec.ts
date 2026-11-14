@@ -297,7 +297,9 @@ test.describe('following links', () => {
     const strip = page.getByTestId('library-strip-now');
     await expect(strip).toContainText('3 found by links', { timeout: 60_000 });
     await expect(page.getByTestId('wiki-foot-sentence')).toContainText('found by links');
-    await expect(found(page, 'Harbour')).toContainText('Found on Harbour, being read in this go');
+    await expect(found(page, 'Harbour')).toContainText(
+      'Found on Harbour, being read in this session',
+    );
     await mkdir(SHOTS, { recursive: true });
     await page.screenshot({ path: `${SHOTS}/follow-links-running.png` });
 
