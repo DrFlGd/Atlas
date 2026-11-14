@@ -139,6 +139,19 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.10.0
+
+          A wiki opens on a landing page, a page's box of facts stays a box, and links lead to parts of pages.
+
+          - **Landing page.** Guides now opens on a landing page, and the game's name stands at the top of the contents and at the start of the path line, where "Contents" stood: press it to come back. When the wiki's own home page was read, the landing page is that page. For any other game Atlas makes one from the contents: each section with its pages as tiles, with a picture where a page has one.
+          - **Boxes of facts.** The box at the side of a wiki page (a title, a picture, a caption, rows of a label and its value) is now one box beside the text, and across the page on a phone, where it was a run of headings before. Its labels are no longer headings of the page. In the page editor's Markdown view it is a table of two columns whose first row is the title and {box}.
+          - **Tiles.** A list of pictures that each have a name, as a wiki's home page or gallery has, is shown as a grid of tiles.
+          - **On this page.** A guide page with three headings or more lists them at its head, each sub-heading set in under its heading. Press one to go to that part of the page; **Back** returns to where you were reading. The list is open in a wide window and folded on a phone: press **On this page** to fold or unfold it. It works with the keyboard, and on your own pages too.
+          - **Links to a part of a page.** A link can now lead to a heading of a page, not only to its top. Atlas opens the page at that heading, or moves there when it is the page you are reading, and **Back** returns. Every heading has a name made from its words: "By boat" is by-boat. In the page editor's Markdown view, write it after the address: \\[by boat\\](demo:guide:wiki-travel "#by-boat"). When no heading fits, the page opens at its top.
+          - Notices and quotes of a wiki page are shown as quotes, a table keeps its caption, and merged cells no longer push a table's columns out of line.
+
+          A game made with 0.10.0 still opens in older versions of Atlas: they show a box of facts as a table, tiles as a list, and open a link to a part of a page at its top. The one exception is a map whose image server counts rows from the bottom, which needs 0.10.0. The Classic layout has no landing page.
+
           ## New in 0.9.0
 
           - **Add to build.** Collect what you want for a build while you read. A guide page has **Add to build** at its head, a table row that names something has a small + button at the end of its first cell, each result of a search in Guides has one, and so does a location's card. The first time, Atlas asks which Build guide to add to, or starts a new one; after that, everything goes to the same list with one press, until you choose **Change**. A notice says what was added, with **Undo**, and a thing that is in the list already is not added twice. Each thing is a step: its name, a link to its page, and the location when you added it from a card.
