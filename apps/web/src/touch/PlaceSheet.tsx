@@ -11,6 +11,7 @@ import { pagesAt } from '../state/guideMatches';
 import { useGuideLinks } from '../state/guideLinks';
 import { useNotedLocations } from '../state/ownNotes';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { AddToBuildButton } from './AddToBuild';
 import { FromTheWiki } from './FromTheWiki';
 import { MyNote } from './MyNote';
 import { listById } from './listViews';
@@ -405,16 +406,19 @@ function PlaceDetails({
           </>
         ) : null}
       </dl>
-      <button
-        type="button"
-        className="touch-text-button"
-        onClick={() => {
-          goToLocation(locationId);
-        }}
-      >
-        <UiIcon name="target" size={18} />
-        Centre on map
-      </button>
+      <div className="place-detail-actions">
+        <button
+          type="button"
+          className="touch-text-button"
+          onClick={() => {
+            goToLocation(locationId);
+          }}
+        >
+          <UiIcon name="target" size={18} />
+          Centre on map
+        </button>
+        <AddToBuildButton game={game} thing={{ name: location.name, locationId }} />
+      </div>
     </div>
   );
 }

@@ -19,6 +19,8 @@ import { canLinkPages, linkedTargets, locationsText, targetText } from '../state
 import { guidesOf, hasMap } from '../state/guides';
 import { canChangeOwnPages, changeContents, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
+import { AddToBuildBar, AddToBuildButton } from './AddToBuild';
+import { useAddToBuild } from './buildChoice';
 import { GuideLinksReview } from './GuideLinksReview';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
 import { showPageOnMap } from './listViews';
@@ -609,6 +611,7 @@ function Page({
 }) {
   const own = useOwnPages((s) => s.own);
   const [showWiki, setShowWiki] = useState(false);
+  const build = useAddToBuild(game);
   if (!guide) return <p className="touch-empty">This page is not in this game any more.</p>;
   const pack = packPage(game, guide.id);
   const change = pageChange(
@@ -636,8 +639,21 @@ function Page({
           }}
         />
       ) : null}
+      <AddToBuildBar build={build} thing={{ name: guide.title, guideId: guide.id }} />
       {guide.source && hasMap(game) ? <OnTheMap game={game} guide={guide} /> : null}
-      <MarkdownBody source={shown.body} className="guide-body guides-page-body" page />
+      <MarkdownBody
+        source={shown.body}
+        className="guide-body guides-page-body"
+        page
+        onAddRow={
+          build.offered
+            ? (row, button) => {
+                build.add(row, button);
+              }
+            : undefined
+        }
+      />
+      {build.dialog}
       {change.changed && !showWiki ? (
         <p className="guides-changed" data-testid="changed-by-you">
           Changed by you. Your changes are kept apart from the wiki’s text.
@@ -999,7 +1015,7 @@ function SearchResults({ game, query }: { game: LoadedGame; query: string }) {
       </p>
       <ul className="touch-plain-list guides-entries">
         {hits.map((hit) => (
-          <li key={hit.guide.id}>
+          <li key={hit.guide.id} className="guides-result-row" data-testid="guides-result-row">
             <button
               type="button"
               className="guides-entry guides-result"
@@ -1011,6 +1027,11 @@ function SearchResults({ game, query }: { game: LoadedGame; query: string }) {
               <span className="guides-result-title">{hit.guide.title}</span>
               {hit.snippet ? <Snippet hit={hit} /> : null}
             </button>
+            <AddToBuildButton
+              game={game}
+              thing={{ name: hit.guide.title, guideId: hit.guide.id }}
+              small
+            />
           </li>
         ))}
       </ul>
