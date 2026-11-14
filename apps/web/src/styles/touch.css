@@ -1372,6 +1372,13 @@
   flex: 1;
 }
 
+/* A second switch under the first, as "With my notes" under "Hide what I have found". */
+.touch-switch-card + .touch-switch-card {
+  margin-top: 8px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 .touch-switch-note {
   display: block;
   color: var(--atlas-muted);
@@ -3289,4 +3296,52 @@ button.photo-card-text {
   margin: 0;
   padding: 16px 12px 0;
   font-size: 17px;
+}
+
+/* Notes without a location, in the filters */
+
+.touch-unplaced-notes {
+  margin: 8px 12px 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: var(--atlas-surface-raised);
+}
+
+.touch-unplaced-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 12px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.touch-unplaced-summary > :first-child {
+  flex: 1;
+}
+
+.touch-unplaced-lead {
+  margin: 0 12px 8px;
+}
+
+.touch-unplaced-list {
+  padding: 0 12px 8px;
+}
+
+.touch-unplaced-note {
+  padding: 8px 0;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.touch-unplaced-name {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.touch-unplaced-actions {
+  display: flex;
+  gap: 4px;
 }

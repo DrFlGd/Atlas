@@ -164,6 +164,8 @@ export type ImportPhase =
       measuring?: boolean;
       /** It waits for another step changing the same game (see `packTurns.ts`). */
       waiting?: boolean;
+      /** A page of a wiki written into its game of pages: no map is built. */
+      pages?: boolean;
       /** A game of pages is built again from this many saved pages: nothing is fetched. */
       savedPages?: number;
       /** How many of them are written again so far, once the importer says. */
@@ -668,7 +670,8 @@ export async function startImport(text: string): Promise<void> {
     }
     return;
   }
-  setPhase({ kind: 'converting', url, importer: importer.title });
+  const pages = importer.fetch ? { pages: true } : {};
+  setPhase({ kind: 'converting', url, importer: importer.title, ...pages });
   const outcome = await convertAndSave(
     importer,
     {
@@ -688,7 +691,7 @@ export async function startImport(text: string): Promise<void> {
     {
       onWaiting: () => {
         if (id === session) {
-          setPhase({ kind: 'converting', url, importer: importer.title, waiting: true });
+          setPhase({ kind: 'converting', url, importer: importer.title, waiting: true, ...pages });
         }
       },
     },
@@ -988,7 +991,9 @@ async function startRun(
           }
           return result;
         }
-        update({ kind: 'converting' });
+        // A page of a wiki is written into a game of pages: no map is built.
+        const of = importer.fetch ? ({ of: 'pages' } as const) : {};
+        update({ kind: 'converting', ...of });
         const outcome = await convertAndSave(
           importer,
           {
@@ -1006,7 +1011,7 @@ async function startRun(
           },
           {
             onWaiting: () => {
-              update({ kind: 'converting', waiting: true });
+              update({ kind: 'converting', waiting: true, ...of });
             },
           },
         );
@@ -2021,7 +2026,7 @@ async function readListings(
           results[index] = { ok: false, message: outcome.message };
           return outcome;
         }
-        update({ kind: 'converting' });
+        update({ kind: 'converting', of: 'list' });
         const result = await convertListing(item, read.data);
         results[index] = result;
         reportListing(item, result);

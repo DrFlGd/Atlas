@@ -48,6 +48,12 @@ describe('DeletePackConfirmView', () => {
     );
   });
 
+  it('offers to delete the person’s own locations, types and notes too, unticked', () => {
+    const offered = view({ onWithLocations: noop });
+    expect(text(offered)).toContain('Also delete my locations, types and notes for this game');
+    expect(offered).not.toMatch(/data-testid="delete-pack-locations"[^>]*checked/);
+  });
+
   it('shows that it is working, and a plain error', () => {
     const working = view({ working: true });
     expect(text(working)).toContain('Stopping the download…');

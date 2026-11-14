@@ -1,4 +1,5 @@
-import { itemState, pixelToWorld } from '@atlas/core';
+import { itemState, ownNoteId, pixelToWorld } from '@atlas/core';
+import { isOwnId } from '@atlas/schema';
 import { useEffect, useRef } from 'react';
 import { GlyphBadge, UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
@@ -8,8 +9,10 @@ import { openChecklistItem, openGuide, showItemPlace } from '../state/checklists
 import { numberFormat, useSummary } from '../state/derived';
 import { pagesAt } from '../state/guideMatches';
 import { useGuideLinks } from '../state/guideLinks';
+import { useNotedLocations } from '../state/ownNotes';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { FromTheWiki } from './FromTheWiki';
+import { MyNote } from './MyNote';
 import { listById } from './listViews';
 import { nextOnList } from './ordering';
 import { markFound, setPlaceExpanded, useKeyHints, useTouch } from './state';
@@ -161,6 +164,9 @@ function Place({
   );
 }
 
+/** The id of the note of a location of the person's own; null for a location of the game. */
+const ownNoteOf = (locationId: string) => (isOwnId(locationId) ? ownNoteId(locationId) : null);
+
 /** Mark found, and the next place: the next entry of the list that is open, or the nearest. */
 function PlaceActions({
   game,
@@ -236,15 +242,23 @@ function PlaceActions({
 function DetailsSummary({ game, locationId }: { game: LoadedGame; locationId: string }) {
   const { pack, checklists } = game;
   const location = pack.locations.get(locationId)!;
-  const guide = location.guideId ? checklists.guide(location.guideId) : undefined;
+  // The note of a location of the person's own is their note, not a guide.
+  const guide =
+    location.guideId && location.guideId !== ownNoteOf(location.id)
+      ? checklists.guide(location.guideId)
+      : undefined;
+  const noted = useNotedLocations(game)?.has(locationId) ?? false;
   const items = checklists.itemsAt(locationId);
   const lists = new Set(items.map((i) => checklists.checklistOf(i.item.id)?.checklist.id)).size;
-  const guides = checklists.guidesAt(locationId).filter((g) => g.id !== guide?.id).length;
+  const guides = checklists
+    .guidesAt(locationId)
+    .filter((g) => g.id !== guide?.id && g.id !== ownNoteOf(locationId)).length;
   const photos = location.photos?.length ?? 0;
   // Pages linked to the map (see `FromTheWiki`).
   useGuideLinks((s) => s.links.choices);
   const wiki = pagesAt(game, locationId).length > 0;
   const more = [
+    noted ? 'my note' : null,
     photos > 0 ? (photos === 1 ? 'a photo' : `${photos} photos`) : null,
     lists > 0 ? `on ${lists === 1 ? '1 checklist' : `${lists} checklists`}` : null,
     guides > 0 ? `in ${guides === 1 ? '1 guide' : `${guides} guides`}` : null,
@@ -276,18 +290,25 @@ function PlaceDetails({
   const layer = pack.layers.get(location.layerId);
   const region = location.regionId ? pack.regions.get(location.regionId) : undefined;
   const parent = region?.parentId ? pack.regions.get(region.parentId) : undefined;
-  const guide = location.guideId ? checklists.guide(location.guideId) : undefined;
+  // The note of a location of the person's own is shown as their note (see `MyNote`).
+  const guide =
+    location.guideId && location.guideId !== ownNoteOf(location.id)
+      ? checklists.guide(location.guideId)
+      : undefined;
   const entities = location.entityIds.flatMap(
     (id) => pack.data.entities.find((e) => e.id === id)?.name ?? [],
   );
   const items = checklists.itemsAt(locationId);
-  const guides = checklists.guidesAt(locationId).filter((g) => g.id !== guide?.id);
+  const guides = checklists
+    .guidesAt(locationId)
+    .filter((g) => g.id !== guide?.id && g.id !== ownNoteOf(locationId));
   const world = map?.worldTransform ? pixelToWorld(location, map.worldTransform) : undefined;
   const levels = map ? pack.layersOf(map.id).length > 1 : false;
   const isDone = (id: string) => found.has(id);
 
   return (
     <div className="place-details" id="place-details" data-testid="place-details">
+      <MyNote game={game} locationId={locationId} />
       <PhotoStrip
         game={game}
         photos={location.photos}

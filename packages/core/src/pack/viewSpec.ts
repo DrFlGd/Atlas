@@ -78,18 +78,21 @@ export interface LayerMarkerOptions {
   filter?: MarkerFilter;
   /** A location to include even when the filter hides it, such as the selection. */
   alwaysInclude?: string | null;
+  /** The locations with a note of the person's own, marked as such. */
+  noted?: ReadonlySet<string> | null;
 }
 
 /**
  * Map markers for the locations on a layer, with their category's colour and
- * glyph. Found locations are muted.
+ * glyph. Found locations are muted; locations with a note of one's own carry
+ * a mark.
  */
 export function layerMarkers(
   pack: LoadedPack,
   layerId: string,
   options: LayerMarkerOptions = {},
 ): MapMarker[] {
-  const { filter, alwaysInclude = null } = options;
+  const { filter, alwaysInclude = null, noted = null } = options;
   const markers: MapMarker[] = [];
   for (const location of pack.locationsOn(layerId)) {
     if (filter && location.id !== alwaysInclude && !passesFilter(location, filter)) continue;
@@ -102,6 +105,7 @@ export function layerMarkers(
       icon: category?.icon ?? 'pin',
     };
     if (filter?.isFound(location.id)) marker.muted = true;
+    if (noted?.has(location.id)) marker.noted = true;
     markers.push(marker);
   }
   return markers;

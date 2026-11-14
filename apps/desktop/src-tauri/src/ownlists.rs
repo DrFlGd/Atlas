@@ -6,8 +6,10 @@
 //!
 //! Their own locations, types and areas are kept the same way, in
 //! `<game id>.my-locations.json` ([`LOCATIONS`], see `ownLocations.ts` in
-//! the schema package), and their changes to the guide pages in
-//! `<game id>.my-pages.json` ([`PAGES`], see `ownPages.ts`).
+//! the schema package), their changes to the guide pages in
+//! `<game id>.my-pages.json` ([`PAGES`], see `ownPages.ts`), and their
+//! notes on the game's locations in `<game id>.my-notes.json` ([`NOTES`],
+//! see `ownNotes.ts`).
 //!
 //! It is never inside a pack folder, so nothing that replaces a pack's
 //! files touches it: refreshing a pack from its site, a newer pack that
@@ -67,8 +69,15 @@ pub const PAGES: OwnFile = OwnFile {
     what: "pages",
 };
 
+/// Own notes on the game's locations.
+pub const NOTES: OwnFile = OwnFile {
+    suffix: ".my-notes.json",
+    format: "atlas-own-notes",
+    what: "notes",
+};
+
 /// Every kind of own file.
-pub const OWN_FILES: [OwnFile; 3] = [LISTS, LOCATIONS, PAGES];
+pub const OWN_FILES: [OwnFile; 4] = [LISTS, LOCATIONS, PAGES, NOTES];
 
 /// The person's links between guide pages and the map (see `guidelinks`,
 /// which reads, writes and carries the file): described here too, so a map
@@ -230,7 +239,7 @@ pub fn delete(maps_folder: &Path, game_id: &str) -> Result<bool, String> {
 }
 
 /// When the maps folder changes: the own files of the old folder (lists,
-/// locations, pages) go to the new one, moved (`move_files`, with the pack
+/// locations, pages, notes) go to the new one, moved (`move_files`, with the pack
 /// folders) or copied (the old folder stays listed with its packs, and
 /// keeps its copies). A file the new folder has already is left as it is
 /// in both. The names carried over.
@@ -459,5 +468,36 @@ mod tests {
             read(third.0.as_path(), "demo").unwrap(),
             Some(lists("demo"))
         );
+    }
+
+    #[test]
+    fn keeps_own_notes_in_a_file_of_their_own() {
+        let maps = TempDir::new("own-notes-1");
+        let path = maps.0.as_path();
+        let notes = |game: &str| {
+            format!(
+                r#"{{"format":"atlas-own-notes","version":1,"gameId":"{game}","updatedAt":"2026-11-14T10:00:00.000Z","notes":{{}}}}"#
+            )
+        };
+        assert_eq!(NOTES.read(path, "demo").unwrap(), None);
+        NOTES.write(path, "demo", &notes("demo"), None).unwrap();
+        assert!(path.join("demo.my-notes.json").is_file());
+        assert_eq!(NOTES.read(path, "demo").unwrap(), Some(notes("demo")));
+        // Not another kind of own file, nor another game's notes.
+        assert!(NOTES.write(path, "demo", &lists("demo"), None).is_err());
+        assert!(NOTES.write(path, "demo", &notes("other"), None).is_err());
+        // A copy is kept when asked.
+        let kept = NOTES
+            .write(path, "demo", &notes("demo"), Some("2026-11-14"))
+            .unwrap();
+        assert_eq!(kept.as_deref(), Some("demo.my-notes.2026-11-14.json"));
+        // Carried with the other own files.
+        let new = TempDir::new("own-notes-2");
+        assert_eq!(
+            carry_over(path, new.0.as_path(), false),
+            vec!["demo.my-notes.json"]
+        );
+        assert!(NOTES.delete(path, "demo").unwrap());
+        assert!(!NOTES.delete(path, "demo").unwrap());
     }
 }

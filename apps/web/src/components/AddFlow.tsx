@@ -437,7 +437,11 @@ function Check({ phase }: { phase: Extract<ImportPhase, { kind: 'check' }> }) {
 const WAITING_TURN =
   'This game is being changed by another step, such as being built again from its saved pages. This page is added as soon as that is done, so nothing either of them adds is lost.';
 
-function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | 'converting' }> }) {
+export function Progress({
+  phase,
+}: {
+  phase: Extract<ImportPhase, { kind: 'waiting' | 'converting' }>;
+}) {
   if (phase.kind === 'converting') {
     return (
       <section className="dialog-section" aria-busy="true" data-testid="add-map-progress">
@@ -456,6 +460,11 @@ function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | '
             total={phase.savedPages}
             done={phase.savedDone}
           />
+        ) : phase.pages ? (
+          <p role="status" data-testid="add-map-writing-page">
+            <strong>Writing the page into its game…</strong> {phase.importer} is adding the page to
+            the game’s pages. No map is built.
+          </p>
         ) : (
           <p role="status">
             <strong>Building the map…</strong> {phase.importer} is turning the page data into a map
@@ -742,7 +751,7 @@ function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> })
 }
 
 /** The state of one page of a run, in words. */
-function PageState({ state }: { state: RunPageState }) {
+export function PageState({ state }: { state: RunPageState }) {
   switch (state.kind) {
     case 'waiting':
       return <span className="muted small">Waiting</span>;
@@ -756,7 +765,15 @@ function PageState({ state }: { state: RunPageState }) {
         </span>
       ) : (
         <span className="small">
-          <strong>{state.measuring ? 'Measuring the map picture…' : 'Building the map…'}</strong>
+          <strong>
+            {state.measuring
+              ? 'Measuring the map picture…'
+              : state.of === 'pages'
+                ? 'Writing the page into its game…'
+                : state.of === 'list'
+                  ? 'Reading the list…'
+                  : 'Building the map…'}
+          </strong>
         </span>
       );
     case 'added':

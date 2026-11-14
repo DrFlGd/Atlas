@@ -213,12 +213,38 @@ describe('matching pages to the map', () => {
     expect(names.find('  ')).toEqual([]);
   });
 
-  it('puts a location’s own name before its type, and its type before its region', () => {
+  it('puts the location alone first, then its own name, its type, and its region', () => {
     const name = names.resolve({ to: 'name', name: 'Wolf den' })!;
     const type = names.resolve({ to: 'type', id: 'isle:cat:den' })!;
     const region = names.resolve({ to: 'region', id: 'isle:region:south' })!;
-    const sorted = [region, type, name].sort((a, b) => specificity(a) - specificity(b));
-    expect(sorted.map((t) => t.what)).toEqual(['name', 'type', 'region']);
+    const one = names.resolve({ to: 'location', id: 'isle:loc:d2' })!;
+    const sorted = [region, type, name, one].sort((a, b) => specificity(a) - specificity(b));
+    expect(sorted.map((t) => t.what)).toEqual(['location', 'name', 'type', 'region']);
+  });
+
+  it('resolves a target of one location, by its id, with its name', () => {
+    expect(names.resolve({ to: 'location', id: 'isle:loc:s2' })).toEqual({
+      target: { to: 'location', id: 'isle:loc:s2' },
+      what: 'location',
+      label: 'Stone warden 2',
+      locations: ['isle:loc:s2'],
+    });
+    expect(names.resolve({ to: 'location', id: 'isle:loc:gone' })).toBeNull();
+    expect(
+      names.locationsOf([
+        { to: 'location', id: 'isle:loc:d1' },
+        { to: 'name', name: 'Wolf den' },
+      ]),
+    ).toEqual(['isle:loc:d1', 'isle:loc:d2']);
+  });
+
+  it('gives the name target of every location with a location’s name, without its number', () => {
+    const warden = names.nameTargetOf('isle:loc:s2')!;
+    expect(warden.target).toEqual({ to: 'name', name: 'Stone warden' });
+    expect(warden.locations).toEqual(['isle:loc:s1', 'isle:loc:s2']);
+    expect(names.nameTargetOf('isle:loc:d1')!.locations).toHaveLength(2);
+    expect(names.nameTargetOf('isle:loc:r1')!.locations).toEqual(['isle:loc:r1']);
+    expect(names.nameTargetOf('isle:loc:gone')).toBeNull();
   });
 });
 

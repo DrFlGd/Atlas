@@ -116,7 +116,9 @@ Coloured words are `[like this]{color=#b8714a}`: the words in brackets and, righ
 
 Pages read from a site (guides with a `source`) can be linked to the map. **Link pages to the map**, at the top of the contents, compares each page's title with the game's types, location names and regions (without case, accents, punctuation, a leading article or simple plurals; a location name is also tried without its number) and lists the pages in three groups: **Sure** (one clear match), **Unsure** (several matches, or only a near one) and **No match**. Each page can be confirmed, changed to another type, location name or region found by name, or skipped; **Confirm all sure** confirms the first group at once. Nothing is linked until the person confirms it. Linking is done on a larger screen (a tablet on its side or a computer); a phone uses the links and says so.
 
-A linked page shows **From the wiki** on the cards of its locations (the page most about the location first: its own name, then its type, then its region; with its first lines, its credit and **Read the full page**), and the page shows **On the map: N locations** with **Show on the map**, which shows only those locations until the chip "Only …" is closed. In the list editor, **Link a guide** in a step's note tools finds a page by name and puts an in-app link to it in the note.
+A linked page shows **From the wiki** on the cards of its locations (the page most about the location first: the location alone, its own name, then its type, then its region; with its first lines, its credit and **Read the full page**), and the page shows **On the map: N locations** with **Show on the map**, which shows only those locations until the chip "Only …" is closed. In the list editor, **Link a guide** in a step's note tools finds a page by name and puts an in-app link to it in the note.
+
+A location's card can also find its page itself, in the standard layout. **Search wiki**, on the card of a location no page is linked to, lists the saved pages that may be about it, the best first, each with **Read** and **This is the page**; on a card with a linked page, **Search for another page** does the same, and **Not this page** takes the link off (with Undo). Only pages already saved are searched; nothing is fetched. A page is found by its title or another name (an id the page was read under before, from the pack's `idMigrations`), whatever their case, accents, punctuation, leading article, simple plurals, a note in brackets or a number at the end, with the words in any order, a word misspelt by a letter (by two in a word of eight letters or more; none in a word of three letters or fewer, or a number; two letters swapped count as one) and words written together or apart taken as the same; a rarer word counts for more than a word many titles share. Pages whose text only mentions the name come after. The pages of other games read with this one are searched too. **This is the page** links the page to every location of the location's name, or only to this one: it asks which when the map has more than one location of that name, and links to the name at once when it has only this one. A page can be linked to at most 20 things on the map. The search itself is `PageNameIndex` in `packages/core/src/guides/nameMatch.ts`, which indexes titles by word so a wiki of thousands of pages is searched as a name is typed.
 
 A game with a map can also read the pages of another game on the device that has pages and no map (a wiki read as a game of its own): **Add guides from another game**, at the top of its contents. Those pages are read under their own heading, with their own ids, and can be linked to this map like the game's own. The other game's pack is never changed; **Stop reading here** takes them away again.
 
@@ -125,7 +127,7 @@ The choices are the person's own and are kept beside the map, not in the pack: i
 ```json
 {
   "format": "atlas-guide-links",
-  "version": 1,
+  "version": 2,
   "gameId": "demo",
   "updatedAt": "2026-11-13T10:00:00.000Z",
   "guidesFrom": [{ "gameId": "isle-wiki" }],
@@ -138,12 +140,16 @@ The choices are the person's own and are kept beside the map, not in the pack: i
       "state": "linked",
       "targets": [{ "to": "name", "name": "Wolf den" }]
     },
+    "demo:guide:wiki-wardens": {
+      "state": "linked",
+      "targets": [{ "to": "location", "id": "demo:loc:0412" }]
+    },
     "demo:guide:wiki-regions": { "state": "skipped" }
   }
 }
 ```
 
-`choices` is keyed by guide id (of this game, or of a game in `guidesFrom`); a target is a type (`{ "to": "type", "id": "<gameId>:cat:…" }`), a location name (`{ "to": "name", "name" }`, every location of that name or of that name with a number) or a region (`{ "to": "region", "id": "<gameId>:region:…" }`, with its sub-regions), at most 20 per page. The file is written strictly and read tolerantly: unknown fields are ignored, a choice that cannot be read is left out (and a copy of the file is kept before it is next written), and choices for pages the game does not have now are kept, so reading the pages again keeps them. It holds no personal data. A map pack file carries it with the person's own things (`mine/guide-links.json`).
+`choices` is keyed by guide id (of this game, or of a game in `guidesFrom`); a target is a type (`{ "to": "type", "id": "<gameId>:cat:…" }`), a location name (`{ "to": "name", "name" }`, every location of that name or of that name with a number), a region (`{ "to": "region", "id": "<gameId>:region:…" }`, with its sub-regions) or one location alone (`{ "to": "location", "id": "<gameId>:loc:…" }`, from **Only this one** on its card), at most 20 per page. A location's pages are looked up in that order: the location alone, its name, its type, its region. The file is version 2 only while some page is linked to one location alone, and version 1 otherwise, as Atlas 0.6.3 writes it; an older Atlas reads a version 2 file and uses it without changing it, and says so. The file is written strictly and read tolerantly: unknown fields are ignored, a choice that cannot be read is left out (and a copy of the file is kept before it is next written), and choices for pages the game does not have now are kept, so reading the pages again keeps them. It holds no personal data. A map pack file carries it with the person's own things (`mine/guide-links.json`).
 
 #### Editing pages
 
@@ -194,6 +200,42 @@ The changes are the person's own and kept apart from the pack, so reading the wi
 ```
 
 A wiki page's record keeps only what the person changed (`title`, `body`, with `basedOn`, the wiki's text it was changed from), `hidden`, and `whenWikiChanges` (`"take"`; absent is "keep"); a page or section of one's own has an id starting `own.`. `contents` is the person's arrangement, when they made one: pages and sections of the pack it does not name (read from a newer pack) are put after the entry before them in the pack's contents, and one's own it does not name at the end. `pictures` are the person's own photos the pages show, kept with their own photos. The file is written strictly and read tolerantly, as the other own files are.
+
+#### My notes
+
+Every location's card has **My note** at its top, in the standard layout (a phone, a tablet or a computer): **Add a note** writes one there, in Markdown (hidden text included), with photos; **Edit** and **Delete** (with Undo) change it. A location with a note carries a small mark on the map, **With my notes** in the filters (and a chip over the map on a phone) shows only those locations, whatever types are shown, and search finds the words of notes after the names, each row saying the line of the note. The note of a location of one's own is the one kept with that location (in the own locations file, `<gameId>.my-locations.json`), shown and changed there the same way.
+
+A note is kept under the location's id as it was when it was written. When the pack renames a location (its `idMigrations`) the note follows it; when the game no longer has the location, the note is kept and listed under **Notes without a location**, in the filters, with the name the location had, to read, copy or delete. When two notes lead to one location, the newer is shown and the other is listed there too; writing the note again keeps one.
+
+The notes are the person's own and kept apart from the pack: in the desktop app as the file `<gameId>.my-notes.json` in the maps folder (moved with the maps folder, deleted with the game only when **Also delete my locations, types and notes for this game** is ticked), in the browser and on Android in IndexedDB (the setting `ownNotes:<gameId>`). A map pack file carries them, with the person's other own things, as `mine/my-notes.json`. Both hold the same JSON:
+
+```json
+{
+  "format": "atlas-own-notes",
+  "version": 1,
+  "gameId": "demo",
+  "updatedAt": "2026-11-14T10:00:00.000Z",
+  "notes": {
+    "demo:loc:0412": {
+      "text": "The ladder is **behind** the well.\n\n||Use the rusted key.||",
+      "name": "Old well",
+      "photos": [{ "picture": "demo:picture:own.ab12", "spoiler": true }],
+      "updatedAt": "2026-11-14T10:00:00.000Z"
+    }
+  },
+  "pictures": [
+    {
+      "id": "demo:picture:own.ab12",
+      "file": "pictures/own.ab12.png",
+      "shareable": true,
+      "width": 1280,
+      "height": 720
+    }
+  ]
+}
+```
+
+`notes` is keyed by location id, of this game's locations only (a location of one's own keeps its note itself); `name` is the location's name when the note was written, at most 200 characters, and `text` at most 20,000 characters of Markdown; a note has words or a photo. Notes are written in the order of their ids, so the file changes only where a note does. `pictures` are the person's own photos the notes show, kept with their own photos and never deleted as unused while a note shows them. The file is written strictly and read tolerantly, as the other own files are: a note that cannot be read is left out and counted (and a copy of the file is kept before it is next written), and a file a newer Atlas wrote is shown and not changed.
 
 ## The demo pack
 

@@ -132,6 +132,8 @@ export function targetText(info: TargetInfo): string {
       return `${info.label} (region)`;
     case 'name':
       return `${info.label} (location name)`;
+    case 'location':
+      return `${info.label} (this location only)`;
   }
 }
 

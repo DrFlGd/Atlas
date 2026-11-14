@@ -3,6 +3,7 @@ import { deleteImagesResult, deletePackResult, plainError } from '../components/
 import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
 import { deleteGuideLinksOf } from './guideLinks';
+import { deleteOwnNotesOf, ownNotesBackend } from './ownNotes';
 import { deleteOwnPagesOf, ownPagesBackend } from './ownPages';
 import { applyListing } from './library';
 import { deleteOwnListsOf, ownListsBackend } from './ownLists';
@@ -59,7 +60,10 @@ export async function deletePack(
    * their own pages and changes to its pages (see `ownPages.ts`).
    */
   deleteLists = false,
-  /** Also the person's own locations, types and areas of the game (see `ownLocations.ts`). */
+  /**
+   * Also the person's own locations, types and areas of the game (see
+   * `ownLocations.ts`), and their notes on its locations (see `ownNotes.ts`).
+   */
   deleteLocations = false,
 ): Promise<RemovalOutcome> {
   if (!desktop) return { ok: false, error: 'Maps can only be deleted in the desktop app.' };
@@ -82,7 +86,10 @@ export async function deletePack(
               ...picturesInFile(await ownListsBackend().read(id), 'lists'),
               ...picturesInFile(await ownPagesBackend().read(id), 'pages'),
             ]
-          : picturesInFile(await ownLocationsBackend().read(id), 'locations');
+          : [
+              ...picturesInFile(await ownLocationsBackend().read(id), 'locations'),
+              ...picturesInFile(await ownNotesBackend().read(id), 'notes'),
+            ];
         await deleteOwnPictures(id, pictures);
       }
     } catch {
@@ -103,9 +110,11 @@ export async function deletePack(
   if (deleteLocations) {
     try {
       await deleteOwnLocationsOf(id);
+      // Their notes on its locations go with their locations.
+      await deleteOwnNotesOf(id);
     } catch {
       notify(
-        `Deleted ${title}, but your locations and types for it could not be deleted.`,
+        `Deleted ${title}, but your locations, types and notes for it could not be deleted.`,
         'error',
       );
       return { ok: true };

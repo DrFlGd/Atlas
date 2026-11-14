@@ -82,7 +82,10 @@ export function DeletePackConfirmView({
   /** The person's own lists of the game, kept beside the pack; offered when this is given. */
   withLists?: boolean;
   onWithLists?: (checked: boolean) => void;
-  /** The person's own locations, types and areas of the game; offered when this is given. */
+  /**
+   * The person's own locations, types and areas of the game, and their
+   * notes on its locations; offered when this is given.
+   */
   withLocations?: boolean;
   onWithLocations?: (checked: boolean) => void;
   onConfirm: () => void;
@@ -145,7 +148,7 @@ export function DeletePackConfirmView({
               onWithLocations(event.target.checked);
             }}
           />{' '}
-          Also delete my locations and types for this game
+          Also delete my locations, types and notes for this game
         </label>
       ) : null}
       {error ? (

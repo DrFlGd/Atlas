@@ -67,5 +67,23 @@ describe('own photos', () => {
     expect(picturesInFile(null, 'lists')).toEqual([]);
     expect(picturesInFile('not json', 'locations')).toEqual([]);
     expect(picturesInFile(lists, 'locations')).toEqual([]);
+    // The photos of one's notes, as the game is deleted with them.
+    const notes = JSON.stringify({
+      format: 'atlas-own-notes',
+      version: 1,
+      gameId: 'demo',
+      updatedAt: '2026-11-14T10:00:00.000Z',
+      notes: {
+        'demo:loc:1': {
+          text: '',
+          name: 'Old well',
+          photos: [{ picture: picture.id }],
+          updatedAt: '2026-11-14T10:00:00.000Z',
+        },
+      },
+      pictures: [picture],
+    });
+    expect(picturesInFile(notes, 'notes')).toEqual([picture]);
+    expect(picturesInFile(notes, 'lists')).toEqual([]);
   });
 });

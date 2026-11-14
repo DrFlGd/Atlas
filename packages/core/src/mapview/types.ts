@@ -47,6 +47,8 @@ export interface MapMarker {
   icon?: string;
   /** Drawn faded, for locations already found. */
   muted?: boolean;
+  /** Drawn with a small mark, for a location with a note of the person's own. */
+  noted?: boolean;
 }
 
 /** The marker under the pointer, and where it sits in container pixels. */

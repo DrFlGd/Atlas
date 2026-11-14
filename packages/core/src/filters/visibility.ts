@@ -39,13 +39,22 @@ export interface MarkerFilter {
    * they are back as soon as this goes.
    */
   only?: ReadonlySet<string> | null;
+  /**
+   * Only the locations with a note of the person's own ("With my notes"),
+   * whatever types are shown; with `only`, those of them it has.
+   */
+  withNotes?: ReadonlySet<string> | null;
 }
 
-/** Whether a location passes the category filter (or the `only` set) and the "hide found" toggle. */
+/**
+ * Whether a location passes the category filter (or the `only` set, or the
+ * locations with notes) and the "hide found" toggle.
+ */
 export function passesFilter(location: Location, filter: MarkerFilter): boolean {
+  if (filter.withNotes && !filter.withNotes.has(location.id)) return false;
   if (filter.only) {
     if (!filter.only.has(location.id)) return false;
-  } else if (!filter.visibleCategories.has(location.categoryId)) {
+  } else if (!filter.withNotes && !filter.visibleCategories.has(location.categoryId)) {
     return false;
   }
   return !(filter.hideFound && filter.isFound(location.id));

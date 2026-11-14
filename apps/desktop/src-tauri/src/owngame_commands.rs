@@ -24,7 +24,7 @@ use crate::{
     commands::{blocking, desktop_only, short, LibraryState},
     library::{Library, Listing},
     owngame::{self, Added},
-    ownlists::{OwnFile, LOCATIONS, PAGES},
+    ownlists::{OwnFile, LOCATIONS, NOTES, PAGES},
 };
 
 // ---------------------------------------------------------------------------
@@ -556,6 +556,52 @@ pub async fn own_pages_delete(library: LibraryState<'_>, game_id: String) -> Res
             activity::info(
                 Area::Library,
                 format!("Deleted the own pages of {game_id}, as asked with the game"),
+            );
+        }
+        Ok(deleted)
+    })
+    .await
+}
+
+/// A person's own notes on the locations of a game, from their file beside
+/// the game's folder (see `ownlists::NOTES`); `None` when there is none yet.
+/// Not on Android, where the web app keeps them itself.
+#[tauri::command]
+pub async fn own_notes_read(
+    library: LibraryState<'_>,
+    game_id: String,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || NOTES.read(&maps, &game_id)).await
+}
+
+/// Writes a person's own notes of a game, whole and at once; with
+/// `keep_copy` (a time), the file as it was is kept beside it first.
+#[tauri::command]
+pub async fn own_notes_write(
+    library: LibraryState<'_>,
+    game_id: String,
+    contents: String,
+    keep_copy: Option<String>,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || write_own_file(NOTES, &maps, &game_id, &contents, keep_copy.as_deref())).await
+}
+
+/// Deletes a person's own notes of a game, when they ask for it as they
+/// delete the game. Whether there were any.
+#[tauri::command]
+pub async fn own_notes_delete(library: LibraryState<'_>, game_id: String) -> Result<bool, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || {
+        let deleted = NOTES.delete(&maps, &game_id)?;
+        if deleted {
+            activity::info(
+                Area::Library,
+                format!("Deleted the own notes of {game_id}, as asked with the game"),
             );
         }
         Ok(deleted)
