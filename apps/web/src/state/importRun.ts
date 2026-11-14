@@ -156,7 +156,12 @@ export type RunPageState =
       attention?: boolean;
     }
   /** The page data is being turned into a map; `measuring` while its picture is measured. */
-  | { kind: 'converting'; measuring?: boolean }
+  | {
+      kind: 'converting';
+      measuring?: boolean;
+      /** It waits for another step changing the same game (see `packTurns.ts`). */
+      waiting?: boolean;
+    }
   | {
       kind: 'added';
       game: string;
