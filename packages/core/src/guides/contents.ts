@@ -1,5 +1,6 @@
-import type { GuideEntry, Section } from '@atlas/schema';
+import { isOwnId, type GuideEntry, type Section } from '@atlas/schema';
 import type { LoadedPack } from '../pack/loadedPack';
+import { guideLinks, placePagesByLinks } from './pageTree';
 
 /**
  * A pack's guides as pages to browse: its contents (`sections.json`), the
@@ -12,20 +13,66 @@ import type { LoadedPack } from '../pack/loadedPack';
  */
 export type ContentsEntry =
   | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
-  | { kind: 'page'; guide: GuideEntry };
+  | { kind: 'page'; guide: GuideEntry; /** Pages under it, however deep. */ pages: number };
+
+/** A step of the way from the top of the contents to an entry: a section, or a page. */
+export type ContentsStep =
+  { kind: 'section'; section: Section } | { kind: 'page'; guide: GuideEntry };
 
 /**
  * Guides to browse as pages: a pack's data, or a pack's pages with a
  * person's own laid over them (see `applyOwnPages`). With `top`, the top of
  * the contents is that list, of sections and pages, and the pages are those
  * it and its sections hold, however deep; without it, the top is every
- * section no other section lists, as a pack's contents says.
+ * section no other section lists, as a pack's contents says. With `under`,
+ * the pages the person put under a page, by that page's id.
  */
 export interface GuidePages {
   data: Pick<LoadedPack['data'], 'guides' | 'sections' | 'maps'>;
   top?: readonly string[];
+  under?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Other ids of guides, by the id that replaces each (a pack's
+   * `idMigrations`): a link to another name of a page is a link to the page.
+   */
+  aliases?: Readonly<Record<string, string>>;
 }
 
+/** The id a guide id stands for now, through `aliases` (a few steps at most). */
+export function aliasedId(aliases: Readonly<Record<string, string>> | undefined, id: string) {
+  let current = id;
+  for (let hops = 0; hops < 32 && aliases?.[current] !== undefined; hops++) {
+    current = aliases[current]!;
+  }
+  return current;
+}
+
+/** The pages a guide links to, through `aliases`, each once, never itself. */
+export function linksThrough(
+  guide: GuideEntry,
+  aliases: Readonly<Record<string, string>> | undefined,
+): readonly string[] {
+  const links = guideLinks(guide);
+  if (!aliases || Object.keys(aliases).length === 0) return links;
+  const out: string[] = [];
+  const seen = new Set<string>([guide.id]);
+  for (const link of links) {
+    const id = aliasedId(aliases, link);
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * The contents as shown: sections that hold sections and pages, and pages
+ * that hold pages. A page of a section marked `placeByLinks` is shown
+ * under the page that leads to it (see `pageTree.ts`); every entry has one
+ * home, its first place in the contents, top to bottom, which the way to
+ * it (`trail`) follows.
+ */
 export class GuideContents {
   /** Whether the pack has guides to browse as pages: a contents, or no map but guides. */
   readonly browsable: boolean;
@@ -33,17 +80,32 @@ export class GuideContents {
   readonly hasContents: boolean;
   private readonly sections: ReadonlyMap<string, Section>;
   private readonly guides: ReadonlyMap<string, GuideEntry>;
-  private readonly parent = new Map<string, string>();
-  private readonly topIds: string[];
+  /** What the pack and the person list: by section id, and by page id the pages put under it. */
+  private readonly baseLists: ReadonlyMap<string, readonly string[]>;
+  private readonly baseTop: readonly string[];
+  private readonly byLinkSections: ReadonlySet<string>;
+  /** The contents as shown (see {@link shown}). */
+  private tree: { top: readonly string[]; lists: ReadonlyMap<string, readonly string[]> } | null =
+    null;
+  /** Each entry's home: the section or page of its first place, or null at the top. */
+  private readonly home = new Map<string, string | null>();
+  /** Every entry at its home, top to bottom. */
+  private readonly inOrder: string[] = [];
   /** With no contents, the guides listed at the top, in guide order. */
   private readonly loose: GuideEntry[];
   /** Every guide the contents lists, however deep. */
   private readonly listed = new Set<string>();
   private readonly pageCounts = new Map<string, number>();
+  /** The pages placed under a page by their links: by page id, that page. */
+  private byLinks: ReadonlyMap<string, string> = new Map();
+  /** By page id, the pages of the contents that link to it, in contents order; when first asked. */
+  private linkedTo: Map<string, string[]> | null = null;
+  private readonly aliases: Readonly<Record<string, string>> | undefined;
 
   constructor(pack: GuidePages) {
     const sections = pack.data.sections ?? [];
     const guides = sortGuides(pack.data.guides);
+    this.aliases = pack.aliases;
     this.sections = new Map(sections.map((s) => [s.id, s]));
     this.guides = new Map(guides.map((g) => [g.id, g]));
     const top = pack.top;
@@ -54,50 +116,102 @@ export class GuideContents {
         ? top.some((id) => this.sections.has(id) || this.guides.has(id))
         : this.hasContents || (!hasMap && guides.length > 0);
 
+    // What the pack and the person list: sections, and pages under pages.
+    const lists = new Map<string, readonly string[]>();
+    const listedBy = new Set<string>();
     for (const section of sections) {
+      if (lists.has(section.id)) continue;
+      lists.set(section.id, section.items);
       for (const item of section.items) {
-        if (this.sections.has(item)) {
-          if (!this.parent.has(item)) this.parent.set(item, section.id);
-        } else if (this.guides.has(item)) this.listed.add(item);
+        if (this.sections.has(item)) listedBy.add(item);
+        else if (this.guides.has(item)) this.listed.add(item);
       }
     }
+    for (const [id, items] of Object.entries(pack.under ?? {})) {
+      if (!this.guides.has(id)) continue;
+      lists.set(id, items);
+      for (const item of items) if (this.guides.has(item)) this.listed.add(item);
+    }
+    let topIds: string[];
     if (top !== undefined) {
-      this.topIds = top.filter((id) => this.sections.has(id) || this.guides.has(id));
-      for (const id of this.topIds) {
-        if (this.guides.has(id)) this.listed.add(id);
-        // A section at the top is listed by none.
-        else this.parent.delete(id);
-      }
+      topIds = top.filter((id) => this.sections.has(id) || this.guides.has(id));
+      for (const id of topIds) if (this.guides.has(id)) this.listed.add(id);
     } else {
-      this.topIds = sections.filter((s) => !this.parent.has(s.id)).map((s) => s.id);
+      topIds = sections.filter((s) => !listedBy.has(s.id)).map((s) => s.id);
     }
+
+    this.baseTop = topIds;
+    this.baseLists = lists;
+    this.byLinkSections = new Set(sections.filter((s) => s.placeByLinks === true).map((s) => s.id));
     this.loose = this.browsable && !this.hasContents ? guides : [];
-    // Only sections listed from the top count; a pack checked for integrity has no loops.
-    for (const id of this.topIds) if (this.sections.has(id)) this.countPages(id, new Set());
   }
 
-  private countPages(id: string, seen: Set<string>): Set<string> {
-    const pages = new Set<string>();
-    const section = this.sections.get(id);
-    if (!section || seen.has(id)) return pages;
-    seen.add(id);
-    for (const item of section.items) {
-      if (this.sections.has(item)) for (const page of this.countPages(item, seen)) pages.add(page);
-      else if (this.guides.has(item)) pages.add(item);
+  /**
+   * The contents as shown, worked out when first asked: placing pages by
+   * their links reads every page's text, which only the Guides section needs.
+   */
+  private shown(): { top: readonly string[]; lists: ReadonlyMap<string, readonly string[]> } {
+    if (this.tree) return this.tree;
+    const shown = (id: string) => this.listed.has(id) && !isOwnId(id);
+    const tree = placePagesByLinks({
+      top: this.baseTop,
+      lists: this.baseLists,
+      isSection: (id) => this.sections.has(id),
+      isPage: (id) => this.guides.has(id),
+      byLinks: this.byLinkSections,
+      linksOf: (id) => linksThrough(this.guides.get(id)!, this.aliases),
+      leads: shown,
+      movable: shown,
+    });
+    this.tree = tree;
+    this.byLinks = tree.placed;
+    for (const id of tree.top) if (this.guides.has(id)) this.listed.add(id);
+    this.walk(tree.top, tree.lists);
+    return tree;
+  }
+
+  /** Each entry's home and place, top to bottom, and the pages under each. */
+  private walk(top: readonly string[], lists: ReadonlyMap<string, readonly string[]>): void {
+    const inOrder = this.inOrder;
+    const stack: { parent: string | null; items: readonly string[]; at: number }[] = [
+      { parent: null, items: top, at: 0 },
+    ];
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      if (frame.at >= frame.items.length) {
+        stack.pop();
+        continue;
+      }
+      const id = frame.items[frame.at++]!;
+      if (this.home.has(id) || (!this.sections.has(id) && !this.guides.has(id))) continue;
+      this.home.set(id, frame.parent);
+      inOrder.push(id);
+      const items = lists.get(id);
+      if (items && items.length > 0) stack.push({ parent: id, items, at: 0 });
     }
-    this.pageCounts.set(id, pages.size);
-    return pages;
+    // From the bottom up: an entry counts the pages it holds, and theirs where they are at home.
+    for (let i = inOrder.length - 1; i >= 0; i--) {
+      const id = inOrder[i]!;
+      let count = 0;
+      for (const item of lists.get(id) ?? []) {
+        if (this.guides.has(item)) count += 1;
+        if (this.home.get(item) === id) count += this.pageCounts.get(item) ?? 0;
+      }
+      this.pageCounts.set(id, count);
+    }
   }
 
   /** What the top of the contents lists: its sections (or, with no contents, every page). */
   top(): ContentsEntry[] {
-    if (!this.hasContents) return this.loose.map((guide) => ({ kind: 'page', guide }));
-    return this.topIds.flatMap((id) => this.entry(id));
+    if (!this.hasContents) {
+      return this.loose.map((guide) => ({ kind: 'page', guide, pages: 0 }));
+    }
+    return this.shown().top.flatMap((id) => this.entry(id));
   }
 
   /** The ids at the top of the contents, in order: sections, and pages (see {@link GuidePages}). */
   topEntryIds(): readonly string[] {
-    return this.hasContents ? this.topIds : this.loose.map((guide) => guide.id);
+    return this.hasContents ? this.shown().top : this.loose.map((guide) => guide.id);
   }
 
   /** Whether a guide is one of the pages browsed here. */
@@ -113,79 +227,94 @@ export class GuideContents {
     return this.guides.get(id);
   }
 
-  /** The guides and sections in a section, in order; items the pack lacks are left out. */
-  items(sectionId: string): ContentsEntry[] {
-    return (this.sections.get(sectionId)?.items ?? []).flatMap((id) => this.entry(id));
+  /** What a section or a page holds, in order; items the pack lacks are left out. */
+  items(id: string): ContentsEntry[] {
+    return (this.shown().lists.get(id) ?? []).flatMap((item) => this.entry(item));
+  }
+
+  /** How many entries a section or a page holds (not counting deeper ones). */
+  itemCount(id: string): number {
+    return this.shown().lists.get(id)?.length ?? 0;
   }
 
   private entry(id: string): ContentsEntry[] {
+    this.shown();
     const section = this.sections.get(id);
     if (section) return [{ kind: 'section', section, pages: this.pageCounts.get(id) ?? 0 }];
     const guide = this.guides.get(id);
-    return guide ? [{ kind: 'page', guide }] : [];
+    return guide ? [{ kind: 'page', guide, pages: this.pageCounts.get(id) ?? 0 }] : [];
+  }
+
+  /** Where an entry is at home: its section or page, null at the top, undefined when not listed. */
+  parentOf(id: string): string | null | undefined {
+    this.shown();
+    return this.home.get(id);
+  }
+
+  /**
+   * The way from the top down to an entry (a guide or a section): the
+   * sections and pages it is under, outermost first.
+   */
+  trail(id: string): ContentsStep[] {
+    this.shown();
+    const path: ContentsStep[] = [];
+    const seen = new Set<string>([id]);
+    for (let at = this.home.get(id); at != null && !seen.has(at); at = this.home.get(at)) {
+      seen.add(at);
+      const section = this.sections.get(at);
+      if (section) path.push({ kind: 'section', section });
+      else {
+        const guide = this.guides.get(at);
+        if (!guide) break;
+        path.push({ kind: 'page', guide });
+      }
+    }
+    return path.reverse();
   }
 
   /** The sections from the top down to the one holding `id` (a guide or a section), outermost first. */
   pathTo(id: string): Section[] {
-    let at: string | undefined = this.sections.has(id) ? this.parent.get(id) : this.holderOf(id);
-    const path: Section[] = [];
-    const seen = new Set<string>();
-    while (at !== undefined && !seen.has(at)) {
-      seen.add(at);
-      const section = this.sections.get(at);
-      if (!section) break;
-      path.unshift(section);
-      at = this.parent.get(at);
-    }
-    return path;
+    return this.trail(id).flatMap((step) => (step.kind === 'section' ? [step.section] : []));
   }
 
-  /** The first section, in contents order, that lists a guide. */
-  private holderOf(guideId: string): string | undefined {
-    const visit = (id: string, seen: Set<string>): string | undefined => {
-      const section = this.sections.get(id);
-      if (!section || seen.has(id)) return undefined;
-      seen.add(id);
-      for (const item of section.items) {
-        if (item === guideId) return id;
-        const inner = this.sections.has(item) ? visit(item, seen) : undefined;
-        if (inner) return inner;
+  /** Whether a page is where it is because of its links (see `pageTree.ts`). */
+  placedByLinks(guideId: string): boolean {
+    this.shown();
+    return this.byLinks.has(guideId);
+  }
+
+  /**
+   * The pages of the contents that link to a page, in contents order, top
+   * to bottom, but the page it is under: "also linked from".
+   */
+  linkedFrom(guideId: string): GuideEntry[] {
+    if (!this.linkedTo) {
+      const linkedTo = new Map<string, string[]>();
+      for (const page of this.pages()) {
+        for (const target of linksThrough(page, this.aliases)) {
+          if (!this.listed.has(target)) continue;
+          const from = linkedTo.get(target);
+          if (from) from.push(page.id);
+          else linkedTo.set(target, [page.id]);
+        }
       }
-      return undefined;
-    };
-    const seen = new Set<string>();
-    for (const id of this.topIds) {
-      const found = visit(id, seen);
-      if (found) return found;
+      this.linkedTo = linkedTo;
     }
-    return undefined;
+    const home = this.home.get(guideId);
+    return (this.linkedTo.get(guideId) ?? [])
+      .filter((id) => id !== home)
+      .map((id) => this.guides.get(id)!);
   }
 
   /** Every page that can be browsed, in contents order, each once. */
   pages(): GuideEntry[] {
+    if (!this.hasContents) return [...this.loose];
+    this.shown();
     const out: GuideEntry[] = [];
-    const seen = new Set<string>();
-    const add = (guide: GuideEntry) => {
-      if (!seen.has(guide.id)) {
-        seen.add(guide.id);
-        out.push(guide);
-      }
-    };
-    const visit = (id: string, sections: Set<string>) => {
-      if (sections.has(id)) return;
-      sections.add(id);
-      for (const entry of this.items(id)) {
-        if (entry.kind === 'page') add(entry.guide);
-        else visit(entry.section.id, sections);
-      }
-    };
-    const sections = new Set<string>();
-    for (const id of this.topIds) {
-      const guide = this.sections.has(id) ? undefined : this.guides.get(id);
-      if (guide) add(guide);
-      else visit(id, sections);
+    for (const id of this.inOrder) {
+      const guide = this.guides.get(id);
+      if (guide) out.push(guide);
     }
-    this.loose.forEach(add);
     return out;
   }
 }

@@ -200,8 +200,8 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
           This app opens at most {MAX_RUN_ADDRESSES} pages at a time
           {pick.keptFrom === null ? ', and the list of games was one of them' : ''}. Each game needs
           its game page and at least one map, so only the first{' '}
-          {plural(plan.games.length, 'ticked game fits', 'ticked games fit')} in this go. These are
-          left for afterwards: {plan.leftOut.map((game) => game.name).join(', ')}.
+          {plural(plan.games.length, 'ticked game fits', 'ticked games fit')} in this session. These
+          are left for afterwards: {plan.leftOut.map((game) => game.name).join(', ')}.
         </p>
       ) : null}
       <div className="row-actions wrap">
@@ -378,10 +378,10 @@ export function ChoosePages({ choice }: { choice: Choice }) {
         ) : queues ? (
           <>
             A section’s name ticks or unticks every page under it; “From here on” ticks a page and
-            every page after it. This app reads the pages you tick in one go, one at a time with a
-            pause. If you stop it or the site asks it to wait, it keeps the rest, and the Library
-            offers to continue with them another time. Once pages are read, the wiki’s screen in the
-            Library lists all of its pages, to tick and read more.
+            every page after it. This app reads the pages you tick in one session, one at a time
+            with a pause. If you stop it or the site asks it to wait, it keeps the rest, and the
+            Library offers to continue with them another time. Once pages are read, the wiki’s
+            screen in the Library lists all of its pages, to tick and read more.
           </>
         ) : (
           <>
@@ -401,7 +401,7 @@ export function ChoosePages({ choice }: { choice: Choice }) {
       ) : null}
       {choice.leftOut.length > 0 ? (
         <p className="download-note" data-testid="add-map-choose-left-out">
-          These games did not fit in this go, so their game pages were not read:{' '}
+          These games did not fit in this session, so their game pages were not read:{' '}
           {choice.leftOut.join(', ')}. Add them afterwards.
         </p>
       ) : null}

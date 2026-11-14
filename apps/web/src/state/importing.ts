@@ -71,6 +71,8 @@ import {
   type RunState,
 } from './importRun';
 import { pagesToFollow, type FollowLinks } from './followLinks';
+import { notePackSaved, packSaves, packTurn } from './packTurns';
+import { packWritten } from './shownGameRefresh';
 import {
   KEPT_POLL_MS,
   PageWindows,
@@ -160,6 +162,8 @@ export type ImportPhase =
       importer: string;
       /** The importer is measuring the map's picture (see {@link measurePicture}). */
       measuring?: boolean;
+      /** It waits for another step changing the same game (see `packTurns.ts`). */
+      waiting?: boolean;
     }
   | {
       kind: 'done';
@@ -172,6 +176,8 @@ export type ImportPhase =
       links?: string[];
       /** Other pages the importer wrote again, with the pages each links to. */
       writtenAgain?: WrittenAgain[];
+      /** The address the page was read from, when that is another name of it. */
+      pageAddress?: string;
       title: string;
       summary: ImportSummary;
       rebuilt: boolean;
@@ -675,6 +681,13 @@ export async function startImport(text: string): Promise<void> {
         setPhase({ kind: 'converting', url, importer: importer.title, measuring: true });
       }
     },
+    {
+      onWaiting: () => {
+        if (id === session) {
+          setPhase({ kind: 'converting', url, importer: importer.title, waiting: true });
+        }
+      },
+    },
   );
   reportPhase(importer.id, outcome);
   if (id !== session) return;
@@ -732,6 +745,9 @@ export function resetImport(): void {
 
 /** The run in progress, if any. */
 let currentRun: ImportRun | null = null;
+
+/** Games asked to be built again while a go was under way, built when it ends. */
+const rebuildAfterGo = new Set<string>();
 
 /** Keeps what the person typed, so it is still there after going back. */
 export function setDraft(draft: string): void {
@@ -981,13 +997,22 @@ async function startRun(
           () => {
             update({ kind: 'converting', measuring: true });
           },
+          {
+            onWaiting: () => {
+              update({ kind: 'converting', waiting: true });
+            },
+          },
         );
         // The person did not confirm the site's licence: nothing more is read.
         if (outcome.kind === 'failed' && outcome.declined) run.stop();
         reportPhase(importer.id, outcome);
         if (importer.fetch && outcome.kind === 'done') {
-          const { links = [], writtenAgain = [] } = outcome;
-          void noteWikiRead(importer.id, url, links).then(() =>
+          // The game shown takes in the page now and then during a long go.
+          packWritten(outcome.packId, { duringGo: true });
+          const { links = [], writtenAgain = [], pageAddress } = outcome;
+          // Read under another name of it: that name is in the go now too.
+          if (pageAddress) inGo.add(pageKey(pageAddress));
+          void noteWikiRead(importer.id, url, links, pageAddress).then(() =>
             noteWikiLinks(importer.id, writtenAgain),
           );
           // The pages it links to join this go, when the person chose that.
@@ -1046,6 +1071,7 @@ async function startRun(
       inGo,
       read: recordedKeys(),
       leftOut: new Set(notes?.leftOut ?? []),
+      ...(notes ? { otherNames: notes.otherNames } : {}),
     });
     if (add.length === 0 || id !== session || run.state.stopRequested) return;
     // A page the wiki's contents list is filed under its heading there.
@@ -1094,6 +1120,17 @@ async function startRun(
     ),
   );
   for (const packId of withPictures) fetchPagePictures(packId);
+  // The game shown, if the go added to it, takes in every page read: it is loaded again.
+  const shownId = useAtlas.getState().game?.entry.id;
+  const addedToShown = final.pages.some(
+    ({ state }) => state.kind === 'added' && state.packId === shownId && !state.mapId,
+  );
+  if (shownId && addedToShown) packWritten(shownId);
+  // A game asked to be built again during the go is built now.
+  for (const packId of rebuildAfterGo) {
+    rebuildAfterGo.delete(packId);
+    void rebuildPack(packId);
+  }
   const counts = runCounts(final);
   if (final.stopReason) {
     report({
@@ -1241,6 +1278,8 @@ export function importContext(
       }
     },
     isBundled: (packId) => bundled.has(packId),
+    // Built again from the pages kept, as the person asked: nothing is fetched.
+    ...(rebuilt ? { rebuild: true } : {}),
     ...(listed ? { listed } : {}),
     ...(site.reading ? { reading: site.reading } : {}),
     ...(site.confirmedLicence ? { confirmedLicence: site.confirmedLicence } : {}),
@@ -1305,6 +1344,12 @@ async function convertAndSave(
   rebuilt = false,
   show = true,
   onMeasuring?: () => void,
+  turn: {
+    /** The pack whose turn the caller holds already (see `packTurns.ts`). */
+    held?: string;
+    /** Called when the page waits for another step changing the same pack. */
+    onWaiting?: () => void;
+  } = {},
 ): Promise<ImportPhase> {
   const shell = desktop;
   if (!shell) return { kind: 'idle' };
@@ -1331,7 +1376,16 @@ async function convertAndSave(
         ...(confirmedLicence ? { confirmedLicence } : {}),
       },
     );
-  let context = contextWith(site?.licence);
+  // When the importer read each pack: changed since, it reads it again (see `packTurns.ts`).
+  const readAt = new Map<string, number>();
+  const noting = (given: ImportContext): ImportContext => ({
+    ...given,
+    existingPack: (packId) => {
+      readAt.set(packId, packSaves(packId));
+      return given.existingPack(packId);
+    },
+  });
+  let context = noting(contextWith(site?.licence));
   const convert = async () => {
     try {
       return checkOutcome(await importer.convert(data, context), page.url);
@@ -1360,95 +1414,127 @@ async function convertAndSave(
       };
     }
     await setSiteLicence(importer.id, site.info.key, licence).catch(() => undefined);
-    context = contextWith(licence);
+    context = noting(contextWith(licence));
     outcome = await convert();
   }
   if (!outcome.ok) {
     return { kind: 'failed', message: outcome.message, ...(outcome.stop ? { refused: true } : {}) };
   }
-  const bundled = context.isBundled(outcome.packId);
-  if (bundled && !importer.refreshesBundledGames) {
-    return {
-      kind: 'failed',
-      message: `${outcome.summary.game} comes with this app, so it is not replaced by an import. Nothing was added.`,
-    };
+  // One step at a time changes a pack: this one waits for any other under way.
+  const mine = turn.held === outcome.packId ? null : packTurn(outcome.packId);
+  try {
+    if (mine) {
+      if (mine.waits) turn.onWaiting?.();
+      await mine.ready;
+      // Saved by another step meanwhile: the page is turned into the pack as it is now.
+      const read = readAt.get(outcome.packId);
+      if (read !== undefined && read !== packSaves(outcome.packId)) {
+        outcome = await convert();
+        if (!outcome.ok) {
+          return {
+            kind: 'failed',
+            message: outcome.message,
+            ...(outcome.stop ? { refused: true } : {}),
+          };
+        }
+      }
+    }
+    return await saveOutcome(outcome);
+  } finally {
+    mine?.done();
   }
 
-  const existing = await context.existingPack(outcome.packId);
-  if (bundled) {
-    // A refresh keeps every map the game has; the shell checks this, and the version, again.
-    const missing = (existing?.maps ?? []).filter(
-      (map) => !outcome.pack.maps.some((kept) => kept.id === map.id),
-    );
-    if (missing.length > 0) {
+  async function saveOutcome(
+    outcome: Extract<Awaited<ReturnType<typeof convert>>, { ok: true }>,
+  ): Promise<ImportPhase> {
+    const library = desktop?.library;
+    if (!library) return { kind: 'idle' };
+    const bundled = context.isBundled(outcome.packId);
+    if (bundled && !importer.refreshesBundledGames) {
       return {
         kind: 'failed',
-        message: `${outcome.summary.game} comes with this app, and refreshing it from this page would leave out maps it came with: ${missing.map((map) => map.name).join(', ')}. Nothing was changed.`,
+        message: `${outcome.summary.game} comes with this app, so it is not replaced by an import. Nothing was added.`,
       };
     }
-  }
-  // The pages kept with it, without their data: a wiki's can be many, and large.
-  const stored = await shell.library
-    .importSourceList(outcome.packId, importer.id)
-    .catch((): StoredPage[] => []);
-  const app = useAtlas.getState().app;
-  const manifest = describePack(outcome.pack, {
-    ...(existing?.manifest.schemaVersion === 2 && existing.manifest.created
-      ? { created: existing.manifest.created }
-      : {}),
-    updated: rebuilt ? new Date().toISOString() : page.importedAt,
-    writtenBy: { name: app?.name ?? 'Atlas', version: app?.version ?? '0.0.0' },
-    source: packSource(importer, stored, {
-      key: outcome.sourceKey,
-      url: page.url,
-      mapId: outcome.mapId,
-      importedAt: page.importedAt,
-    }),
-    images: existing ? recordedImages(existing.manifest) : new Map(),
-  });
-  let listing: Listing;
-  try {
-    listing = await shell.library.saveImport({
-      packId: outcome.packId,
-      importer: { id: importer.id, title: importer.title },
-      sourceKey: outcome.sourceKey,
-      pageUrl: page.url,
-      importedAt: page.importedAt,
-      ...(outcome.mapId ? { mapId: outcome.mapId } : {}),
-      pageData: page.pageData,
-      files: packFiles({ ...outcome.pack, manifest }),
-      ...(bundled ? { refreshBundled: true } : {}),
-      // Pictures a page showed as the person browsed it, read from the page as it loaded them.
-      ...(page.way === 'browse' && outcome.pictureFiles
-        ? { pictures: Object.fromEntries(outcome.pictureFiles.map((p) => [p.file, p.data])) }
+
+    const existing = await context.existingPack(outcome.packId);
+    if (bundled) {
+      // A refresh keeps every map the game has; the shell checks this, and the version, again.
+      const missing = (existing?.maps ?? []).filter(
+        (map) => !outcome.pack.maps.some((kept) => kept.id === map.id),
+      );
+      if (missing.length > 0) {
+        return {
+          kind: 'failed',
+          message: `${outcome.summary.game} comes with this app, and refreshing it from this page would leave out maps it came with: ${missing.map((map) => map.name).join(', ')}. Nothing was changed.`,
+        };
+      }
+    }
+    // The pages kept with it, without their data: a wiki's can be many, and large.
+    const stored = await library
+      .importSourceList(outcome.packId, importer.id)
+      .catch((): StoredPage[] => []);
+    const app = useAtlas.getState().app;
+    const manifest = describePack(outcome.pack, {
+      ...(existing?.manifest.schemaVersion === 2 && existing.manifest.created
+        ? { created: existing.manifest.created }
         : {}),
+      updated: rebuilt ? new Date().toISOString() : page.importedAt,
+      writtenBy: { name: app?.name ?? 'Atlas', version: app?.version ?? '0.0.0' },
+      source: packSource(importer, stored, {
+        key: outcome.sourceKey,
+        url: page.url,
+        mapId: outcome.mapId,
+        importedAt: page.importedAt,
+      }),
+      images: existing ? recordedImages(existing.manifest) : new Map(),
     });
-  } catch (error) {
-    return { kind: 'failed', message: errorText(error) };
+    let listing: Listing;
+    try {
+      listing = await library.saveImport({
+        packId: outcome.packId,
+        importer: { id: importer.id, title: importer.title },
+        sourceKey: outcome.sourceKey,
+        pageUrl: page.url,
+        importedAt: page.importedAt,
+        ...(outcome.mapId ? { mapId: outcome.mapId } : {}),
+        pageData: page.pageData,
+        files: packFiles({ ...outcome.pack, manifest }),
+        ...(bundled ? { refreshBundled: true } : {}),
+        // Pictures a page showed as the person browsed it, read from the page as it loaded them.
+        ...(page.way === 'browse' && outcome.pictureFiles
+          ? { pictures: Object.fromEntries(outcome.pictureFiles.map((p) => [p.file, p.data])) }
+          : {}),
+      });
+    } catch (error) {
+      return { kind: 'failed', message: errorText(error) };
+    }
+    notePackSaved(outcome.packId);
+    applyListing(listing);
+    const entry = useAtlas.getState().catalog.find((p) => p.id === outcome.packId);
+    // Load the new pack and show the imported map; a run does that at its end.
+    if (entry && show && outcome.mapId) await showMap(entry, outcome.mapId);
+    else if (entry && show) await loadGame(entry);
+    // Pages that come with their pictures: fetched now; a run does that at its end.
+    const pictures =
+      __ATLAS_DOWNLOADS__ &&
+      importer.picturesWithPages === true &&
+      (outcome.pack.pictures ?? []).some((picture) => picture.remote !== undefined);
+    if (pictures && show) fetchPagePictures(outcome.packId);
+    return {
+      kind: 'done',
+      packId: outcome.packId,
+      mapId: outcome.mapId ?? null,
+      ...(outcome.guideId ? { guideId: outcome.guideId } : {}),
+      ...(outcome.links ? { links: outcome.links } : {}),
+      ...(outcome.writtenAgain ? { writtenAgain: outcome.writtenAgain } : {}),
+      ...(outcome.pageAddress ? { pageAddress: outcome.pageAddress } : {}),
+      title: outcome.summary.game,
+      summary: outcome.summary,
+      rebuilt,
+      ...(pictures ? { pictures: true } : {}),
+    };
   }
-  applyListing(listing);
-  const entry = useAtlas.getState().catalog.find((p) => p.id === outcome.packId);
-  // Load the new pack and show the imported map; a run does that at its end.
-  if (entry && show && outcome.mapId) await showMap(entry, outcome.mapId);
-  else if (entry && show) await loadGame(entry);
-  // Pages that come with their pictures: fetched now; a run does that at its end.
-  const pictures =
-    __ATLAS_DOWNLOADS__ &&
-    importer.picturesWithPages === true &&
-    (outcome.pack.pictures ?? []).some((picture) => picture.remote !== undefined);
-  if (pictures && show) fetchPagePictures(outcome.packId);
-  return {
-    kind: 'done',
-    packId: outcome.packId,
-    mapId: outcome.mapId ?? null,
-    ...(outcome.guideId ? { guideId: outcome.guideId } : {}),
-    ...(outcome.links ? { links: outcome.links } : {}),
-    ...(outcome.writtenAgain ? { writtenAgain: outcome.writtenAgain } : {}),
-    title: outcome.summary.game,
-    summary: outcome.summary,
-    rebuilt,
-    ...(pictures ? { pictures: true } : {}),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1514,6 +1600,8 @@ async function startBrowse(
   }
   // Pages read while browsing, by page key: each once.
   const seen = new Set<string>();
+  // The games pages were kept in.
+  const browsedInto = new Set<string>();
   while (id === session) {
     await sleep(KEPT_POLL_MS);
     if (id !== session) break;
@@ -1541,6 +1629,10 @@ async function startBrowse(
       continue;
     }
     const kept = await keepBrowsed(importer, address, result.data);
+    if (kept.packId) {
+      browsedInto.add(kept.packId);
+      packWritten(kept.packId, { duringGo: true });
+    }
     if (id !== session) break;
     if (kept.title) {
       show({ kept: [...state.kept, { url: address, title: kept.title }], note: null });
@@ -1551,6 +1643,8 @@ async function startBrowse(
   }
   await shell.importWindow.close().catch(() => undefined);
   void flushWikiNotes();
+  // The game shown, if pages were kept in it, takes them all in.
+  for (const packId of browsedInto) packWritten(packId);
   if (id === session) show({ ended: true });
 }
 
@@ -1559,7 +1653,7 @@ async function keepBrowsed(
   importer: AtlasImporter,
   url: string,
   data: string,
-): Promise<{ title?: string; note?: string; stop?: boolean }> {
+): Promise<{ title?: string; note?: string; stop?: boolean; packId?: string }> {
   // The wiki's contents, when the person opened them: kept as its contents, not as a page.
   const games = importer.games;
   if (games && safely(() => games.matches(url))) {
@@ -1579,9 +1673,11 @@ async function keepBrowsed(
   );
   reportPhase(importer.id, outcome);
   if (outcome.kind === 'done') {
-    await noteWikiRead(importer.id, url, outcome.links ?? []).catch(() => undefined);
+    await noteWikiRead(importer.id, url, outcome.links ?? [], outcome.pageAddress).catch(
+      () => undefined,
+    );
     await noteWikiLinks(importer.id, outcome.writtenAgain ?? []).catch(() => undefined);
-    return { title: outcome.summary.map || url };
+    return { title: outcome.summary.map || url, packId: outcome.packId };
   }
   if (outcome.kind === 'failed') {
     void noteWikiFailed(importer.id, url, outcome.message);
@@ -1667,8 +1763,24 @@ export async function rebuildPack(packId: string): Promise<void> {
     );
     return;
   }
+  // During a go, the game is built again when the go ends.
+  if (currentRun) {
+    rebuildAfterGo.add(packId);
+    notify(
+      `${listed.title} is built again from its saved pages when the pages being read now are done.`,
+      'info',
+    );
+    return;
+  }
   const id = ++session;
+  // One change to the game at a time: a page being saved to it is saved first.
+  const turn = packTurn(packId);
   try {
+    if (turn.waits) {
+      setPhase({ kind: 'converting', url: listed.url, importer: entry.title, waiting: true });
+      showLibraryAdd();
+    }
+    await turn.ready;
     const importer = await loadImporter(entry);
     // The last page kept, read alone: the importer reads the others itself when it needs them.
     const listedLast = (await shell.library.importSourceList(packId, importer.id)).at(-1);
@@ -1679,18 +1791,24 @@ export async function rebuildPack(packId: string): Promise<void> {
       notify(`No page data is kept with ${listed.title}, so it cannot be rebuilt.`, 'error');
       return;
     }
-    setPhase({ kind: 'converting', url: last.url, importer: importer.title });
-    showLibraryAdd();
+    // A go started meanwhile keeps the screen.
+    if (id === session) {
+      setPhase({ kind: 'converting', url: last.url, importer: importer.title });
+      showLibraryAdd();
+    }
     const outcome = await convertAndSave(
       importer,
       { url: last.url, pageData: last.data, importedAt: last.importedAt },
       true,
+      true,
+      undefined,
+      { held: packId },
     );
     reportPhase(importer.id, outcome);
     // The links of the pages written again, this one too, are kept; nothing else about them changes.
     if (importer.fetch && outcome.kind === 'done') {
       await noteWikiLinks(importer.id, [
-        { url: last.url, links: outcome.links ?? [] },
+        { url: last.url, links: outcome.links ?? [], pageAddress: outcome.pageAddress },
         ...(outcome.writtenAgain ?? []),
       ])
         .then(flushWikiNotes)
@@ -1700,6 +1818,8 @@ export async function rebuildPack(packId: string): Promise<void> {
   } catch (error) {
     report({ importerId: entry.id, outcome: 'failed', message: errorText(error) });
     if (id === session) setPhase({ kind: 'failed', message: errorText(error) });
+  } finally {
+    turn.done();
   }
 }
 

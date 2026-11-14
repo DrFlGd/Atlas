@@ -323,9 +323,9 @@ function QueuedPages() {
   return (
     <div className="add-map-browse" data-testid="add-map-queued">
       <p className="muted small">
-        Pages you chose earlier that were not read: the go was stopped, or the site asked this app
-        to wait. Read them reads them all now, in one go, one at a time with a pause. Forget them
-        drops the list; nothing that was read is deleted.
+        Pages you chose earlier that were not read: the session was stopped, or the site asked this
+        app to wait. Read them reads them all now, in one session, one at a time with a pause.
+        Forget them drops the list; nothing that was read is deleted.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
@@ -433,11 +433,19 @@ function Check({ phase }: { phase: Extract<ImportPhase, { kind: 'check' }> }) {
   );
 }
 
+/** A page waiting for its turn to change a game (see `packTurns.ts`). */
+const WAITING_TURN =
+  'This game is being changed by another step, such as being built again from its saved pages. This page is added as soon as that is done, so nothing either of them adds is lost.';
+
 function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | 'converting' }> }) {
   if (phase.kind === 'converting') {
     return (
       <section className="dialog-section" aria-busy="true" data-testid="add-map-progress">
-        {phase.measuring ? (
+        {phase.waiting ? (
+          <p role="status" data-testid="add-map-waiting-turn">
+            <strong>Waiting for another change to this game…</strong> {WAITING_TURN}
+          </p>
+        ) : phase.measuring ? (
           <p role="status">
             <strong>Measuring the map picture…</strong> Atlas is asking the image server which map
             images exist, so that the map is as large as its picture. This can take a minute.
@@ -683,7 +691,12 @@ function PageState({ state }: { state: RunPageState }) {
     case 'open':
       return <OpenPage state={state} />;
     case 'converting':
-      return (
+      return state.waiting ? (
+        <span className="small" data-testid="add-map-waiting-turn">
+          <strong>Waiting for another change to this game…</strong>{' '}
+          <span className="muted">{WAITING_TURN}</span>
+        </span>
+      ) : (
         <span className="small">
           <strong>{state.measuring ? 'Measuring the map picture…' : 'Building the map…'}</strong>
         </span>
@@ -781,7 +794,8 @@ function Run({
           </strong>{' '}
           {found ? (
             <span className="muted" data-testid="add-map-run-found">
-              The pages found by links were added to this go as the pages linking to them were read.
+              The pages found by links were added to this session as the pages linking to them were
+              read.
             </span>
           ) : null}{' '}
           {run.pausing ? <span className="muted">Opening the next page in a moment.</span> : null}

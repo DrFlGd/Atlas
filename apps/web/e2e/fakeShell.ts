@@ -52,6 +52,8 @@ export interface WikiSite {
       licence?: string;
       /** A picture the page shows as the person browses it (its alternative text), on the wiki's own site. */
       picture?: string;
+      /** The wiki forwards this name to another page, by slug: it answers that page, from its own address. */
+      forward?: string;
     }
   >;
   /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
@@ -137,8 +139,10 @@ interface ShellEvent {
   /**
    * `read`: a poll that handed over the page's data. `browse`: the person
    * went to a page in a window opened for browsing ({@link browseTo}).
+   * `source`: the app asked for a page kept with a pack (its address).
+   * `save`: the app saved a pack, made from the page at that address.
    */
-  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch' | 'browse';
+  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch' | 'browse' | 'source' | 'save';
   url: string | null;
   at: number;
   purpose?: string;
@@ -166,6 +170,8 @@ export interface MockShell {
   extra: Record<string, Record<string, string>>;
   /** The picture files the app asked to write with a pack, by pack id. */
   pictures: Record<string, string[]>;
+  /** Milliseconds the shell takes to hand over one page kept with a pack (a slow disk). */
+  slowSources: number;
   reports: {
     outcome: string;
     message?: string;
@@ -202,6 +208,7 @@ function installFakeShell({
     lag: false,
     extra: {},
     pictures: {},
+    slowSources: 0,
     reports: [],
   };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
@@ -350,6 +357,13 @@ function installFakeShell({
     }
     if (site.busy?.includes(slug)) return answer(503, 'Busy');
     const page = site.pages[slug];
+    // Forwarded: the page it leads to, answered from its own address.
+    const forward = page?.forward;
+    if (forward) {
+      const to = site.pages[forward];
+      const finalUrl = `${at.origin}/wiki/${forward}`;
+      return to ? { ...answer(200, to), finalUrl } : { ...answer(404, 'Not found'), finalUrl };
+    }
     return page ? answer(200, page) : answer(404, 'Not found');
   };
   /** A wiki page as a window shows it: what its reader would read, in the shape of a fetched page. */
@@ -477,6 +491,11 @@ function installFakeShell({
       case 'library_import_source_list':
         return (sources[args.packId as string] ?? []).map(({ data: _, ...page }) => page);
       case 'library_import_source': {
+        const asked = (sources[args.packId as string] ?? []).find((s) => s.key === args.key);
+        shell.events.push({ what: 'source', url: asked?.url ?? null, at: Date.now() });
+        if (shell.slowSources > 0) {
+          await new Promise((resolve) => setTimeout(resolve, shell.slowSources));
+        }
         const one = (sources[args.packId as string] ?? []).find((s) => s.key === args.key);
         return one ? { ...one } : null;
       }
@@ -492,6 +511,7 @@ function installFakeShell({
           files: Record<string, string>;
           pictures?: Record<string, string>;
         };
+        shell.events.push({ what: 'save', url: request.pageUrl, at: Date.now() });
         await write(request.packId, request.files);
         if (request.pictures) {
           (shell.pictures[request.packId] ??= []).push(...Object.keys(request.pictures));
@@ -704,7 +724,7 @@ export const browseTo = (page: Page, url: string) =>
 
 export const setMock = (
   page: Page,
-  patch: Partial<Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra'>>,
+  patch: Partial<Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra' | 'slowSources'>>,
 ) =>
   page.evaluate((patch) => {
     Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell, patch);

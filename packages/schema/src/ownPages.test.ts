@@ -33,6 +33,8 @@ const own = (): OwnPages => ({
     sections: {
       'demo:section:own.mine': ['demo:guide:own.notes'],
       'demo:section:wiki-basics': ['demo:guide:wiki-travel'],
+      // A page put under another page.
+      'demo:guide:wiki-travel': ['demo:guide:wiki-regions'],
     },
   },
   pictures: [

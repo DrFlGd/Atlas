@@ -235,6 +235,48 @@ export async function loadGame(
   }
 }
 
+/**
+ * Loads the game shown again from its files, after a step wrote to its
+ * pack without showing it (a go, browse and keep, reading a page again,
+ * the pictures of its pages): where the person is stays as far as it is
+ * still in the game (the map, the location chosen, the page open in
+ * Guides, their marks and what Undo takes back). A game shown meanwhile,
+ * or another game, is left alone. Nothing is fetched.
+ */
+export async function reloadShownGame(gameId: string): Promise<boolean> {
+  const shown = get().game;
+  if (shown?.entry.id !== gameId) return false;
+  const listed = get().catalog.find((p) => p.id === gameId);
+  // The same entry when its files are where they were, so nothing keyed on it starts over.
+  const entry = listed && listed.url !== shown.entry.url ? listed : shown.entry;
+  const token = loadToken;
+  try {
+    const read = await loadPack(entry.url);
+    const mine = await readOwnLocationsOf(read.manifest.gameId);
+    if (token !== loadToken || get().game !== shown) return false;
+    const { pack } = packWithOwn(read, mine.own);
+    const counter = new ProgressCounter(pack);
+    const search = new SearchIndex(pack);
+    const checklists = new ChecklistIndex(pack, (id) => counter.isTrackable(id));
+    const { layerId, selectedId, rows } = get();
+    const layer =
+      (layerId ? pack.layers.get(layerId) : undefined) ??
+      pack.layersOf(pack.data.maps[0]?.id ?? '')[0];
+    set({
+      game: { entry, pack, counter, search, checklists },
+      mapId: layer?.mapId ?? null,
+      layerId: layer?.id ?? null,
+      ...(selectedId !== null && !pack.locations.get(selectedId) ? { selectedId: null } : {}),
+      found: resolveProgress([...rows.values()], pack.currentId),
+    });
+    void loadMapImages(get().game!);
+    return true;
+  } catch {
+    // The game stays as it was shown; showing it again reads it.
+    return false;
+  }
+}
+
 export async function switchGame(id: string): Promise<void> {
   const entry = get().catalog.find((p) => p.id === id);
   if (entry && entry.id !== get().game?.entry.id) await loadGame(entry);

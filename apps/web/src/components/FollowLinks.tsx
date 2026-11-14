@@ -53,9 +53,9 @@ export function FollowLinksChoice({
       </div>
       <p className="muted small" id={noteId}>
         Links are followed only to the wiki’s own pages, never to a page read before or left out,
-        and each page is read once, one at a time with a pause. A go has no page limit: the bar
+        and each page is read once, one at a time with a pause. A session has no page limit: the bar
         shows how many pages it has read and found as it goes, and Stop ends it after the page open
-        now. Pages found and not read stay listed as found, to read in another go.
+        now. Pages found and not read stay listed as found, to read in another session.
       </p>
     </fieldset>
   );

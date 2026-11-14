@@ -27,3 +27,4 @@ export * from './guides/contents';
 export * from './guides/guideText';
 export * from './guides/linking';
 export * from './guides/ownPages';
+export * from './guides/pageTree';

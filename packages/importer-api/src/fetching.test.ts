@@ -300,6 +300,53 @@ describe('a page that became a guide', () => {
     expect(capped.ok && capped.writtenAgain?.[0]).toEqual({ url: `${page}-0`, links: [page] });
   });
 
+  it('keeps the address a page was read from when it is another name of it, on the same site', () => {
+    const asked = 'https://wiki.example.org/wiki/Old-name';
+    const outcome = checkOutcome(
+      {
+        ...success,
+        guideId: 'pages:guide:start',
+        pageAddress: 'https://wiki.example.org/wiki/New-name#Top',
+        links: ['https://wiki.example.org/wiki/Gates', 'https://wiki.example.org/wiki/New-name'],
+        writtenAgain: [
+          {
+            url: 'https://wiki.example.org/wiki/Bells',
+            pageAddress: 'https://wiki.example.org/wiki/Bell',
+            links: ['https://wiki.example.org/wiki/Bell'],
+          },
+          {
+            url: 'https://wiki.example.org/wiki/Gates',
+            pageAddress: 'https://elsewhere.example.com/wiki/Gates',
+            links: [],
+          },
+        ],
+      },
+      asked,
+    );
+    expect(outcome.ok && outcome.pageAddress).toBe('https://wiki.example.org/wiki/New-name');
+    // Its links are the links of the page where it is: never itself.
+    expect(outcome.ok && outcome.links).toEqual(['https://wiki.example.org/wiki/Gates']);
+    expect(outcome.ok && outcome.writtenAgain).toEqual([
+      {
+        url: 'https://wiki.example.org/wiki/Bells',
+        pageAddress: 'https://wiki.example.org/wiki/Bell',
+        links: [],
+      },
+      // Another site is not another name of a page.
+      { url: 'https://wiki.example.org/wiki/Gates', links: [] },
+    ]);
+    // Another site, the same page, or not an address: left out.
+    for (const pageAddress of [
+      'https://elsewhere.example.com/wiki/New-name',
+      `${asked}/`,
+      'http://wiki.example.org/wiki/New-name',
+      7,
+    ]) {
+      const odd = checkOutcome({ ...success, guideId: 'pages:guide:start', pageAddress }, asked);
+      expect(odd.ok && 'pageAddress' in odd).toBe(false);
+    }
+  });
+
   it('may stop the go when the page asked to confirm the reader is a person', () => {
     expect(checkOutcome({ ok: false, message: 'Asked to confirm.', stop: true })).toEqual({
       ok: false,

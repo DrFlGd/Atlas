@@ -192,6 +192,16 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.6.3
+
+          - **Pages under pages.** In Guides, a page that the game's contents does not place is now shown under the page that leads to it, by the fewest links from the contents, instead of in one long list under **Pages**. The contents at the side is a tree: it opens to the page you are reading and shows the pages beside it. **Pages** keeps only the pages that nothing in the contents leads to.
+          - **The whole way to a page.** The line above a page names every step down to it, such as Contents › Equipment › Armor › Warden Plate, and each step is a link, so you can go up as well as down.
+          - **Also linked from.** A page that several pages link to has one home in the contents. The other pages that link to it are listed on it under **Also linked from**.
+          - **Put a page under a page.** When you edit the contents, **Move to…** can put a page under another page as well as in a section. A page you put somewhere stays there.
+          - **A page with two names.** A link that uses another name of a page now opens the page.
+
+          The tree is worked out from the links between a game's pages, so it needs a map pack written by Atlas 0.6.3 or later; an older pack shows its pages as before.
+
           ## New in 0.6.2
 
           - **Sort a table.** In Guides, press a column heading of a table to sort by it: once for smallest first, again for largest first, a third time for the page's own order. Numbers sort as numbers. It changes only what you see, never the page.

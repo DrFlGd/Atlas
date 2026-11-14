@@ -72,6 +72,46 @@
   color: var(--atlas-accent);
 }
 
+/* A page in the tree: a button to show or hide the pages under it, then the page. */
+.guides-tree-page {
+  display: flex;
+  align-items: center;
+}
+
+.guides-tree-toggle,
+.guides-tree-spacer {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  min-height: 36px;
+}
+
+.guides-tree-toggle {
+  padding: 0;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-muted);
+}
+
+.guides-tree-toggle:hover {
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-text);
+}
+
+.guides-tree-page-name {
+  flex: 1;
+  min-width: 0;
+  padding-left: 4px;
+}
+
+.guides-tree-more,
+.guides-more {
+  color: var(--atlas-accent);
+}
+
 /* The reader: a bar with Back, Forward and where the place is, then the place. */
 .guides-reader {
   display: flex;
@@ -106,14 +146,17 @@
   align-items: center;
   min-width: 0;
   margin-left: 6px;
-  overflow: hidden;
+  /* A long way scrolls sideways; the app scrolls it to its end. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   white-space: nowrap;
 }
 
 .guides-crumb-part {
   display: flex;
+  flex: none;
   align-items: center;
-  min-width: 0;
 }
 
 .guides-crumb {
@@ -143,8 +186,12 @@ button.guides-crumb:hover {
   color: var(--atlas-muted);
 }
 
-.guides-compact .guides-crumb-part:not(:last-child) {
+.guides-crumbs::-webkit-scrollbar {
   display: none;
+}
+
+.guides-compact .guides-crumb {
+  max-width: 160px;
 }
 
 .guides-body {
@@ -698,6 +745,31 @@ button.guides-crumb:hover {
 .guides-edit-button {
   flex: none;
   gap: 6px;
+}
+
+/* At the foot of a page: the pages under it (on a phone), and the other pages linking to it. */
+.guides-under {
+  margin: 24px 0 0;
+}
+
+.guides-under-title,
+.guides-also-title {
+  margin: 0 0 6px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.guides-also {
+  margin: 24px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.guides-also-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
 }
 
 .guides-changed {

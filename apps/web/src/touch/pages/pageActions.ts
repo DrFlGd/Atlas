@@ -1,3 +1,4 @@
+import { parseId } from '@atlas/schema';
 import type { BlockModel, ListModel } from '../../markdownEdit/blocks';
 import {
   insertBlockAfter,
@@ -137,7 +138,8 @@ export function sectionChoices(game: LoadedGame): { id: string; title: string; d
   const out: { id: string; title: string; depth: number }[] = [];
   const walk = (items: readonly string[], depth: number) => {
     for (const id of items) {
-      if (!(id in layout.sections)) continue;
+      // Sections only: a layout also holds the pages put under a page, by its id.
+      if (!(id in layout.sections) || parseId(id)?.kind !== 'section') continue;
       out.push({ id, title: contents.section(id)?.title ?? titles.get(id) ?? id, depth });
       walk(layout.sections[id] ?? [], depth + 1);
     }
