@@ -1,5 +1,5 @@
 import { devices, type Page } from '@playwright/test';
-import { collectErrors } from './helpers';
+import { collectErrors, openGuidesSection } from './helpers';
 import { expect, test } from './layout';
 
 /**
@@ -33,7 +33,7 @@ const wordsAt = (page: Page) =>
 async function openMaul(page: Page): Promise<void> {
   await page.goto('./');
   await page.getByTestId('section-guides').click();
-  await body(page).getByTestId('guides-section').filter({ hasText: 'Gear' }).click();
+  await openGuidesSection(page, 'Gear');
   await body(page).getByTestId('guides-page-link').filter({ hasText: 'Stonebreaker maul' }).click();
   await expect(shownPage(page).locator('h1')).toHaveText('Stonebreaker maul');
 }
