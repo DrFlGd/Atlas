@@ -34,18 +34,22 @@ export const FOLLOW_CHOICES: readonly { id: FollowLinks; label: string; sentence
     id: 'linked',
     label: 'And the pages they link to',
     sentence:
-      'Also reads the wiki’s pages that the ticked pages link to, in the same go, but not the pages those link to.',
+      'Also reads the wiki’s pages that the ticked pages link to, in the same session, but not the pages those link to.',
   },
   {
     id: 'all',
     label: 'And every page those lead to',
     sentence:
-      'Keeps following the links of every page read, until no new page is found or you stop the go.',
+      'Keeps following the links of every page read, until no new page is found or you stop the session.',
   },
 ];
 
 export const isFollowLinks = (value: unknown): value is FollowLinks =>
   value === 'ticked' || value === 'linked' || value === 'all';
+
+/** The page keys of the addresses pages asked under other names were read from. */
+const arrivedKeys = (otherNames: Readonly<Record<string, string>>) =>
+  new Set(Object.values(otherNames).map(pageKey));
 
 /** Whether the links of a page read at `depth` (0 for a page ticked) are followed. */
 export function followsFrom(follow: FollowLinks, depth: number): boolean {
@@ -67,13 +71,22 @@ export function pagesToFollow(options: {
   /** Page keys of the pages read before (in the game). */
   read: ReadonlySet<string>;
   leftOut: ReadonlySet<string>;
+  /**
+   * Other names of pages read (`wikiNotes.ts`): the page key asked, with
+   * the address the page was read from. A link to either name of a page
+   * read is to a page read.
+   */
+  otherNames?: Readonly<Record<string, string>>;
 }): { add: string[] } {
-  const { importer, inGo, read, leftOut } = options;
+  const { importer, inGo, read, leftOut, otherNames = {} } = options;
   if (!followsFrom(options.follow, options.depth)) return { add: [] };
   const seen = new Set<string>();
   const add: string[] = [];
+  let arrived: Set<string> | undefined;
   for (const url of options.links) {
     const key = pageKey(url);
+    // Another name of a page read, or the name a page asked under another was read from.
+    if (otherNames[key] !== undefined || (arrived ??= arrivedKeys(otherNames)).has(key)) continue;
     if (seen.has(key) || inGo.has(key) || read.has(key) || leftOut.has(key)) continue;
     seen.add(key);
     if (!canAddPage(importer, url) || refusalFor([importer], url) !== null) continue;
