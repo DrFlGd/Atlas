@@ -7,16 +7,23 @@ import {
 import { useEffect, useId, useState } from 'react';
 import {
   answerLicence,
+  chooseHow,
   confirmHow,
+  forgetWikiSite,
+  howAddressFor,
   setHowWay,
+  siteMemory,
   stopBrowse,
   useImport,
   type ImportPhase,
   type LicenceAsk,
+  type SiteMemory,
 } from '../state/importing';
+import { parseAddresses } from '../state/importRun';
 import { showLibraryAdd, useLibrary } from '../state/libraryView';
 import { WAY_LABELS, WAY_TEXTS } from '../state/readingWays';
 import { loadWikiNotes, setSiteLicence, setSiteWay, useWikiNotes } from '../state/wikiNotes';
+import { memoryParts } from './removalText';
 
 /**
  * How a site's pages are read, as the person chooses among the ways its
@@ -79,7 +86,12 @@ function SiteNotice({ site }: { site: SiteInfo }) {
   ) : null;
 }
 
-/** Before a site is first read: what its importer says about it, and how to read it. */
+/**
+ * Before a site is read while no wiki of it is in the Library: what its
+ * importer says about it, how to read it (the way chosen before ticked),
+ * and what this app still remembers of it from an earlier session, which
+ * can be forgotten to start from nothing.
+ */
 export function HowStep({ phase }: { phase: Extract<ImportPhase, { kind: 'how' }> }) {
   return (
     <div className="dialog-section" data-testid="add-how">
@@ -92,9 +104,10 @@ export function HowStep({ phase }: { phase: Extract<ImportPhase, { kind: 'how' }
       ) : null}
       <p className="muted small">
         {phase.site.ways.length > 1
-          ? 'This choice is kept for this site. You can change it later on its screen in the Library; this app never changes it by itself.'
-          : 'This is shown once for this site, and again on its screen in the Library.'}
+          ? 'This choice is kept for this site. While no wiki of this site is in the Library, adding it asks again; once one is, you change it on its screen in the Library. This app never changes it by itself.'
+          : 'This is shown whenever this site is added while no wiki of it is in the Library, and on its screen in the Library.'}
       </p>
+      <RememberedSite importerId={phase.importerId} url={phase.url} />
       <div className="row-actions">
         <button
           type="button"
@@ -108,6 +121,152 @@ export function HowStep({ phase }: { phase: Extract<ImportPhase, { kind: 'how' }
     </div>
   );
 }
+
+/**
+ * What this app still remembers of a site with no wiki in the Library,
+ * from an earlier session (its list of pages, pages that could not be
+ * read or were left out, pages kept for later, a confirmed licence), with
+ * a way to forget it after asking. The way chosen is not counted here: it
+ * is the question being asked.
+ */
+function RememberedSite({ importerId, url }: { importerId: string; url: string }) {
+  const notes = useWikiNotes((s) => s.byImporter[importerId]);
+  const queueVersion = useImport((s) => s.queueVersion);
+  const [memory, setMemory] = useState<SiteMemory | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    void siteMemory(importerId, url)
+      .catch(() => null)
+      .then((found) => {
+        if (current) setMemory(found);
+      });
+    return () => {
+      current = false;
+    };
+  }, [importerId, url, notes, queueVersion]);
+  if (!memory || memory.inLibrary) return null;
+  const parts = memoryParts(memory, { way: false });
+  if (parts.length === 0) return null;
+  const list = parts.join(', ');
+  return (
+    <div className="site-remembered" data-testid="site-remembered">
+      <p className="muted small">
+        This app still remembers this wiki from an earlier session: {list}. To start from nothing,
+        forget it first.
+      </p>
+      {asking ? (
+        <div
+          className="download-confirm removal-confirm"
+          role="group"
+          aria-label="Forget what this app remembers of this wiki?"
+          data-testid="site-forget-confirm"
+        >
+          <p>
+            <strong>Forget what this app remembers of {memory.key}?</strong>
+          </p>
+          <p className="removal-detail">
+            This app forgets {list}, and how its pages are read; the way ticked here is kept again
+            when you go on. Nothing that was read is in the Library, so nothing else is deleted.
+            This cannot be undone.
+          </p>
+          {error ? (
+            <p className="download-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="row-actions">
+            <button
+              type="button"
+              className="button button-danger"
+              data-testid="site-forget-confirm-button"
+              onClick={() => {
+                setError(null);
+                void forgetWikiSite(importerId, memory.key).then(
+                  () => {
+                    setAsking(false);
+                  },
+                  (failure: unknown) => {
+                    setError(failure instanceof Error ? failure.message : String(failure));
+                  },
+                );
+              }}
+            >
+              Forget it
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setAsking(false);
+              }}
+            >
+              Keep it
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="button"
+            data-testid="site-forget"
+            onClick={() => {
+              setAsking(true);
+            }}
+          >
+            Forget what it remembers
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * After a session of a wiki's pages that kept none: a way to choose how
+ * its pages are read and try again, when its importer offers a choice.
+ * Nothing is read until the person goes on from that step.
+ */
+export function ChooseHowOffer({ page }: { page: string }) {
+  const draft = useImport((s) => s.draft);
+  const [found, setFound] = useState<{ page: string; address: string | null } | null>(null);
+  useEffect(() => {
+    const { addresses } = parseAddresses(draft);
+    let current = true;
+    void howAddressFor(page, addresses.length === 1 ? addresses[0]! : null)
+      .catch(() => null)
+      .then((address) => {
+        if (current) setFound({ page, address });
+      });
+    return () => {
+      current = false;
+    };
+  }, [page, draft]);
+  const address = found?.page === page ? found.address : null;
+  if (!address) return null;
+  return (
+    <div data-testid="add-map-how-offer">
+      <p className="muted small">
+        No page was kept. You can choose another way to read this wiki and try again.
+      </p>
+      <div className="row-actions">
+        <button
+          type="button"
+          className="button"
+          data-testid="add-map-how"
+          onClick={() => void chooseHow(address)}
+        >
+          {CHOOSE_HOW}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The button that shows how a site is read, to choose another way. */
+export const CHOOSE_HOW = 'Choose how its pages are read';
 
 /**
  * The question a page read waits on: which Creative Commons licence the
@@ -283,6 +442,7 @@ export function BrowseKeep({ phase }: { phase: Extract<ImportPhase, { kind: 'bro
             ))}
         </ul>
       ) : null}
+      {phase.ended && count === 0 ? <ChooseHowOffer page={phase.url} /> : null}
       {phase.ended ? null : (
         <div className="row-actions">
           <button
