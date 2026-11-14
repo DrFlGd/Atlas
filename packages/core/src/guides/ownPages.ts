@@ -11,6 +11,7 @@ import {
   type WikiChangeChoice,
 } from '@atlas/schema';
 import { sortGuides, type GuidePages } from './contents';
+import { guideLinks, guideLinksIn, placePagesByLinks } from './pageTree';
 
 /**
  * A person's own pages laid over a pack's (see `ownPages.ts` in the schema
@@ -29,6 +30,14 @@ import { sortGuides, type GuidePages } from './contents';
  * the pack has before it; and a page or section of their own their layout
  * does not name goes at the end of the top, so nothing of theirs is ever
  * out of sight.
+ *
+ * A layout also holds, by a page's id, the pages put under that page by
+ * hand. The pages a pack leaves to be placed by their links (a section
+ * marked `placeByLinks`, see `pageTree.ts`) are placed when the contents
+ * is shown, never written into a layout: a page the person's layout still
+ * has in such a section is placed by its links like any other, and one the
+ * pack has since placed elsewhere goes there. Only where the person put a
+ * page by hand stays theirs.
  */
 
 /** Where an entry of the contents is: in a section, or at the top (`null`). */
@@ -56,6 +65,10 @@ export function packLayout(data: GuidePages['data']): PagesLayout {
   return layout;
 }
 
+/** A record without one key. */
+const withoutKey = <T>(record: Record<string, T>, key: string): Record<string, T> =>
+  Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
+
 /** A copy of a layout, to change. */
 function copyLayout(layout: PagesLayout): PagesLayout {
   return {
@@ -79,12 +92,21 @@ export function mergeLayouts(
   mine: PagesLayout | undefined,
   exists: (id: string) => boolean,
   own: readonly string[],
+  /** The pack's sections whose pages are placed by their links. */
+  loose: ReadonlySet<string> = new Set(),
 ): PagesLayout {
   const result: PagesLayout = { top: [], sections: {} };
   const sectionIds = new Set([...Object.keys(mine?.sections ?? {}), ...Object.keys(pack.sections)]);
+  // What the pack places itself, outside the sections it leaves to links.
+  const packPlaced = new Set<string>(pack.top);
+  for (const [id, items] of Object.entries(pack.sections)) {
+    if (!loose.has(id)) for (const item of items) packPlaced.add(item);
+  }
   for (const id of sectionIds) {
     if (!exists(id)) continue;
-    const items = mine?.sections[id] ?? pack.sections[id] ?? [];
+    let items = mine?.sections[id] ?? pack.sections[id] ?? [];
+    // A page the person left among those placed by links goes where the pack places it now.
+    if (loose.has(id) && mine?.sections[id]) items = items.filter((item) => !packPlaced.has(item));
     result.sections[id] = items.filter(exists);
   }
   result.top = (mine ? mine.top : pack.top).filter(exists);
@@ -190,7 +212,71 @@ function existing(data: GuidePages['data'], own: OwnPages): (id: string) => bool
  * their changes to the contents start from.
  */
 export function layoutFor(data: GuidePages['data'], own: OwnPages): PagesLayout {
-  return mergeLayouts(packLayout(data), own.contents, existing(data, own), ownIdsOf(own));
+  return mergeLayouts(
+    packLayout(data),
+    own.contents,
+    existing(data, own),
+    ownIdsOf(own),
+    looseSections(data),
+  );
+}
+
+/** The pack's sections whose pages are placed by their links. */
+export function looseSections(data: GuidePages['data']): Set<string> {
+  return new Set(
+    (data.sections ?? []).filter((section) => section.placeByLinks === true).map((s) => s.id),
+  );
+}
+
+const isPageId = (id: string | null) => id !== null && parseId(id)?.kind === 'guide';
+
+/** The contents as the arrange tool shows it: the person's layout with the pages placed by links. */
+export interface ShownContents {
+  /** What is at the top, and what each section and page holds, as shown. */
+  layout: PagesLayout;
+  /** The pages placed by their links: by page id, the page it is under. */
+  placed: ReadonlyMap<string, string>;
+}
+
+/**
+ * The contents as the person sees it, hidden pages included (where the
+ * person's layout has them), with the pages placed by their links as the
+ * Guides section places them: the arrange tool shows this.
+ */
+export function shownContentsFor(data: GuidePages['data'], own: OwnPages): ShownContents {
+  const layout = layoutFor(data, own);
+  const guides = new Map(data.guides.map((guide) => [guide.id, guide]));
+  const pages = new Map(own.pages.map((page) => [page.id, page]));
+  const sectionIds = new Set([
+    ...(data.sections ?? []).map((section) => section.id),
+    ...own.sections.map((section) => section.id),
+  ]);
+  const isPage = (id: string) =>
+    guides.has(id) || (isOwnId(id) && pages.get(id)?.body !== undefined);
+  // A page of the pack, shown: it places and is placed. One hidden does neither.
+  const shownPack = (id: string) => guides.has(id) && pages.get(id)?.hidden !== true;
+  const lists = new Map<string, string[]>();
+  for (const [id, items] of Object.entries(layout.sections)) lists.set(id, items);
+  const tree = placePagesByLinks({
+    top: layout.top,
+    lists,
+    isSection: (id) => sectionIds.has(id),
+    isPage,
+    byLinks: looseSections(data),
+    linksOf: (id) => {
+      const guide = guides.get(id)!;
+      const page = pages.get(id);
+      return page?.body === undefined
+        ? guideLinks(guide)
+        : guideLinksIn(shownBody(guide, page), id);
+    },
+    leads: shownPack,
+    movable: shownPack,
+  });
+  return {
+    layout: { top: tree.top, sections: Object.fromEntries(tree.lists) },
+    placed: tree.placed,
+  };
 }
 
 /** Whether anything of the person's changes what the contents shows. */
@@ -249,6 +335,7 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
       id: section.id,
       title: titles.get(section.id) ?? section.title,
       items: shown(layout.sections[section.id] ?? []),
+      ...(section.placeByLinks === true ? { placeByLinks: true } : {}),
     });
   }
   for (const section of own.sections) {
@@ -260,7 +347,17 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
       items: shown(layout.sections[section.id] ?? []),
     });
   }
-  return { data: { ...data, guides, sections }, top: shown(layout.top) };
+  // The pages put under a page by hand. A hidden page is not shown, so the
+  // contents shows its pages where pages nothing leads to are (see `pageTree.ts`).
+  const under: Record<string, string[]> = {};
+  for (const [id, items] of Object.entries(layout.sections)) {
+    if (isPageId(id)) under[id] = shown(items);
+  }
+  return {
+    data: { ...data, guides, sections },
+    top: shown(layout.top),
+    ...(Object.keys(under).length > 0 ? { under } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +372,21 @@ export function sectionsWithin(layout: PagesLayout, sectionId: string): Set<stri
     for (const item of layout.sections[id] ?? []) if (layout.sections[item]) visit(item);
   };
   visit(sectionId);
+  return found;
+}
+
+/** Everything inside an entry of the contents (sections and pages), however deep, and itself. */
+export function entriesWithin(layout: PagesLayout, id: string): Set<string> {
+  const found = new Set<string>([id]);
+  const queue = [id];
+  // The queue grows as it is walked.
+  for (const at of queue) {
+    for (const item of layout.sections[at] ?? []) {
+      if (found.has(item)) continue;
+      found.add(item);
+      queue.push(item);
+    }
+  }
   return found;
 }
 
@@ -313,6 +425,70 @@ export function moveInLayout(
   return next;
 }
 
+/**
+ * Moves an entry of the contents as shown (`shown`, see
+ * {@link shownContentsFor}) to a section, under a page (`to` a page id), or
+ * to the top, before the entry `before` there (at the end when it is null
+ * or not there), changing the person's layout (`layout`, see
+ * {@link layoutFor}). Under a page, the pages shown there are kept there,
+ * in the order shown, as the person arranged them: placed by hand from now
+ * on, as the moved one is. Only pages go under a page, and never under
+ * themselves. Returns the layout unchanged when the move cannot be made.
+ */
+export function moveInContents(
+  layout: PagesLayout,
+  shown: PagesLayout,
+  id: string,
+  to: ContentsParent,
+  before: string | null,
+  loose: ReadonlySet<string>,
+): PagesLayout {
+  if (to !== null && entriesWithin(shown, id).has(to)) return layout;
+  const toPage = isPageId(to);
+  if (toPage && !isPageId(id)) return layout;
+  if (!toPage && to !== null && layout.sections[to] === undefined) return layout;
+  const next = copyLayout(layout);
+  const from = parentOf(next, id);
+  if (from !== undefined) {
+    const list = listOf(next, from)!;
+    list.splice(list.indexOf(id), 1);
+    if (list.length === 0 && from !== null && isPageId(from)) {
+      next.sections = withoutKey(next.sections, from);
+    }
+  }
+  if (toPage) {
+    const list = (shown.sections[to!] ?? []).filter((item) => item !== id);
+    const index = before === null ? -1 : list.indexOf(before);
+    list.splice(index < 0 ? list.length : index, 0, id);
+    // Pages shown there by their links are placed there by hand now: out of the sections left to links.
+    const taken = new Set(list);
+    for (const section of loose) {
+      const items = next.sections[section];
+      if (items) next.sections[section] = items.filter((item) => !taken.has(item));
+    }
+    next.sections[to!] = list;
+    return next;
+  }
+  const target = listOf(next, to)!;
+  const index = before === null ? -1 : target.indexOf(before);
+  target.splice(index < 0 ? target.length : index, 0, id);
+  return next;
+}
+
+/** Moves an entry of the contents as shown (see {@link moveInContents}). */
+export function moveShownEntry(
+  own: OwnPages,
+  layout: PagesLayout,
+  shown: PagesLayout,
+  id: string,
+  to: ContentsParent,
+  before: string | null,
+  loose: ReadonlySet<string>,
+): OwnPages {
+  const next = moveInContents(layout, shown, id, to, before, loose);
+  return next === layout ? own : { ...own, contents: next };
+}
+
 /** Puts a new entry in the contents, before `before` (at the end when null). */
 export function insertInLayout(
   layout: PagesLayout,
@@ -322,6 +498,7 @@ export function insertInLayout(
 ): PagesLayout {
   const next = copyLayout(layout);
   if (layout.sections[id] === undefined && parseId(id)?.kind === 'section') next.sections[id] = [];
+  if (isPageId(to) && next.sections[to!] === undefined) next.sections[to!] = [];
   const target = listOf(next, to) ?? next.top;
   const index = before === null ? -1 : target.indexOf(before);
   target.splice(index < 0 ? target.length : index, 0, id);
@@ -477,14 +654,21 @@ export function addOwnPage(
   };
 }
 
-/** Deletes a page of one's own, from the contents too. */
+/** Deletes a page of one's own, from the contents too; the pages under it go where it was. */
 export function deleteOwnPage(own: OwnPages, layout: PagesLayout, id: string): OwnPages {
   if (!isOwnId(id)) return own;
-  return {
-    ...own,
-    pages: own.pages.filter((page) => page.id !== id),
-    contents: removeFromLayout(layout, id),
-  };
+  const under = layout.sections[id];
+  let contents: PagesLayout;
+  if (under) {
+    contents = copyLayout(layout);
+    contents.sections = withoutKey(contents.sections, id);
+    const replace = (list: string[]) => list.flatMap((item) => (item === id ? under : [item]));
+    contents.top = replace(contents.top);
+    for (const key of Object.keys(contents.sections)) {
+      contents.sections[key] = replace(contents.sections[key]!);
+    }
+  } else contents = removeFromLayout(layout, id);
+  return { ...own, pages: own.pages.filter((page) => page.id !== id), contents };
 }
 
 /** A new section of one's own, put in the contents. */
