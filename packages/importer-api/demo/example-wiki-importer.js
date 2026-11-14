@@ -13,6 +13,13 @@
  *   of the wiki's pack, filed under its heading, and its links are given
  *   back as `links` (see `ImportSuccess.links`). An answer of 404 is a page
  *   the wiki does not have.
+ * - A page asked for under one name and answered from another address of
+ *   the wiki (`finalUrl`: the wiki forwarded it) is the page it was
+ *   answered as: its guide is kept under that name, the address is given
+ *   back as `pageAddress`, and the name asked is kept as another name of it
+ *   (the manifest's `idMigrations`), so a link to that name opens it.
+ * - Built again from its saved pages (`rebuild`), every page kept is
+ *   written again from its data, and one the pack lacks is added back.
  *
  * It is a single plain ES module with no imports, as every importer module
  * must be.
@@ -68,6 +75,59 @@ function json(/** @type {string} */ text) {
   } catch {
     return null;
   }
+}
+
+/**
+ * The guide a page's answer becomes, with the pages it links to, and its
+ * other name when it was asked for under another address than it came from.
+ * @returns {{ problem: string } | { guide: GuideEntry, links: string[], other: string | null, pageAddress?: string }}
+ */
+function guideOf(
+  /** @type {FetchedPage} */ answer,
+  /** @type {string} */ asked,
+  /** @type {string} */ importedAt,
+) {
+  if (answer.status === 404) return { problem: 'The wiki has no such page.' };
+  const page = /** @type {{ title?: unknown, body?: unknown, links?: unknown }} */ (
+    json(answer.text) ?? {}
+  );
+  const askedSlug = slugOf(asked);
+  const slug = slugOf(answer.finalUrl || asked);
+  if (!askedSlug || !slug || slug === 'Contents') {
+    return { problem: 'The page did not hold a wiki page in the expected shape.' };
+  }
+  if (typeof page.title !== 'string' || typeof page.body !== 'string') {
+    return { problem: 'The page did not hold a wiki page in the expected shape.' };
+  }
+  const address = `${SITE}/wiki/${slug}`;
+  /** @type {GuideEntry} */
+  const guide = {
+    id: `${PACK}:guide:${local(slug)}`,
+    title: page.title,
+    body: page.body,
+    locationIds: [],
+    source: { url: address, site: NAME, license: LICENSE, readAt: importedAt, adapted: true },
+  };
+  const links = Array.isArray(page.links)
+    ? page.links.filter((link) => typeof link === 'string').map((link) => `${SITE}/wiki/${link}`)
+    : [];
+  const other = askedSlug === slug ? null : `${PACK}:guide:${local(askedSlug)}`;
+  return { guide, links, other, ...(other ? { pageAddress: address } : {}) };
+}
+
+/** The pack with `name` kept as another name of the guide `id`, unless it is a page of its own. */
+function withOtherName(
+  /** @type {PackData} */ pack,
+  /** @type {string | null} */ name,
+  /** @type {string} */ id,
+) {
+  const migrations = { ...pack.manifest.idMigrations };
+  // The page is a page of its own: no name of it leads elsewhere.
+  delete migrations[id];
+  if (name && !pack.guides.some((g) => g.id === name)) migrations[name] = id;
+  for (const [from, to] of Object.entries(migrations)) if (to === name) migrations[from] = id;
+  pack.manifest.idMigrations = migrations;
+  return pack;
 }
 
 /** The pack with one page added or read again, filed under its heading. */
@@ -134,42 +194,48 @@ const importer = {
   async convert(pageData, context) {
     const answer = answerOf(pageData);
     if (!answer) return { ok: false, message: 'The page provided no data.' };
-    if (answer.status === 404) return { ok: false, message: 'The wiki has no such page.' };
-    const page = /** @type {{ title?: unknown, body?: unknown, links?: unknown }} */ (
-      json(answer.text) ?? {}
-    );
-    const slug = slugOf(context.url);
-    if (!slug || typeof page.title !== 'string' || typeof page.body !== 'string') {
-      return { ok: false, message: 'The page did not hold a wiki page in the expected shape.' };
+    const read = guideOf(answer, context.url, context.importedAt);
+    if ('problem' in read) return { ok: false, message: read.problem };
+    const { guide, links, other } = read;
+    const sourceKey = local(slugOf(context.url) ?? guide.id);
+    let existing = await context.existingPack(PACK);
+    /** @type {{ url: string, links: string[], pageAddress?: string }[]} */
+    const writtenAgain = [];
+    // Built again from the saved pages: each written again from its data, nothing fetched.
+    if (context.rebuild && existing && context.savedPages && context.savedSource) {
+      for (const kept of await context.savedPages(PACK)) {
+        if (kept.key === sourceKey) continue;
+        const source = await context.savedSource(PACK, kept.key);
+        const keptAnswer = source ? answerOf(source.data) : null;
+        if (!source || !keptAnswer) continue;
+        const again = guideOf(keptAnswer, source.url, source.importedAt);
+        if ('problem' in again) continue;
+        existing = withOtherName(
+          withPage(existing, again.guide, undefined).pack,
+          again.other,
+          again.guide.id,
+        );
+        writtenAgain.push({
+          url: source.url,
+          links: again.links,
+          ...(again.pageAddress ? { pageAddress: again.pageAddress } : {}),
+        });
+      }
     }
-    const guide = {
-      id: `${PACK}:guide:${local(slug)}`,
-      title: page.title,
-      body: page.body,
-      locationIds: [],
-      source: {
-        url: `${SITE}/wiki/${slug}`,
-        site: NAME,
-        license: LICENSE,
-        readAt: context.importedAt,
-        adapted: true,
-      },
-    };
-    const existing = await context.existingPack(PACK);
-    const { pack, refreshed } = withPage(existing, guide, context.listed?.group);
-    const links = Array.isArray(page.links)
-      ? page.links.filter((link) => typeof link === 'string').map((link) => `${SITE}/wiki/${link}`)
-      : [];
+    const { pack: added, refreshed } = withPage(existing, guide, context.listed?.group);
+    const pack = withOtherName(added, other, guide.id);
     return {
       ok: true,
       packId: PACK,
-      sourceKey: local(slug),
+      sourceKey,
       guideId: guide.id,
       links,
+      ...(read.pageAddress ? { pageAddress: read.pageAddress } : {}),
+      ...(writtenAgain.length > 0 ? { writtenAgain } : {}),
       pack,
       summary: {
         game: NAME,
-        map: page.title,
+        map: guide.title,
         maps: 0,
         locations: 0,
         mapLocations: 0,
