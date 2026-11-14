@@ -94,7 +94,8 @@ test.describe('on a desktop', () => {
     });
     const scrolled = await body(page).evaluate((el) => el.scrollTop);
     expect(scrolled).toBeGreaterThan(100);
-    await shownPage(page).getByRole('button', { name: 'Getting around' }).click();
+    // The link in its text (the foot names the pages that link to it, too).
+    await shownPage(page).locator('.app-link', { hasText: 'Getting around' }).click();
     await expect(shownPage(page).locator('h1')).toHaveText('Getting around');
     await expect(body(page)).toHaveJSProperty('scrollTop', 0);
     await page.getByTestId('guides-back').click();
@@ -274,8 +275,9 @@ test.describe('on a phone', () => {
     // The page itself does not scroll sideways.
     expect(await body(page).evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
     await expect(page.getByTestId('guides-credit')).toContainText('Example Wiki');
-    // Only where the page is shows above it; the contents is a tap away.
-    await expect(page.locator('.guides-crumb-part:visible')).toHaveText(/The isle/);
+    // The way to the page shows above it, scrolled to its end; the contents is a tap away.
+    await expect(page.locator('.guides-crumbs')).toHaveText(/The isle\s*›\s*Regions/);
+    await expect(page.locator('.guides-crumb-part').last()).toBeInViewport();
     await page.getByTestId('guides-contents-button').tap();
     await expect(page.getByTestId('guides-contents')).toBeVisible();
     expect(errors).toEqual([]);

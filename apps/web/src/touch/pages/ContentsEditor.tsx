@@ -1,25 +1,31 @@
-import { isOwnId } from '@atlas/schema';
+import { isOwnId, parseId } from '@atlas/schema';
 import {
   addOwnPage,
   addOwnSection,
   deleteOwnPage,
   deleteOwnSection,
-  moveEntry,
+  entriesWithin,
   newOwnId,
   pageChange,
   pageTitle,
   parentOf,
   renameSection,
-  sectionsWithin,
   setPageHidden,
   stepInLayout,
   type ContentsParent,
 } from '@atlas/core';
 import type { PagesLayout } from '@atlas/schema';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { UiIcon } from '../../components/icons';
 import { guidesOf } from '../../state/guides';
-import { changeContents, canChangeOwnPages, layoutOf, useOwnPages } from '../../state/ownPages';
+import {
+  changeContents,
+  canChangeOwnPages,
+  layoutOf,
+  moveInContentsOf,
+  shownContentsOf,
+  useOwnPages,
+} from '../../state/ownPages';
 import type { LoadedGame } from '../../state/store';
 import { sectionChoices } from './pageActions';
 import { MenuItem } from './PageBlocks';
@@ -28,17 +34,28 @@ import { editNewPage, openPageEditor, packPage, usePageEditor } from './pageEdit
 
 /**
  * The contents as the person arranges it, beside the page edited: sections
- * that hold pages and sections, each moved by dragging its handle, by
- * Alt+Up and Alt+Down on it, or from its menu ("Move up", "Move down",
- * "Move to section…"); new pages and sections of one's own; a wiki page
- * hidden or shown again; one's own deleted.
+ * that hold pages and sections, and pages that hold pages, each moved by
+ * dragging its handle, by Alt+Up and Alt+Down on it, or from its menu
+ * ("Move up", "Move down", "Move to…"); new pages and sections of one's
+ * own; a wiki page hidden or shown again; one's own deleted.
+ *
+ * It shows the contents as Guides does, with the pages placed by their
+ * links under the pages that lead to them. A page moved by hand stays
+ * where it was put; under a page, the pages shown there stay as arranged.
+ * A page moved back to a section whose pages are placed by their links is
+ * placed by its links again. Only pages go under a page.
  */
 
 interface Drop {
   id: string;
-  /** Before the entry, after it, or into the section (at its end). */
+  /** Before the entry, after it, or into the section or page (at its end). */
   where: 'before' | 'after' | 'into';
 }
+
+const isSectionId = (id: string) => parseId(id)?.kind === 'section';
+
+/** Rows of one list shown at first, and more with each press. */
+const ROWS_AT_ONCE = 200;
 
 /** The title of an entry of the contents, as shown. */
 function titleOf(game: LoadedGame, id: string): string {
@@ -65,27 +82,47 @@ function dropPlace(layout: PagesLayout, drop: Drop): { to: ContentsParent; befor
 }
 
 function move(game: LoadedGame, id: string, to: ContentsParent, before: string | null): void {
-  const layout = layoutOf(game);
-  if (to !== null && (to === id || sectionsWithin(layout, id).has(to))) return;
-  changeContents(
-    (own, l) => moveEntry(own, l, id, parentOf(l, id) ?? null, to, before),
-    `Moved “${titleOf(game, id)}”`,
+  const shown = shownContentsOf(game).layout;
+  if (to !== null && entriesWithin(shown, id).has(to)) return;
+  if (to !== null && !isSectionId(to) && isSectionId(id)) return;
+  moveInContentsOf(
+    game,
+    id,
+    to,
+    before,
+    to !== null && !isSectionId(to)
+      ? `Moved “${titleOf(game, id)}” under “${titleOf(game, to)}”`
+      : `Moved “${titleOf(game, id)}”`,
   );
 }
 
 function step(game: LoadedGame, id: string, by: -1 | 1): void {
-  const layout = layoutOf(game);
-  const place = stepInLayout(layout, id, parentOf(layout, id) ?? null, by);
-  if (place) move(game, id, place.to, place.before);
+  const shown = shownContentsOf(game).layout;
+  const place = stepInLayout(shown, id, parentOf(shown, id) ?? null, by);
+  // A section never goes under a page.
+  if (place && (place.to === null || isSectionId(place.to) || !isSectionId(id))) {
+    move(game, id, place.to, place.before);
+  }
 }
 
 export function ContentsEditor({ game }: { game: LoadedGame }) {
   // The contents follow the person's changes.
   useOwnPages((s) => s.own);
   const canChange = useOwnPages((s) => canChangeOwnPages(s));
-  const layout = layoutOf(game);
+  const layout = shownContentsOf(game).layout;
   const editing = usePageEditor((s) => s.guideId);
   const [drag, setDrag] = useState<{ id: string; drop: Drop | null } | null>(null);
+  // Pages with pages under them are folded, but the way to the page edited; and as the person chose.
+  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const onWay = useMemo(() => {
+    const ids = new Set<string>();
+    for (let at = editing ? parentOf(layout, editing) : null; at; at = parentOf(layout, at)) {
+      if (ids.has(at)) break;
+      ids.add(at);
+    }
+    return ids;
+  }, [layout, editing]);
+  const [counts, setCounts] = useState<ReadonlyMap<string, number>>(new Map());
   const [dialog, setDialog] = useState<
     | { kind: 'rename'; id: string }
     | { kind: 'move'; id: string }
@@ -97,7 +134,8 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
   /** The parent and the place a new page or section goes: beside the page edited. */
   const newPlace = (): { to: ContentsParent; before: string | null } => {
     if (!editing) return { to: null, before: null };
-    return { to: parentOf(layout, editing) ?? null, before: null };
+    const base = layoutOf(game);
+    return { to: parentOf(base, editing) ?? null, before: null };
   };
 
   const startDrag = (id: string, event: React.PointerEvent) => {
@@ -117,8 +155,11 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
     }
     const rect = element.getBoundingClientRect();
     const y = (event.clientY - rect.top) / rect.height;
-    const section = element.dataset.kind === 'section';
-    const where: Drop['where'] = section
+    // Into a section anything; into a page only a page.
+    const into =
+      element.dataset.kind === 'section' ||
+      (element.dataset.kind === 'page' && !isSectionId(drag.id));
+    const where: Drop['where'] = into
       ? y < 0.3
         ? 'before'
         : y > 0.7
@@ -137,9 +178,16 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
     setDrag(null);
   };
 
-  const level = (items: readonly string[], depth: number): React.ReactNode =>
-    items.map((id) => {
-      const isSection = id in layout.sections;
+  const level = (key: string, items: readonly string[], depth: number): React.ReactNode => {
+    const count = Math.max(
+      counts.get(key) ?? ROWS_AT_ONCE,
+      Math.ceil((items.findIndex((id) => id === editing || onWay.has(id)) + 1) / ROWS_AT_ONCE) *
+        ROWS_AT_ONCE,
+    );
+    const rows = items.slice(0, count).map((id) => {
+      const isSection = isSectionId(id);
+      const under = isSection ? [] : (layout.sections[id] ?? []);
+      const open = isSection || (under.length > 0 && (toggled.get(id) ?? onWay.has(id)));
       const dropHere = drag?.drop?.id === id ? drag.drop.where : null;
       return (
         <li key={id} className="pe-tree-item">
@@ -148,6 +196,11 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
             id={id}
             depth={depth}
             section={isSection}
+            under={under.length}
+            open={open}
+            onFold={(next) => {
+              setToggled(new Map(toggled).set(id, next));
+            }}
             current={editing === id}
             dropHere={dropHere}
             dragging={drag?.id === id}
@@ -161,17 +214,43 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
               setDialog({ kind, id });
             }}
           />
-          {isSection ? (
-            <ul className="touch-plain-list">{level(layout.sections[id] ?? [], depth + 1)}</ul>
+          {open ? (
+            <ul className="touch-plain-list">
+              {level(id, isSection ? (layout.sections[id] ?? []) : under, depth + 1)}
+            </ul>
           ) : null}
         </li>
       );
     });
+    const left = items.length - count;
+    if (left > 0) {
+      rows.push(
+        <li key="more" className="pe-tree-item">
+          <button
+            type="button"
+            className="pe-tree-rows-more"
+            style={{ marginLeft: 4 + depth * 16 }}
+            onClick={() => {
+              setCounts(new Map(counts).set(key, count + ROWS_AT_ONCE));
+            }}
+          >
+            {left > ROWS_AT_ONCE
+              ? `Show ${ROWS_AT_ONCE} more of ${left.toLocaleString('en')}`
+              : `Show the other ${left === 1 ? 'one' : left.toLocaleString('en')}`}
+          </button>
+        </li>,
+      );
+    }
+    return rows;
+  };
 
   return (
     <nav className="pe-contents" aria-label="Contents" data-testid="contents-editor">
       <h2 className="pe-contents-title">Guides</h2>
-      <p className="pe-note">{game.pack.manifest.title}. Drag to move a page or a section.</p>
+      <p className="pe-note">
+        {game.pack.manifest.title}. Drag to move a page or a section; drop a page on a page to put
+        it under that page.
+      </p>
       <div className="pe-contents-actions">
         <button
           type="button"
@@ -215,7 +294,7 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
         </button>
       </div>
       <ul className="touch-plain-list pe-tree" data-testid="contents-tree">
-        {level(layout.top, 0)}
+        {level('', layout.top, 0)}
       </ul>
       {dialog?.kind === 'rename' || dialog?.kind === 'new-section' ? (
         <NameDialog
@@ -261,11 +340,11 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
         <ConfirmDialog
           title={`Delete “${titleOf(game, dialog.id)}”?`}
           text={
-            dialog.id in layout.sections
+            isSectionId(dialog.id)
               ? 'What the section holds stays, where the section was.'
-              : 'The page and its text go. You can undo this for a while.'
+              : 'The page and its text go; the pages under it stay, where it was. You can undo this for a while.'
           }
-          confirm={dialog.id in layout.sections ? 'Delete the section' : 'Delete the page'}
+          confirm={isSectionId(dialog.id) ? 'Delete the section' : 'Delete the page'}
           testId="delete-entry-dialog"
           onClose={() => {
             setDialog(null);
@@ -273,7 +352,7 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
           onConfirm={() => {
             const id = dialog.id;
             const title = titleOf(game, id);
-            const section = id in layout.sections;
+            const section = isSectionId(id);
             if (!section && usePageEditor.getState().guideId === id) {
               usePageEditor.setState({
                 guideId: null,
@@ -298,6 +377,9 @@ function Row({
   id,
   depth,
   section,
+  under,
+  open,
+  onFold,
   current,
   dropHere,
   dragging,
@@ -311,6 +393,10 @@ function Row({
   id: string;
   depth: number;
   section: boolean;
+  /** How many pages are under a page (none for a section). */
+  under: number;
+  open: boolean;
+  onFold: (open: boolean) => void;
   current: boolean;
   dropHere: Drop['where'] | null;
   dragging: boolean;
@@ -364,6 +450,21 @@ function Row({
       >
         <UiIcon name="grip" size={14} />
       </button>
+      {!section && under > 0 ? (
+        <button
+          type="button"
+          className="pe-tree-fold"
+          aria-expanded={open}
+          aria-label={open ? `Hide the pages under “${title}”` : `Show the pages under “${title}”`}
+          title={open ? 'Hide the pages under it' : 'Show the pages under it'}
+          data-testid="contents-fold"
+          onClick={() => {
+            onFold(!open);
+          }}
+        >
+          <UiIcon name={open ? 'chevronDown' : 'chevron'} size={14} />
+        </button>
+      ) : null}
       {section ? (
         <span className="pe-tree-name pe-tree-section-name">
           <UiIcon name="folder" size={16} />
@@ -441,7 +542,7 @@ function Row({
                 onDialog('move');
               }}
             >
-              Move to section…
+              Move to…
             </MenuItem>
             {section ? (
               <MenuItem
@@ -539,12 +640,31 @@ function NameDialog({
   );
 }
 
-/** "Move to section…": the top of the contents, or a section not inside what is moved. */
+/**
+ * "Move to…": the top of the contents, a section not inside what is moved,
+ * or (for a page) under another page, found by its title.
+ */
 function MoveDialog({ game, id, onClose }: { game: LoadedGame; id: string; onClose: () => void }) {
-  const layout = layoutOf(game);
-  const inside = sectionsWithin(layout, id);
-  const parent = parentOf(layout, id) ?? null;
+  const shown = shownContentsOf(game).layout;
+  const inside = entriesWithin(shown, id);
+  const parent = parentOf(shown, id) ?? null;
   const choices = sectionChoices(game).filter((s) => !inside.has(s.id) && s.id !== id);
+  const page = !isSectionId(id);
+  const [query, setQuery] = useState('');
+  const queryId = useId();
+  const loose = new Set(
+    (game.pack.data.sections ?? []).filter((s) => s.placeByLinks === true).map((s) => s.id),
+  );
+  const words = query.trim().toLowerCase();
+  // The first twenty pages whose title has the words, in contents order.
+  const pages: { id: string; title: string }[] = [];
+  if (page && words !== '') {
+    for (const guide of guidesOf(game).contents.pages()) {
+      if (inside.has(guide.id) || !guide.title.toLowerCase().includes(words)) continue;
+      pages.push({ id: guide.id, title: guide.title });
+      if (pages.length >= 20) break;
+    }
+  }
   return (
     <Modal title={`Move “${titleOf(game, id)}” to…`} onClose={onClose} testId="move-dialog">
       <ul className="touch-plain-list pe-move-list">
@@ -575,10 +695,50 @@ function MoveDialog({ game, id, onClose }: { game: LoadedGame; id: string; onClo
               }}
             >
               {section.title}
+              {loose.has(section.id) && page ? (
+                <span className="pe-move-note">
+                  A page here is put under the page that links to it, when one does.
+                </span>
+              ) : null}
             </button>
           </li>
         ))}
       </ul>
+      {page ? (
+        <div className="pe-form pe-move-under">
+          <label htmlFor={queryId}>Or under a page: type part of its title</label>
+          <input
+            id={queryId}
+            className="own-input"
+            value={query}
+            data-testid="move-page-query"
+            onChange={(event) => {
+              setQuery(event.target.value);
+            }}
+          />
+          {words !== '' && pages.length === 0 ? (
+            <p className="pe-note">No other page has that in its title.</p>
+          ) : null}
+          <ul className="touch-plain-list pe-move-list">
+            {pages.map((target) => (
+              <li key={target.id}>
+                <button
+                  type="button"
+                  className="pe-move-choice"
+                  disabled={target.id === parent}
+                  data-testid="move-under-choice"
+                  onClick={() => {
+                    onClose();
+                    move(game, id, target.id, null);
+                  }}
+                >
+                  {`Under “${target.title}”`}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <footer className="own-dialog-foot">
         <span className="own-space" />
         <button type="button" className="own-pill-button" onClick={onClose}>

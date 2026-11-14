@@ -1,4 +1,12 @@
-import { layoutFor } from '@atlas/core';
+import {
+  layoutFor,
+  looseSections,
+  moveShownEntry,
+  shownContentsFor,
+  type ContentsParent,
+  type LoadedPack,
+  type ShownContents,
+} from '@atlas/core';
 import {
   NO_OWN_PAGES,
   OWN_PAGES_VERSION,
@@ -205,6 +213,49 @@ export function ownPagesOf(gameId: string, state: OwnPagesState = get()): OwnPag
 /** The contents as the person arranged it, hidden pages included. */
 export function layoutOf(game: LoadedGame): PagesLayout {
   return layoutFor(game.pack.data, ownPagesOf(game.pack.manifest.gameId));
+}
+
+const shownKnown = new WeakMap<LoadedPack, { own: OwnPages; shown: ShownContents }>();
+
+/**
+ * The contents as the arrange tool shows it: the person's layout with the
+ * pages placed by their links, hidden pages included (see
+ * `shownContentsFor`). Worked out once per pack and change.
+ */
+export function shownContentsOf(game: LoadedGame): ShownContents {
+  const own = ownPagesOf(game.pack.manifest.gameId);
+  const known = shownKnown.get(game.pack);
+  if (known?.own === own) return known.shown;
+  const shown = shownContentsFor(game.pack.data, own);
+  shownKnown.set(game.pack, { own, shown });
+  return shown;
+}
+
+/**
+ * Moves an entry of the contents as shown, under a page too, and says so
+ * with a way to undo it (see `moveInContents`). Returns whether it moved.
+ */
+export function moveInContentsOf(
+  game: LoadedGame,
+  id: string,
+  to: ContentsParent,
+  before: string | null,
+  said: string,
+): boolean {
+  const data = game.pack.data;
+  return changeContents(
+    (own, layout) =>
+      moveShownEntry(
+        own,
+        layout,
+        shownContentsFor(data, own).layout,
+        id,
+        to,
+        before,
+        looseSections(data),
+      ),
+    said,
+  );
 }
 
 // ---------------------------------------------------------------------------

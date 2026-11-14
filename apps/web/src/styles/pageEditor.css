@@ -732,6 +732,50 @@
   color: var(--atlas-text);
 }
 
+.pe-tree-fold {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-muted);
+}
+
+.pe-tree-fold:hover {
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-text);
+}
+
+.pe-tree-rows-more {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  font-size: 13px;
+}
+
+.pe-tree-rows-more:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.pe-move-note {
+  display: block;
+  color: var(--atlas-muted);
+  font-size: 12px;
+}
+
+.pe-move-under {
+  margin-top: 8px;
+}
+
 .pe-move-list {
   max-height: 50vh;
   overflow: auto;

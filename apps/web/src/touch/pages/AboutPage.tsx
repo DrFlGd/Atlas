@@ -1,11 +1,16 @@
-import { moveEntry, pageChange, parentOf, revertPage, setWhenWikiChanges } from '@atlas/core';
-import { sameLinkTarget, type LinkTarget, isOwnId } from '@atlas/schema';
+import { pageChange, parentOf, revertPage, setWhenWikiChanges } from '@atlas/core';
+import { sameLinkTarget, type LinkTarget, isOwnId, parseId } from '@atlas/schema';
 import { useId, useState } from 'react';
 import { UiIcon } from '../../components/icons';
 import { canChangeGuideLinks, forgetChoice, linkPage, useGuideLinks } from '../../state/guideLinks';
 import { linkedTargets, targetText } from '../../state/guideMatches';
 import { hasMap } from '../../state/guides';
-import { changeContents, layoutOf, useOwnPages } from '../../state/ownPages';
+import {
+  changeContents,
+  moveInContentsOf,
+  shownContentsOf,
+  useOwnPages,
+} from '../../state/ownPages';
 import type { LoadedGame } from '../../state/store';
 import { LocationFinder } from '../editor/StepPanel';
 import { sectionChoices } from './pageActions';
@@ -20,8 +25,15 @@ import { packPage, reloadPage, setWikiView, usePageEditor } from './pageEditorSt
 export function AboutPage({ game, guideId }: { game: LoadedGame; guideId: string }) {
   const own = useOwnPages((s) => s.own);
   const sectionId = useId();
-  const layout = layoutOf(game);
-  const parent = parentOf(layout, guideId) ?? null;
+  const shown = shownContentsOf(game).layout;
+  const parent = parentOf(shown, guideId) ?? null;
+  // Under a page: that page, as the arrange tool shows it.
+  const underPage = parent !== null && parseId(parent)?.kind === 'guide' ? parent : null;
+  const underTitle = underPage
+    ? (game.pack.data.guides.find((g) => g.id === underPage)?.title ??
+      own.pages.find((p) => p.id === underPage)?.title ??
+      underPage)
+    : null;
   const sections = sectionChoices(game);
   const pack = packPage(game, guideId);
   const page = own.pages.find((p) => p.id === guideId);
@@ -44,13 +56,18 @@ export function AboutPage({ game, guideId }: { game: LoadedGame; guideId: string
         value={parent ?? ''}
         onChange={(event) => {
           const to = event.target.value || null;
+          if (to === underPage) return;
           const name = to ? sections.find((s) => s.id === to)?.title : null;
-          changeContents(
-            (o, l) => moveEntry(o, l, guideId, parentOf(l, guideId) ?? null, to, null),
+          moveInContentsOf(
+            game,
+            guideId,
+            to,
+            null,
             name ? `Moved the page to “${name}”` : 'Moved the page out of its section',
           );
         }}
       >
+        {underPage ? <option value={underPage}>{`Under the page “${underTitle}”`}</option> : null}
         <option value="">Not in a section</option>
         {sections.map((section) => (
           <option key={section.id} value={section.id}>
