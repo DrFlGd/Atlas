@@ -884,3 +884,115 @@ button.guides-crumb:hover {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* "Search wiki" on a location's card */
+
+.place-wiki-find {
+  margin: 0 0 8px;
+}
+
+.place-wiki-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.place-wiki-actions .touch-text-button {
+  min-height: 40px;
+  padding: 0 6px;
+  font-size: 14px;
+}
+
+.place-wiki-search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+}
+
+.place-wiki .place-wiki-search {
+  margin-bottom: 4px;
+  background: var(--atlas-surface);
+}
+
+.place-wiki-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.place-wiki-search-head .touch-text-button {
+  min-height: 36px;
+}
+
+.place-wiki-search-form {
+  display: flex;
+  gap: 8px;
+}
+
+.place-wiki-search-form .touch-text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.place-wiki-search p {
+  margin: 0;
+}
+
+.place-wiki-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--atlas-accent);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-accent-soft);
+}
+
+.place-wiki-ask-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.place-wiki-ask-buttons .touch-button {
+  min-height: 44px;
+  text-align: left;
+}
+
+.place-wiki-hits {
+  display: flex;
+  flex-direction: column;
+}
+
+.place-wiki-hit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.place-wiki-hit-title {
+  font-weight: 600;
+}
+
+.place-wiki-hit-buttons {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.place-wiki-hit-buttons .touch-button {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+}

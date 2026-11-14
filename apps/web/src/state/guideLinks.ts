@@ -337,6 +337,14 @@ export function skipPage(guideId: string): boolean {
   });
 }
 
+/** Puts back what was said about a page (`undefined`: nothing), as Undo does. */
+export function restoreChoice(guideId: string, choice: LinkChoice | undefined): boolean {
+  if (!choice) return forgetChoice(guideId);
+  return setChoices((choices) => {
+    choices[guideId] = choice;
+  });
+}
+
 /** Forgets what was said about a page: it is offered again, unlinked. */
 export function forgetChoice(guideId: string): boolean {
   if (!canChangeGuideLinks()) return false;
