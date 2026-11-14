@@ -155,10 +155,15 @@ export type RunPageState =
       measuring?: boolean;
       attention?: boolean;
     }
-  /** The page data is being turned into a map; `measuring` while its picture is measured. */
+  /**
+   * The page data is being turned into a map; `measuring` while its picture
+   * is measured. `of` says when it is not a map: a page written into a game
+   * of pages, or a list of pages or games being read.
+   */
   | {
       kind: 'converting';
       measuring?: boolean;
+      of?: 'pages' | 'list';
       /** It waits for another step changing the same game (see `packTurns.ts`). */
       waiting?: boolean;
     }
