@@ -12,9 +12,11 @@ import {
   confirmChecked,
   continueQueue,
   forgetQueue,
+  forgetQueuedWiki,
   pictureText,
   queuedGames,
   resetImport,
+  siteMemory,
   setDraft,
   stopRun,
   submitAddresses,
@@ -46,7 +48,8 @@ import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { SameTitleOfferCard } from './GameTitles';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
-import { BrowseKeep, HowStep, LicenceQuestion } from './SiteReading';
+import { SITE_MEMORY } from './removalText';
+import { BrowseKeep, CHOOSE_HOW, ChooseHowOffer, HowStep, LicenceQuestion } from './SiteReading';
 
 /**
  * "Add a map or a wiki", in desktop builds that include importers: the
@@ -247,7 +250,7 @@ function Failure({ message, how }: { message: string; how?: string | undefined }
             data-testid="add-map-how"
             onClick={() => void chooseHow(how)}
           >
-            Choose how this wiki is read
+            {CHOOSE_HOW}
           </button>
         </div>
       ) : (
@@ -326,40 +329,118 @@ function QueuedPages() {
       <p className="muted small">
         Pages you chose earlier that were not read: the session was stopped, or the site asked this
         app to wait. Read them reads them all now, in one session, one at a time with a pause.
-        Forget them drops the list; nothing that was read is deleted.
+        Forget them drops the list; nothing that was read is deleted. Forget this wiki, for a wiki
+        with no page in the Library, also forgets everything this app remembers of its site.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
-          <li key={`${game.importerId} ${game.key}`} data-testid="add-map-queued-game">
-            <span>
-              <strong>{game.game}</strong>{' '}
-              <span className="muted small">
-                {game.pages.length} {game.pages.length === 1 ? 'page' : 'pages'} left
-              </span>
-            </span>
-            <span className="row-actions">
-              <button
-                type="button"
-                className="button"
-                data-testid="add-map-queued-continue"
-                onClick={() => void continueQueue(game.importerId, game.key)}
-              >
-                {game.pages.length === 1
-                  ? 'Read it'
-                  : `Read them (${game.pages.length.toLocaleString('en')})`}
-              </button>
-              <button
-                type="button"
-                className="button"
-                onClick={() => void forgetQueue(game.importerId, game.key)}
-              >
-                Forget them
-              </button>
-            </span>
-          </li>
+          <QueuedGameRow key={`${game.importerId} ${game.key}`} game={game} />
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * One game with pages kept for later. For a wiki with no game in the
+ * Library (its sessions kept no page), forgetting it forgets everything
+ * this app keeps of its site too, as deleting a wiki does, after asking.
+ */
+function QueuedGameRow({ game }: { game: QueuedGame }) {
+  const library = useAtlas((s) => s.library);
+  const [away, setAway] = useState<{ key: string } | null>(null);
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    let live = true;
+    siteMemory(game.importerId, game.key).then(
+      (memory) => {
+        if (live) setAway(memory && !memory.inLibrary ? { key: memory.key } : null);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [game.importerId, game.key, library]);
+  const left = game.pages.length;
+  return (
+    <li data-testid="add-map-queued-game">
+      <span>
+        <strong>{game.game}</strong>{' '}
+        <span className="muted small">
+          {left} {left === 1 ? 'page' : 'pages'} left
+          {away ? '. No page of this wiki is in the Library yet.' : ''}
+        </span>
+      </span>
+      <span className="row-actions">
+        <button
+          type="button"
+          className="button"
+          data-testid="add-map-queued-continue"
+          onClick={() => void continueQueue(game.importerId, game.key)}
+        >
+          {left === 1 ? 'Read it' : `Read them (${left.toLocaleString('en')})`}
+        </button>
+        {away ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="add-map-queued-forget-wiki"
+            onClick={() => {
+              setAsking(true);
+            }}
+          >
+            Forget this wiki
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="button"
+            data-testid="add-map-queued-forget"
+            onClick={() => void forgetQueue(game.importerId, game.key)}
+          >
+            Forget them
+          </button>
+        )}
+      </span>
+      {away && asking ? (
+        <div
+          className="download-confirm removal-confirm"
+          role="group"
+          aria-label={`Forget ${game.game}?`}
+          data-testid="queued-forget-confirm"
+        >
+          <p>
+            <strong>Forget {game.game}?</strong>
+          </p>
+          <p className="removal-detail">
+            No page of this wiki is in the Library. This app forgets the {left}{' '}
+            {left === 1 ? 'page' : 'pages'} kept for later and what it remembers of the wiki’s site,{' '}
+            {away.key}: {SITE_MEMORY}. Nothing else is deleted, and adding the wiki again asks again
+            how its pages are read. This cannot be undone.
+          </p>
+          <div className="row-actions">
+            <button
+              type="button"
+              className="button button-danger"
+              data-testid="queued-forget-confirm-button"
+              onClick={() => void forgetQueuedWiki(game.importerId, game.key)}
+            >
+              Forget it
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setAsking(false);
+              }}
+            >
+              Keep it
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -922,6 +1003,10 @@ function Run({
             ? 'One address was left out, because this app cannot add maps from it.'
             : `${run.leftOut} addresses were left out, because this app cannot add maps from them.`}
         </p>
+      ) : null}
+      {/* No page kept: the person can choose another way to read the wiki. */}
+      {!running && !update && games.size === 0 && run.pages[0] ? (
+        <ChooseHowOffer page={run.pages[0].url} />
       ) : null}
       {/* Pages chosen beyond this go: how many are left, and the next go. */}
       {!running ? <QueuedPages /> : null}

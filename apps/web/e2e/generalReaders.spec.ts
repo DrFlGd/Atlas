@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
-import { collectErrors } from './helpers';
+import { collectErrors, openLibraryGame, storedSetting } from './helpers';
 import { expect, test } from './layout';
 import {
   DOWNLOADS_BUILD,
@@ -68,7 +68,25 @@ const ROOM: WikiSite = {
 const ROOM_HOST = 'wiki.isle.reading-room.example';
 const ROOM_WIKI = `https://${ROOM_HOST}/wiki`;
 const ROOM_PACK = 'wiki-isle-reading-room-example-wiki';
-const OTHERS = { [MARSH_HOST]: MARSH, 'wiki.dunes.example': MARSH, [ROOM_HOST]: ROOM };
+const MARSH_PACK = 'wiki-marsh-example-wiki';
+const DUNES_WIKI = 'https://wiki.dunes.example/wiki';
+const DUNES_PACK = 'wiki-dunes-example-wiki';
+/** A made-up wiki whose first page states no licence and the next one does. */
+const FENS: WikiSite = {
+  headings: [{ title: 'Wet', pages: ['Mist', 'Rushes'] }],
+  pages: {
+    Mist: { title: 'Mist', body: 'It hangs low.' },
+    Rushes: { title: 'Rushes', body: 'They bend.', licence: BY_SA_3 },
+  },
+};
+const FENS_HOST = 'wiki.fens.example';
+const FENS_WIKI = `https://${FENS_HOST}/wiki`;
+const OTHERS = {
+  [MARSH_HOST]: MARSH,
+  'wiki.dunes.example': MARSH,
+  [ROOM_HOST]: ROOM,
+  [FENS_HOST]: FENS,
+};
 
 /** The app's own requests and windows, from the fake shell. */
 async function events(page: Page, what: 'fetch' | 'open' | 'navigate' | 'read') {
@@ -208,7 +226,11 @@ test('a page that states no licence is kept only once the person confirms one, w
   ).toHaveCount(0);
 
   // Confirmed: the page is read with it, and its guide says the person confirmed it.
+  // No page of the wiki is in the Library yet, so adding it asks how again, the way ticked.
   await add(page, `${MARSH_WIKI}/Wicks`);
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(flow.getByTestId('site-ways')).toHaveAttribute('data-way', 'fetch');
+  await flow.getByTestId('add-how-go').click();
   await expect(question).toBeVisible({ timeout: 30_000 });
   await expect(question).toContainText(`Which licence is ${MARSH_HOST} under?`);
   await expect(question.getByTestId('licence-confirm')).toBeDisabled();
@@ -319,5 +341,226 @@ test('browse and keep: each page the person opens is kept once; the app never op
     timeout: 30_000,
   });
   expect((await mock(page)).events.filter((e) => e.what === 'close').length).toBeGreaterThan(0);
+  expect(realErrors(errors)).toEqual([]);
+});
+
+/** Reads one page of a wiki, choosing how first: `way` ticked, then Read it. */
+async function readOnePage(page: Page, address: string, way: 'fetch' | 'window') {
+  const flow = page.getByTestId('library-flow');
+  await add(page, address);
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await flow.getByTestId(`site-way-${way}`).click();
+  await flow.getByTestId('add-how-go').click();
+  await expect(flow).toHaveAttribute('data-phase', 'done', { timeout: 30_000 });
+  await flow.getByTestId('library-flow-close').click();
+}
+
+const wikiRow = (page: Page, pack: string) =>
+  page.locator(`[data-testid="library-game"][data-pack="${pack}"]`);
+
+test('a wiki is deleted by itself, with what this app remembers of its site; another wiki keeps its own, and adding it again asks how', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  await setUp(page, true, { others: OTHERS });
+  const flow = page.getByTestId('library-flow');
+  // Two wikis of the same importer: the marsh read in a window, the dunes by itself.
+  await readOnePage(page, `${MARSH_WIKI}/Lanterns`, 'window');
+  await readOnePage(page, `${DUNES_WIKI}/Reeds`, 'fetch');
+  expect(await storedSetting(page, 'wikiSites:other-wikis')).toEqual({
+    [MARSH_HOST]: { way: 'window' },
+    'wiki.dunes.example': { way: 'fetch' },
+  });
+
+  // More names the row for a wiki, and says only it goes.
+  await openLibraryGame(page, MARSH_PACK);
+  await page.getByTestId('library-more').click();
+  const more = page.getByTestId('library-more-menu');
+  const row = more.getByTestId('delete-pack');
+  await expect(row).toContainText('Delete this wiki');
+  await expect(row).toContainText(
+    'Deletes only this wiki: the pages read from it, their pictures, and what this app remembers of its site. You are asked first, and told what happens to the marks you made.',
+  );
+  await expect(more.getByTestId('restart-wiki')).toContainText(
+    'Start this wiki again from the beginning',
+  );
+  await row.click();
+
+  // The confirmation: what goes, that only it goes, and what this app forgets.
+  const confirm = page.getByTestId('delete-pack-confirm');
+  await expect(confirm).toHaveAttribute('data-kind', 'wiki');
+  await expect(confirm).toContainText(/Delete the wiki .+\?/);
+  await expect(confirm).toContainText('with the pages read from it and their downloaded pictures');
+  await expect(confirm.getByTestId('delete-pack-only')).toHaveText(
+    'Only this wiki is deleted. Your other games stay.',
+  );
+  await expect(confirm.getByTestId('delete-pack-site')).toContainText(
+    `This app also forgets what it remembers of the wiki’s site, ${MARSH_HOST}: its list of pages,`,
+  );
+  await page.screenshot({ path: `${SHOTS}/delete-wiki.png` });
+  await confirm.getByTestId('confirm-delete-pack').click();
+  await expect(wikiRow(page, MARSH_PACK)).toHaveCount(0);
+  await expect(wikiRow(page, DUNES_PACK)).toHaveCount(1);
+  expect((await mock(page)).events.filter((e) => e.what === 'delete').map((e) => e.url)).toEqual([
+    MARSH_PACK,
+  ]);
+
+  // Forgotten: the way chosen for the marsh; the dunes keep theirs (the unit tests cover the rest).
+  await expect
+    .poll(() => storedSetting(page, 'wikiSites:other-wikis'))
+    .toEqual({ 'wiki.dunes.example': { way: 'fetch' } });
+  await openLibraryGame(page, DUNES_PACK);
+  await expect(page.getByTestId('wiki-reading').getByTestId('site-ways')).toHaveAttribute(
+    'data-way',
+    'fetch',
+  );
+
+  // Added again: it asks how its pages are read, before anything is read.
+  const before = (await mock(page)).events.length;
+  await add(page, `${MARSH_WIKI}/Lanterns`);
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(flow.getByTestId('site-ways')).toHaveAttribute('data-way', 'fetch');
+  await expect(flow.getByTestId('site-remembered')).toHaveCount(0);
+  expect((await mock(page)).events.slice(before).filter((e) => e.what !== 'poll')).toEqual([]);
+  expect(realErrors(errors)).toEqual([]);
+});
+
+test('a wiki whose session kept no page is asked how again, with the way chosen ticked, and can be forgotten whole', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  await setUp(page, true, { others: OTHERS });
+  const flow = page.getByTestId('library-flow');
+
+  // Read in a window; its first page states no licence, and the person does not confirm one.
+  await add(page, `${FENS_WIKI}/Contents`);
+  await flow.getByTestId('site-way-window').click();
+  await flow.getByTestId('add-how-go').click();
+  await expect(flow).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
+  for (const title of ['Mist', 'Rushes']) {
+    await page
+      .getByTestId('add-map-choose-page')
+      .filter({ hasText: title })
+      .getByRole('checkbox')
+      .check();
+  }
+  await flow.getByTestId('follow-links-ticked').click();
+  await page.getByTestId('add-map-choose-confirm').click();
+  const question = page.getByTestId('licence-question');
+  await expect(question).toBeVisible({ timeout: 30_000 });
+  await question.getByTestId('licence-decline').click();
+  const run = flow.getByTestId('add-map-run');
+  await expect(run).not.toHaveAttribute('data-status', 'running', { timeout: 30_000 });
+
+  // No page kept: no wiki in the Library, a way to choose how, and the page kept for later.
+  await expect(wikiRow(page, 'wiki-fens-example-wiki')).toHaveCount(0);
+  await expect(run.getByTestId('add-map-how-offer')).toContainText('No page was kept.');
+  await expect(run.getByTestId('add-map-how')).toHaveText('Choose how its pages are read');
+  const queued = run.getByTestId('add-map-queued-game');
+  await expect(queued).toContainText('No page of this wiki is in the Library yet.');
+  await page.screenshot({ path: `${SHOTS}/no-page-kept.png` });
+
+  // Choose how: the way chosen is ticked; another can be chosen.
+  await run.getByTestId('add-map-how').click();
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(flow.getByTestId('site-ways')).toHaveAttribute('data-way', 'window');
+  await flow.getByTestId('library-flow-close').click();
+
+  // Added again: asked again, the way chosen ticked, with what is still remembered of it.
+  await add(page, `${FENS_WIKI}/Contents`);
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(flow.getByTestId('site-ways')).toHaveAttribute('data-way', 'window');
+  const remembered = flow.getByTestId('site-remembered');
+  await expect(remembered).toContainText('its list of pages');
+  await expect(remembered).toContainText('1 page kept for later');
+  await flow.getByTestId('library-flow-close').click();
+
+  // Forget this wiki, from the pages kept for later: asked first, then all of it goes.
+  await openLibrary(page);
+  await page.getByTestId('add-map-url').focus();
+  const waiting = page.getByTestId('add-map-queued-game');
+  await waiting.getByTestId('add-map-queued-forget-wiki').click();
+  const forget = page.getByTestId('queued-forget-confirm');
+  await expect(forget).toContainText(/Forget .+\?/);
+  await expect(forget).toContainText(
+    `This app forgets the 1 page kept for later and what it remembers of the wiki’s site, ${FENS_HOST}:`,
+  );
+  await forget.getByTestId('queued-forget-confirm-button').click();
+  await expect(page.getByTestId('add-map-queued')).toHaveCount(0);
+  await expect.poll(() => storedSetting(page, 'wikiSites:other-wikis')).toEqual({});
+  expect(await storedSetting(page, 'wikiContents:other-wikis')).toEqual({});
+  expect(await storedSetting(page, 'pageQueue:other-wikis')).toEqual([]);
+
+  // Added again: the importer's first way, and nothing remembered.
+  await add(page, `${FENS_WIKI}/Contents`);
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(flow.getByTestId('site-ways')).toHaveAttribute('data-way', 'fetch');
+  await expect(flow.getByTestId('site-remembered')).toHaveCount(0);
+  expect(realErrors(errors)).toEqual([]);
+});
+
+test('a wiki started again from the beginning: asked first, deleted, then asked how its pages are read', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  await setUp(page, true, { others: OTHERS });
+  const flow = page.getByTestId('library-flow');
+  await readOnePage(page, `${MARSH_WIKI}/Lanterns`, 'window');
+
+  await openLibraryGame(page, MARSH_PACK);
+  await page.getByTestId('library-more').click();
+  const row = page.getByTestId('library-more-menu').getByTestId('restart-wiki');
+  await expect(row).toContainText(
+    'Deletes the pages read from this wiki and what this app remembers of its site, then asks again how its pages are read. Your own pages, notes, lists and found marks stay. You are asked first.',
+  );
+  await row.click();
+  const confirm = page.getByTestId('restart-wiki-confirm');
+  await expect(confirm).toContainText(/Start the wiki .+ again from the beginning\?/);
+  await expect(confirm).toContainText(
+    'from the maps folder, with the pages read from it and their downloaded pictures. This cannot be undone.',
+  );
+  await expect(confirm.getByTestId('restart-wiki-site')).toContainText(
+    `This app also forgets what it remembers of the wiki’s site, ${MARSH_HOST}:`,
+  );
+  await expect(confirm.getByTestId('restart-wiki-kept')).toHaveText(
+    'Your own pages, notes, lists and found marks for this wiki are kept.',
+  );
+  await expect(confirm.getByTestId('restart-wiki-next')).toContainText(
+    `Then the address box holds its start address, ${MARSH_WIKI}/Contents,`,
+  );
+  await page.screenshot({ path: `${SHOTS}/start-wiki-again.png` });
+  const before = (await mock(page)).events.filter((e) => e.what !== 'poll').length;
+  await confirm.getByTestId('confirm-restart-wiki').click();
+
+  // Deleted, and the steps of adding ask how its pages are read; nothing is read.
+  await expect(flow).toHaveAttribute('data-phase', 'how');
+  await expect(wikiRow(page, MARSH_PACK)).toHaveCount(0);
+  await expect(page.getByTestId('add-map-url')).toHaveValue(`${MARSH_WIKI}/Contents`);
+  await expect(flow.getByTestId('site-ways')).toHaveAttribute('data-way', 'fetch');
+  expect(
+    (await mock(page)).events
+      .filter((e) => e.what !== 'poll')
+      .slice(before)
+      .map((e) => e.what),
+  ).toEqual(['delete']);
+
+  // Read by itself this time: its contents, then the page ticked; the wiki is back.
+  await flow.getByTestId('add-how-go').click();
+  await expect(flow).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
+  await page
+    .getByTestId('add-map-choose-page')
+    .filter({ hasText: 'Lanterns' })
+    .getByRole('checkbox')
+    .check();
+  await flow.getByTestId('follow-links-ticked').click();
+  await page.getByTestId('add-map-choose-confirm').click();
+  await expect(flow).toHaveAttribute('data-run', 'finished', { timeout: 30_000 });
+  await expect(wikiRow(page, MARSH_PACK)).toHaveCount(1);
+  expect(await storedSetting(page, 'wikiSites:other-wikis')).toEqual({
+    [MARSH_HOST]: { way: 'fetch' },
+  });
   expect(realErrors(errors)).toEqual([]);
 });

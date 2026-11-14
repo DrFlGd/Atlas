@@ -1,8 +1,14 @@
 import { mkdir } from 'node:fs/promises';
 import type { Page, Route } from '@playwright/test';
-import { collectErrors, openGuidesSection, storedSetting } from './helpers';
+import {
+  collectErrors,
+  libraryMore,
+  openGuidesSection,
+  openLibraryGame,
+  storedSetting,
+} from './helpers';
 import { expect, test } from './layout';
-import { DOWNLOADS_BUILD, mock, paste, realErrors, setUp, url } from './fakeShell';
+import { DOWNLOADS_BUILD, mock, paste, realErrors, setUp, url, type WikiSite } from './fakeShell';
 
 /**
  * Games shown under one title: made in Games (a browser, the Android app)
@@ -477,6 +483,117 @@ test.describe('in the Library', () => {
     expect(await storedSetting(page, 'gameGroupsAsked')).toEqual(
       expect.arrayContaining(['test-hills']),
     );
+    expect(realErrors(errors)).toEqual([]);
+  });
+});
+
+/** A made-up wiki read by the "Other wikis" importer of the contract's demo folder. */
+const TARN: WikiSite = {
+  headings: [{ title: 'Shore', pages: ['Stones'] }],
+  pages: {
+    Stones: {
+      title: 'Stones',
+      body: 'Flat stones skip.',
+      licence: 'https://creativecommons.org/licenses/by-sa/3.0/',
+    },
+  },
+};
+const TARN_WIKI = 'https://wiki.tarn.example/wiki';
+const TARN_PACK = 'wiki-tarn-example-wiki';
+
+test.describe('a wiki under one title, in the Library', () => {
+  test.skip(!DOWNLOADS_BUILD, 'Pages are fetched only in a build with downloads.');
+
+  /** Reads the tarn's page by itself, after the question of how it is read. */
+  async function readTarn(page: Page) {
+    if (!(await page.getByTestId('library').isVisible())) {
+      await page.getByTestId('maps-button').click();
+    }
+    const flow = page.getByTestId('library-flow');
+    await page.getByTestId('add-map-url').fill(`${TARN_WIKI}/Stones`);
+    await page.getByTestId('add-map-url').press('Enter');
+    await expect(flow).toHaveAttribute('data-phase', 'how');
+    await flow.getByTestId('add-how-go').click();
+    await expect(flow).toHaveAttribute('data-phase', 'done', { timeout: 30_000 });
+    await flow.getByTestId('library-flow-close').click();
+  }
+
+  /** Shows the tarn's wiki with Test Valley under the title Valley. */
+  async function underOneTitle(page: Page) {
+    await openLibraryGame(page, TARN_PACK);
+    await libraryMore(page, 'show-with-another');
+    const form = page.getByTestId('title-form');
+    await form.getByTestId('title-choice').filter({ hasText: 'Test Valley' }).click();
+    await form.getByTestId('title-name').fill('Valley');
+    await form.getByTestId('title-save').click();
+    await stored(page, { Valley: [TARN_PACK, 'test-valley'] });
+  }
+
+  test('deleting the wiki leaves the maps of the title; started again, it returns under the title', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { others: { 'wiki.tarn.example': TARN } });
+    await paste(page, url('test-valley', 'east-field'));
+    await page.getByTestId('add-map-start').click();
+    const flow = page.getByTestId('library-flow');
+    await expect(flow).toHaveAttribute('data-phase', 'done');
+    await readTarn(page);
+    await underOneTitle(page);
+
+    // Delete this wiki: only it goes, and the title's other source stays.
+    const pane = page.getByTestId('library-game-pane');
+    await expect(pane).toHaveAttribute('data-pack', TARN_PACK);
+    await pane.getByTestId('library-more').click();
+    const row = page.getByTestId('library-more-menu').getByTestId('delete-pack');
+    await expect(row).toContainText('Delete this wiki');
+    await expect(row).toContainText('The other sources of its title stay.');
+    await row.click();
+    const confirm = pane.getByTestId('delete-pack-confirm');
+    await expect(confirm.getByTestId('delete-pack-title')).toHaveText(
+      'Only this wiki is deleted. It leaves the title Valley. The other sources stay under it.',
+    );
+    await shot(page, '8-delete-wiki-of-title');
+    await confirm.getByTestId('confirm-delete-pack').click();
+    const library = page.getByTestId('library');
+    await expect(library.locator(`[data-pack="${TARN_PACK}"]`)).toHaveCount(0);
+    await expect(
+      library.locator('[data-testid="library-game"][data-pack="test-valley"]'),
+    ).toHaveCount(1);
+    await stored(page, {});
+    expect((await mock(page)).events.filter((e) => e.what === 'delete').map((e) => e.url)).toEqual([
+      TARN_PACK,
+    ]);
+
+    // Added again: asked how first; then under one title again, and started again from there.
+    await readTarn(page);
+    await underOneTitle(page);
+    await pane.getByTestId('library-more').click();
+    await page.getByTestId('library-more-menu').getByTestId('restart-wiki').click();
+    const restart = pane.getByTestId('restart-wiki-confirm');
+    await expect(restart.getByTestId('restart-wiki-kept')).toHaveText(
+      'Your own pages, notes, lists and found marks for this wiki are kept. It stays under the title Valley while it is away, so it shows there again once its pages are read again. The other sources of the title stay.',
+    );
+    await restart.getByTestId('confirm-restart-wiki').click();
+    await expect(flow).toHaveAttribute('data-phase', 'how');
+    // Its place under the title is kept while it is away.
+    await stored(page, { Valley: [TARN_PACK, 'test-valley'] });
+    await flow.getByTestId('add-how-go').click();
+    await expect(flow).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
+    await page
+      .getByTestId('add-map-choose-page')
+      .filter({ hasText: 'Stones' })
+      .getByRole('checkbox')
+      .check();
+    await page.getByTestId('add-map-choose-confirm').click();
+    await expect(flow).toHaveAttribute('data-run', 'finished', { timeout: 30_000 });
+    const title = library.getByTestId('library-title');
+    await expect(title).toHaveCount(1);
+    await expect(title).toContainText('Valley');
+    await expect(
+      library.locator(`[data-testid="library-game"][data-pack="${TARN_PACK}"]`),
+    ).toHaveCount(0);
     expect(realErrors(errors)).toEqual([]);
   });
 });

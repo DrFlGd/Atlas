@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { DeleteImagesConfirm } from '../components/DeleteImagesConfirm';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
+import { RestartWikiConfirm } from '../components/RestartWikiConfirm';
 import {
   SameTitleOfferCard,
   ShowWithAnotherForm,
@@ -180,6 +181,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
             updatable={updatable}
             groupable={several}
             grouped={group !== undefined}
+            kind={kind}
+            wikiStart={kind === 'wiki' && wiki ? wiki.start : null}
             onConfirm={setConfirming}
           />
         ) : null}
@@ -188,6 +191,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
         <div className="library-cards library-cards-confirm">
           {confirming === 'pack' ? (
             <DeletePackConfirm id={id} title={title} onClose={close} />
+          ) : confirming === 'restart' ? (
+            <RestartWikiConfirm id={id} title={title} start={wiki.start} onClose={close} />
           ) : confirming === 'title' ? (
             <ShowWithAnotherForm gameId={id} onClose={close} />
           ) : (

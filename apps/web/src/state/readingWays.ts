@@ -6,6 +6,7 @@ import {
   type ReadingWay,
   type SiteInfo,
 } from '@atlas/importer-api';
+import type { ListedPack } from '../desktop';
 import { loadWikiNotes, NO_WIKI_NOTES } from './wikiNotes';
 
 /**
@@ -41,13 +42,36 @@ export async function siteReading(importer: AtlasImporter, url: string): Promise
   };
 }
 
+/** Whether the importer offers a choice for this site: more than one way, or something to say about it. */
+export const offersChoice = (info: SiteInfo): boolean =>
+  info.ways.length > 1 || info.notice !== undefined;
+
 /**
  * Whether adding from this site first asks how to read it: when the
- * importer offers more than one way, or says something about the site,
- * and the person has not chosen yet.
+ * importer offers a choice ({@link offersChoice}), and either the person
+ * has not chosen yet or no game read from the site is in the Library (a
+ * wiki whose sessions kept nothing, or one deleted, is started again from
+ * the question, with the way chosen before ticked). A wiki in the Library
+ * has the choice on its own screen, so adding it again does not ask.
  */
-export const asksHow = (reading: SiteReading): boolean =>
-  !reading.chosen && (reading.info.ways.length > 1 || reading.info.notice !== undefined);
+export const asksHow = (reading: SiteReading, { inLibrary }: { inLibrary: boolean }): boolean =>
+  offersChoice(reading.info) && (!reading.chosen || !inLibrary);
+
+/** What the Library lists of a game, to tell the site it was read from. */
+type ListedGame = Pick<ListedPack, 'imported' | 'pages'>;
+
+/** Whether a game in the Library was read from the site `key` with this importer. */
+export function siteInLibrary(
+  importer: Pick<AtlasImporter, 'id' | 'siteInfo' | 'fetch' | 'pageReader' | 'browseReader'>,
+  key: string,
+  packs: readonly ListedGame[],
+): boolean {
+  return packs.some(
+    (pack) =>
+      pack.imported?.importerId === importer.id &&
+      (pack.pages ?? []).some((page) => siteInfoOf(importer, page.url).key === key),
+  );
+}
 
 /**
  * The way a page of an importer is read, when the importer says how its

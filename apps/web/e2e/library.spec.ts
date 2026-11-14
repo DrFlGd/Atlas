@@ -91,3 +91,45 @@ test('adds a map from the box, opens it, and shows its map', async ({ page }) =>
   await expect(page.getByTestId('map-status')).toBeVisible();
   expect(realErrors(errors)).toEqual([]);
 });
+
+test('More names the delete row for maps, and deletes only these maps after asking', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await setUp(page);
+  await paste(page, url('test-valley', 'east-field'));
+  await page.getByTestId('add-map-start').click();
+  const flow = page.getByTestId('library-flow');
+  await expect(flow).toHaveAttribute('data-phase', 'done');
+  await page.getByTestId('add-map-done').click();
+  const pane = page.getByTestId('library-game-pane');
+  await expect(pane).toHaveAttribute('data-pack', 'test-valley');
+
+  // The row says what it is and that only it goes; maps have no row to start again.
+  await pane.getByTestId('library-more').click();
+  const more = page.getByTestId('library-more-menu');
+  const row = more.getByTestId('delete-pack');
+  await expect(row.locator('.library-more-title')).toHaveText('Delete these maps');
+  await expect(row.locator('.library-more-sentence')).toHaveText(
+    'Deletes only these maps: their folder with the maps, locations and images. You are asked first, and told what happens to the marks you made.',
+  );
+  await expect(more.getByTestId('restart-wiki')).toHaveCount(0);
+  await row.click();
+
+  // Asked first: named for the maps, only they go, and nothing is said of a wiki's site.
+  const confirm = pane.getByTestId('delete-pack-confirm');
+  await expect(confirm).toHaveAttribute('data-kind', 'maps');
+  await expect(confirm).toContainText('Delete the maps of Test Valley?');
+  await expect(confirm.getByTestId('delete-pack-only')).toHaveText(
+    'Only these maps are deleted. Your other games stay.',
+  );
+  await expect(confirm.getByTestId('delete-pack-site')).toHaveCount(0);
+  await confirm.getByTestId('confirm-delete-pack').click();
+  await expect(page.locator('[data-testid="library-game"][data-pack="test-valley"]')).toHaveCount(
+    0,
+  );
+  expect((await mock(page)).events.filter((e) => e.what === 'delete').map((e) => e.url)).toEqual([
+    'test-valley',
+  ]);
+  expect(realErrors(errors)).toEqual([]);
+});
