@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./dexie": "./src/dexie.ts",
-    "./mapview": "./src/mapview/index.ts"
+    "./mapview": "./src/mapview/index.ts",
+    "./sections": "./src/guides/sections.ts"
   },
   "scripts": {
     "test": "vitest run",

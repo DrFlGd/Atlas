@@ -172,6 +172,7 @@ describe('collecting', () => {
   it('reads the page of a step only from a link its note starts with', () => {
     expect(stepPageId({ note: `[Ring](${page('ring')}) and more` })).toBe(page('ring'));
     expect(stepPageId({ note: `See [Ring](${page('ring')})` })).toBeNull();
+    expect(stepPageId({ note: `[Ring](${page('ring')} "#where-to-find")` })).toBe(page('ring'));
     expect(stepPageId({ note: '[A location](isle:loc:gate)' })).toBeNull();
     expect(stepPageId({ note: '[Web](https://example.org/)' })).toBeNull();
     expect(stepPageId({})).toBeNull();

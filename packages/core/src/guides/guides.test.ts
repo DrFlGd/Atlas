@@ -79,6 +79,12 @@ describe('guidePlainText', () => {
     ).toBe('The tower Climb the stairs to the top, see a bell. Bell Where First one two a||b');
   });
 
+  it('keeps the words of a link to a section, not its section', () => {
+    expect(guidePlainText('Read [the drops](pages:guide:top "#drops") first.')).toBe(
+      'Read the drops first.',
+    );
+  });
+
   it('pairs bars left to right and keeps a last bar without a partner', () => {
     // Bars that are not marks show as spaces, as table cells do.
     expect(guidePlainText('a ||b|| c ||d|| e || f')).toBe('a c e f');

@@ -112,6 +112,11 @@ describe('pages placed by their links', () => {
     expect(guideLinksIn('no links here')).toEqual([]);
   });
 
+  it('reads a link to a section of a page as a link to the page', () => {
+    const body = `[a](wiki:guide:a "#drops") [here](wiki:guide:me "#notes") [b](<wiki:guide:b> "#where-to-find")`;
+    expect(guideLinksIn(body, 'wiki:guide:me')).toEqual(['wiki:guide:a', 'wiki:guide:b']);
+  });
+
   it('puts each page under the page it is reached from by the fewest links from the menu', () => {
     const contents = new GuideContents({ data: wiki(base(), menu, loose) });
     expect(tree(contents)).toEqual([
