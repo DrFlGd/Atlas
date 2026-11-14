@@ -1,13 +1,17 @@
 import { useEffect, useId, useState } from 'react';
 import type { ImagesInfo } from '../desktop';
+import type { GameKind } from '../state/gameFacts';
 import { useTitleOf } from '../state/gameGroups';
 import { deletePack, loadImagesInfo } from '../state/removal';
-import { deletePackDetails } from './removalText';
+import { usePackKind, useWikiSite } from './packKind';
+import { deletePackDetails, deletePackQuestion, onlyThisText, siteMemoryText } from './removalText';
 
 /**
- * Asks before deleting a pack from the maps folder, saying what goes and
- * roughly how much, and whether a running download is stopped first. It
- * stays open with a plain explanation when the delete fails.
+ * Asks before deleting a pack from the maps folder, named for what it is
+ * (a wiki, maps, a game made here), saying that only it goes, what goes
+ * with it and roughly how much, and whether a running download is stopped
+ * first; for a wiki, what this app forgets of its site. It stays open with
+ * a plain explanation when the delete fails.
  */
 export function DeletePackConfirm({
   id,
@@ -25,6 +29,8 @@ export function DeletePackConfirm({
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const group = useTitleOf(id);
+  const kind = usePackKind(id);
+  const site = useWikiSite(id, kind);
   useEffect(() => {
     let current = true;
     void loadImagesInfo(id).then((loaded) => {
@@ -38,6 +44,8 @@ export function DeletePackConfirm({
     <DeletePackConfirmView
       title={title}
       info={info}
+      kind={kind}
+      site={site}
       inTitle={group?.title}
       withProgress={withProgress}
       working={working}
@@ -65,6 +73,8 @@ export function DeletePackConfirm({
 export function DeletePackConfirmView({
   title,
   info,
+  kind = 'maps',
+  site,
   withProgress,
   working,
   error,
@@ -79,6 +89,10 @@ export function DeletePackConfirmView({
 }: {
   title: string;
   info: ImagesInfo | null;
+  /** What it is: the question and what goes are named for it. */
+  kind?: GameKind;
+  /** For a wiki, the site this app forgets (see {@link siteMemoryText}). */
+  site?: { key: string; shared: boolean } | null | undefined;
   /** The title the game is shown under with other games, if any. */
   inTitle?: string | undefined;
   withProgress: boolean;
@@ -100,24 +114,34 @@ export function DeletePackConfirmView({
   const checkboxId = useId();
   const listsId = useId();
   const locationsId = useId();
+  const question = deletePackQuestion(title, kind);
+  const memory = kind === 'wiki' ? siteMemoryText(site) : null;
+  const what = kind === 'wiki' ? 'this wiki' : 'this game';
   return (
     <div
       className="download-confirm removal-confirm"
       role="group"
-      aria-label={`Delete ${title}?`}
+      aria-label={question}
       data-testid="delete-pack-confirm"
+      data-kind={kind}
     >
       <p>
-        <strong>Delete {title}?</strong>
+        <strong>{question}</strong>
       </p>
-      {deletePackDetails(title, info).map((line) => (
+      {deletePackDetails(title, info, kind).map((line) => (
         <p key={line} className="removal-detail">
           {line}
         </p>
       ))}
-      {inTitle ? (
-        <p className="removal-detail" data-testid="delete-pack-title">
-          It leaves the title {inTitle}. The other sources stay under it.
+      <p
+        className="removal-detail"
+        data-testid={inTitle ? 'delete-pack-title' : 'delete-pack-only'}
+      >
+        {onlyThisText(kind, inTitle)}
+      </p>
+      {memory ? (
+        <p className="removal-detail" data-testid="delete-pack-site">
+          {memory}
         </p>
       ) : null}
       <label htmlFor={checkboxId} className="checkbox-row">
@@ -130,7 +154,7 @@ export function DeletePackConfirmView({
             onWithProgress(event.target.checked);
           }}
         />{' '}
-        Also delete my progress for this game in this app
+        Also delete my progress for {what} in this app
       </label>
       {onWithLists ? (
         <label htmlFor={listsId} className="checkbox-row">
@@ -144,7 +168,7 @@ export function DeletePackConfirmView({
               onWithLists(event.target.checked);
             }}
           />{' '}
-          Also delete my lists, guides, guide links and pages for this game
+          Also delete my lists, guides, guide links and pages for {what}
         </label>
       ) : null}
       {onWithLocations ? (
@@ -159,7 +183,7 @@ export function DeletePackConfirmView({
               onWithLocations(event.target.checked);
             }}
           />{' '}
-          Also delete my locations, types and notes for this game
+          Also delete my locations, types and notes for {what}
         </label>
       ) : null}
       {error ? (

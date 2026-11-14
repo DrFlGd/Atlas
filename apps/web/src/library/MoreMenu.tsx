@@ -1,6 +1,8 @@
 import type { ListedPack } from '../desktop';
 import { downloadsOffered, foldersOffered, importsOffered } from '../features';
-import { rebuildPack, updateGame } from '../state/importing';
+import { deleteRow } from '../components/removalText';
+import type { GameKind } from '../state/gameFacts';
+import { rebuildPack, sessionGoing, updateGame, useImport } from '../state/importing';
 import { reveal } from '../state/library';
 import { setMoreOpen } from '../state/libraryView';
 import { openExport, pickPackFile } from '../state/packFile';
@@ -10,9 +12,10 @@ import { UiIcon, type UiIconName } from '../components/icons';
 
 /**
  * What More can ask the game pane to show in its place: a confirmation
- * before deleting, or choosing a game to show this one with under one title.
+ * before deleting, or before starting a wiki again from the beginning, or
+ * choosing a game to show this one with under one title.
  */
-export type MoreConfirm = 'pack' | 'images' | 'title';
+export type MoreConfirm = 'pack' | 'images' | 'title' | 'restart';
 
 /**
  * "More" on the open game: the things done less often, each with a
@@ -26,6 +29,8 @@ export function MoreMenu({
   updatable,
   groupable = false,
   grouped = false,
+  kind = 'maps',
+  wikiStart = null,
   onConfirm,
 }: {
   id: string;
@@ -37,6 +42,10 @@ export function MoreMenu({
   groupable?: boolean;
   /** It is shown under one title already (its card says so). */
   grouped?: boolean;
+  /** What it is: the delete row is named for it. */
+  kind?: GameKind;
+  /** For a wiki read by an importer of this app, where reading it starts: it can be started again. */
+  wikiStart?: string | null;
   onConfirm: (what: MoreConfirm) => void;
 }) {
   const folders = useAtlas(foldersOffered);
@@ -46,6 +55,8 @@ export function MoreMenu({
     s.config?.importers.some((i) => i.id === listed?.imported?.importerId),
   );
   const busy = useAtlas((s) => s.library?.busy.includes(id) ?? false);
+  // A session of reading pages, or a game built again, is going: nothing is started again meanwhile.
+  const reading = useImport((s) => sessionGoing(s.phase) || s.licenceAsk !== null);
   const source = listed?.pages?.[0]?.url ?? listed?.url ?? null;
   const close = () => {
     setMoreOpen(false);
@@ -132,12 +143,24 @@ export function MoreMenu({
       },
     });
   }
-  if (listed?.origin === 'maps-folder' && !listed.bundled && !busy) {
+  const deletable = listed?.origin === 'maps-folder' && !listed.bundled && !busy;
+  if (deletable && kind === 'wiki' && wikiStart && imports && !reading) {
+    rows.push({
+      id: 'restart-wiki',
+      icon: 'undo',
+      title: 'Start this wiki again from the beginning',
+      text: 'Deletes the pages read from this wiki and what this app remembers of its site, then asks again how its pages are read. Your own pages, notes, lists and found marks stay. You are asked first.',
+      danger: true,
+      run: () => {
+        onConfirm('restart');
+      },
+    });
+  }
+  if (deletable) {
     rows.push({
       id: 'delete-pack',
       icon: 'trash',
-      title: 'Delete the game',
-      text: 'Deletes the game’s folder with its maps and images. You are asked first, and told what happens to the marks you made.',
+      ...deleteRow(kind, grouped),
       danger: true,
       run: () => {
         onConfirm('pack');
