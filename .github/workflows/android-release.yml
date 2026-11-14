@@ -192,6 +192,18 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.11.0
+
+          The pages of a wiki are filed more carefully in its contents.
+
+          - **Only a page that lists a page holds it.** Before, a page went under the first page that linked to it in any way, so the page of a weapon could hold the locations and characters its text names. Now a page goes only under a list page: an index such as Weapons, where the link is the main link of a list item, of a tile, of a line of links, of a heading, or of the name column of a table. A link in a sentence, in a box of facts or in another column of a table only mentions a page and files nothing.
+          - **Pages named everywhere.** A page that many pages link to, such as a main location or a main character, goes only under a page that really lists it, never under one of the many pages that name it.
+          - **Where the source files a page.** A game can now say which page each page belongs under, and Atlas uses that before anything else.
+          - **When unsure, flat.** A page no list page lists stays in its section under its own name. No page is left out of the contents, and a page reached from several pages still names the others under **Also linked from**.
+          - **Your own choices win.** A page you put somewhere with **Move to** stays there.
+
+          Atlas works the tree out when Guides is opened, so the games you already have are filed the new way at once. A game made with 0.11.0 still opens in older versions of Atlas, which show the tree as before.
+
           ## New in 0.10.0
 
           A wiki opens on a landing page, a page's box of facts stays a box, and links lead to parts of pages.
