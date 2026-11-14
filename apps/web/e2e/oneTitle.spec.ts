@@ -315,6 +315,50 @@ test.describe('in Games', () => {
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
   });
 
+  test('a page of the title’s wiki goes into a build of the open source, and is found', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveGames(page, [WIKI]);
+    await page.goto('./');
+    await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+    await showWithAnother(page, 'Isle Wiki');
+    await page.getByTestId('title-save').click();
+    await stored(page, { 'Atlas demo world': ['demo', 'isle-wiki'] });
+
+    await page.getByTestId('section-guides').click();
+    await page.getByTestId('guides-section').filter({ hasText: 'Isle Wiki' }).click();
+    await page.getByTestId('guides-section').filter({ hasText: 'Gear' }).click();
+    await page.getByTestId('guides-page-link').filter({ hasText: 'Ember blade' }).click();
+    const shown = page.getByTestId('guides-page');
+    await expect(page.locator('.guides-crumbs')).toHaveText(/Isle Wiki\s*›\s*Gear/);
+    await shown.getByTestId('add-to-build').click();
+    const dialog = page.getByTestId('build-list-dialog');
+    await dialog.getByTestId('build-list-name').fill('Wiki build');
+    await dialog.getByTestId('build-list-done').click();
+    await expect(page.getByTestId('toast')).toHaveText(/Added “Ember blade” to Wiki build\./);
+    // The list is the open source's, its step linked to the wiki's page.
+    await expect
+      .poll(async () => {
+        const text = (await storedSetting(page, 'ownLists:demo')) as string | undefined;
+        const lists = text
+          ? (JSON.parse(text) as { lists: { items: { note?: string }[] }[] }).lists
+          : [];
+        return lists[0]?.items.map((item) => item.note);
+      })
+      .toEqual(['[Ember blade](isle-wiki:guide:wiki-ember-blade)']);
+    expect(await storedSetting(page, 'ownLists:isle-wiki')).toBeUndefined();
+
+    // Found on the map from the wiki's page.
+    await page.getByTestId('section-lists').click();
+    await page.getByTestId('list-link').filter({ hasText: 'Wiki build' }).click();
+    await page.getByTestId('list-find-on-map').click();
+    const found = page.getByTestId('find-found').getByTestId('find-step');
+    await expect(found).toContainText('Ember blade');
+    await expect(found).toContainText('Named in its page');
+    expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
+  });
+
   test('at phone size, the title is one row with its sources', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const errors = collectErrors(page);
