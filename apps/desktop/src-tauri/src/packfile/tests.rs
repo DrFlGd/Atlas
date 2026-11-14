@@ -1587,7 +1587,7 @@ fn carries_own_photos_and_guide_links_when_asked() {
 }
 
 #[test]
-fn carries_own_pages_as_version_4() {
+fn carries_own_pages_as_version_4_without_notes() {
     let dir = TempDir::new("packfile-mine-pages");
     let pack = dir.0.join("pack");
     write_pack(&pack, "1.0.0");
@@ -1602,7 +1602,7 @@ fn carries_own_pages_as_version_4() {
     };
     let file = dir.0.join("pages.atlaspack");
     let exported = export_mine(&source, &file, &mine).unwrap();
-    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(exported.header.version, VERSION_WITH_PAGES);
     let facts = exported.header.mine.unwrap();
     assert_eq!((facts.lists, facts.pages, facts.sections), (1, 1, 0));
     assert!(entry_names(&file).contains_key("mine/my-pages.json"));
@@ -1628,6 +1628,47 @@ fn carries_own_pages_as_version_4() {
 }
 
 #[test]
+fn carries_own_notes_as_version_5() {
+    let dir = TempDir::new("packfile-mine-notes");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let source = folder_source(&pack);
+    let notes = format!(
+        r#"{{"format":"atlas-own-notes","version":1,"gameId":"{ID}","updatedAt":"2026-11-14T10:00:00.000Z","notes":{{"{ID}:loc:a":{{"text":"x","name":"A","updatedAt":"2026-11-14T10:00:00.000Z"}},"{ID}:loc:b":{{"text":"y","name":"B","updatedAt":"2026-11-14T10:00:00.000Z"}}}}}}"#
+    );
+    let mine = Mine {
+        notes: Some(notes.clone()),
+        ..Mine::default()
+    };
+    let file = dir.0.join("notes.atlaspack");
+    let exported = export_mine(&source, &file, &mine).unwrap();
+    // Only an app that knows notes reads it.
+    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(exported.header.mine.unwrap().notes, 2);
+    assert!(entry_names(&file).contains_key("mine/my-notes.json"));
+    let maps = dir.0.join("maps-notes");
+    let imported = run_import(&file, &maps).unwrap();
+    assert_eq!(imported.mine, mine);
+    assert!(files_under(&maps).keys().all(|name| !name.contains("my-")));
+    // Another game's notes are refused.
+    let other = Mine {
+        notes: Some(notes.replace(&format!("\"gameId\":\"{ID}\""), "\"gameId\":\"x\"")),
+        ..Mine::default()
+    };
+    assert!(export_mine(&source, &dir.0.join("other.atlaspack"), &other).is_err());
+    // Guide links that link a page to one location alone need version 5 too;
+    // other guide links stay version 3.
+    let links = |version: u32| Mine {
+        guide_links: Some(format!(
+            r#"{{"format":"atlas-guide-links","version":{version},"gameId":"{ID}"}}"#
+        )),
+        ..Mine::default()
+    };
+    assert_eq!(links(2).version(), VERSION);
+    assert_eq!(links(1).version(), VERSION_WITH_PHOTOS);
+}
+
+#[test]
 fn reads_the_photos_the_own_files_name() {
     let dir = TempDir::new("packfile-mine-read");
     let maps = dir.0.join("maps");
@@ -1645,6 +1686,23 @@ fn reads_the_photos_the_own_files_name() {
         .unwrap();
     let mine = Mine::read(&maps, ID).unwrap();
     assert_eq!(mine.pictures, vec![("own.a.jpg".to_owned(), jpeg.to_vec())]);
+    // The photos the notes show too.
+    crate::ownpictures::write(&maps, ID, "own.n.jpg", &jpeg).unwrap();
+    let notes = format!(
+        r#"{{"format":"atlas-own-notes","version":1,"gameId":"{ID}","updatedAt":"2026-11-14T10:00:00.000Z","notes":{{}},"pictures":[{{"id":"{ID}:picture:own.n","file":"pictures/own.n.jpg","shareable":true}}]}}"#
+    );
+    crate::ownlists::NOTES
+        .write(&maps, ID, &notes, None)
+        .unwrap();
+    let mine = Mine::read(&maps, ID).unwrap();
+    assert_eq!(mine.notes, Some(notes));
+    assert_eq!(
+        mine.pictures
+            .iter()
+            .map(|(file, _)| file.as_str())
+            .collect::<Vec<_>>(),
+        vec!["own.a.jpg", "own.n.jpg"]
+    );
 }
 
 // ---------------------------------------------------------------------------
