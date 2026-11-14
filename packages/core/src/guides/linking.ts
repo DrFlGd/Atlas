@@ -22,7 +22,7 @@ import { normalizeText } from '../search/searchIndex';
  */
 
 /** What a target is, in the person's words. */
-export type TargetWhat = 'type' | 'name' | 'region';
+export type TargetWhat = 'type' | 'name' | 'region' | 'location';
 
 /** A target as the app shows it: what it is, its name, and its locations. */
 export interface TargetInfo {
@@ -82,15 +82,24 @@ export function stemWord(word: string): string {
   return w;
 }
 
-/** The words of a name, compared as names are (see the top of this file). */
-export function nameWords(text: string): string[] {
+/**
+ * The words of a name as they are written, tidied as names are compared
+ * (see the top of this file) but not made singular: without case, accents,
+ * punctuation, a note in brackets at the end or a leading article.
+ */
+export function tidyNameWords(text: string): string[] {
   const trimmed = text.replace(/\s*\([^()]*\)\s*$/u, '').trim() || text;
   const words = normalizeText(trimmed)
     .replace(/['’ʼ`]/gu, '')
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
   if (words.length > 1 && ARTICLES.has(words[0]!)) words.shift();
-  return words.map(stemWord);
+  return words;
+}
+
+/** The words of a name, compared as names are (see the top of this file). */
+export function nameWords(text: string): string[] {
+  return tidyNameWords(text).map(stemWord);
 }
 
 /** A name as one key: two names with the same key are the same name. */
@@ -103,6 +112,9 @@ export function baseName(name: string): string {
   const base = name.replace(/\s*(?:#|no\.?\s*)?\d+$/iu, '').trim();
   return base || name;
 }
+
+/** Whether a word says little about what a name is about: "of", "the" and the like. */
+export const isStopWord = (word: string): boolean => STOP_WORDS.has(word);
 
 /** The words that say what a name is about, without "of", "the" and the like. */
 const meaningWords = (words: readonly string[]) =>
@@ -136,7 +148,7 @@ interface Entry {
   offered: boolean;
 }
 
-const WHAT_ORDER: Record<TargetWhat, number> = { type: 0, name: 1, region: 2 };
+const WHAT_ORDER: Record<TargetWhat, number> = { type: 0, name: 1, region: 2, location: 3 };
 
 /** The parts of a pack the names come from. */
 export type NamesSource = Pick<PackData, 'locations' | 'categories' | 'regions'>;
@@ -154,6 +166,8 @@ export class MapNames {
   private readonly types = new Map<string, Entry>();
   private readonly regions = new Map<string, Entry>();
   private readonly names = new Map<string, Entry>();
+  /** Each location's name, for a page linked to one location alone. */
+  private readonly locationNames = new Map<string, string>();
 
   constructor(data: NamesSource) {
     const byType = new Map<string, string[]>();
@@ -165,6 +179,7 @@ export class MapNames {
       else byName.set(key, { label, ids: [id], numbered });
     };
     for (const location of data.locations) {
+      this.locationNames.set(location.id, location.name);
       const ids = byType.get(location.categoryId);
       if (ids) ids.push(location.id);
       else byType.set(location.categoryId, [location.id]);
@@ -245,7 +260,27 @@ export class MapNames {
         const entry = this.names.get(nameKey(target.name));
         return entry ? { ...entry.info, target } : null;
       }
+      case 'location': {
+        const name = this.locationNames.get(target.id);
+        return name === undefined
+          ? null
+          : { target, what: 'location', label: name, locations: [target.id] };
+      }
     }
+  }
+
+  /**
+   * The name target that stands for every location with a location's name
+   * (its name without a number at its end, when that is how the map names
+   * them), with its locations; null when the map has no such location.
+   */
+  nameTargetOf(locationId: string): TargetInfo | null {
+    const name = this.locationNames.get(locationId);
+    if (name === undefined) return null;
+    const base = this.names.get(nameKey(baseName(name)));
+    if (base?.info.locations.includes(locationId)) return { ...base.info };
+    const full = this.names.get(nameKey(name));
+    return full ? { ...full.info } : null;
   }
 
   /** The locations of several targets, each once, in the order of the targets. */
@@ -401,10 +436,11 @@ export function matchPages(names: MapNames, guides: readonly GuideEntry[]): Page
 
 /**
  * How specific a target is for one location, for showing its pages: a page
- * of its own name first, then of its type, then of its region; of two of
- * the same, the one with fewer locations. Lower is more specific.
+ * linked to it alone first, then one of its own name, then of its type, then
+ * of its region; of two of the same, the one with fewer locations. Lower is
+ * more specific.
  */
-const SPECIFIC_ORDER: Record<TargetWhat, number> = { name: 0, type: 1, region: 2 };
+const SPECIFIC_ORDER: Record<TargetWhat, number> = { location: 0, name: 1, type: 2, region: 3 };
 
 export function specificity(info: TargetInfo): number {
   return SPECIFIC_ORDER[info.what] * 1e9 + info.locations.length;
