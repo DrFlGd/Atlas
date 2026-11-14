@@ -12,8 +12,10 @@ import {
   useRef,
   useState,
 } from 'react';
+import { create } from 'zustand';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
+import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
 import { guidesOf, hasMap } from '../state/guides';
@@ -53,7 +55,9 @@ import '../styles/guides.css';
  * are, and a page lists the pages under it at its foot. Above the page,
  * the way to it: every section and page it is under, each a link.
  *
- * A link to a section of a page opens the page there (see `reader.ts`).
+ * A page with a few headings lists them at its top, "On this page", each
+ * a link to its section; a link to a section of a page opens the page
+ * there (see `reader.ts`).
  */
 const PageEditor = lazy(() => import('./pages/PageEditor'));
 
@@ -683,6 +687,7 @@ function Page({
       ) : null}
       <AddToBuildBar build={build} thing={{ name: guide.title, guideId: guide.id }} />
       {guide.source && hasMap(game) ? <OnTheMap game={game} guide={guide} /> : null}
+      <OnThisPage guideId={guide.id} body={shown.body} wide={wide} />
       <MarkdownBody
         source={shown.body}
         className="guide-body guides-page-body"
@@ -707,6 +712,79 @@ function Page({
       <AlsoLinkedFrom key={guide.id} game={game} guideId={guide.id} />
       {guide.source ? <Credit source={guide.source} title={guide.title} /> : null}
     </article>
+  );
+}
+
+/** A page lists its headings when it has at least this many shown. */
+export const ON_THIS_PAGE_FROM = 3;
+
+/** How far in a heading is listed under the one above it, at most. */
+const MOST_INDENT = 3;
+
+/**
+ * Whether "On this page" is open, as the person last chose for the layout
+ * while the app is open: at first open beside the contents (wide) and
+ * folded on a phone, where it would push the page down.
+ */
+const useOnThisPage = create<{ wide: boolean | null; compact: boolean | null }>()(() => ({
+  wide: null,
+  compact: null,
+}));
+
+/**
+ * "On this page": the page's headings, sub-headings in under their
+ * heading, each a link to its section, in place of a wiki's own box of
+ * contents. On a page with {@link ON_THIS_PAGE_FROM} headings or more;
+ * headings inside hidden text are left out until it is shown.
+ */
+function OnThisPage({ guideId, body, wide }: { guideId: string; body: string; wide: boolean }) {
+  const listId = useId();
+  const layout = wide ? 'wide' : 'compact';
+  const chosen = useOnThisPage((s) => s[layout]);
+  const open = chosen ?? wide;
+  const headings = useMemo(
+    () => guideHeadings(body).filter((heading) => !heading.hidden && heading.words !== ''),
+    [body],
+  );
+  if (headings.length < ON_THIS_PAGE_FROM) return null;
+  const top = Math.min(...headings.map((heading) => heading.level));
+  return (
+    <nav className="guides-toc" aria-label="On this page" data-testid="on-this-page">
+      <button
+        type="button"
+        className="guides-toc-toggle"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        data-testid="on-this-page-toggle"
+        onClick={() => {
+          useOnThisPage.setState({ [layout]: !open });
+        }}
+      >
+        <UiIcon name={open ? 'chevronDown' : 'chevron'} size={14} strokeWidth={2} />
+        <span className="guides-toc-title">On this page</span>
+        <span className="touch-figure">{headings.length}</span>
+      </button>
+      {open ? (
+        <ul id={listId} className="touch-plain-list guides-toc-list">
+          {headings.map((heading) => (
+            <li key={heading.name}>
+              <button
+                type="button"
+                className="guides-tree-row guides-toc-row"
+                style={{ paddingLeft: 10 + Math.min(heading.level - top, MOST_INDENT) * 14 }}
+                data-testid="on-this-page-entry"
+                data-target-section={heading.name}
+                onClick={() => {
+                  openPlace({ kind: 'page', guideId, section: heading.name });
+                }}
+              >
+                {heading.words}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </nav>
   );
 }
 

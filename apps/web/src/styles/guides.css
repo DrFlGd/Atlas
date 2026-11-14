@@ -361,6 +361,58 @@ button.guides-crumb:hover {
   outline: none;
 }
 
+/* "On this page": the page's headings, each a link to its section. */
+.guides-toc {
+  margin: 4px 0 16px;
+  padding: 4px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+}
+
+.guides-toc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.guides-toc-toggle:hover {
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-text);
+}
+
+.guides-toc-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.guides-toc-list {
+  margin: 0;
+  padding: 0 0 4px;
+}
+
+.guides-toc-row {
+  min-height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.touch[data-input='touch'] .guides-toc-row {
+  min-height: 40px;
+}
+
 /* Wide tables scroll sideways inside the page, which stays put. */
 .guides-page-body table {
   display: block;
