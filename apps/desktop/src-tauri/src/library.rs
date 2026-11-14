@@ -78,6 +78,13 @@ pub const MAX_PACK_FILE_BYTES: usize = 64 << 20;
 pub const MAX_PACK_BYTES: usize = 256 << 20;
 /// Page data larger than this is refused (the web app checks the same).
 pub const MAX_PAGE_DATA_BYTES: usize = 64 << 20;
+/// The bytes of one picture a page showed that an import may write (the
+/// contract's `MAX_PICTURE_FILE_BYTES`).
+pub const MAX_IMPORT_PICTURE_BYTES: usize = 4 << 20;
+/// Pictures one import may write, and their bytes in all (the contract's
+/// `MAX_PICTURE_FILES` and `MAX_PICTURE_FILES_BYTES`).
+pub const MAX_IMPORT_PICTURES: usize = 100;
+pub const MAX_IMPORT_PICTURES_BYTES: usize = 24 << 20;
 
 /// The app identifier of the Atlas viewer, whose data folder held downloaded
 /// map images before they moved into pack folders (version 0.2.0).
@@ -318,6 +325,53 @@ pub struct SaveImport {
     /// allows that). Without it, such packs are refused.
     #[serde(default)]
     pub refresh_bundled: bool,
+    /// Pictures the page showed as the person browsed it, read from the
+    /// page as it loaded them (never fetched): each picture file of the pack
+    /// (`pictures/<name>.png`, `.jpg`, `.jpeg` or `.webp`) with its bytes
+    /// in base64. Written into the pack folder with the pack; a picture
+    /// whose bytes are not of the type its name says is refused.
+    #[serde(default)]
+    pub pictures: BTreeMap<String, String>,
+}
+
+/// The pictures of an import, checked: each a picture file of a type the
+/// app writes, whose bytes are of that type, within the limits.
+fn import_pictures(pictures: &BTreeMap<String, String>) -> Result<Vec<(String, Vec<u8>)>, String> {
+    if pictures.len() > MAX_IMPORT_PICTURES {
+        return Err("The page showed more pictures than an import may keep.".to_owned());
+    }
+    let mut total = 0;
+    let mut kept = Vec::with_capacity(pictures.len());
+    for (name, data) in pictures {
+        let writable = crate::packfile::is_picture_path(name)
+            && matches!(
+                name.rsplit_once('.').map(|(_, extension)| extension),
+                Some("png" | "jpg" | "jpeg" | "webp")
+            );
+        if !writable {
+            return Err(format!("{name} is not a picture file of the pack."));
+        }
+        let bytes = crate::ownpictures::from_base64(data)
+            .ok_or_else(|| format!("The picture {name} could not be read."))?;
+        // `bytes_match_name` knows `.jpg`; a `.jpeg` file holds the same bytes.
+        let as_named = name
+            .strip_suffix(".jpeg")
+            .map_or_else(|| name.clone(), |stem| format!("{stem}.jpg"));
+        if !crate::ownpictures::bytes_match_name(&as_named, &bytes) {
+            return Err(format!(
+                "The picture {name} is not of the type its name says."
+            ));
+        }
+        if bytes.len() > MAX_IMPORT_PICTURE_BYTES {
+            return Err(format!("The picture {name} is too large."));
+        }
+        total += bytes.len();
+        if total > MAX_IMPORT_PICTURES_BYTES {
+            return Err("The pictures of the page are too large in all.".to_owned());
+        }
+        kept.push((name.clone(), bytes));
+    }
+    Ok(kept)
 }
 
 pub struct Library {
@@ -1128,6 +1182,7 @@ impl Library {
         if total > MAX_PACK_BYTES {
             return Err("The pack is too large.".to_owned());
         }
+        let pictures = import_pictures(&request.pictures)?;
         let manifest = request
             .files
             .get(MANIFEST_FILE)
@@ -1191,7 +1246,7 @@ impl Library {
             let after = plan_of_files(&dir, &request.files);
             self.stage_images(&request.pack_id, &dir, after.as_ref(), Area::Import)?
         };
-        let written = Self::write_import_files(&dir, request, manifest);
+        let written = Self::write_import_files(&dir, request, manifest, &pictures);
         #[cfg(feature = "downloads")]
         for layer in self.settle_images(&request.pack_id, &dir, &image_roots, Area::Import) {
             // Its shrunk levels were built again with its new numbers.
@@ -1228,9 +1283,14 @@ impl Library {
         Ok(dir)
     }
 
-    /// Writes an import's page data and pack files into its pack folder, the
-    /// manifest last.
-    fn write_import_files(dir: &Path, request: &SaveImport, manifest: &str) -> Result<(), String> {
+    /// Writes an import's page data, the pictures its page showed and its
+    /// pack files into its pack folder, the manifest last.
+    fn write_import_files(
+        dir: &Path,
+        request: &SaveImport,
+        manifest: &str,
+        pictures: &[(String, Vec<u8>)],
+    ) -> Result<(), String> {
         let write = |path: &Path, text: &str| {
             write_atomic(path, text.as_bytes())
                 .map_err(|error| format!("Could not write {}: {error}", path.display()))
@@ -1268,6 +1328,17 @@ impl Library {
             &import_dir.join(IMPORT_INDEX),
             &serde_json::to_string_pretty(&index).map_err(|error| error.to_string())?,
         )?;
+
+        // The pictures the page showed, before the files that list them.
+        if !pictures.is_empty() {
+            fs::create_dir_all(dir.join("pictures"))
+                .map_err(|error| format!("Could not write to {}: {error}", dir.display()))?;
+        }
+        for (name, bytes) in pictures {
+            let path = dir.join(name);
+            write_atomic(&path, bytes)
+                .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
+        }
 
         // The manifest last: until it is written, the folder still describes the old pack.
         for (name, text) in &request.files {
@@ -2334,7 +2405,50 @@ mod tests {
             ]
             .into(),
             refresh_bundled: false,
+            pictures: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn writes_the_pictures_a_page_showed_and_refuses_any_other_file() {
+        use crate::ownpictures::to_base64;
+        let s = setup("library-import-pictures", Vec::new());
+        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3];
+        let jpeg = [0xff, 0xd8, 0xff, 0xe0, 4, 5, 6];
+        let mut request = import("browsed", "start");
+        request.pictures = [
+            ("pictures/boat.png".to_owned(), to_base64(&png)),
+            ("pictures/knot.jpeg".to_owned(), to_base64(&jpeg)),
+        ]
+        .into();
+        let dir = s.library.save_import(&request).unwrap();
+        assert_eq!(fs::read(dir.join("pictures/boat.png")).unwrap(), png);
+        assert_eq!(fs::read(dir.join("pictures/knot.jpeg")).unwrap(), jpeg);
+        for (name, data) in [
+            // Bytes not of the type the name says.
+            ("pictures/boat.png", to_base64(&jpeg)),
+            // Not a picture file of a pack, or a type an import does not write.
+            ("manifest.json", to_base64(&png)),
+            ("pictures/../boat.png", to_base64(&png)),
+            ("pictures/anim.gif", to_base64(b"GIF89a")),
+            // Not base64.
+            ("pictures/boat.png", "not base64!".to_owned()),
+            // Too large.
+            (
+                "pictures/big.png",
+                to_base64(&[&png[..], &vec![0; MAX_IMPORT_PICTURE_BYTES]].concat()),
+            ),
+        ] {
+            let mut bad = import("browsed", "second");
+            bad.pictures = [(name.to_owned(), data)].into();
+            assert!(s.library.save_import(&bad).is_err(), "{name}");
+        }
+        // Nothing of a refused import was written.
+        assert!(s
+            .library
+            .saved_source("browsed", "demo-maps", "second")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

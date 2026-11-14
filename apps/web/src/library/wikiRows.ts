@@ -65,7 +65,7 @@ const keys = new Map<string, string>();
 function keyOf(url: string): string {
   let key = keys.get(url);
   if (key === undefined) {
-    if (keys.size >= 50_000) keys.clear();
+    if (keys.size >= 500_000) keys.clear();
     key = pageKey(url);
     keys.set(url, key);
   }
@@ -172,12 +172,41 @@ export function matchesFilter(row: WikiRow, filter: WikiFilter): boolean {
 /** Pages that a go can read now: not left out. */
 export const canTick = (row: WikiRow) => row.state !== 'left-out';
 
+/**
+ * The pages a heading's box ticks: every page shown under it, the pages
+ * listed under the heading and those found on them, each once, read before
+ * or not, never one left out. Called with the heading as the filter shows
+ * it, so with a filter on it ticks only what that filter shows.
+ */
+export function headingPages(group: WikiGroup): WikiRow[] {
+  const seen = new Set<string>();
+  return [...group.rows, ...group.found.flatMap((found) => found.pages)].filter((row) => {
+    if (!canTick(row) || seen.has(row.key)) return false;
+    seen.add(row.key);
+    return true;
+  });
+}
+
+/** How a heading's box shows: ticked when every page it ticks is, in between when some are. */
+export function headingTick(
+  pages: readonly WikiRow[],
+  ticked: ReadonlySet<string>,
+): { checked: boolean; indeterminate: boolean; disabled: boolean } {
+  const some = pages.some((row) => ticked.has(row.key));
+  const all = pages.length > 0 && pages.every((row) => ticked.has(row.key));
+  return { checked: all, indeterminate: some && !all, disabled: pages.length === 0 };
+}
+
 /** Pages "Tick every page not read" ticks: of the contents, not read yet, not left out. */
 export const unread = (row: WikiRow) => row.state === 'not-read' || row.state === 'failed';
 
-/** "About 9 minutes": how long reading `pages` takes, one at a time with the pause. */
-export function readingTime(pages: number): string {
-  const seconds = pages * 5;
+/**
+ * "About 9 minutes": how long reading `pages` takes, one at a time with the
+ * pause: about 5 seconds a page fetched by the app, about 2 seconds a page
+ * read in the window kept for a go (its shorter pause, `WINDOW_PAGE_PAUSE_MS`).
+ */
+export function readingTime(pages: number, inWindow = false): string {
+  const seconds = pages * (inWindow ? 2 : 5);
   if (seconds < 60) return 'Less than a minute';
   const minutes = Math.round(seconds / 60);
   if (minutes < 90) return minutes === 1 ? 'About a minute' : `About ${minutes} minutes`;

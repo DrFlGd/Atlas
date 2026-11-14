@@ -7,7 +7,7 @@ import {
   type CatalogueGame,
   type ListedPage,
 } from '@atlas/importer-api';
-import { MAX_FETCHED_RUN_PAGES, MAX_RUN_ADDRESSES } from './importRun';
+import { MAX_RUN_ADDRESSES } from './importRun';
 
 /**
  * The lists the person chooses from before pages are opened: the pages of
@@ -299,16 +299,16 @@ export function splitChosen(choice: Choice): { now: ChosenPage[]; later: ChosenP
 }
 
 /**
- * How many of the ticked pages one go reads: pages the app fetches itself
- * (their games keep the rest for later) have a go of their own size, since
- * no window is opened for them, or one at a time when their site shows
- * them only to a person; any other choice has what is left of the cap of
- * pages opened.
+ * How many of the ticked pages one go reads: every one, when they are all
+ * pages of importers with `fetch` (fetched, or opened one at a time in a
+ * window when their site shows them only to a person), which a go reads
+ * with no limit; any other choice has what is left of the cap of pages
+ * opened.
  */
 export function goRoom(choice: Choice): number {
   const chosen = chosenToRead(choice);
   return chosen.length > 0 && chosen.every((page) => page.queues)
-    ? MAX_FETCHED_RUN_PAGES
+    ? Number.POSITIVE_INFINITY
     : pagesLeft(choice.opened);
 }
 

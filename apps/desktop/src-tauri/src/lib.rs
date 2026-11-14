@@ -96,6 +96,7 @@ macro_rules! viewer_commands {
             commands::import_open,
             commands::import_poll,
             commands::import_close,
+            commands::import_navigate,
             commands::import_report,
             commands::activity_log_read,
             saves::saves_default_folder,

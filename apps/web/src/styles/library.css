@@ -847,3 +847,32 @@
     overflow: visible;
   }
 }
+
+/* How a wiki's pages are read, what its importer says about it, and the licence the person confirmed. */
+.wiki-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.wiki-reading p,
+.site-notice {
+  margin: 0;
+}
+
+.site-notice {
+  padding: 8px 12px;
+  border-left: 3px solid var(--atlas-accent);
+  background: var(--atlas-bg);
+}
+
+.licence-question {
+  margin-bottom: 12px;
+}
+
+.licence-question-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}

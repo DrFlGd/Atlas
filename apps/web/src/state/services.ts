@@ -36,6 +36,7 @@ function counted(inner: ProgressStore): ProgressStore {
   return {
     ...inner,
     putSetting: (key, value) => track(inner.putSetting(key, value)),
+    putSettings: (entries) => track(inner.putSettings(entries)),
     write: (batch) => track(inner.write(batch)),
   };
 }
@@ -100,16 +101,26 @@ export const SETTINGS = {
   gamePins: (readerId: string) => `gamePins:${readerId}`,
   /** A site's list of games as it was last read, kept so it need not be read each time. */
   catalogue: (importerId: string) => `catalogue:${importerId}`,
-  /** Pages chosen to read that did not fit in one go, by game, for an importer that keeps them. */
+  /** Pages chosen to read that a go did not reach (it was stopped, or the site refused), by game, for an importer that keeps them. */
   pageQueue: (importerId: string) => `pageQueue:${importerId}`,
   /** A wiki's contents as last read, by the page key of its address (see `wikiNotes.ts`). */
   wikiContents: (importerId: string) => `wikiContents:${importerId}`,
   /** Pages of a wiki that could not be read, with why. */
   wikiFailed: (importerId: string) => `wikiFailed:${importerId}`,
-  /** The pages of the same wiki each page read links to. */
+  /**
+   * The pages of the same wiki each page read links to, all in one record:
+   * how version 0.6.1 kept them. Read, moved to {@link SETTINGS.wikiPageLinks}
+   * and emptied.
+   */
   wikiLinks: (importerId: string) => `wikiLinks:${importerId}`,
+  /** The pages of the same wiki one page read links to, a record per page, by its page key. */
+  wikiPageLinks: (importerId: string, key: string) => `wikiPageLinks:${importerId}:${key}`,
+  /** The start of the keys of {@link SETTINGS.wikiPageLinks}, to read them all. */
+  wikiPageLinksOf: (importerId: string) => `wikiPageLinks:${importerId}:`,
   /** Pages of a wiki the person left out. */
   wikiLeftOut: (importerId: string) => `wikiLeftOut:${importerId}`,
   /** How far a go follows the links of a wiki's pages, as last chosen (see `followLinks.ts`). */
   wikiFollow: (importerId: string) => `wikiFollow:${importerId}`,
+  /** The person's choices for each site of an importer's wikis, by its key: how it is read, the licence they confirmed (see `wikiNotes.ts`). */
+  wikiSites: (importerId: string) => `wikiSites:${importerId}`,
 } as const;

@@ -1,22 +1,25 @@
 import { pageChange, setPageHidden } from '@atlas/core';
-import { pageKey } from '@atlas/importer-api';
+import { pageKey, readingWayOf } from '@atlas/importer-api';
 import type { OwnPages } from '@atlas/schema';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { FollowLinksChoice } from '../components/FollowLinks';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
+import { LicenceQuestion, WikiReading } from '../components/SiteReading';
 import type { ListedPack, PackDetails } from '../desktop';
 import { notify, switchGame } from '../state/actions';
 import type { FollowLinks } from '../state/followLinks';
 import { guidesOf } from '../state/guides';
 import {
+  browseWiki,
   readWikiContents,
   readWikiPages,
+  stopBrowse,
   stopRun,
   useImport,
   type WikiSource,
 } from '../state/importing';
-import { MAX_FETCHED_RUN_PAGES, foundText } from '../state/importRun';
+import { foundText, waitingForPerson } from '../state/importRun';
 import { hasLibraryHost, openPageForEditing } from '../state/libraryView';
 import { canChangeOwnPages, changeOwnPages, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -25,6 +28,8 @@ import {
   WIKI_FILTERS,
   allRows,
   canTick,
+  headingPages,
+  headingTick,
   matchesFilter,
   readWhen,
   readingTime,
@@ -101,7 +106,14 @@ export function WikiScreen({
     return new Map(
       phase.run.pages.flatMap((page): [string, string][] =>
         page.state.kind === 'open' || page.state.kind === 'converting'
-          ? [[pageKey(page.url), 'Reading now']]
+          ? [
+              [
+                pageKey(page.url),
+                page.state.kind === 'open' && page.state.attention
+                  ? 'Waiting for you in the page window'
+                  : 'Reading now',
+              ],
+            ]
           : page.state.kind === 'waiting'
             ? [
                 [
@@ -122,10 +134,17 @@ export function WikiScreen({
           ).length,
           total: phase.run.pages.length,
           found: foundText(phase.run),
+          waiting: waitingForPerson(phase.run),
         }
       : null;
 
   const tickedRows = rows.filter((row) => ticked.has(row.key) && canTick(row));
+  // Read as the person chose for the site, when its importer offers ways.
+  const way = source.site ? readingWayOf(source.site, notes.sites[source.site.key]?.way) : null;
+  const inWindow = way ? way === 'window' : source.inWindow;
+  // Read only as the person browses it: no go, no contents read by this app.
+  const browsing = way === 'browse';
+  const browseOn = phase.kind === 'browse' && !phase.ended;
   const counts = Object.fromEntries(
     WIKI_FILTERS.map((f) => [f.id, rows.filter((row) => matchesFilter(row, f.id)).length]),
   ) as Record<WikiFilter, number>;
@@ -215,6 +234,14 @@ export function WikiScreen({
       </div>
       <div className="wiki-body">
         <div className="wiki-list touch-scroll" data-testid="wiki-list" data-scroll-root>
+          <LicenceQuestion />
+          {source.site ? (
+            <WikiReading
+              importerId={source.importerId}
+              site={source.site}
+              disabled={running || browseOn}
+            />
+          ) : null}
           {contents ? null : (
             <div className="wiki-no-contents" data-testid="wiki-no-contents">
               <p>
@@ -251,7 +278,7 @@ export function WikiScreen({
               />
             ))
           )}
-          {source.address ? (
+          {source.address && !browsing ? (
             <div className="wiki-contents-again">
               <button
                 type="button"
@@ -328,15 +355,23 @@ export function WikiScreen({
               : `${tickedRows.length.toLocaleString('en')} ${tickedRows.length === 1 ? 'page' : 'pages'} ticked`}
           </strong>
           <span className="muted small" data-testid="wiki-foot-sentence">
-            {running
-              ? `A go is reading pages now, one at a time with a pause${
-                  progress
-                    ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
-                    : ''
-                }. Stop ends it after the page open now.`
-              : tickedRows.length > 0
-                ? `${estimate(tickedRows.length, notes.follow)}${source.pictures ? ' Pictures come with each page.' : ''}`
-                : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
+            {browsing
+              ? browseOn
+                ? 'You are browsing in the window this app opened: each article page you open is kept, once. Close the window or stop browsing to end it.'
+                : 'This wiki is read as you browse it: Start browsing opens it in a window of this app, where each article page you open is kept, once. This app opens no page by itself.'
+              : running
+                ? `A go is reading pages now, one at a time with a pause${
+                    progress
+                      ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
+                      : ''
+                  }.${
+                    progress?.waiting
+                      ? ' The page window is waiting for you: if the page asks you to confirm you are a person, answer it there. This app does not answer it for you.'
+                      : ''
+                  } Stop ends it after the page open now.`
+                : tickedRows.length > 0
+                  ? `${estimate(tickedRows.length, notes.follow, inWindow)}${source.pictures ? ' Pictures come with each page.' : ''}`
+                  : 'Tick the pages to read, then read them: one page at a time with a pause, only when you start.'}
           </span>
         </div>
         <button
@@ -353,7 +388,28 @@ export function WikiScreen({
         >
           Tick every page not read
         </button>
-        {running ? (
+        {browsing ? (
+          browseOn ? (
+            <button
+              type="button"
+              className="button"
+              data-testid="wiki-stop-browsing"
+              onClick={() => void stopBrowse()}
+            >
+              Stop browsing
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="button button-primary"
+              data-testid="wiki-browse"
+              disabled={running}
+              onClick={() => void browseWiki(source, source.start)}
+            >
+              Start browsing
+            </button>
+          )
+        ) : running ? (
           <button
             type="button"
             className="button"
@@ -389,14 +445,14 @@ export function WikiScreen({
  * ticked alone; with links, how many pages there are is known only as
  * they are read.
  */
-function estimate(ticked: number, follow: FollowLinks): string {
+function estimate(ticked: number, follow: FollowLinks, inWindow: boolean): string {
   switch (follow) {
     case 'ticked':
-      return `${readingTime(ticked)}, one page at a time with a pause. Nothing else is read.`;
+      return `${readingTime(ticked, inWindow)}, one page at a time with a pause. Nothing else is read.`;
     case 'linked':
       return 'Plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.';
     case 'all':
-      return `Plus every page their links lead to, up to ${MAX_FETCHED_RUN_PAGES.toLocaleString('en')} pages in all: how many is known only as they are read, so this go may take long. One page at a time with a pause.`;
+      return 'Plus every page their links lead to, until no new page is found or you stop the go: how many is known only as they are read, so this go may take long, and the bar shows the count as it grows. One page at a time with a pause.';
   }
 }
 
@@ -515,27 +571,34 @@ function Group({
 }) {
   const id = useId();
   const read = whole.rows.filter((row) => row.state === 'read').length;
-  // The heading ticks the pages under it that were not read, and are not left out.
-  const tickable = whole.rows.filter(unread);
-  const tickedHere = whole.rows.filter((row) => ticked.has(row.key) && canTick(row)).length;
-  const all = tickable.length > 0 && tickable.every((row) => ticked.has(row.key));
+  // The heading ticks every page shown under it, those found on its pages too; never one left out.
+  const tickable = headingPages(group);
+  const box = headingTick(tickable, ticked);
+  const tickedHere = headingPages(whole).filter((row) => ticked.has(row.key)).length;
+  // A heading of thousands of pages shows them a step at a time, so the screen stays quick.
+  const [shown, setShown] = useState(ROWS_STEP);
+  const rowKeys = useMemo(() => new Set(group.rows.map((row) => row.key)), [group.rows]);
+  const foundOn = useMemo(
+    () => new Map(group.found.map((found) => [found.from.key, found])),
+    [group.found],
+  );
   return (
     <section className="wiki-group" data-testid="wiki-group" data-group={group.title}>
       <div className="wiki-group-head">
         <input
           id={id}
           type="checkbox"
-          aria-label={`Tick the pages under ${group.title} that were not read`}
+          aria-label={`Tick the pages under ${group.title}`}
           data-testid="wiki-group-tick"
-          checked={all}
-          disabled={tickable.length === 0}
+          checked={box.checked}
+          disabled={box.disabled}
           ref={(input) => {
-            if (input) input.indeterminate = !all && tickable.some((row) => ticked.has(row.key));
+            if (input) input.indeterminate = box.indeterminate;
           }}
           onChange={() => {
             onTick(
               tickable.map((row) => row.key),
-              !all,
+              !box.checked,
             );
           }}
         />
@@ -558,19 +621,19 @@ function Group({
       </div>
       {open ? (
         <ul className="wiki-rows">
-          {group.rows.map((row) => (
-            <li key={row.key}>
-              <PageRow
-                row={row}
-                ticked={ticked.has(row.key)}
-                chosen={chosen === row.key}
-                state={stateText(row, inRun)}
-                onTick={onTick}
-                onChoose={onChoose}
-              />
-              {group.found
-                .filter((found) => found.from.key === row.key)
-                .map((found) => (
+          {group.rows.slice(0, shown).map((row) => {
+            const found = foundOn.get(row.key);
+            return (
+              <li key={row.key}>
+                <PageRow
+                  row={row}
+                  ticked={ticked.has(row.key)}
+                  chosen={chosen === row.key}
+                  state={stateText(row, inRun)}
+                  onTick={onTick}
+                  onChoose={onChoose}
+                />
+                {found ? (
                   <FoundRow
                     key={`found-${row.key}`}
                     found={found}
@@ -579,12 +642,28 @@ function Group({
                     onTick={onTick}
                     onChoose={onChoose}
                   />
-                ))}
+                ) : null}
+              </li>
+            );
+          })}
+          {group.rows.length > shown ? (
+            <li>
+              <button
+                type="button"
+                className="button button-small wiki-rows-more"
+                data-testid="wiki-rows-more"
+                onClick={() => {
+                  setShown((before) => before + ROWS_STEP);
+                }}
+              >
+                Show {Math.min(ROWS_STEP, group.rows.length - shown).toLocaleString('en')} more of{' '}
+                {(group.rows.length - shown).toLocaleString('en')} not shown
+              </button>
             </li>
-          ))}
+          ) : null}
           {/* Pages found on a page this filter hides. */}
           {group.found
-            .filter((found) => !group.rows.some((row) => row.key === found.from.key))
+            .filter((found) => !rowKeys.has(found.from.key))
             .map((found) => (
               <li key={`found-${found.from.key}`}>
                 <FoundRow
@@ -651,6 +730,9 @@ function PageRow({
     </div>
   );
 }
+
+/** Pages a heading shows at first, and how many more each "Show more" adds. */
+const ROWS_STEP = 200;
 
 /** "Daggers, Straight Swords and 94 more: Found on Weapons, not read". */
 function FoundRow({

@@ -1,4 +1,4 @@
-import { devices, type Page, type Route } from '@playwright/test';
+import { devices, type Locator, type Page, type Route } from '@playwright/test';
 import { collectErrors } from './helpers';
 import { expect, test } from './layout';
 
@@ -145,6 +145,112 @@ test.describe('on a desktop', () => {
   });
 });
 
+/** A page with a table to sort: numbers, words, linked pictures and hidden text. */
+const ARMS = [
+  'Arms of the isle.',
+  '',
+  '| Weapon | Icon | Damage |',
+  '| --- | --- | --- |',
+  '| Wolf Fang | [![Fang](demo:picture:wiki-waystone "=20x20")](demo:guide:wiki-wolves) | +408% |',
+  '| axe | [![Axe](demo:picture:wiki-waystone "=20x20")](demo:guide:wiki-wolves) | 147-279 (230-437) |',
+  '| Bow | [![bow](demo:picture:wiki-waystone "=20x20")](demo:guide:wiki-wolves) | -13% |',
+  '| \\|\\|Secret Blade\\|\\| | [![Chain](demo:picture:wiki-waystone "=20x20")](demo:guide:wiki-wolves) | 1,200 |',
+  '| Club | [![Club](demo:picture:wiki-waystone "=20x20")](demo:guide:wiki-wolves) | N/A |',
+].join('\n');
+
+/** The words of each cell as they read: hidden text that is not shown is not there. */
+const shownTexts = (cells: Locator) =>
+  cells.evaluateAll((all) => all.map((cell) => (cell as HTMLElement).innerText.trim()));
+
+/** Serves the demo pack with the Regions page's text as `body`. */
+async function serveRegions(page: Page, body: string): Promise<void> {
+  await page.route('**/packs/demo/guides.json', async (route) => {
+    const response = await route.fetch();
+    const all = (await response.json()) as { id: string; body: string }[];
+    await route.fulfill({
+      response,
+      json: all.map((guide) =>
+        guide.id === 'demo:guide:wiki-regions' ? { ...guide, body } : guide,
+      ),
+    });
+  });
+}
+
+test.describe('a table sorted by a column', () => {
+  test('sorts by numbers both ways and back, by words, by pictures, and keeps hidden text hidden', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveRegions(page, ARMS);
+    // The pictures' file arrives late, and is not there: the page is shown anew then.
+    let release: (() => void) | undefined;
+    const late = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route('**/packs/demo/pictures/wiki-waystone.png', async (route) => {
+      await late;
+      await route.fulfill({ status: 404, body: 'not found' });
+    });
+    await openGuides(page);
+    await openEntry(page, 'The isle');
+    await openEntry(page, 'Regions');
+    const table = shownPage(page).locator('table');
+    const firstColumn = table.locator('tbody tr td:first-child');
+    const pageOrder = ['Wolf Fang', 'axe', 'Bow', 'Show hidden text', 'Club'];
+    await expect.poll(() => shownTexts(firstColumn)).toEqual(pageOrder);
+    const heading = (name: string) => table.getByRole('button', { name, exact: true });
+    const damage = table.locator('th').nth(2);
+
+    // Numbers: smallest first, then largest first, then the page's order; nothing last.
+    await heading('Damage').click();
+    await expect(damage).toHaveAttribute('aria-sort', 'ascending');
+    await expect
+      .poll(() => shownTexts(firstColumn))
+      .toEqual(['Bow', 'axe', 'Wolf Fang', 'Show hidden text', 'Club']);
+    await heading('Damage').click();
+    await expect(damage).toHaveAttribute('aria-sort', 'descending');
+    await expect
+      .poll(() => shownTexts(firstColumn))
+      .toEqual(['Show hidden text', 'Wolf Fang', 'axe', 'Bow', 'Club']);
+    await heading('Damage').click();
+    await expect(damage).not.toHaveAttribute('aria-sort');
+    await expect.poll(() => shownTexts(firstColumn)).toEqual(pageOrder);
+
+    // Words, without regard to case; the hidden name counts as nothing, and stays hidden.
+    await heading('Weapon').focus();
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(() => shownTexts(firstColumn))
+      .toEqual(['axe', 'Bow', 'Club', 'Wolf Fang', 'Show hidden text']);
+    await expect(table.locator('.hidden-text[hidden]')).toHaveCount(1);
+    await expect(table.getByText('Secret Blade')).toBeHidden();
+
+    // Linked pictures, by their words; shown anew when the file is not there, still sorted.
+    await heading('Icon').click();
+    const sortedByIcon = ['axe', 'Bow', 'Show hidden text', 'Club', 'Wolf Fang'];
+    await expect.poll(() => shownTexts(firstColumn)).toEqual(sortedByIcon);
+    release?.();
+    await expect(table.locator('.guide-picture[data-missing]')).toHaveCount(5);
+    await expect(table.locator('th').nth(1)).toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(() => shownTexts(firstColumn)).toEqual(sortedByIcon);
+    await expect(table.getByText('Secret Blade')).toBeHidden();
+
+    // Shown, the hidden name sorts as it reads.
+    await table.getByRole('button', { name: 'Show hidden text' }).click();
+    await heading('Weapon').click();
+    await expect
+      .poll(() => shownTexts(firstColumn))
+      .toEqual(['axe', 'Bow', 'Club', 'Secret Blade', 'Wolf Fang']);
+
+    // Another page, and back: the page's own order.
+    await shownPage(page).getByRole('button', { name: 'Fang' }).click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Wolves');
+    await page.getByTestId('guides-back').click();
+    await expect.poll(() => shownTexts(firstColumn)).toEqual(pageOrder);
+    expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
+  });
+});
+
 test.describe('on a phone', () => {
   test.use({ ...pixel });
 
@@ -159,6 +265,12 @@ test.describe('on a phone', () => {
     const table = shownPage(page).locator('table');
     const sizes = await table.evaluate((el) => [el.scrollWidth, el.clientWidth]);
     expect(sizes[0]).toBeGreaterThan(sizes[1]!);
+    // Its headings sort with a tap, and it still scrolls on its own.
+    await table.getByRole('button', { name: 'Suggested level' }).tap();
+    await table.getByRole('button', { name: 'Suggested level' }).tap();
+    await expect(table.locator('th').nth(1)).toHaveAttribute('aria-sort', 'descending');
+    await expect(table.locator('tbody tr td:first-child').first()).toHaveText('Highcrown Peaks');
+    expect(await table.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
     // The page itself does not scroll sideways.
     expect(await body(page).evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
     await expect(page.getByTestId('guides-credit')).toContainText('Example Wiki');

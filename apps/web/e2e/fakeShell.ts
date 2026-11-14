@@ -27,6 +27,10 @@ const WIKI_IMPORTER = new URL(
   '../../../packages/importer-api/demo/example-wiki-importer.js',
   import.meta.url,
 );
+const OTHER_WIKIS_IMPORTER = new URL(
+  '../../../packages/importer-api/demo/other-wikis-importer.js',
+  import.meta.url,
+);
 
 /** The made-up Example Wiki that `example-wiki-importer.js` reads, answered by `import_fetch`. */
 export const WIKI = 'https://wiki.example.org/wiki';
@@ -34,10 +38,30 @@ export const WIKI = 'https://wiki.example.org/wiki';
 export interface WikiSite {
   /** The contents: each heading's pages, by slug. */
   headings: { title: string; pages: string[] }[];
-  /** Every page there is, by slug: its title, its text and the slugs it links to. */
-  pages: Record<string, { title: string; body: string; links?: string[] }>;
+  /**
+   * Every page there is, by slug: its title, its text and the slugs it links
+   * to; for a wiki the "Other wikis" importer reads, the deed of the licence
+   * the page states, if any.
+   */
+  pages: Record<
+    string,
+    {
+      title: string;
+      body: string;
+      links?: string[];
+      licence?: string;
+      /** A picture the page shows as the person browses it (its alternative text), on the wiki's own site. */
+      picture?: string;
+    }
+  >;
   /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
   busy?: string[];
+  /**
+   * Its pages (not its contents) are shown only to a person: the importer
+   * has them opened in a window (`fetch.inWindow`), where the fake shell
+   * hands over what the site would have answered.
+   */
+  inWindow?: boolean;
 }
 
 export const EXAMPLE_WIKI: WikiSite = {
@@ -110,10 +134,18 @@ export const WORLDS: Record<string, World> = {
 };
 
 interface ShellEvent {
-  what: 'open' | 'close' | 'poll' | 'fetch';
+  /**
+   * `read`: a poll that handed over the page's data. `browse`: the person
+   * went to a page in a window opened for browsing ({@link browseTo}).
+   */
+  what: 'open' | 'navigate' | 'close' | 'poll' | 'read' | 'fetch' | 'browse';
   url: string | null;
   at: number;
   purpose?: string;
+  /** The window was opened kept for the go's next pages. */
+  keep?: boolean;
+  /** The window was opened for the person to browse (browse and keep). */
+  browse?: boolean;
 }
 
 export interface MockShell {
@@ -122,8 +154,18 @@ export interface MockShell {
   hold: string[];
   /** Slugs whose window the person closes. */
   close: string[];
+  /** Slugs whose page shows the site's check: no data, and the window asks for attention after a while. */
+  check: string[];
+  /**
+   * A kept window that lags: the first poll after each move hands over the
+   * page shown before, with its address, as a shell without its own check
+   * would. The app must never take it for the page asked for.
+   */
+  lag: boolean;
   /** Maps the site has added since, by world: their game page lists them too. */
   extra: Record<string, Record<string, string>>;
+  /** The picture files the app asked to write with a pack, by pack id. */
+  pictures: Record<string, string[]>;
   reports: {
     outcome: string;
     message?: string;
@@ -145,17 +187,42 @@ function installFakeShell({
   worlds,
   downloads,
   wiki,
+  others,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
   wiki: WikiSite | null;
+  others: Record<string, WikiSite>;
 }) {
-  const shell: MockShell = { events: [], hold: [], close: [], extra: {}, reports: [] };
+  const shell: MockShell = {
+    events: [],
+    hold: [],
+    close: [],
+    check: [],
+    lag: false,
+    extra: {},
+    pictures: {},
+    reports: [],
+  };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
   const write = (
     window as unknown as { __writePack: (id: string, files: unknown) => Promise<void> }
   ).__writePack;
-  let current: { url: string; polls: number } | null = null;
+  let current: {
+    url: string;
+    polls: number;
+    keep: boolean;
+    previous: string | null;
+    /** Opened for the person to browse: each page they go to is handed over once. */
+    browse?: boolean;
+    read?: boolean;
+  } | null = null;
+  // The person goes to another page in a window opened for browsing (see `browseTo`).
+  (window as unknown as { __browseTo: (url: string) => void }).__browseTo = (url) => {
+    if (!current?.browse) throw new Error('No window is open for browsing.');
+    current = { ...current, url, polls: 0, read: false };
+    shell.events.push({ what: 'browse', url, at: Date.now() });
+  };
   const packs: Record<string, unknown>[] = [];
   const sources: Record<
     string,
@@ -254,6 +321,60 @@ function installFakeShell({
     }
     return parts.length === 3 && second ? mapData(world, second) : null;
   };
+  /** What the made-up wiki answers for an address: robots.txt, its contents and its pages, as JSON. */
+  const wikiAnswer = (address: string) => {
+    const answer = (status: number, body: unknown) => ({
+      url: address,
+      finalUrl: address,
+      status,
+      contentType: 'application/json',
+      text: typeof body === 'string' ? body : JSON.stringify(body),
+      retryAfter: null,
+    });
+    const at = new URL(address);
+    // The Example Wiki, or a wiki only the "Other wikis" importer reads.
+    const site = at.origin === 'https://wiki.example.org' ? wiki : (others[at.hostname] ?? null);
+    if (!site || at.protocol !== 'https:') return null;
+    if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nDisallow: /private/');
+    const slug = at.pathname.replace(/^\/wiki\//, '');
+    if (slug === 'Contents') {
+      return answer(200, {
+        headings: site.headings.map((heading) => ({
+          title: heading.title,
+          pages: heading.pages.map((page) => ({
+            slug: page,
+            title: site.pages[page]?.title ?? page.replaceAll('_', ' '),
+          })),
+        })),
+      });
+    }
+    if (site.busy?.includes(slug)) return answer(503, 'Busy');
+    const page = site.pages[slug];
+    return page ? answer(200, page) : answer(404, 'Not found');
+  };
+  /** A wiki page as a window shows it: what its reader would read, in the shape of a fetched page. */
+  const wikiWindowData = (address: string) => {
+    const answer = wikiAnswer(address);
+    if (!answer) return null;
+    const { retryAfter: _, ...page } = answer;
+    return { fetched: [page] };
+  };
+  /** A made-up PNG's bytes in base64: the PNG signature and a few bytes. */
+  const PNG = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3));
+  /**
+   * A page as the browse reader would read it from a window the person
+   * browses: an article page of a wiki, with the picture it shows; null for
+   * anything else (a page the wiki does not have), as the reader returns.
+   */
+  const browsedData = (address: string) => {
+    const data = wikiWindowData(address);
+    const at = new URL(address);
+    const site = others[at.hostname] ?? (at.origin === 'https://wiki.example.org' ? wiki : null);
+    const slug = at.pathname.replace(/^\/wiki\//, '');
+    if (!data || data.fetched[0]?.status !== 200) return null;
+    const picture = site?.pages[slug]?.picture;
+    return picture ? { ...data, shown: [{ alt: picture, type: 'image/png', data: PNG }] } : data;
+  };
   const invoke = async (command: string, args: Record<string, unknown> = {}) => {
     switch (command) {
       case 'desktop_info':
@@ -261,59 +382,88 @@ function installFakeShell({
       case 'library_list':
         return listing();
       case 'import_open':
-        current = { url: args.url as string, polls: 0 };
+        current = {
+          url: args.url as string,
+          polls: 0,
+          keep: args.keep === true,
+          previous: null,
+          ...(args.browse === true ? { browse: true, read: false } : {}),
+        };
         shell.events.push({
           what: 'open',
           url: current.url,
           at: Date.now(),
           ...(typeof args.purpose === 'string' ? { purpose: args.purpose } : {}),
+          ...(current.keep ? { keep: true } : {}),
+          ...(current.browse ? { browse: true } : {}),
         });
         return null;
+      case 'import_navigate': {
+        // The person closed the window: nothing is opened.
+        if (!current) return 'closed';
+        if (current.browse) {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'The person browses in this window, so this app does not move it.';
+        }
+        if (!current.keep) {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw 'The page window is not kept for the next page.';
+        }
+        current = { url: args.url as string, polls: 0, keep: true, previous: current.url };
+        shell.events.push({ what: 'navigate', url: current.url, at: Date.now() });
+        return 'navigated';
+      }
       case 'import_poll': {
         if (!current) return { state: 'failed', message: 'No page is open.' };
         current.polls++;
         shell.events.push({ what: 'poll', url: current.url, at: Date.now() });
         const slug = new URL(current.url).pathname.split('/').filter(Boolean).pop() ?? '';
-        if (shell.close.includes(slug)) return { state: 'closed' };
-        const data = pageData(current.url);
+        if (shell.close.includes(slug)) {
+          current = null;
+          return { state: 'closed' };
+        }
+        if (current.browse) {
+          // Each page the person opens, once it has loaded, once; never while it shows a check.
+          const browsed = browsedData(current.url);
+          if (current.read || current.polls < 2 || shell.check.includes(slug) || !browsed) {
+            return { state: 'waiting', loading: current.polls < 2, note: null };
+          }
+          current.read = true;
+          shell.events.push({ what: 'read', url: current.url, at: Date.now() });
+          return { state: 'ready', data: JSON.stringify(browsed), address: current.url };
+        }
+        if (shell.lag && current.previous && current.polls === 1) {
+          // Still the page before, handed over as if it were the new one.
+          return {
+            state: 'ready',
+            data: JSON.stringify(wikiWindowData(current.previous) ?? pageData(current.previous)),
+            address: current.previous,
+          };
+        }
+        if (shell.check.includes(slug)) {
+          return { state: 'waiting', loading: false, note: null, attention: current.polls > 3 };
+        }
+        const data = wikiWindowData(current.url) ?? pageData(current.url);
         if (!data || shell.hold.includes(slug) || current.polls < 2) {
           return { state: 'waiting', loading: current.polls < 2, note: null };
         }
-        return { state: 'ready', data: JSON.stringify(data) };
+        shell.events.push({ what: 'read', url: current.url, at: Date.now() });
+        return {
+          state: 'ready',
+          data: JSON.stringify(data),
+          ...(current.keep ? { address: current.url } : {}),
+        };
       }
       case 'import_fetch': {
         // The made-up wiki: robots.txt, its contents and its pages, as JSON.
         const address = args.url as string;
         shell.events.push({ what: 'fetch', url: address, at: Date.now() });
-        const answer = (status: number, body: unknown) => ({
-          url: address,
-          finalUrl: address,
-          status,
-          contentType: 'application/json',
-          text: typeof body === 'string' ? body : JSON.stringify(body),
-          retryAfter: null,
-        });
-        const at = new URL(address);
-        if (!wiki || at.origin !== 'https://wiki.example.org') {
+        const answer = wikiAnswer(address);
+        if (!answer) {
           // eslint-disable-next-line @typescript-eslint/only-throw-error
           throw 'The site could not be reached.';
         }
-        if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nDisallow: /private/');
-        const slug = at.pathname.replace(/^\/wiki\//, '');
-        if (slug === 'Contents') {
-          return answer(200, {
-            headings: wiki.headings.map((heading) => ({
-              title: heading.title,
-              pages: heading.pages.map((page) => ({
-                slug: page,
-                title: wiki.pages[page]?.title ?? page.replaceAll('_', ' '),
-              })),
-            })),
-          });
-        }
-        if (wiki.busy?.includes(slug)) return answer(503, 'Busy');
-        const page = wiki.pages[slug];
-        return page ? answer(200, page) : answer(404, 'Not found');
+        return answer;
       }
       case 'import_close':
         if (current) shell.events.push({ what: 'close', url: current.url, at: Date.now() });
@@ -340,8 +490,12 @@ function installFakeShell({
           mapId?: string;
           pageData: string;
           files: Record<string, string>;
+          pictures?: Record<string, string>;
         };
         await write(request.packId, request.files);
+        if (request.pictures) {
+          (shell.pictures[request.packId] ??= []).push(...Object.keys(request.pictures));
+        }
         const kept = (sources[request.packId] ??= []);
         const at = kept.findIndex((source) => source.key === request.sourceKey);
         const source = {
@@ -431,14 +585,24 @@ function installFakeShell({
 export async function setUp(
   page: Page,
   downloads = DOWNLOADS_BUILD,
-  { wiki = null }: { wiki?: WikiSite | null } = {},
+  {
+    wiki = null,
+    others = null,
+  }: {
+    wiki?: WikiSite | null;
+    /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
+    others?: Record<string, WikiSite> | null;
+  } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
   await page.exposeFunction('__writePack', (id: string, files: Record<string, string>) => {
     packs[id] = files;
   });
   const importer = await readFile(IMPORTER, 'utf8');
-  const wikiImporter = await readFile(WIKI_IMPORTER, 'utf8');
+  const wikiImporter = wiki?.inWindow
+    ? windowedWikiImporter(await readFile(WIKI_IMPORTER, 'utf8'))
+    : await readFile(WIKI_IMPORTER, 'utf8');
+  const otherWikis = await readFile(OTHER_WIKIS_IMPORTER, 'utf8');
   await page.route('**/config.json', async (route) => {
     const response = await route.fetch();
     const config = (await response.json()) as Record<string, unknown>;
@@ -464,6 +628,17 @@ export async function setUp(
                 },
               ]
             : []),
+          ...(others
+            ? [
+                {
+                  id: 'other-wikis',
+                  title: 'Other wikis',
+                  description: 'Reads made-up wikis this app does not know.',
+                  version: '1.0.0',
+                  module: 'importers/other-wikis.js',
+                },
+              ]
+            : []),
         ],
       },
     });
@@ -473,6 +648,9 @@ export async function setUp(
   );
   await page.route('**/importers/example-wiki.js', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: wikiImporter }),
+  );
+  await page.route('**/importers/other-wikis.js', (route) =>
+    route.fulfill({ contentType: 'text/javascript', body: otherWikis }),
   );
   await page.route(`${PACKS}**`, (route) => {
     const [, id = '', name = ''] =
@@ -484,7 +662,12 @@ export async function setUp(
       : route.fulfill({ headers, contentType: 'application/json', body });
   });
   await page.clock.install();
-  await page.addInitScript(installFakeShell, { worlds: WORLDS, downloads, wiki });
+  await page.addInitScript(installFakeShell, {
+    worlds: WORLDS,
+    downloads,
+    wiki,
+    others: others ?? {},
+  });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
 }
@@ -492,7 +675,37 @@ export async function setUp(
 export const mock = (page: Page) =>
   page.evaluate(() => (window as unknown as { __mockShell: MockShell }).__mockShell);
 
-export const setMock = (page: Page, patch: Partial<Pick<MockShell, 'hold' | 'close' | 'extra'>>) =>
+/**
+ * The Example Wiki's importer with its pages (not its contents) opened in a
+ * window (`fetch.inWindow`), as for a site that shows its pages only to a
+ * person. The fake shell hands over the data itself, so the reader is never run.
+ */
+function windowedWikiImporter(source: string): string {
+  const fetchPart = `  fetch: {
+    addresses: (url) => (isPage(url) ? [url.trim()] : []),
+  },`;
+  if (!source.includes(fetchPart))
+    throw new Error('The Example Wiki importer changed: update fakeShell.ts.');
+  return source.replace(
+    fetchPart,
+    `  fetch: {
+    addresses: (url) => (isPage(url) ? [url.trim()] : []),
+    inWindow: (url) => isPage(url),
+  },
+  pageReader: '() => null',`,
+  );
+}
+
+/** The person goes to `url` in the window opened for browsing, as they would by a link. */
+export const browseTo = (page: Page, url: string) =>
+  page.evaluate((url) => {
+    (window as unknown as { __browseTo: (url: string) => void }).__browseTo(url);
+  }, url);
+
+export const setMock = (
+  page: Page,
+  patch: Partial<Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra'>>,
+) =>
   page.evaluate((patch) => {
     Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell, patch);
   }, patch);

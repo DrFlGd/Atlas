@@ -369,9 +369,11 @@ export function ChoosePages({ choice }: { choice: Choice }) {
           <>
             A section’s name ticks or unticks every page under it; “From here on” ticks a page and
             every page after it. This site shows its pages only to a person, so this app opens the
-            pages you tick in a window, one at a time with a pause. If a page asks you to confirm
-            you are a person, do that in its window. If you stop it or close a window, it keeps the
-            rest, and the Library offers to continue with them another time.
+            pages you tick one at a time, with a pause, in one window that it moves from page to
+            page; the window comes to the front for the first page only, so you can put it aside. If
+            a page asks you to confirm you are a person, do that in the window. If you stop it or
+            close the window, it keeps the rest, and the Library offers to continue with them
+            another time.
           </>
         ) : queues ? (
           <>

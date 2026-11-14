@@ -583,6 +583,11 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     readAt: z.union([z.iso.date(), isoTime]),
     /** The text was changed from the original (for example converted to Markdown). */
     adapted: z.boolean().optional(),
+    /**
+     * The page stated no licence, and the person who read it confirmed
+     * `license` as the licence of its site. Shown with the credit.
+     */
+    licenseConfirmed: z.boolean().optional(),
   });
 
   /**

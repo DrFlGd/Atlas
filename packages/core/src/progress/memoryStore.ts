@@ -40,6 +40,17 @@ export function createMemoryStore(initial?: Partial<StoreSnapshot>): ProgressSto
       settings.set(key, clone(value));
       return Promise.resolve();
     },
+    listSettings(prefix) {
+      const rows = [...settings]
+        .filter(([key]) => key.startsWith(prefix))
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([key, value]) => ({ key, value: clone(value) }));
+      return Promise.resolve(rows);
+    },
+    putSettings(entries) {
+      for (const { key, value } of entries) settings.set(key, clone(value));
+      return Promise.resolve();
+    },
     write(batch) {
       apply(batch);
       return Promise.resolve();

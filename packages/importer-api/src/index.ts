@@ -39,9 +39,11 @@ import {
   type PackData,
 } from '@atlas/schema';
 import { z } from 'zod';
-import { MAX_PAGE_FETCHES, type PageFetch } from './fetching';
+import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
+import type { ConfirmedLicence, SiteInfo } from './sites';
 
 export * from './fetching';
+export * from './sites';
 
 /** The contract version described here. */
 export const IMPORTER_API_VERSION = 1;
@@ -159,6 +161,20 @@ export interface ImportContext {
    * it was under, for an importer that files pages under sections.
    */
   listed?: { title: string; group?: string };
+  /**
+   * Optional: how the page was read, as the person chose for its site
+   * among the ways {@link AtlasImporter.siteInfo} offers. Apps that do not
+   * know it leave it out.
+   */
+  reading?: ReadingWay;
+  /**
+   * Optional: the Creative Commons licence the person confirmed for the
+   * site of the page (see {@link ImportFailure.askLicence}), kept by the
+   * app per site. An importer uses it only for a page that states no
+   * licence it can read, says in what it writes that the person confirmed
+   * it, and never in place of a licence the page states.
+   */
+  confirmedLicence?: ConfirmedLicence;
 }
 
 // ---------------------------------------------------------------------------
@@ -719,9 +735,71 @@ export interface ImportSuccess {
    * It records the links only; nothing is read because of them.
    */
   writtenAgain?: WrittenAgain[];
+  /**
+   * Optional, for a page read as the person browsed (`ImportContext.reading`
+   * `browse`): the files of pictures the page showed, read from the page as
+   * it loaded them (never fetched), for the app to write into the pack's
+   * folder with the pack. Each `file` is the `file` of a picture of `pack`
+   * (`pictures/<name>.png`, `.jpg`, `.jpeg` or `.webp`), and `data` its
+   * bytes in base64, of the type its name says, at most {@link
+   * MAX_PICTURE_FILE_BYTES}; at most {@link MAX_PICTURE_FILES} of them and
+   * {@link MAX_PICTURE_FILES_BYTES} in all. The app leaves out any other
+   * entry, and checks the bytes again before writing them. Such pictures
+   * have no `remote`: the app's own picture download never runs for them.
+   */
+  pictureFiles?: PictureFile[];
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
+}
+
+/** A picture file a page showed, with its bytes (see {@link ImportSuccess.pictureFiles}). */
+export interface PictureFile {
+  file: string;
+  /** Its bytes, in base64. */
+  data: string;
+}
+
+/** The bytes of one picture file of a page the app takes at most (see {@link ImportSuccess.pictureFiles}). */
+export const MAX_PICTURE_FILE_BYTES = 4 * 1024 * 1024;
+/** Picture files of one page the app takes at most. */
+export const MAX_PICTURE_FILES = 100;
+/** The bytes of all picture files of one page the app takes at most. */
+export const MAX_PICTURE_FILES_BYTES = 24 * 1024 * 1024;
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+const PICTURE_FILE = /^pictures\/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.(png|jpe?g|webp)$/;
+
+/** How many bytes a base64 text holds. */
+const base64Bytes = (data: string) =>
+  Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+
+/**
+ * The picture files of a page as the app takes them (see {@link
+ * ImportSuccess.pictureFiles}): each the file of a picture of `pack`, of a
+ * type the app writes, in base64, within the limits, each file once, in
+ * the order given; anything else is left out.
+ */
+export function pictureFilesOf(value: unknown, pack: PackData): PictureFile[] {
+  if (!Array.isArray(value)) return [];
+  const listed = new Set((pack.pictures ?? []).map((picture) => picture.file));
+  const kept: PictureFile[] = [];
+  let total = 0;
+  for (const entry of value as unknown[]) {
+    if (kept.length >= MAX_PICTURE_FILES) break;
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { file, data } = entry as { file?: unknown; data?: unknown };
+    if (typeof file !== 'string' || typeof data !== 'string') continue;
+    if (!PICTURE_FILE.test(file) || !listed.has(file) || kept.some((k) => k.file === file)) {
+      continue;
+    }
+    if (data.length === 0 || data.length % 4 !== 0 || !BASE64.test(data)) continue;
+    const bytes = base64Bytes(data);
+    if (bytes > MAX_PICTURE_FILE_BYTES || total + bytes > MAX_PICTURE_FILES_BYTES) continue;
+    total += bytes;
+    kept.push({ file, data });
+  }
+  return kept;
 }
 
 /** Links of one page that the app keeps at most (see {@link ImportSuccess.links}). */
@@ -733,8 +811,13 @@ export interface WrittenAgain {
   links: string[];
 }
 
-/** Pages written again whose links the app keeps at most (see {@link ImportSuccess.writtenAgain}). */
-export const MAX_WRITTEN_AGAIN = 2000;
+/**
+ * Pages written again whose links the app keeps at most (see {@link
+ * ImportSuccess.writtenAgain}): far above the pages of a large wiki (tens
+ * of thousands), since a go of such pages has no page limit, and there
+ * only so that an importer that goes wrong cannot hand over without end.
+ */
+export const MAX_WRITTEN_AGAIN = 100_000;
 
 export interface ImportFailure {
   ok: false;
@@ -745,6 +828,15 @@ export interface ImportFailure {
    * slow down: the app stops the go at once and reads no more pages.
    */
   stop?: boolean;
+  /**
+   * The page states no licence the importer can read, and the importer
+   * would read it under a licence the person confirms for its site: an app
+   * that can ask does so (one of {@link CONFIRMABLE_LICENCES}), keeps the
+   * answer for the site and hands the same page data to `convert` again
+   * with {@link ImportContext.confirmedLicence}, fetching nothing again.
+   * Without an answer nothing is kept. Other apps show the message.
+   */
+  askLicence?: boolean;
 }
 
 export type ImportOutcome = ImportSuccess | ImportFailure;
@@ -869,6 +961,23 @@ export interface AtlasImporter {
   /** Whether this importer can read the page at `url` (a full `https:` URL). Must not throw. */
   matches(url: string): boolean;
   /**
+   * Optional: whether the importer recognises `url` (with `matches`, or as
+   * a game address with `games.matches`) only as a general reader: it does
+   * not know the site, and reads it only if its pages turn out to be of a
+   * kind it reads, failing plainly otherwise. The app then gives the
+   * address to an importer that knows it first ({@link findReader}), and
+   * reads nothing until the person asks, as for any address. Must not throw.
+   */
+  general?(url: string): boolean;
+  /**
+   * Optional: what the importer says about the site of `url` before
+   * anything is read: its key, the ways its pages can be read, and a
+   * notice to show (see {@link SiteInfo}, checked with {@link siteInfoOf}).
+   * Asked for page and game addresses alike; null for an address it does
+   * not read. Must not throw.
+   */
+  siteInfo?(url: string): SiteInfo | null;
+  /**
    * Optional: why the app must not read `url` at all, in a plain sentence,
    * or null. Asked before anything is opened or fetched, for every address
    * the person enters, also those no importer recognises. Must not throw.
@@ -894,6 +1003,20 @@ export interface AtlasImporter {
    * there yet". Required unless the importer reads by {@link fetch}.
    */
   pageReader?: string;
+  /**
+   * Optional: the reader of "browse and keep" (the reading way `browse`,
+   * see `fetching.ts`), a function's source like {@link pageReader}, run
+   * in the app's window on each page the person opens there themselves,
+   * once the page has finished loading. It returns `null` for a page not
+   * to keep (not an article, or a page that asks to confirm the reader is a
+   * person: the app never reads past such a check) and otherwise the page's
+   * data for `convert`, which gets `ImportContext.reading` `browse`. It must
+   * not change the page or make any request; it may read the pictures the
+   * page already shows, as they loaded, within the page data's size limit
+   * (see {@link ImportSuccess.pictureFiles}). Without it, `browse` is not
+   * offered.
+   */
+  browseReader?: string;
   /**
    * Optional: measuring a map's picture from the page, when the person asks
    * for it (see {@link PageMeasure}). An app without it never runs it.
@@ -983,8 +1106,11 @@ export const importerSchema = z
     example: z.string().max(500).optional(),
     matches: z.custom<AtlasImporter['matches']>(isFunction, 'must be a function'),
     refuses: z.custom<NonNullable<AtlasImporter['refuses']>>(isFunction).optional(),
+    general: z.custom<NonNullable<AtlasImporter['general']>>(isFunction).optional(),
+    siteInfo: z.custom<NonNullable<AtlasImporter['siteInfo']>>(isFunction).optional(),
     fetch: fetchSchema.optional(),
     pageReader: z.string().min(1).max(MAX_READER_CHARS).optional(),
+    browseReader: readerSchema.optional(),
     pageMeasure: z
       .object({
         matches: z.custom<NonNullable<PageMeasure['matches']>>(isFunction).optional(),
@@ -1027,17 +1153,61 @@ export function isAllowedPageUrl(text: string): boolean {
   return url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
 }
 
-/** The first installed importer that recognises `url`, or null. */
-export function findImporter<T extends Pick<AtlasImporter, 'matches'>>(
+/** Whether an importer recognises `url` only as a general reader (see {@link AtlasImporter.general}). */
+export function readsAsGeneral(importer: Pick<AtlasImporter, 'general'>, url: string): boolean {
+  return importer.general !== undefined && safely(() => importer.general!(url.trim()), false);
+}
+
+/**
+ * The first installed importer that recognises `url`, or null: one that
+ * knows its site first, then one that would read it as a general reader.
+ */
+export function findImporter<T extends Pick<AtlasImporter, 'matches' | 'general'>>(
   importers: readonly T[],
   url: string,
 ): T | null {
   if (!isAllowedPageUrl(url)) return null;
-  for (const importer of importers) {
-    try {
-      if (importer.matches(url.trim())) return importer;
-    } catch {
-      // An importer that throws does not recognise the URL.
+  const recognising = importers.filter((importer) =>
+    safely(() => importer.matches(url.trim()), false),
+  );
+  return recognising.find((importer) => !readsAsGeneral(importer, url)) ?? recognising[0] ?? null;
+}
+
+/** What an address is to the importer that reads it (see {@link findReader}). */
+export type ReaderKind = 'page' | 'game' | 'catalogue';
+
+/**
+ * The importer that reads `url`, and as what: a page, a game's page or
+ * the site's list of games. Importers that know the address come first, in
+ * that order of kinds; an importer that would read it only as a general
+ * reader comes after all of them, so a general reader never takes an
+ * address another importer knows. Null when none recognises it.
+ */
+export function findReader<
+  T extends Pick<AtlasImporter, 'matches' | 'general' | 'games' | 'catalogue'>,
+>(importers: readonly T[], url: string): { importer: T; kind: ReaderKind } | null {
+  if (!isAllowedPageUrl(url)) return null;
+  const address = url.trim();
+  const kinds: [ReaderKind, (importer: T) => boolean][] = [
+    ['page', (importer) => safely(() => importer.matches(address), false)],
+    [
+      'game',
+      (importer) =>
+        importer.games !== undefined && safely(() => importer.games!.matches(address), false),
+    ],
+    [
+      'catalogue',
+      (importer) =>
+        importer.catalogue !== undefined &&
+        safely(() => importer.catalogue!.matches(address), false),
+    ],
+  ];
+  for (const general of [false, true]) {
+    for (const [kind, recognises] of kinds) {
+      const importer = importers.find(
+        (candidate) => readsAsGeneral(candidate, address) === general && recognises(candidate),
+      );
+      if (importer) return { importer, kind };
     }
   }
   return null;
@@ -1087,6 +1257,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
       .optional(),
     // Checked entry by entry, and entries that are not in shape are left out.
     writtenAgain: z.unknown().optional(),
+    // Checked against the pack, entry by entry (`pictureFilesOf`).
+    pictureFiles: z.unknown().optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
@@ -1094,6 +1266,7 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     ok: z.literal(false),
     message: z.string().trim().min(1).max(2000),
     stop: z.boolean().optional(),
+    askLicence: z.boolean().optional(),
   }),
 ]);
 
@@ -1212,13 +1385,15 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   if (success.guideId !== undefined && !pack.data.guides.some((g) => g.id === success.guideId)) {
     return { ok: false, message: 'The importer named a guide that is not in its pack.' };
   }
-  const { links: given, writtenAgain: again, ...rest } = success;
+  const { links: given, writtenAgain: again, pictureFiles: files, ...rest } = success;
   const links = pageLinks(given, pageUrl);
   const writtenAgain = writtenAgainLinks(again, pageUrl);
+  const pictureFiles = pictureFilesOf(files, pack.data);
   return {
     ...rest,
     ...(links.length > 0 ? { links } : {}),
     ...(writtenAgain.length > 0 ? { writtenAgain } : {}),
+    ...(pictureFiles.length > 0 ? { pictureFiles } : {}),
     pack: pack.data,
   };
 }
@@ -1266,15 +1441,19 @@ export function canAddPage(importer: Pick<AtlasImporter, 'matches'>, url: string
   return isAllowedPageUrl(url) && safely(() => importer.matches(url.trim()), false);
 }
 
-/** The first importer that recognises `url` as a game address, or null. */
-export function findGameImporter<T extends Pick<AtlasImporter, 'games'>>(
+/**
+ * The first importer that recognises `url` as a game address, or null: one
+ * that knows its site first, then one that would read it as a general reader.
+ */
+export function findGameImporter<T extends Pick<AtlasImporter, 'games' | 'general'>>(
   importers: readonly T[],
   url: string,
 ): T | null {
   if (!isAllowedPageUrl(url)) return null;
-  return (
-    importers.find((i) => i.games && safely(() => i.games!.matches(url.trim()), false)) ?? null
+  const recognising = importers.filter(
+    (i) => i.games && safely(() => i.games!.matches(url.trim()), false),
   );
+  return recognising.find((i) => !readsAsGeneral(i, url)) ?? recognising[0] ?? null;
 }
 
 /** The first importer that recognises `url` as the address of its list of games, or null. */

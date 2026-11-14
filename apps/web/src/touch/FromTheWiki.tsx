@@ -113,7 +113,8 @@ function about(page: LocationPage): string {
 
 /** "From “Waystones” on Example Wiki · CC BY-SA 4.0 · By the contributors of …" */
 function creditLine(title: string, source: GuideSource): string {
-  return [`From “${title}” on ${source.site}`, source.license.name, source.credit]
-    .filter(Boolean)
-    .join(' · ');
+  const licence = source.licenseConfirmed
+    ? `${source.license.name} (confirmed by you)`
+    : source.license.name;
+  return [`From “${title}” on ${source.site}`, licence, source.credit].filter(Boolean).join(' · ');
 }

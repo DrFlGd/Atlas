@@ -28,7 +28,7 @@ use tokio::sync::oneshot;
 use crate::{
     activity::{self, ActivityLog, Area, RecentLog},
     downloads::Downloads,
-    imports::{Imports, PollResult},
+    imports::{Imports, Navigated, PollResult},
     library::{FolderChoice, Library, Listing, SaveImport, SavedSource, SavedSourceEntry},
     ownlists,
     packfile::{self, AppInfo, ExportOptions, Progress, Stop},
@@ -1995,9 +1995,13 @@ pub async fn import_open<R: Runtime>(
     wait_seconds: Option<u32>,
     purpose: Option<String>,
     measure: Option<String>,
+    keep: Option<bool>,
+    browse: Option<bool>,
 ) -> Result<(), String> {
     desktop_only()?;
     *lock_poll() = None;
+    let keep = keep.unwrap_or(false);
+    let browse = browse.unwrap_or(false);
     // Only for the log: what is read from the page. Nothing about the window changes.
     let listing = matches!(purpose.as_deref(), Some("game" | "catalogue"));
     *lock_listing() = listing;
@@ -2020,12 +2024,19 @@ pub async fn import_open<R: Runtime>(
     } else {
         ""
     };
-    match imports.open(&app, &url, reader, measure) {
+    let kept = if browse {
+        "; the person browses the site in it, and each page they open is read once (browse and keep): this app never moves the window"
+    } else if keep {
+        "; the window is kept for the next pages of the go on the same site"
+    } else {
+        ""
+    };
+    match imports.open(&app, &url, reader, measure, keep, browse) {
         Ok(()) => {
             activity::info(
                 Area::Import,
                 format!(
-                    "Opened {page} in the import window{reading} for importer {importer}{wait}{measuring}"
+                    "Opened {page} in the import window{reading} for importer {importer}{wait}{measuring}{kept}"
                 ),
             );
             Ok(())
@@ -2034,6 +2045,55 @@ pub async fn import_open<R: Runtime>(
             activity::warn(
                 Area::Import,
                 format!("Could not open {page} for importer {importer}: {error}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+/// Moves the import window, kept for a go, to the go's next page on the
+/// same site, for the importer's page reader. The window is not focused or
+/// brought to the front. Answers `closed` when the person closed it.
+#[tauri::command]
+pub async fn import_navigate<R: Runtime>(
+    app: AppHandle<R>,
+    imports: State<'_, Imports>,
+    url: String,
+    reader: String,
+    importer_id: Option<String>,
+    wait_seconds: Option<u32>,
+) -> Result<Navigated, String> {
+    desktop_only()?;
+    *lock_poll() = None;
+    let importer = importer_id
+        .as_deref()
+        .map(short)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let page = page_address(&url);
+    let wait = wait_seconds.map_or_else(String::new, |seconds| {
+        format!(", waiting up to {seconds} s for its page data")
+    });
+    match imports.navigate(&app, &url, reader) {
+        Ok(Navigated::Navigated) => {
+            activity::info(
+                Area::Import,
+                format!("Moved the import window to {page} for importer {importer}{wait}"),
+            );
+            Ok(Navigated::Navigated)
+        }
+        Ok(Navigated::Closed) => {
+            activity::warn(
+                Area::Import,
+                format!("The page window was closed, so {page} was not opened"),
+            );
+            Ok(Navigated::Closed)
+        }
+        Err(error) => {
+            activity::warn(
+                Area::Import,
+                format!(
+                    "Could not move the import window to {page} for importer {importer}: {error}"
+                ),
             );
             Err(error)
         }
@@ -2100,6 +2160,20 @@ pub async fn import_poll<R: Runtime>(
     // What the page holds is never logged; only what the app saw happen.
     let (state, line) = match &result {
         PollResult::Waiting { loading: true, .. } => ("loading", None),
+        PollResult::Waiting {
+            loading: false,
+            attention: true,
+            ..
+        } => (
+            "attention",
+            Some((
+                false,
+                format!(
+                    "The page has loaded but has not provided its {what} for {} s; the page window asked for the person's attention, without coming to the front",
+                    crate::imports::ATTENTION_AFTER.as_secs()
+                ),
+            )),
+        ),
         PollResult::Waiting { loading: false, .. } => (
             "waiting",
             Some((

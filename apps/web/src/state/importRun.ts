@@ -22,18 +22,34 @@ import {
  * opening the rest.
  */
 
-/** Addresses one run takes at most, of pages opened in the import window. */
+/**
+ * Addresses one run takes at most, of pages opened in the import window
+ * (map pages of an importer without `fetch`). A go of the pages an importer
+ * with `fetch` names (a wiki's pages, fetched or opened in a window through
+ * `fetch.inWindow`) has no such limit: the person watches the count and
+ * stops it when they choose. Its pages are still read one at a time with
+ * the pause, never against the site's `robots.txt`, and the go stops at
+ * once on a refusal and after two pages in a row without data; what it
+ * did not reach is kept for later.
+ */
 export const MAX_RUN_ADDRESSES = 25;
 /**
- * Pages one run reads at most when the app fetches them itself, with no
- * window (an importer with `fetch`: a wiki's pages, say): a whole section,
- * or a small wiki, in one go. They are still read one at a time with the
- * pause between requests, never against the site's `robots.txt`, and the
- * run stops at once on a refusal; what is left is kept for later.
+ * The pause after one page has been read and before the next page opens:
+ * after its window closes, or, in a go whose window is kept for its pages
+ * on one site, before the window moves to the next page.
  */
-export const MAX_FETCHED_RUN_PAGES = 2000;
-/** The pause after one page's window closes and before the next page opens. */
 export const RUN_PAUSE_MS = 3000;
+/**
+ * The pause between two pages of a go read in the window kept for it
+ * (pages an importer names through `fetch.inWindow`): after one page has
+ * been read and before the window moves to the next. It is the pace sites
+ * that show their pages only to a person ask of archiving programs, about
+ * two seconds a page with the page's own loading. It starts when a page
+ * has been read, and the window moves only after it; it is never skipped.
+ * Every other pause stays: {@link RUN_PAUSE_MS} for map pages and between
+ * pages the app fetches itself, with the pause of its requests.
+ */
+export const WINDOW_PAGE_PAUSE_MS = 1000;
 /** Pages in a row that end without their map data before the run stops. */
 export const NO_DATA_IN_A_ROW = 2;
 
@@ -124,7 +140,12 @@ export type FailureCause =
 export type RunPageState =
   /** Not reached yet. */
   | { kind: 'waiting' }
-  /** The page is open in the import window; `measuring` once its map picture is measured from the page. */
+  /**
+   * The page is open in the import window; `measuring` once its map picture
+   * is measured from the page; `attention` once the page window, kept for
+   * the go, has loaded the page and asked for the person's attention
+   * because the page gave no data.
+   */
   | {
       kind: 'open';
       startedAt: number;
@@ -132,6 +153,7 @@ export type RunPageState =
       waitSeconds: number;
       loading: boolean;
       measuring?: boolean;
+      attention?: boolean;
     }
   /** The page data is being turned into a map; `measuring` while its picture is measured. */
   | { kind: 'converting'; measuring?: boolean }
@@ -357,6 +379,11 @@ export function runSummary(run: RunState): string {
     .join(', ');
 }
 
+/** The page open now is waiting for the person in the page window (see `RunPageState`). */
+export const waitingForPerson = (run: RunState): boolean =>
+  run.status === 'running' &&
+  run.pages.some((page) => page.state.kind === 'open' && page.state.attention === true);
+
 /** Why the run stopped early, in words. */
 export function stopReasonText(reason: StopReason): string {
   switch (reason) {
@@ -401,7 +428,8 @@ export class ImportRun {
     urls: readonly string[],
     leftOut: number,
     private readonly driver: RunDriver,
-    private readonly pauseMs = RUN_PAUSE_MS,
+    /** The pause before a page after the first, or how long it is before page `index`. */
+    private readonly pauseMs: number | ((index: number) => number) = RUN_PAUSE_MS,
     /** A pause before the first page too, when a page closed just before the run. */
     private readonly firstPauseMs = 0,
   ) {
@@ -444,7 +472,12 @@ export class ImportRun {
 
   async run(): Promise<RunState> {
     for (let index = 0; index < this.state.pages.length; index++) {
-      const pause = index > 0 ? this.pauseMs : this.firstPauseMs;
+      const pause =
+        index === 0
+          ? this.firstPauseMs
+          : typeof this.pauseMs === 'function'
+            ? this.pauseMs(index)
+            : this.pauseMs;
       if (index > 0 || pause > 0) {
         this.set({ ...this.state, pausing: true });
         if (!this.cancelled && !this.state.stopRequested) {

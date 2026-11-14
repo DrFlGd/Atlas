@@ -69,6 +69,17 @@ describe.each(backends)('%s store', (_name, create) => {
     await store.putSetting('filters:demo', { hideFound: true });
     expect(await store.getSetting('filters:demo')).toEqual({ hideFound: true });
     expect(await store.getSetting('missing')).toBeUndefined();
+    await store.putSettings([
+      { key: 'notes:b', value: [2] },
+      { key: 'notes:a', value: [1] },
+      { key: 'notesx', value: 'other' },
+    ]);
+    expect(await store.listSettings('notes:')).toEqual([
+      { key: 'notes:a', value: [1] },
+      { key: 'notes:b', value: [2] },
+    ]);
+    expect(await store.listSettings('none:')).toEqual([]);
+    await store.putSettings([]);
 
     await store.write({
       profiles: [newProfile('demo', 'P', 1, 'p')],

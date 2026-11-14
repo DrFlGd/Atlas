@@ -7,6 +7,7 @@ import {
   browseGames,
   cancelImport,
   catalogueImporters,
+  chooseHow,
   closeAdding,
   confirmChecked,
   continueQueue,
@@ -29,7 +30,6 @@ import {
   useLibrary,
 } from '../state/libraryView';
 import {
-  MAX_FETCHED_RUN_PAGES,
   MAX_RUN_ADDRESSES,
   foundByLinks,
   foundText,
@@ -45,6 +45,7 @@ import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
+import { BrowseKeep, HowStep, LicenceQuestion } from './SiteReading';
 
 /**
  * "Add a map or a wiki", in desktop builds that include importers: the
@@ -68,6 +69,7 @@ export function AddBox() {
   const busy =
     phase.kind === 'waiting' ||
     phase.kind === 'converting' ||
+    (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running');
   useEffect(() => {
     if (focus > 0) input.current?.focus();
@@ -141,9 +143,11 @@ export function AddBox() {
 /** The steps of adding, on the right of the Library. */
 export function AddFlow() {
   const phase = useImport((s) => s.phase);
+  const asking = useImport((s) => s.licenceAsk !== null);
   const busy = phase.kind === 'waiting' || phase.kind === 'converting';
   const running =
-    (phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running';
+    ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running') ||
+    (phase.kind === 'browse' && !phase.ended);
   return (
     <section
       className="library-pane library-flow"
@@ -172,10 +176,13 @@ export function AddFlow() {
         </button>
       </header>
       <div className="library-pane-body touch-scroll" data-scroll-root>
+        <LicenceQuestion />
         {phase.kind === 'idle' ? <AddHelp /> : null}
-        {phase.kind === 'failed' ? <Failure message={phase.message} /> : null}
+        {phase.kind === 'how' ? <HowStep phase={phase} /> : null}
+        {phase.kind === 'browse' ? <BrowseKeep phase={phase} /> : null}
+        {phase.kind === 'failed' ? <Failure message={phase.message} how={phase.how} /> : null}
         {phase.kind === 'check' ? <Check phase={phase} /> : null}
-        {busy ? <Progress phase={phase} /> : null}
+        {busy && !asking ? <Progress phase={phase} /> : null}
         {phase.kind === 'done' ? <Result phase={phase} /> : null}
         {phase.kind === 'run' ? (
           <Run run={phase.run} shownPackId={phase.shownPackId} update={phase.update} />
@@ -225,13 +232,28 @@ function AddHelp() {
 }
 
 /** Why nothing was added, with the way back to the address box. */
-function Failure({ message }: { message: string }) {
+function Failure({ message, how }: { message: string; how?: string | undefined }) {
   return (
     <div className="dialog-section">
       <p className="download-error" role="alert" data-testid="add-map-error">
         {message}
       </p>
-      <p className="muted small">Change the address in the box on the left and press Add again.</p>
+      {how ? (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="button"
+            data-testid="add-map-how"
+            onClick={() => void chooseHow(how)}
+          >
+            Choose how this wiki is read
+          </button>
+        </div>
+      ) : (
+        <p className="muted small">
+          Change the address in the box on the left and press Add again.
+        </p>
+      )}
     </div>
   );
 }
@@ -281,7 +303,7 @@ function BrowseGames() {
   );
 }
 
-/** Pages chosen in an earlier go that did not fit: continue reading them, or forget them. */
+/** Pages chosen in an earlier go that it did not reach: read them, or forget them. */
 function QueuedPages() {
   const version = useImport((s) => s.queueVersion);
   const [games, setGames] = useState<QueuedGame[]>([]);
@@ -302,8 +324,8 @@ function QueuedPages() {
     <div className="add-map-browse" data-testid="add-map-queued">
       <p className="muted small">
         Pages you chose earlier that were not read: the go was stopped, or the site asked this app
-        to wait. Read the next reads them now, one at a time with a pause. Forget them drops the
-        list; nothing that was read is deleted.
+        to wait. Read them reads them all now, in one go, one at a time with a pause. Forget them
+        drops the list; nothing that was read is deleted.
       </p>
       <ul className="add-map-pick-list">
         {games.map((game) => (
@@ -321,7 +343,9 @@ function QueuedPages() {
                 data-testid="add-map-queued-continue"
                 onClick={() => void continueQueue(game.importerId, game.key)}
               >
-                Read the next {Math.min(MAX_FETCHED_RUN_PAGES, game.pages.length)}
+                {game.pages.length === 1
+                  ? 'Read it'
+                  : `Read them (${game.pages.length.toLocaleString('en')})`}
               </button>
               <button
                 type="button"
@@ -624,13 +648,23 @@ function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> })
         <strong>
           {state.measuring
             ? 'Open: measuring the map picture from the page…'
-            : state.loading
-              ? 'Open: the page is loading…'
-              : 'Open: waiting for the map data…'}
+            : state.attention
+              ? 'Open: the page window is waiting for you'
+              : state.loading
+                ? 'Open: the page is loading…'
+                : 'Open: waiting for the map data…'}
         </strong>{' '}
         <span className="muted">{formatDuration(elapsed)} so far</span>
       </span>
-      {state.measuring ? null : elapsed >= STILL_WAITING_SECONDS ? (
+      {state.measuring ? null : state.attention ? (
+        <span className="download-note small" data-testid="add-map-window-waiting">
+          The page has loaded but has not provided its data. Look at the page window: if it asks you
+          to sign in or to confirm you are a person, deal with it there, or close the window to
+          stop. This app does not answer it for you, and it did not bring the window to the front.
+          It waits{' '}
+          {left > 60 ? `about ${Math.ceil(left / 60)} more minutes` : 'less than a minute more'}.
+        </span>
+      ) : elapsed >= STILL_WAITING_SECONDS ? (
         <span className="download-note small" data-testid="add-map-still-waiting">
           Look at the page window: if it asks you to sign in, to confirm you are a person or to
           wait, deal with it there, or close the window to stop. This app waits{' '}

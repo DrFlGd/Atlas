@@ -8,12 +8,10 @@ import {
   checkCatalogue,
   checkGameListing,
   checkOutcome,
-  checkPageObservations,
   checkPictureTiles,
   fetchAddresses,
-  findCatalogueImporter,
-  findGameImporter,
   findImporter,
+  findReader,
   gameAddressOf,
   isAllowedPageUrl,
   isPictureRequest,
@@ -25,7 +23,10 @@ import {
   refusalOf,
   robotsAllows,
   rulesFromAnswer,
+  sameSite,
+  siteInfoOf,
   type AtlasImporter,
+  type ConfirmedLicence,
   type FetchedPage,
   type PageFetch,
   type RobotsRules,
@@ -39,7 +40,9 @@ import {
   type PictureSummary,
   type PictureTiles,
   type PictureTilesRequest,
+  type ReadingWay,
   type SavedSource,
+  type SiteInfo,
   type WrittenAgain,
 } from '@atlas/importer-api';
 import {
@@ -68,6 +71,14 @@ import {
   type RunState,
 } from './importRun';
 import { pagesToFollow, type FollowLinks } from './followLinks';
+import {
+  KEPT_POLL_MS,
+  PageWindows,
+  closedMessage,
+  type PageRead,
+  type PageWaiting,
+  type Reading,
+} from './pageWindow';
 import { fetchPagePictures } from './pagePictures';
 import {
   choiceGame,
@@ -89,9 +100,10 @@ import {
   type KeptCatalogue,
   type RecordedPage,
 } from './gameChoice';
-import { MAX_FETCHED_RUN_PAGES, RUN_PAUSE_MS } from './importRun';
+import { RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
+import { asksHow, siteReading, WINDOW_HINT, type SiteReading } from './readingWays';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
 import {
@@ -103,6 +115,8 @@ import {
   noteWikiFailed,
   noteWikiLinks,
   noteWikiRead,
+  setSiteLicence,
+  setSiteWay,
 } from './wikiNotes';
 
 /**
@@ -164,8 +178,44 @@ export type ImportPhase =
       /** Its pictures are being fetched now (see `pagePictures.ts`). */
       pictures?: boolean;
     }
-  /** `refused`: the site refused or asked to confirm the reader is a person; a run stops. */
-  | { kind: 'failed'; message: string; refused?: boolean }
+  /**
+   * `refused`: the site refused or asked to confirm the reader is a person;
+   * a run stops. `how`: the address of a site that can be read another way,
+   * for the person to choose it. `declined`: the person did not confirm the
+   * site's licence; a run stops.
+   */
+  | { kind: 'failed'; message: string; refused?: boolean; how?: string; declined?: boolean }
+  /**
+   * Before reading a site whose importer offers more than one way to read
+   * it, or says something about it: the ways, the importer's notice, and
+   * the way ticked now. Nothing has been read.
+   */
+  | {
+      kind: 'how';
+      url: string;
+      importerId: string;
+      importer: string;
+      site: SiteInfo;
+      way: ReadingWay;
+    }
+  /**
+   * Browse and keep: the person browses a site in the app's window, and
+   * each page they open is kept (see {@link startBrowse}). `ended` once the
+   * window was closed or browsing was stopped.
+   */
+  | {
+      kind: 'browse';
+      url: string;
+      importerId: string;
+      importer: string;
+      /** The site's key, for the person. */
+      site: string;
+      /** The pages kept, in the order they were opened. */
+      kept: { url: string; title: string }[];
+      /** What happened last, in a sentence. */
+      note: string | null;
+      ended: boolean;
+    }
   /** Several addresses, some of which no importer recognises: shown before the run. */
   | {
       kind: 'check';
@@ -212,25 +262,37 @@ export const useImport = create<{
   measureFromPage: boolean;
   /** Changes whenever pages kept for later change, for the list of them to read again. */
   queueVersion: number;
+  /** A page read waits for the person to confirm its site's licence (see {@link LicenceAsk}). */
+  licenceAsk: LicenceAsk | null;
 }>()(() => ({
   phase: { kind: 'idle' },
   draft: '',
   measureFromPage: false,
   queueVersion: 0,
+  licenceAsk: null,
 }));
+
+/**
+ * A page of a site whose pages state no licence, read and waiting: its
+ * importer asked the person to confirm the site's licence
+ * (`askLicence` of the outcome). Nothing of it is kept until they do.
+ */
+export interface LicenceAsk {
+  importerId: string;
+  importer: string;
+  /** The site's key, as its importer gives it: the licence is kept for the site. */
+  siteKey: string;
+  /** The page read. */
+  url: string;
+  /** What the importer said, in its words. */
+  message: string;
+}
 
 const setPhase = (phase: ImportPhase) => {
   useImport.setState({ phase });
 };
 
-/** How often the open page is asked for its data. */
-export const POLL_MS = 2000;
-/** After this long, the dialog explains what may be holding the page up. */
-export const STILL_WAITING_SECONDS = 20;
-
-/** A wait in words: "45 seconds", "5 minutes". */
-export const waitText = (seconds: number) =>
-  seconds < 120 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
+export { POLL_MS, KEPT_POLL_MS, STILL_WAITING_SECONDS, waitText } from './pageWindow';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -331,50 +393,25 @@ export function pictureText(picture: PictureSummary): string {
 /** The importer of the import in progress, for the log. */
 let currentImporter: string | null = null;
 
-/** When the page window last closed: the next page opens no sooner than the pause after it. */
-let lastClosedAt = 0;
+/**
+ * The import window: one at a time, kept for the pages of a go that an
+ * importer opens in a window through `fetch.inWindow` (`pageWindow.ts`).
+ */
+const pageWindows = new PageWindows({
+  sleep: (ms) => sleep(ms),
+  now: () => Date.now(),
+  report,
+});
 
-/** What is left of the pause after the page window last closed. */
-const pauseLeft = () => Math.max(0, lastClosedAt + RUN_PAUSE_MS - Date.now());
+/** What is left of the pause after the page window last let go of a page (closed it, or read a kept window's page). */
+const pauseLeft = () => Math.max(0, pageWindows.releasedAt + RUN_PAUSE_MS - Date.now());
 
-const closeWindow = async (shell: NonNullable<typeof desktop>) => {
-  await shell.importWindow.close().catch(() => undefined);
-  lastClosedAt = Date.now();
-};
-
-/** What a page is read for. */
-type Reading = 'map' | 'game' | 'catalogue';
-
-const READING_NOUN: Record<Reading, string> = {
-  map: 'the map data',
-  game: 'the list of its pages',
-  catalogue: 'the list of games',
-};
+const closeWindow = (shell: NonNullable<typeof desktop>) => pageWindows.close(shell.importWindow);
 
 // ---------------------------------------------------------------------------
 // Waiting for the page
 
 let session = 0;
-
-/** How reading one page ended. */
-type PageRead =
-  /** The data, and what the page loaded when it was measured. */
-  | { state: 'ready'; data: string; page?: PageObservations }
-  /** The person closed the page window. */
-  | { state: 'closed'; message: string }
-  /** The page's data could not be used (not JSON, too large). */
-  | { state: 'failed'; message: string }
-  /** The data did not appear within the wait (reported to the log). */
-  | { state: 'timed-out'; message: string }
-  /** The window did not open. */
-  | { state: 'open-failed'; message: string }
-  /** The site refused, asked to slow down, or robots.txt does not allow the page: stop. */
-  | { state: 'refused'; message: string }
-  /** Another import or a cancel took over. */
-  | { state: 'cancelled' };
-
-const closedMessage = (reading: Reading) =>
-  `The page window was closed before the page provided ${READING_NOUN[reading]}. Nothing was added.`;
 
 /** The reader and wait for a page: a map page, a game page or the list of games. */
 function readerFor(importer: AtlasImporter, reading: Reading) {
@@ -390,91 +427,81 @@ function readerFor(importer: AtlasImporter, reading: Reading) {
  * Opens `url` in the import window, asks it for its data every few seconds
  * until it appears, the window is closed or the wait runs out, and closes
  * the window. The same for one page and for each page of a run, and for a
- * game page or a list of games with the importer's reader for those.
+ * game page or a list of games with the importer's reader for those. With
+ * `keepFor`, the go a page an importer opens in a window through
+ * `fetch.inWindow` is read in, the window is kept for the go's next pages
+ * on the same site and moved to them (see `pageWindow.ts`).
  */
 async function readPage(
   shell: NonNullable<typeof desktop>,
   url: string,
   importer: AtlasImporter,
   id: number,
-  onWaiting: (waiting: {
-    startedAt: number;
-    now: number;
-    waitSeconds: number;
-    loading: boolean;
-    note: string | null;
-    measuring?: boolean;
-  }) => void,
+  onWaiting: (waiting: PageWaiting) => void,
   reading: Reading = 'map',
   /** The importer's page measuring step, when the map picture is to be measured from the page. */
   measure: string | null = null,
+  keepFor: number | null = null,
+  /** The way the person chose for the site, for an importer that offers ways (`siteInfo`). */
+  way?: ReadingWay,
 ): Promise<PageRead> {
-  const fetcher = fetcherFor(importer, reading, url);
+  // A site read only as the person browses it: nothing is opened or fetched by itself.
+  if (way === 'browse') return { state: 'failed', message: BROWSE_ONLY };
+  const fetcher = fetcherFor(importer, reading, url, way);
   if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
   const { pageReader, waitSeconds } = readerFor(importer, reading);
-  const startedAt = Date.now();
-  onWaiting({ startedAt, now: startedAt, waitSeconds, loading: true, note: null });
-  try {
-    await shell.importWindow.open(
-      url,
-      pageReader,
-      { id: importer.id, waitSeconds },
-      reading,
-      measure ?? undefined,
-    );
-  } catch (error) {
-    lastClosedAt = Date.now();
-    return id === session
-      ? { state: 'open-failed', message: errorText(error) }
-      : { state: 'cancelled' };
-  }
-
-  // Once the data is read, measuring the page has bounds of its own in the shell.
-  let measuring = false;
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-    if (id !== session) return { state: 'cancelled' };
-    const now = Date.now();
-    if (!measuring && now - startedAt > waitSeconds * 1000) {
-      await closeWindow(shell);
-      const message = `The page did not provide ${READING_NOUN[reading]} within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the ${reading === 'map' ? 'map' : 'page'} load; you can try again later. Nothing was added.`;
-      report({ importerId: importer.id, outcome: 'timed-out', message });
-      return { state: 'timed-out', message };
-    }
-    let result;
-    try {
-      result = await shell.importWindow.poll();
-    } catch (error) {
-      result = { state: 'failed', message: errorText(error) } as const;
-    }
-    if (id !== session) return { state: 'cancelled' };
-    if (result.state === 'waiting') {
-      onWaiting({ startedAt, now, waitSeconds, loading: result.loading, note: result.note });
-      continue;
-    }
-    if (result.state === 'measuring') {
-      measuring = true;
-      onWaiting({ startedAt, now, waitSeconds, loading: false, note: null, measuring: true });
-      continue;
-    }
-    await closeWindow(shell);
-    if (result.state === 'closed') return { state: 'closed', message: closedMessage(reading) };
-    if (result.state === 'failed') return { state: 'failed', message: result.message };
-    // What the page loaded is handed on only when it was asked for and has the expected shape.
-    const page = measure && result.page !== undefined ? checkPageObservations(result.page) : null;
-    return { state: 'ready', data: result.data, ...(page ? { page } : {}) };
-  }
+  return pageWindows.read(
+    shell.importWindow,
+    { url, importer, pageReader, waitSeconds, reading, measure, keepFor, onWaiting },
+    () => id === session,
+  );
 }
+
+/**
+ * Whether a page of a go is one an importer that fetches opens in a window
+ * (through `fetch.inWindow`, or because the person chose to read the site
+ * in a window), whose window the go keeps.
+ */
+const keptInWindow = (importer: AtlasImporter, url: string, way?: ReadingWay) =>
+  importer.fetch !== undefined &&
+  (way === undefined ? readsInWindow(importer.fetch, url) : way === 'window');
 
 // ---------------------------------------------------------------------------
 // Reading a page by fetching it (see `fetching.ts` in the importer contract)
 
-/** How an importer has a page of this reading fetched, if it reads that way. */
-function fetcherFor(importer: AtlasImporter, reading: Reading, url: string): PageFetch | null {
+/**
+ * How an importer has a page of this reading fetched, if it reads that way:
+ * as the person chose for the site (`way`), or for an importer that offers
+ * no choice, unless it opens the page in a window (`fetch.inWindow`).
+ */
+function fetcherFor(
+  importer: AtlasImporter,
+  reading: Reading,
+  url: string,
+  way?: ReadingWay,
+): PageFetch | null {
   if (reading === 'catalogue') return null;
   const fetch = (reading === 'game' ? importer.games?.fetch : importer.fetch) ?? null;
+  if (!fetch) return null;
+  if (way !== undefined) return way === 'fetch' ? fetch : null;
   // A page its site shows only to a person is opened in a window, where the person answers.
-  return fetch && !readsInWindow(fetch, url) ? fetch : null;
+  return readsInWindow(fetch, url) ? null : fetch;
+}
+
+/** The site of a page with the person's choices, for an importer that offers ways to read its sites. */
+const readingOf = (importer: AtlasImporter, url: string): Promise<SiteReading | undefined> =>
+  importer.siteInfo
+    ? siteReading(importer, url).catch(() => undefined)
+    : Promise.resolve(undefined);
+
+/**
+ * A refusal, with a sentence that the site can be read in a window of this
+ * app instead, when it was fetched and its importer offers that way.
+ */
+function withWindowHint(message: string, site: SiteReading | undefined): string {
+  return site?.way === 'fetch' && site.info.ways.includes('window')
+    ? `${message} ${WINDOW_HINT}`
+    : message;
 }
 
 /** When the app last asked a site for a page. */
@@ -606,6 +633,7 @@ export async function startImport(text: string): Promise<void> {
     return;
   }
   currentImporter = importer.id;
+  const site = await readingOf(importer, url);
   const read = await readPage(
     shell,
     url,
@@ -616,16 +644,30 @@ export async function startImport(text: string): Promise<void> {
     },
     'map',
     measureStep(importer, url),
+    null,
+    site?.way,
   );
   if (read.state === 'cancelled') return;
   if (read.state !== 'ready') {
-    if (id === session) setPhase({ kind: 'failed', message: read.message });
+    if (id === session) {
+      setPhase(
+        read.state === 'refused'
+          ? refusedPhase(read.message, url, site)
+          : failedPhase(read.message),
+      );
+    }
     return;
   }
   setPhase({ kind: 'converting', url, importer: importer.title });
   const outcome = await convertAndSave(
     importer,
-    { url, pageData: read.data, importedAt: new Date().toISOString(), observations: read.page },
+    {
+      url,
+      pageData: read.data,
+      importedAt: new Date().toISOString(),
+      observations: read.page,
+      ...(site ? { way: site.way } : {}),
+    },
     false,
     true,
     () => {
@@ -635,7 +677,25 @@ export async function startImport(text: string): Promise<void> {
     },
   );
   reportPhase(importer.id, outcome);
-  if (id === session) setPhase(outcome);
+  if (id !== session) return;
+  setPhase(
+    outcome.kind === 'failed' && outcome.refused
+      ? refusedPhase(outcome.message, url, site)
+      : outcome,
+  );
+}
+
+const failedPhase = (message: string): ImportPhase => ({ kind: 'failed', message });
+
+/** A page the site refused, with a way to read the site in a window instead when it offers one. */
+function refusedPhase(message: string, url: string, site: SiteReading | undefined): ImportPhase {
+  const hint = withWindowHint(message, site);
+  return {
+    kind: 'failed',
+    message: hint,
+    refused: true,
+    ...(hint !== message ? { how: url } : {}),
+  };
 }
 
 /** Stops waiting and closes the page window; a run stops with it. */
@@ -645,6 +705,7 @@ export async function cancelImport(): Promise<void> {
   }
   currentRun?.cancel();
   session++;
+  answerLicence(null);
   setPhase({ kind: 'idle' });
   if (__ATLAS_DOWNLOADS__ && desktop && downloadsOffered(useAtlas.getState())) {
     // A page of a run may be measuring its map's picture.
@@ -658,6 +719,7 @@ export function resetImport(): void {
   const { phase } = useImport.getState();
   if (
     phase.kind === 'waiting' ||
+    (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running')
   ) {
     return;
@@ -684,15 +746,12 @@ export async function submitAddresses(text: string): Promise<void> {
   const { addresses, tooMany } = parseAddresses(text);
   if (addresses.length === 0) return;
   const importers = await loadImporters();
-  // A map page first; then a game's page, or a site's list of games.
-  const listing = (url: string) =>
-    findImporter(importers, url)
-      ? null
-      : findGameImporter(importers, url)
-        ? 'game'
-        : findCatalogueImporter(importers, url)
-          ? 'catalogue'
-          : null;
+  // A map page first; then a game's page, or a site's list of games: of an importer that
+  // knows the address before one that would read it only as a general reader.
+  const listing = (url: string) => {
+    const reader = findReader(importers, url);
+    return reader && reader.kind !== 'page' ? reader.kind : null;
+  };
   if (addresses.length === 1) {
     const url = addresses[0]!;
     // An address an importer refuses is never opened or fetched.
@@ -702,11 +761,21 @@ export async function submitAddresses(text: string): Promise<void> {
       setPhase({ kind: 'failed', message: refusal });
       return;
     }
-    const kind = listing(url);
-    if (kind === 'game') await startGameAddress(url, findGameImporter(importers, url)!);
-    else if (kind === 'catalogue')
-      await startCatalogue(url, findCatalogueImporter(importers, url)!);
-    else await startImport(url);
+    // A site that can be read more than one way: the person chooses first, once.
+    const reader = findReader(importers, url);
+    const site = reader ? await readingOf(reader.importer, url) : undefined;
+    if (reader && site && asksHow(site)) {
+      setPhase({
+        kind: 'how',
+        url,
+        importerId: reader.importer.id,
+        importer: reader.importer.title,
+        site: site.info,
+        way: site.way,
+      });
+      return;
+    }
+    await addAddress(url, importers);
     return;
   }
   if (addresses.some((url) => listing(url) !== null)) {
@@ -731,6 +800,50 @@ export async function submitAddresses(text: string): Promise<void> {
     return;
   }
   await startRun(checked, 0);
+}
+
+/** Reads one address the person added: a page, a game's page, or a site's list of games. */
+async function addAddress(url: string, importers: readonly AtlasImporter[]): Promise<void> {
+  const reader = findReader(importers, url);
+  // A site read as the person browses it: browsing starts at the address.
+  const site = reader ? await readingOf(reader.importer, url) : undefined;
+  if (reader && site?.way === 'browse') await startBrowse(url, reader.importer, site);
+  else if (reader?.kind === 'game') await startGameAddress(url, reader.importer);
+  else if (reader?.kind === 'catalogue') await startCatalogue(url, reader.importer);
+  else await startImport(url);
+}
+
+/**
+ * Shows how the site of `url` can be read, with the way chosen now ticked,
+ * for the person to change it (after a refusal, say). Nothing is read.
+ */
+export async function chooseHow(url: string): Promise<void> {
+  const importers = await loadImporters();
+  const reader = findReader(importers, url);
+  const site = reader ? await readingOf(reader.importer, url) : undefined;
+  if (!reader || !site) return;
+  setPhase({
+    kind: 'how',
+    url,
+    importerId: reader.importer.id,
+    importer: reader.importer.title,
+    site: site.info,
+    way: site.way,
+  });
+}
+
+/** Ticks a way in the step that asks how a site is read. */
+export function setHowWay(way: ReadingWay): void {
+  const { phase } = useImport.getState();
+  if (phase.kind === 'how' && phase.site.ways.includes(way)) setPhase({ ...phase, way });
+}
+
+/** Keeps the way ticked for the site, then reads the address as the person added it. */
+export async function confirmHow(): Promise<void> {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'how') return;
+  await setSiteWay(phase.importerId, phase.site.key, phase.way).catch(() => undefined);
+  await addAddress(phase.url, await loadImporters());
 }
 
 /** After the check: adds the addresses that can be added and leaves out the rest. */
@@ -785,7 +898,7 @@ const outcomeOf = (
  * `importRun.ts`), then shows the game of the last map added. In a go of
  * pages an importer fetches, `follow` says per importer how far the links
  * of the pages read are followed (see `followLinks.ts`): the pages found
- * are added to the go, after the others, while it has room.
+ * are added to the go, after the others: a go has no page limit.
  */
 async function startRun(
   checked: readonly CheckedAddress<AtlasImporter>[],
@@ -809,6 +922,8 @@ async function startRun(
   }[] = checked.flatMap(({ url, importer, listed }) =>
     importer ? [{ url, importer, listed }] : [],
   );
+  // How each page is read, as the person chose for its site (fixed for the go).
+  const sites = await Promise.all(pages.map((page) => readingOf(page.importer, page.url)));
   // How many links away from a page ticked each page is (0: ticked), and every page of the go.
   const depths = pages.map(() => 0);
   const inGo = new Set(pages.map((page) => pageKey(page.url)));
@@ -824,6 +939,7 @@ async function startRun(
       },
       async importPage(index, url, update) {
         const { importer, listed } = pages[index]!;
+        const site = sites[index];
         currentImporter = importer.id;
         const read = await readPage(
           shell,
@@ -835,12 +951,15 @@ async function startRun(
           },
           'map',
           measureStep(importer, url),
+          keptInWindow(importer, url, site?.way) ? id : null,
+          site?.way,
         );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
             report({ importerId: importer.id, outcome: 'cancelled' });
           }
           const result = outcomeOf(read);
+          if (result.kind === 'refused') result.message = withWindowHint(result.message, site);
           if (importer.fetch && read.state !== 'cancelled' && read.state !== 'closed') {
             void noteWikiFailed(importer.id, url, result.message);
           }
@@ -855,6 +974,7 @@ async function startRun(
             importedAt: new Date().toISOString(),
             observations: read.page,
             listed,
+            ...(site ? { way: site.way } : {}),
           },
           false,
           false,
@@ -862,6 +982,8 @@ async function startRun(
             update({ kind: 'converting', measuring: true });
           },
         );
+        // The person did not confirm the site's licence: nothing more is read.
+        if (outcome.kind === 'failed' && outcome.declined) run.stop();
         reportPhase(importer.id, outcome);
         if (importer.fetch && outcome.kind === 'done') {
           const { links = [], writtenAgain = [] } = outcome;
@@ -890,7 +1012,7 @@ async function startRun(
           };
         }
         if (outcome.kind === 'failed' && outcome.refused) {
-          return { kind: 'refused', message: outcome.message };
+          return { kind: 'refused', message: withWindowHint(outcome.message, site) };
         }
         return {
           kind: 'failed',
@@ -898,7 +1020,13 @@ async function startRun(
         };
       },
     },
-    RUN_PAUSE_MS,
+    // A page read in the window kept from the page before follows after a shorter pause.
+    (index) => {
+      const next = pages[index];
+      return next && keptInWindow(next.importer, next.url, sites[index]?.way)
+        ? pageWindows.pauseBefore(id, next.importer.id, next.url)
+        : RUN_PAUSE_MS;
+    },
     firstPauseMs,
   );
   /** Adds the pages a page read links to, as `follow` says, within the go's limit. */
@@ -918,7 +1046,6 @@ async function startRun(
       inGo,
       read: recordedKeys(),
       leftOut: new Set(notes?.leftOut ?? []),
-      room: MAX_FETCHED_RUN_PAGES - run.state.pages.length,
     });
     if (add.length === 0 || id !== session || run.state.stopRequested) return;
     // A page the wiki's contents list is filed under its heading there.
@@ -936,6 +1063,7 @@ async function startRun(
           ? { listed: { title: listed.title, ...(listed.group ? { group: listed.group } : {}) } }
           : {}),
       });
+      sites.push(await readingOf(importer, found));
       depths.push(depth + 1);
       inGo.add(pageKey(found));
     }
@@ -955,6 +1083,8 @@ async function startRun(
   });
   const final = await run.run();
   if (currentRun === run) currentRun = null;
+  // The window kept for the go's pages closes with it, however it ended.
+  await pageWindows.release(shell.importWindow, id);
   // The links of the pages read, written every few seconds during the go, are all written now.
   void flushWikiNotes();
   // The pictures of the pages added, once the pages are all read: one download a game.
@@ -1061,6 +1191,8 @@ export function importContext(
   onMeasuring?: () => void,
   observations?: PageObservations,
   listed?: ImportContext['listed'],
+  /** How the page was read, and the licence the person confirmed for its site. */
+  site: { reading?: ReadingWay; confirmedLicence?: ConfirmedLicence } = {},
 ): ImportContext {
   const state = useAtlas.getState();
   const listing = state.library;
@@ -1110,6 +1242,8 @@ export function importContext(
     },
     isBundled: (packId) => bundled.has(packId),
     ...(listed ? { listed } : {}),
+    ...(site.reading ? { reading: site.reading } : {}),
+    ...(site.confirmedLicence ? { confirmedLicence: site.confirmedLicence } : {}),
     ...(__ATLAS_DOWNLOADS__ && downloadsOffered(state)
       ? {
           pictureTiles: (request: PictureTilesRequest) =>
@@ -1165,6 +1299,8 @@ async function convertAndSave(
     importedAt: string;
     observations?: PageObservations;
     listed?: ImportContext['listed'];
+    /** How it was read, as the person chose for its site. */
+    way?: ReadingWay;
   },
   rebuilt = false,
   show = true,
@@ -1179,25 +1315,54 @@ async function convertAndSave(
   if (data === undefined) {
     return { kind: 'failed', message: 'The page data was not in the expected shape.' };
   }
-  const context = importContext(
-    page.url,
-    page.importedAt,
-    importer.id,
-    rebuilt,
-    onMeasuring,
-    page.observations,
-    page.listed,
-  );
-  let returned: unknown;
-  try {
-    returned = await importer.convert(data, context);
-  } catch (error) {
-    return {
-      kind: 'failed',
-      message: `The importer stopped with an error, so nothing was added: ${errorText(error)}`,
-    };
+  // The licence the person confirmed for the site, as kept now: a page before may just have asked.
+  const site = await readingOf(importer, page.url);
+  const contextWith = (confirmedLicence: ConfirmedLicence | undefined) =>
+    importContext(
+      page.url,
+      page.importedAt,
+      importer.id,
+      rebuilt,
+      onMeasuring,
+      page.observations,
+      page.listed,
+      {
+        ...(page.way ? { reading: page.way } : {}),
+        ...(confirmedLicence ? { confirmedLicence } : {}),
+      },
+    );
+  let context = contextWith(site?.licence);
+  const convert = async () => {
+    try {
+      return checkOutcome(await importer.convert(data, context), page.url);
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: `The importer stopped with an error, so nothing was added: ${errorText(error)}`,
+      };
+    }
+  };
+  let outcome = await convert();
+  // A site whose pages state no licence: the person confirms one, once, and the page is read with it.
+  if (!outcome.ok && outcome.askLicence && site && !context.confirmedLicence) {
+    const licence = await askLicence({
+      importerId: importer.id,
+      importer: importer.title,
+      siteKey: site.info.key,
+      url: page.url,
+      message: outcome.message,
+    });
+    if (!licence) {
+      return {
+        kind: 'failed',
+        message: LICENCE_NOT_CONFIRMED,
+        declined: true,
+      };
+    }
+    await setSiteLicence(importer.id, site.info.key, licence).catch(() => undefined);
+    context = contextWith(licence);
+    outcome = await convert();
   }
-  const outcome = checkOutcome(returned, page.url);
   if (!outcome.ok) {
     return { kind: 'failed', message: outcome.message, ...(outcome.stop ? { refused: true } : {}) };
   }
@@ -1253,6 +1418,10 @@ async function convertAndSave(
       pageData: page.pageData,
       files: packFiles({ ...outcome.pack, manifest }),
       ...(bundled ? { refreshBundled: true } : {}),
+      // Pictures a page showed as the person browsed it, read from the page as it loaded them.
+      ...(page.way === 'browse' && outcome.pictureFiles
+        ? { pictures: Object.fromEntries(outcome.pictureFiles.map((p) => [p.file, p.data])) }
+        : {}),
     });
   } catch (error) {
     return { kind: 'failed', message: errorText(error) };
@@ -1280,6 +1449,196 @@ async function convertAndSave(
     rebuilt,
     ...(pictures ? { pictures: true } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Browse and keep
+
+/** A page of a site read only as the person browses it, asked for in a go or by fetching. */
+export const BROWSE_ONLY =
+  'This wiki is read only as you browse it, so this app does not open or fetch its pages by itself. Start browsing on its screen in the Library, or add its address again, and each page you open in the window is kept.';
+
+/** A page the person opened while browsing that its importer counts part of another wiki. */
+export const OTHER_WIKI =
+  'This page is of another wiki than the one you are browsing, so it was not kept. Start browsing that wiki to keep its pages.';
+
+/**
+ * Browse and keep: opens `url` in the app's window, browsing, and keeps
+ * each page the person opens there that the importer's browse reader reads
+ * (an article page), once a page has finished loading: converted and saved
+ * like any page, but never more than once while browsing, and never with
+ * a pause or a go. The app never opens, moves to or fetches a page itself;
+ * the window stays on its site. The pages a kept page links to are kept as
+ * found, not read. It ends when the person closes the window or presses
+ * Stop browsing ({@link stopBrowse}).
+ */
+async function startBrowse(
+  url: string,
+  importer: AtlasImporter,
+  site: SiteReading | undefined,
+): Promise<void> {
+  const shell = desktop;
+  if (!shell || !importer.browseReader) return;
+  currentRun?.cancel();
+  const id = ++session;
+  await closeWindow(shell);
+  currentImporter = importer.id;
+  let state: Extract<ImportPhase, { kind: 'browse' }> = {
+    kind: 'browse',
+    url,
+    importerId: importer.id,
+    importer: importer.title,
+    site: site?.info.key ?? new URL(url).hostname,
+    kept: [],
+    note: null,
+    ended: false,
+  };
+  const show = (change: Partial<typeof state>) => {
+    state = { ...state, ...change };
+    if (id === session) setPhase(state);
+  };
+  show({});
+  try {
+    await shell.importWindow.open(
+      url,
+      importer.browseReader,
+      { id: importer.id },
+      'map',
+      undefined,
+      false,
+      true,
+    );
+  } catch (error) {
+    show({ ended: true, note: `The window could not be opened: ${errorText(error)}` });
+    return;
+  }
+  // Pages read while browsing, by page key: each once.
+  const seen = new Set<string>();
+  while (id === session) {
+    await sleep(KEPT_POLL_MS);
+    if (id !== session) break;
+    let result: Awaited<ReturnType<typeof shell.importWindow.poll>>;
+    try {
+      result = await shell.importWindow.poll();
+    } catch {
+      continue;
+    }
+    if (result.state === 'closed') break;
+    if (result.state === 'failed') {
+      if (result.message === 'No page is open.') break;
+      show({ note: result.message });
+      continue;
+    }
+    if (result.state !== 'ready') continue;
+    const address = result.address ?? url;
+    // By the whole address but its fragment: a wiki may tell its pages apart by the query.
+    const key = address.split('#')[0] ?? address;
+    if (!sameSite(url, address) || seen.has(key)) continue;
+    seen.add(key);
+    // A page of another wiki on the same host (another language, say) is not kept here.
+    if (site && siteInfoOf(importer, address).key !== site.info.key) {
+      show({ note: OTHER_WIKI });
+      continue;
+    }
+    const kept = await keepBrowsed(importer, address, result.data);
+    if (id !== session) break;
+    if (kept.title) {
+      show({ kept: [...state.kept, { url: address, title: kept.title }], note: null });
+    } else if (kept.note) {
+      show({ note: kept.note });
+    }
+    if (kept.stop) break;
+  }
+  await shell.importWindow.close().catch(() => undefined);
+  void flushWikiNotes();
+  if (id === session) show({ ended: true });
+}
+
+/** Keeps one page the person opened while browsing: its title once kept, or what happened. */
+async function keepBrowsed(
+  importer: AtlasImporter,
+  url: string,
+  data: string,
+): Promise<{ title?: string; note?: string; stop?: boolean }> {
+  // The wiki's contents, when the person opened them: kept as its contents, not as a page.
+  const games = importer.games;
+  if (games && safely(() => games.matches(url))) {
+    const result = await convertListing({ url, importer, reading: 'game' }, data);
+    if (result.ok && 'pages' in result) {
+      await noteWikiContents(importer.id, url, result.game, result.pages);
+      return { note: `The wiki’s contents were read: ${result.pages.length} pages listed.` };
+    }
+    if (!canAdd(importer, url)) return {};
+  }
+  if (!canAdd(importer, url)) return {};
+  const outcome = await convertAndSave(
+    importer,
+    { url, pageData: data, importedAt: new Date().toISOString(), way: 'browse' },
+    false,
+    false,
+  );
+  reportPhase(importer.id, outcome);
+  if (outcome.kind === 'done') {
+    await noteWikiRead(importer.id, url, outcome.links ?? []).catch(() => undefined);
+    await noteWikiLinks(importer.id, outcome.writtenAgain ?? []).catch(() => undefined);
+    return { title: outcome.summary.map || url };
+  }
+  if (outcome.kind === 'failed') {
+    void noteWikiFailed(importer.id, url, outcome.message);
+    return { note: outcome.message, ...(outcome.declined ? { stop: true } : {}) };
+  }
+  return {};
+}
+
+/** What an importer's function answers, or false when it throws. */
+const safely = (answer: () => boolean) => {
+  try {
+    return answer();
+  } catch {
+    return false;
+  }
+};
+
+/** Stop browsing: closes the window; what was kept stays. */
+export async function stopBrowse(): Promise<void> {
+  if (desktop) await desktop.importWindow.close().catch(() => undefined);
+}
+
+/** Starts browsing a wiki from its screen in the Library, at `url` (its contents or a page). */
+export async function browseWiki(source: WikiSource, url: string): Promise<void> {
+  const importer = (await loadImporters()).find((i) => i.id === source.importerId);
+  if (!importer) return;
+  showLibraryAdd();
+  await startBrowse(url, importer, await readingOf(importer, url));
+}
+
+/** A page whose site's licence the person did not confirm. */
+export const LICENCE_NOT_CONFIRMED =
+  'The wiki’s licence was not confirmed, so nothing was added from this page and no more pages were read.';
+
+/** The answer to the licence question now asked, when it is answered. */
+let licenceAnswer: ((licence: ConfirmedLicence | null) => void) | null = null;
+
+/**
+ * Asks the person to confirm the licence of a page's site, and waits for
+ * the answer: a licence of `CONFIRMABLE_LICENCES`, or null for none. One
+ * question at a time; a run waits on its page meanwhile.
+ */
+function askLicence(ask: LicenceAsk): Promise<ConfirmedLicence | null> {
+  answerLicence(null);
+  useImport.setState({ licenceAsk: ask });
+  notify(`${ask.importer}: confirm the wiki’s licence in the Library to read this page.`, 'info');
+  return new Promise((resolve) => {
+    licenceAnswer = resolve;
+  });
+}
+
+/** The person's answer to the licence question: the licence they confirmed, or null (not now). */
+export function answerLicence(licence: { name: string; url: string } | null): void {
+  const answer = licenceAnswer;
+  licenceAnswer = null;
+  if (useImport.getState().licenceAsk) useImport.setState({ licenceAsk: null });
+  answer?.(licence ? { ...licence, confirmedAt: new Date().toISOString() } : null);
 }
 
 /** Loads a game and shows one of its maps. */
@@ -1475,6 +1834,7 @@ async function readListings(
       async importPage(index, url, update) {
         const item = items[index]!;
         currentImporter = item.importer.id;
+        const site = await readingOf(item.importer, url);
         const read = await readPage(
           shell,
           url,
@@ -1484,12 +1844,16 @@ async function readListings(
             update({ kind: 'open', ...waiting });
           },
           item.reading,
+          null,
+          null,
+          site?.way,
         );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
             report({ importerId: item.importer.id, outcome: 'cancelled' });
           }
           const outcome = outcomeOf(read);
+          if (outcome.kind === 'refused') outcome.message = withWindowHint(outcome.message, site);
           results[index] = { ok: false, message: outcome.message };
           return outcome;
         }
@@ -1550,7 +1914,12 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
   if (!read) return;
   const result = read.results[0];
   if (!result?.ok || !('pages' in result)) {
-    setPhase({ kind: 'failed', message: listingFailure(read.run, result) });
+    const message = listingFailure(read.run, result);
+    setPhase({
+      kind: 'failed',
+      message,
+      ...(message.endsWith(WINDOW_HINT) ? { refused: true, how: url } : {}),
+    });
     return;
   }
   const packId = packForListing(importer.id, result);
@@ -1800,6 +2169,12 @@ export interface WikiSource {
   address: string | null;
   /** A page's pictures are downloaded with it. */
   pictures: boolean;
+  /** Its pages are read in a window kept for a go (`fetch.inWindow`, or as the person chose), with that window's shorter pause. */
+  inWindow: boolean;
+  /** Where browsing it starts: its contents, else the last page read. */
+  start: string;
+  /** The site as its importer describes it, when it offers ways to read its sites (`siteInfo`). */
+  site: SiteInfo | null;
 }
 
 /** The wiki a game was read from, when an importer that fetches its pages made it; null otherwise. */
@@ -1808,11 +2183,16 @@ export async function wikiSourceOf(packId: string): Promise<WikiSource | null> {
   const [game] = await updatableGames([packId]);
   const importer = importers.find((i) => i.id === game?.importerId);
   if (!game || !importer?.fetch) return null;
+  const at = game.address ?? game.recorded[0]?.url ?? '';
+  const site = await readingOf(importer, at);
   return {
     importerId: game.importerId,
     importerTitle: game.importerTitle,
     address: importer.games ? game.address : null,
     pictures: importer.picturesWithPages === true,
+    inWindow: site ? site.way === 'window' : readsInWindow(importer.fetch, at),
+    start: game.address ?? game.recorded.at(-1)?.url ?? at,
+    site: site?.info ?? null,
   };
 }
 
@@ -1838,7 +2218,7 @@ export async function readWikiContents(source: WikiSource): Promise<string | nul
 /**
  * "Read n pages" on the wiki screen: the pages go to the front of the
  * wiki's pages kept to read, and a go reads them now, one at a time with
- * the pause, as "Read the next…" does, following their links as far as
+ * the pause, as "Read them" does, following their links as far as
  * `follow` says. Pages left out are not read.
  */
 export async function readWikiPages(
@@ -1863,10 +2243,8 @@ export async function readWikiPages(
       { ...kept, pages: kept.pages.filter((page) => !now.has(pageKey(page.url))) },
     ]);
   }
-  await readChosen(importer, key, game, reading.slice(0, MAX_FETCHED_RUN_PAGES), follow);
-  // Those that did not fit in one go wait at the front of the list.
-  const later = reading.slice(MAX_FETCHED_RUN_PAGES);
-  if (later.length > 0) await queuePages(importer.id, key, game, later, true);
+  // Every page in one go: a go of these pages has no limit.
+  await readChosen(importer, key, game, reading, follow);
 }
 
 /** "Update all…": lists the games to update, all ticked, before anything opens. */
@@ -1909,9 +2287,20 @@ async function startUpdate(games: readonly UpdateGame[]): Promise<void> {
     games: games.length,
     pages: withAddress.map((game) => game.address!),
   });
+  // A wiki read only as the person browses it is never read by an update.
+  const browsed = new Set<string>();
+  for (const game of games) {
+    const importer = importers.find((i) => i.id === game.importerId);
+    const at = game.address ?? game.recorded[0]?.url;
+    if (importer && at && (await readingOf(importer, at))?.way === 'browse') {
+      browsed.add(game.packId);
+    }
+  }
   const items = withAddress.flatMap((game): ListingItem[] => {
     const importer = importers.find((i) => i.id === game.importerId);
-    return importer ? [{ url: game.address!, importer, reading: 'game' }] : [];
+    return importer && !browsed.has(game.packId)
+      ? [{ url: game.address!, importer, reading: 'game' }]
+      : [];
   });
   const read = items.length > 0 ? await readListings(items, 'update') : { run: null, results: [] };
   if (!read) return;
@@ -1928,6 +2317,9 @@ async function startUpdate(games: readonly UpdateGame[]): Promise<void> {
       recorded: game.recorded,
     };
     if (result?.ok && 'pages' in result) return [choiceGame({ ...base, listed: result.pages })];
+    if (browsed.has(game.packId)) {
+      return [choiceGame({ ...base, listed: null, tick: false, note: BROWSE_ONLY })];
+    }
     if (index < 0) {
       return [
         choiceGame({
@@ -2118,7 +2510,7 @@ export async function queuedGames(): Promise<QueuedGame[]> {
   return games;
 }
 
-/** Reads the next pages kept for a game: as many as one go opens. */
+/** Reads the pages kept for a game, all in one go: a go of them has no limit. */
 export async function continueQueue(importerId: string, key: string): Promise<void> {
   const importers = await loadImporters();
   const importer = importers.find((i) => i.id === importerId);
@@ -2128,11 +2520,8 @@ export async function continueQueue(importerId: string, key: string): Promise<vo
   // Pages the person left out since they were kept are not read.
   const leftOut = await leftOutKeys(importerId).catch(() => new Set<string>());
   const pages = game.pages.filter((page) => !leftOut.has(pageKey(page.url)));
-  const now = pages.slice(0, MAX_FETCHED_RUN_PAGES);
-  await writeQueue(importerId, [
-    ...games.filter((g) => g.key !== key),
-    { ...game, pages: pages.slice(now.length) },
-  ]);
+  const now = pages;
+  await writeQueue(importerId, [...games.filter((g) => g.key !== key), { ...game, pages: [] }]);
   if (now.length === 0) return;
   await readChosen(importer, key, game.game, now, await followOf(importerId));
 }

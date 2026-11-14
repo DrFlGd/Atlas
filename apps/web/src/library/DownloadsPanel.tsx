@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { downloadPercent, formatBytes, roughDuration } from '../components/downloadFormat';
 import { UiIcon } from '../components/icons';
+import { BrowseStrip } from '../components/SiteReading';
 import type { JobEntry } from '../desktop';
 import { numberFormat } from '../state/derived';
 import { loadDownloadSettings } from '../state/downloads';
@@ -15,7 +16,7 @@ import {
   useDownloadsView,
 } from '../state/downloadsView';
 import { stopRun, useImport, type ImportPhase } from '../state/importing';
-import { foundText, stopReasonText, type RunState } from '../state/importRun';
+import { foundText, stopReasonText, waitingForPerson, type RunState } from '../state/importRun';
 import { openSettings, setDownloadsOpen, showLibraryAdd, useLibrary } from '../state/libraryView';
 import { useAtlas } from '../state/store';
 
@@ -58,9 +59,12 @@ export function DownloadsStrip() {
   const jobs = useDownloadsView((s) => s.jobs);
   const pending = useDownloadsView((s) => s.pending);
   const phase = useImport((s) => s.phase);
+  const licence = useImport((s) => s.licenceAsk !== null);
   const open = useLibrary((s) => s.downloads);
   const pane = useLibrary((s) => s.pane);
   const run = runningRun(phase);
+  // Browsing a wiki whose pages are kept: its own strip, with Stop browsing.
+  if (phase.kind === 'browse' && !phase.ended) return <BrowseStrip phase={phase} />;
   const now = jobs.find((entry) => entry.job.state === 'running');
   const next = jobs.find((entry) => entry.job.state === 'queued' || entry.job.state === 'waiting');
   const stopped = jobs.filter((entry) => entry.job.state === 'stopped').length;
@@ -69,8 +73,10 @@ export function DownloadsStrip() {
   if (run) {
     const done = runDone(run);
     const found = foundText(run);
-    text = `Reading page ${Math.min(done + 1, run.pages.length)} of ${run.pages.length}${found ? `, ${found}` : ''}${run.stopRequested ? ', stopping after this page' : ''}`;
+    text = `Reading page ${Math.min(done + 1, run.pages.length)} of ${run.pages.length}${found ? `, ${found}` : ''}${run.stopRequested ? ', stopping after this page' : ''}${waitingForPerson(run) ? '. The page window is waiting for you' : ''}${licence ? '. A page waits for you to confirm the wiki’s licence' : ''}`;
     share = done / Math.max(1, run.pages.length);
+  } else if (licence) {
+    text = 'A page waits for you to confirm the wiki’s licence.';
   } else if (now) {
     text = `Downloading ${noun(now)} of ${gameTitle(now)}, ${downloadPercent(now.job)}%`;
     share = now.job.done / Math.max(1, now.job.total);

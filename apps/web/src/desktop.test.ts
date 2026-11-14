@@ -193,6 +193,18 @@ describe('desktop bridge', () => {
       'map',
       '(state) => ({ done: true })',
     );
+    await bridge.importWindow.open(
+      'https://wiki.example.org/wiki/A',
+      '() => 3',
+      { id: 'example-wiki', waitSeconds: 60 },
+      'map',
+      undefined,
+      true,
+    );
+    await bridge.importWindow.navigate('https://wiki.example.org/wiki/B', '() => 3', {
+      id: 'example-wiki',
+      waitSeconds: 60,
+    });
     await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
     await bridge.activityLog.read();
     await bridge.library.reveal({ kind: 'log-folder' });
@@ -259,6 +271,25 @@ describe('desktop bridge', () => {
           importerId: 'demo-maps',
           waitSeconds: 30,
           measure: '(state) => ({ done: true })',
+        },
+      ],
+      [
+        'import_open',
+        {
+          url: 'https://wiki.example.org/wiki/A',
+          reader: '() => 3',
+          importerId: 'example-wiki',
+          waitSeconds: 60,
+          keep: true,
+        },
+      ],
+      [
+        'import_navigate',
+        {
+          url: 'https://wiki.example.org/wiki/B',
+          reader: '() => 3',
+          importerId: 'example-wiki',
+          waitSeconds: 60,
         },
       ],
       ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],

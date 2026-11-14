@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AddBox, AddFlow } from '../components/AddFlow';
+import { BrowseStrip } from '../components/SiteReading';
 import { UiIcon } from '../components/icons';
 import { downloadsOffered, importsOffered } from '../features';
 import {
@@ -11,7 +12,7 @@ import {
 } from '../state/gameFacts';
 import { followDownloads, useDownloadsView } from '../state/downloadsView';
 import { stopRun, updateAll, useImport } from '../state/importing';
-import { foundText } from '../state/importRun';
+import { foundText, waitingForPerson } from '../state/importRun';
 import {
   closeLibraryWindow,
   openLibraryGame,
@@ -287,7 +288,9 @@ function SideTools({ updatable }: { updatable: boolean }) {
  */
 function LibraryStrip() {
   const phase = useImport((s) => s.phase);
+  const licence = useImport((s) => s.licenceAsk !== null);
   const pane = useLibrary((s) => s.pane);
+  if (phase.kind === 'browse' && !phase.ended) return <BrowseStrip phase={phase} />;
   if ((phase.kind !== 'run' && phase.kind !== 'listing') || phase.run.status !== 'running') {
     return null;
   }
@@ -306,6 +309,8 @@ function LibraryStrip() {
         <strong>Now:</strong> reading page {Math.min(done + 1, total)} of {total}
         {found ? `, ${found}` : ''}
         {phase.run.stopRequested ? ', stopping after this page' : ''}
+        {waitingForPerson(phase.run) ? '. The page window is waiting for you' : ''}
+        {licence ? '. A page waits for you to confirm the wiki’s licence' : ''}
       </span>
       <span className="meter meter-small library-strip-meter" aria-hidden="true">
         <span className="meter-fill" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} />

@@ -561,8 +561,8 @@ export function withoutHiddenText(markdown: string, replacement = HIDDEN_TEXT): 
 }
 
 /**
- * A note in Markdown as one line of plain text: links keep their text,
- * marks and markup go, hidden parts read "(Hidden)", and only the first
+ * A note in Markdown as one line of plain text: links and coloured words
+ * keep their text, marks and markup go, hidden parts read "(Hidden)", and only the first
  * paragraph is kept.
  */
 export function plainNote(markdown: string): string {
@@ -570,9 +570,12 @@ export function plainNote(markdown: string): string {
     withoutHiddenText(markdown)
       .trim()
       .split(/\n\s*\n/)[0] ?? '';
+  const coloured = /\[([^\]]*)\]\{color=#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\}/g;
   return first
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(coloured, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(coloured, '$1')
     .replace(/<[^>]+>/g, '')
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
     .replace(/(\*\*|__|\*|_|~~|`)/g, '')
