@@ -613,6 +613,117 @@ export function setSiteLicence(
   );
 }
 
+/**
+ * An importer's notes without those of one of its sites (`siteKey`, the
+ * key its importer gives the site): its contents, its pages that could
+ * not be read, their links and other names, the pages left out, and the
+ * person's choices for it (the way and a confirmed licence). `ofSite` says
+ * whether an address (or a page key) is of that site. The notes of the
+ * importer's other sites, and how far a session follows links, stay.
+ */
+export function withoutSite(
+  notes: WikiNotes,
+  siteKey: string,
+  ofSite: (address: string) => boolean,
+): WikiNotes {
+  const keep = <T>(record: Record<string, T>, gone: (key: string, value: T) => boolean) =>
+    Object.fromEntries(Object.entries(record).filter(([key, value]) => !gone(key, value)));
+  const { [siteKey]: _site, ...sites } = notes.sites;
+  return {
+    ...notes,
+    contents: keep(notes.contents, (key, entry) => ofSite(key) || ofSite(entry.address)),
+    failed: keep(notes.failed, (key, entry) => ofSite(key) || ofSite(entry.url)),
+    links: keep(notes.links, (key) => ofSite(key)),
+    otherNames: keep(notes.otherNames, (key, address) => ofSite(key) || ofSite(address)),
+    leftOut: notes.leftOut.filter((key) => !ofSite(key)),
+    sites,
+  };
+}
+
+/** What an importer's notes hold of one site, counted, for the person (see {@link withoutSite}). */
+export interface SiteNotesHeld {
+  /** Its list of pages was read. */
+  contents: boolean;
+  failed: number;
+  leftOut: number;
+  /** Pages read whose links or other names are kept. */
+  links: number;
+  way: boolean;
+  licence: boolean;
+}
+
+export function siteNotesHeld(
+  notes: WikiNotes,
+  siteKey: string,
+  ofSite: (address: string) => boolean,
+): SiteNotesHeld {
+  const gone = withoutSite(notes, siteKey, ofSite);
+  const count = (before: object, after: object) =>
+    Object.keys(before).length - Object.keys(after).length;
+  return {
+    contents: count(notes.contents, gone.contents) > 0,
+    failed: count(notes.failed, gone.failed),
+    leftOut: notes.leftOut.length - gone.leftOut.length,
+    links: count(notes.links, gone.links) + count(notes.otherNames, gone.otherNames),
+    way: notes.sites[siteKey]?.way !== undefined,
+    licence: notes.sites[siteKey]?.licence !== undefined,
+  };
+}
+
+/** Whether the notes hold anything of a site. */
+export const holdsAny = (held: SiteNotesHeld): boolean =>
+  held.contents ||
+  held.failed > 0 ||
+  held.leftOut > 0 ||
+  held.links > 0 ||
+  held.way ||
+  held.licence;
+
+/**
+ * Forgets what an importer's notes hold of one of its sites (see
+ * {@link withoutSite}), and keeps the notes without it: each part that
+ * changes is written now, the links of each page forgotten removed.
+ */
+export async function forgetSiteNotes(
+  importerId: string,
+  siteKey: string,
+  ofSite: (address: string) => boolean,
+): Promise<void> {
+  const notes = await loadWikiNotes(importerId);
+  const gone = withoutSite(notes, siteKey, ofSite);
+  const parts = (['contents', 'failed', 'otherNames', 'leftOut', 'sites'] as const).filter(
+    (part) => !sameKeys(gone[part], notes[part]),
+  );
+  for (const part of parts) {
+    await change(importerId, part, (now) => ({
+      ...now,
+      [part]: withoutSite(now, siteKey, ofSite)[part],
+    }));
+  }
+  if (Object.keys(gone.links).length !== Object.keys(notes.links).length) {
+    await change(importerId, 'links', (now) => {
+      const dropped = Object.keys(now.links).filter((key) => ofSite(key));
+      return {
+        ...now,
+        links: withLinks(
+          importerId,
+          now.links,
+          dropped.map((key) => [key, []] as const),
+        ),
+      };
+    });
+  }
+}
+
+/** Whether two parts of the notes hold the same entries (a record's keys, or a list's items). */
+function sameKeys(a: object, b: object): boolean {
+  const keysOf = (value: object): unknown[] =>
+    Array.isArray(value) ? (value as unknown[]) : Object.keys(value);
+  const left = keysOf(a);
+  const right = keysOf(b);
+  return left.length === right.length && left.every((key, i) => key === right[i]);
+}
+
 /** The person's choices for a site of an importer, as kept. */
 export async function siteChoices(importerId: string, key: string): Promise<SiteChoices> {
   return (await loadWikiNotes(importerId)).sites[key] ?? {};

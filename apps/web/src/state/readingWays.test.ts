@@ -1,7 +1,7 @@
 import { CONFIRMABLE_LICENCES, type AtlasImporter } from '@atlas/importer-api';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { importContext } from './importing';
-import { asksHow, siteReading, wayFor } from './readingWays';
+import { asksHow, siteInLibrary, siteReading, wayFor } from './readingWays';
 import { SETTINGS, openProgressStore, progressStore } from './services';
 import { loadWikiNotes, setSiteLicence, setSiteWay, useWikiNotes } from './wikiNotes';
 
@@ -36,15 +36,19 @@ const PAGE = 'https://wiki.example.net/wiki/Lanterns';
 const licence = { ...CONFIRMABLE_LICENCES[1]!, confirmedAt: '2026-11-13T09:00:00.000Z' };
 
 describe('how a site is read', () => {
-  it('is the importer’s first way until the person chooses, and asks once', async () => {
+  it('is the importer’s first way until the person chooses, and asks again while no wiki of the site is in the Library', async () => {
     const importer = wikis('ways-first');
     const before = await siteReading(importer, PAGE);
     expect(before).toMatchObject({ way: 'fetch', chosen: false });
-    expect(asksHow(before)).toBe(true);
+    expect(asksHow(before, { inLibrary: false })).toBe(true);
+    expect(asksHow(before, { inLibrary: true })).toBe(true);
     await setSiteWay(importer.id, 'wiki.example.net', 'window');
     const after = await siteReading(importer, PAGE);
     expect(after).toMatchObject({ way: 'window', chosen: true });
-    expect(asksHow(after)).toBe(false);
+    // A wiki of the site in the Library has the choice on its screen: adding it again does not ask.
+    expect(asksHow(after, { inLibrary: true })).toBe(false);
+    // None in the Library (its sessions kept nothing, or it was deleted): asked again, the way chosen ticked.
+    expect(asksHow(after, { inLibrary: false })).toBe(true);
     await expect(wayFor(importer, PAGE)).resolves.toBe('window');
     // Another site of the same importer keeps its own choice.
     await expect(wayFor(importer, 'https://other.example.net/wiki/A')).resolves.toBe('fetch');
@@ -66,7 +70,7 @@ describe('how a site is read', () => {
       chosen: false,
     });
     // One way and nothing to say: nothing to ask.
-    expect(asksHow(await siteReading(narrowed, PAGE))).toBe(false);
+    expect(asksHow(await siteReading(narrowed, PAGE), { inLibrary: false })).toBe(false);
   });
 
   it('asks once for a site with one way and a notice, so the notice is shown before it is read', async () => {
@@ -81,9 +85,28 @@ describe('how a site is read', () => {
     };
     const reading = await siteReading(importer, PAGE);
     expect(reading.info.notice).toBe('The site’s terms say something about reading it.');
-    expect(asksHow(reading)).toBe(true);
+    expect(asksHow(reading, { inLibrary: false })).toBe(true);
     await setSiteWay(importer.id, reading.info.key, 'fetch');
-    expect(asksHow(await siteReading(importer, PAGE))).toBe(false);
+    expect(asksHow(await siteReading(importer, PAGE), { inLibrary: true })).toBe(false);
+    expect(asksHow(await siteReading(importer, PAGE), { inLibrary: false })).toBe(true);
+  });
+
+  it('tells a game in the Library read from the site with the importer, and no other', () => {
+    const importer = wikis('ways-library');
+    const game = (importerId: string, url: string) => ({
+      imported: { importerId, importerTitle: 'Wikis' },
+      pages: [{ url, mapId: null }],
+    });
+    expect(siteInLibrary(importer, 'wiki.example.net', [])).toBe(false);
+    expect(siteInLibrary(importer, 'wiki.example.net', [game(importer.id, PAGE)])).toBe(true);
+    // Another site of the same importer, the same site read by another importer, or a game not imported.
+    expect(
+      siteInLibrary(importer, 'wiki.example.net', [
+        game(importer.id, 'https://other.example.net/wiki/A'),
+        game('another-importer', PAGE),
+        { imported: null, pages: [{ url: PAGE, mapId: null }] },
+      ]),
+    ).toBe(false);
   });
 
   it('is left to the importer when it offers no ways (`fetch.inWindow` as before)', async () => {

@@ -5,6 +5,7 @@ import { notify } from './actions';
 import { deleteGuideLinksOf } from './guideLinks';
 import { deleteOwnNotesOf, ownNotesBackend } from './ownNotes';
 import { forgetDeletedGame } from './gameGroups';
+import { forgetWikiSite, wikiSiteOf } from './importing';
 import { deleteOwnPagesOf, ownPagesBackend } from './ownPages';
 import { applyListing } from './library';
 import { deleteOwnListsOf, ownListsBackend } from './ownLists';
@@ -66,9 +67,20 @@ export async function deletePack(
    * `ownLocations.ts`), and their notes on its locations (see `ownNotes.ts`).
    */
   deleteLocations = false,
+  {
+    keepTitle = false,
+  }: {
+    /**
+     * It keeps its place under the title it is shown under, to show there
+     * again once read again (a wiki started again from the beginning).
+     */
+    keepTitle?: boolean;
+  } = {},
 ): Promise<RemovalOutcome> {
   if (!desktop) return { ok: false, error: 'Maps can only be deleted in the desktop app.' };
   const title = titleOf(id);
+  // A wiki: what the app keeps of its site goes with it (asked before it is gone from the list).
+  const wiki = await wikiSiteOf(id).catch(() => null);
   let outcome;
   try {
     outcome = await desktop.library.deletePack(id);
@@ -77,7 +89,15 @@ export async function deletePack(
   }
   await refreshWithout(id);
   // It leaves the title it was shown under; the title's other games stay together.
-  await forgetDeletedGame(id).catch(() => undefined);
+  if (!keepTitle) await forgetDeletedGame(id).catch(() => undefined);
+  // A wiki's site is forgotten, unless another wiki in the Library is read from it.
+  const forgotten =
+    !wiki ||
+    wiki.shared ||
+    (await forgetWikiSite(wiki.importerId, wiki.key).then(
+      () => true,
+      () => false,
+    ));
   // Their photos go with them: all of them when both go, else those the one deleted names.
   if (deleteLists || deleteLocations) {
     try {
@@ -134,6 +154,13 @@ export async function deletePack(
       notify(`Deleted ${title}, but your progress for it could not be deleted.`, 'error');
       return { ok: true };
     }
+  }
+  if (!forgotten) {
+    notify(
+      `Deleted ${title}, but what this app remembers of its site could not be forgotten.`,
+      'error',
+    );
+    return { ok: true };
   }
   // Said last, in place of "no longer available" when it was the game shown.
   notify(deletePackResult(title, outcome, deleteProgress));

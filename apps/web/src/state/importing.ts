@@ -105,12 +105,23 @@ import {
 } from './gameChoice';
 import { RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
+import { gameKind, useGameFacts } from './gameFacts';
 import { offerSameTitle } from './gameGroups';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
-import { asksHow, siteReading, WINDOW_HINT, type SiteReading } from './readingWays';
+import {
+  asksHow,
+  offersChoice,
+  siteInLibrary,
+  siteReading,
+  WINDOW_HINT,
+  type SiteReading,
+} from './readingWays';
 import { SETTINGS, progressStore } from './services';
 import { useAtlas } from './store';
 import {
+  forgetSiteNotes,
+  siteNotesHeld,
+  type SiteNotesHeld,
   leftOutKeys,
   flushWikiNotes,
   loadWikiNotes,
@@ -736,6 +747,30 @@ export async function cancelImport(): Promise<void> {
   if (desktop) await closeWindow(desktop);
 }
 
+/**
+ * Whether pages are being read or a game is being changed now: a page
+ * open or turned into its game (a game built again from saved pages too),
+ * a session of pages or lists going, or the person browsing a wiki.
+ */
+export const sessionGoing = (phase: ImportPhase): boolean =>
+  phase.kind === 'waiting' ||
+  phase.kind === 'converting' ||
+  (phase.kind === 'browse' && !phase.ended) ||
+  ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running');
+
+/**
+ * After a wiki was deleted to start it again from the beginning: the
+ * address box holds its start address, and the steps of adding ask how its
+ * pages are read, with the way chosen before ticked (when its importer
+ * offers a choice; otherwise the person presses Add). Nothing is read.
+ */
+export async function startWikiAgain(start: string): Promise<void> {
+  setDraft(start);
+  setPhase({ kind: 'idle' });
+  showLibraryAdd();
+  await chooseHow(start);
+}
+
 /** Back to the address field, after a result or a failure. */
 export function resetImport(): void {
   const { phase } = useImport.getState();
@@ -789,10 +824,11 @@ export async function submitAddresses(text: string): Promise<void> {
       setPhase({ kind: 'failed', message: refusal });
       return;
     }
-    // A site that can be read more than one way: the person chooses first, once.
+    // A site that can be read more than one way: the person chooses first, and again
+    // whenever no wiki of the site is in the Library (started again from the beginning).
     const reader = findReader(importers, url);
     const site = reader ? await readingOf(reader.importer, url) : undefined;
-    if (reader && site && asksHow(site)) {
+    if (reader && site && asksHow(site, { inLibrary: inLibrary(reader.importer, site) })) {
       setPhase({
         kind: 'how',
         url,
@@ -830,15 +866,49 @@ export async function submitAddresses(text: string): Promise<void> {
   await startRun(checked, 0);
 }
 
+/** Whether a game read from this site with this importer is in the Library. */
+const inLibrary = (importer: AtlasImporter, site: SiteReading): boolean =>
+  siteInLibrary(importer, site.info.key, useAtlas.getState().library?.packs ?? []);
+
 /** Reads one address the person added: a page, a game's page, or a site's list of games. */
 async function addAddress(url: string, importers: readonly AtlasImporter[]): Promise<void> {
   const reader = findReader(importers, url);
   // A site read as the person browses it: browsing starts at the address.
   const site = reader ? await readingOf(reader.importer, url) : undefined;
+  const started = session;
   if (reader && site?.way === 'browse') await startBrowse(url, reader.importer, site);
   else if (reader?.kind === 'game') await startGameAddress(url, reader.importer);
   else if (reader?.kind === 'catalogue') await startCatalogue(url, reader.importer);
   else await startImport(url);
+  // Whatever went wrong, the person can choose another way to read a site that offers one.
+  const { phase } = useImport.getState();
+  if (
+    site &&
+    offersChoice(site.info) &&
+    phase.kind === 'failed' &&
+    !phase.how &&
+    session - started <= 1
+  ) {
+    setPhase({ ...phase, how: url });
+  }
+}
+
+/**
+ * The address to choose how a site is read for, after a session of its
+ * pages that kept none: the address the person added when it is of the
+ * same site as `page`, else `page`; null when the site offers no choice.
+ * Nothing is read.
+ */
+export async function howAddressFor(page: string, added: string | null): Promise<string | null> {
+  const importers = await loadImporters().catch((): AtlasImporter[] => []);
+  const reader = findReader(importers, page);
+  const site = reader ? await readingOf(reader.importer, page) : undefined;
+  if (!reader || !site || !offersChoice(site.info)) return null;
+  const same =
+    added !== null &&
+    findReader(importers, added)?.importer.id === reader.importer.id &&
+    siteInfoOf(reader.importer, added).key === site.info.key;
+  return same ? added : page;
 }
 
 /**
@@ -2389,6 +2459,114 @@ export async function wikiSourceOf(packId: string): Promise<WikiSource | null> {
   };
 }
 
+/** The site a wiki in the Library was read from, as the app keeps its notes on it. */
+export interface WikiSite {
+  importerId: string;
+  /** The site's key, as its importer gives it (`siteInfoOf`). */
+  key: string;
+  /** Where adding it again starts: its contents, else the last page read. */
+  start: string;
+  /** Another game in the Library was read from the same site, so what the app keeps of the site stays. */
+  shared: boolean;
+}
+
+/**
+ * The site of a wiki in the Library: a game of pages made by an importer
+ * that fetches pages; null for anything else, maps included. Nothing is read
+ * but the game's own files.
+ */
+export async function wikiSiteOf(packId: string): Promise<WikiSite | null> {
+  const listed = useAtlas.getState().library?.packs.find((p) => p.id === packId);
+  if (!listed?.imported) return null;
+  const source = await wikiSourceOf(packId);
+  const importer = (await loadImporters()).find((i) => i.id === source?.importerId);
+  if (!source || !importer) return null;
+  let details = useGameFacts.getState().byId[packId]?.details ?? null;
+  if (!details && desktop) details = await desktop.packFiles.details(packId).catch(() => null);
+  if (gameKind(listed, details) !== 'wiki') return null;
+  const key = source.site?.key ?? siteInfoOf(importer, source.start).key;
+  const others = (useAtlas.getState().library?.packs ?? []).filter((p) => p.id !== packId);
+  return {
+    importerId: importer.id,
+    key,
+    start: source.start,
+    shared: siteInLibrary(importer, key, others),
+  };
+}
+
+/** Whether an address is of the site `key` of an importer, each address asked once. */
+function siteTest(importer: AtlasImporter, key: string): (address: string) => boolean {
+  const known = new Map<string, boolean>();
+  return (address) => {
+    let of = known.get(address);
+    if (of === undefined) {
+      of = siteInfoOf(importer, address).key === key;
+      known.set(address, of);
+    }
+    return of;
+  };
+}
+
+/**
+ * Forgets what this app keeps of one site read with an importer: its wiki
+ * notes (see `withoutSite` in `wikiNotes.ts`: its list of pages, the pages
+ * that could not be read, left out, their links and other names, the way
+ * chosen and the licence confirmed) and its pages kept for later. Nothing
+ * of the importer's other sites changes, and nothing is read.
+ */
+export async function forgetSite(importer: AtlasImporter, key: string): Promise<void> {
+  const ofSite = siteTest(importer, key);
+  await forgetSiteNotes(importer.id, key, ofSite);
+  const games = await readQueue(importer.id);
+  const kept = games.flatMap((game): QueuedGame[] =>
+    ofSite(game.key) ? [] : [{ ...game, pages: game.pages.filter((page) => !ofSite(page.url)) }],
+  );
+  const pages = (list: readonly QueuedGame[]) =>
+    list.reduce((sum, game) => sum + game.pages.length, 0);
+  if (kept.length !== games.length || pages(kept) !== pages(games)) {
+    await writeQueue(importer.id, kept);
+  }
+}
+
+/** {@link forgetSite} for an importer of this app, by its id. */
+export async function forgetWikiSite(importerId: string, key: string): Promise<void> {
+  const importer = (await loadImporters()).find((i) => i.id === importerId);
+  if (!importer) throw new Error('The importer of this wiki is not in this app any more.');
+  await forgetSite(importer, key);
+}
+
+/** What this app keeps of a site, for the person: its notes, pages kept for later, and whether a game of it is in the Library. */
+export interface SiteMemory {
+  key: string;
+  held: SiteNotesHeld;
+  /** Pages kept for later. */
+  queued: number;
+  inLibrary: boolean;
+}
+
+/** What this app keeps of the site of `url`, read with an importer of this app; null when it reads no such site. */
+export async function siteMemory(importerId: string, url: string): Promise<SiteMemory | null> {
+  const importer = (await loadImporters()).find((i) => i.id === importerId);
+  if (!importer) return null;
+  const key = siteInfoOf(importer, url).key;
+  const ofSite = siteTest(importer, key);
+  const notes = await loadWikiNotes(importerId).catch(() => NO_WIKI_NOTES);
+  const queued = (await readQueue(importerId))
+    .filter((game) => ofSite(game.key) || game.pages.some((page) => ofSite(page.url)))
+    .reduce(
+      (sum, game) =>
+        sum +
+        (ofSite(game.key) ? game.pages.length : game.pages.filter((p) => ofSite(p.url)).length),
+      0,
+    );
+  return {
+    key,
+    held: siteNotesHeld(notes, key, ofSite),
+    queued,
+    inLibrary: siteInLibrary(importer, key, useAtlas.getState().library?.packs ?? []),
+  };
+}
+
 /**
  * "Read the contents again": reads the wiki's contents page, one page, and
  * keeps what it lists (see `wikiNotes.ts`); nothing else is read. Returns
@@ -2752,6 +2930,21 @@ async function readChosen(
     { firstPauseMs: pauseLeft(), follow: new Map([[importer.id, follow]]) },
   );
   await requeueUnread(chosen, final);
+}
+
+/**
+ * Forgets the pages kept for a wiki that has no game in the Library (its
+ * sessions kept no page, or it was deleted): its pages kept for later, and
+ * everything else this app keeps of its site ({@link forgetSite}), as
+ * deleting the wiki does. A wiki in the Library keeps what it has.
+ */
+export async function forgetQueuedWiki(importerId: string, key: string): Promise<void> {
+  const importer = (await loadImporters()).find((i) => i.id === importerId);
+  await forgetQueue(importerId, key);
+  if (!importer) return;
+  const site = siteInfoOf(importer, key).key;
+  if (siteInLibrary(importer, site, useAtlas.getState().library?.packs ?? [])) return;
+  await forgetSite(importer, site);
 }
 
 /** Forgets the pages kept for a game. */
