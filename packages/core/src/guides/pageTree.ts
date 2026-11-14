@@ -23,6 +23,12 @@ import type { GuideEntry } from '@atlas/schema';
  *   them.
  * - A page no placed page leads to stays in its section.
  *
+ * - A home page (`root`, a wiki's main page, see the manifest's
+ *   `homePage`) is where the contents starts from before any other page:
+ *   it is not shown in the contents (Guides shows it on its own), and the
+ *   pages it leads to (and those put under it by hand) are at the top of
+ *   the contents, before the sections whose pages are placed by links.
+ *
  * Every page is reached once, so links in a circle (A to B, B to A) or to
  * the page itself change nothing; one read more adds the new page and may
  * move the pages it reaches sooner, and nothing else.
@@ -76,6 +82,12 @@ export interface PageTreeInput {
   leads: (guideId: string) => boolean;
   /** Whether a page may be placed by links (a pack's page that is shown). */
   movable: (guideId: string) => boolean;
+  /**
+   * The home page the top of the contents branches from, if any: walked
+   * first, left out of the contents, and the pages it leads to placed at
+   * the top.
+   */
+  root?: string | null;
 }
 
 /** The contents with the pages placed (see the top of this file). */
@@ -83,16 +95,22 @@ export interface PageTree {
   top: string[];
   /** What each section and each page holds, as shown. */
   lists: Map<string, string[]>;
-  /** The pages placed by links: by page id, the page it is under. */
+  /** The pages placed by links: by page id, the page it is under (the home page for one at the top). */
   placed: Map<string, string>;
 }
 
 /** Places the pages of `placeByLinks` sections under the pages that lead to them. */
 export function placePagesByLinks(input: PageTreeInput): PageTree {
-  const { lists, isSection, isPage, byLinks } = input;
+  const { isSection, isPage, byLinks } = input;
+  const root = input.root != null && isPage(input.root) ? input.root : null;
+  // The home page is shown on its own, wherever else it is listed.
+  const lists: ReadonlyMap<string, readonly string[]> =
+    root === null
+      ? input.lists
+      : new Map([...input.lists].map(([id, items]) => [id, items.filter((item) => item !== root)]));
   const out = new Map<string, string[]>();
   const placed = new Map<string, string>();
-  const top = [...input.top];
+  const top = input.top.filter((id) => id !== root);
 
   // The pages put under a page by hand: they stay there.
   const byHand = new Set<string>();
@@ -113,6 +131,11 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   const waiting = new Set<string>();
   const sectionsSeen = new Set<string>();
   // Walked without recursion: a contents may be deep.
+  if (root !== null) {
+    // The home page first: the top of the contents branches from it.
+    reached.add(root);
+    seeds.push(root);
+  }
   const stack: { items: readonly string[]; at: number; loose: boolean }[] = [
     { items: top, at: 0, loose: false },
   ];
@@ -203,6 +226,14 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   if (lost.length > 0) {
     if (shelter) out.set(shelter, [...(out.get(shelter) ?? []), ...lost]);
     else top.push(...lost);
+  }
+  if (root !== null) {
+    // What the home page leads to is the top of the contents, before the
+    // sections of pages placed by links (those nothing else leads to).
+    const branches = out.get(root) ?? [];
+    out.delete(root);
+    const at = top.findIndex((id) => byLinks.has(id));
+    top.splice(at < 0 ? top.length : at, 0, ...branches);
   }
   return { top, lists: out, placed };
 }

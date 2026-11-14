@@ -241,12 +241,15 @@ export interface ShownContents {
 /**
  * The contents as the person sees it, hidden pages included (where the
  * person's layout has them), with the pages placed by their links as the
- * Guides section places them: the arrange tool shows this.
+ * Guides section places them: the arrange tool shows this. With a home
+ * page, the top branches from it as in Guides, and it is not in the
+ * contents.
  */
 export function shownContentsFor(
   data: GuidePages['data'],
   own: OwnPages,
   aliases?: GuidePages['aliases'],
+  homePage?: string | null,
 ): ShownContents {
   const layout = layoutFor(data, own);
   const guides = new Map(data.guides.map((guide) => [guide.id, guide]));
@@ -275,6 +278,7 @@ export function shownContentsFor(
     },
     leads: shownPack,
     movable: shownPack,
+    root: homePage ?? null,
   });
   return {
     layout: { top: tree.top, sections: Object.fromEntries(tree.lists) },
