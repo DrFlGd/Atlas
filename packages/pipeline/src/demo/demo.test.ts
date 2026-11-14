@@ -8,7 +8,7 @@ import { createTerrain, elevationAt, renderTerrain } from './terrain';
 import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
 import { DEMO_PHOTO_GUIDE, addPhotos, photoFiles } from './photos';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
-import { WIKI_PAGES, WIKI_PICTURE, addWiki, wikiPictureFiles } from './wiki';
+import { WIKI_OTHER_NAME, WIKI_PAGES, WIKI_PICTURE, addWiki, wikiPictureFiles } from './wiki';
 
 const SIZE = 2048;
 const SEED = 7;
@@ -326,9 +326,28 @@ describe('demo wiki', () => {
     expect(bodies).toMatch(/^\| --- \|/m);
     expect(bodies).toContain(`](${WIKI_PICTURE})`);
     expect(bodies).toMatch(/\|\|[^|]+\|\|/);
-    const targets = [...bodies.matchAll(/\]\((demo:guide:[^)\s]+)\)/g)].map((m) => m[1]!);
+    // A link may name a section of the page (its title); another name leads to its page.
+    const migrations = pack.manifest.idMigrations;
+    const targets = [...bodies.matchAll(/\]\((demo:guide:[^)\s]+)(?: "#[a-z-]+")?\)/g)].map(
+      (m) => migrations[m[1]!] ?? m[1]!,
+    );
     expect(targets.length).toBeGreaterThan(10);
     for (const target of targets) expect(pages.has(target), target).toBe(true);
+  });
+
+  it('links to sections of its pages, and has another name that leads to one', () => {
+    const travel = wiki.find((g) => g.id === WIKI_PAGES.travel)!;
+    expect(travel.body.match(/^#{2,3} /gm)?.length).toBeGreaterThanOrEqual(3);
+    // A section of its own page, and one of another page.
+    expect(travel.body).toContain(`](${WIKI_PAGES.travel} "#on-foot")`);
+    expect(travel.body).toContain(`](${WIKI_PAGES.waystones} "#waking-a-waystone")`);
+    expect(travel.body).toMatch(/^## On foot$/m);
+    expect(wiki.find((g) => g.id === WIKI_PAGES.waystones)!.body).toMatch(
+      /^## Waking a waystone$/m,
+    );
+    expect(pack.manifest.idMigrations[WIKI_OTHER_NAME.id]).toBe(WIKI_PAGES.travel);
+    expect(pack.manifest.idSections?.[WIKI_OTHER_NAME.id]).toBe('by-boat');
+    expect(travel.body).toMatch(/^## By boat$/m);
   });
 
   it('credits a made-up wiki under an open licence on every page', () => {

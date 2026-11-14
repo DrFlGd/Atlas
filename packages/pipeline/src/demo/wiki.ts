@@ -17,7 +17,11 @@ import { DEMO_GAME_ID } from './content';
  * pack looks like: a contents of sections, a table wider than a phone,
  * links between pages, hidden text, a picture, and the credit of each page.
  * Its gear pages say where things are in the ways wikis do (a heading, a
- * table column, a box of facts), for the build planner.
+ * table column, a box of facts), for the build planner. "Getting around"
+ * has headings enough for "On this page", a link to a section of its own
+ * and one to a section of another page; `wiki-ferry` is another name of it
+ * that leads to its section "By boat", as a wiki forwards a name, and the
+ * regions link to that name.
  */
 
 const id = (kind: Parameters<typeof makeId>[1], local: string) => makeId(DEMO_GAME_ID, kind, local);
@@ -41,6 +45,16 @@ export const WIKI_PAGES = {
   emberBlade: id('guide', 'wiki-ember-blade'),
   maul: id('guide', 'wiki-stonebreaker-maul'),
   charm: id('guide', 'wiki-tidecaller-charm'),
+} as const;
+
+/**
+ * Another name of a page, as a wiki forwards a name to a part of a page:
+ * the page it is a name of, and the section it leads to there.
+ */
+export const WIKI_OTHER_NAME = {
+  id: id('guide', 'wiki-ferry'),
+  page: WIKI_PAGES.travel,
+  section: 'by-boat',
 } as const;
 
 /** The sections of its contents. */
@@ -74,6 +88,9 @@ const page = (key: keyof typeof WIKI_PAGES, title: string, path: string, body: s
   }) satisfies GuideEntry;
 
 const to = (key: keyof typeof WIKI_PAGES, text: string) => `[${text}](${WIKI_PAGES[key]})`;
+/** A link to a section of a page, which its title names. */
+const toSection = (key: keyof typeof WIKI_PAGES, section: string, text: string) =>
+  `[${text}](${WIKI_PAGES[key]} "#${section}")`;
 
 /**
  * The wiki's pages, with their sources. Regions are named after the pack's
@@ -117,17 +134,25 @@ Nothing in this wiki is about a real game. It exists to show how Atlas reads one
 Most of the isle is walked. The ${to('waystones', 'waystones')} let you travel
 between the ones you have woken, and every region has at least one.
 
-### On foot
+## On foot
 
 1. Follow the river south from the landing.
 2. Cross at the ford; the bridge is down.
 3. Climb to the first waystone and touch it.
 
-### By boat
-
-The ferry runs between the two largest regions. It does not run at night.
+### At night
 
 > Tip: the ${to('wolves', 'wolves')} of the northern woods hunt along the paths, not the river.
+
+## By boat
+
+The ferry runs between the two largest regions. It does not run at night, so
+${toSection('travel', 'on-foot', 'walk')} after dark.
+
+## By waystone
+
+Touch a woken stone to travel to any other woken one.
+${toSection('waystones', 'waking-a-waystone', 'Wake each one you pass')}.
 
 See also: ${to('regions', 'Regions')}.
 `,
@@ -145,7 +170,8 @@ suggest, not rules.
 ${rows.join('\n')}
 
 Each region has its own ${to('wardens', 'warden')}. Travel between them is
-described under ${to('travel', 'Getting around')}.
+described under ${to('travel', 'Getting around')}; the two largest are also
+joined [by boat](${WIKI_OTHER_NAME.id}).
 `,
     ),
     page(
@@ -325,6 +351,12 @@ export function addWiki(data: PackData): PackData {
         ...data.manifest.attribution,
         { name: WIKI_SITE, url: WIKI_URL, license: WIKI_LICENSE.name },
       ],
+      // The other name of a page, and the section it leads to.
+      idMigrations: { ...data.manifest.idMigrations, [WIKI_OTHER_NAME.id]: WIKI_OTHER_NAME.page },
+      idSections: {
+        ...data.manifest.idSections,
+        [WIKI_OTHER_NAME.id]: WIKI_OTHER_NAME.section,
+      },
     },
     guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine)],
     sections: [...(data.sections ?? []), ...wikiSections()],
