@@ -62,6 +62,22 @@ describe('loadPack', () => {
     expect(pack.currentId('demo:loc:0002')).toBe('demo:loc:0002');
   });
 
+  it('says the section another name of a page leads to', async () => {
+    const pack = makeFixturePack();
+    pack.manifest.idMigrations = {
+      ...pack.manifest.idMigrations,
+      'demo:guide:herb-lore': 'demo:guide:herbs',
+      'demo:guide:old-herbs': 'demo:guide:herbs',
+    };
+    pack.manifest.idSections = { 'demo:guide:herb-lore': 'where-to-find' };
+    const { fetchFn } = servePack(packFiles(pack));
+    const loaded = await loadPack(BASE, { fetch: fetchFn });
+    expect(loaded.currentId('demo:guide:herb-lore')).toBe('demo:guide:herbs');
+    expect(loaded.sectionOf('demo:guide:herb-lore')).toBe('where-to-find');
+    expect(loaded.sectionOf('demo:guide:old-herbs')).toBeNull();
+    expect(loaded.sectionOf('demo:guide:herbs')).toBeNull();
+  });
+
   it('accepts a pack URL without a trailing slash', async () => {
     const { fetchFn, requested } = servePack(packFiles(makeFixturePack()));
     await loadPack(BASE.slice(0, -1), { fetch: fetchFn });

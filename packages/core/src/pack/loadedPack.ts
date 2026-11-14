@@ -35,6 +35,12 @@ export interface LoadedPack {
    * pack. Ids that were never migrated are returned unchanged.
    */
   readonly currentId: (id: string) => string;
+  /**
+   * The section of its page an id leads to on the way to the current id
+   * (the manifest's `idSections`, for another name of a page that a site
+   * forwards to a part of the page), or null when it names none.
+   */
+  readonly sectionOf: (id: string) => string | null;
 }
 
 const byId = <T extends { id: string }>(items: readonly T[]) =>
@@ -49,6 +55,7 @@ export function indexPack(data: PackData, baseUrl: URL): LoadedPack {
     else locationsByLayer.set(location.layerId, [location]);
   }
   const migrations = data.manifest.idMigrations;
+  const sections = data.manifest.idSections ?? {};
 
   return {
     baseUrl,
@@ -71,6 +78,15 @@ export function indexPack(data: PackData, baseUrl: URL): LoadedPack {
         current = migrations[current]!;
       }
       return current;
+    },
+    sectionOf: (id) => {
+      let current = id;
+      for (let hops = 0; hops < 32 && migrations[current] !== undefined; hops++) {
+        const section = sections[current];
+        if (section) return section;
+        current = migrations[current]!;
+      }
+      return null;
     },
   };
 }

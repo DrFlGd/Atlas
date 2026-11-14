@@ -8,6 +8,9 @@ import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
  */
 export const SCHEMA_VERSION = 2;
 
+/** The longest section another name of a page may lead to (`idSections` of the manifest). */
+export const MAX_ID_SECTION_LENGTH = 200;
+
 /** Every pack schema version this package reads. */
 export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2];
 
@@ -161,6 +164,19 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    */
   const idMigrationsSchema = z.record(anyIdSchema, anyIdSchema);
 
+  /**
+   * Where another name of a page leads inside the page: by a guide id of
+   * `idMigrations`, the section of the page it opens at (a heading's name,
+   * see `sections.ts` in `@atlas/core`), as a site forwards a name to a
+   * part of a page. A name `idMigrations` does not have is never reached.
+   * Optional; an app that does not know it opens the page at its top. Read
+   * leniently: one that cannot be read is left out.
+   */
+  const idSectionsSchema = z.record(
+    idOf('guide'),
+    z.string().trim().min(1).max(MAX_ID_SECTION_LENGTH),
+  );
+
   const manifestBase = {
     gameId: gameIdSchema,
     /** Display name of the pack. */
@@ -170,6 +186,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     gamePatch: nonEmpty,
     attribution: z.array(attributionSchema),
     idMigrations: idMigrationsSchema,
+    idSections: reading ? descriptive(idSectionsSchema) : idSectionsSchema.optional(),
   };
 
   /** The program that wrote a pack: an app or a command-line tool, and its version. */
@@ -690,6 +707,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   return {
     attributionSchema,
     idMigrationsSchema,
+    idSectionsSchema,
     writtenBySchema,
     packSourceSchema,
     layerImagesSchema,
@@ -724,6 +742,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
 export const {
   attributionSchema,
   idMigrationsSchema,
+  idSectionsSchema,
   writtenBySchema,
   packSourceSchema,
   layerImagesSchema,

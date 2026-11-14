@@ -90,6 +90,9 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
     gamePatch: previous.gamePatch,
     attribution: previous.attribution,
     idMigrations: previous.idMigrations,
+    ...(previous.idSections && Object.keys(previous.idSections).length > 0
+      ? { idSections: previous.idSections }
+      : {}),
     created,
     updated: info.updated,
     writtenBy: info.writtenBy,

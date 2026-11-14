@@ -56,6 +56,20 @@ describe('pack descriptions (manifest version 2)', () => {
     expect(again.source).toBeUndefined();
   });
 
+  it('keeps the sections other names of pages lead to', () => {
+    const pack = makeFixturePack();
+    pack.manifest.idMigrations = { 'demo:guide:herb-lore': 'demo:guide:herbs' };
+    pack.manifest.idSections = { 'demo:guide:herb-lore': 'where-to-find' };
+    const manifest = describePack(pack, { updated: '2026-11-10T12:00:00Z', writtenBy });
+    expect(manifest.idSections).toEqual({ 'demo:guide:herb-lore': 'where-to-find' });
+    expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
+    // None is left out, as before.
+    expect(
+      'idSections' in
+        describePack(makeFixturePack(), { updated: '2026-11-10T12:00:00Z', writtenBy }),
+    ).toBe(false);
+  });
+
   it('still reads version 1 manifests, without descriptive fields', () => {
     const { manifest } = makeFixturePack();
     expect(manifest.schemaVersion).toBe(1);

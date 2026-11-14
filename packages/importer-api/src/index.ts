@@ -190,6 +190,14 @@ export interface ImportContext {
    * it, and never in place of a licence the page states.
    */
   confirmedLicence?: ConfirmedLicence;
+  /**
+   * Optional: true when the app keeps the manifest's `idSections`, the
+   * section of its page another name of a page leads to. An app that does
+   * not say so checks a pack strictly and refuses one that has it, as any
+   * field it does not know, so an importer writes it only when this is
+   * true.
+   */
+  keepsIdSections?: boolean;
 }
 
 // ---------------------------------------------------------------------------

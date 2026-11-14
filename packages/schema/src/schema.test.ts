@@ -283,6 +283,24 @@ describe('reading tolerantly, writing strictly', () => {
     expect(read.safeParse({ ...checklist, type: null }).success).toBe(false);
   });
 
+  it('writes and reads the sections other names of pages lead to', () => {
+    const pack = makeFixturePack();
+    const manifest = {
+      ...pack.manifest,
+      idMigrations: { 'demo:guide:old-herbs': 'demo:guide:herbs' },
+      idSections: { 'demo:guide:old-herbs': 'where-to-find' },
+    };
+    expect(manifestSchema.parse(manifest).idSections).toEqual(manifest.idSections);
+    expect(packReadSchemas.manifestSchema.parse(manifest).idSections).toEqual(manifest.idSections);
+    // Only for pages, and never empty.
+    for (const idSections of [{ 'demo:loc:0001': 'x' }, { 'demo:guide:old-herbs': ' ' }]) {
+      expect(manifestSchema.safeParse({ ...manifest, idSections }).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      const read = packReadSchemas.manifestSchema.parse({ ...manifest, idSections });
+      expect(read.idSections).toBeUndefined();
+    }
+  });
+
   it('still refuses what is wrong rather than new when reading', () => {
     const pack = makeFixturePack();
     const [location] = pack.locations;
