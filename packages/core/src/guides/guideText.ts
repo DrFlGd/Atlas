@@ -4,8 +4,9 @@ import { normalizeText } from '../search/searchIndex';
 /**
  * The text of a guide as a reader sees it before showing anything hidden:
  * Markdown marks taken out, link and picture targets left out (their words
- * kept), and hidden text (`||like this||`) removed, so it can be searched
- * and quoted without giving anything away.
+ * kept), the mark of a box of facts (`{box}`) left out, and hidden text
+ * (`||like this||`) removed, so it can be searched and quoted without
+ * giving anything away.
  *
  * This reads Markdown roughly, without a Markdown parser. Bars pair up left
  * to right, as the renderer pairs them; escaped bars and bars in inline code
@@ -47,6 +48,8 @@ export function guidePlainText(markdown: string): string {
       .replace(/^ {0,3}>\s?/gm, '')
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '')
       .replace(/^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/gm, ' ')
+      // The mark of a box of facts, at the end of its first row, is no words of the page.
+      .replace(/\|\s*\{box\}\s*\|\s*$/gm, '|')
       .replace(/\|/g, ' ')
       .replace(/(\*\*|__|\*|_|~~|`)/g, '')
       .replace(/\\([\\`*_{}[\]()#+\-.!>~])/g, '$1')

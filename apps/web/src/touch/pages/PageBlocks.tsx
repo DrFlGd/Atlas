@@ -16,6 +16,7 @@ import {
   addRow,
   cellAt,
   indentItem,
+  isBoxTable,
   itemAt,
   outdentItem,
   removeItem,
@@ -478,6 +479,13 @@ const alignOf = (table: TableModel, column: number) => table.align[column] ?? un
 
 function TableBlock({ blockKey, table }: { blockKey: number; table: TableModel }) {
   const columns = table.header.length;
+  const box = isBoxTable(table);
+  const noteId = useId();
+  const labelOf = (row: number, column: number) => {
+    if (box && row === 0) return column === 0 ? 'Title of the box of facts' : 'Mark of the box';
+    if (box) return column === 0 ? `Row ${row}, label` : `Row ${row}, value`;
+    return row === 0 ? `Heading of column ${column + 1}` : `Row ${row}, column ${column + 1}`;
+  };
   const cell = (row: number, column: number) => {
     const Tag = row === 0 ? 'th' : 'td';
     return (
@@ -491,7 +499,7 @@ function TableBlock({ blockKey, table }: { blockKey: number; table: TableModel }
           block={blockKey}
           pieces={cellAt(table, row, column)}
           context="cell"
-          label={row === 0 ? `Heading of column ${column + 1}` : `Row ${row}, column ${column + 1}`}
+          label={labelOf(row, column)}
           testId="table-cell"
           onChange={(pieces, typing) => {
             setModel(
@@ -506,8 +514,19 @@ function TableBlock({ blockKey, table }: { blockKey: number; table: TableModel }
     );
   };
   return (
-    <div className="pe-table-wrap">
-      <table className="pe-table" data-testid="table-editor">
+    <div className={box ? 'pe-table-wrap pe-box' : 'pe-table-wrap'}>
+      {box ? (
+        <p id={noteId} className="pe-note" data-testid="box-note">
+          A box of facts, shown beside the text. Its first row is its title, and {'{box}'} keeps it
+          a box. A row with nothing in its second cell runs across the box, and is a heading of the
+          box when its words are all bold.
+        </p>
+      ) : null}
+      <table
+        className="pe-table"
+        data-testid="table-editor"
+        aria-describedby={box ? noteId : undefined}
+      >
         <thead>
           <tr>{Array.from({ length: columns }, (_, column) => cell(0, column))}</tr>
         </thead>

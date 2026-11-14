@@ -79,6 +79,12 @@ describe('guidePlainText', () => {
     ).toBe('The tower Climb the stairs to the top, see a bell. Bell Where First one two a||b');
   });
 
+  it('keeps the words of a box of facts, not its mark', () => {
+    expect(
+      guidePlainText('| Ember blade | {box} |\n| --- | --- |\n| Type | Sword |\n\nA blade {box}.'),
+    ).toBe('Ember blade Type Sword A blade {box}.');
+  });
+
   it('keeps the words of a link to a section, not its section', () => {
     expect(guidePlainText('Read [the drops](pages:guide:top "#drops") first.')).toBe(
       'Read the drops first.',
