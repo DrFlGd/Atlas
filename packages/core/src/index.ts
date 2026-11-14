@@ -30,3 +30,4 @@ export * from './guides/linking';
 export * from './guides/ownPages';
 export * from './guides/pageTree';
 export * from './guides/nameMatch';
+export * from './groups/gameGroups';
