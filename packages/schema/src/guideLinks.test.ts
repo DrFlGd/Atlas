@@ -106,6 +106,64 @@ describe('guide links file', () => {
     });
   });
 
+  it('is version 2 only while a page is linked to one location alone', () => {
+    const withOne: GuideLinks = {
+      ...links(),
+      choices: {
+        ...links().choices,
+        'demo:guide:wiki-wolves': {
+          state: 'linked',
+          targets: [
+            { to: 'name', name: 'Boar hollow' },
+            { to: 'location', id: 'demo:loc:0412' },
+          ],
+        },
+      },
+    };
+    const value = JSON.parse(writeGuideLinksFile('demo', withOne, NOW)) as Record<string, unknown>;
+    expect(value.version).toBe(2);
+    expect(readGuideLinksFile(value)).toEqual({
+      ok: true,
+      file: { gameId: 'demo', version: 2, skipped: 0, ...withOne },
+    });
+    // Without such a target it is version 1 again, as Atlas 0.6.3 writes it.
+    const without = JSON.parse(writeGuideLinksFile('demo', links(), NOW)) as Record<string, unknown>;
+    expect(without.version).toBe(1);
+    // The strict schema holds to that, and to the location being of this game.
+    expect(guideLinksFileSchema.safeParse({ ...value, version: 1 }).success).toBe(false);
+    expect(guideLinksFileSchema.safeParse({ ...without, version: 2 }).success).toBe(false);
+    expect(
+      writeGuideLinksFile.bind(
+        null,
+        'demo',
+        {
+          ...links(),
+          choices: {
+            'demo:guide:a': { state: 'linked', targets: [{ to: 'location', id: 'other:loc:1' }] },
+          },
+        },
+        NOW,
+      ),
+    ).toThrow();
+    // A location target of another game is left out when read.
+    const read = readGuideLinksFile({
+      ...value,
+      choices: {
+        'demo:guide:a': {
+          state: 'linked',
+          targets: [
+            { to: 'location', id: 'other:loc:1' },
+            { to: 'location', id: 'demo:guide:1' },
+            { to: 'location', id: 'demo:loc:1' },
+          ],
+        },
+      },
+    });
+    expect(read.ok && read.file.choices).toEqual({
+      'demo:guide:a': { state: 'linked', targets: [{ to: 'location', id: 'demo:loc:1' }] },
+    });
+  });
+
   it('is not a guide links file when its header is wrong', () => {
     expect(readGuideLinksFile(null).ok).toBe(false);
     expect(readGuideLinksFile({ format: 'atlas-own-lists', version: 1, gameId: 'demo' }).ok).toBe(

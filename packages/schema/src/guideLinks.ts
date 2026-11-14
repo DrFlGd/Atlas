@@ -25,8 +25,16 @@ import { gameIdSchema, idOf, parseId } from './ids';
 
 /** What the guide links file of a game says it is. */
 export const GUIDE_LINKS_FORMAT = 'atlas-guide-links';
-/** The version of the guide links file this app writes. */
-export const GUIDE_LINKS_VERSION = 1;
+/**
+ * The newest version of the guide links file this app reads and writes.
+ * Version 2 adds a target of one location (`location`). A file is written
+ * as version 2 only when it has such a target; without one it stays version
+ * 1, which Atlas 0.6.3 and earlier read and write too. An app older than a
+ * file's version uses its links and does not change the file.
+ */
+export const GUIDE_LINKS_VERSION = 2;
+/** The version of a file without a target of one location. */
+export const GUIDE_LINKS_VERSION_WITHOUT_LOCATIONS = 1;
 
 /** The most targets one page may be linked to. */
 export const MAX_LINK_TARGETS = 20;
@@ -45,7 +53,8 @@ const isoTime = z.iso.datetime({ offset: true });
  *   names: case, punctuation, a leading article, simple plurals and a
  *   number at the end of a location's name do not count);
  * - `region`: a region (`id`), with the locations in it and in the regions
- *   inside it.
+ *   inside it;
+ * - `location`: one location (`id`), and no other of its name (version 2).
  */
 export const linkTargetSchema = z.discriminatedUnion('to', [
   z.strictObject({ to: z.literal('type'), id: idOf('cat') }),
@@ -54,6 +63,7 @@ export const linkTargetSchema = z.discriminatedUnion('to', [
     name: z.string().trim().min(1).max(MAX_LINK_NAME_LENGTH),
   }),
   z.strictObject({ to: z.literal('region'), id: idOf('region') }),
+  z.strictObject({ to: z.literal('location'), id: idOf('loc') }),
 ]);
 
 export type LinkTarget = z.infer<typeof linkTargetSchema>;
@@ -76,7 +86,10 @@ export const guidesFromSchema = z.strictObject({ gameId: gameIdSchema });
 export const guideLinksFileSchema = z
   .strictObject({
     format: z.literal(GUIDE_LINKS_FORMAT),
-    version: z.literal(GUIDE_LINKS_VERSION),
+    version: z.union([
+      z.literal(GUIDE_LINKS_VERSION_WITHOUT_LOCATIONS),
+      z.literal(GUIDE_LINKS_VERSION),
+    ]),
     gameId: gameIdSchema,
     updatedAt: isoTime,
     guidesFrom: z.array(guidesFromSchema).max(MAX_GUIDES_FROM),
@@ -94,6 +107,16 @@ export const guideLinksFileSchema = z
       }
       seen.add(from.gameId);
     });
+    const needed = hasLocationTarget(file.choices)
+      ? GUIDE_LINKS_VERSION
+      : GUIDE_LINKS_VERSION_WITHOUT_LOCATIONS;
+    if (file.version !== needed) {
+      context.addIssue({
+        code: 'custom',
+        path: ['version'],
+        message: `must be ${needed}: version 2 only with a target of one location`,
+      });
+    }
     for (const [guideId, choice] of Object.entries(file.choices)) {
       if (choice.state !== 'linked') continue;
       choice.targets.forEach((target, i) => {
@@ -139,6 +162,7 @@ const readTarget = z.discriminatedUnion('to', [
   z.object({ to: z.literal('type'), id: idOf('cat') }),
   z.object({ to: z.literal('name'), name: z.string().trim().min(1).max(MAX_LINK_NAME_LENGTH) }),
   z.object({ to: z.literal('region'), id: idOf('region') }),
+  z.object({ to: z.literal('location'), id: idOf('loc') }),
 ]);
 
 const readChoice = z.object({ state: z.string(), targets: z.array(z.unknown()).optional() });
@@ -210,13 +234,24 @@ export function writeGuideLinksFile(gameId: string, links: GuideLinks, now: Date
   for (const id of Object.keys(links.choices).sort()) choices[id] = links.choices[id]!;
   const file: GuideLinksFile = guideLinksFileSchema.parse({
     format: GUIDE_LINKS_FORMAT,
-    version: GUIDE_LINKS_VERSION,
+    // The newer version only when an older app could not keep what is in it.
+    version: hasLocationTarget(choices)
+      ? GUIDE_LINKS_VERSION
+      : GUIDE_LINKS_VERSION_WITHOUT_LOCATIONS,
     gameId,
     updatedAt: now.toISOString(),
     guidesFrom: links.guidesFrom.map((from) => ({ gameId: from })),
     choices,
   });
   return `${JSON.stringify(file, null, 2)}\n`;
+}
+
+/** Whether any page is linked to one location alone (which needs version 2). */
+export function hasLocationTarget(choices: Readonly<Record<string, LinkChoice>>): boolean {
+  return Object.values(choices).some(
+    (choice) =>
+      choice.state === 'linked' && choice.targets.some((target) => target.to === 'location'),
+  );
 }
 
 /** Whether two targets are the same (a name compared as written). */
