@@ -266,7 +266,7 @@ test.describe('in Games', () => {
     // Guides: the wiki's pages, under its heading, said to come with the title.
     await page.getByTestId('section-guides').click();
     const sections = page.getByTestId('guides-contents').getByTestId('guides-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Isle Wiki\s*6 pages/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
     await expect(page.getByTestId('guides-from-title')).toHaveText('With this title');
     await shot(page, '4-guides-wiki-of-the-title');
@@ -281,7 +281,7 @@ test.describe('in Games', () => {
       .click();
     await expect(page.getByTestId('map-chip')).toContainText('Second map site');
     await page.getByTestId('section-guides').click();
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Isle Wiki\s*6 pages/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
     expect(await storedSetting(page, 'guideLinks:isles-two')).toBeUndefined();
 
     // The wiki itself: the maps of its title, a tap away.
@@ -311,7 +311,7 @@ test.describe('in Games', () => {
     await stored(page, { 'Atlas demo world': ['demo', 'isles-two'] });
     await reloadShown(page);
     await page.getByTestId('section-guides').click();
-    await expect(sections).toHaveText([/Basics/, /The isle/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/]);
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
   });
 
