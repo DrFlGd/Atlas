@@ -1,7 +1,7 @@
 import type { ContentsEntry, ContentsStep, GuideHit } from '@atlas/core';
 import type { GuideEntry, GuideSource } from '@atlas/schema';
 import { parseId } from '@atlas/schema';
-import { keepOwnVersion, pageChange, revertPage } from '@atlas/core';
+import { findSection, keepOwnVersion, pageChange, revertPage } from '@atlas/core';
 import {
   lazy,
   Suspense,
@@ -25,6 +25,7 @@ import { GuideLinksReview } from './GuideLinksReview';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
 import { showPageOnMap } from './listViews';
 import {
+  arrivedAtSection,
   canGoBack,
   canGoForward,
   currentPlace,
@@ -33,6 +34,7 @@ import {
   readerForward,
   rememberScroll,
   useReader,
+  waitsForSection,
   type ReaderPlace,
 } from './reader';
 import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
@@ -50,6 +52,8 @@ import '../styles/guides.css';
  * compact (a phone), the contents are a place of their own, as the pages
  * are, and a page lists the pages under it at its foot. Above the page,
  * the way to it: every section and page it is under, each a link.
+ *
+ * A link to a section of a page opens the page there (see `reader.ts`).
  */
 const PageEditor = lazy(() => import('./pages/PageEditor'));
 
@@ -100,13 +104,30 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
   const body = useRef<HTMLDivElement>(null);
   const { contents } = guidesOf(game);
 
-  // Each place opens where it was scrolled to when it was left.
+  // Each place opens where it was scrolled to when it was left; a page
+  // opened at a section, at that section's heading (its top when no
+  // heading fits).
   const scroll = reader.visits[reader.at]?.scroll ?? 0;
+  const toSection = waitsForSection(reader);
   useLayoutEffect(() => {
-    if (body.current) body.current.scrollTop = scroll;
+    const root = body.current;
+    if (!root) return;
+    if (toSection) {
+      const heading =
+        place.kind === 'page' && place.section ? headingOf(root, place.section) : null;
+      root.scrollTop = heading ? offsetIn(root, heading) - SECTION_MARGIN : 0;
+      if (heading) {
+        // Read on from the heading, also with the keyboard.
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+      arrivedAtSection(root.scrollTop);
+      return;
+    }
+    root.scrollTop = scroll;
     // Only when the place changes, not while it is scrolled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reader.at, reader.visits.length, place]);
+  }, [reader.at, reader.visits.length, place, toSection]);
 
   const frame = useRef(0);
   const onScroll = () => {
@@ -185,6 +206,27 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
 }
 
 const LINKS_TITLE = 'Link pages to the map';
+
+/** The room left above a heading scrolled to. */
+const SECTION_MARGIN = 12;
+
+/** The heading of the page shown that a section names, or null when none fits or it is hidden. */
+function headingOf(root: HTMLElement, section: string): HTMLElement | null {
+  const headings = [
+    ...root.querySelectorAll<HTMLElement>('.guides-page-body [data-section]'),
+  ].filter((heading) => /^H[1-6]$/u.test(heading.tagName));
+  const index = findSection(
+    section,
+    headings.map((heading) => heading.dataset.section ?? ''),
+  );
+  const heading = index >= 0 ? headings[index]! : null;
+  return heading && !heading.closest('[hidden]') ? heading : null;
+}
+
+/** How far down a scrolled element an element inside it stands. */
+function offsetIn(root: HTMLElement, element: HTMLElement): number {
+  return element.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+}
 
 function placeTitle(game: LoadedGame, place: ReaderPlace): string {
   const { contents } = guidesOf(game);

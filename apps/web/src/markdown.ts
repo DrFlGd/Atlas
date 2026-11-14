@@ -1,5 +1,6 @@
+import { headingNames, sectionOfTitle } from '@atlas/core';
 import { parseId } from '@atlas/schema';
-import MarkdownIt, { type Token } from 'markdown-it';
+import MarkdownIt, { type StateCore, type Token } from 'markdown-it';
 import { markdownMarks } from './markdownMarks';
 
 /**
@@ -24,6 +25,13 @@ import { markdownMarks } from './markdownMarks';
  *   button carrying the id in `data-atlas-target`, which the app acts on, and
  *   never a link the browser follows. An id the pack does not have, or of a
  *   kind the app cannot show, becomes plain text.
+ * - A link to a page can name a section of it with its title, `#` and the
+ *   section's name: `[by boat](demo:guide:travel "#by-boat")` (see
+ *   `sections.ts` in `@atlas/core`). The button carries the section in
+ *   `data-atlas-section`, and such a title is no tooltip.
+ * - Every heading has a name worked out from its words, in
+ *   `data-section` (see {@link guideHeadings}), so a link to a section can
+ *   find it; nothing is stored for it.
  * - Text between double bars, `||like this||`, is hidden until the reader
  *   asks for it (see {@link revealHiddenText}): a "Show hidden text" button
  *   stands where it begins, and the hidden part is in the page with the
@@ -89,6 +97,8 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
         if (!open) continue;
         const ok = isAppTarget?.(href) ?? false;
         const title = token.attrGet('title');
+        // A title that names a section of the page is no tooltip.
+        const section = target?.kind === 'guide' ? sectionOfTitle(String(title ?? '')) : null;
         (token.meta as AppLinkMeta | null) = { appLink: ok ? 'ok' : 'missing' };
         if (ok) {
           token.tag = 'button';
@@ -97,6 +107,7 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
             ['class', 'app-link'],
             ['data-atlas-target', href],
           ];
+          if (section) token.attrs.push(['data-atlas-section', section]);
         } else {
           token.tag = 'span';
           token.attrs = [['class', 'app-link-missing']];
@@ -105,7 +116,7 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
             token.attrs.push(['data-unread', ''], ['title', unreadPage]);
           }
         }
-        if (title !== null && title !== '') token.attrSet('title', String(title));
+        if (title !== null && title !== '' && !section) token.attrSet('title', String(title));
       } else if (token.type === 'link_close' && open) {
         token.tag = open.tag;
         open = null;
@@ -113,6 +124,79 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Headings: each with a name from its words
+
+/** A heading of a guide's text, as {@link guideHeadings} gives it. */
+export interface GuideHeading {
+  /** 1 to 6, as `#` to `######`. */
+  level: number;
+  /** Its words, as the page shows them. */
+  words: string;
+  /** Its name, which a link to its section names (see `sections.ts` in `@atlas/core`). */
+  name: string;
+  /** Inside hidden text, so not shown until the reader asks. */
+  hidden: boolean;
+}
+
+/** The words of a heading's inline tokens, as the page shows them (pictures and buttons aside). */
+function wordsOf(tokens: readonly Token[]): string {
+  return tokens
+    .map((token) =>
+      token.type === 'text' || token.type === 'code_inline'
+        ? token.content
+        : token.type === 'softbreak' || token.type === 'hardbreak'
+          ? ' '
+          : token.children && token.type !== 'image'
+            ? wordsOf(token.children)
+            : '',
+    )
+    .join('')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+/** The headings of the parsed text, each named, in order. */
+function headingsOf(state: StateCore): GuideHeading[] {
+  const found: { open: Token; level: number; words: string; hidden: boolean }[] = [];
+  // Whether each block open around a token is hidden as a whole.
+  const around: boolean[] = [];
+  state.tokens.forEach((token, i) => {
+    if (token.nesting === -1) around.pop();
+    if (token.nesting === 1) around.push(token.attrGet('hidden') !== null);
+    if (token.type !== 'heading_open') return;
+    const inline = state.tokens[i + 1];
+    found.push({
+      open: token,
+      level: Number(token.tag.slice(1)) || 1,
+      words: inline?.children ? wordsOf(inline.children) : '',
+      hidden: around.includes(true),
+    });
+  });
+  const names = headingNames(found.map((heading) => heading.words));
+  return found.map((heading, i) => {
+    heading.open.attrSet('data-section', names[i]!);
+    return { level: heading.level, words: heading.words, name: names[i]!, hidden: heading.hidden };
+  });
+}
+
+markdown.core.ruler.push('atlas_headings', (state) => {
+  (state.env as HeadingsEnv).headings = headingsOf(state);
+});
+
+type HeadingsEnv = Record<string, unknown> & { headings?: GuideHeading[] };
+
+/**
+ * The headings of a guide's text, in order, each with its name: the same
+ * names the page gives them where it is shown (`data-section`). A heading
+ * inside hidden text says so.
+ */
+export function guideHeadings(source: string): GuideHeading[] {
+  const env: HeadingsEnv = {};
+  markdown.parse(source, env);
+  return env.headings ?? [];
+}
 
 // ---------------------------------------------------------------------------
 // Pictures: only the pack's own, by id
@@ -483,4 +567,10 @@ export function revealHiddenText(target: EventTarget | null, root: Element): boo
 export function appLinkTarget(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
   return target.closest('[data-atlas-target]')?.getAttribute('data-atlas-target') ?? null;
+}
+
+/** The section of its page the in-app link an event happened in names, if any. */
+export function appLinkSection(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest('[data-atlas-target]')?.getAttribute('data-atlas-section') ?? null;
 }

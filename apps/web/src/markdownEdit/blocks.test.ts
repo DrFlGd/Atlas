@@ -359,7 +359,7 @@ describe('a changed block', () => {
       content: [text('C #')],
     };
     expect(writeBlock(heading)).toBe('## C \\#');
-    expect(render(writeBlock(heading))).toBe('<h2>C #</h2>\n');
+    expect(render(writeBlock(heading))).toBe('<h2 data-section="c">C #</h2>\n');
     const quote: BlockModel = { kind: 'quote', paragraphs: [parseInline('a\nb'), [text('c')]] };
     expect(writeBlock(quote)).toBe('> a\n> b\n>\n> c');
     const code: BlockModel = { kind: 'code', fence: '```', info: 'js', text: 'a\n```\nb\n' };

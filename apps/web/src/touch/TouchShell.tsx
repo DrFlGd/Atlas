@@ -385,11 +385,11 @@ function useTouchEffects(wide: boolean, room: boolean) {
     }
   }, [gameEntry]);
   useEffect(() => {
-    setGuideReader((id) => {
+    setGuideReader((id, section) => {
       const shown = useAtlas.getState().game;
       const contents = shown ? guidesOf(shown).contents : null;
       if (!contents?.browsable || !contents.isPage(id)) return false;
-      openPlace({ kind: 'page', guideId: id });
+      openPlace(section ? { kind: 'page', guideId: id, section } : { kind: 'page', guideId: id });
       showSection('guides');
       return true;
     });

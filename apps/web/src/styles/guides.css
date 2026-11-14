@@ -356,6 +356,11 @@ button.guides-crumb:hover {
   font-size: 16.5px;
 }
 
+/* A heading a link to its section moved to takes the focus, with no ring of its own. */
+.guides-page-body [data-section]:focus {
+  outline: none;
+}
+
 /* Wide tables scroll sideways inside the page, which stays put. */
 .guides-page-body table {
   display: block;

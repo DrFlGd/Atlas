@@ -1,3 +1,4 @@
+import { sectionOfTitle } from '@atlas/core';
 import { parseColour, TEXT_COLOUR_ATTRIBUTE } from '../textColour';
 import { normalizeInline, type Inline, type LinkMark, type Marks } from './inline';
 import { readPictureSize } from './pictureSize';
@@ -39,12 +40,14 @@ function wrap(html: string, marks: Marks): string {
   }
   if (marks.link) {
     const { href, title, auto } = marks.link;
+    // A link to a section of a page says which, where it is pointed at.
+    const section = sectionOfTitle(title);
     out = `<a${attrs({
       'data-md-link': '',
       'data-href': href,
       'data-title': title,
       'data-auto': auto === undefined ? undefined : String(auto),
-      title: href,
+      title: section ? `${href}, at the section ${section}` : href,
     })}>${out}</a>`;
   }
   return out;

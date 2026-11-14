@@ -70,14 +70,19 @@ export function openChecklistItem(itemId: string): void {
  * Where a layout reads a guide as a page instead (the standard layout's
  * Guides section): returns whether it opened it there.
  */
-let guideReader: ((id: string) => boolean) | null = null;
+let guideReader: ((id: string, section?: string) => boolean) | null = null;
 
-export function setGuideReader(reader: ((id: string) => boolean) | null): void {
+export function setGuideReader(reader: ((id: string, section?: string) => boolean) | null): void {
   guideReader = reader;
 }
 
-export function openGuide(id: string): void {
-  if (guideReader?.(id)) return;
+/**
+ * Opens a guide: as a page where the layout reads guides as pages, at the
+ * section of it named, if any (see `sections.ts` in `@atlas/core`);
+ * otherwise on the checklists screen, at its top.
+ */
+export function openGuide(id: string, section?: string): void {
+  if (guideReader?.(id, section)) return;
   openChecklistPage({ kind: 'guide', id });
 }
 
@@ -154,10 +159,12 @@ export function appLinkKind(game: LoadedGame, rawId: string): AppLinkKind | null
  * needed), a region or map is shown, and a checklist, item or guide opens on
  * the checklists screen.
  */
-export function followAppLink(rawId: string): void {
+export function followAppLink(rawId: string, section?: string | null): void {
   const { game } = get();
   if (!game) return;
   const id = game.pack.currentId(rawId);
+  // A link's own section, else the one another name of the page leads to.
+  const at = section ?? game.pack.sectionOf(rawId) ?? undefined;
   switch (appLinkKind(game, id)) {
     case 'location':
       goToLocation(id);
@@ -175,7 +182,7 @@ export function followAppLink(rawId: string): void {
       openChecklistItem(id);
       break;
     case 'guide':
-      openGuide(id);
+      openGuide(id, at);
       break;
     case null:
       break;

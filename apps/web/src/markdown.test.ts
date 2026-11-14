@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { guideSearchText, isInlinePicture, renderGuideMarkdown, shownSize } from './markdown';
+import {
+  guideHeadings,
+  guideSearchText,
+  isInlinePicture,
+  renderGuideMarkdown,
+  shownSize,
+} from './markdown';
 
 describe('renderGuideMarkdown', () => {
   it('renders ordinary Markdown', () => {
@@ -407,5 +413,60 @@ describe('guideSearchText', () => {
   it('pairs bars as the page does', () => {
     expect(guideSearchText('a ||b|| c || d')).toBe('a c || d');
     expect(guideSearchText('```\n||\n```\n\n||secret|| shown')).toBe('|| shown');
+  });
+});
+
+describe('sections', () => {
+  const known = new Set(['demo:guide:walk', 'demo:loc:0412']);
+  const options = { isAppTarget: (id: string) => known.has(id) };
+
+  it('gives every heading a name from its words, a repeated one numbered', () => {
+    const html = renderGuideMarkdown(
+      '## Where to find\n\nText.\n\n### The *old* `well`\n\n## Where to find\n\n# Notes',
+    );
+    expect(html).toContain('<h2 data-section="where-to-find">Where to find</h2>');
+    expect(html).toContain('<h3 data-section="the-old-well">');
+    expect(html).toContain('<h2 data-section="where-to-find-2">Where to find</h2>');
+    expect(html).toContain('<h1 data-section="notes">Notes</h1>');
+  });
+
+  it('lists the headings with their names and levels, the same as the page', () => {
+    const source =
+      '## Getting there ![a gate](demo:picture:gate)\n\n### On [foot](demo:guide:walk)\n\n||\n\n## The secret\n\n||\n\n## Getting there';
+    expect(guideHeadings(source)).toEqual([
+      { level: 2, words: 'Getting there', name: 'getting-there', hidden: false },
+      { level: 3, words: 'On foot', name: 'on-foot', hidden: false },
+      { level: 2, words: 'The secret', name: 'the-secret', hidden: true },
+      { level: 2, words: 'Getting there', name: 'getting-there-2', hidden: false },
+    ]);
+    expect(renderGuideMarkdown(source)).toContain('data-section="getting-there-2"');
+    expect(guideHeadings('No heading here.')).toEqual([]);
+  });
+
+  it('carries the section a link names, and does not show it as a tooltip', () => {
+    const html = renderGuideMarkdown(
+      '[by boat](demo:guide:walk "#By boat") and [the well](demo:guide:walk "Part 2")',
+      options,
+    );
+    expect(html).toContain(
+      '<button type="button" class="app-link" data-atlas-target="demo:guide:walk" data-atlas-section="by-boat">by boat</button>',
+    );
+    expect(html).toContain('title="Part 2">the well</button>');
+    expect(html).not.toContain('title="#');
+  });
+
+  it('names a section only for a page', () => {
+    const html = renderGuideMarkdown('[the well](demo:loc:0412 "#top")', options);
+    expect(html).not.toContain('data-atlas-section');
+    expect(html).toContain('title="#top"');
+  });
+
+  it('keeps saying a page was not read yet when its link names a section', () => {
+    const html = renderGuideMarkdown('[runes](demo:guide:unread "#runes")', {
+      ...options,
+      unreadPage: 'This page has not been read yet',
+    });
+    expect(html).toContain('data-unread="" title="This page has not been read yet"');
+    expect(html).not.toContain('#runes');
   });
 });
