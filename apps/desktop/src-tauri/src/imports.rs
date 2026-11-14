@@ -916,11 +916,11 @@ impl Imports {
 /// What moving a kept window to the next page did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(mobile, allow(dead_code))]
 pub enum Navigated {
     /// The window is on its way to the next page.
     Navigated,
     /// The person had closed the window: nothing was opened.
-    #[cfg_attr(mobile, allow(dead_code))]
     Closed,
 }
 
