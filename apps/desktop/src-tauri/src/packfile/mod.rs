@@ -42,13 +42,15 @@
 //! `mine/my-locations.json`, their links between guide pages and the map as
 //! `mine/guide-links.json`, their own guide pages and changes to the
 //! pack's pages as `mine/my-pages.json`, their notes on the game's
-//! locations as `mine/my-notes.json`, and the photos their lists,
-//! locations, pages and notes show as `mine/pictures/<file>` ([`Mine`]).
-//! Such a file is version 2 of the format (version 3 when it carries photos
-//! or guide links, version 4 when it carries pages, version 5 when it
-//! carries notes or a guide page linked to one location alone), so an older
-//! app says it needs a newer one instead of refusing an entry it does not
-//! know; a file without them stays version 1. An import
+//! locations as `mine/my-notes.json`, the title the game is shown under
+//! with other games and those games' ids as `mine/game-group.json` (see
+//! `gamegroups.rs`), and the photos their lists, locations, pages and notes
+//! show as `mine/pictures/<file>` ([`Mine`]). Such a file is version 2 of
+//! the format (version 3 when it carries photos or guide links, version 4
+//! when it carries pages, version 5 when it carries notes or a guide page
+//! linked to one location alone, version 6 when it carries a title), so an
+//! older app says it needs a newer one instead of refusing an entry it does
+//! not know; a file without them stays version 1. An import
 //! never writes them into the pack's folder: it hands them to the web app,
 //! which adds them to what the person has (see `Imported::mine`).
 //!
@@ -89,8 +91,13 @@ pub const FORMAT: &str = "atlas-pack-file";
 /// adds a person's own lists, locations and types ([`Mine`]); version 3
 /// their photos and links between guide pages and the map; version 4 their
 /// own guide pages; version 5 their notes on the game's locations, and
-/// links of a guide page to one location alone (guide links version 2).
-pub const VERSION: u32 = 5;
+/// links of a guide page to one location alone (guide links version 2);
+/// version 6 the title the game is shown under with other games.
+pub const VERSION: u32 = 6;
+/// The version of a file with a person's notes, or a guide page linked to
+/// one location alone, but no title, which an app from before version 6
+/// reads too.
+pub const VERSION_WITH_NOTES: u32 = 5;
 /// The version of a file with a person's own pages but no notes, which an
 /// app from before version 5 reads too.
 pub const VERSION_WITH_PAGES: u32 = 4;
@@ -290,15 +297,19 @@ pub struct MineFacts {
     pub sections: u64,
     /// Their notes on the game's locations (version 5).
     pub notes: u64,
+    /// Whether the title the game is shown under with other games is in it
+    /// (version 6).
+    pub group: bool,
 }
 
 /// The entries of a person's own files, and which file each is.
-pub const MINE_ENTRIES: [(&str, OwnFile); 5] = [
+pub const MINE_ENTRIES: [(&str, OwnFile); 6] = [
     ("mine/my-lists.json", ownlists::LISTS),
     ("mine/my-locations.json", ownlists::LOCATIONS),
     ("mine/guide-links.json", ownlists::GUIDE_LINKS),
     ("mine/my-pages.json", ownlists::PAGES),
     ("mine/my-notes.json", ownlists::NOTES),
+    ("mine/game-group.json", crate::gamegroups::CARRIED),
 ];
 
 /// Where a person's own photos are in a file: `mine/pictures/<file>`.
@@ -307,9 +318,10 @@ pub const MINE_PICTURES_DIR: &str = "mine/pictures/";
 pub const MAX_MINE_PICTURE_BYTES: u64 = 512 << 20;
 
 /// A person's own lists, own locations, types and areas, links between
-/// guide pages and the map, own guide pages, and notes on the game's
-/// locations, of one game: the text of their files (see `ownlists.rs` and
-/// `guidelinks.rs`), each when there is one; and the photos the lists,
+/// guide pages and the map, own guide pages, notes on the game's
+/// locations, and the title it is shown under with other games, of one
+/// game: the text of their files (see `ownlists.rs`, `guidelinks.rs` and
+/// `gamegroups.rs`), each when there is one; and the photos the lists,
 /// locations, pages and notes show (see `ownpictures.rs`), by file name.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Mine {
@@ -318,6 +330,8 @@ pub struct Mine {
     pub guide_links: Option<String>,
     pub pages: Option<String>,
     pub notes: Option<String>,
+    /// The title of the game and the games shown under it (`gamegroups::carried`).
+    pub group: Option<String>,
     pub pictures: Vec<(String, Vec<u8>)>,
 }
 
@@ -330,6 +344,7 @@ impl Mine {
         let guide_links = crate::guidelinks::read(maps_folder, game_id)?;
         let pages = ownlists::PAGES.read(maps_folder, game_id)?;
         let notes = ownlists::NOTES.read(maps_folder, game_id)?;
+        let group = crate::gamegroups::carried(maps_folder, game_id)?;
         let mut pictures = Vec::new();
         let mut total = 0u64;
         let named = [&lists, &locations, &pages, &notes]
@@ -356,16 +371,21 @@ impl Mine {
             guide_links,
             pages,
             notes,
+            group,
             pictures,
         })
     }
 
-    /// The version of the format a file carrying these needs: 5 with notes
-    /// or a guide page linked to one location alone, 4 with own pages, 3
-    /// with photos or guide links, 2 otherwise.
+    /// The version of the format a file carrying these needs: 6 with a
+    /// title, 5 with notes or a guide page linked to one location alone, 4
+    /// with own pages, 3 with photos or guide links, 2 otherwise.
     pub fn version(&self) -> u32 {
-        if self.notes.is_some() || self.guide_links.as_deref().is_some_and(links_one_location) {
+        if self.group.is_some() {
             VERSION
+        } else if self.notes.is_some()
+            || self.guide_links.as_deref().is_some_and(links_one_location)
+        {
+            VERSION_WITH_NOTES
         } else if self.pages.is_some() {
             VERSION_WITH_PAGES
         } else if self.guide_links.is_some() || !self.pictures.is_empty() {
@@ -381,6 +401,7 @@ impl Mine {
             && self.guide_links.is_none()
             && self.pages.is_none()
             && self.notes.is_none()
+            && self.group.is_none()
             && self.pictures.is_empty()
     }
 
@@ -394,6 +415,7 @@ impl Mine {
                 &self.guide_links,
                 &self.pages,
                 &self.notes,
+                &self.group,
             ])
             .filter_map(|((name, kind), text)| text.as_deref().map(|text| (name, kind, text)))
     }
@@ -407,6 +429,8 @@ impl Mine {
             &mut self.pages
         } else if kind.suffix == ownlists::NOTES.suffix {
             &mut self.notes
+        } else if kind.suffix == crate::gamegroups::CARRIED.suffix {
+            &mut self.group
         } else {
             &mut self.guide_links
         }
@@ -435,6 +459,8 @@ impl Mine {
                     .get("notes")
                     .and_then(Value::as_object)
                     .map_or(0, serde_json::Map::len) as u64;
+            } else if kind.suffix == crate::gamegroups::CARRIED.suffix {
+                facts.group = true;
             } else {
                 facts.guide_links = true;
             }

@@ -78,6 +78,8 @@ const COMMANDS: &[&str] = &[
     "guide_links_read",
     "guide_links_write",
     "guide_links_delete",
+    "game_groups_read",
+    "game_groups_write",
     "own_pictures_read",
     "own_pictures_write",
     "own_pictures_list",
