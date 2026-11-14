@@ -3,6 +3,7 @@ import {
   changeStep,
   changeTemplate,
   duplicateStep,
+  findSteps,
   insertRows,
   isOrdered,
   locationsToAdd,
@@ -10,8 +11,10 @@ import {
   moveRowBy,
   newHeading,
   newOwnId,
+  nearestCandidates,
   newStep,
   outlineOf,
+  placeLocations,
   removeRow,
   removeStepPhoto,
   renameHeading,
@@ -21,10 +24,12 @@ import {
   suggestOrder,
   type OutlineRow,
   type StepChanges,
+  type StepFinding,
 } from '@atlas/core';
 import type { ChecklistType, OwnList, Picture } from '@atlas/schema';
 import { create } from 'zustand';
 import { notify } from '../../state/actions';
+import { buildFinderOf } from '../../state/buildPlanner';
 import { openChecklist } from '../../state/checklists';
 import { useMapOverlay } from '../../state/mapOverlay';
 import {
@@ -38,6 +43,7 @@ import {
 } from '../../state/ownLists';
 import { sweepOwnPicturesLater } from '../../state/ownPictures';
 import { useAtlas } from '../../state/store';
+import { centreOn } from '../listViews';
 
 /**
  * The list editor's state (see `ListEditor.tsx`): which own list is being
@@ -53,13 +59,29 @@ export type AddTab = 'map' | 'type' | 'search' | 'list' | 'blank';
 /** A location is being chosen for a step: its location, or a link in its note. */
 export type Picking = { purpose: 'location' | 'link'; stepId: string } | null;
 
+/**
+ * "Find on the map" of a Build guide (see `planBuild.ts` in core), as the
+ * check panel shows it: what was found for each step with no location, the
+ * possible locations nearest first, and what the person chose. Nothing is
+ * put on a step until they confirm.
+ */
+export interface Finding {
+  findings: readonly StepFinding[];
+  /** Steps that have a location already, left as they are. */
+  located: number;
+  /** By step id: the location to put on it, or null for none. */
+  chosen: Readonly<Record<string, string | null>>;
+  /** The location shown on the map from the panel, if any. */
+  shown: string | null;
+}
+
 export interface EditorState {
   listId: string | null;
   mode: 'edit' | 'preview';
   /** The row of the outline open in the side panel (a step or a heading). */
   open: string | null;
-  /** What the side panel shows: the open row, the ways to add steps, or nothing. */
-  panel: 'row' | 'add' | null;
+  /** What the side panel shows: the open row, the ways to add steps, what was found, or nothing. */
+  panel: 'row' | 'add' | 'find' | null;
   addTab: AddTab;
   picking: Picking;
   /** Locations ticked in "A type", drawn on the map before they are added. */
@@ -68,6 +90,8 @@ export interface EditorState {
   announce: string;
   /** A row just added, whose name field takes the focus once it shows. */
   focusNameFor: string | null;
+  /** What "Find on the map" found, while its panel is open. */
+  finding: Finding | null;
 }
 
 const INITIAL: EditorState = {
@@ -80,6 +104,7 @@ const INITIAL: EditorState = {
   picked: [],
   announce: '',
   focusNameFor: null,
+  finding: null,
 };
 
 export const useEditor = create<EditorState>()(() => INITIAL);
@@ -125,11 +150,11 @@ export function setPreview(preview: boolean): void {
 }
 
 export function openRow(id: string | null): void {
-  set({ open: id, panel: id ? 'row' : null, picking: null, picked: [] });
+  set({ open: id, panel: id ? 'row' : null, picking: null, picked: [], finding: null });
 }
 
 export function openAdd(tab: AddTab = get().addTab): void {
-  set({ panel: 'add', addTab: tab, picking: null, picked: [] });
+  set({ panel: 'add', addTab: tab, picking: null, picked: [], finding: null });
 }
 
 export function setAddTab(tab: AddTab): void {
@@ -137,7 +162,7 @@ export function setAddTab(tab: AddTab): void {
 }
 
 export function closePanel(): void {
-  set({ panel: null, picking: null, picked: [] });
+  set({ panel: null, picking: null, picked: [], finding: null });
 }
 
 export function setPicking(picking: Picking): void {
@@ -391,11 +416,79 @@ export function suggestEditedOrder(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Find on the map
+
+/**
+ * "Find on the map": looks for every step with no location (see
+ * `planBuild.ts` in core) and opens the panel that shows what was found.
+ * A step found for sure is ticked to be used; one with several possible
+ * locations waits for the person to choose.
+ */
+export function startFinding(): void {
+  const game = useAtlas.getState().game;
+  const list = editedList();
+  if (!game || !list) return;
+  const { findings, located } = findSteps(list, buildFinderOf(game));
+  const chosen: Record<string, string | null> = {};
+  const sorted = findings.map((finding) => {
+    chosen[finding.stepId] = finding.outcome === 'found' ? finding.locationIds[0]! : null;
+    return finding.outcome === 'several'
+      ? {
+          ...finding,
+          locationIds: nearestCandidates(list, game.pack, finding.stepId, finding.locationIds),
+        }
+      : finding;
+  });
+  set({
+    panel: 'find',
+    picking: null,
+    picked: [],
+    finding: { findings: sorted, located, chosen, shown: null },
+  });
+}
+
+/** Chooses the location to put on a step, or none. */
+export function chooseFound(stepId: string, locationId: string | null): void {
+  const { finding } = get();
+  if (!finding) return;
+  set({ finding: { ...finding, chosen: { ...finding.chosen, [stepId]: locationId } } });
+}
+
+/** Shows a location found on the map, marked, without choosing it. */
+export function showFound(locationId: string): void {
+  const game = useAtlas.getState().game;
+  const { finding } = get();
+  if (!game || !finding) return;
+  set({ finding: { ...finding, shown: locationId } });
+  centreOn(game, locationId);
+}
+
+/** Puts the chosen locations on their steps, with Undo, and closes the panel. */
+export function confirmFound(): number {
+  const { finding } = get();
+  const list = editedList();
+  if (!finding || !list) return 0;
+  const chosen = new Map(
+    Object.entries(finding.chosen).filter((entry): entry is [string, string] => entry[1] !== null),
+  );
+  closePanel();
+  if (chosen.size === 0) return 0;
+  update((current) => placeLocations(current, chosen));
+  undoable(
+    chosen.size === 1
+      ? 'Put a location on one step. Suggest an order to put the steps nearest next.'
+      : `Put locations on ${chosen.size} steps. Suggest an order to put the steps nearest next.`,
+    list,
+  );
+  return chosen.size;
+}
+
+// ---------------------------------------------------------------------------
 // The map
 
 /** Draws the list on the map, and takes taps on markers, while the editor is open. */
 function followMap(): void {
-  const { listId, mode, open, picked, picking } = get();
+  const { listId, mode, open, picked, picking, finding } = get();
   const game = useAtlas.getState().game;
   const list = listId ? ownListById(listId) : undefined;
   if (!list || !game || mode !== 'edit') {
@@ -422,7 +515,7 @@ function followMap(): void {
       style: row.item.id === open ? 'current' : ordered && row.item.optional ? 'optional' : 'step',
     });
   }
-  for (const id of picked) {
+  for (const id of finding?.shown ? [...picked, finding.shown] : picked) {
     const location = game.pack.locations.get(id);
     if (location) {
       points.push({
@@ -437,9 +530,13 @@ function followMap(): void {
   useMapOverlay.setState({
     points,
     joined: ordered,
-    pick: picking ? pickFor(picking) : addLocationStep,
+    // While what was found is checked, a tap on the map adds nothing.
+    pick: picking ? pickFor(picking) : finding ? ignoreTap : addLocationStep,
   });
 }
+
+/** A tap that does nothing. */
+const ignoreTap = () => undefined;
 
 /** What a tap on a marker does while a location is being chosen for a step. */
 let linkPicked: ((locationId: string) => void) | null = null;

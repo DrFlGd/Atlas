@@ -318,7 +318,7 @@ describe('demo wiki', () => {
     expect(packDataSchema.safeParse(pack).success).toBe(true);
     const listed = (pack.sections ?? []).flatMap((s) => s.items).filter((id) => pages.has(id));
     expect(listed.sort()).toEqual([...pages].sort());
-    expect(pack.sections).toHaveLength(3);
+    expect(pack.sections).toHaveLength(4);
   });
 
   it('has a table, a picture, hidden text and links that all lead to its own pages', () => {

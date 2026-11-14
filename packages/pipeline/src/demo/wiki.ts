@@ -16,6 +16,8 @@ import { DEMO_GAME_ID } from './content';
  * examples), the text and the picture. It shows what a wiki read into a
  * pack looks like: a contents of sections, a table wider than a phone,
  * links between pages, hidden text, a picture, and the credit of each page.
+ * Its gear pages say where things are in the ways wikis do (a heading, a
+ * table column, a box of facts), for the build planner.
  */
 
 const id = (kind: Parameters<typeof makeId>[1], local: string) => makeId(DEMO_GAME_ID, kind, local);
@@ -35,6 +37,10 @@ export const WIKI_PAGES = {
   waystones: id('guide', 'wiki-waystones'),
   wardens: id('guide', 'wiki-wardens'),
   wolves: id('guide', 'wiki-wolves'),
+  blades: id('guide', 'wiki-blades'),
+  emberBlade: id('guide', 'wiki-ember-blade'),
+  maul: id('guide', 'wiki-stonebreaker-maul'),
+  charm: id('guide', 'wiki-tidecaller-charm'),
 } as const;
 
 /** The sections of its contents. */
@@ -42,6 +48,7 @@ export const WIKI_SECTIONS = {
   basics: id('section', 'wiki-basics'),
   isle: id('section', 'wiki-isle'),
   foes: id('section', 'wiki-foes'),
+  gear: id('section', 'wiki-gear'),
 } as const;
 
 export const WIKI_PICTURE = id('picture', 'wiki-waystone');
@@ -68,8 +75,14 @@ const page = (key: keyof typeof WIKI_PAGES, title: string, path: string, body: s
 
 const to = (key: keyof typeof WIKI_PAGES, text: string) => `[${text}](${WIKI_PAGES[key]})`;
 
-/** The wiki's pages, with their sources. Regions are named after the pack's own. */
-export function wikiGuides(regionNames: readonly string[]): GuideEntry[] {
+/**
+ * The wiki's pages, with their sources. Regions are named after the pack's
+ * own, and the gear pages name a location of its map (`shrine`).
+ */
+export function wikiGuides(
+  regionNames: readonly string[],
+  shrine = 'Sunken shrine 1',
+): GuideEntry[] {
   const regions = regionNames.length > 0 ? regionNames : ['The lowlands'];
   const rows = regions.map((name, i) => {
     const level = 4 + i * 6;
@@ -192,10 +205,73 @@ Wolves hunt in packs of three to five in the northern woods.
 Fire keeps them back. Read ${to('travel', 'Getting around')} for the safer paths.
 `,
     ),
+    page(
+      'blades',
+      'Blades',
+      'Blades',
+      `
+The blades of the isle, from light to heavy. A blade with a page of its own
+leads there.
+
+| Blade | Damage | Location |
+| --- | --- | --- |
+| ${to('emberBlade', 'Ember blade')} | 40 | ${shrine} |
+| Saltglass dagger | 22 | A trader on the coast, now and then |
+| ${to('maul', 'Stonebreaker maul')} | 55 | See its page |
+`,
+    ),
+    page(
+      'emberBlade',
+      'Ember blade',
+      'Ember_blade',
+      `
+A short sword that glows like coals. It is one of the ${to('blades', 'blades')} of the isle.
+
+## Where to find
+
+It rests in ${shrine}, past the flooded hall. ||The hall drains when you pull the second chain.||
+
+## Materials
+
+To temper it at a forge:
+
+| Material | Amount |
+| --- | --- |
+| Moonpetal | 3 |
+| Relic shard | 2 |
+| Saltleaf | 1 |
+`,
+    ),
+    page(
+      'maul',
+      'Stonebreaker maul',
+      'Stonebreaker_maul',
+      `
+| Stonebreaker maul | |
+| --- | --- |
+| Damage | 55 |
+| Weight | Heavy |
+| Found in | ${to('wardens', 'Stone wardens')} |
+
+A maul too heavy for most. Stone wardens carry it, and drop it when beaten.
+`,
+    ),
+    page(
+      'charm',
+      'Tidecaller charm',
+      'Tidecaller_charm',
+      `
+A charm that hums when the sea is near.
+
+## How to get
+
+Bought from a travelling merchant, who turns up at random.
+`,
+    ),
   ];
 }
 
-/** The contents: two sections at the top, the second holding a third. */
+/** The contents: three sections at the top, the second holding a fourth. */
 export function wikiSections(): Section[] {
   return [
     {
@@ -212,6 +288,11 @@ export function wikiSections(): Section[] {
       id: WIKI_SECTIONS.foes,
       title: 'Foes',
       items: [WIKI_PAGES.wardens, WIKI_PAGES.wolves],
+    },
+    {
+      id: WIKI_SECTIONS.gear,
+      title: 'Gear',
+      items: [WIKI_PAGES.blades, WIKI_PAGES.emberBlade, WIKI_PAGES.maul, WIKI_PAGES.charm],
     },
   ];
 }
@@ -234,6 +315,8 @@ export function wikiPictures(): Picture[] {
 /** Adds the wiki's pages, contents and picture, and credits the wiki. */
 export function addWiki(data: PackData): PackData {
   const regionNames = data.regions.filter((r) => r.parentId !== null).map((r) => r.name);
+  // A ruin of the map, named on the gear pages as where a blade is.
+  const shrine = data.locations.find((l) => /^Sunken shrine \d+$/u.test(l.name))?.name;
   return {
     ...data,
     manifest: {
@@ -243,7 +326,7 @@ export function addWiki(data: PackData): PackData {
         { name: WIKI_SITE, url: WIKI_URL, license: WIKI_LICENSE.name },
       ],
     },
-    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5))],
+    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine)],
     sections: [...(data.sections ?? []), ...wikiSections()],
     pictures: [...(data.pictures ?? []), ...wikiPictures()],
   };
