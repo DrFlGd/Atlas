@@ -4,12 +4,16 @@ import type { Page } from '@playwright/test';
  * A made-up wiki whose pages are placed by their links, served as a game
  * with no map: a menu of sections (Equipment, The world, Things) with a
  * few pages, and the pages nothing in the menu names in a section placed
- * by links ("Pages"). Everything here is invented, its address
- * (example.org) included.
+ * by links ("Pages"). Only list pages file pages: the pages a list names
+ * go under it, a link in a sentence files nothing. Everything here is
+ * invented, its address (example.org) included.
  *
- * - Equipment › Armor › Warden Plate › Warden Helm, with Ash Mail beside
- *   Warden Plate; Longblade (under Weapons) links to Warden Plate too.
- * - Common Ore is linked from fifteen pages.
+ * - Equipment › Armor › Warden Plate › Warden Helm, with Ash Mail and
+ *   Iron Cap beside Warden Plate; Longblade (under Weapons) mentions
+ *   Warden Plate too.
+ * - Common Ore is mentioned by sixteen pages, among them Warden Plate, and
+ *   listed by Materials, which no page lists: it is under Materials, in
+ *   Pages.
  * - Things › Catalogue has 450 pages under it.
  * - Stray Note is linked from nothing placed, so it stays in Pages.
  */
@@ -33,8 +37,9 @@ const source = (local: string) => ({
   adapted: true,
 });
 
-function page(local: string, title: string, text: string, links: [string, string][]): Guide {
-  const list = links.map(([to, name]) => `- [${name}](${g(to)})`).join('\n');
+/** A page: a sentence (which may mention pages), then a list of the pages it lists. */
+function page(local: string, title: string, text: string, listed: [string, string][]): Guide {
+  const list = listed.map(([to, name]) => `- [${name}](${g(to)})`).join('\n');
   return {
     id: g(local),
     title,
@@ -44,33 +49,55 @@ function page(local: string, title: string, text: string, links: [string, string
   };
 }
 
+/** A sentence that mentions a page. */
+const mention = (local: string, name: string) => `[${name}](${g(local)})`;
+
 const ORE_FROM = Array.from({ length: 13 }, (_, i) => `mine-${i + 1}`);
 const ITEMS = Array.from({ length: 450 }, (_, i) => `item-${String(i + 1).padStart(3, '0')}`);
 
 export function pageTreeGuides(): Guide[] {
+  const ore = mention('common-ore', 'Common Ore');
   return [
     page('armor', 'Armor', 'Every set of armour in the game.', [
       ['warden-plate', 'Warden Plate'],
       ['ash-mail', 'Ash Mail'],
+      ['iron-cap', 'Iron Cap'],
     ]),
-    page('weapons', 'Weapons', 'Blades and bows.', [['longblade', 'Longblade']]),
+    page('weapons', 'Weapons', 'Blades and bows.', [
+      ['longblade', 'Longblade'],
+      ['short-bow', 'Short Bow'],
+      ['hand-axe', 'Hand Axe'],
+    ]),
     page('bestiary', 'Bestiary', 'The creatures of the isle.', [
       ['marsh-toad', 'Marsh Toad'],
+      ['cave-bat', 'Cave Bat'],
       ['mines', 'Mines'],
     ]),
-    page('warden-plate', 'Warden Plate', 'Heavy plate worn by the wardens.', [
+    page('warden-plate', 'Warden Plate', `Heavy plate worn by the wardens, forged from ${ore}.`, [
       ['warden-helm', 'Warden Helm'],
-      ['common-ore', 'Common Ore'],
+      ['warden-boots', 'Warden Boots'],
+      ['warden-gloves', 'Warden Gloves'],
     ]),
-    page('warden-helm', 'Warden Helm', 'The helm of the warden set.', [
-      ['warden-plate', 'Warden Plate'],
-    ]),
-    page('ash-mail', 'Ash Mail', 'Light mail from the ash fields.', [['common-ore', 'Common Ore']]),
-    page('longblade', 'Longblade', 'A long blade. Pairs well with the warden set.', [
-      ['warden-plate', 'Warden Plate'],
-      ['common-ore', 'Common Ore'],
-    ]),
-    page('marsh-toad', 'Marsh Toad', 'A toad of the marsh.', [['common-ore', 'Common Ore']]),
+    page(
+      'warden-helm',
+      'Warden Helm',
+      `The helm of the ${mention('warden-plate', 'warden set')}.`,
+      [],
+    ),
+    page('warden-boots', 'Warden Boots', 'The boots of the warden set.', []),
+    page('warden-gloves', 'Warden Gloves', 'The gloves of the warden set.', []),
+    page('ash-mail', 'Ash Mail', `Light mail from the ash fields, of ${ore}.`, []),
+    page('iron-cap', 'Iron Cap', 'A plain cap.', []),
+    page(
+      'longblade',
+      'Longblade',
+      `A long blade of ${ore}. Pairs well with ${mention('warden-plate', 'Warden Plate')}.`,
+      [],
+    ),
+    page('short-bow', 'Short Bow', 'A short bow.', []),
+    page('hand-axe', 'Hand Axe', 'A hand axe.', []),
+    page('marsh-toad', 'Marsh Toad', 'A toad of the marsh.', []),
+    page('cave-bat', 'Cave Bat', 'A bat of the caves.', []),
     page(
       'mines',
       'Mines',
@@ -78,9 +105,16 @@ export function pageTreeGuides(): Guide[] {
       ORE_FROM.map((id, i) => [id, `Mine ${i + 1}`]),
     ),
     ...ORE_FROM.map((id, i) =>
-      page(id, `Mine ${i + 1}`, `Mine number ${i + 1}.`, [['common-ore', 'Common Ore']]),
+      page(id, `Mine ${i + 1}`, `Mine number ${i + 1} yields ${ore}.`, []),
     ),
+    page('materials', 'Materials', 'What things are made of.', [
+      ['common-ore', 'Common Ore'],
+      ['rare-ore', 'Rare Ore'],
+      ['gem-dust', 'Gem Dust'],
+    ]),
     page('common-ore', 'Common Ore', 'Found everywhere.', []),
+    page('rare-ore', 'Rare Ore', 'Found deep down.', []),
+    page('gem-dust', 'Gem Dust', 'Ground gems.', []),
     page(
       'catalogue',
       'Catalogue',

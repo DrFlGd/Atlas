@@ -1,6 +1,7 @@
 import { isOwnId, type GuideEntry, type Section } from '@atlas/schema';
 import type { LoadedPack } from '../pack/loadedPack';
-import { guideLinks, placePagesByLinks } from './pageTree';
+import { guideFiling, isListPage } from './pageFiling';
+import { guideLinks, placePagesByLinks, type PageListing } from './pageTree';
 
 /**
  * A pack's guides as pages to browse: its contents (`sections.json`), the
@@ -14,6 +15,23 @@ import { guideLinks, placePagesByLinks } from './pageTree';
 export type ContentsEntry =
   | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
   | { kind: 'page'; guide: GuideEntry; /** Pages under it, however deep. */ pages: number };
+
+/**
+ * How the pages of the contents are filed (see {@link GuideContents.filing}):
+ * each page of the contents, the home page aside, is counted once.
+ */
+export interface ContentsFiling {
+  /** The pages of the contents. */
+  pages: number;
+  /** Under the list page that lists them (or at the top, listed by the home page). */
+  underListPage: number;
+  /** In a section of the contents placed by the pack itself (a wiki's menu), or at the top by it. */
+  inSection: number;
+  /** Left in a section of pages placed by links (a wiki's "Pages"): no list page lists them. */
+  inPagesSection: number;
+  /** Under a page the person put them under. */
+  byHand: number;
+}
 
 /** A step of the way from the top of the contents to an entry: a section, or a page. */
 export type ContentsStep =
@@ -73,9 +91,34 @@ export function linksThrough(
 }
 
 /**
+ * What a guide lists (see `pageFiling.ts`), through `aliases`, and whether
+ * it is a list page. With `onlyListPage`, the listing of a page that is no
+ * list page may be left out (it files nothing, see `pageTree.ts`).
+ */
+export function listingThrough(
+  guide: GuideEntry,
+  aliases: Readonly<Record<string, string>> | undefined,
+  onlyListPage = false,
+): PageListing {
+  const filing = guideFiling(guide, onlyListPage);
+  const listPage = isListPage(filing);
+  if (!aliases || Object.keys(aliases).length === 0) return { listing: filing.listing, listPage };
+  const listing: string[] = [];
+  const seen = new Set<string>([guide.id]);
+  for (const link of filing.listing) {
+    const id = aliasedId(aliases, link);
+    if (!seen.has(id)) {
+      seen.add(id);
+      listing.push(id);
+    }
+  }
+  return { listing, listPage };
+}
+
+/**
  * The contents as shown: sections that hold sections and pages, and pages
  * that hold pages. A page of a section marked `placeByLinks` is shown
- * under the page that leads to it (see `pageTree.ts`); every entry has one
+ * under the list page that lists it (see `pageTree.ts`); every entry has one
  * home, its first place in the contents, top to bottom, which the way to
  * it (`trail`) follows.
  */
@@ -185,6 +228,9 @@ export class GuideContents {
       isPage: (id) => this.guides.has(id),
       byLinks: this.byLinkSections,
       linksOf: (id) => linksThrough(this.guides.get(id)!, this.aliases),
+      // The home page files what it lists, list page or not.
+      filingOf: (id) =>
+        listingThrough(this.guides.get(id)!, this.aliases, id !== this.homeGuide?.id),
       leads: shown,
       movable: shown,
       root: this.homeGuide?.id ?? null,
@@ -357,6 +403,29 @@ export class GuideContents {
     return (this.linkedTo.get(guideId) ?? [])
       .filter((id) => id !== home && id !== homePage)
       .map((id) => this.guides.get(id)!);
+  }
+
+  /** How the pages of the contents are filed (see {@link ContentsFiling}). */
+  filing(): ContentsFiling {
+    const counts: ContentsFiling = {
+      pages: 0,
+      underListPage: 0,
+      inSection: 0,
+      inPagesSection: 0,
+      byHand: 0,
+    };
+    if (!this.hasContents) return counts;
+    this.shown();
+    for (const id of this.inOrder) {
+      if (!this.guides.has(id) || id === this.homeGuide?.id) continue;
+      counts.pages += 1;
+      const parent = this.home.get(id) ?? null;
+      if (this.byLinks.has(id)) counts.underListPage += 1;
+      else if (parent !== null && this.guides.has(parent)) counts.byHand += 1;
+      else if (parent !== null && this.byLinkSections.has(parent)) counts.inPagesSection += 1;
+      else counts.inSection += 1;
+    }
+    return counts;
   }
 
   /** Every page that can be browsed, in contents order (the home page first), each once. */
