@@ -6,6 +6,7 @@ export * from './pack/loadedPack';
 export * from './pack/viewSpec';
 export * from './pack/packIndex';
 export * from './pack/ownLocations';
+export * from './pack/ownNotes';
 export * from './pack/tileProbe';
 export * from './pack/tileStatus';
 export * from './icons/glyphs';

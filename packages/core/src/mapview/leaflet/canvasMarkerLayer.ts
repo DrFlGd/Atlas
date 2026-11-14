@@ -31,6 +31,8 @@ function mixHex(a: string, b: string, t: number): string {
 interface Palette {
   outline: string;
   muted: string;
+  /** The mark of a location with a note of one's own. */
+  note: string;
   clusterFill: string;
   clusterRing: string;
   clusterText: string;
@@ -40,6 +42,7 @@ interface Palette {
 const FALLBACK_PALETTE: Palette = {
   outline: 'rgba(8, 10, 14, 0.9)',
   muted: '#7d8494',
+  note: '#f4d35e',
   clusterFill: 'rgba(32, 40, 56, 0.92)',
   clusterRing: '#e6b450',
   clusterText: '#f2f4f8',
@@ -53,6 +56,7 @@ function readPalette(element: HTMLElement): Palette {
   return {
     outline: read('--atlas-marker-outline', FALLBACK_PALETTE.outline),
     muted: read('--atlas-marker-muted', FALLBACK_PALETTE.muted),
+    note: read('--atlas-marker-note', FALLBACK_PALETTE.note),
     clusterFill: read('--atlas-cluster-fill', FALLBACK_PALETTE.clusterFill),
     clusterRing: read('--atlas-cluster-ring', FALLBACK_PALETTE.clusterRing),
     clusterText: read('--atlas-cluster-text', FALLBACK_PALETTE.clusterText),
@@ -78,7 +82,10 @@ interface DrawnItem {
 }
 
 const spriteKey = (marker: MapMarker) =>
-  `${marker.color}|${marker.icon ?? ''}|${marker.muted ? 1 : 0}`;
+  `${marker.color}|${marker.icon ?? ''}|${marker.muted ? 1 : 0}|${marker.noted ? 1 : 0}`;
+
+/** Radius of the mark of a location with a note, at the badge's top right. */
+const NOTE_RADIUS = 3.5;
 
 /** Whether two marker lists hold the same ids at the same positions, in the same order. */
 function sameGeometry(a: readonly MapMarker[], b: readonly MapMarker[]): boolean {
@@ -318,7 +325,8 @@ export class CanvasMarkerLayer extends L.Layer {
     let sprite = this.sprites.get(key);
     if (sprite) return sprite;
     const lineWidth = 1.5;
-    const size = Math.ceil((MARKER_RADIUS + lineWidth) * 2 + 2);
+    // Room for the note mark, which stands a little out of the badge.
+    const size = Math.ceil((MARKER_RADIUS + lineWidth) * 2 + 2 + (marker.noted ? 4 : 0));
     sprite = document.createElement('canvas');
     sprite.width = Math.ceil(size * ratio);
     sprite.height = Math.ceil(size * ratio);
@@ -346,6 +354,24 @@ export class CanvasMarkerLayer extends L.Layer {
       if (glyph.holes) {
         ctx.fillStyle = fill;
         ctx.fill(new Path2D(glyph.holes), 'evenodd');
+      }
+      if (marker.noted) {
+        // A dot at the top right, outlined like the badge.
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(
+          center + MARKER_RADIUS * 0.72,
+          center - MARKER_RADIUS * 0.72,
+          NOTE_RADIUS,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fillStyle = this.palette.note;
+        ctx.fill();
+        ctx.lineWidth = 1.25;
+        ctx.strokeStyle = this.palette.outline;
+        ctx.stroke();
       }
     }
     this.sprites.set(key, sprite);
@@ -391,6 +417,7 @@ export class CanvasMarkerLayer extends L.Layer {
     if (!this.index) {
       canvas.dataset.drawnMarkers = '0';
       canvas.dataset.drawnClusters = '0';
+      canvas.dataset.drawnNoted = '0';
       return;
     }
 
@@ -417,6 +444,7 @@ export class CanvasMarkerLayer extends L.Layer {
     const clusters: DrawnItem[] = [];
     let selected: DrawnItem | null = null;
     let markerCount = 0;
+    let notedCount = 0;
     for (const hit of hits) {
       const x = hit.x * scale + offsetX;
       const y = hit.y * scale + offsetY;
@@ -425,6 +453,7 @@ export class CanvasMarkerLayer extends L.Layer {
         continue;
       }
       markerCount++;
+      if (hit.point.noted) notedCount++;
       const item = { x, y, r: MARKER_RADIUS, hit };
       this.drawn.push(item);
       if (hit.point.id === this.selectedId) selected = item;
@@ -488,6 +517,7 @@ export class CanvasMarkerLayer extends L.Layer {
     // Exposed for diagnostics and performance tests.
     canvas.dataset.drawnMarkers = String(markerCount);
     canvas.dataset.drawnClusters = String(clusters.length);
+    canvas.dataset.drawnNoted = String(notedCount);
     canvas.dataset.drawMs = (performance.now() - started).toFixed(2);
   }
 }

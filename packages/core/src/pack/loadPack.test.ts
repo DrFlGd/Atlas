@@ -241,6 +241,12 @@ describe('view helpers', () => {
     expect(
       layerMarkers(pack, 'demo:layer:surface', { filter: nothing, alwaysInclude: 'demo:loc:0001' }),
     ).toHaveLength(1);
+    // A location with a note of one's own carries a mark.
+    expect(
+      layerMarkers(pack, 'demo:layer:surface', { noted: new Set(['demo:loc:0002']) }).map(
+        (m) => m.noted,
+      ),
+    ).toEqual([undefined, true]);
   });
 });
 
