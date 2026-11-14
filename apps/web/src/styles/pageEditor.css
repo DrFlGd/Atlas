@@ -701,6 +701,21 @@
   font-weight: 600;
 }
 
+/* The home page, above the contents: no handle, as it is not moved. */
+.pe-tree-home {
+  margin-bottom: 4px;
+  padding-right: 4px;
+  font-weight: 600;
+}
+
+.pe-tree-home-mark {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  color: var(--atlas-muted);
+}
+
 .pe-tag {
   flex: none;
   padding: 1px 6px;

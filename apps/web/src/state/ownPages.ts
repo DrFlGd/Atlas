@@ -227,7 +227,12 @@ export function shownContentsOf(game: LoadedGame): ShownContents {
   const own = ownPagesOf(game.pack.manifest.gameId);
   const known = shownKnown.get(game.pack);
   if (known?.own === own) return known.shown;
-  const shown = shownContentsFor(game.pack.data, own, guideAliases([game.pack]) ?? undefined);
+  const shown = shownContentsFor(
+    game.pack.data,
+    own,
+    guideAliases([game.pack]) ?? undefined,
+    game.pack.homePage,
+  );
   shownKnown.set(game.pack, { own, shown });
   return shown;
 }
@@ -249,7 +254,8 @@ export function moveInContentsOf(
       moveShownEntry(
         own,
         layout,
-        shownContentsFor(data, own, guideAliases([game.pack]) ?? undefined).layout,
+        shownContentsFor(data, own, guideAliases([game.pack]) ?? undefined, game.pack.homePage)
+          .layout,
         id,
         to,
         before,

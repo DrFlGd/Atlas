@@ -27,6 +27,7 @@ export * from './progress/counters';
 export * from './progress/exchange';
 export * from './guides/contents';
 export * from './guides/guideText';
+export * from './guides/landing';
 export * from './guides/linking';
 export * from './guides/ownPages';
 export * from './guides/pageTree';

@@ -184,6 +184,16 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     z.string().trim().min(1).max(MAX_ID_SECTION_LENGTH),
   );
 
+  /**
+   * The pack's home page: the guide that is the site's own home page (a
+   * wiki's main page), from which its main areas branch off. Guides opens
+   * on it, and the top of the contents branches from it (see `pageTree.ts`
+   * in `@atlas/core`). Optional; an app that does not know it opens on the
+   * contents. Read leniently: a value that cannot be read is left out, and
+   * one that names no guide of the pack is not used.
+   */
+  const homePageSchema = idOf('guide');
+
   const manifestBase = {
     gameId: gameIdSchema,
     /** Display name of the pack. */
@@ -194,6 +204,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     attribution: z.array(attributionSchema),
     idMigrations: idMigrationsSchema,
     idSections: reading ? descriptive(idSectionsSchema) : idSectionsSchema.optional(),
+    homePage: reading ? descriptive(homePageSchema) : homePageSchema.optional(),
   };
 
   /** The program that wrote a pack: an app or a command-line tool, and its version. */
@@ -719,6 +730,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     attributionSchema,
     idMigrationsSchema,
     idSectionsSchema,
+    homePageSchema,
     writtenBySchema,
     packSourceSchema,
     layerImagesSchema,
@@ -754,6 +766,7 @@ export const {
   attributionSchema,
   idMigrationsSchema,
   idSectionsSchema,
+  homePageSchema,
   writtenBySchema,
   packSourceSchema,
   layerImagesSchema,

@@ -23,7 +23,10 @@ import { DEMO_GAME_ID } from './content';
  * has headings enough for "On this page", a link to a section of its own
  * and one to a section of another page; `wiki-ferry` is another name of it
  * that leads to its section "By boat", as a wiki forwards a name, and the
- * regions link to that name.
+ * regions link to that name. Its home page (`WIKI_HOME`, the manifest's
+ * `homePage`) is a wiki's main page: a welcome line, a picture that leads
+ * to a page, and groups of links to the main areas; it is in no section,
+ * as Guides shows it on its own.
  */
 
 const id = (kind: Parameters<typeof makeId>[1], local: string) => makeId(DEMO_GAME_ID, kind, local);
@@ -48,6 +51,9 @@ export const WIKI_PAGES = {
   maul: id('guide', 'wiki-stonebreaker-maul'),
   charm: id('guide', 'wiki-tidecaller-charm'),
 } as const;
+
+/** The wiki's home page, its main page: in no section of the contents. */
+export const WIKI_HOME = id('guide', 'wiki-main-page');
 
 /**
  * Another name of a page, as a wiki forwards a name to a part of a page:
@@ -97,6 +103,38 @@ const to = (key: keyof typeof WIKI_PAGES, text: string) => `[${text}](${WIKI_PAG
 /** A link to a section of a page, which its title names. */
 const toSection = (key: keyof typeof WIKI_PAGES, section: string, text: string) =>
   `[${text}](${WIKI_PAGES[key]} "#${section}")`;
+
+/** The wiki's home page: a welcome, a picture that leads to a page, and the main areas. */
+export function wikiHomePage(): GuideEntry {
+  return {
+    id: WIKI_HOME,
+    title: 'Main Page',
+    body: `
+Welcome to the **Example Wiki**, the made-up wiki of the Sundered Isle that anyone can edit.
+Pick an area below, or start with ${to('welcome', 'the welcome page')}.
+
+[![Waystones](${WIKI_PICTURE} "=320x200")](${WIKI_PAGES.waystones})
+
+## The isle
+
+- ${to('regions', 'Regions')}: from the landing outwards
+- ${to('waystones', 'Waystones')}: waking them and travelling between them
+- ${to('travel', 'Getting around')}: on foot, by boat and by waystone
+
+## Foes
+
+- ${to('wardens', 'Stone wardens')}
+- ${to('wolves', 'Wolves')}
+
+## Gear
+
+- ${to('blades', 'Blades')}: ${to('emberBlade', 'Ember blade')}, ${to('maul', 'Stonebreaker maul')}
+- ${to('charm', 'Tidecaller charm')}
+`.trim(),
+    locationIds: [],
+    source: source('Main_Page'),
+  };
+}
 
 /**
  * The wiki's pages, with their sources. Regions are named after the pack's
@@ -395,8 +433,10 @@ export function addWiki(data: PackData): PackData {
         ...data.manifest.idSections,
         [WIKI_OTHER_NAME.id]: WIKI_OTHER_NAME.section,
       },
+      // The page Guides opens on.
+      homePage: WIKI_HOME,
     },
-    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine)],
+    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine), wikiHomePage()],
     sections: [...(data.sections ?? []), ...wikiSections()],
     pictures: [...(data.pictures ?? []), ...wikiPictures()],
   };

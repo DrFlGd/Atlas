@@ -93,6 +93,7 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
     ...(previous.idSections && Object.keys(previous.idSections).length > 0
       ? { idSections: previous.idSections }
       : {}),
+    ...(previous.homePage ? { homePage: previous.homePage } : {}),
     created,
     updated: info.updated,
     writtenBy: info.writtenBy,

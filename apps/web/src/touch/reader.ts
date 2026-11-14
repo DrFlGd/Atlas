@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 
 /**
- * The Guides section's reader: where it is (the contents, a section, a
- * page or a search), and the places it was before and after, so Back and
- * Forward return to them, each where it was scrolled to.
+ * The Guides section's reader: where it is (the landing page, the
+ * contents, a section, a page or a search), and the places it was before
+ * and after, so Back and Forward return to them, each where it was
+ * scrolled to. A game's guides open on the landing page: the wiki's own
+ * home page, or one made from the top of the contents.
  *
  * A page can be opened at a section of it (a heading's name, see
  * `sections.ts` in `@atlas/core`): the visit is scrolled to that heading
@@ -13,6 +15,8 @@ import { create } from 'zustand';
  */
 
 export type ReaderPlace =
+  /** The landing page: the home page, or one made from the top of the contents. */
+  | { kind: 'home' }
   /** The contents: its top (`sectionId` null), or one section. */
   | { kind: 'contents'; sectionId: string | null }
   /** A page, at its top or at one of its sections. */
@@ -38,7 +42,7 @@ export interface ReaderState {
 /** Places kept for Back, at most. */
 const MAX_VISITS = 100;
 
-const TOP: Visit = { place: { kind: 'contents', sectionId: null }, scroll: 0 };
+const TOP: Visit = { place: { kind: 'home' }, scroll: 0 };
 
 export const useReader = create<ReaderState>()(() => ({ visits: [TOP], at: 0 }));
 
@@ -127,7 +131,7 @@ export function readerForward(): boolean {
   return true;
 }
 
-/** A new game: the reader starts at the top of its contents. */
+/** A new game: the reader starts at its landing page. */
 export function resetReader(): void {
   set({ visits: [TOP], at: 0 });
 }

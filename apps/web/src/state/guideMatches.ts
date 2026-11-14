@@ -37,10 +37,17 @@ export function canLinkPages(game: LoadedGame | null): boolean {
   return linkablePagesOf(game).length > 0;
 }
 
-/** The pages that can be linked: pages of the Guides section with a source. */
+/**
+ * The pages that can be linked: pages of the Guides section with a source,
+ * but for a wiki's home page, which is about no one location.
+ */
 export function linkablePagesOf(game: LoadedGame): GuideEntry[] {
   const { contents } = guidesOf(game);
-  return contents.browsable ? contents.pages().filter((guide) => guide.source !== undefined) : [];
+  return contents.browsable
+    ? contents
+        .pages()
+        .filter((guide) => guide.source !== undefined && !contents.isHomePage(guide.id))
+    : [];
 }
 
 const matchesByContents = new WeakMap<object, PageMatch[]>();

@@ -1,5 +1,5 @@
 import { devices, type Locator, type Page } from '@playwright/test';
-import { collectErrors, storedSetting } from './helpers';
+import { collectErrors, openGuidesSection, storedSetting } from './helpers';
 import { expect, test } from './layout';
 
 /**
@@ -27,7 +27,7 @@ async function openGuides(page: Page): Promise<void> {
 
 async function openPage(page: Page, sections: string | string[], name: string): Promise<void> {
   for (const section of Array.isArray(sections) ? sections : [sections]) {
-    await body(page).getByTestId('guides-section').filter({ hasText: section }).first().click();
+    await openGuidesSection(page, section);
   }
   await body(page).getByTestId('guides-page-link').filter({ hasText: name }).first().click();
   await expect(shownPage(page).locator('h1')).toHaveText(name);
@@ -211,7 +211,7 @@ test.describe('on a phone', () => {
     const errors = collectErrors(page);
     await page.goto('./');
     await page.getByTestId('section-guides').tap();
-    await body(page).getByTestId('guides-section').filter({ hasText: 'Basics' }).first().tap();
+    await openGuidesSection(page, 'Basics');
     await body(page).getByTestId('guides-page-link').filter({ hasText: 'Getting around' }).tap();
     await expect(shownPage(page).locator('h1')).toHaveText('Getting around');
     const toggle = page.getByTestId('on-this-page-toggle');

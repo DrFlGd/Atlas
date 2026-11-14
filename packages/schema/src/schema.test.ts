@@ -321,6 +321,25 @@ describe('reading tolerantly, writing strictly', () => {
     }
   });
 
+  it('writes and reads the home page', () => {
+    const pack = makeFixturePack();
+    const manifest = { ...pack.manifest, homePage: 'demo:guide:herbs' };
+    expect(manifestSchema.parse(manifest).homePage).toBe('demo:guide:herbs');
+    expect(packReadSchemas.manifestSchema.parse(manifest).homePage).toBe('demo:guide:herbs');
+    // Only a page.
+    for (const homePage of ['demo:loc:0001', '', 42]) {
+      expect(manifestSchema.safeParse({ ...manifest, homePage }).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      expect(packReadSchemas.manifestSchema.parse({ ...manifest, homePage }).homePage).toBe(
+        undefined,
+      );
+    }
+    // A pack's checks name one that is no guide of the pack.
+    const lost = { ...pack, manifest: { ...pack.manifest, homePage: 'demo:guide:nowhere' } };
+    expect(checkPackIntegrity(lost).map((issue) => issue.path)).toEqual(['manifest.homePage']);
+    expect(checkPackIntegrity({ ...pack, manifest })).toEqual([]);
+  });
+
   it('still refuses what is wrong rather than new when reading', () => {
     const pack = makeFixturePack();
     const [location] = pack.locations;

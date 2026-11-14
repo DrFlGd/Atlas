@@ -198,6 +198,13 @@ export interface ImportContext {
    * true.
    */
   keepsIdSections?: boolean;
+  /**
+   * Optional: true when the app keeps the manifest's `homePage`, the guide
+   * that is the site's own home page (a wiki's main page). An app that does
+   * not say so refuses a pack that has it, as any field it does not know,
+   * so an importer writes it only when this is true.
+   */
+  keepsHomePage?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +907,7 @@ export interface ListedPage {
    * its address ({@link AtlasImporter.matches}); a map page must be one it
    * recognises. Other pages are listed as not supported yet, so an importer
    * that learns to read them later only has to accept their addresses.
+   * {@link HOME_PAGE_KIND} is the site's own home page.
    */
   kind: string;
   /** The page's name as the site shows it. */
@@ -1554,6 +1562,15 @@ const failureSchema = z.object({
   ok: z.literal(false),
   message: z.string().trim().min(1).max(2000),
 });
+
+/**
+ * The kind of a listed page that is the site's own home page (a wiki's
+ * main page, see the pack manifest's `homePage`): an app that knows it
+ * ticks it at first, and keeps the page the person browses to as that page
+ * too when the listing was read from it. An app that does not know the
+ * kind lists it as any other page.
+ */
+export const HOME_PAGE_KIND = 'home-page';
 
 const listedPageSchema = z.strictObject({
   url: z.string().min(1).max(MAX_ADDRESS_CHARS),

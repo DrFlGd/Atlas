@@ -1,5 +1,5 @@
 import { devices, type Locator, type Page, type Route } from '@playwright/test';
-import { collectErrors } from './helpers';
+import { collectErrors, openGuidesSection } from './helpers';
 import { expect, test } from './layout';
 
 /**
@@ -22,13 +22,22 @@ async function openGuides(page: Page): Promise<void> {
   await expect(guides(page)).toBeVisible();
 }
 
-/** Opens an entry of the contents shown (a section or a page) by its name. */
+/**
+ * Opens an entry of the contents shown (a section or a page) by its name;
+ * a section from the contents beside the page or the "Contents" button
+ * when the page shown lists none (the landing page).
+ */
 async function openEntry(page: Page, name: string): Promise<void> {
-  await body(page)
+  const entry = body(page)
     .locator('[data-testid="guides-section"], [data-testid="guides-page-link"]')
     .filter({ hasText: name })
-    .first()
-    .click();
+    .first();
+  const shown = await entry
+    .waitFor({ timeout: 1500 })
+    .then(() => true)
+    .catch(() => false);
+  if (shown) await entry.click();
+  else await openGuidesSection(page, name);
 }
 
 test.describe('on a desktop', () => {
@@ -52,18 +61,20 @@ test.describe('on a desktop', () => {
     const errors = collectErrors(page);
     await openGuides(page);
     await expect(page.locator('.touch')).toHaveAttribute('data-section', 'guides');
-    // The contents: its sections, at the top and beside the page.
-    const contents = page.getByTestId('guides-contents');
-    await expect(contents.getByTestId('guides-section')).toHaveText([
-      /Basics\s*2 pages/,
-      /The isle\s*4 pages/,
-      /Gear\s*4 pages/,
+    // The guides open on the wiki's home page, named after the game; its
+    // sections are beside it.
+    await expect(page.getByTestId('guides-home')).toHaveAttribute('data-landing', 'page');
+    await expect(shownPage(page).locator('h1')).toHaveText('Atlas demo world');
+    await expect(page.getByTestId('guides-crumb-game')).toHaveText('Atlas demo world');
+    await expect(page.locator('.guides-side .guides-tree-section')).toHaveText([
+      /Basics/,
+      /The isle/,
+      /Gear/,
     ]);
-    await expect(page.locator('.guides-side')).toContainText('The isle');
 
     // A section, then a page with a table, a picture and its credit.
     await openEntry(page, 'The isle');
-    await expect(page.locator('.guides-crumbs')).toHaveText(/Contents\s*›\s*The isle/);
+    await expect(page.locator('.guides-crumbs')).toHaveText(/Atlas demo world\s*›\s*The isle/);
     await openEntry(page, 'Waystones');
     await expect(shownPage(page).locator('h1')).toHaveText('Waystones');
     const picture = shownPage(page).locator('.guide-picture img');
@@ -107,9 +118,9 @@ test.describe('on a desktop', () => {
     await page.getByTestId('guides-forward').click();
     await expect(shownPage(page).locator('h1')).toHaveText('Getting around');
 
-    // Back through the pages read, to the top of the contents.
+    // Back through the pages read, to the landing page.
     for (let i = 0; i < 3; i++) await page.getByTestId('guides-back').click();
-    await expect(page.getByTestId('guides-contents')).toBeVisible();
+    await expect(page.getByTestId('guides-home')).toBeVisible();
     await expect(page.getByTestId('guides-back')).toBeDisabled();
     await expect(page.getByTestId('guides-forward')).toBeEnabled();
     expect(errors).toEqual([]);
@@ -329,7 +340,7 @@ test.describe('a game with no map', () => {
     await expect(page.getByTestId('section-map')).toHaveCount(0);
     await expect(page.getByTestId('section-lists')).toHaveCount(0);
     await expect(page.locator('.leaflet-container')).toHaveCount(0);
-    await expect(page.getByTestId('guides-contents').locator('h1')).toHaveText('Example Wiki');
+    await expect(page.getByTestId('guides-home').locator('h1').first()).toHaveText('Example Wiki');
 
     // `/` searches its pages.
     await page.keyboard.press('/');

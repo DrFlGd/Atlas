@@ -251,3 +251,30 @@ export async function libraryMore(page: Page, action: string) {
   await page.getByTestId('library-more').click();
   await page.getByTestId('library-more-menu').getByTestId(action).click();
 }
+
+/**
+ * Opens a section of the guides shown, from wherever the reader is (the
+ * guides open on their landing page, which lists no sections): from the
+ * contents in the page when they show it, else from the contents beside
+ * the page (wide), else from the list the "Contents" button opens.
+ */
+export async function openGuidesSection(page: Page, name: string): Promise<void> {
+  const body = page.getByTestId('guides-body');
+  const inBody = body.getByTestId('guides-section').filter({ hasText: name }).first();
+  const side = page.locator('.guides-side .guides-tree-section').filter({ hasText: name }).first();
+  const button = page.getByTestId('guides-contents-button');
+  /** The way to the section the reader shows now, once it shows one. */
+  const wayNow = async (): Promise<'body' | 'side' | 'button' | null> => {
+    if (await inBody.isVisible()) return 'body';
+    if (await side.isVisible()) return 'side';
+    return (await button.isVisible()) ? 'button' : null;
+  };
+  await expect.poll(wayNow).not.toBeNull();
+  const way = await wayNow();
+  if (way === 'body') await inBody.click();
+  else if (way === 'side') await side.click();
+  else {
+    await button.click();
+    await body.getByTestId('guides-section').filter({ hasText: name }).first().click();
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CatalogueGame, ListedPage } from '@atlas/importer-api';
+import { HOME_PAGE_KIND, type CatalogueGame, type ListedPage } from '@atlas/importer-api';
 import {
   choiceGame,
   chosenPages,
@@ -100,6 +100,33 @@ describe('choiceGame', () => {
         unlisted: false,
       },
     ]);
+  });
+
+  it('ticks a site’s home page even when it ticks nothing else, until it is added', () => {
+    const home: ListedPage = {
+      url: `${SITE}/test-valley/checklists/home`,
+      kind: HOME_PAGE_KIND,
+      title: 'Home',
+      group: 'Home page',
+    };
+    const pages = [home, map('test-valley', 'the-valley')];
+    const options = { key: 'test-valley', title: 'Test valley', importer, packId: null };
+    const fresh = choiceGame({ ...options, listed: pages, recorded: [], tick: false });
+    // Maps first, as always; the home page ticked though nothing else is.
+    expect(fresh.pages.map((page) => [page.title, page.checked])).toEqual([
+      ['The valley', false],
+      ['Home', true],
+    ]);
+    const added = choiceGame({
+      ...options,
+      listed: pages,
+      recorded: [{ url: home.url, mapId: null }],
+      tick: false,
+    });
+    expect(added.pages.find((page) => page.title === 'Home')).toMatchObject({
+      added: true,
+      checked: false,
+    });
   });
 });
 

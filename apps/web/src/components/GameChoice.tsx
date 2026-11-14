@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react';
-import { MAP_KIND } from '@atlas/importer-api';
+import { HOME_PAGE_KIND, MAP_KIND } from '@atlas/importer-api';
 import { numberFormat } from '../state/derived';
 import {
   chosenPages,
@@ -337,7 +337,8 @@ function pageNote(page: ChoicePage): { text: string; tone: 'new' | 'added' | 'of
 }
 
 /** What a kind of page is called in the list. */
-const kindLabel = (kind: string) => (kind === MAP_KIND ? 'Map' : kind);
+const kindLabel = (kind: string) =>
+  kind === MAP_KIND ? 'Map' : kind === HOME_PAGE_KIND ? 'Home page' : kind;
 
 /** The pages of one or more games, with tick boxes. */
 export function ChoosePages({ choice }: { choice: Choice }) {

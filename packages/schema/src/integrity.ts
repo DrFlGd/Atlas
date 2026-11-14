@@ -200,6 +200,11 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
 
   checkContents(pack, guides, report);
 
+  const home = pack.manifest.homePage;
+  if (home !== undefined) {
+    expect(guides.has(home), 'manifest.homePage', `unknown guide ${home}`);
+  }
+
   for (const [from, to] of Object.entries(pack.manifest.idMigrations)) {
     const path = `manifest.idMigrations["${from}"]`;
     expect(!allIds.has(from), path, `migrated id ${from} is still in use`);

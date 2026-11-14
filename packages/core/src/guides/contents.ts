@@ -36,6 +36,12 @@ export interface GuidePages {
    * `idMigrations`): a link to another name of a page is a link to the page.
    */
   aliases?: Readonly<Record<string, string>>;
+  /**
+   * The home page (a pack's `homePage`, a wiki's main page): shown on its
+   * own, not in the contents, and the top of the contents branches from it
+   * (see `pageTree.ts`). Not used when the guides have no such page.
+   */
+  homePage?: string | null;
 }
 
 /** The id a guide id stands for now, through `aliases` (a few steps at most). */
@@ -101,6 +107,8 @@ export class GuideContents {
   /** By page id, the pages of the contents that link to it, in contents order; when first asked. */
   private linkedTo: Map<string, string[]> | null = null;
   private readonly aliases: Readonly<Record<string, string>> | undefined;
+  /** The home page, when the guides have it and there is a contents to branch from it. */
+  private readonly homeGuide: GuideEntry | null;
 
   constructor(pack: GuidePages) {
     const sections = pack.data.sections ?? [];
@@ -144,6 +152,23 @@ export class GuideContents {
     this.baseLists = lists;
     this.byLinkSections = new Set(sections.filter((s) => s.placeByLinks === true).map((s) => s.id));
     this.loose = this.browsable && !this.hasContents ? guides : [];
+    const home = pack.homePage ? this.guides.get(pack.homePage) : undefined;
+    this.homeGuide = home && this.browsable ? home : null;
+    if (this.homeGuide && this.hasContents) this.listed.add(this.homeGuide.id);
+  }
+
+  /**
+   * The home page, shown on its own as the page the guides open on; null
+   * when the guides have none (a landing page is then made from the top of
+   * the contents, see `landing.ts`).
+   */
+  homePage(): GuideEntry | null {
+    return this.homeGuide;
+  }
+
+  /** Whether a guide is the home page. */
+  isHomePage(guideId: string): boolean {
+    return this.homeGuide !== null && aliasedId(this.aliases, guideId) === this.homeGuide.id;
   }
 
   /**
@@ -162,6 +187,7 @@ export class GuideContents {
       linksOf: (id) => linksThrough(this.guides.get(id)!, this.aliases),
       leads: shown,
       movable: shown,
+      root: this.homeGuide?.id ?? null,
     });
     this.tree = tree;
     this.byLinks = tree.placed;
@@ -204,14 +230,37 @@ export class GuideContents {
   /** What the top of the contents lists: its sections (or, with no contents, every page). */
   top(): ContentsEntry[] {
     if (!this.hasContents) {
-      return this.loose.map((guide) => ({ kind: 'page', guide, pages: 0 }));
+      return this.looseShown().map((guide) => ({ kind: 'page', guide, pages: 0 }));
     }
-    return this.shown().top.flatMap((id) => this.entry(id));
+    return this.shown()
+      .top.filter((id) => !this.isEmptied(id))
+      .flatMap((id) => this.entry(id));
   }
 
   /** The ids at the top of the contents, in order: sections, and pages (see {@link GuidePages}). */
   topEntryIds(): readonly string[] {
-    return this.hasContents ? this.shown().top : this.loose.map((guide) => guide.id);
+    return this.hasContents
+      ? this.shown().top.filter((id) => !this.isEmptied(id))
+      : this.looseShown().map((guide) => guide.id);
+  }
+
+  /**
+   * A section of pages placed by their links that is left with none, each
+   * shown under a page that leads to it (as every page the home page leads
+   * to is): not shown, as it holds nothing to read.
+   */
+  private isEmptied(id: string): boolean {
+    return (
+      this.byLinkSections.has(id) &&
+      (this.shown().lists.get(id) ?? []).every(
+        (item) => !this.sections.has(item) && !this.guides.has(item),
+      )
+    );
+  }
+
+  /** With no contents, the guides listed at the top: every one but the home page. */
+  private looseShown(): GuideEntry[] {
+    return this.homeGuide ? this.loose.filter((guide) => guide !== this.homeGuide) : this.loose;
   }
 
   /** Whether a guide is one of the pages browsed here. */
@@ -229,7 +278,9 @@ export class GuideContents {
 
   /** What a section or a page holds, in order; items the pack lacks are left out. */
   items(id: string): ContentsEntry[] {
-    return (this.shown().lists.get(id) ?? []).flatMap((item) => this.entry(item));
+    return (this.shown().lists.get(id) ?? [])
+      .filter((item) => !this.isEmptied(item))
+      .flatMap((item) => this.entry(item));
   }
 
   /** How many entries a section or a page holds (not counting deeper ones). */
@@ -285,7 +336,8 @@ export class GuideContents {
 
   /**
    * The pages of the contents that link to a page, in contents order, top
-   * to bottom, but the page it is under: "also linked from".
+   * to bottom, but the page it is under and the home page (which the way
+   * above every page leads to): "also linked from".
    */
   linkedFrom(guideId: string): GuideEntry[] {
     if (!this.linkedTo) {
@@ -301,16 +353,19 @@ export class GuideContents {
       this.linkedTo = linkedTo;
     }
     const home = this.home.get(guideId);
+    const homePage = this.homeGuide?.id;
     return (this.linkedTo.get(guideId) ?? [])
-      .filter((id) => id !== home)
+      .filter((id) => id !== home && id !== homePage)
       .map((id) => this.guides.get(id)!);
   }
 
-  /** Every page that can be browsed, in contents order, each once. */
+  /** Every page that can be browsed, in contents order (the home page first), each once. */
   pages(): GuideEntry[] {
-    if (!this.hasContents) return [...this.loose];
+    if (!this.hasContents) {
+      return this.homeGuide ? [this.homeGuide, ...this.looseShown()] : [...this.loose];
+    }
     this.shown();
-    const out: GuideEntry[] = [];
+    const out: GuideEntry[] = this.homeGuide ? [this.homeGuide] : [];
     for (const id of this.inOrder) {
       const guide = this.guides.get(id);
       if (guide) out.push(guide);
@@ -336,6 +391,8 @@ export interface GuidesOfGame {
   /** The other game's title, the heading its pages are under. */
   title: string;
   data: Pick<LoadedPack['data'], 'guides' | 'sections'>;
+  /** Its home page (its pack's `homePage`), listed first under its title. */
+  homePage?: string | null;
 }
 
 /** The local id of the section that holds another game's pages. */
@@ -345,8 +402,8 @@ export const OTHER_GAME_SECTION = 'atlas.from-game';
  * A game's guides together with those of other games (a wiki read as a
  * game of its own), as {@link GuideContents} takes them: each other game's
  * contents under a section of its own, named after that game, after the
- * game's own. Ids keep their own game, so nothing is renamed; no pack is
- * changed.
+ * game's own, its home page first. Ids keep their own game, so nothing is
+ * renamed; no pack is changed.
  */
 export function guidesTogether(pack: GuidePages, others: readonly GuidesOfGame[]): GuidePages {
   if (others.length === 0) return pack;
@@ -356,15 +413,26 @@ export function guidesTogether(pack: GuidePages, others: readonly GuidesOfGame[]
   for (const other of others) {
     const own = other.data.sections ?? [];
     const listed = new Set(own.flatMap((section) => section.items));
+    const home =
+      other.homePage && other.data.guides.some((guide) => guide.id === other.homePage)
+        ? other.homePage
+        : null;
     const top =
       own.length > 0
         ? own.filter((section) => !listed.has(section.id)).map((section) => section.id)
-        : sortGuides(other.data.guides).map((guide) => guide.id);
+        : sortGuides(other.data.guides)
+            .map((guide) => guide.id)
+            .filter((id) => id !== home);
+    if (home !== null) top.unshift(home);
     if (top.length === 0) continue;
     guides.push(...other.data.guides);
     const id = `${other.gameId}:section:${OTHER_GAME_SECTION}`;
     sections.push({ id, title: other.title, items: top }, ...own);
     pageTop?.push(id);
   }
-  return { data: { ...pack.data, guides, sections }, ...(pageTop ? { top: pageTop } : {}) };
+  return {
+    data: { ...pack.data, guides, sections },
+    ...(pageTop ? { top: pageTop } : {}),
+    ...(pack.homePage ? { homePage: pack.homePage } : {}),
+  };
 }

@@ -2,6 +2,7 @@ import { loadPack, type PackEntry } from '@atlas/core';
 import {
   DEFAULT_WAIT_SECONDS,
   FETCH_PAUSE_MS,
+  HOME_PAGE_KIND,
   MAP_KIND,
   MAX_PAGE_DATA_CHARS,
   asImporter,
@@ -1293,6 +1294,8 @@ export function importContext(
     isBundled: (packId) => bundled.has(packId),
     // The sections other names of pages lead to are kept with the pack.
     keepsIdSections: true,
+    // So is the guide that is the site's own home page.
+    keepsHomePage: true,
     // Built again from the pages kept, as the person asked: nothing is fetched.
     ...(rebuilt ? { rebuild: true } : {}),
     ...(listed ? { listed } : {}),
@@ -1685,17 +1688,33 @@ async function keepBrowsed(
   url: string,
   data: string,
 ): Promise<{ title?: string; note?: string; stop?: boolean; packId?: string }> {
-  // The wiki's contents, when the person opened them: kept as its contents, not as a page.
+  // The wiki's contents, when the person opened them: kept as its contents, not as a page;
+  // but when they name the wiki's home page, which the start address shows, as that page too.
   const games = importer.games;
   if (games && safely(() => games.matches(url))) {
     const result = await convertListing({ url, importer, reading: 'game' }, data);
     if (result.ok && 'pages' in result) {
       await noteWikiContents(importer.id, url, result.game, result.pages);
-      return { note: `The wiki’s contents were read: ${result.pages.length} pages listed.` };
+      const note = `The wiki’s contents were read: ${result.pages.length} pages listed.`;
+      const home = result.pages.find(
+        (page) => page.kind === HOME_PAGE_KIND && canAdd(importer, page.url),
+      );
+      if (!home) return { note };
+      const kept = await keepBrowsedPage(importer, home.url, data);
+      return { ...kept, note: kept.note ? `${note} ${kept.note}` : note };
     }
     if (!canAdd(importer, url)) return {};
   }
   if (!canAdd(importer, url)) return {};
+  return keepBrowsedPage(importer, url, data);
+}
+
+/** Keeps one page the person opened while browsing, as the page at `url`. */
+async function keepBrowsedPage(
+  importer: AtlasImporter,
+  url: string,
+  data: string,
+): Promise<{ title?: string; note?: string; stop?: boolean; packId?: string }> {
   const outcome = await convertAndSave(
     importer,
     { url, pageData: data, importedAt: new Date().toISOString(), way: 'browse' },

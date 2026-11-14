@@ -338,8 +338,8 @@ test.describe('the pages of another game', () => {
     await page.getByTestId('guides-from-choice').filter({ hasText: 'Isle Wiki' }).click();
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
     // Its contents, under its own heading, and its pages read here.
-    const sections = page.getByTestId('guides-contents').getByTestId('guides-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki\s*10 pages/]);
+    const sections = page.locator('.guides-side .guides-tree-section');
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki/]);
     await sections.filter({ hasText: 'Isle Wiki' }).click();
     await page.getByTestId('guides-section').filter({ hasText: 'The isle' }).click();
     await page.getByTestId('guides-section').filter({ hasText: 'Foes' }).click();
@@ -354,7 +354,7 @@ test.describe('the pages of another game', () => {
     );
 
     // Linked to the demo's map: Wolf dens is a sure match now.
-    await page.locator('.guides-crumbs').getByRole('button', { name: 'Contents' }).click();
+    await page.getByTestId('guides-crumb-game').click();
     await page.getByTestId('open-guide-links').click();
     const wolfDens = row(page, 'Wolf dens');
     await expect(wolfDens).toHaveAttribute('data-guide', 'isle-wiki:guide:wiki-wolves');
