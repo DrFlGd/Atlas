@@ -20,8 +20,8 @@ describe('the Guides reader', () => {
     resetReader();
   });
 
-  it('starts at the top of the contents, with nowhere to go back to', () => {
-    expect(currentPlace()).toEqual({ kind: 'contents', sectionId: null });
+  it('starts at the landing page, with nowhere to go back to', () => {
+    expect(currentPlace()).toEqual({ kind: 'home' });
     expect(canGoBack(useReader.getState())).toBe(false);
     expect(readerBack()).toBe(false);
   });
@@ -48,7 +48,7 @@ describe('the Guides reader', () => {
     expect(canGoForward(useReader.getState())).toBe(false);
     openPlace(page('c'));
     expect(useReader.getState().visits.map((v) => v.place)).toEqual([
-      { kind: 'contents', sectionId: null },
+      { kind: 'home' },
       page('a'),
       page('c'),
     ]);
@@ -60,7 +60,22 @@ describe('the Guides reader', () => {
     openPlace({ kind: 'search', query: 'bell' });
     expect(useReader.getState().visits).toHaveLength(2);
     readerBack();
-    expect(currentPlace()).toEqual({ kind: 'contents', sectionId: null });
+    expect(currentPlace()).toEqual({ kind: 'home' });
+  });
+
+  it('opens the contents from the landing page, and Back returns to it; the landing page shown is not opened again', () => {
+    openPlace({ kind: 'home' });
+    expect(useReader.getState().visits).toHaveLength(1);
+    openPlace({ kind: 'contents', sectionId: null });
+    openPlace({ kind: 'home' });
+    expect(useReader.getState().visits.map((v) => v.place)).toEqual([
+      { kind: 'home' },
+      { kind: 'contents', sectionId: null },
+      { kind: 'home' },
+    ]);
+    readerBack();
+    readerBack();
+    expect(currentPlace()).toEqual({ kind: 'home' });
   });
 
   it('keeps at most a hundred visits', () => {

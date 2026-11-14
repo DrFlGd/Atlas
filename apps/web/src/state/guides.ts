@@ -65,10 +65,14 @@ export function guidesOf(game: LoadedGame): GameGuides {
       gameId: other.gameId,
       title: other.title,
       data: other.pack.data,
+      homePage: other.pack.homePage,
     })),
   );
   const aliases = guideAliases([game.pack, ...others.map((other) => other.pack)]);
-  const contents = new GuideContents(aliases ? { ...together, aliases } : together);
+  // The home page, unless the person hid it: the landing page is then made from the contents.
+  const home = game.pack.homePage;
+  const homePage = home && !own.pages.some((page) => page.id === home && page.hidden) ? home : null;
+  const contents = new GuideContents({ ...together, ...(aliases ? { aliases } : {}), homePage });
   // Each picture from its own pack's folder.
   const pictures = new Map([
     ...(game.pack.data.pictures ?? []).map((picture) => pictureOfPack(game.pack, picture)),

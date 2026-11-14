@@ -104,6 +104,21 @@ describe('a home page', () => {
     ]);
   });
 
+  it('leaves out the section of pages placed by links once it leads to all of them', () => {
+    const data = wiki(g('main-page'));
+    const all = {
+      ...data.data,
+      guides: data.data.guides.filter((guide) => guide.id !== g('stray')),
+    };
+    const contents = new GuideContents({ ...data, data: all });
+    expect(
+      tree(contents).map((entry) =>
+        typeof entry === 'string' ? entry : Object.keys(entry as object)[0],
+      ),
+    ).toEqual(['Menu', 'Classes', 'Items', 'Quests']);
+    expect(contents.topEntryIds()).not.toContain(s('pages'));
+  });
+
   it('is shown on its own even where a section lists it', () => {
     const contents = new GuideContents(wiki(g('main-page'), true));
     expect(tree(contents)[0]).toEqual({ Menu: [{ Help: ['Editing'] }] });
@@ -187,6 +202,7 @@ describe('the landing page made from the contents', () => {
     // Three tiles at most, the rest counted.
     expect(pages!.tiles).toHaveLength(3);
     expect(pages!.more).toBe(4);
+    expect([menu!.pages, pages!.pages]).toEqual([2, 7]);
     expect(pages!.tiles.map((t) => t.picture)).toEqual([null, pic('knight'), null]);
   });
 

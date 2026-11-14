@@ -232,12 +232,30 @@ export class GuideContents {
     if (!this.hasContents) {
       return this.looseShown().map((guide) => ({ kind: 'page', guide, pages: 0 }));
     }
-    return this.shown().top.flatMap((id) => this.entry(id));
+    return this.shown()
+      .top.filter((id) => !this.isEmptied(id))
+      .flatMap((id) => this.entry(id));
   }
 
   /** The ids at the top of the contents, in order: sections, and pages (see {@link GuidePages}). */
   topEntryIds(): readonly string[] {
-    return this.hasContents ? this.shown().top : this.looseShown().map((guide) => guide.id);
+    return this.hasContents
+      ? this.shown().top.filter((id) => !this.isEmptied(id))
+      : this.looseShown().map((guide) => guide.id);
+  }
+
+  /**
+   * A section of pages placed by their links that is left with none, each
+   * shown under a page that leads to it (as every page the home page leads
+   * to is): not shown, as it holds nothing to read.
+   */
+  private isEmptied(id: string): boolean {
+    return (
+      this.byLinkSections.has(id) &&
+      (this.shown().lists.get(id) ?? []).every(
+        (item) => !this.sections.has(item) && !this.guides.has(item),
+      )
+    );
   }
 
   /** With no contents, the guides listed at the top: every one but the home page. */
@@ -260,7 +278,9 @@ export class GuideContents {
 
   /** What a section or a page holds, in order; items the pack lacks are left out. */
   items(id: string): ContentsEntry[] {
-    return (this.shown().lists.get(id) ?? []).flatMap((item) => this.entry(item));
+    return (this.shown().lists.get(id) ?? [])
+      .filter((item) => !this.isEmptied(item))
+      .flatMap((item) => this.entry(item));
   }
 
   /** How many entries a section or a page holds (not counting deeper ones). */

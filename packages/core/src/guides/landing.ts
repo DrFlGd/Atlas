@@ -27,6 +27,8 @@ export interface LandingGroup {
   tiles: LandingTile[];
   /** How many entries the group holds that are not shown as tiles. */
   more: number;
+  /** How many pages it holds, however deep. */
+  pages: number;
 }
 
 /** How many tiles a group shows at most. */
@@ -93,6 +95,7 @@ export function madeLanding(
       section: null,
       tiles: pages.slice(0, shown).map(tile),
       more: Math.max(0, pages.length - shown),
+      pages: pages.reduce((sum, entry) => sum + 1 + entry.pages, 0),
     });
     pages = [];
   };
@@ -107,6 +110,7 @@ export function madeLanding(
       section: entry.section,
       tiles: items.slice(0, tilesPerGroup).map(tile),
       more: Math.max(0, items.length - tilesPerGroup),
+      pages: entry.pages,
     });
   }
   pagesDone();

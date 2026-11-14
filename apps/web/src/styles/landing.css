@@ -1,0 +1,171 @@
+/*
+ * The landing page of Guides (src/touch/GuidesScreen.tsx): the game's name
+ * at the top of the contents beside the page, and the landing page made
+ * from the top of the contents, its sections as groups of tiles. The
+ * wiki's own home page is shown as any page is (guides.css).
+ */
+
+/* The game's name at the top of the contents beside the page. */
+.guides-tree-home {
+  margin-bottom: 4px;
+  color: var(--atlas-text);
+  font-weight: 600;
+}
+
+.guides-tree-home > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.guides-tree-home[aria-current='page'] > .ui-icon {
+  color: inherit;
+}
+
+/* The home page first in the list a phone opens from "Contents". */
+.guides-entries-home {
+  margin-bottom: 10px;
+}
+
+.guides-entry-home .guides-entry-name {
+  font-weight: 600;
+}
+
+/* Under the home page shown as the landing page. */
+.guides-landing > .guides-link-button {
+  margin-top: 20px;
+}
+
+/* The landing page made from the contents. */
+.guides-landing-made .guides-edit-button {
+  margin-bottom: 4px;
+}
+
+.guides-landing-group {
+  margin: 22px 0 0;
+}
+
+.guides-landing-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.guides-landing-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+}
+
+.guides-landing-section > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.guides-landing-section:hover {
+  color: var(--atlas-accent);
+}
+
+.guides-landing-section:hover > .ui-icon {
+  color: inherit;
+}
+
+.guides-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.guides-compact .guides-tiles {
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 8px;
+}
+
+.guides-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.guides-tile:hover {
+  border-color: var(--atlas-border-strong);
+  background: var(--atlas-surface-hover);
+}
+
+.guides-tile-name {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.guides-tile-name > .ui-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--atlas-muted);
+}
+
+.guides-tile-count {
+  font-size: 12px;
+}
+
+/* Tiles with pictures: the picture across the top, cut to one shape. */
+.guides-tiles-pictures .guides-tile {
+  padding: 0 0 10px;
+  overflow: hidden;
+}
+
+.guides-tiles-pictures .guides-tile-name,
+.guides-tiles-pictures .guides-tile-count {
+  padding: 0 12px;
+}
+
+.guides-tile-picture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+  margin-bottom: 8px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-muted);
+}
+
+.guides-tile-picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.guides-landing-more {
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.guides-landing-note {
+  margin: 28px 0 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}

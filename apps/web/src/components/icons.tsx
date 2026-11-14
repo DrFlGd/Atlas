@@ -64,6 +64,7 @@ const UI_PATHS = {
   back: 'M9 4l-6 6l6 6M3 10h14',
   // Guides read as pages.
   forward: 'M11 4l6 6l-6 6M17 10H3',
+  home: 'M3 9.5l7-6l7 6M5 8v8.5h3.8v-5h2.4v5H15V8',
   book: 'M10 5.5C8.5 4 6 3.5 3 3.5v12c3 0 5.5.5 7 2c1.5-1.5 4-2 7-2v-12c-3 0-5.5.5-7 2zM10 5.5v12',
   external: 'M11 3.5h5.5V9M16.5 3.5L9 11M14 12v4.5H3.5V6H8',
   chevronDown: 'M5 7l5 5l5-5',
