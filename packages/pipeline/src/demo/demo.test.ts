@@ -8,7 +8,14 @@ import { createTerrain, elevationAt, renderTerrain } from './terrain';
 import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
 import { DEMO_PHOTO_GUIDE, addPhotos, photoFiles } from './photos';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
-import { WIKI_OTHER_NAME, WIKI_PAGES, WIKI_PICTURE, addWiki, wikiPictureFiles } from './wiki';
+import {
+  WIKI_HOME,
+  WIKI_OTHER_NAME,
+  WIKI_PAGES,
+  WIKI_PICTURE,
+  addWiki,
+  wikiPictureFiles,
+} from './wiki';
 
 const SIZE = 2048;
 const SEED = 7;
@@ -348,6 +355,18 @@ describe('demo wiki', () => {
     expect(pack.manifest.idMigrations[WIKI_OTHER_NAME.id]).toBe(WIKI_PAGES.travel);
     expect(pack.manifest.idSections?.[WIKI_OTHER_NAME.id]).toBe('by-boat');
     expect(travel.body).toMatch(/^## By boat$/m);
+  });
+
+  it('has a home page in no section, with a picture that leads to a page and links to the areas', () => {
+    expect(pack.manifest.homePage).toBe(WIKI_HOME);
+    const home = pack.guides.find((g) => g.id === WIKI_HOME)!;
+    expect((pack.sections ?? []).some((s) => s.items.includes(WIKI_HOME))).toBe(false);
+    expect(home.body).toContain(
+      `[![Waystones](${WIKI_PICTURE} "=320x200")](${WIKI_PAGES.waystones})`,
+    );
+    expect(home.body.match(/^## /gm)).toHaveLength(3);
+    for (const id of Object.values(WIKI_PAGES)) expect(home.body).toContain(`](${id})`);
+    expect(home.source?.url).toBe('https://wiki.example.org/wiki/Main_Page');
   });
 
   it('credits a made-up wiki under an open licence on every page', () => {

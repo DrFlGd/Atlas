@@ -1,5 +1,5 @@
 import { devices, type Page } from '@playwright/test';
-import { collectErrors, storedSetting } from './helpers';
+import { collectErrors, openGuidesSection, storedSetting } from './helpers';
 import { expect, test } from './layout';
 
 /**
@@ -44,7 +44,7 @@ async function openGuides(page: Page): Promise<void> {
 async function openPage(page: Page, sections: string | string[], name: string): Promise<void> {
   const body = page.getByTestId('guides-body');
   for (const section of Array.isArray(sections) ? sections : [sections]) {
-    await body.getByTestId('guides-section').filter({ hasText: section }).first().click();
+    await openGuidesSection(page, section);
   }
   await body.getByTestId('guides-page-link').filter({ hasText: name }).first().click();
   await expect(page.getByTestId('guides-page').locator('h1')).toHaveText(name);
@@ -345,12 +345,7 @@ test('moves a page to another section, and asks before leaving changes not saved
 
   // The reader's contents have it in Basics too.
   await page.getByTestId('cancel-edit').click();
-  await page.locator('.guides-crumbs').getByRole('button', { name: 'Contents' }).click();
-  await page
-    .getByTestId('guides-body')
-    .getByTestId('guides-section')
-    .filter({ hasText: 'Basics' })
-    .click();
+  await openGuidesSection(page, 'Basics');
   await expect(page.getByTestId('guides-body').getByTestId('guides-page-link')).toContainText([
     'Wolves',
   ]);

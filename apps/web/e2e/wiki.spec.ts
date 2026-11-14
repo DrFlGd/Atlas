@@ -189,7 +189,12 @@ test('Edit opens the page in Guides with its editor; the wiki screen then says i
   await preview.getByTestId('wiki-leave-out').click();
   await expect(row(page, 'Welcome')).toHaveAttribute('data-state', 'left-out');
   await page.getByTestId('section-guides').click();
-  await expect(page.getByTestId('guides-page-link').filter({ hasText: 'Welcome' })).toHaveCount(0);
+  await expect(page.getByTestId('guides-home')).toBeVisible();
+  await expect(
+    page
+      .locator('[data-testid="guides-page-link"], [data-testid="guides-tile"]')
+      .filter({ hasText: 'Welcome' }),
+  ).toHaveCount(0);
   await page.getByTestId('section-library').click();
   await page.locator('[data-testid="library-game"][data-pack="example-wiki"]').click();
   await row(page, 'Welcome').getByTestId('wiki-row-open').click();

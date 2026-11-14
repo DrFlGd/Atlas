@@ -229,8 +229,10 @@ test('a page that states no licence is kept only once the person confirms one, w
   await expect(licence).toContainText('You confirmed this wiki’s licence: CC BY-NC-SA 4.0');
 
   // In Guides, the credit says it was confirmed by the person.
+  // Its own home page was not read: the landing page is made from its pages.
   await page.getByTestId('section-guides').click();
-  await page.getByTestId('guides-page-link').filter({ hasText: 'Wicks' }).click();
+  await expect(page.getByTestId('guides-home')).toHaveAttribute('data-landing', 'made');
+  await page.getByTestId('guides-tile').filter({ hasText: 'Wicks' }).click();
   await expect(page.getByTestId('guides-credit')).toContainText(
     'CC BY-NC-SA 4.0 (confirmed by you: the page states no licence)',
   );

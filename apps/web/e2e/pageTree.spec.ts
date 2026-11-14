@@ -45,7 +45,7 @@ test.describe('on a desktop', () => {
 
     // The way: every section and page above it, then the page itself.
     await expect(crumbs(page)).toHaveText(
-      /Contents\s*›\s*Equipment\s*›\s*Armor\s*›\s*Warden Plate\s*›\s*Warden Helm/,
+      /Example Wiki\s*›\s*Equipment\s*›\s*Armor\s*›\s*Warden Plate\s*›\s*Warden Helm/,
     );
     await expect(crumbs(page).locator('[aria-current="page"]')).toHaveText('Warden Helm');
 
@@ -138,7 +138,7 @@ test('the arrange tool moves a page under another page, and it stays there', asy
   await servePageTree(page);
   await page.goto('./');
   await openBySearch(page, 'nothing links here', 'Stray Note');
-  await expect(crumbs(page)).toHaveText(/Contents\s*›\s*Pages\s*›\s*Stray Note/);
+  await expect(crumbs(page)).toHaveText(/Example Wiki\s*›\s*Pages\s*›\s*Stray Note/);
   await page.getByTestId('edit-page').click();
   const contents = page.getByTestId('contents-editor');
   // The arrange tool shows the tree too: Armor holds its pages, folded.
