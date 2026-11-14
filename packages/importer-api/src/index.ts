@@ -120,6 +120,13 @@ export interface ImportContext {
    */
   rebuild?: boolean;
   /**
+   * Optional: tells the app how far a long step is, for the person to see:
+   * `done` of `total` kept pages written again while a game is built again
+   * (`rebuild`). Call it as often as wanted; the app shows it at its own
+   * pace, and may not show it at all.
+   */
+  progress?(step: { done: number; total: number }): void;
+  /**
    * Optional: which tiles of one zoom of an image set exist on its server,
    * for an importer whose site does not say how large a map's picture is.
    * Only an app that downloads map images offers it; an importer must check

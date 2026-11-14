@@ -450,6 +450,12 @@ function Progress({ phase }: { phase: Extract<ImportPhase, { kind: 'waiting' | '
             <strong>Measuring the map picture…</strong> Atlas is asking the image server which map
             images exist, so that the map is as large as its picture. This can take a minute.
           </p>
+        ) : phase.savedPages !== undefined ? (
+          <SavedPagesProgress
+            importer={phase.importer}
+            total={phase.savedPages}
+            done={phase.savedDone}
+          />
         ) : (
           <p role="status">
             <strong>Building the map…</strong> {phase.importer} is turning the page data into a map
@@ -531,6 +537,14 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
         </p>
       ) : summary.checklist && !phase.rebuilt ? (
         <ChecklistResult checklist={summary.checklist} />
+      ) : phase.guideId && summary.maps === 0 ? (
+        // A game of pages built again: it has no map to give figures of.
+        <p className="muted" data-testid="add-map-rebuilt-pages">
+          {phase.writtenAgain && phase.writtenAgain.length > 0
+            ? `Its ${numberFormat.format(phase.writtenAgain.length + 1)} saved pages were written again from what is kept on this computer.`
+            : 'It was built again from what is kept on this computer.'}{' '}
+          Nothing was downloaded.
+        </p>
       ) : (
         <MapFigures phase={phase} downloadable={downloadable} />
       )}
@@ -647,6 +661,50 @@ function ChecklistResult({ checklist }: { checklist: { items: number; leftOut: n
 }
 
 /** "12 seconds so far", and after a while what may be holding the page up. */
+/** A game of pages being built again from its saved pages: what happens, and how far it is. */
+function SavedPagesProgress({
+  importer,
+  total,
+  done,
+}: {
+  importer: string;
+  total: number;
+  done: number | undefined;
+}) {
+  const pages = `${numberFormat.format(total)} saved ${total === 1 ? 'page' : 'pages'}`;
+  const figure =
+    done === undefined
+      ? 'Starting…'
+      : done >= total
+        ? `All ${numberFormat.format(total)} written. Saving the game…`
+        : `${numberFormat.format(done)} of ${numberFormat.format(total)} pages`;
+  return (
+    <div data-testid="add-map-saved-pages">
+      <p role="status">
+        <strong>Writing the saved pages again…</strong> {importer} is building this game again from
+        its {pages}. Nothing is downloaded. With many pages this can take a few minutes.
+      </p>
+      <span
+        className="meter"
+        role="progressbar"
+        aria-label="Saved pages written again"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={done ?? 0}
+        aria-valuetext={figure}
+      >
+        <span
+          className="meter-fill"
+          style={{ width: `${((done ?? 0) / Math.max(1, total)) * 100}%` }}
+        />
+      </span>
+      <p className="muted small" data-testid="add-map-saved-pages-figure">
+        {figure}
+      </p>
+    </div>
+  );
+}
+
 function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> }) {
   const elapsed = Math.max(0, Math.round((state.now - state.startedAt) / 1000));
   const left = Math.max(0, state.waitSeconds - elapsed);
