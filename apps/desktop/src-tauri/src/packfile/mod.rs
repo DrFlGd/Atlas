@@ -32,7 +32,8 @@
 //! (`layers.json` is unchanged, so its remote source is kept).
 //!
 //! Never in it: the app's lock and download records (`.atlas/`), the page
-//! data kept by "Add a map" (`import/`), and found marks and other
+//! data and style sheets kept by "Add a map" (`import/`, with
+//! `import/styles/`), and found marks and other
 //! progress, which stay in the browser storage and its own export file.
 //!
 //! Only when the person ticks "Include my lists, locations, types and
@@ -1571,6 +1572,10 @@ pub struct PackDetails {
     pub archive: bool,
     /// The map pack file it was imported from, if it was.
     pub pack_file: Option<ImportedRecord>,
+    /// The style sheets kept from the pages it was read from (see
+    /// `styles.rs`), when there are any. Never in a map pack file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub styles: Option<crate::styles::StylesFacts>,
 }
 
 /// The facts about an installed pack.
@@ -1623,6 +1628,7 @@ pub fn pack_details(source: &PackSource) -> Result<PackDetails, String> {
         detail,
         images_at,
         pack_file: read_imported_record(&source.root),
+        styles: crate::styles::facts(&source.root),
     })
 }
 

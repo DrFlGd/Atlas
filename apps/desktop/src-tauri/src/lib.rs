@@ -45,6 +45,7 @@ pub mod picked;
 mod removal;
 pub mod saves;
 pub mod settings;
+pub mod styles;
 pub mod tiles;
 
 use std::{fs, path::PathBuf, sync::Arc};
@@ -94,10 +95,13 @@ macro_rules! viewer_commands {
             commands::library_import_source_list,
             commands::library_import_source,
             commands::library_save_import,
+            commands::library_styles,
+            commands::library_keep_styles,
             commands::import_open,
             commands::import_poll,
             commands::import_close,
             commands::import_navigate,
+            commands::import_run_once,
             commands::import_report,
             commands::activity_log_read,
             saves::saves_default_folder,

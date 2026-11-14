@@ -1229,6 +1229,60 @@ pub async fn library_save_import(
     saved
 }
 
+/// What is kept of the style sheets of a game read from a wiki's pages
+/// (see `styles.rs`): nothing for a game without any.
+#[tauri::command]
+pub async fn library_styles(
+    library: LibraryState<'_>,
+    pack_id: String,
+) -> Result<crate::styles::StylesList, String> {
+    let library = Arc::clone(&library);
+    blocking(move || {
+        Ok(library
+            .pack_folder(&pack_id)
+            .map(|dir| crate::styles::list(&dir))
+            .unwrap_or_default())
+    })
+    .await
+}
+
+/// Keeps style sheets of a game read from a wiki's pages, once each, in
+/// its folder (see `styles.rs`), and notes those the web app could not get.
+/// The log says in one line what was kept or why not, when anything was.
+#[tauri::command]
+pub async fn library_keep_styles(
+    library: LibraryState<'_>,
+    pack_id: String,
+    request: crate::styles::KeepStyles,
+) -> Result<crate::styles::StylesList, String> {
+    let library = Arc::clone(&library);
+    blocking(move || {
+        let Some(dir) = library.pack_folder(&pack_id) else {
+            return Err("The game is not in the Library.".to_owned());
+        };
+        let now = crate::manifest::now_rfc3339();
+        match crate::styles::keep(&dir, &request, &now) {
+            Ok(kept) => {
+                if kept.worth_noting() {
+                    activity::info(Area::Import, kept.line(&short(&pack_id), request.way));
+                }
+                Ok(crate::styles::list(&dir))
+            }
+            Err(error) => {
+                activity::warn(
+                    Area::Import,
+                    format!(
+                        "Could not keep the style sheets of {}: {error}",
+                        short(&pack_id)
+                    ),
+                );
+                Err(error)
+            }
+        }
+    })
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Map pack files
 
@@ -2226,6 +2280,20 @@ pub async fn import_poll<R: Runtime>(
         }
     }
     Ok(result)
+}
+
+/// Runs a script of the importer's once in the page whose data was read
+/// last, while the window still shows it (see `Imports::run_once`): its
+/// answer as JSON text, or none.
+#[tauri::command]
+pub async fn import_run_once<R: Runtime>(
+    app: AppHandle<R>,
+    imports: State<'_, Imports>,
+    script: String,
+    argument: serde_json::Value,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    imports.run_once(&app, &script, &argument).await
 }
 
 #[tauri::command]
