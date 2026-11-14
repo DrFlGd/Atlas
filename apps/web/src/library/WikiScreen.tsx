@@ -8,6 +8,7 @@ import { MarkdownBody } from '../components/MarkdownBody';
 import { LicenceQuestion, WikiReading } from '../components/SiteReading';
 import type { ListedPack, PackDetails } from '../desktop';
 import { notify, switchGame } from '../state/actions';
+import { showWiki } from '../state/shownGameRefresh';
 import type { FollowLinks } from '../state/followLinks';
 import { guidesOf } from '../state/guides';
 import {
@@ -111,14 +112,16 @@ export function WikiScreen({
                 pageKey(page.url),
                 page.state.kind === 'open' && page.state.attention
                   ? 'Waiting for you in the page window'
-                  : 'Reading now',
+                  : page.state.kind === 'converting' && page.state.waiting
+                    ? 'Read, waiting while this wiki is built again or changed by another step'
+                    : 'Reading now',
               ],
             ]
           : page.state.kind === 'waiting'
             ? [
                 [
                   pageKey(page.url),
-                  page.foundOn ? 'Found by a link, next in this go' : 'Next in this go',
+                  page.foundOn ? 'Found by a link, next in this session' : 'Next in this session',
                 ],
               ]
             : [],
@@ -318,7 +321,7 @@ export function WikiScreen({
               // Read again and Try again read that page only.
               onRead={(row) => void readNow([row], 'ticked')}
               onLeaveOut={(row, out) => void leaveOut([row], out)}
-              onShowGame={() => void switchGame(id)}
+              onShowGame={() => void showWiki(id)}
             />
           ) : (
             <div className="wiki-preview-empty">
@@ -336,7 +339,7 @@ export function WikiScreen({
                     type="button"
                     className="button"
                     data-testid="wiki-show-game"
-                    onClick={() => void switchGame(id)}
+                    onClick={() => void showWiki(id)}
                   >
                     Show this wiki
                   </button>
@@ -360,7 +363,7 @@ export function WikiScreen({
                 ? 'You are browsing in the window this app opened: each article page you open is kept, once. Close the window or stop browsing to end it.'
                 : 'This wiki is read as you browse it: Start browsing opens it in a window of this app, where each article page you open is kept, once. This app opens no page by itself.'
               : running
-                ? `A go is reading pages now, one at a time with a pause${
+                ? `A session is reading pages now, one at a time with a pause${
                     progress
                       ? `: ${progress.done.toLocaleString('en')} of ${progress.total.toLocaleString('en')} done${progress.found ? `, ${progress.found}` : ''}`
                       : ''
@@ -450,9 +453,9 @@ function estimate(ticked: number, follow: FollowLinks, inWindow: boolean): strin
     case 'ticked':
       return `${readingTime(ticked, inWindow)}, one page at a time with a pause. Nothing else is read.`;
     case 'linked':
-      return 'Plus the pages they link to: how many is known only as they are read, so this go may take a while. One page at a time with a pause.';
+      return 'Plus the pages they link to: how many is known only as they are read, so this session may take a while. One page at a time with a pause.';
     case 'all':
-      return 'Plus every page their links lead to, until no new page is found or you stop the go: how many is known only as they are read, so this go may take long, and the bar shows the count as it grows. One page at a time with a pause.';
+      return 'Plus every page their links lead to, until no new page is found or you stop the session: how many is known only as they are read, so this session may take long, and the bar shows the count as it grows. One page at a time with a pause.';
   }
 }
 
@@ -526,7 +529,9 @@ function stateText(row: WikiRow, inRun: ReadonlyMap<string, string>): string {
     case 'left-out':
       return 'Left out';
     case 'failed':
-      return `Could not be read: ${shortReason(row.failure?.message ?? '')}`;
+      return row.failure?.message.trim()
+        ? `Could not be read: ${shortReason(row.failure.message)}`
+        : 'Could not be read';
     case 'not-read':
       return 'Not read';
     case 'read': {
@@ -639,6 +644,7 @@ function Group({
                     found={found}
                     inRun={inRun}
                     ticked={ticked}
+                    chosen={chosen}
                     onTick={onTick}
                     onChoose={onChoose}
                   />
@@ -670,6 +676,7 @@ function Group({
                   found={found}
                   inRun={inRun}
                   ticked={ticked}
+                  chosen={chosen}
                   onTick={onTick}
                   onChoose={onChoose}
                 />
@@ -739,50 +746,79 @@ function FoundRow({
   found,
   inRun,
   ticked,
+  chosen,
   onTick,
   onChoose,
 }: {
   found: FoundRows;
   inRun: ReadonlyMap<string, string>;
   ticked: ReadonlySet<string>;
+  chosen: string | null;
   onTick: (keys: readonly string[], on: boolean) => void;
   onChoose: (key: string) => void;
 }) {
-  const pages = found.pages.filter(canTick);
+  // Pages tried that could not be read, and pages left out, are rows of their own, with why.
+  const apart = found.pages.filter((page) => page.state === 'failed' || page.state === 'left-out');
+  const waiting = found.pages.filter(
+    (page) => page.state !== 'failed' && page.state !== 'left-out',
+  );
+  const pages = waiting.filter(canTick);
   const all = pages.length > 0 && pages.every((page) => ticked.has(page.key));
-  const names = found.pages.slice(0, 2).map((page) => page.title);
-  const more = found.pages.length - names.length;
+  const names = waiting.slice(0, 2).map((page) => page.title);
+  const more = waiting.length - names.length;
   return (
-    <div className="wiki-row wiki-row-found" data-testid="wiki-found" data-from={found.from.url}>
-      <input
-        type="checkbox"
-        aria-label={`Tick the pages found on ${found.from.title}`}
-        data-testid="wiki-found-tick"
-        checked={all}
-        disabled={pages.length === 0}
-        onChange={() => {
-          onTick(
-            pages.map((page) => page.key),
-            !all,
-          );
-        }}
-      />
-      <button
-        type="button"
-        className="wiki-row-title wiki-row-found-names"
-        title={`Show ${found.from.title}, the page they were found on`}
-        onClick={() => {
-          onChoose(found.from.key);
-        }}
-      >
-        {names.join(', ')}
-        {more > 0 ? ` and ${more.toLocaleString('en')} more` : ''}
-      </button>
-      <span className="wiki-row-state">
-        Found on {found.from.title},{' '}
-        {found.pages.some((page) => inRun.has(page.key)) ? 'being read in this go' : 'not read'}
-      </span>
-    </div>
+    <>
+      {waiting.length > 0 ? (
+        <div
+          className="wiki-row wiki-row-found"
+          data-testid="wiki-found"
+          data-from={found.from.url}
+        >
+          <input
+            type="checkbox"
+            aria-label={`Tick the pages found on ${found.from.title}`}
+            data-testid="wiki-found-tick"
+            checked={all}
+            disabled={pages.length === 0}
+            onChange={() => {
+              onTick(
+                pages.map((page) => page.key),
+                !all,
+              );
+            }}
+          />
+          <button
+            type="button"
+            className="wiki-row-title wiki-row-found-names"
+            title={`Show ${found.from.title}, the page they were found on`}
+            onClick={() => {
+              onChoose(found.from.key);
+            }}
+          >
+            {names.join(', ')}
+            {more > 0 ? ` and ${more.toLocaleString('en')} more` : ''}
+          </button>
+          <span className="wiki-row-state">
+            Found on {found.from.title},{' '}
+            {waiting.some((page) => inRun.has(page.key))
+              ? 'being read in this session'
+              : 'not read'}
+          </span>
+        </div>
+      ) : null}
+      {apart.map((page) => (
+        <div key={page.key} className="wiki-found-apart" data-testid="wiki-found-row">
+          <PageRow
+            row={page}
+            ticked={ticked.has(page.key)}
+            chosen={chosen === page.key}
+            state={`${stateText(page, inRun)}. Found on ${found.from.title}`}
+            onTick={onTick}
+            onChoose={onChoose}
+          />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -830,7 +866,9 @@ function Preview({
           : row.state === 'read'
             ? `${readWhen(row.readAt)}.${row.changedByYou ? ' Changed by you: your changes are kept apart from the wiki’s text.' : ''}`
             : row.state === 'failed'
-              ? `Could not be read: ${row.failure?.message ?? ''}`
+              ? row.failure?.message.trim()
+                ? `Could not be read: ${row.failure.message}`
+                : 'Could not be read. No reason was kept; Try again reads it again.'
               : row.listed
                 ? `Not read. Listed under ${row.group} in the wiki’s contents.`
                 : 'Not read. A page read links to it; the wiki’s contents do not list it.'}
