@@ -724,6 +724,10 @@
   padding: 14px 16px 6px;
 }
 
+.touch-menu .touch-menu-note {
+  margin: 8px 16px 4px;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .touch-sheet,
   .place-sheet:not(.place-card) {
@@ -3344,4 +3348,8 @@ button.photo-card-text {
 .touch-unplaced-actions {
   display: flex;
   gap: 4px;
+}
+
+.touch-game-actions-wrap {
+  flex-wrap: wrap;
 }

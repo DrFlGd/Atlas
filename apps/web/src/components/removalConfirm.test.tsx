@@ -54,6 +54,13 @@ describe('DeletePackConfirmView', () => {
     expect(offered).not.toMatch(/data-testid="delete-pack-locations"[^>]*checked/);
   });
 
+  it('says a game under one title leaves it, and the other sources stay', () => {
+    expect(text(view())).not.toContain('It leaves the title');
+    expect(text(view({ inTitle: 'Sundered Isles' }))).toContain(
+      'It leaves the title Sundered Isles. The other sources stay under it.',
+    );
+  });
+
   it('shows that it is working, and a plain error', () => {
     const working = view({ working: true });
     expect(text(working)).toContain('Stopping the download…');

@@ -682,6 +682,11 @@ button.guides-crumb:hover {
   min-width: 0;
 }
 
+.guides-from-note {
+  color: var(--atlas-muted);
+  font-size: 0.875rem;
+}
+
 .guides-from-pick {
   margin: 4px 0 0;
 }

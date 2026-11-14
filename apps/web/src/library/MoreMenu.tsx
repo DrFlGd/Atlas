@@ -8,8 +8,11 @@ import { openPageInBrowser } from '../state/pageView';
 import { useAtlas } from '../state/store';
 import { UiIcon, type UiIconName } from '../components/icons';
 
-/** What More can ask the game pane to show in its place: a confirmation before deleting. */
-export type MoreConfirm = 'pack' | 'images';
+/**
+ * What More can ask the game pane to show in its place: a confirmation
+ * before deleting, or choosing a game to show this one with under one title.
+ */
+export type MoreConfirm = 'pack' | 'images' | 'title';
 
 /**
  * "More" on the open game: the things done less often, each with a
@@ -21,6 +24,8 @@ export function MoreMenu({
   title,
   listed,
   updatable,
+  groupable = false,
+  grouped = false,
   onConfirm,
 }: {
   id: string;
@@ -28,6 +33,10 @@ export function MoreMenu({
   /** The game as the shell lists it; undefined for one served from the app itself. */
   listed: ListedPack | undefined;
   updatable: boolean;
+  /** Another game is here, so this one can be shown with it under one title. */
+  groupable?: boolean;
+  /** It is shown under one title already (its card says so). */
+  grouped?: boolean;
   onConfirm: (what: MoreConfirm) => void;
 }) {
   const folders = useAtlas(foldersOffered);
@@ -67,6 +76,17 @@ export function MoreMenu({
       title: 'Open the page it came from',
       text: 'Opens the page this game was made from in your own browser.',
       run: () => void openPageInBrowser(id, source),
+    });
+  }
+  if (groupable && !grouped) {
+    rows.push({
+      id: 'show-with-another',
+      icon: 'layers',
+      title: 'Show with another game under one title',
+      text: 'Lists this game and another source of the same game as one title, to change source from the maps menu. Each stays a whole game, with its own found marks.',
+      run: () => {
+        onConfirm('title');
+      },
     });
   }
   if (folders && !busy) {

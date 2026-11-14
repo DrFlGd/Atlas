@@ -25,6 +25,8 @@ import {
 } from '../state/libraryView';
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
+import { SourcesLine } from '../components/GameTitles';
+import { sourceToOpenNow, useTitleRows } from '../state/gameGroups';
 import { listedPages, loadWikiNotes, useWikiNotes } from '../state/wikiNotes';
 import { NewGameButton } from '../touch/OwnGames';
 import { GamePane } from './GamePane';
@@ -160,9 +162,12 @@ function AddArea() {
   return <AddBox />;
 }
 
-/** The games on this computer, each with its type and one line on its state. */
+/**
+ * The games on this computer, each with its type and one line on its state.
+ * Games shown under one title are one row (see `state/gameGroups.ts`).
+ */
 function GameList({ openId }: { openId: string | null }) {
-  const catalog = useAtlas((s) => s.catalog);
+  const rows = useTitleRows();
   const packs = useAtlas((s) => s.library?.packs);
   const shown = useAtlas((s) => s.game?.entry.id ?? null);
   const downloads = useAtlas(downloadsOffered);
@@ -184,7 +189,37 @@ function GameList({ openId }: { openId: string | null }) {
         Games on this computer
       </h2>
       <ul className="library-list" data-testid="library-list">
-        {catalog.map((entry) => {
+        {rows.map((row) => {
+          if (row.kind === 'title') {
+            const { group } = row;
+            const ids = row.entries.map((entry) => entry.id);
+            return (
+              <li key={group.id}>
+                <button
+                  type="button"
+                  className="library-row"
+                  aria-current={openId !== null && ids.includes(openId) ? 'true' : undefined}
+                  data-testid="library-title"
+                  data-group={group.id}
+                  onClick={() => {
+                    openLibraryGame(sourceToOpenNow(group) ?? ids[0]!);
+                  }}
+                >
+                  <span className="library-row-top">
+                    <span className="library-row-title">{group.title}</span>
+                    {shown !== null && ids.includes(shown) ? (
+                      <span className="badge badge-done">Shown</span>
+                    ) : null}
+                  </span>
+                  <span className="library-row-line">
+                    <span className="library-kind library-kind-title">One title</span>
+                    <SourcesLine group={group} className="library-status" />
+                  </span>
+                </button>
+              </li>
+            );
+          }
+          const { entry } = row;
           const listed = packs?.find((p) => p.id === entry.id);
           const own = facts[entry.id];
           const kind = gameKind(listed, own?.details ?? null);

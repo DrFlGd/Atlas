@@ -20,7 +20,7 @@ import { guidesOf, hasMap } from '../state/guides';
 import { canChangeOwnPages, changeContents, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { GuideLinksReview } from './GuideLinksReview';
-import { GuidesFromGames } from './GuidesFromGames';
+import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
 import { showPageOnMap } from './listViews';
 import {
   canGoBack,
@@ -311,6 +311,7 @@ function ContentsPlace({ game, sectionId }: { game: LoadedGame; sectionId: strin
       {entries.length === 0 ? <p className="touch-empty">Nothing here yet.</p> : null}
       <EntryList entries={entries} />
       {!section && hasMap(game) ? <GuidesFromGames game={game} /> : null}
+      {!section && !hasMap(game) ? <TitleMaps game={game} /> : null}
     </div>
   );
 }

@@ -3003,3 +3003,99 @@ th[aria-sort='descending'] .table-sort-arrow::after {
 .check-item-photos {
   margin: 6px 0;
 }
+
+/* Games shown under one title (components/GameTitles.tsx), in Games and the Library. */
+.title-form,
+.title-panel,
+.title-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  line-height: 1.45;
+}
+
+.title-form,
+.title-offer {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.title-form p,
+.title-offer p,
+.title-panel p {
+  margin: 0;
+}
+
+.title-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.title-legend {
+  margin-bottom: 2px;
+  padding: 0;
+  font-weight: 600;
+}
+
+.title-choice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+}
+
+.title-input {
+  flex: none;
+  width: 100%;
+  height: 36px;
+}
+
+.title-kept {
+  max-width: 60ch;
+}
+
+.title-sources-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.title-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.title-source-text {
+  display: flex;
+  flex: 1 1 160px;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.title-source-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.title-rename {
+  flex-wrap: wrap;
+}
+
+.title-rename .download-error {
+  flex-basis: 100%;
+  margin: 0;
+}

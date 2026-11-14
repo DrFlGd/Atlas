@@ -1,6 +1,11 @@
 import { useEffect, useId, useState } from 'react';
 import { DeleteImagesConfirm } from '../components/DeleteImagesConfirm';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
+import {
+  SameTitleOfferCard,
+  ShowWithAnotherForm,
+  TitleSourcesPanel,
+} from '../components/GameTitles';
 import { DETAILS, downloadPercent, formatBytes, roughDuration } from '../components/downloadFormat';
 import { UiIcon } from '../components/icons';
 import { MapPageActions } from '../components/MapPageActions';
@@ -27,7 +32,15 @@ import {
 import { canChangeGuideLinks, useGuideLinks, type OtherGuides } from '../state/guideLinks';
 import { hasMap } from '../state/guides';
 import { updateGame, wikiSourceOf, type WikiSource } from '../state/importing';
-import { focusAddBox, leaveLibrary, setMoreOpen, showGame, useLibrary } from '../state/libraryView';
+import { useSourceNames, useTitleOf } from '../state/gameGroups';
+import {
+  focusAddBox,
+  leaveLibrary,
+  openLibraryGame,
+  setMoreOpen,
+  showGame,
+  useLibrary,
+} from '../state/libraryView';
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
 import { showSection } from '../touch/state';
@@ -69,6 +82,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const more = useLibrary((s) => s.more);
   const [confirming, setConfirming] = useState<MoreConfirm | null>(null);
   const canMake = useAtlas(ownGamesOffered);
+  const group = useTitleOf(id);
+  const several = useAtlas((s) => s.catalog.length > 1);
   // A wiki read page by page: its own screen, once its importer is known.
   const [wiki, setWiki] = useState<WikiSource | null>(null);
   const imported = listed?.imported?.importerId ?? null;
@@ -163,6 +178,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
             title={title}
             listed={listed}
             updatable={updatable}
+            groupable={several}
+            grouped={group !== undefined}
             onConfirm={setConfirming}
           />
         ) : null}
@@ -171,6 +188,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
         <div className="library-cards library-cards-confirm">
           {confirming === 'pack' ? (
             <DeletePackConfirm id={id} title={title} onClose={close} />
+          ) : confirming === 'title' ? (
+            <ShowWithAnotherForm gameId={id} onClose={close} />
           ) : (
             <DeleteImagesConfirm id={id} title={title} onClose={close} />
           )}
@@ -178,6 +197,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
       ) : null}
       {kind === 'wiki' && wiki ? (
         <WikiScreen id={id} title={title} source={wiki} listed={listed} details={details}>
+          <SameTitleOfferCard gameId={id} />
+          {group ? <TitleCard id={id} /> : null}
           {__ATLAS_DOWNLOADS__ && downloads && facts?.photos && facts.photos.total > 0 ? (
             <PhotosCard id={id} facts={facts} kind={kind} />
           ) : null}
@@ -194,7 +215,11 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
             <DeletePackConfirm id={id} title={title} onClose={close} />
           ) : confirming === 'images' ? (
             <DeleteImagesConfirm id={id} title={title} onClose={close} />
+          ) : confirming === 'title' ? (
+            <ShowWithAnotherForm gameId={id} onClose={close} />
           ) : null}
+          <SameTitleOfferCard gameId={id} />
+          {group ? <TitleCard id={id} /> : null}
           <ContentsCard
             id={id}
             kind={kind}
@@ -228,6 +253,33 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * "One title", for a game shown under one title with others: its sources,
+ * each opened here in the Library, taken out, the title renamed or the
+ * games shown separately again.
+ */
+function TitleCard({ id }: { id: string }) {
+  const group = useTitleOf(id);
+  const names = useSourceNames(group);
+  if (!group) return null;
+  return (
+    <Card icon="layers" title={`One title: ${group.title}`} testId="library-title-card">
+      <p className="library-card-state">
+        This is the source {names.get(id) ?? id}. Show the map shows this source; the maps menu
+        lists the maps of every source.
+      </p>
+      <TitleSourcesPanel
+        group={group}
+        shownId={id}
+        openLabel="Open"
+        onOpen={(gameId) => {
+          openLibraryGame(gameId);
+        }}
+      />
+    </Card>
   );
 }
 

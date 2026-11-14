@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import type { ImagesInfo } from '../desktop';
+import { useTitleOf } from '../state/gameGroups';
 import { deletePack, loadImagesInfo } from '../state/removal';
 import { deletePackDetails } from './removalText';
 
@@ -23,6 +24,7 @@ export function DeletePackConfirm({
   const [withLocations, setWithLocations] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const group = useTitleOf(id);
   useEffect(() => {
     let current = true;
     void loadImagesInfo(id).then((loaded) => {
@@ -36,6 +38,7 @@ export function DeletePackConfirm({
     <DeletePackConfirmView
       title={title}
       info={info}
+      inTitle={group?.title}
       withProgress={withProgress}
       working={working}
       error={error}
@@ -72,9 +75,12 @@ export function DeletePackConfirmView({
   onWithLocations,
   onConfirm,
   onCancel,
+  inTitle,
 }: {
   title: string;
   info: ImagesInfo | null;
+  /** The title the game is shown under with other games, if any. */
+  inTitle?: string | undefined;
   withProgress: boolean;
   working: boolean;
   error: string | null;
@@ -109,6 +115,11 @@ export function DeletePackConfirmView({
           {line}
         </p>
       ))}
+      {inTitle ? (
+        <p className="removal-detail" data-testid="delete-pack-title">
+          It leaves the title {inTitle}. The other sources stay under it.
+        </p>
+      ) : null}
       <label htmlFor={checkboxId} className="checkbox-row">
         <input
           id={checkboxId}
