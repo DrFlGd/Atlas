@@ -10,6 +10,8 @@ export const SCHEMA_VERSION = 2;
 
 /** The longest section another name of a page may lead to (`idSections` of the manifest). */
 export const MAX_ID_SECTION_LENGTH = 200;
+/** The most pages a guide's `filedUnder` names (see the guide entry). */
+export const MAX_FILED_UNDER = 20;
 
 /** Every pack schema version this package reads. */
 export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2];
@@ -696,8 +698,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    *
    * `order` is optional and was added without a schema version change; Atlas
    * 0.3.3 and earlier refuse a pack whose guides have it. So is `source`;
-   * Atlas 0.4.4 and earlier refuse a pack whose guides have it.
+   * Atlas 0.4.4 and earlier refuse a pack whose guides have it. So is
+   * `filedUnder`; Atlas 0.5.0 and later read a pack tolerantly and open
+   * one whose guides have it, without it (an importer writes it only when
+   * the app says it keeps it, `keepsFiledUnder` of the import context).
    */
+  const filedUnderSchema = z.array(idOf('guide')).max(MAX_FILED_UNDER);
+
   const guideEntrySchema = record({
     id: packId('guide'),
     title: nonEmpty,
@@ -708,6 +715,17 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     order: z.int().optional(),
     /** Where the text was read, for a guide taken from a site under an open licence. */
     source: guideSourceSchema.optional(),
+    /**
+     * The guides the source itself files this guide under, as it says so
+     * (a wiki's categories that are pages of the wiki, the title of a
+     * navigation box at the foot of the page), the most fitting first. A
+     * guide the pack does not have (not read yet) is no error: it is left
+     * out where the guide is placed. Only a page of a section marked
+     * `placeByLinks` is placed by it (see `pageTree.ts` in the core
+     * package). Optional; read leniently: one that cannot be read is left
+     * out.
+     */
+    filedUnder: reading ? descriptive(filedUnderSchema) : filedUnderSchema.optional(),
   });
 
   /** A directed relation between two pieces of content, e.g. a portal between two locations. */
