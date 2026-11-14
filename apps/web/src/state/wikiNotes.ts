@@ -30,6 +30,13 @@ import { SETTINGS, progressStore } from './services';
  *   LINKS_WRITE_MS}). Version 0.6.1 kept them all in one record,
  *   `wikiLinks:<importer id>`; it is still read, moved to records per page
  *   and then emptied.
+ * - `wikiOtherNames:<importer id>`: other names of pages read, by page
+ *   key: a page asked for under one address and read from another of the
+ *   same wiki (the wiki forwarded it, or names it otherwise; `pageAddress`
+ *   of the import outcome), with the address it was read from. Both are
+ *   one page: one row on the wiki's screen, read, and never fetched again
+ *   under the other name. Kept as each page is read, and learnt again from
+ *   the pages kept when a game is built again from them.
  * - `wikiLeftOut:<importer id>`: the page keys of pages the person left
  *   out. They are never ticked or read until taken back in. A page read
  *   before is also hidden from Guides, among the person's own pages.
@@ -83,6 +90,8 @@ export interface WikiNotes {
   contents: Record<string, WikiContents>;
   failed: Record<string, WikiFailure>;
   links: Record<string, string[]>;
+  /** The address each other name (page key) of a page read leads to. */
+  otherNames: Record<string, string>;
   leftOut: string[];
   follow: FollowLinks;
   sites: Record<string, SiteChoices>;
@@ -92,6 +101,7 @@ export const NO_WIKI_NOTES: WikiNotes = {
   contents: {},
   failed: {},
   links: {},
+  otherNames: {},
   leftOut: [],
   follow: DEFAULT_FOLLOW,
   sites: {},
@@ -108,6 +118,7 @@ const MAX_CONTENTS = 50;
 export const MAX_FAILED = 100_000;
 export const MAX_LINKED_PAGES = 100_000;
 export const MAX_LEFT_OUT = 100_000;
+export const MAX_OTHER_NAMES = 100_000;
 /** Sites with choices kept, per importer. */
 export const MAX_SITES = 1_000;
 
@@ -187,6 +198,15 @@ function readSites(value: unknown): Record<string, SiteChoices> {
   return kept;
 }
 
+function readOtherNames(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const kept: Record<string, string> = {};
+  for (const [key, address] of Object.entries(value).slice(-MAX_OTHER_NAMES)) {
+    if (isText(address) && key.length > 0) kept[key] = address;
+  }
+  return kept;
+}
+
 const readLeftOut = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter(isText).slice(0, MAX_LEFT_OUT) : [];
 
@@ -202,15 +222,17 @@ export function loadWikiNotes(importerId: string): Promise<WikiNotes> {
       const store = progressStore();
       const get = (key: string) => store.getSetting(key).catch((): unknown => undefined);
       const prefix = SETTINGS.wikiPageLinksOf(importerId);
-      const [contents, failed, oldLinks, pageLinks, leftOut, follow, sites] = await Promise.all([
-        get(SETTINGS.wikiContents(importerId)),
-        get(SETTINGS.wikiFailed(importerId)),
-        get(SETTINGS.wikiLinks(importerId)),
-        store.listSettings(prefix).catch((): { key: string; value: unknown }[] => []),
-        get(SETTINGS.wikiLeftOut(importerId)),
-        get(SETTINGS.wikiFollow(importerId)),
-        get(SETTINGS.wikiSites(importerId)),
-      ]);
+      const [contents, failed, oldLinks, pageLinks, otherNames, leftOut, follow, sites] =
+        await Promise.all([
+          get(SETTINGS.wikiContents(importerId)),
+          get(SETTINGS.wikiFailed(importerId)),
+          get(SETTINGS.wikiLinks(importerId)),
+          store.listSettings(prefix).catch((): { key: string; value: unknown }[] => []),
+          get(SETTINGS.wikiOtherNames(importerId)),
+          get(SETTINGS.wikiLeftOut(importerId)),
+          get(SETTINGS.wikiFollow(importerId)),
+          get(SETTINGS.wikiSites(importerId)),
+        ]);
       // The record of 0.6.1 first; a record per page, newer, wins.
       const byPage = new Map(Object.entries(readLinks(oldLinks)));
       const moving = new Set(byPage.keys());
@@ -226,6 +248,7 @@ export function loadWikiNotes(importerId: string): Promise<WikiNotes> {
         contents: readContents(contents),
         failed: readFailed(failed),
         links,
+        otherNames: readOtherNames(otherNames),
         leftOut: readLeftOut(leftOut),
         follow: isFollowLinks(follow) ? follow : DEFAULT_FOLLOW,
         sites: readSites(sites),
@@ -258,6 +281,7 @@ const settingOf = (importerId: string, part: Exclude<keyof WikiNotes, 'links'>) 
   ({
     contents: SETTINGS.wikiContents,
     failed: SETTINGS.wikiFailed,
+    otherNames: SETTINGS.wikiOtherNames,
     leftOut: SETTINGS.wikiLeftOut,
     follow: SETTINGS.wikiFollow,
     sites: SETTINGS.wikiSites,
@@ -429,55 +453,107 @@ export function noteWikiContents(
   }));
 }
 
-/** A page was read: it is off the pages that could not be read, and its links are kept. */
-export async function noteWikiRead(
-  importerId: string,
-  url: string,
-  links: readonly string[],
-): Promise<void> {
-  const key = pageKey(url);
-  const notes = await loadWikiNotes(importerId);
-  if (key in notes.failed) {
-    await change(importerId, 'failed', (n) => {
-      const { [key]: _gone, ...failed } = n.failed;
-      return { ...n, failed };
-    });
+/** A page read, as the app notes it: its address asked, its links, and where it was read from. */
+export interface PageRead {
+  url: string;
+  links: readonly string[];
+  /** The address it was read from, when that is another name of it (`pageAddress`). */
+  pageAddress?: string | undefined;
+}
+
+/** The other names of pages with these pages' (asked under one, read from another). */
+function withOtherNames(
+  otherNames: Record<string, string>,
+  pages: readonly PageRead[],
+): Record<string, string> | null {
+  let next: Record<string, string> | null = null;
+  for (const page of pages) {
+    if (!page.pageAddress) continue;
+    const asked = pageKey(page.url);
+    const at = pageKey(page.pageAddress);
+    // A page of its own again, under the address it was read from.
+    if ((next ?? otherNames)[at] !== undefined) {
+      const { [at]: _gone, ...rest } = next ?? otherNames;
+      next = rest;
+    }
+    if (asked === at || (next ?? otherNames)[asked] === page.pageAddress) continue;
+    next = withLast(next ?? otherNames, asked, page.pageAddress, MAX_OTHER_NAMES);
   }
-  if (links.length > 0 || key in notes.links) {
+  return next;
+}
+
+/**
+ * Pages were read (or written again from their kept data): they are off
+ * the pages that could not be read, their links are kept, under the
+ * address each was read from, and their other names.
+ */
+async function noteRead(
+  importerId: string,
+  pages: readonly PageRead[],
+  { clearFailed }: { clearFailed: boolean },
+): Promise<void> {
+  if (pages.length === 0) return;
+  const notes = await loadWikiNotes(importerId);
+  const otherNames = withOtherNames(notes.otherNames, pages);
+  if (otherNames) {
+    await change(importerId, 'otherNames', (n) => ({
+      ...n,
+      otherNames: withOtherNames(n.otherNames, pages) ?? n.otherNames,
+    }));
+  }
+  // A page read is not one that could not be read, under either of its names.
+  const tried = clearFailed
+    ? pages.flatMap((page) => [
+        pageKey(page.url),
+        ...(page.pageAddress ? [pageKey(page.pageAddress)] : []),
+      ])
+    : pages.flatMap((page) => (page.pageAddress ? [pageKey(page.pageAddress)] : []));
+  if (tried.some((key) => key in notes.failed)) {
+    await change(importerId, 'failed', (n) => ({
+      ...n,
+      failed: Object.fromEntries(Object.entries(n.failed).filter(([key]) => !tried.includes(key))),
+    }));
+  }
+  // The links are kept under the address the page was read from; any under its other name go.
+  const entries = pages.flatMap((page): (readonly [string, readonly string[]])[] => {
+    const asked = pageKey(page.url);
+    const at = page.pageAddress ? pageKey(page.pageAddress) : asked;
+    return at === asked
+      ? [[at, page.links]]
+      : [
+          [asked, []],
+          [at, page.links],
+        ];
+  });
+  if (entries.some(([key, links]) => links.length > 0 || key in notes.links)) {
     await change(
       importerId,
       'links',
-      (n) => ({ ...n, links: withLinks(importerId, n.links, [[key, links]]) }),
+      (n) => ({ ...n, links: withLinks(importerId, n.links, entries) }),
       { soon: true },
     );
   }
 }
 
+/** A page was read: it is off the pages that could not be read, and its links are kept. */
+export function noteWikiRead(
+  importerId: string,
+  url: string,
+  links: readonly string[],
+  pageAddress?: string,
+): Promise<void> {
+  return noteRead(importerId, [{ url, links, pageAddress }], { clearFailed: true });
+}
+
 /**
  * The links of pages read before, as the importer gave them when it wrote
  * those pages again (`writtenAgain` of the import outcome): kept as the
- * links of a page just read, but nothing else about the pages changes (a
- * note that one could not be read again stays).
+ * links of a page just read, with the other name of a page kept under
+ * another one; nothing else about the pages changes (a note that one
+ * could not be read again stays).
  */
-export async function noteWikiLinks(
-  importerId: string,
-  pages: readonly { url: string; links: readonly string[] }[],
-): Promise<void> {
-  if (pages.length === 0) return;
-  await change(
-    importerId,
-    'links',
-    // The pages given last are the newest, as for pages read one by one.
-    (n) => ({
-      ...n,
-      links: withLinks(
-        importerId,
-        n.links,
-        pages.map((page) => [pageKey(page.url), page.links] as const),
-      ),
-    }),
-    { soon: true },
-  );
+export function noteWikiLinks(importerId: string, pages: readonly PageRead[]): Promise<void> {
+  return noteRead(importerId, pages, { clearFailed: false });
 }
 
 /** A page could not be read, and why. */

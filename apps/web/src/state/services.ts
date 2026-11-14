@@ -117,6 +117,8 @@ export const SETTINGS = {
   wikiPageLinks: (importerId: string, key: string) => `wikiPageLinks:${importerId}:${key}`,
   /** The start of the keys of {@link SETTINGS.wikiPageLinks}, to read them all. */
   wikiPageLinksOf: (importerId: string) => `wikiPageLinks:${importerId}:`,
+  /** Other names of a wiki's pages read: the page key asked, with the address the page was read from. */
+  wikiOtherNames: (importerId: string) => `wikiOtherNames:${importerId}`,
   /** Pages of a wiki the person left out. */
   wikiLeftOut: (importerId: string) => `wikiLeftOut:${importerId}`,
   /** How far a go follows the links of a wiki's pages, as last chosen (see `followLinks.ts`). */

@@ -80,23 +80,42 @@ export function wikiGroups(options: {
 }): WikiGroup[] {
   const { contents, notes } = options;
   const leftOut = new Set(notes.leftOut);
-  const read = new Map(options.read.map((page) => [keyOf(page.url), page]));
-  const guides = new Map(options.guides.map((guide) => [keyOf(guide.url), guide]));
+  // A page asked for under another name of it is the page it was read as: one row.
+  const otherNames = notes.otherNames;
+  const named = Object.keys(otherNames).length > 0;
+  const sameKey = (key: string): string => {
+    if (!named) return key;
+    let current = key;
+    for (let step = 0; step < 8 && otherNames[current] !== undefined; step++) {
+      const next = keyOf(otherNames[current]!);
+      if (next === current || next === key) break;
+      current = next;
+    }
+    return current;
+  };
+  const canon = (url: string) => sameKey(keyOf(url));
+  const read = new Map(options.read.map((page) => [canon(page.url), page]));
+  const guides = new Map(options.guides.map((guide) => [canon(guide.url), guide]));
   const groups = new Map<string, WikiGroup>();
   const seen = new Set<string>();
 
-  const row = (url: string, title: string | null, group: string | null, listed: boolean) => {
-    const key = keyOf(url);
+  const row = (asked: string, named: string | null, group: string | null, listed: boolean) => {
+    const key = canon(asked);
     const page = read.get(key);
     const guide = guides.get(key);
+    // Under another name: shown as the page it was read as, with its own title.
+    const other = key !== keyOf(asked);
+    const url = other ? (guide?.url ?? otherNames[keyOf(asked)] ?? asked) : asked;
+    const title = other ? (guide?.title ?? null) : named;
     const failure = notes.failed[key] ?? null;
-    const state: WikiPageState = leftOut.has(key)
-      ? 'left-out'
-      : page || guide
-        ? 'read'
-        : failure
-          ? 'failed'
-          : 'not-read';
+    const state: WikiPageState =
+      leftOut.has(key) || leftOut.has(keyOf(asked))
+        ? 'left-out'
+        : page || guide
+          ? 'read'
+          : failure
+            ? 'failed'
+            : 'not-read';
     return {
       key,
       url,
@@ -122,15 +141,15 @@ export function wikiGroups(options: {
   };
 
   for (const page of contents?.pages ?? []) {
-    if (seen.has(keyOf(page.url))) continue;
+    if (seen.has(canon(page.url))) continue;
     add(row(page.url, page.title, page.group ?? null, true));
   }
   // Pages read that the contents do not list (or before the contents were read).
   for (const guide of options.guides) {
-    if (!seen.has(keyOf(guide.url))) add(row(guide.url, guide.title, null, false));
+    if (!seen.has(canon(guide.url))) add(row(guide.url, guide.title, null, false));
   }
   for (const page of options.read) {
-    if (!seen.has(keyOf(page.url))) add(row(page.url, null, null, false));
+    if (!seen.has(canon(page.url))) add(row(page.url, null, null, false));
   }
   // The pages each read page links to that are neither listed nor read: found there.
   for (const group of groups.values()) {
@@ -138,7 +157,7 @@ export function wikiGroups(options: {
       if (from.links.length === 0) continue;
       const pages: WikiRow[] = [];
       for (const link of from.links) {
-        const key = keyOf(link);
+        const key = canon(link);
         if (seen.has(key)) continue;
         seen.add(key);
         pages.push({ ...row(link, null, group.title, false), group: group.title });
