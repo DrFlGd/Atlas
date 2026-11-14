@@ -2027,7 +2027,7 @@ pub async fn import_open<R: Runtime>(
     let kept = if browse {
         "; the person browses the site in it, and each page they open is read once (browse and keep): this app never moves the window"
     } else if keep {
-        "; the window is kept for the next pages of the go on the same site"
+        "; the window is kept for the next pages of the session on the same site"
     } else {
         ""
     };
