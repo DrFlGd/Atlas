@@ -104,6 +104,7 @@ import {
 } from './gameChoice';
 import { RUN_PAUSE_MS } from './importRun';
 import { applyListing } from './library';
+import { offerSameTitle } from './gameGroups';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
 import { asksHow, siteReading, WINDOW_HINT, type SiteReading } from './readingWays';
 import { SETTINGS, progressStore } from './services';
@@ -1537,6 +1538,8 @@ async function convertAndSave(
     }
     notePackSaved(outcome.packId);
     applyListing(listing);
+    // A new game with the title of one here: offered once to show them under one title.
+    if (__ATLAS_DOWNLOADS__ && !existing) void offerSameTitle(outcome.packId);
     const entry = useAtlas.getState().catalog.find((p) => p.id === outcome.packId);
     // Load the new pack and show the imported map; a run does that at its end.
     if (entry && show && outcome.mapId) await showMap(entry, outcome.mapId);

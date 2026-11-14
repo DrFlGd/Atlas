@@ -62,6 +62,9 @@ describe('desktop bridge', () => {
     await bridge.ownNotes.read('demo');
     await bridge.ownNotes.write('demo', '{}', '2026-11-14T10:00:00Z');
     await bridge.ownNotes.delete('demo');
+    await bridge.gameGroups.read();
+    await bridge.gameGroups.write('{}');
+    await bridge.gameGroups.write('{}', '2026-11-14T10:00:00Z');
     await bridge.ownGames.pickPicture();
     await bridge.ownGames.create('Cloud Isles', 'Harbour', '/pictures/harbour.png');
     await bridge.ownGames.addMap('cloud-isles', 'Caves', '/pictures/caves.webp');
@@ -82,6 +85,9 @@ describe('desktop bridge', () => {
       ['own_notes_read', { gameId: 'demo' }],
       ['own_notes_write', { gameId: 'demo', contents: '{}', keepCopy: '2026-11-14T10:00:00Z' }],
       ['own_notes_delete', { gameId: 'demo' }],
+      ['game_groups_read', undefined],
+      ['game_groups_write', { contents: '{}', keepCopy: null }],
+      ['game_groups_write', { contents: '{}', keepCopy: '2026-11-14T10:00:00Z' }],
       ['map_picture_pick', undefined],
       [
         'own_game_create',

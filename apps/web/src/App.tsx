@@ -16,6 +16,7 @@ import { downloadsOffered, touchUiOffered } from './features';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
+import { loadGameGroups } from './state/gameGroups';
 import { hasMap } from './state/guides';
 import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
 import { useLibrary } from './state/libraryView';
@@ -101,6 +102,11 @@ export function App() {
     if (!game) return;
     void loadOwnNotes(game);
   }, [game]);
+  // The games they show under one title, once the app knows where they are kept.
+  const booted = game !== null;
+  useEffect(() => {
+    if (booted) void loadGameGroups();
+  }, [booted]);
 
   useViewHashSync();
   useWidthClass();

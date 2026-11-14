@@ -11,6 +11,7 @@ import {
 import { exportProgress, loadGame, notify } from './actions';
 import { addImportedGuideLinks, flushGuideLinks } from './guideLinks';
 import { addImportedOwnNotes, flushOwnNotes } from './ownNotes';
+import { addImportedGameGroup } from './gameGroups';
 import { addImportedOwnPages, flushOwnPages } from './ownPages';
 import { applyListing } from './library';
 import { addImportedOwnLists, flushOwnLists } from './ownLists';
@@ -166,6 +167,8 @@ export interface MineRestored {
   sections: number;
   /** Notes on the game's locations added. */
   notes: number;
+  /** The title the game is shown under with other games now, from the file. */
+  title: string | null;
   /** Why some could not be added, in plain words. */
   problem: string | null;
 }
@@ -179,6 +182,7 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     !imported.guideLinks &&
     !imported.ownPages &&
     !imported.ownNotes &&
+    !imported.gameGroup &&
     pictures.length === 0
   ) {
     return null;
@@ -193,6 +197,7 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
     pages: 0,
     sections: 0,
     notes: 0,
+    title: null,
     problem: null,
   };
   const problems: string[] = [];
@@ -250,6 +255,13 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
       restored.notes = await addImportedOwnNotes(imported.packId, imported.ownNotes);
     } catch (error) {
       problems.push(`Your notes from the file could not be added: ${errorText(error)}`);
+    }
+  }
+  if (imported.gameGroup) {
+    try {
+      restored.title = await addImportedGameGroup(imported.packId, imported.gameGroup);
+    } catch (error) {
+      problems.push(`The title from the file could not be added: ${errorText(error)}`);
     }
   }
   restored.problem = problems.length > 0 ? problems.join(' ') : null;
