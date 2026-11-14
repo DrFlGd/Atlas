@@ -632,6 +632,43 @@ export interface PackDetails {
   archive: boolean;
   /** The map pack file it was imported from. */
   packFile: { importedAt: string; fileName: string; header: PackFileHeader } | null;
+  /**
+   * The style sheets kept from the pages it was read from (`library.keepStyles`),
+   * when there are any: distinct sheets, their bytes, and sheets noted as not kept.
+   */
+  styles?: { sheets: number; bytes: number; leftOut: number };
+}
+
+/** What is kept of a game's style sheets (`import/styles/` in its folder). */
+export interface KeptStyles {
+  /** Each sheet kept: its address (none for a block of a page), the page's mark of its text, its bytes. */
+  sheets: { address?: string; mark?: string; bytes: number }[];
+  /** Distinct texts kept, and their bytes. */
+  files: number;
+  bytes: number;
+  /** Sheets noted as not kept. */
+  leftOut: number;
+}
+
+/** How a style sheet was got: fetched by the app, or handed over by a page in its window. */
+export type StylesWay = 'fetch' | 'window' | 'browse';
+
+/** Why a style sheet was not kept, as the index notes it. */
+export type StyleLeftOutReason =
+  | 'too-large'
+  | 'no-room'
+  | 'other-address'
+  | 'other-host'
+  | 'robots'
+  | 'refused'
+  | 'failed'
+  | 'not-asked';
+
+/** Style sheets to keep with a game, and those that could not be got. */
+export interface KeepStylesRequest {
+  way: StylesWay;
+  sheets: { address?: string; text: string; mark?: string }[];
+  leftOut: { address?: string; reason: StyleLeftOutReason; bytes?: number }[];
 }
 
 /** One level of detail in the Export dialog. */
@@ -862,6 +899,10 @@ export interface DesktopBridge {
     /** One page stored with an imported pack, by its key; null when there is none. */
     importSource(packId: string, importerId: string, key: string): Promise<StoredSource | null>;
     saveImport(request: SaveImportRequest): Promise<Listing>;
+    /** What is kept of a game's style sheets; nothing for a game without any. */
+    styles(packId: string): Promise<KeptStyles>;
+    /** Keeps style sheets with a game, once each, and notes those not got; what is kept after. */
+    keepStyles(packId: string, request: KeepStylesRequest): Promise<KeptStyles>;
   };
   importWindow: {
     open(
@@ -899,6 +940,13 @@ export interface DesktopBridge {
       importer?: { id: string; waitSeconds: number },
     ): Promise<'navigated' | 'closed'>;
     poll(): Promise<PollResult>;
+    /**
+     * Runs a script of the importer's (the source of a function taking one
+     * argument) once in the page whose data was read last, with `argument`,
+     * while the window still shows that very page: what it returned, as
+     * JSON text, or null.
+     */
+    runOnce(script: string, argument: unknown): Promise<string | null>;
     close(): Promise<void>;
     /** Records how an import ended in the activity log. */
     report(report: ImportReport): Promise<void>;
@@ -1158,6 +1206,8 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       importSource: (packId, importerId, key) =>
         call('library_import_source', { packId, importerId, key }),
       saveImport: (request) => call('library_save_import', { request }),
+      styles: (packId) => call('library_styles', { packId }),
+      keepStyles: (packId, request) => call('library_keep_styles', { packId, request }),
     },
     importWindow: {
       open: (url, reader, importer, purpose, measure, keep, browse) =>
@@ -1184,6 +1234,7 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           ...(importer ? { importerId: importer.id, waitSeconds: importer.waitSeconds } : {}),
         }),
       poll: () => call('import_poll'),
+      runOnce: (script, argument) => call('import_run_once', { script, argument }),
       close: () => call('import_close'),
       report: (report) => call('import_report', { report }),
     },

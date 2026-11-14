@@ -183,6 +183,12 @@ describe('desktop bridge', () => {
     await bridge.library.importSources('demo', 'demo-maps');
     await bridge.library.importSourceList('demo', 'demo-maps');
     await bridge.library.importSource('demo', 'demo-maps', 'east-field');
+    await bridge.library.styles('example-wiki');
+    await bridge.library.keepStyles('example-wiki', {
+      way: 'window',
+      sheets: [{ text: '.box { float: right; }', mark: '22-x' }],
+      leftOut: [{ address: 'https://files.example.net/a.css', reason: 'other-address' }],
+    });
     await bridge.library.imagesInfo('my-game');
     await bridge.library.deleteImages('my-game');
     await bridge.library.deletePack('my-game');
@@ -217,6 +223,7 @@ describe('desktop bridge', () => {
       id: 'example-wiki',
       waitSeconds: 60,
     });
+    await bridge.importWindow.runOnce('(marks) => ({ sheets: [] })', ['22-x']);
     await bridge.importWindow.report({ importerId: 'demo-maps', outcome: 'cancelled' });
     await bridge.activityLog.read();
     await bridge.library.reveal({ kind: 'log-folder' });
@@ -251,6 +258,18 @@ describe('desktop bridge', () => {
       ['library_import_sources', { packId: 'demo', importerId: 'demo-maps' }],
       ['library_import_source_list', { packId: 'demo', importerId: 'demo-maps' }],
       ['library_import_source', { packId: 'demo', importerId: 'demo-maps', key: 'east-field' }],
+      ['library_styles', { packId: 'example-wiki' }],
+      [
+        'library_keep_styles',
+        {
+          packId: 'example-wiki',
+          request: {
+            way: 'window',
+            sheets: [{ text: '.box { float: right; }', mark: '22-x' }],
+            leftOut: [{ address: 'https://files.example.net/a.css', reason: 'other-address' }],
+          },
+        },
+      ],
       ['library_images_info', { id: 'my-game' }],
       ['library_delete_images', { id: 'my-game' }],
       ['library_delete_pack', { id: 'my-game' }],
@@ -304,6 +323,7 @@ describe('desktop bridge', () => {
           waitSeconds: 60,
         },
       ],
+      ['import_run_once', { script: '(marks) => ({ sheets: [] })', argument: ['22-x'] }],
       ['import_report', { report: { importerId: 'demo-maps', outcome: 'cancelled' } }],
       ['activity_log_read', undefined],
       ['library_reveal', { target: { kind: 'log-folder' } }],

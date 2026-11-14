@@ -38,6 +38,7 @@ import {
   type ImportSummary,
   type ListingContext,
   type PageObservations,
+  type PageStyles,
   type PictureSummary,
   type PictureTiles,
   type PictureTilesRequest,
@@ -57,7 +58,13 @@ import {
 } from '@atlas/schema';
 import { create } from 'zustand';
 import type { ImporterEntry } from '../config';
-import { desktop, type ImportReport, type Listing, type StoredPage } from '../desktop';
+import {
+  desktop,
+  type ImportReport,
+  type Listing,
+  type ShellFetchedPage,
+  type StoredPage,
+} from '../desktop';
 import { downloadsOffered } from '../features';
 import { loadGame, notify } from './actions';
 import {
@@ -83,6 +90,18 @@ import {
   type Reading,
 } from './pageWindow';
 import { fetchPagePictures } from './pagePictures';
+import {
+  fetchSessionStyles,
+  gameOfSite,
+  keepFetchedStyles,
+  keepPageStyles,
+  marksFor,
+  noteGameOfSite,
+  noteHandedStyles,
+  readPageStyles,
+  sheetFromAnswer,
+  type SheetAnswer,
+} from './pageStyles';
 import {
   choiceGame,
   keptCatalogue,
@@ -469,6 +488,8 @@ async function readPage(
   keepFor: number | null = null,
   /** The way the person chose for the site, for an importer that offers ways (`siteInfo`). */
   way?: ReadingWay,
+  /** For a page read in the window: run once its data is read, while the window shows it. */
+  afterRead?: () => Promise<void>,
 ): Promise<PageRead> {
   // A site read only as the person browses it: nothing is opened or fetched by itself.
   if (way === 'browse') return { state: 'failed', message: BROWSE_ONLY };
@@ -477,7 +498,17 @@ async function readPage(
   const { pageReader, waitSeconds } = readerFor(importer, reading);
   return pageWindows.read(
     shell.importWindow,
-    { url, importer, pageReader, waitSeconds, reading, measure, keepFor, onWaiting },
+    {
+      url,
+      importer,
+      pageReader,
+      waitSeconds,
+      reading,
+      measure,
+      keepFor,
+      onWaiting,
+      ...(afterRead ? { afterRead } : {}),
+    },
     () => id === session,
   );
 }
@@ -536,6 +567,47 @@ let lastFetchAt = 0;
 const robotsOf = new Map<string, { session: number; rules: RobotsRules }>();
 
 /**
+ * Asks for one address as the app, after the pause between pages and at
+ * least the pause after the last request; null when another go or a cancel
+ * took over meanwhile.
+ */
+async function fetchAsApp(
+  shell: NonNullable<typeof desktop>,
+  address: string,
+  id: number,
+): Promise<ShellFetchedPage | null> {
+  const wait = Math.max(pauseLeft(), lastFetchAt + FETCH_PAUSE_MS - Date.now());
+  if (wait > 0) await sleep(wait);
+  if (id !== session) return null;
+  try {
+    return await shell.tiles.fetchPage(address);
+  } finally {
+    lastFetchAt = Date.now();
+  }
+}
+
+/**
+ * The robots.txt rules of the site of `origin` in go `id`, asked for once
+ * in a go; a refusal when the site refused that, null when another go or a
+ * cancel took over.
+ */
+async function robotsFor(
+  shell: NonNullable<typeof desktop>,
+  origin: string,
+  id: number,
+): Promise<RobotsRules | { refusal: string } | null> {
+  const robots = robotsOf.get(origin);
+  if (robots?.session === id) return robots.rules;
+  const answer = await fetchAsApp(shell, `${origin}/robots.txt`, id);
+  if (!answer) return null;
+  const refusal = refusalOf(answer.status, answer.retryAfter);
+  if (refusal) return { refusal };
+  const rules = rulesFromAnswer(answer);
+  robotsOf.set(origin, { session: id, rules });
+  return rules;
+}
+
+/**
  * Fetches the addresses an importer names for `url`, as the app, one at a
  * time: robots.txt first (once per site in a go), then each address after
  * the pause. An answer that refuses stops here, and so does an address
@@ -556,30 +628,15 @@ async function fetchPage(
     report({ importerId: importer.id, outcome: 'failed', message });
     return { state: 'refused', message };
   };
-  const one = async (address: string) => {
-    // After the pause between pages, and at least the pause after the last request.
-    const wait = Math.max(pauseLeft(), lastFetchAt + FETCH_PAUSE_MS - Date.now());
-    if (wait > 0) await sleep(wait);
-    if (id !== session) return null;
-    try {
-      return await shell.tiles.fetchPage(address);
-    } finally {
-      lastFetchAt = Date.now();
-    }
-  };
+  const one = (address: string) => fetchAsApp(shell, address, id);
   try {
     for (const address of named.addresses) {
-      const origin = new URL(address).origin;
-      let robots = robotsOf.get(origin);
-      if (robots?.session !== id) {
-        const answer = await one(`${origin}/robots.txt`);
-        if (!answer) return { state: 'cancelled' };
-        const refusal = refusalOf(answer.status, answer.retryAfter);
-        if (refusal) return stop(`${refusal} This app stopped and read no more pages.`);
-        robots = { session: id, rules: rulesFromAnswer(answer) };
-        robotsOf.set(origin, robots);
+      const robots = await robotsFor(shell, new URL(address).origin, id);
+      if (!robots) return { state: 'cancelled' };
+      if ('refusal' in robots) {
+        return stop(`${robots.refusal} This app stopped and read no more pages.`);
       }
-      if (!robotsAllows(robots.rules, address)) {
+      if (!robotsAllows(robots, address)) {
         return stop(
           `The site's robots.txt does not allow this app to read ${address}, so it stopped and read no more pages.`,
         );
@@ -602,6 +659,124 @@ async function fetchPage(
     return { state: 'failed', message: 'The page provided more data than this app accepts.' };
   }
   return { state: 'ready', data };
+}
+
+// ---------------------------------------------------------------------------
+// The style sheets of a wiki's pages (see `pageStyles.ts`)
+
+/** The style work of pages read, one step after the other: the end of a session waits for it. */
+let stylesWork: Promise<unknown> = Promise.resolve();
+
+const queueStyles = (work: () => Promise<void>) => {
+  stylesWork = stylesWork.then(work).catch(() => undefined);
+};
+
+/** Whether this app fetches style sheets itself: a build that downloads, with downloads on. */
+const fetchesSheets = () => __ATLAS_DOWNLOADS__ && downloadsOffered(useAtlas.getState());
+
+/** How a page's style sheets came, for keeping them once the page is saved. */
+type PageSheets =
+  { way: 'fetch'; pageData: string } | { way: 'window' | 'browse'; styles: PageStyles | null };
+
+/**
+ * For a page that an importer that keeps style sheets (`styleReader`) has
+ * read in the window: the step that runs the style reader once the page's
+ * data is read, with the marks of the sheets kept for its game, and what
+ * it read. Null for an importer without one.
+ */
+function windowStyles(
+  shell: NonNullable<typeof desktop>,
+  importer: AtlasImporter,
+  url: string,
+): { afterRead: () => Promise<void>; sheets: () => PageSheets } | null {
+  const reader = importer.styleReader;
+  if (!reader) return null;
+  let styles: PageStyles | null = null;
+  return {
+    afterRead: async () => {
+      const packs = useAtlas.getState().library?.packs ?? [];
+      const marks = await marksFor(shell.library, gameOfSite(importer, url, packs));
+      styles = await readPageStyles(
+        (script, argument) => shell.importWindow.runOnce(script, argument),
+        reader,
+        marks,
+      );
+    },
+    sheets: () => ({ way: 'window', styles }),
+  };
+}
+
+/** Keeps the style sheets a page came with, once the page is saved in game `packId`. */
+function keepStylesOf(
+  shell: NonNullable<typeof desktop>,
+  importer: AtlasImporter,
+  url: string,
+  packId: string,
+  id: number,
+  sheets: PageSheets | null,
+): void {
+  if (!importer.styleReader || !sheets) return;
+  noteGameOfSite(importer, url, packId);
+  const library = shell.library;
+  if (sheets.way === 'fetch') {
+    const { pageData } = sheets;
+    queueStyles(() => keepFetchedStyles(library, { packId, pageUrl: url, pageData, session: id }));
+    return;
+  }
+  const { way, styles } = sheets;
+  if (!styles) return;
+  noteHandedStyles(packId, styles);
+  const fileHosts = siteInfoOf(importer, url).fileHosts ?? [];
+  queueStyles(() =>
+    keepPageStyles(library, {
+      packId,
+      way,
+      pageUrl: url,
+      styles,
+      session: id,
+      fetches: way === 'window' && fetchesSheets(),
+      fileHosts,
+    }),
+  );
+}
+
+/**
+ * Once the pages of session `id` are read: fetches the style sheets they
+ * named that are not kept yet, with the rules of pages (`pageStyles.ts`).
+ * Nothing is fetched when the session stopped before its end.
+ */
+function afterSessionStyles(
+  shell: NonNullable<typeof desktop>,
+  id: number,
+  stopped: boolean,
+): void {
+  queueStyles(() =>
+    fetchSessionStyles(shell.library, id, stopped, (address) => fetchSheet(shell, address, id)),
+  );
+}
+
+/**
+ * Fetches one style sheet as the app fetches a page: robots.txt first
+ * (once per site in a go), after the pause, and a refusal or a page in
+ * place of the sheet (a check that the reader is a person) stops asking.
+ */
+async function fetchSheet(
+  shell: NonNullable<typeof desktop>,
+  address: string,
+  id: number,
+): Promise<SheetAnswer> {
+  if (!fetchesSheets()) return { kind: 'cancelled' };
+  try {
+    const robots = await robotsFor(shell, new URL(address).origin, id);
+    if (!robots) return { kind: 'cancelled' };
+    if ('refusal' in robots) return { kind: 'not', reason: 'refused', stop: true };
+    if (!robotsAllows(robots, address)) return { kind: 'not', reason: 'robots' };
+    const answer = await fetchAsApp(shell, address, id);
+    if (!answer) return { kind: 'cancelled' };
+    return sheetFromAnswer({ ...answer, refusal: refusalOf(answer.status, answer.retryAfter) });
+  } catch {
+    return { kind: 'not', reason: 'failed' };
+  }
 }
 
 /**
@@ -659,6 +834,7 @@ export async function startImport(text: string): Promise<void> {
   }
   currentImporter = importer.id;
   const site = await readingOf(importer, url);
+  const styles = keptInWindow(importer, url, site?.way) ? windowStyles(shell, importer, url) : null;
   const read = await readPage(
     shell,
     url,
@@ -671,6 +847,7 @@ export async function startImport(text: string): Promise<void> {
     measureStep(importer, url),
     null,
     site?.way,
+    styles?.afterRead,
   );
   if (read.state === 'cancelled') return;
   if (read.state !== 'ready') {
@@ -710,12 +887,35 @@ export async function startImport(text: string): Promise<void> {
     },
   );
   reportPhase(importer.id, outcome);
+  if (outcome.kind === 'done') {
+    keepStylesOf(
+      shell,
+      importer,
+      url,
+      outcome.packId,
+      id,
+      sheetsOf(importer, url, site, read, styles),
+    );
+  }
+  afterSessionStyles(shell, id, false);
   if (id !== session) return;
   setPhase(
     outcome.kind === 'failed' && outcome.refused
       ? refusedPhase(outcome.message, url, site)
       : outcome,
   );
+}
+
+/** How the style sheets of a page read came: in its fetched data, or from the window. */
+function sheetsOf(
+  importer: AtlasImporter,
+  url: string,
+  site: SiteReading | undefined,
+  read: { data: string },
+  styles: { sheets: () => PageSheets } | null,
+): PageSheets | null {
+  if (styles) return styles.sheets();
+  return fetcherFor(importer, 'map', url, site?.way) ? { way: 'fetch', pageData: read.data } : null;
 }
 
 const failedPhase = (message: string): ImportPhase => ({ kind: 'failed', message });
@@ -1039,6 +1239,8 @@ async function startRun(
         const { importer, listed } = pages[index]!;
         const site = sites[index];
         currentImporter = importer.id;
+        const kept = keptInWindow(importer, url, site?.way);
+        const styles = kept ? windowStyles(shell, importer, url) : null;
         const read = await readPage(
           shell,
           url,
@@ -1049,8 +1251,9 @@ async function startRun(
           },
           'map',
           measureStep(importer, url),
-          keptInWindow(importer, url, site?.way) ? id : null,
+          kept ? id : null,
           site?.way,
+          styles?.afterRead,
         );
         if (read.state !== 'ready') {
           if (read.state === 'cancelled') {
@@ -1090,6 +1293,16 @@ async function startRun(
         // The person did not confirm the site's licence: nothing more is read.
         if (outcome.kind === 'failed' && outcome.declined) run.stop();
         reportPhase(importer.id, outcome);
+        if (outcome.kind === 'done') {
+          keepStylesOf(
+            shell,
+            importer,
+            url,
+            outcome.packId,
+            id,
+            sheetsOf(importer, url, site, read, styles),
+          );
+        }
         if (importer.fetch && outcome.kind === 'done') {
           // The game shown takes in the page now and then during a long go.
           packWritten(outcome.packId, { duringGo: true });
@@ -1195,6 +1408,8 @@ async function startRun(
   if (currentRun === run) currentRun = null;
   // The window kept for the go's pages closes with it, however it ended.
   await pageWindows.release(shell.importWindow, id);
+  // The style sheets its pages named, once its pages are all read.
+  afterSessionStyles(shell, id, final.stopReason !== null);
   // The links of the pages read, written every few seconds during the go, are all written now.
   void flushWikiNotes();
   // The pictures of the pages added, once the pages are all read: one download a game.
@@ -1732,10 +1947,13 @@ async function startBrowse(
       show({ note: OTHER_WIKI });
       continue;
     }
+    // The page's style sheets, at once, while the window still shows it.
+    const styles = await browsedStyles(shell, importer, address);
     const kept = await keepBrowsed(importer, address, result.data);
     if (kept.packId) {
       browsedInto.add(kept.packId);
       packWritten(kept.packId, { duringGo: true });
+      keepStylesOf(shell, importer, address, kept.packId, id, { way: 'browse', styles });
     }
     if (id !== session) break;
     if (kept.title) {
@@ -1750,6 +1968,23 @@ async function startBrowse(
   // The game shown, if pages were kept in it, takes them all in.
   for (const packId of browsedInto) packWritten(packId);
   if (id === session) show({ ended: true });
+}
+
+/** The style sheets of a page the person opened while browsing, handed over by the page, for an importer that keeps them. */
+async function browsedStyles(
+  shell: NonNullable<typeof desktop>,
+  importer: AtlasImporter,
+  url: string,
+): Promise<PageStyles | null> {
+  const reader = importer.styleReader;
+  if (!reader) return null;
+  const packs = useAtlas.getState().library?.packs ?? [];
+  const marks = await marksFor(shell.library, gameOfSite(importer, url, packs));
+  return readPageStyles(
+    (script, argument) => shell.importWindow.runOnce(script, argument),
+    reader,
+    marks,
+  );
 }
 
 /** Keeps one page the person opened while browsing: its title once kept, or what happened. */
