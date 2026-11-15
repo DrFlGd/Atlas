@@ -440,8 +440,8 @@ export async function deleteOwnPagesOf(gameId: string): Promise<boolean> {
 
 /**
  * The own pages of one file added to another's: a page or section in the
- * file replaces the one with its id; the contents as the file arranged
- * them are used when there was none here.
+ * file replaces the one with its id, as its say on a list page does; the
+ * contents as the file arranged them are used when there was none here.
  */
 export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
   const byId = <T extends { id: string }>(a: readonly T[], b: readonly T[]): T[] => {
@@ -457,6 +457,9 @@ export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
   if (contents) merged.contents = contents;
   const pictures = byId(here.pictures ?? [], incoming.pictures ?? []);
   if (pictures.length > 0) merged.pictures = pictures;
+  // The says on list pages: the file's for the pages it names.
+  const listPages = { ...here.listPages, ...incoming.listPages };
+  if (Object.keys(listPages).length > 0) merged.listPages = listPages;
   return merged;
 }
 

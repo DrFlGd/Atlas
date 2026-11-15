@@ -1,5 +1,6 @@
 import { parseId } from '@atlas/schema';
-import type { BlockModel, ListModel } from '../../markdownEdit/blocks';
+import { entryIdOf, pagesListMarkdown, type ListedPage } from '@atlas/core';
+import { readBlock, type BlockModel, type ListModel } from '../../markdownEdit/blocks';
 import {
   insertBlockAfter,
   newBlock,
@@ -10,6 +11,7 @@ import {
 } from '../../markdownEdit/draft';
 import { inlineLength, toggleMark, type Inline, type ToggleMark } from '../../markdownEdit/inline';
 import { indentItem, outdentItem, type ItemPath } from '../../markdownEdit/structure';
+import { notify } from '../../state/actions';
 import { guidesOf } from '../../state/guides';
 import { layoutOf, useOwnPages } from '../../state/ownPages';
 import type { LoadedGame } from '../../state/store';
@@ -146,4 +148,37 @@ export function sectionChoices(game: LoadedGame): { id: string; title: string; d
   };
   walk(layout.top, 0);
   return out;
+}
+
+/**
+ * The pages under a page as Guides shows them, as deep as they go: each
+ * page with the pages under it, a level made of a heading as its words.
+ */
+export function pagesUnder(game: LoadedGame, guideId: string): ListedPage[] {
+  const { contents } = guidesOf(game);
+  const seen = new Set<string>([guideId]);
+  const walk = (id: string, depth: number): ListedPage[] =>
+    contents.items(id).flatMap((entry): ListedPage[] => {
+      const at = entryIdOf(entry);
+      if (entry.kind === 'section' || seen.has(at)) return [];
+      seen.add(at);
+      const under = depth < 16 ? walk(at, depth + 1) : [];
+      return entry.kind === 'page'
+        ? [{ id: at, title: entry.guide.title, under }]
+        : [{ title: entry.heading.title, under }];
+    });
+  return walk(guideId, 0);
+}
+
+/**
+ * Puts a list of links to the pages under the page edited after the block
+ * being edited, nested as the contents shows them. It is text from then on.
+ */
+export function insertPagesList(game: LoadedGame, guideId: string): void {
+  const pages = pagesUnder(game, guideId);
+  if (pages.length === 0) {
+    notify('No page is under this page yet, so there is nothing to list.');
+    return;
+  }
+  insertBlock(readBlock(pagesListMarkdown(pages).trimEnd()));
 }
