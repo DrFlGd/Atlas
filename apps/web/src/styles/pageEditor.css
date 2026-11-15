@@ -739,9 +739,20 @@
 }
 
 /* A heading of a list page shown as a level: no handle, set apart from the pages. */
-.pe-tree-level-name {
+.pe-tree-name.pe-tree-level-name {
+  min-width: min-content;
   color: var(--atlas-muted);
   font-weight: 600;
+  overflow-wrap: break-word;
+}
+
+/* In a narrow contents, the tag gives way before a level's words break. */
+.pe-tree-level .pe-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pe-drop-refused {

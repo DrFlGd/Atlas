@@ -1,6 +1,5 @@
 import {
   layoutFor,
-  looseSections,
   moveShownEntry,
   shownContentsFor,
   type ContentsParent,
@@ -259,7 +258,6 @@ export function moveInContentsOf(
         id,
         to,
         before,
-        looseSections(data),
       ),
     said,
   );

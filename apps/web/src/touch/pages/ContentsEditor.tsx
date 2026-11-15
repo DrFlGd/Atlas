@@ -7,7 +7,6 @@ import {
   deleteOwnSection,
   entriesWithin,
   listingThrough,
-  looseSections,
   moveShownEntries,
   newOwnId,
   pageChange,
@@ -103,24 +102,44 @@ function dropPlace(layout: PagesLayout, drop: Drop): { to: ContentsParent; befor
   return { to: parent, before: items[at + 1] ?? null };
 }
 
+/**
+ * What is said when pages are put among the pages the app files under a
+ * page (by the entry they were dropped on, else by `before`): they go
+ * with the pages put there by hand, which come first, and the app's keep
+ * their order. Empty when they were not.
+ */
+function filedNote(game: LoadedGame, to: ContentsParent, near: readonly (string | null)[]): string {
+  if (to === null || isSectionId(to)) return '';
+  const { placed } = shownContentsOf(game);
+  if (!near.some((id) => id !== null && placed.get(id) === to)) return '';
+  return `Pages put under “${titleOf(game, to)}” by hand come first, and the pages the app files there keep the order of its text.`;
+}
+
+/** A sentence and another after it. */
+const withSentence = (text: string, more: string) =>
+  more === '' ? text : `${text.endsWith('.') ? text : `${text}.`} ${more}`;
+
 function move(
   game: LoadedGame,
   id: string,
   to: ContentsParent,
   before: string | null,
   more = '',
+  near: readonly string[] = [],
 ): void {
   const shown = shownContentsOf(game).layout;
   if (to !== null && entriesWithin(shown, id).has(to)) return;
   if (to !== null && !isSectionId(to) && isSectionId(id)) return;
+  const said =
+    (to !== null && !isSectionId(to)
+      ? `Moved “${titleOf(game, id)}” under “${titleOf(game, to)}”`
+      : `Moved “${titleOf(game, id)}”`) + more;
   moveInContentsOf(
     game,
     id,
     to,
     before,
-    (to !== null && !isSectionId(to)
-      ? `Moved “${titleOf(game, id)}” under “${titleOf(game, to)}”`
-      : `Moved “${titleOf(game, id)}”`) + more,
+    withSentence(said, filedNote(game, to, near.length > 0 ? near : [before])),
   );
 }
 
@@ -162,13 +181,11 @@ function startOf(game: LoadedGame): {
   own: OwnPages;
   layout: PagesLayout;
   shown: PagesLayout;
-  loose: Set<string>;
 } {
   return {
     own: useOwnPages.getState().own,
     layout: layoutOf(game),
     shown: shownContentsOf(game).layout,
-    loose: looseSections(game.pack.data),
   };
 }
 
@@ -184,9 +201,10 @@ function moveMany(
   ids: readonly string[],
   to: ContentsParent,
   before: string | null,
+  near: readonly string[] = [],
 ): boolean {
-  const { own, layout, shown, loose } = startOf(game);
-  const result = moveShownEntries(own, layout, shown, ids, to, before, loose);
+  const { own, layout, shown } = startOf(game);
+  const result = moveShownEntries(own, layout, shown, ids, to, before);
   if (result.moved.length === 0) {
     notify(
       ids.length === 1
@@ -201,7 +219,12 @@ function moveMany(
     result.moved.length === 1
       ? `“${titleOf(game, result.moved[0]!)}”`
       : `${result.moved.length} pages`;
-  return applyMany(result, own, `Moved ${what}${where}.${leftText(result.left.length)}`);
+  const note = filedNote(game, to, near.length > 0 ? near : [before]);
+  return applyMany(
+    result,
+    own,
+    withSentence(`Moved ${what}${where}.${leftText(result.left.length)}`, note),
+  );
 }
 
 /** The pages of a level, however deep, in order, and what it holds as a list for a page's text. */
@@ -247,9 +270,9 @@ function makeLevel(
   ids: readonly string[],
   list: boolean | readonly ListedPage[],
 ): string | null {
-  const { own, layout, shown, loose } = startOf(game);
+  const { own, layout, shown } = startOf(game);
   const id = newPageId(game);
-  const result = addLevelPage(own, layout, shown, { id, title, body: '' }, ids, loose, new Date());
+  const result = addLevelPage(own, layout, shown, { id, title, body: '' }, ids, new Date());
   const listed =
     list === true
       ? result.moved.map((page) => ({ id: page, title: titleOf(game, page) }))
@@ -438,8 +461,8 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
     } else if (drag && drop) {
       const place = dropPlace(layout, drop);
       if (ticked.has(drag.id) && ticked.size > 1) {
-        if (moveMany(game, tickedInOrder, place.to, place.before)) clearTicks();
-      } else move(game, drag.id, place.to, place.before);
+        if (moveMany(game, tickedInOrder, place.to, place.before, [drop.id])) clearTicks();
+      } else move(game, drag.id, place.to, place.before, '', [drop.id]);
     }
     setDrag(null);
   };
