@@ -4,9 +4,9 @@ import { GuideContents, entryTitleOf } from './contents';
 import { headingStepId } from './headingSteps';
 import {
   addLevelPage,
+  addOwnPage,
   applyOwnPages,
   layoutFor,
-  looseSections,
   moveShownEntries,
   setListPageSay,
   shownContentsFor,
@@ -33,12 +33,14 @@ const entry = (local: string, body: string): GuideEntry => ({
   locationIds: [],
 });
 
-const LOOSE = ['a', 'b', 'c', 'd', 'x', 'y', 'z', 'w1', 'w2', 'w3', 'c1', 'c2', 'c3'];
+const WEAPONS = ['w1', 'w2', 'w3', 'w4', 'w5'];
+const CHARMS = ['c1', 'c2', 'c3'];
+const LOOSE = ['a', 'b', 'c', 'd', 'x', 'y', 'z', ...WEAPONS, ...CHARMS];
 const MENTIONED = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'];
 
 /**
  * Index lists a to d; Notes lists x, y and z, but names six pages more in
- * its sentences, so it is no list page; Gear lists three pages under
+ * its sentences, so it is no list page; Gear lists five pages under
  * "Weapons" and three under "Charms", which are levels.
  */
 function data() {
@@ -50,7 +52,7 @@ function data() {
     ),
     entry(
       'gear',
-      `# Gear\n\n## Weapons\n\n${items('w1', 'w2', 'w3')}\n\n## Charms\n\n${items('c1', 'c2', 'c3')}`,
+      `# Gear\n\n## Weapons\n\n${items(...WEAPONS)}\n\n## Charms\n\n${items(...CHARMS)}`,
     ),
     ...[...LOOSE, ...MENTIONED].map((id) => entry(id, `# ${titleOf(id)}\n\nA page.`)),
   ];
@@ -80,7 +82,6 @@ function moveMany(
     ids.map(g),
     target,
     before,
-    looseSections(data()),
   );
 }
 
@@ -116,7 +117,6 @@ describe('several pages moved at once', () => {
       [PAGES, g('x')],
       g('index'),
       null,
-      looseSections(data()),
     );
     expect(section.left).toEqual([PAGES]);
     expect(section.moved).toEqual([g('x')]);
@@ -134,7 +134,6 @@ describe('a new level made of pages', () => {
       shown.layout,
       level,
       [g('d'), g('b')],
-      looseSections(data()),
       NOW,
     );
     expect(moved).toEqual([g('d'), g('b')]);
@@ -159,7 +158,6 @@ describe('a new level made of pages', () => {
       shownOf(NO_OWN_PAGES).layout,
       level,
       [g('notes'), PAGES, g('gear')],
-      looseSections(data()),
       NOW,
     );
     expect(left).toEqual([PAGES]);
@@ -180,11 +178,10 @@ describe('a new level made of pages', () => {
       shown.layout,
       { ...level, title: 'Weapons' },
       [...shown.levels.get(weapons)!],
-      looseSections(data()),
       NOW,
     );
     const after = shownOf(own);
-    expect(after.layout.sections[level.id]).toEqual(['w1', 'w2', 'w3'].map(g));
+    expect(after.layout.sections[level.id]).toEqual(WEAPONS.map(g));
     // The other level stays a level of Gear.
     expect(after.levels.get(g('gear'))).toEqual([level.id, headingStepId(g('gear'), 'charms')]);
     expect(trail(contentsOf(own), 'w2')).toEqual(['Menu', 'Gear', 'Weapons']);
@@ -243,5 +240,134 @@ describe('the person’s say on list pages', () => {
     expect(trail(contents, 'x')).toEqual(['Menu', 'Index']);
     expect(trail(contents, 'y')).toEqual(['Menu', 'Notes']);
     expect(contents.pages()).toHaveLength(data().guides.length);
+  });
+});
+
+describe('pages the app places under a list page, when the person puts one there', () => {
+  const weapons = headingStepId(g('gear'), 'weapons');
+  const charms = headingStepId(g('gear'), 'charms');
+  const levelsOf = (own: OwnPages) => shownOf(own).levels;
+  const byHand = (own: OwnPages, local: string) => own.contents?.sections[g(local)];
+  /** Gear's levels, as shown, with the pages put beside them. */
+  const gearShown = (own: OwnPages) => levelsOf(own).get(g('gear'));
+
+  it('stay placed by the app when one page goes in: the levels stay, with it beside them', () => {
+    expect(gearShown(NO_OWN_PAGES)).toEqual([weapons, charms]);
+    const { own } = moveMany(NO_OWN_PAGES, ['x'], g('gear'));
+    expect(byHand(own, 'gear')).toEqual([g('x')]);
+    // Nothing else is written: the pages of the levels stay where the app places them.
+    expect(own.contents?.sections[PAGES]).toEqual(
+      expect.arrayContaining([...WEAPONS, ...CHARMS].map(g)),
+    );
+    expect(gearShown(own)).toEqual([g('x'), weapons, charms]);
+    expect(levelsOf(own).get(weapons)).toEqual(WEAPONS.map(g));
+    expect(levelsOf(own).get(charms)).toEqual(CHARMS.map(g));
+    const contents = contentsOf(own);
+    expect(contents.placedByLinks(g('w2'))).toBe(true);
+    expect(contents.placedByLinks(g('x'))).toBe(false);
+    expect(contents.pages()).toHaveLength(data().guides.length);
+  });
+
+  it('stay placed by the app when many ticked pages go in, and a list page keeps the rest', () => {
+    const { own, moved } = moveMany(NO_OWN_PAGES, ['a', 'x', 'd'], g('gear'));
+    expect(moved).toEqual(['a', 'x', 'd'].map(g));
+    expect(byHand(own, 'gear')).toEqual(['a', 'x', 'd'].map(g));
+    expect(gearShown(own)).toEqual([...['a', 'x', 'd'].map(g), weapons, charms]);
+    // Index, which listed a and d, still files b and c by its list, and nothing of it is written.
+    expect(byHand(own, 'index')).toBeUndefined();
+    expect(shownOf(own).layout.sections[g('index')]).toEqual(['b', 'c'].map(g));
+    expect(contentsOf(own).placedByLinks(g('b'))).toBe(true);
+  });
+
+  it('stay placed by the app when one is dragged out of a level or a list page', () => {
+    let { own } = moveMany(NO_OWN_PAGES, ['w1'], MENU, g('notes'));
+    expect(shownOf(own).layout.sections[MENU]).toEqual(['index', 'w1', 'notes', 'gear'].map(g));
+    expect(byHand(own, 'gear')).toBeUndefined();
+    expect(levelsOf(own).get(weapons)).toEqual(['w2', 'w3', 'w4', 'w5'].map(g));
+    expect(levelsOf(own).get(charms)).toEqual(CHARMS.map(g));
+    // Out of a list page with no levels: its other pages stay its.
+    ({ own } = moveMany(own, ['b'], g('notes')));
+    expect(byHand(own, 'index')).toBeUndefined();
+    expect(shownOf(own).layout.sections[g('index')]).toEqual(['a', 'c', 'd'].map(g));
+    expect(contentsOf(own).placedByLinks(g('a'))).toBe(true);
+  });
+
+  it('stay placed by the app beside a new level, a new page and a level made ones own', () => {
+    const level = { id: g('own.level'), title: 'Short ones', body: '' };
+    const made = addLevelPage(
+      NO_OWN_PAGES,
+      layoutFor(data(), NO_OWN_PAGES),
+      shownOf(NO_OWN_PAGES).layout,
+      level,
+      [g('w1'), g('w2')],
+      NOW,
+    );
+    expect(byHand(made.own, 'gear')).toEqual([level.id]);
+    expect(gearShown(made.own)).toEqual([level.id, weapons, charms]);
+    expect(levelsOf(made.own).get(weapons)).toEqual(['w3', 'w4', 'w5'].map(g));
+    // A new page under Gear goes after the pages put there by hand; the levels stay.
+    const page = { id: g('own.new'), title: 'New page', body: '' };
+    const added = addOwnPage(made.own, layoutFor(data(), made.own), page, g('gear'), null, NOW);
+    expect(byHand(added, 'gear')).toEqual([level.id, page.id]);
+    expect(gearShown(added)).toEqual([level.id, page.id, weapons, charms]);
+  });
+
+  it('a page dropped among them goes after the pages put there by hand; among those, where aimed', () => {
+    // Aimed before w3, a page the app places in the level Weapons.
+    let { own } = moveMany(NO_OWN_PAGES, ['x'], g('gear'), g('w3'));
+    expect(byHand(own, 'gear')).toEqual([g('x')]);
+    expect(levelsOf(own).get(weapons)).toEqual(WEAPONS.map(g));
+    ({ own } = moveMany(own, ['y', 'z'], g('gear'), g('c1')));
+    expect(byHand(own, 'gear')).toEqual(['x', 'y', 'z'].map(g));
+    // Before a page put there by hand: there, as today.
+    ({ own } = moveMany(own, ['z'], g('gear'), g('x')));
+    expect(byHand(own, 'gear')).toEqual(['z', 'x', 'y'].map(g));
+    expect(gearShown(own)).toEqual([...['z', 'x', 'y'].map(g), weapons, charms]);
+  });
+
+  it('take back a page put there by hand and moved back to the section placed by links', () => {
+    let { own } = moveMany(NO_OWN_PAGES, ['a'], g('gear'));
+    expect(trail(contentsOf(own), 'a')).toEqual(['Menu', 'Gear']);
+    ({ own } = moveMany(own, ['a'], PAGES));
+    expect(byHand(own, 'gear')).toBeUndefined();
+    expect(trail(contentsOf(own), 'a')).toEqual(['Menu', 'Index']);
+    expect(contentsOf(own).placedByLinks(g('a'))).toBe(true);
+    expect(gearShown(own)).toEqual([weapons, charms]);
+  });
+
+  it('a list of pages kept under a page by an older app stays as it is, and grows by hand', () => {
+    // As an earlier app wrote a move under Gear: every page shown there, in order, by hand.
+    const layout = layoutFor(data(), NO_OWN_PAGES);
+    const frozen = [g('x'), ...WEAPONS.map(g), ...CHARMS.map(g)];
+    const old: OwnPages = {
+      ...NO_OWN_PAGES,
+      contents: {
+        top: layout.top,
+        sections: {
+          ...layout.sections,
+          [PAGES]: layout.sections[PAGES]!.filter((id) => !frozen.includes(id)),
+          [g('gear')]: frozen,
+        },
+      },
+    };
+    const before = contentsOf(old);
+    expect(before.items(g('gear')).map((item) => entryTitleOf(item))).toEqual(
+      ['x', ...WEAPONS, ...CHARMS].map(titleOf),
+    );
+    expect(before.placedByLinks(g('w2'))).toBe(false);
+    // No levels: every page there was put there by hand.
+    expect(gearShown(old)).toBeUndefined();
+    const { own } = moveMany(old, ['y'], g('gear'), g('w3'));
+    expect(byHand(own, 'gear')).toEqual([
+      g('x'),
+      g('w1'),
+      g('w2'),
+      g('y'),
+      ...['w3', 'w4', 'w5'].map(g),
+      ...CHARMS.map(g),
+    ]);
+    // Nothing else moved.
+    for (const id of frozen)
+      expect(trail(contentsOf(own), id.split(':').at(-1)!)).toEqual(['Menu', 'Gear']);
   });
 });

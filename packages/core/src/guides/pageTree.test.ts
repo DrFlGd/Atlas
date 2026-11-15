@@ -6,7 +6,6 @@ import {
   applyOwnPages,
   deleteOwnPage,
   layoutFor,
-  looseSections,
   moveShownEntry,
   setPageHidden,
   shownContentsFor,
@@ -357,7 +356,6 @@ describe('pages placed by their links', () => {
       g('shiv'),
       g('gear'),
       null,
-      looseSections(data),
     );
     const contents = new GuideContents(applyOwnPages(data, own));
     expect(contents.parentOf(g('dirk'))).toBe(g('short-blades'));
@@ -542,15 +540,7 @@ describe('the person over pages placed by links', () => {
   /** Moves an entry as the arrange tool does, on the contents as shown. */
   const move = (own: OwnPages, id: string, to: string | null, before: string | null = null) => {
     const shown = shownContentsFor(data(), own).layout;
-    return moveShownEntry(
-      own,
-      layoutFor(data(), own),
-      shown,
-      id,
-      to,
-      before,
-      looseSections(data()),
-    );
+    return moveShownEntry(own, layoutFor(data(), own), shown, id, to, before);
   };
 
   it('keeps a page moved by hand where it was put, under a page or in a section', () => {
@@ -575,21 +565,22 @@ describe('the person over pages placed by links', () => {
     expect(contents.parentOf(g('warden-helm'))).toBe(g('warden-plate'));
   });
 
-  it('keeps the order of the pages under a page as arranged, and new ones after', () => {
-    // Ash Mail before Warden Plate under Armor.
-    const own = move(NO_OWN_PAGES, g('ash-mail'), g('armor'), g('warden-plate'));
-    expect(own.contents?.sections[g('armor')]).toEqual([
-      g('ash-mail'),
-      g('warden-plate'),
-      g('iron-cap'),
-    ]);
-    expect(own.contents?.sections[PAGES]).not.toContain(g('warden-plate'));
-    const contents = contentsOf(own);
-    expect(contents.items(g('armor')).map((e) => e.kind === 'page' && e.guide.title)).toEqual([
-      'Ash Mail',
-      'Warden Plate',
-      'Iron Cap',
-    ]);
+  it('keeps the order of the pages put under a page by hand, before those the app places', () => {
+    const titles = (own: OwnPages) =>
+      contentsOf(own)
+        .items(g('armor'))
+        .map((e) => e.kind === 'page' && e.guide.title);
+    // Ash Mail before Warden Plate under Armor: only Ash Mail is placed by hand.
+    let own = move(NO_OWN_PAGES, g('ash-mail'), g('armor'), g('warden-plate'));
+    expect(own.contents?.sections[g('armor')]).toEqual([g('ash-mail')]);
+    expect(own.contents?.sections[PAGES]).toContain(g('warden-plate'));
+    expect(own.contents?.sections[PAGES]).toContain(g('iron-cap'));
+    expect(titles(own)).toEqual(['Ash Mail', 'Warden Plate', 'Iron Cap']);
+    expect(contentsOf(own).placedByLinks(g('warden-plate'))).toBe(true);
+    // Before a page put there by hand: among them, in that order.
+    own = move(own, g('iron-cap'), g('armor'), g('ash-mail'));
+    expect(own.contents?.sections[g('armor')]).toEqual([g('iron-cap'), g('ash-mail')]);
+    expect(titles(own)).toEqual(['Iron Cap', 'Ash Mail', 'Warden Plate']);
     // Move up and down work on the contents as shown.
     const shown = shownContentsFor(data(), own).layout;
     expect(stepInLayout(shown, g('warden-plate'), parentOf(shown, g('warden-plate'))!, -1)).toEqual(
@@ -751,7 +742,6 @@ describe('pages the wiki files itself', () => {
       g('stone-hound'),
       g('peaks'),
       null,
-      looseSections(data),
     );
     const contents = new GuideContents(applyOwnPages(data, own));
     expect(contents.parentOf(g('stone-hound'))).toBe(g('peaks'));

@@ -522,10 +522,14 @@ export function moveInLayout(
  * {@link shownContentsFor}) to a section, under a page (`to` a page id), or
  * to the top, before the entry `before` there (at the end when it is null
  * or not there), changing the person's layout (`layout`, see
- * {@link layoutFor}). Under a page, the pages shown there are kept there,
- * in the order shown, as the person arranged them: placed by hand from now
- * on, as the moved one is. Only pages go under a page, and never under
- * themselves. Returns the layout unchanged when the move cannot be made.
+ * {@link layoutFor}). Under a page, only the moved page is placed by hand:
+ * it goes among the pages put there by hand, before `before` when that is
+ * one of them, else after them. The pages the app places there (by their
+ * links, or as the source files them) stay placed by the app, after the
+ * pages put there by hand, so a list page keeps its levels and follows its
+ * text when the pack is read again. Only pages go under a page, and never
+ * under themselves. Returns the layout unchanged when the move cannot be
+ * made.
  */
 export function moveInContents(
   layout: PagesLayout,
@@ -533,7 +537,6 @@ export function moveInContents(
   id: string,
   to: ContentsParent,
   before: string | null,
-  loose: ReadonlySet<string>,
 ): PagesLayout {
   if (to !== null && entriesWithin(shown, id).has(to)) return layout;
   const toPage = isPageId(to);
@@ -549,15 +552,10 @@ export function moveInContents(
     }
   }
   if (toPage) {
-    const list = (shown.sections[to!] ?? []).filter((item) => item !== id);
+    // Among the pages put there by hand; before a page the app places there, after them.
+    const list = (next.sections[to!] ?? []).filter((item) => item !== id);
     const index = before === null ? -1 : list.indexOf(before);
     list.splice(index < 0 ? list.length : index, 0, id);
-    // Pages shown there by their links are placed there by hand now: out of the sections left to links.
-    const taken = new Set(list);
-    for (const section of loose) {
-      const items = next.sections[section];
-      if (items) next.sections[section] = items.filter((item) => !taken.has(item));
-    }
     next.sections[to!] = list;
     return next;
   }
@@ -575,9 +573,8 @@ export function moveShownEntry(
   id: string,
   to: ContentsParent,
   before: string | null,
-  loose: ReadonlySet<string>,
 ): OwnPages {
-  const next = moveInContents(layout, shown, id, to, before, loose);
+  const next = moveInContents(layout, shown, id, to, before);
   return next === layout ? own : { ...own, contents: next };
 }
 
@@ -851,7 +848,6 @@ export function moveShownEntries(
   ids: readonly string[],
   to: ContentsParent,
   before: string | null,
-  loose: ReadonlySet<string>,
 ): MovedMany {
   let next = layout;
   // The contents as shown, kept in step with each move.
@@ -864,7 +860,7 @@ export function moveShownEntries(
     const changed =
       (to !== null && entriesWithin(view, id).has(to)) || (isPageId(to) && !isPageId(id))
         ? next
-        : moveInContents(next, view, id, to, after, loose);
+        : moveInContents(next, view, id, to, after);
     if (changed === next) {
       left.push(id);
       continue;
@@ -876,8 +872,12 @@ export function moveShownEntries(
       const list = listOf(view, from)!;
       list.splice(list.indexOf(id), 1);
     }
-    if (isPageId(to)) view.sections[to!] = [...next.sections[to!]!];
-    else {
+    if (isPageId(to)) {
+      // As shown: the pages put there by hand, then those the app places there.
+      const byHand = next.sections[to!]!;
+      const rest = (view.sections[to!] ?? []).filter((item) => !byHand.includes(item));
+      view.sections[to!] = [...byHand, ...rest];
+    } else {
       const target = listOf(view, to) ?? view.top;
       const index = after === null ? -1 : target.indexOf(after);
       target.splice(index < 0 ? target.length : index, 0, id);
@@ -900,7 +900,6 @@ export function addLevelPage(
   shown: PagesLayout,
   page: { id: string; title: string; body: string },
   ids: readonly string[],
-  loose: ReadonlySet<string>,
   now: Date,
 ): MovedMany {
   const first = ids[0];
@@ -915,7 +914,7 @@ export function addLevelPage(
   around.splice(at < 0 ? around.length : at, 0, page.id);
   view.sections[page.id] = [];
   const pagesOnly = ids.filter((id) => isPageId(id));
-  const result = moveShownEntries(added, added.contents!, view, pagesOnly, page.id, null, loose);
+  const result = moveShownEntries(added, added.contents!, view, pagesOnly, page.id, null);
   return {
     ...result,
     own: result.moved.length > 0 ? result.own : added,
