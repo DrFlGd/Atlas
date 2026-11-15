@@ -22,7 +22,8 @@ import { headingParents } from './pageTree';
  *   with that group, named by the outer heading.
  * - A single group over all the pages a list page groups makes no step:
  *   the groups under it are the levels. Steps are made only when they part
- *   the pages into two groups or more, or one group and pages beside it.
+ *   the pages into two groups or more, or one group and pages beside it
+ *   (grouped or not: a page the person put there counts).
  * - A first-level heading with the page's own title is no level.
  *
  * So the levels are at most as deep as the page's headings go (six), and
@@ -85,7 +86,9 @@ export function headingSteps(
   const at = new Map<string, number>();
   listing.forEach((id, i) => at.set(id, i));
   const chosen = input.items.filter((id) => input.grouped(id) && at.has(id));
-  if (chosen.length < 2) return null;
+  // One page alone makes a level only beside pages put there otherwise.
+  const beside = input.items.length > chosen.length;
+  if (chosen.length === 0 || (chosen.length < 2 && !beside)) return null;
   const parents = headingParents(headings);
   const title = input.title.trim().toLowerCase();
   // A first-level heading with the page's own title is no level.
@@ -138,8 +141,9 @@ export function headingSteps(
     return items.sort((a, b) => a.first - b.first);
   };
   let top = build(root);
-  // One group over all: no step for it, the groups under it are the levels.
-  for (let only = top[0]; top.length === 1 && only?.kind === 'step'; only = top[0]) {
+  // One group over all (and nothing beside it, put there by hand or by the
+  // source): no step for it, the groups under it are the levels.
+  for (let only = top[0]; !beside && top.length === 1 && only?.kind === 'step'; only = top[0]) {
     top = only.items;
   }
   if (!top.some((item) => item.kind === 'step')) return null;

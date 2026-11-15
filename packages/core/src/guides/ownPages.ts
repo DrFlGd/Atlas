@@ -14,10 +14,11 @@ import {
   aliasedId,
   filedUnderThrough,
   linksThrough,
-  listingThrough,
+  listingWithSay,
   sortGuides,
   type GuidePages,
 } from './contents';
+import { headingSteps } from './headingSteps';
 import { guideLinksIn, placePagesByLinks } from './pageTree';
 
 /**
@@ -237,12 +238,31 @@ export function looseSections(data: GuidePages['data']): Set<string> {
 
 const isPageId = (id: string | null) => id !== null && parseId(id)?.kind === 'guide';
 
+/** A heading of a list page shown as a level in the arrange tool (see `headingSteps.ts`). */
+export interface ShownLevel {
+  /** Its id: the list page's id, `#`, the heading's section. */
+  id: string;
+  /** The list page it is a level of. */
+  page: string;
+  /** The heading's words. */
+  title: string;
+  section: string;
+}
+
 /** The contents as the arrange tool shows it: the person's layout with the pages placed by links. */
 export interface ShownContents {
   /** What is at the top, and what each section and page holds, as shown. */
   layout: PagesLayout;
   /** The pages placed by their links: by page id, the page it is under. */
   placed: ReadonlyMap<string, string>;
+  /**
+   * The headings of list pages as levels, as Guides shows them: by list
+   * page id and by level id, what each holds as shown, levels included.
+   * Only for showing: `layout` holds no level, and a page is moved by it.
+   */
+  levels: ReadonlyMap<string, readonly string[]>;
+  /** The levels, by id. */
+  steps: ReadonlyMap<string, ShownLevel>;
 }
 
 /**
@@ -271,6 +291,13 @@ export function shownContentsFor(
   const shownPack = (id: string) => guides.has(id) && pages.get(id)?.hidden !== true;
   const lists = new Map<string, string[]>();
   for (const [id, items] of Object.entries(layout.sections)) lists.set(id, items);
+  const filingOf = (id: string, onlyListPage: boolean) => {
+    const guide = guides.get(id)!;
+    const page = pages.get(id);
+    const say = own.listPages?.[id];
+    if (page?.body === undefined) return listingWithSay(guide, aliases, onlyListPage, say);
+    return listingWithSay({ ...guide, body: shownBody(guide, page) }, aliases, onlyListPage, say);
+  };
   const tree = placePagesByLinks({
     top: layout.top,
     lists,
@@ -283,21 +310,60 @@ export function shownContentsFor(
       if (page?.body === undefined) return linksThrough(guide, aliases);
       return guideLinksIn(shownBody(guide, page), id).map((link) => aliasedId(aliases, link));
     },
-    filingOf: (id) => {
-      const guide = guides.get(id)!;
-      const page = pages.get(id);
-      const all = id === homePage;
-      if (page?.body === undefined) return listingThrough(guide, aliases, !all);
-      return listingThrough({ ...guide, body: shownBody(guide, page) }, aliases, !all);
-    },
+    filingOf: (id) => filingOf(id, id !== homePage),
     filedUnderOf: (id) => filedUnderThrough(guides.get(id)!, aliases),
     leads: shownPack,
     movable: shownPack,
     root: homePage ?? null,
   });
+  // The headings of list pages as levels, as Guides shows them.
+  const levels = new Map<string, string[]>();
+  const steps = new Map<string, ShownLevel>();
+  const counted = new Map<string, number>();
+  const pagesUnder = (id: string, depth = 0): number => {
+    let count = counted.get(id);
+    if (count !== undefined) return count;
+    count = 0;
+    if (depth < 64) {
+      for (const item of tree.lists.get(id) ?? []) count += 1 + pagesUnder(item, depth + 1);
+    }
+    counted.set(id, count);
+    return count;
+  };
+  for (const [id, items] of tree.lists) {
+    if (!guides.has(id) || id === homePage) continue;
+    const grouped = (item: string) => tree.placed.get(item) === id && !tree.filed.has(item);
+    if (!items.some(grouped)) continue;
+    const { listing, headings, listedUnder } = filingOf(id, true);
+    if (!headings || !listedUnder || headings.length === 0) continue;
+    const title = pages.get(id)?.title ?? guides.get(id)!.title;
+    const found = headingSteps({
+      page: id,
+      title,
+      items,
+      grouped,
+      weight: (item) => 1 + pagesUnder(item),
+      listing,
+      headings,
+      listedUnder,
+    });
+    if (!found) continue;
+    levels.set(id, found.items);
+    for (const step of found.steps) {
+      levels.set(step.id, step.items);
+      steps.set(step.id, {
+        id: step.id,
+        page: id,
+        title: step.words || title,
+        section: step.section,
+      });
+    }
+  }
   return {
     layout: { top: tree.top, sections: Object.fromEntries(tree.lists) },
     placed: tree.placed,
+    levels,
+    steps,
   };
 }
 
@@ -315,8 +381,10 @@ function changesContents(own: OwnPages): boolean {
  * takes them. Without anything of theirs, the pack's own data, as it is.
  */
 export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePages {
+  const says =
+    own.listPages && Object.keys(own.listPages).length > 0 ? { listPages: own.listPages } : {};
   if (own.pages.length === 0 && own.sections.length === 0 && own.contents === undefined) {
-    return { data };
+    return { data, ...says };
   }
   const byId = new Map(own.pages.map((page) => [page.id, page]));
   const guides: GuideEntry[] = data.guides.map((guide) => {
@@ -341,6 +409,7 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
           titles.has(section.id) ? { ...section, title: titles.get(section.id)! } : section,
         ),
       },
+      ...says,
     };
   }
   const layout = layoutFor(data, own);
@@ -379,6 +448,7 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
     data: { ...data, guides, sections },
     top: shown(layout.top),
     ...(Object.keys(under).length > 0 ? { under } : {}),
+    ...says,
   };
 }
 
@@ -757,4 +827,112 @@ export function moveEntry(
 ): OwnPages {
   const next = moveInLayout(layout, id, from, to, before);
   return next === layout ? own : { ...own, contents: next };
+}
+
+/** What moving several entries did: the records, and the entries moved and left where they were. */
+export interface MovedMany {
+  own: OwnPages;
+  moved: string[];
+  /** The entries that could not go there (under themselves, or a section under a page). */
+  left: string[];
+}
+
+/**
+ * Moves several entries of the contents as shown, in the order given, to
+ * one place (see {@link moveInContents}): each goes before `before` there
+ * (at the end when it is null), so they stay in their order. An entry that
+ * would go under itself or under an entry beneath it, or a section that
+ * would go under a page, is left where it is.
+ */
+export function moveShownEntries(
+  own: OwnPages,
+  layout: PagesLayout,
+  shown: PagesLayout,
+  ids: readonly string[],
+  to: ContentsParent,
+  before: string | null,
+  loose: ReadonlySet<string>,
+): MovedMany {
+  let next = layout;
+  // The contents as shown, kept in step with each move.
+  const view = copyLayout(shown);
+  const moved: string[] = [];
+  const left: string[] = [];
+  for (const id of ids) {
+    if (moved.includes(id) || left.includes(id)) continue;
+    const after = id === before ? null : before;
+    const changed =
+      (to !== null && entriesWithin(view, id).has(to)) || (isPageId(to) && !isPageId(id))
+        ? next
+        : moveInContents(next, view, id, to, after, loose);
+    if (changed === next) {
+      left.push(id);
+      continue;
+    }
+    next = changed;
+    moved.push(id);
+    const from = parentOf(view, id);
+    if (from !== undefined) {
+      const list = listOf(view, from)!;
+      list.splice(list.indexOf(id), 1);
+    }
+    if (isPageId(to)) view.sections[to!] = [...next.sections[to!]!];
+    else {
+      const target = listOf(view, to) ?? view.top;
+      const index = after === null ? -1 : target.indexOf(after);
+      target.splice(index < 0 ? target.length : index, 0, id);
+    }
+  }
+  return { own: moved.length > 0 ? { ...own, contents: next } : own, moved, left };
+}
+
+/**
+ * A new page of one's own as a level: put where the first of `ids` is
+ * shown (before it in a section or at the top; under the page it is
+ * under, after the pages put there by hand), with the pages of `ids`
+ * moved under it, in their order (see {@link moveShownEntries}). Sections
+ * among them stay where they are. The page is made even when none can go
+ * under it.
+ */
+export function addLevelPage(
+  own: OwnPages,
+  layout: PagesLayout,
+  shown: PagesLayout,
+  page: { id: string; title: string; body: string },
+  ids: readonly string[],
+  loose: ReadonlySet<string>,
+  now: Date,
+): MovedMany {
+  const first = ids[0];
+  const parent = first === undefined ? null : (parentOf(shown, first) ?? null);
+  const inLayout = listOf(layout, parent) ?? [];
+  const before = first !== undefined && inLayout.includes(first) ? first : null;
+  const added = addOwnPage(own, layout, page, parent, before, now);
+  // Shown where it was put, holding nothing yet.
+  const view = copyLayout(shown);
+  const around = listOf(view, parent) ?? view.top;
+  const at = first === undefined ? -1 : around.indexOf(first);
+  around.splice(at < 0 ? around.length : at, 0, page.id);
+  view.sections[page.id] = [];
+  const pagesOnly = ids.filter((id) => isPageId(id));
+  const result = moveShownEntries(added, added.contents!, view, pagesOnly, page.id, null, loose);
+  return {
+    ...result,
+    own: result.moved.length > 0 ? result.own : added,
+    left: [...ids.filter((id) => !isPageId(id)), ...result.left],
+  };
+}
+
+/**
+ * The person's say on whether a pack's page files the pages it lists
+ * under it: `true` whatever share of its links it lists, `false` none,
+ * `null` to let the app decide again (see `listPages` in the schema).
+ */
+export function setListPageSay(own: OwnPages, id: string, say: boolean | null): OwnPages {
+  const before = own.listPages ?? {};
+  if (say === null ? !(id in before) : before[id] === say) return own;
+  const listPages = say === null ? withoutKey(before, id) : { ...before, [id]: say };
+  const next: OwnPages = { ...own, listPages };
+  if (Object.keys(listPages).length === 0) delete next.listPages;
+  return next;
 }
