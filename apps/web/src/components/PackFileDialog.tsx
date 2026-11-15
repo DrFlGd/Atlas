@@ -31,7 +31,10 @@ import {
   imagesText,
   installedImagesText,
   photosHint,
+  PICTURES_IN_FILE_LABELS,
+  picturesInFileText,
   sourceText,
+  type PicturesInFile,
 } from './packFileText';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -140,18 +143,24 @@ function useJobProgress(): PackFileProgress | null {
 /** Shown while a file is being written, read or (on Android) copied into the app. */
 function JobProgress({ verb }: { verb: string }) {
   const progress = useJobProgress();
-  const done = progress?.bytesDone ?? 0;
-  const total = progress?.bytesTotal ?? 0;
+  // Pictures made smaller before anything is written: counted by pictures.
+  const shrinking =
+    progress !== null && progress.entriesTotal === 0 && (progress.picturesTotal ?? 0) > 0;
+  const done = (shrinking ? progress.picturesDone : progress?.bytesDone) ?? 0;
+  const total = (shrinking ? progress.picturesTotal : progress?.bytesTotal) ?? 0;
+  const pictureCount = (count: number) => count.toLocaleString('en');
   return (
     <div className="download-overall" data-testid="pack-file-progress">
       <span className="download-figures">
         <span>{verb}…</span>
         <span className="muted small">
-          {progress && progress.entriesTotal > 0
-            ? `${progress.entriesDone.toLocaleString('en')} of ${progress.entriesTotal.toLocaleString('en')} files · ${formatBytes(done)} of ${formatBytes(total)}`
-            : progress?.kind === 'copy' && total > 0
-              ? `${formatBytes(done)} of ${formatBytes(total)}`
-              : 'Starting…'}
+          {shrinking
+            ? `Making the pictures smaller: ${pictureCount(done)} of ${pictureCount(total)}`
+            : progress && progress.entriesTotal > 0
+              ? `${progress.entriesDone.toLocaleString('en')} of ${progress.entriesTotal.toLocaleString('en')} files · ${formatBytes(done)} of ${formatBytes(total)}`
+              : progress?.kind === 'copy' && total > 0
+                ? `${formatBytes(done)} of ${formatBytes(total)}`
+                : 'Starting…'}
         </span>
       </span>
       <span
@@ -161,7 +170,11 @@ function JobProgress({ verb }: { verb: string }) {
         aria-valuemin={0}
         aria-valuemax={total}
         aria-valuenow={done}
-        aria-valuetext={`${formatBytes(done)} of ${formatBytes(total)}`}
+        aria-valuetext={
+          shrinking
+            ? `${pictureCount(done)} of ${pictureCount(total)} pictures`
+            : `${formatBytes(done)} of ${formatBytes(total)}`
+        }
       >
         <span className="meter-fill" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} />
       </span>
@@ -234,6 +247,9 @@ function ExportView({
   // Off until asked for: a file with them is one to keep, not to pass on.
   const [withPhotos, setWithPhotos] = useState(false);
   const photosId = useId();
+  // Full size until asked otherwise: the file is then as large as the pictures here.
+  const [picturesInFile, setPicturesInFile] = useState<PicturesInFile>('full');
+  const sizeName = useId();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PackFileExported | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,12 +273,25 @@ function ExportView({
   }, [packId]);
 
   const ownUse = options?.ownUsePictures ?? 0;
+  // The pictures the file would carry, and their bytes at full size.
+  const carried = (options?.pictures ?? 0) + (withPhotos ? ownUse : 0);
+  const carriedBytes =
+    (options?.pictureBytes ?? 0) + (withPhotos ? (options?.ownUsePictureBytes ?? 0) : 0);
+  // Offered by a shell that can make them smaller, for a game with pictures.
+  const sizeOffered = options?.pictures !== undefined && (options.pictures > 0 || ownUse > 0);
 
   const start = (detail: Detail) => {
     setError(null);
     setRunning(true);
     setBusy(true);
-    exportPackFile(packId, detail, withProgress, withMine, withPhotos && ownUse > 0)
+    exportPackFile(
+      packId,
+      detail,
+      withProgress,
+      withMine,
+      withPhotos && ownUse > 0,
+      sizeOffered && carried > 0 && picturesInFile === 'smaller',
+    )
       .then(setResult, (reason: unknown) => {
         setError(errorText(reason));
       })
@@ -399,6 +428,38 @@ function ExportView({
                 </span>
               </span>
             </label>
+          ) : null}
+          {sizeOffered ? (
+            <fieldset
+              className="detail-options pack-file-pictures"
+              disabled={running || carried === 0}
+              data-testid="export-picture-size"
+            >
+              <legend className="pack-file-legend">Pictures in the file</legend>
+              {(['full', 'smaller'] as const).map((choice) => (
+                <label
+                  key={choice}
+                  className="detail-option"
+                  data-testid={`export-pictures-${choice}`}
+                >
+                  <input
+                    type="radio"
+                    name={sizeName}
+                    value={choice}
+                    checked={picturesInFile === choice}
+                    onChange={() => {
+                      setPicturesInFile(choice);
+                    }}
+                  />
+                  <span className="detail-text">
+                    <span className="detail-label">{PICTURES_IN_FILE_LABELS[choice]}</span>
+                    <span className="detail-description">
+                      {picturesInFileText(choice, carried, formatBytes(carriedBytes))}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
           ) : null}
           {running ? (
             <JobProgress verb="Saving the map pack file" />

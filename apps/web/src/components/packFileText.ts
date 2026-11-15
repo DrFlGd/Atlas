@@ -25,6 +25,23 @@ export function photosHint(count: number, size: string): string {
   return `The ${photos} downloaded for your own use (location photos and the pictures of guide pages, ${size}), so the other device shows them without downloading them again. Keep a file with them to yourself: they are not yours to pass on.`;
 }
 
+/** "Pictures in the file": the pictures as this computer keeps them, or made smaller. */
+export type PicturesInFile = 'full' | 'smaller';
+
+export const PICTURES_IN_FILE_LABELS: Record<PicturesInFile, string> = {
+  full: 'Full size',
+  smaller: 'Smaller',
+};
+
+/** What each choice means, given how many pictures go in and their size at full size. */
+export function picturesInFileText(choice: PicturesInFile, count: number, size: string): string {
+  if (choice === 'full') {
+    const pictures = `${numberFormat.format(count)} picture${count === 1 ? '' : 's'}`;
+    return `The pictures as this computer keeps them (${pictures}, ${size}).`;
+  }
+  return 'Each picture at most 1,280 pixels wide, a photo saved as a JPEG: a much smaller file, with less detail when a picture is opened large. The pictures on this computer and your own photos stay as they are.';
+}
+
 /** A date and time in the person's own format and time zone. */
 export function localDate(iso: string): string {
   const time = Date.parse(iso);

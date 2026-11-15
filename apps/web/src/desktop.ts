@@ -701,6 +701,13 @@ export interface PackFileOptions {
    */
   ownUsePictures?: number;
   ownUsePictureBytes?: number;
+  /**
+   * The pictures that may be passed on whose file is here, which every file
+   * carries, and their bytes at full size. None from a shell that cannot
+   * make them smaller.
+   */
+  pictures?: number;
+  pictureBytes?: number;
   /** A download of the pack is not over. */
   downloading: boolean;
 }
@@ -815,6 +822,9 @@ export interface PackFileProgress {
   entriesTotal: number;
   bytesDone: number;
   bytesTotal: number;
+  /** An export with smaller pictures, before it writes: how many are made smaller. */
+  picturesDone?: number;
+  picturesTotal?: number;
   cancelling: boolean;
 }
 
@@ -1091,7 +1101,9 @@ export interface DesktopBridge {
      * Asks where to save, then writes the file; with `progress` (a progress
      * export's text) saves that beside it, with `includeMine` the person's
      * own lists, locations and types go in the file, and with
-     * `includePhotos` the pictures downloaded for their own use. Null when
+     * `includePhotos` the pictures downloaded for their own use; with
+     * `smallerPictures` ("Pictures in the file: Smaller") the pictures are
+     * made smaller as they are written, never on this computer. Null when
      * the dialog was closed.
      */
     export(
@@ -1100,6 +1112,7 @@ export interface DesktopBridge {
       progress?: string,
       includeMine?: boolean,
       includePhotos?: boolean,
+      smallerPictures?: boolean,
     ): Promise<PackFileExported | null>;
     /** Asks for a file to import and reads its description. Null when the dialog was closed. */
     pick(): Promise<PackFileInfo | null>;
@@ -1321,13 +1334,14 @@ export function createBridge(invoke: Invoke): DesktopBridge {
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
-      export: (id, detail, progress, includeMine, includePhotos) =>
+      export: (id, detail, progress, includeMine, includePhotos, smallerPictures) =>
         call('packfile_export', {
           id,
           detail,
           progress: progress ?? null,
           includeMine: includeMine ?? false,
           includePhotos: includePhotos ?? false,
+          smallerPictures: smallerPictures ?? false,
         }),
       pick: () => call('packfile_pick'),
       inspect: (path) => call('packfile_inspect', { path }),

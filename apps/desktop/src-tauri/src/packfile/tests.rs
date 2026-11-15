@@ -244,6 +244,7 @@ fn folder_source(dir: &Path) -> PackSource {
         lock: true,
         comes_with_app: false,
         own_use_pictures: false,
+        smaller_pictures: false,
     }
 }
 
@@ -613,6 +614,7 @@ fn exports_images_from_the_overlay_of_a_pack_that_comes_with_the_app() {
         lock: false,
         comes_with_app: true,
         own_use_pictures: false,
+        smaller_pictures: false,
     };
     let options = export_options(&source).unwrap();
     assert!(options.exportable);
@@ -1545,6 +1547,7 @@ fn exports_the_own_files_beside_the_game() {
             &dir.0.join(name),
             include,
             false,
+            false,
             &mut |_| {},
             &|| false,
         )
@@ -1971,4 +1974,307 @@ fn tells_picture_paths_from_other_paths() {
     ] {
         assert!(!is_picture_path(bad), "{bad}");
     }
+}
+
+/// The bytes of one entry of a map pack file.
+fn entry_bytes(file: &Path, name: &str) -> Vec<u8> {
+    let mut archive = ZipArchive::new(fs::File::open(file).unwrap()).unwrap();
+    let mut entry = archive.by_name(name).unwrap();
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+    bytes
+}
+
+/// A game of pages with real pictures of every sort, kept at full size,
+/// one of them with a copy for pages.
+#[cfg(not(target_os = "android"))]
+fn write_full_size_pack(dir: &Path) {
+    use super::smaller::tests::{encoded, photo};
+    use image::ImageFormat;
+    write_pages_pack(dir);
+    let pictures = [
+        (
+            "photo",
+            "pictures/photo.png",
+            photo(3000, 2000, false),
+            ImageFormat::Png,
+        ),
+        (
+            "clear",
+            "pictures/clear.png",
+            photo(2000, 1000, true),
+            ImageFormat::Png,
+        ),
+        (
+            "icon",
+            "pictures/icon.png",
+            photo(64, 64, false),
+            ImageFormat::Png,
+        ),
+        (
+            "shot",
+            "pictures/shot.jpg",
+            photo(2560, 1440, false),
+            ImageFormat::Jpeg,
+        ),
+        (
+            "small",
+            "pictures/small.jpg",
+            photo(800, 600, false),
+            ImageFormat::Jpeg,
+        ),
+        // Its JPEG name is taken by the picture after it.
+        (
+            "taken",
+            "pictures/taken.png",
+            photo(1600, 900, false),
+            ImageFormat::Png,
+        ),
+        (
+            "other",
+            "pictures/taken.jpg",
+            photo(400, 300, false),
+            ImageFormat::Jpeg,
+        ),
+    ];
+    let mut list =
+        serde_json::from_slice::<Vec<Value>>(&fs::read(dir.join("pictures.json")).unwrap())
+            .unwrap();
+    for (id, file, image, format) in pictures {
+        put(&dir.join(file), &encoded(&image, format));
+        list.push(
+            json!({"id": format!("{ID}:picture:{id}"), "file": file, "shareable": true,
+                         "width": image.width(), "height": image.height()}),
+        );
+    }
+    list.last_mut().unwrap()["caption"] = json!("Another picture");
+    // The photo has a copy for pages and was shown at another address.
+    let photo = list
+        .iter_mut()
+        .find(|p| p["file"] == "pictures/photo.png")
+        .unwrap();
+    photo["pageCopy"] = json!({"file": "pictures/photo.page.png", "width": 320});
+    photo["shownAt"] = json!("https://pictures.example.com/photo-small.png");
+    put(
+        &dir.join("pictures/photo.page.png"),
+        &encoded(
+            &super::smaller::tests::photo(640, 427, false),
+            ImageFormat::Png,
+        ),
+    );
+    put_json(&dir.join("pictures.json"), &Value::Array(list));
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn makes_the_pictures_in_the_file_smaller_only_when_asked_and_never_those_here() {
+    use super::smaller::tests::read;
+    use image::ImageFormat;
+    let dir = TempDir::new("packfile-smaller");
+    let pack = dir.0.join("pages");
+    write_full_size_pack(&pack);
+    let before = files_under(&pack);
+    let kept = |files: BTreeMap<String, Vec<u8>>| {
+        files
+            .into_iter()
+            .filter(|(name, _)| !name.starts_with(".atlas/"))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let options = export_options(&folder_source(&pack)).unwrap();
+    // Every picture to pass on whose file is here: gate and the seven above.
+    assert_eq!(options.pictures, 8);
+    let on_disk: u64 = [
+        "photo.png",
+        "clear.png",
+        "icon.png",
+        "shot.jpg",
+        "small.jpg",
+        "taken.png",
+        "taken.jpg",
+        "gate.png",
+    ]
+    .iter()
+    .map(|name| {
+        fs::metadata(pack.join("pictures").join(name))
+            .unwrap()
+            .len()
+    })
+    .sum();
+    assert_eq!(options.picture_bytes, on_disk);
+
+    // Full size: the files as they are; the copy for pages is never carried.
+    let full = dir.0.join("full.atlaspack");
+    run_export(&folder_source(&pack), Detail::Overview, &full).unwrap();
+    let names = entry_names(&full);
+    assert!(
+        !names.keys().any(|name| name.contains(".page.")),
+        "{names:?}"
+    );
+    assert_eq!(
+        entry_bytes(&full, "pictures/photo.png"),
+        before["pictures/photo.png"]
+    );
+    let listed = json_entry(&full, "pictures.json");
+    let photo = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["file"] == "pictures/photo.png")
+        .unwrap();
+    assert!(photo.get("pageCopy").is_none(), "{photo}");
+    assert_eq!(
+        photo["shownAt"],
+        "https://pictures.example.com/photo-small.png"
+    );
+
+    // Smaller.
+    let small = dir.0.join("small.atlaspack");
+    let source = PackSource {
+        smaller_pictures: true,
+        ..folder_source(&pack)
+    };
+    let exported = run_export(&source, Detail::Overview, &small).unwrap();
+    let names = entry_names(&small);
+    let listed = json_entry(&small, "pictures.json");
+    let list = listed.as_array().unwrap();
+    let entry = |id: &str| {
+        list.iter()
+            .find(|p| p["id"] == format!("{ID}:picture:{id}"))
+            .unwrap()
+    };
+    // Each picture named in the list is the file the pack file holds, and the other way round.
+    let files: Vec<&str> = list.iter().map(|p| p["file"].as_str().unwrap()).collect();
+    for name in names.keys().filter(|name| name.starts_with("pictures/")) {
+        assert!(files.contains(&name.as_str()), "{name} is not listed");
+    }
+    for (id, file, format, width, height) in [
+        ("photo", "pictures/photo.jpg", ImageFormat::Jpeg, 1280, 854),
+        ("clear", "pictures/clear.png", ImageFormat::Png, 1280, 640),
+        ("icon", "pictures/icon.png", ImageFormat::Png, 64, 64),
+        ("shot", "pictures/shot.jpg", ImageFormat::Jpeg, 1280, 720),
+        ("small", "pictures/small.jpg", ImageFormat::Jpeg, 800, 600),
+        ("taken", "pictures/taken.png", ImageFormat::Png, 1280, 720),
+        ("other", "pictures/taken.jpg", ImageFormat::Jpeg, 400, 300),
+    ] {
+        let picture = entry(id);
+        assert_eq!(picture["file"], file, "{id}");
+        assert_eq!(
+            (picture["width"].as_u64(), picture["height"].as_u64()),
+            (Some(width), Some(height)),
+            "{id}"
+        );
+        assert_eq!(
+            read(&entry_bytes(&small, file)),
+            (format, width as u32, height as u32),
+            "{id}"
+        );
+    }
+    assert!(!names.contains_key("pictures/photo.png"));
+    // Pictures left as they are: the same bytes.
+    for file in [
+        "pictures/icon.png",
+        "pictures/small.jpg",
+        "pictures/taken.jpg",
+        "pictures/gate.png",
+    ] {
+        assert_eq!(entry_bytes(&small, file), before[file], "{file}");
+    }
+    assert!(entry("photo").get("pageCopy").is_none());
+    assert_eq!(entry("other")["caption"], "Another picture");
+    let full_size = fs::metadata(&full).unwrap().len();
+    assert!(
+        exported.size * 3 < full_size,
+        "{} of {full_size}",
+        exported.size
+    );
+    eprintln!(
+        "A pack file with full-size pictures: {full_size} bytes; with smaller ones: {} bytes",
+        exported.size
+    );
+
+    // The files here are as they were.
+    assert!(kept(files_under(&pack)) == before, "the files here changed");
+
+    // Opened on another device: each picture is there under the name the list gives. The
+    // file is the same version as one with full-size pictures, and this import is the one
+    // Atlas 0.11.0 has, so that app opens it too.
+    let imported = run_import(&small, &dir.0.join("maps")).unwrap();
+    let files = files_under(&imported.folder);
+    for file in [
+        "pictures/photo.jpg",
+        "pictures/clear.png",
+        "pictures/taken.png",
+        "pictures/taken.jpg",
+    ] {
+        assert!(files.contains_key(file), "{file}");
+    }
+    assert!(!files.contains_key("pictures/photo.png"));
+    let imported_list: Value = serde_json::from_slice(&files["pictures.json"]).unwrap();
+    assert_eq!(imported_list, listed);
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn makes_the_pictures_kept_for_own_use_smaller_too_when_they_go_in() {
+    use super::smaller::tests::{encoded, photo, read};
+    use image::ImageFormat;
+    let dir = TempDir::new("packfile-smaller-own-use");
+    let pack = dir.0.join("pages");
+    write_pages_pack(&pack);
+    put(
+        &pack.join("pictures/own.png"),
+        &encoded(&photo(2400, 1600, false), ImageFormat::Png),
+    );
+    let file = dir.0.join("pages.atlaspack");
+    let source = PackSource {
+        own_use_pictures: true,
+        smaller_pictures: true,
+        ..folder_source(&pack)
+    };
+    run_export(&source, Detail::Overview, &file).unwrap();
+    let listed = json_entry(&file, "pictures.json");
+    let own = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == format!("{ID}:picture:own"))
+        .unwrap();
+    assert_eq!(own["file"], "pictures/own.jpg");
+    assert_eq!(own["shareable"], false);
+    assert_eq!(read(&entry_bytes(&file, "pictures/own.jpg")).1, 1280);
+    // Not a real picture: carried as it is.
+    assert_eq!(
+        entry_bytes(&file, "pictures/far.jpg"),
+        b"downloaded picture"
+    );
+    run_import(&file, &dir.0.join("maps")).unwrap();
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn cancelling_while_pictures_are_made_smaller_leaves_nothing() {
+    let dir = TempDir::new("packfile-smaller-cancel");
+    let pack = dir.0.join("pages");
+    write_full_size_pack(&pack);
+    let file = dir.0.join("pages.atlaspack");
+    let source = PackSource {
+        smaller_pictures: true,
+        ..folder_source(&pack)
+    };
+    let asked = Cell::new(0);
+    let result = export(
+        &source,
+        &app(),
+        Detail::Overview,
+        &file,
+        &mut |_| {},
+        &|| {
+            asked.set(asked.get() + 1);
+            true
+        },
+    );
+    assert!(matches!(result, Err(Stop::Cancelled)), "{result:?}");
+    // Cancelled while the pictures were made smaller, before anything was written.
+    assert_eq!(asked.get(), 1);
+    assert!(!file.exists() && !part_path(&file).exists());
 }

@@ -195,6 +195,7 @@ pub(crate) fn import_with(
         entries_total: checked.entries.len() as u64,
         bytes_done: 0,
         bytes_total: checked.bytes,
+        ..Progress::default()
     };
     // Map images first, then the status files, the pack files and the
     // manifest last, so the folder is a pack only once it is complete.

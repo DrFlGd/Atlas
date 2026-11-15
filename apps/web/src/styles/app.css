@@ -2782,6 +2782,13 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   display: block;
 }
 
+/* "Pictures in the file": full size or smaller. */
+.pack-file-pictures .pack-file-legend {
+  margin-bottom: 2px;
+  padding: 0;
+  font-weight: 600;
+}
+
 .pack-compare {
   width: 100%;
   border-collapse: collapse;
