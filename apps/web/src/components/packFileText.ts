@@ -37,9 +37,9 @@ export const PICTURES_IN_FILE_LABELS: Record<PicturesInFile, string> = {
 export function picturesInFileText(choice: PicturesInFile, count: number, size: string): string {
   if (choice === 'full') {
     const pictures = `${numberFormat.format(count)} picture${count === 1 ? '' : 's'}`;
-    return `The pictures as this computer keeps them (${pictures}, ${size}).`;
+    return `The pictures go in as this computer keeps them (${pictures}, ${size}).`;
   }
-  return 'Each picture at most 1,280 pixels wide, a photo saved as a JPEG: a much smaller file, with less detail when a picture is opened large. The pictures on this computer and your own photos stay as they are.';
+  return 'Each picture is made at most 1,280 pixels wide and a photo is saved as a JPEG, so the file is much smaller and a picture opened large shows less detail. The pictures on this computer and your own photos stay as they are.';
 }
 
 /** A date and time in the person's own format and time zone. */

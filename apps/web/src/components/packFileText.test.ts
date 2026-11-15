@@ -220,7 +220,7 @@ describe('map pack file facts in words', () => {
 
   it('says what each size of the pictures in a file means', () => {
     expect(picturesInFileText('full', 1, '80 KB')).toBe(
-      'The pictures as this computer keeps them (1 picture, 80 KB).',
+      'The pictures go in as this computer keeps them (1 picture, 80 KB).',
     );
     expect(picturesInFileText('full', 1252, '41 MB')).toContain('(1,252 pictures, 41 MB)');
     const smaller = picturesInFileText('smaller', 1252, '41 MB');

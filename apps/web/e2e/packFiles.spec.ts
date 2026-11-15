@@ -634,7 +634,7 @@ test('offers the pictures in a map pack file at full size or smaller, and only w
   const smaller = choice.getByRole('radio', { name: /Smaller/ });
   await expect(full).toBeChecked();
   await expect(choice.getByTestId('export-pictures-full')).toContainText(
-    'The pictures as this computer keeps them (252 pictures, 41 MB).',
+    'The pictures go in as this computer keeps them (252 pictures, 41 MB).',
   );
   await expect(choice.getByTestId('export-pictures-smaller')).toContainText(
     'at most 1,280 pixels wide',
