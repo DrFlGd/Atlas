@@ -34,11 +34,15 @@ import {
   currentPlace,
   openPlace,
   readerBack,
+  readerBackTo,
   readerForward,
   rememberScroll,
   useReader,
   waitsForSection,
+  wayCame,
+  type OpenedBy,
   type ReaderPlace,
+  type WayStep,
 } from './reader';
 import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
 import { useTouch } from './state';
@@ -55,7 +59,8 @@ import '../styles/landing.css';
  * Wide, the contents stay beside the page, a tree open to the page shown;
  * compact (a phone), the contents are a place of their own, as the pages
  * are, and a page lists the pages under it at its foot. Above the page,
- * the way to it: every section and page it is under, each a link.
+ * the way to it: every section and page it is under, each a link; or,
+ * when the reader walked to it from page to page, the way they came.
  *
  * A page with a few headings lists them at its top, "On this page", each
  * a link to its section; a link to a section of a page opens the page
@@ -178,7 +183,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         >
           <UiIcon name="forward" size={20} />
         </button>
-        <Breadcrumbs game={game} place={place} name={name} />
+        <Breadcrumbs game={game} place={place} name={name} way={wayCame(reader)} />
         {wide ? null : (
           <button
             type="button"
@@ -290,26 +295,52 @@ function placeTitle(game: LoadedGame, place: ReaderPlace, name: string): string 
  * Where the place is in the contents: the game's name (the landing page) ›
  * Section › Page › … › the place itself. The game's name opens the
  * landing page, a section its contents, a page the page.
+ *
+ * A page the reader walked to from page to page (see `reader.ts`) shows
+ * the way they came instead: the game's name, the contents path of the
+ * page the walk started on (none when it started on the landing page),
+ * each page walked, and the page itself. A page walked through goes back
+ * to it, as Back pressed that many times would. When a page on the way is
+ * also on the contents path of the page it started on, the contents path
+ * is left out, so no page is named twice.
  */
 function Breadcrumbs({
   game,
   place,
   name,
+  way,
 }: {
   game: LoadedGame;
   place: ReaderPlace;
   name: string;
+  way: readonly WayStep[];
 }) {
   const { contents } = guidesOf(game);
   const line = useRef<HTMLElement>(null);
   const atHome = isLanding(game, place);
-  const path: ContentsStep[] = atHome
+  // The pages walked, from the page the walk started on; none from the landing page.
+  const walked =
+    atHome || place.kind !== 'page'
+      ? []
+      : way.flatMap((step) =>
+          step.place.kind === 'page' && !isLanding(game, step.place)
+            ? [{ at: step.at, guideId: step.place.guideId }]
+            : [],
+        );
+  const startedOn = way[0]?.place;
+  const fromPage = walked.length > 0 && startedOn?.kind === 'page' && walked[0]!.at === way[0]!.at;
+  let path: ContentsStep[] = atHome
     ? []
     : place.kind === 'page'
-      ? contents.trail(place.guideId)
+      ? contents.trail(fromPage ? walked[0]!.guideId : place.guideId)
       : place.kind === 'contents' && place.sectionId
         ? contents.trail(place.sectionId)
         : [];
+  if (way.length > 0 && place.kind === 'page') {
+    if (!fromPage) path = [];
+    const named = new Set([place.guideId, ...walked.map((step) => step.guideId)]);
+    if (path.some((step) => step.kind === 'page' && named.has(step.guide.id))) path = [];
+  }
   const here = atHome
     ? null
     : place.kind === 'search'
@@ -328,7 +359,12 @@ function Breadcrumbs({
   useLayoutEffect(() => {
     const element = line.current;
     if (element) element.scrollLeft = element.scrollWidth;
-  }, [place, path.length]);
+  }, [place, path.length, walked.length]);
+  const separator = (
+    <span className="guides-crumb-sep" aria-hidden="true">
+      ›
+    </span>
+  );
   return (
     <nav ref={line} className="guides-crumbs" aria-label="Where this is">
       {atHome ? (
@@ -355,9 +391,7 @@ function Breadcrumbs({
         const id = step.kind === 'section' ? step.section.id : step.guide.id;
         return (
           <span key={id} className="guides-crumb-part">
-            <span className="guides-crumb-sep" aria-hidden="true">
-              ›
-            </span>
+            {separator}
             <button
               type="button"
               className="guides-crumb"
@@ -376,11 +410,34 @@ function Breadcrumbs({
           </span>
         );
       })}
+      {walked.length > 0 ? (
+        <span
+          className="guides-crumb-way"
+          role="group"
+          aria-label="The way you came"
+          title="The way you came"
+          data-testid="guides-crumb-way"
+        >
+          {walked.map((step) => (
+            <span key={step.at} className="guides-crumb-part">
+              {separator}
+              <button
+                type="button"
+                className="guides-crumb guides-crumb-walked"
+                data-testid="guides-crumb-walked"
+                onClick={() => {
+                  readerBackTo(step.at);
+                }}
+              >
+                {contents.guide(step.guideId)?.title ?? 'Page'}
+              </button>
+            </span>
+          ))}
+        </span>
+      ) : null}
       {here ? (
         <span className="guides-crumb-part">
-          <span className="guides-crumb-sep" aria-hidden="true">
-            ›
-          </span>
+          {separator}
           <span className="guides-crumb guides-crumb-here" aria-current="page">
             {here}
           </span>
@@ -479,7 +536,18 @@ function MoreRows({
   );
 }
 
-function EntryList({ entries }: { entries: readonly ContentsEntry[] }) {
+/**
+ * A list of sections and pages. `by` says how a page is opened from it:
+ * walked to from the page shown (the pages under it), or afresh (the
+ * contents).
+ */
+function EntryList({
+  entries,
+  by = 'fresh',
+}: {
+  entries: readonly ContentsEntry[];
+  by?: OpenedBy;
+}) {
   const [count, setCount] = useState(ROWS_AT_ONCE);
   return (
     <ul className="touch-plain-list guides-entries">
@@ -507,7 +575,7 @@ function EntryList({ entries }: { entries: readonly ContentsEntry[] }) {
               className="guides-entry"
               data-testid="guides-page-link"
               onClick={() => {
-                openPlace({ kind: 'page', guideId: entry.guide.id });
+                openPlace({ kind: 'page', guideId: entry.guide.id }, by);
               }}
             >
               <UiIcon name="book" size={20} />
@@ -906,6 +974,7 @@ function Tile({
           section
             ? { kind: 'contents', sectionId: entry.section.id }
             : { kind: 'page', guideId: entry.guide.id },
+          'walk',
         );
       }}
     >
@@ -1143,7 +1212,7 @@ function PagesUnder({ game, guideId }: { game: LoadedGame; guideId: string }) {
   return (
     <section className="guides-under" aria-label="Pages under this page" data-testid="pages-under">
       <h2 className="guides-under-title">Pages under this page</h2>
-      <EntryList key={guideId} entries={entries} />
+      <EntryList key={guideId} entries={entries} by="walk" />
     </section>
   );
 }
@@ -1173,7 +1242,7 @@ function AlsoLinkedFrom({ game, guideId }: { game: LoadedGame; guideId: string }
               className="guides-inline-button"
               data-testid="also-linked-page"
               onClick={() => {
-                openPlace({ kind: 'page', guideId: page.id });
+                openPlace({ kind: 'page', guideId: page.id }, 'walk');
               }}
             >
               {page.title}

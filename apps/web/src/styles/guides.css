@@ -186,6 +186,19 @@ button.guides-crumb:hover {
   color: var(--atlas-muted);
 }
 
+/* The way the reader came, page to page: a quiet dotted line under each page walked. */
+.guides-crumb-way {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.guides-crumb-walked {
+  text-decoration: underline dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
 .guides-crumbs::-webkit-scrollbar {
   display: none;
 }
