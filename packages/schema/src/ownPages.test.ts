@@ -3,6 +3,7 @@ import {
   NO_OWN_PAGES,
   OWN_PAGES_FORMAT,
   noOwnPages,
+  ownPageReadSchemas,
   readOwnPagesFile,
   writeOwnPagesFile,
   type OwnPages,
@@ -129,6 +130,55 @@ describe('own pages file', () => {
     expect(read.file.own.pages.map((page) => page.id)).toEqual(own().pages.map((p) => p.id));
     expect(read.file.own.contents?.top).toEqual(own().contents!.top);
     expect(read.file.own.sections).toHaveLength(2);
+  });
+
+  it('keeps the person’s say on list pages, and reads it tolerantly', () => {
+    const says = {
+      ...own(),
+      listPages: { 'demo:guide:wiki-travel': true, 'demo:guide:wiki-wolves': false },
+    };
+    const text = writeOwnPagesFile('demo', says, NOW);
+    const read = readOwnPagesFile(JSON.parse(text));
+    expect(read.ok && read.file.own.listPages).toEqual(says.listPages);
+    expect(read.ok && read.file.skipped).toBe(0);
+    // None said: no field.
+    expect(
+      JSON.parse(writeOwnPagesFile('demo', { ...own(), listPages: {} }, NOW)),
+    ).not.toHaveProperty('listPages');
+    expect(noOwnPages({ ...NO_OWN_PAGES, listPages: { 'demo:guide:wiki-travel': true } })).toBe(
+      false,
+    );
+    // Written strictly: a page of the game, and yes or no.
+    expect(() =>
+      writeOwnPagesFile('demo', { ...NO_OWN_PAGES, listPages: { 'other:guide:x': true } }, NOW),
+    ).toThrow();
+    expect(() =>
+      writeOwnPagesFile('demo', { ...NO_OWN_PAGES, listPages: { 'demo:section:x': true } }, NOW),
+    ).toThrow();
+    // Read tolerantly: a say that cannot be read is left out and counted.
+    const value = JSON.parse(text) as { listPages: Record<string, unknown> };
+    value.listPages['demo:guide:wiki-regions'] = 'yes';
+    value.listPages['other:guide:x'] = true;
+    const tolerant = readOwnPagesFile(value);
+    expect(tolerant.ok && tolerant.file.own.listPages).toEqual(says.listPages);
+    expect(tolerant.ok && tolerant.file.skipped).toBe(2);
+    const odd = readOwnPagesFile({ ...value, listPages: 'all' });
+    expect(odd.ok && odd.file.own.listPages).toBeUndefined();
+  });
+
+  it('with says on list pages, is read by Atlas 0.11.0 as before', () => {
+    // The file as Atlas 0.11.0 reads it: the same fields, and none for the says.
+    const before = ownPageReadSchemas.ownPagesFileSchema.omit({ listPages: true });
+    const says = { ...own(), listPages: { 'demo:guide:wiki-travel': true } };
+    const value = JSON.parse(writeOwnPagesFile('demo', says, NOW)) as Record<string, unknown>;
+    expect(before.safeParse(value).success).toBe(true);
+    expect(Object.keys(before.parse(value))).not.toContain('listPages');
+    // What it reads of the rest is what it read before the says were written.
+    const { listPages: _, ...rest } = value;
+    const read = readOwnPagesFile(rest);
+    const plain = readOwnPagesFile(JSON.parse(writeOwnPagesFile('demo', own(), NOW)));
+    expect(read.ok && plain.ok && read.file.own).toEqual(plain.ok && plain.file.own);
+    expect(read.ok && read.file.skipped).toBe(0);
   });
 
   it('says what is not a pages file', () => {

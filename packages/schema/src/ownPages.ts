@@ -28,6 +28,11 @@ import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
  *   pages are placed by their links (`placeByLinks`) is still placed by
  *   its links: only where they put a page by hand is kept as theirs.
  * - `pictures`: their own pictures the pages show (see `ownPictures.ts`).
+ * - `listPages`: by a pack's page id, the person's say on whether the page
+ *   files the pages it lists under it: `true` makes it a list page whatever
+ *   share of its links it lists, `false` makes it file none (see
+ *   `pageTree.ts` in the core package). Absent where the app decides.
+ *   Apps before it ignore the field.
  *
  * In the desktop app it is a file beside the game's folder in the maps
  * folder (`<game id>.my-pages.json`); elsewhere it is kept where progress
@@ -150,6 +155,10 @@ function ownPageSchemas(mode: SchemaMode) {
     pictures: reading
       ? z.array(z.unknown()).optional().catch(undefined)
       : z.array(ownPictureSchema).max(MAX_OWN_PICTURES).optional(),
+    // Read one by one too (see `readOwnPagesFile`).
+    listPages: reading
+      ? z.record(z.string(), z.unknown()).optional().catch(undefined)
+      : z.record(idOf('guide'), z.boolean()).optional(),
   });
 
   return { ownPageSchema, ownSectionSchema, contentsSchema, ownPictureSchema, ownPagesFileSchema };
@@ -195,6 +204,12 @@ export interface OwnPages {
   contents?: PagesLayout;
   /** Their own pictures the pages show; absent when there are none. */
   pictures?: Picture[];
+  /**
+   * By a pack's page id, whether the page files the pages it lists under
+   * it (`true`) or none (`false`), whatever the app would decide; absent
+   * when the person said nothing.
+   */
+  listPages?: Record<string, boolean>;
 }
 
 /** No changes. */
@@ -279,6 +294,16 @@ export function readOwnPagesFile(
     pictures.push(picture.data);
   }
   if (pictures.length > 0) own.pictures = pictures;
+
+  const listPages: Record<string, boolean> = {};
+  for (const [id, say] of Object.entries(parsed.data.listPages ?? {})) {
+    if (typeof say !== 'boolean' || !idOf('guide').safeParse(id).success || !ofGame(id)) {
+      skipped++;
+      continue;
+    }
+    listPages[id] = say;
+  }
+  if (Object.keys(listPages).length > 0) own.listPages = listPages;
   return { ok: true, file: { gameId, version: parsed.data.version, own, skipped } };
 }
 
@@ -309,8 +334,11 @@ export function writeOwnPagesFile(gameId: string, own: OwnPages, now: Date): str
     ...own.pages.map((page) => page.id),
     ...own.sections.map((section) => section.id),
     ...(own.pictures ?? []).map((picture) => picture.id),
+    ...Object.keys(own.listPages ?? {}),
   ];
-  if (!ids.every(ofGame)) throw new Error('A page, section or picture is not of this game.');
+  if (!ids.every(ofGame)) {
+    throw new Error('A page, section, picture or list page is not of this game.');
+  }
   const unique = (list: readonly { id: string }[]) =>
     new Set(list.map((item) => item.id)).size === list.length;
   if (!unique(own.pages) || !unique(own.sections) || !unique(own.pictures ?? [])) {
@@ -325,16 +353,18 @@ export function writeOwnPagesFile(gameId: string, own: OwnPages, now: Date): str
     sections: own.sections,
     ...(own.contents ? { contents: own.contents } : {}),
     ...(own.pictures && own.pictures.length > 0 ? { pictures: own.pictures } : {}),
+    ...(own.listPages && Object.keys(own.listPages).length > 0 ? { listPages: own.listPages } : {}),
   });
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
-/** Whether there is nothing in them: no page, section, contents or picture. */
+/** Whether there is nothing in them: no page, section, contents, picture or say on a list page. */
 export function noOwnPages(own: OwnPages): boolean {
   return (
     own.pages.length === 0 &&
     own.sections.length === 0 &&
     own.contents === undefined &&
-    (own.pictures ?? []).length === 0
+    (own.pictures ?? []).length === 0 &&
+    Object.keys(own.listPages ?? {}).length === 0
   );
 }
