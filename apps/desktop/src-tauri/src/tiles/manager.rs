@@ -42,7 +42,7 @@
 //! the activity log.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
@@ -436,6 +436,10 @@ pub struct DownloadManager {
     /// Measuring pictures for imports (see `measure`).
     pictures: Pictures,
     picture_cache: PictureCache,
+    /// Full files of pictures that were refused, not there or could not be
+    /// kept since the app started: their photo jobs ask only for the copy
+    /// their page showed (see `photos`).
+    full_not_kept: Mutex<HashSet<String>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -470,6 +474,7 @@ impl DownloadManager {
             schedule: Mutex::new(Schedule::default()),
             lock_retry: LOCK_RETRY,
             log: ActivityLog::global(),
+            full_not_kept: Mutex::new(HashSet::new()),
         }
     }
 
@@ -1616,6 +1621,7 @@ async fn run_job(
                     parent: layer
                         .parent_of(level, tile.x, tile.y)
                         .map(|parent| layer.tile_path(parent.z, parent.x, parent.y)),
+                    fallback: None,
                 }
             }));
         }

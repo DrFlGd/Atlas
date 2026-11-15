@@ -793,6 +793,7 @@ async fn ask(
                 rows: size,
             }),
             parent: None,
+            fallback: None,
         })
         .collect();
     let outcomes: Arc<Mutex<Vec<Answer>>> = Arc::default();

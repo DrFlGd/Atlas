@@ -287,6 +287,11 @@ pub struct Task {
     /// The tile one remote zoom up that covers this one, relative to the
     /// overlay folder: when it is not on the server, this one is not asked for.
     pub parent: Option<PathBuf>,
+    /// A picture's full file only (never a map tile): the address of the
+    /// smaller copy its page showed, asked for once in its place when the
+    /// full file is refused, not on the server or cannot be kept (see
+    /// [`Downloader::fell_back`]). No other request is made for it.
+    pub fallback: Option<String>,
 }
 
 impl Task {
@@ -298,6 +303,7 @@ impl Task {
             label: None,
             place: None,
             parent: None,
+            fallback: None,
         }
     }
 }
@@ -684,6 +690,9 @@ pub struct Downloader {
     pending: Mutex<HashSet<PathBuf>>,
     /// Layers whose first store denial has been logged.
     denial_logged: Mutex<HashSet<usize>>,
+    /// Full files of pictures that were not kept, so the copy their page
+    /// showed was asked for instead (see [`Task::fallback`]).
+    fell_back: Mutex<HashSet<String>>,
 }
 
 impl Downloader {
@@ -719,7 +728,17 @@ impl Downloader {
             denied_in_a_row: AtomicU32::new(0),
             pending: Mutex::new(HashSet::new()),
             denial_logged: Mutex::new(HashSet::new()),
+            fell_back: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// The full files of pictures this downloader did not keep and asked
+    /// for the copy their page showed instead.
+    pub fn fell_back(&self) -> HashSet<String> {
+        self.fell_back
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Records that `host` sent images of layer `layer` in an earlier
@@ -1057,8 +1076,37 @@ impl Downloader {
         }
     }
 
-    /// Fetches one tile, retrying what is worth retrying.
+    /// Fetches one tile, retrying what is worth retrying. A picture's full
+    /// file that is refused, not on the server or cannot be kept falls back
+    /// once to the copy its page showed ([`Task::fallback`]), after the
+    /// usual pause: that answer is the picture's.
     async fn fetch(&self, task: &Task) -> Result<Outcome, Stop> {
+        let outcome = self.fetch_once(task).await?;
+        let (Some(shown), Outcome::Failed(why)) = (&task.fallback, &outcome) else {
+            return Ok(outcome);
+        };
+        self.log.info(
+            Area::Download,
+            format!(
+                "Did not keep the full picture {} ({why}); asking once for the copy its page showed, {shown}, instead",
+                task.url
+            ),
+        );
+        self.fell_back
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(task.url.clone());
+        self.sleep(self.pace().delay).await?;
+        let shown_task = Task {
+            url: shown.clone(),
+            fallback: None,
+            ..task.clone()
+        };
+        self.fetch_once(&shown_task).await
+    }
+
+    /// Fetches one tile at its own address, retrying what is worth retrying.
+    async fn fetch_once(&self, task: &Task) -> Result<Outcome, Stop> {
         let settings = &self.settings;
         let mut delay = settings.backoff;
         let mut last_error = String::new();
@@ -1113,6 +1161,13 @@ impl Downloader {
         };
         let status = response.status();
         Ok(match status.as_u16() {
+            // A picture's full file that is refused or not there: the copy
+            // its page showed is asked for instead (see `fetch`). Nothing is
+            // recorded for its file, and the job does not stop for it; a
+            // refusal of that copy stops it as any refusal does.
+            code @ (401 | 403 | 404 | 410) if task.fallback.is_some() => {
+                Attempt::Done(Outcome::Failed(format!("HTTP {code}")))
+            }
             404 | 410 => {
                 self.store.mark_missing(&task.path).map_err(|error| {
                     self.disk_error(task, &error);
