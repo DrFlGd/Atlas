@@ -3,6 +3,7 @@ import {
   siteInfoOf,
   type AtlasImporter,
   type ConfirmedLicence,
+  type PictureSize,
   type ReadingWay,
   type SiteInfo,
 } from '@atlas/importer-api';
@@ -26,6 +27,8 @@ export interface SiteReading {
   chosen: boolean;
   /** The licence the person confirmed for the site, if any. */
   licence?: ConfirmedLicence;
+  /** The size its pictures are kept at: the one chosen, else {@link DEFAULT_PICTURE_SIZE}. */
+  pictures: PictureSize;
 }
 
 /** The site of `url` for an importer, with the person's choices for it. */
@@ -39,6 +42,7 @@ export async function siteReading(importer: AtlasImporter, url: string): Promise
     way,
     chosen: kept.way === way,
     ...(kept.licence ? { licence: kept.licence } : {}),
+    pictures: kept.pictures ?? DEFAULT_PICTURE_SIZE,
   };
 }
 
@@ -105,3 +109,29 @@ export const WAY_TEXTS: Record<ReadingWay, string> = {
 /** The sentence added to a refusal when the site can also be read in a window of this app. */
 export const WINDOW_HINT =
   'You can choose to read this wiki “In a window of this app” on its screen in the Library, where you answer the site’s check yourself.';
+
+/**
+ * The size the pictures of a site's pages are kept at until the person
+ * chooses for the site (see `pictureSize` of the import context): `full`,
+ * each picture's full file where the importer can tell it, with a copy
+ * made for pages; or `shown`, each as its page shows it. The one place
+ * the default is set.
+ */
+export const DEFAULT_PICTURE_SIZE: PictureSize = 'full';
+
+/** The sizes pictures can be kept at, as the app shows them. */
+export const PICTURE_SIZE_LABELS: Record<PictureSize, string> = {
+  full: 'Full size',
+  shown: 'As the page shows them',
+};
+
+/** What each size does, in a sentence. */
+export const PICTURE_SIZE_TEXTS: Record<PictureSize, string> = {
+  full: 'Each picture is downloaded once at the size of its file, so pressing it shows it large. This takes more disk space and a little more time than the small copies the pages show.',
+  shown:
+    'Each picture is downloaded at the size the page shows it, which is often a small copy. This takes the least space.',
+};
+
+/** What the choice changes for a wiki read before, in a sentence. */
+export const PICTURE_SIZE_NOTE =
+  'A change counts for pages read from now on. To change the pictures of the pages already read, build the wiki again from its saved pages; its pictures are then downloaded again.';

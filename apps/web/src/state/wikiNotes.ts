@@ -5,6 +5,7 @@ import {
   isReadingWay,
   pageKey,
   type ConfirmedLicence,
+  type PictureSize,
   type ReadingWay,
 } from '@atlas/importer-api';
 import { create } from 'zustand';
@@ -45,8 +46,9 @@ import { SETTINGS, progressStore } from './services';
  * - `wikiSites:<importer id>`: the person's choices for each site of the
  *   importer, by the key the importer gives the site (`siteInfo` of the
  *   contract): how its pages are read, among the ways the importer offers
- *   (`way`), and the Creative Commons licence the person confirmed for a
- *   site whose pages state none (`licence`). A choice stays until the
+ *   (`way`), the Creative Commons licence the person confirmed for a
+ *   site whose pages state none (`licence`), and the size its pictures are
+ *   kept at (`pictures`, see `readingWays.ts`). A choice stays until the
  *   person changes it; the app never changes it by itself.
  *
  * Nothing here is fetched: these are notes on what the person read.
@@ -84,7 +86,17 @@ export interface SiteChoices {
   way?: ReadingWay;
   /** The licence the person confirmed for it, when its pages state none. */
   licence?: ConfirmedLicence;
+  /** The size its pages' pictures are kept at, as the person chose; the app's default until then. */
+  pictures?: PictureSize;
 }
+
+/** Whether a value is a size pictures are kept at. */
+const isPictureSize = (value: unknown): value is PictureSize =>
+  value === 'full' || value === 'shown';
+
+/** Whether a site's choices hold anything to keep. */
+const holdsChoice = (choices: SiteChoices): boolean =>
+  Boolean(choices.way ?? choices.licence ?? choices.pictures);
 
 export interface WikiNotes {
   contents: Record<string, WikiContents>;
@@ -192,8 +204,9 @@ function readSites(value: unknown): Record<string, SiteChoices> {
             },
           }
         : {}),
+      ...(isPictureSize(entry.pictures) ? { pictures: entry.pictures } : {}),
     };
-    if (choices.way || choices.licence) kept[key] = choices;
+    if (holdsChoice(choices)) kept[key] = choices;
   }
   return kept;
 }
@@ -592,7 +605,7 @@ function changeSite(
   return change(importerId, 'sites', (notes) => {
     const choices = next(notes.sites[key] ?? {});
     const { [key]: _old, ...others } = notes.sites;
-    const kept = choices.way || choices.licence ? { ...others, [key]: choices } : others;
+    const kept = holdsChoice(choices) ? { ...others, [key]: choices } : others;
     return { ...notes, sites: Object.fromEntries(Object.entries(kept).slice(-MAX_SITES)) };
   });
 }
@@ -600,6 +613,15 @@ function changeSite(
 /** Keeps how the person chose to read a site's pages. */
 export function setSiteWay(importerId: string, key: string, way: ReadingWay): Promise<void> {
   return changeSite(importerId, key, (choices) => ({ ...choices, way }));
+}
+
+/** Keeps the size the person chose to keep a site's pictures at. */
+export function setSitePictures(
+  importerId: string,
+  key: string,
+  pictures: PictureSize,
+): Promise<void> {
+  return changeSite(importerId, key, (choices) => ({ ...choices, pictures }));
 }
 
 /** Keeps the licence the person confirmed for a site, or forgets it (null). */

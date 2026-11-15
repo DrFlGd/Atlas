@@ -39,6 +39,7 @@ import {
   type ListingContext,
   type PageObservations,
   type PageStyles,
+  type PictureSize,
   type PictureSummary,
   type PictureTiles,
   type PictureTilesRequest,
@@ -129,6 +130,7 @@ import { offerSameTitle } from './gameGroups';
 import { showLibraryAdd, showLibraryGame } from './libraryView';
 import {
   asksHow,
+  DEFAULT_PICTURE_SIZE,
   offersChoice,
   siteInLibrary,
   siteReading,
@@ -1529,8 +1531,16 @@ export function importContext(
   onMeasuring?: () => void,
   observations?: PageObservations,
   listed?: ImportContext['listed'],
-  /** How the page was read, and the licence the person confirmed for its site. */
-  site: { reading?: ReadingWay; confirmedLicence?: ConfirmedLicence } = {},
+  /**
+   * How the page was read, the licence the person confirmed for its site,
+   * and the size its pictures are kept at (for an importer whose pages
+   * come with their pictures).
+   */
+  site: {
+    reading?: ReadingWay;
+    confirmedLicence?: ConfirmedLicence;
+    pictureSize?: PictureSize;
+  } = {},
 ): ImportContext {
   const state = useAtlas.getState();
   const listing = state.library;
@@ -1590,6 +1600,8 @@ export function importContext(
     ...(listed ? { listed } : {}),
     ...(site.reading ? { reading: site.reading } : {}),
     ...(site.confirmedLicence ? { confirmedLicence: site.confirmedLicence } : {}),
+    // The app keeps a picture's address shown and its copy for pages.
+    ...(site.pictureSize ? { pictureSize: site.pictureSize } : {}),
     ...(__ATLAS_DOWNLOADS__ && downloadsOffered(state)
       ? {
           pictureTiles: (request: PictureTilesRequest) =>
@@ -1683,6 +1695,10 @@ async function convertAndSave(
       {
         ...(page.way ? { reading: page.way } : {}),
         ...(confirmedLicence ? { confirmedLicence } : {}),
+        // Built again too with the size chosen for the site now.
+        ...(importer.picturesWithPages === true
+          ? { pictureSize: site?.pictures ?? DEFAULT_PICTURE_SIZE }
+          : {}),
       },
     );
   // When the importer read each pack: changed since, it reads it again (see `packTurns.ts`).

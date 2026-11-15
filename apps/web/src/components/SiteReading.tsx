@@ -1,6 +1,7 @@
 import {
   CONFIRMABLE_LICENCES,
   readingWayOf,
+  type PictureSize,
   type ReadingWay,
   type SiteInfo,
 } from '@atlas/importer-api';
@@ -21,8 +22,21 @@ import {
 } from '../state/importing';
 import { parseAddresses } from '../state/importRun';
 import { showLibraryAdd, useLibrary } from '../state/libraryView';
-import { WAY_LABELS, WAY_TEXTS } from '../state/readingWays';
-import { loadWikiNotes, setSiteLicence, setSiteWay, useWikiNotes } from '../state/wikiNotes';
+import {
+  DEFAULT_PICTURE_SIZE,
+  PICTURE_SIZE_LABELS,
+  PICTURE_SIZE_NOTE,
+  PICTURE_SIZE_TEXTS,
+  WAY_LABELS,
+  WAY_TEXTS,
+} from '../state/readingWays';
+import {
+  loadWikiNotes,
+  setSiteLicence,
+  setSitePictures,
+  setSiteWay,
+  useWikiNotes,
+} from '../state/wikiNotes';
 import { memoryParts } from './removalText';
 
 /**
@@ -73,6 +87,61 @@ export function WaysChoice({
           </label>
         ))}
       </div>
+    </fieldset>
+  );
+}
+
+/** The sizes a site's pictures can be kept at, in the order shown. */
+const PICTURE_SIZES: readonly PictureSize[] = ['full', 'shown'];
+
+/**
+ * "Pictures: Full size / As the page shows them": the size a wiki's
+ * pictures are kept at, with what each costs. Changed at once, never
+ * during a session; it counts for pages read from then on, and for the
+ * wiki built again from its saved pages.
+ */
+export function PicturesChoice({
+  size,
+  disabled = false,
+  onChange,
+}: {
+  size: PictureSize;
+  disabled?: boolean;
+  onChange: (size: PictureSize) => void;
+}) {
+  const name = useId();
+  return (
+    <fieldset
+      className="follow-links site-pictures"
+      data-testid="site-pictures"
+      data-size={size}
+      disabled={disabled}
+    >
+      <legend>Pictures</legend>
+      <div className="follow-links-options">
+        {PICTURE_SIZES.map((option) => (
+          <label
+            key={option}
+            className="follow-links-option"
+            data-testid={`site-pictures-${option}`}
+          >
+            <input
+              type="radio"
+              name={name}
+              value={option}
+              checked={size === option}
+              onChange={() => {
+                onChange(option);
+              }}
+            />
+            <span>
+              <strong>{PICTURE_SIZE_LABELS[option]}</strong>
+              <span className="muted small">{PICTURE_SIZE_TEXTS[option]}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <p className="muted small">{PICTURE_SIZE_NOTE}</p>
     </fieldset>
   );
 }
@@ -346,17 +415,21 @@ function LicenceAskCard({ ask }: { ask: LicenceAsk }) {
 
 /**
  * On a wiki's screen: what its importer says about it, how its pages are
- * read (changed at once, never during a go), and the licence the person
- * confirmed for it, which they can forget.
+ * read (changed at once, never during a go), the size its pictures are
+ * kept at in an app that downloads them (`pictures`: its importer's pages
+ * come with their pictures), and the licence the person confirmed for it,
+ * which they can forget.
  */
 export function WikiReading({
   importerId,
   site,
   disabled,
+  pictures = false,
 }: {
   importerId: string;
   site: SiteInfo;
   disabled: boolean;
+  pictures?: boolean;
 }) {
   const choices = useWikiNotes((s) => s.byImporter[importerId]?.sites[site.key]);
   useEffect(() => {
@@ -364,7 +437,8 @@ export function WikiReading({
   }, [importerId]);
   const way = readingWayOf(site, choices?.way);
   const licence = choices?.licence;
-  if (site.ways.length < 2 && !site.notice && !licence) return null;
+  const sizes = __ATLAS_DOWNLOADS__ && pictures;
+  if (site.ways.length < 2 && !site.notice && !licence && !sizes) return null;
   return (
     <div className="wiki-reading" data-testid="wiki-reading">
       <SiteNotice site={site} />
@@ -374,6 +448,13 @@ export function WikiReading({
           way={way}
           disabled={disabled}
           onChange={(next) => void setSiteWay(importerId, site.key, next)}
+        />
+      ) : null}
+      {sizes ? (
+        <PicturesChoice
+          size={choices?.pictures ?? DEFAULT_PICTURE_SIZE}
+          disabled={disabled}
+          onChange={(next) => void setSitePictures(importerId, site.key, next)}
         />
       ) : null}
       {licence ? (

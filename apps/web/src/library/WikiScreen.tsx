@@ -243,6 +243,7 @@ export function WikiScreen({
               importerId={source.importerId}
               site={source.site}
               disabled={running || browseOn}
+              pictures={source.pictures}
             />
           ) : null}
           {contents ? null : (
