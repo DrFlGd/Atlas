@@ -61,11 +61,15 @@ test.describe('on a desktop', () => {
       'true',
     );
     await expect(side(page).getByTestId('guides-tree-page').getByText('Ash Mail')).toBeVisible();
-    // Pages keeps only what no list page the menu leads to lists: a list page with its pages, and a note.
+    // Pages keeps only what no list page the menu leads to lists: a list page with its pages, the
+    // keepsakes Field Notes names (no list page), and a note.
     const pages = side(page).locator('.guides-tree-section').filter({ hasText: 'Pages' });
     await pages.click();
     await expect(page.getByTestId('guides-contents').getByTestId('guides-page-link')).toHaveText([
       /Materials\s*3 pages under it/,
+      'Old Map',
+      'Lost Key',
+      'Torn Page',
       'Stray Note',
     ]);
 
