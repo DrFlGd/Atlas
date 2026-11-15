@@ -30,10 +30,21 @@ import type { GuideEntry } from '@atlas/schema';
  *   contents shows them, top to bottom, and further pages in the order
  *   they were listed. So a page has exactly one home, and every walk of
  *   the same pages gives the same tree.
+ * - The narrower list wins: when a list page that lists a page also lists
+ *   a list page that lists it too, and puts that one under itself, the
+ *   page goes under the narrower one (an index of all gear lists "Short
+ *   blades" and every short blade, and "Short blades" lists its blades:
+ *   Gear › Short blades › Dirk, not Gear › Dirk), and so on down, for as
+ *   long as a narrower one lists it. Only a list page that none of the
+ *   pages put beside it lists is narrower: a page whose "See also" names
+ *   its neighbours is one of them, and takes none of them. What the home
+ *   page lists stays at the top as it is.
  * - A page many pages link to (a location every item names, see
  *   {@link POPULAR_MIN_LINKERS}) goes only under one of the longest list
  *   pages that list it (see {@link POPULAR_PARENT_SHARE}), never under a
- *   page that merely names it among many others.
+ *   page that merely names it among many others; or under a narrower
+ *   list page that such a list page puts under itself, as above (a real
+ *   part of that index, however short).
  * - A list page no placed page leads to stays in its section, with the
  *   pages it lists under it (those no other list page took first).
  * - Under a page: the pages the person put there first, in their order,
@@ -310,6 +321,50 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   }
 
   /**
+   * By page, the narrower list page it is kept for: a list page put under
+   * the page that lists it (see {@link narrower}), which files it when its
+   * turn comes, or keeps it for a narrower one of its own.
+   */
+  const keptFor = new Map<string, string>();
+  /** The pages each list page lists, as a set, made when first asked. */
+  const listSets = new Map<string, ReadonlySet<string>>();
+  const listsPage = (page: string, id: string) => {
+    let set = listSets.get(page);
+    if (!set) {
+      const listing = filing.get(page);
+      if (!listing) return false;
+      listSets.set(page, (set = new Set(listing)));
+    }
+    return set.has(id);
+  };
+
+  /**
+   * Of the pages put under `page` together (`under`), the narrower list
+   * pages its listed pages (`listed`) go under, by page (see the top of
+   * this file): a list page among them that lists the page, the first in
+   * order. A list page that one of the others lists (an item's "See also"
+   * naming its neighbours) is a neighbour, not a narrower list: only list
+   * pages none of the others lists count.
+   */
+  const narrower = (under: readonly string[], listed: readonly string[]) => {
+    const found = new Map<string, string>();
+    const listPages = under.filter((id) => filing.has(id));
+    if (listPages.length === 0 || listed.length === 0) return found;
+    const here = new Set(under);
+    const named = new Set<string>();
+    for (const id of listPages) {
+      for (const target of filing.get(id)!) if (here.has(target)) named.add(target);
+    }
+    const hosts = listPages.filter((id) => !named.has(id));
+    if (hosts.length === 0) return found;
+    for (const target of listed) {
+      const host = hosts.find((id) => id !== target && listsPage(id, target));
+      if (host !== undefined) found.set(target, host);
+    }
+    return found;
+  };
+
+  /**
    * Walks out from `queue`: the pages put under each, then the pages the
    * source files under it, then (with links) those it lists.
    */
@@ -334,10 +389,27 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
       }
       const listing = withLinks ? filing.get(page) : undefined;
       if (listing) {
+        // The pages it files: those kept for it, and those no page took first.
+        const listed: string[] = [];
         for (const target of listing) {
+          if (keptFor.get(target) === page) {
+            keptFor.delete(target);
+            listed.push(target);
+            continue;
+          }
           if (!waiting.has(target) || reached.has(target) || wikiParent.has(target)) continue;
           if (!mayFile(page, listing.length, target)) continue;
           reached.add(target);
+          listed.push(target);
+        }
+        // The home page's own list stays at the top as it is.
+        const kept = page === root ? null : narrower([...under, ...listed], listed);
+        for (const target of listed) {
+          const host = kept?.get(target);
+          if (host !== undefined) {
+            keptFor.set(target, host);
+            continue;
+          }
           placed.set(target, page);
           under.push(target);
           queue.push(target);
