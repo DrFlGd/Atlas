@@ -120,7 +120,7 @@ test.describe('on a computer', () => {
     await expect.poll(filter).not.toContain('blur');
     await spoiler.getByRole('button', { name: 'Open The waystone after the climb' }).click();
     await expect(viewer).toBeVisible();
-    await viewer.getByRole('button', { name: 'Close photo' }).click();
+    await viewer.getByRole('button', { name: 'Close picture' }).click();
     await expect(viewer).toBeHidden();
     expect(errors).toEqual([]);
   });

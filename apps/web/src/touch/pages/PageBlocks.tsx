@@ -184,19 +184,23 @@ export function MenuItem({
   onClick,
   disabled,
   danger,
+  checked,
   testId,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
+  /** For a choice that is in force or not: shown with a tick when it is. */
+  checked?: boolean;
   testId?: string;
 }) {
   return (
     <button
       type="button"
-      role="menuitem"
-      className={`pe-menu-item${danger ? ' pe-menu-danger' : ''}`}
+      role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+      aria-checked={checked}
+      className={`pe-menu-item${danger ? ' pe-menu-danger' : ''}${checked ? ' pe-menu-checked' : ''}`}
       disabled={disabled}
       data-testid={testId}
       onMouseDown={(event) => {

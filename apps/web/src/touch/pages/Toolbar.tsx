@@ -10,12 +10,14 @@ import {
   type ToggleMark,
 } from '../../markdownEdit/inline';
 import { listTexts, setOrdered } from '../../markdownEdit/structure';
+import { useAtlas } from '../../state/store';
 import {
   changeBlock,
   fieldOfCell,
   fieldOfList,
   focusedBlock,
   insertBlock,
+  insertPagesList,
   setModel,
   toggle,
   withField,
@@ -156,6 +158,8 @@ function setQuote(): void {
 /** The text tools over the page. */
 export function Toolbar({ openDialog }: { openDialog: (dialog: ToolDialog) => void }) {
   const focused = usePageEditor((s) => s.focused);
+  const guideId = usePageEditor((s) => s.guideId);
+  const game = useAtlas((s) => s.game);
   const canUndo = usePageEditor((s) => s.undo.length > 0);
   const canRedo = usePageEditor((s) => s.redo.length > 0);
   const block = usePageEditor((s) =>
@@ -379,6 +383,19 @@ export function Toolbar({ openDialog }: { openDialog: (dialog: ToolDialog) => vo
             >
               Add a line across the page
             </MenuItem>
+            <MenuItem
+              disabled={!game || !guideId}
+              testId="tool-pages-list"
+              onClick={() => {
+                close();
+                if (game && guideId) insertPagesList(game, guideId);
+              }}
+            >
+              List the pages under this page
+            </MenuItem>
+            <p className="pe-menu-note">
+              The list is text from then on: it does not change when the pages under this page do.
+            </p>
           </>
         )}
       </Menu>

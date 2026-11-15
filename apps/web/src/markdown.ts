@@ -68,6 +68,12 @@ markdown.use(markdownMarks);
 export interface GuidePicture {
   /** Where the app loads it: in the pack's own folder. */
   url: string;
+  /**
+   * Its file, when `url` is a smaller copy of it for pages (the picture's
+   * `pageCopy`): shown in the larger view, and on the page when the copy
+   * is not there.
+   */
+  fullUrl?: string;
   caption?: string;
   credit?: string;
   width?: number;
@@ -471,6 +477,7 @@ markdown.renderer.rules.atlas_picture = (tokens, index) => {
     return alt ? `<span class="picture-alt">${escape(alt)}</span>` : '';
   }
   const note = [picture.caption, picture.credit].filter(Boolean).join(' · ');
+  const full = picture.fullUrl ? ` data-full="${escape(picture.fullUrl)}"` : '';
   if (shown) {
     // The size the guide gives it where it stands; a small one stands in
     // the line of text, with what it shows as its tooltip and no line under it.
@@ -479,7 +486,7 @@ markdown.renderer.rules.atlas_picture = (tokens, index) => {
     const tip =
       inline && (picture.caption ?? alt) ? ` title="${escape(picture.caption ?? alt)}"` : '';
     return (
-      `<span class="guide-picture ${inline ? 'inline' : 'sized'}"><img src="${escape(picture.url)}" alt="${escape(alt)}"${size}${tip} loading="lazy" decoding="async">` +
+      `<span class="guide-picture ${inline ? 'inline' : 'sized'}"><img src="${escape(picture.url)}"${full} alt="${escape(alt)}"${size}${tip} loading="lazy" decoding="async">` +
       (note && !inline ? `<span class="guide-picture-note">${escape(note)}</span>` : '') +
       '</span>'
     );
@@ -487,7 +494,7 @@ markdown.renderer.rules.atlas_picture = (tokens, index) => {
   const size =
     picture.width && picture.height ? ` width="${picture.width}" height="${picture.height}"` : '';
   return (
-    `<span class="guide-picture"><img src="${escape(picture.url)}" alt="${escape(alt)}"${size} loading="lazy" decoding="async">` +
+    `<span class="guide-picture"><img src="${escape(picture.url)}"${full} alt="${escape(alt)}"${size} loading="lazy" decoding="async">` +
     (note ? `<span class="guide-picture-note">${escape(note)}</span>` : '') +
     '</span>'
   );

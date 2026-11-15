@@ -1261,6 +1261,22 @@ impl Library {
         }
         written?;
 
+        // Pictures the pack no longer lists (another name after a page was
+        // read again, or a picture no page shows any more), with what was
+        // kept about them: their files would stay on disk for nothing.
+        if let Some(list) = request.files.get(crate::packfile::PICTURES_FILE) {
+            let removed = remove_unlisted_pictures(&dir, list);
+            if removed > 0 {
+                activity::info(
+                    Area::Import,
+                    format!(
+                        "Removed {removed} picture files of {} that its pictures no longer list",
+                        request.pack_id
+                    ),
+                );
+            }
+        }
+
         // An import that moves a layer's images (another address template)
         // leaves the levels Atlas made by shrinking them in the old
         // arrangement, and no download would build them again.
@@ -2127,6 +2143,56 @@ fn move_file(source: &Path, target: &Path) -> io::Result<()> {
     fs::remove_file(source)
 }
 
+/// Removes the files in an imported pack's `pictures/` folder that its
+/// list of pictures (`pictures.json`, as just written) names neither as a
+/// picture's file nor as its copy for pages, with the marks kept beside
+/// them (`.404` for one not on the server, `.part` for one half written).
+/// Only an import's pictures are there: a person's own photos are kept
+/// outside the pack folder (see `ownpictures`). Nothing is removed when the
+/// list cannot be read. Returns how many files were removed.
+pub(crate) fn remove_unlisted_pictures(dir: &Path, list: &str) -> usize {
+    let Ok(serde_json::Value::Array(pictures)) =
+        serde_json::from_str::<serde_json::Value>(list.trim_start_matches('\u{feff}'))
+    else {
+        return 0;
+    };
+    let listed: HashSet<String> = pictures
+        .iter()
+        .flat_map(|picture| {
+            [
+                picture.get("file"),
+                picture.get("pageCopy").and_then(|copy| copy.get("file")),
+            ]
+        })
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_lowercase)
+        .collect();
+    let Ok(entries) = fs::read_dir(dir.join("pictures")) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let base = name
+            .strip_suffix(crate::tiles::store::MISSING_SUFFIX)
+            .or_else(|| name.strip_suffix(crate::tiles::store::PART_SUFFIX))
+            .unwrap_or(&name);
+        let path = format!("pictures/{base}");
+        if !crate::packfile::is_picture_path(&path) || listed.contains(&path.to_lowercase()) {
+            continue;
+        }
+        if entry.file_type().is_ok_and(|kind| kind.is_file())
+            && fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2459,6 +2525,55 @@ mod tests {
     }
 
     #[test]
+    fn removes_the_picture_files_the_pack_no_longer_lists_when_it_is_built_again() {
+        let s = setup("library-import-unlisted", Vec::new());
+        let mut request = import("pages", "start");
+        request.files.insert(
+            "pictures.json".into(),
+            r#"[{"id":"pages:picture:a","file":"pictures/a.png","shareable":false,"remote":"https://wiki.example.org/A.png",
+                 "pageCopy":{"file":"pictures/a.page.png","width":40}},
+                {"id":"pages:picture:b","file":"pictures/B.jpg","shareable":false,"remote":"https://wiki.example.org/B.jpg"}]"#
+                .into(),
+        );
+        let dir = s.library.save_import(&request).unwrap();
+        let pictures = dir.join("pictures");
+        fs::create_dir_all(&pictures).unwrap();
+        // Downloaded under the names it lists, and under older names.
+        for name in [
+            "a.png",
+            "a.page.png",
+            "b.jpg",
+            "old-1x2.png",
+            "old-1x2.page.png",
+            "gone.jpg.404",
+            "half.webp.part",
+            "notes.txt",
+        ] {
+            fs::write(pictures.join(name), b"x").unwrap();
+        }
+        fs::create_dir_all(pictures.join("folder.png")).unwrap();
+        // Built again: the list names the same pictures.
+        s.library.save_import(&request).unwrap();
+        let mut left: Vec<String> = fs::read_dir(&pictures)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        // What it lists stays (also by another case); a file that is no
+        // picture's, and a folder, are not touched.
+        assert_eq!(
+            left,
+            ["a.page.png", "a.png", "b.jpg", "folder.png", "notes.txt"]
+        );
+        // A list that cannot be read removes nothing; neither does an import without one.
+        fs::write(pictures.join("old.png"), b"x").unwrap();
+        assert_eq!(remove_unlisted_pictures(&dir, "not json"), 0);
+        request.files.remove("pictures.json");
+        s.library.save_import(&request).unwrap();
+        assert!(pictures.join("old.png").exists());
+    }
+
+    #[test]
     fn keeps_a_game_with_no_map_read_from_pages() {
         let s = setup("library-pages", Vec::new());
         let mut request = import("pages", "start");
@@ -2485,6 +2600,7 @@ mod tests {
             lock: false,
             comes_with_app: false,
             own_use_pictures: false,
+            smaller_pictures: false,
         })
         .unwrap();
         assert_eq!((details.contents.maps, details.contents.guides), (0, 1));

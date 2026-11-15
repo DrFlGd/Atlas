@@ -9,6 +9,7 @@ import {
   imagesText,
   installedImagesText,
   photosHint,
+  picturesInFileText,
   sourceText,
   stylesText,
 } from './packFileText';
@@ -215,6 +216,19 @@ describe('map pack file facts in words', () => {
     );
     expect(photosHint(3081, '212 MB')).toContain('The 3,081 photos downloaded');
     expect(photosHint(2, '1 MB')).toContain('Keep a file with them to yourself');
+  });
+
+  it('says what each size of the pictures in a file means', () => {
+    expect(picturesInFileText('full', 1, '80 KB')).toBe(
+      'The pictures go in as this computer keeps them (1 picture, 80 KB).',
+    );
+    expect(picturesInFileText('full', 1252, '41 MB')).toContain('(1,252 pictures, 41 MB)');
+    const smaller = picturesInFileText('smaller', 1252, '41 MB');
+    expect(smaller).toContain('at most 1,280 pixels wide');
+    expect(smaller).toContain(
+      'The pictures on this computer and your own photos stay as they are.',
+    );
+    expect(smaller).not.toMatch(/\u2014/);
   });
 
   it('counts the contents and the map images', () => {

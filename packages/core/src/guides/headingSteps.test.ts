@@ -139,6 +139,13 @@ describe('the headings of a list page as levels', () => {
     ]);
     // One group and nothing beside it makes no level at all.
     expect(levels([heading(2, 'Weapons')], pages('w', 4, 0))).toBeNull();
+    // One group and a page put beside it by hand does.
+    expect(
+      levels([heading(2, 'Weapons')], pages('w', 3, 0), {
+        items: ['moved', 'w1', 'w2', 'w3'],
+        grouped: (id) => id !== 'moved',
+      }),
+    ).toEqual(['moved', { Weapons: ['w1', 'w2', 'w3'] }]);
     // One group and pages beside it does.
     expect(levels([heading(2, 'Weapons')], [...pages('x', 2, -1), ...pages('w', 3, 0)])).toEqual([
       'x1',
@@ -175,6 +182,14 @@ describe('the headings of a list page as levels', () => {
   it('are none with no headings or fewer than two pages to group', () => {
     expect(levels([], pages('w', 6, -1))).toBeNull();
     expect(levels([heading(2, 'Weapons')], pages('w', 1, 0))).toBeNull();
+    // One page with pages under it, beside a page put there by hand, is a level.
+    expect(
+      levels([heading(2, 'Weapons')], pages('w', 1, 0), {
+        items: ['moved', 'w1'],
+        grouped: (id) => id !== 'moved',
+        weight: (id) => (id === 'w1' ? 9 : 1),
+      }),
+    ).toEqual(['moved', { Weapons: ['w1'] }]);
   });
 });
 

@@ -1,20 +1,21 @@
 import type { LoadedPack } from '@atlas/core';
 import { isOwnId, type Photo, type Picture } from '@atlas/schema';
-import { useEffect, useId, useRef, useState } from 'react';
-import { create } from 'zustand';
+import { useState } from 'react';
 import { useOwnLists } from '../state/ownLists';
 import { useOwnLocations } from '../state/ownLocations';
 import { useOwnNotes } from '../state/ownNotes';
 import { useOwnPictureUrl } from '../state/ownPictures';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
+import { openPicture } from '../state/pictureViewer';
 
 /**
  * Photos of locations and of list entries: pictures of the pack, or a
  * person's own. A pack's picture is shown from the pack's own files only,
  * never from the address it may be fetched from later, so one not
  * downloaded shows a quiet mark instead. A spoiler photo stays blurred
- * until it is tapped or clicked; then a tap opens it large.
+ * until it is tapped or clicked; then a tap opens it large (see
+ * `PictureViewer.tsx`).
  */
 
 const packPictures = new WeakMap<LoadedPack, Map<string, Picture>>();
@@ -123,7 +124,14 @@ export function PhotoTile({
         onClick={(event) => {
           event.stopPropagation();
           if (hidden) setRevealed(true);
-          else openPhoto({ url, description, picture });
+          else {
+            openPicture({
+              url,
+              description,
+              ...(picture?.credit ? { credit: picture.credit } : {}),
+              opener: event.currentTarget,
+            });
+          }
         }}
       >
         <img
@@ -178,71 +186,5 @@ export function PhotoStrip({
         <PhotoTile key={photo.picture} game={game} photo={photo} size={size} name={name} />
       ))}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// A photo shown large
-
-interface Shown {
-  url: string;
-  description: string;
-  picture: Picture | undefined;
-}
-
-const usePhotoViewer = create<{ shown: Shown | null }>()(() => ({ shown: null }));
-
-function openPhoto(shown: Shown): void {
-  usePhotoViewer.setState({ shown });
-}
-
-function closePhoto(): void {
-  usePhotoViewer.setState({ shown: null });
-}
-
-/** The photo opened, large, over everything; Escape, Close or a click beside it closes it. */
-export function PhotoViewer() {
-  const shown = usePhotoViewer((s) => s.shown);
-  const ref = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (shown && !dialog.open) dialog.showModal();
-    if (!shown && dialog.open) dialog.close();
-  }, [shown]);
-
-  const credit = shown?.picture?.credit;
-  return (
-    <dialog
-      ref={ref}
-      className="photo-viewer"
-      aria-labelledby={titleId}
-      data-testid="photo-viewer"
-      onClose={closePhoto}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) closePhoto();
-      }}
-    >
-      {shown ? (
-        <figure className="photo-viewer-figure">
-          <img src={shown.url} alt={shown.description} />
-          <figcaption>
-            <span id={titleId}>{shown.description}</span>
-            {credit ? <span className="photo-viewer-credit"> · {credit}</span> : null}
-          </figcaption>
-          <button
-            type="button"
-            className="photo-viewer-close"
-            aria-label="Close photo"
-            autoFocus
-            onClick={closePhoto}
-          >
-            <UiIcon name="close" size={20} />
-          </button>
-        </figure>
-      ) : null}
-    </dialog>
   );
 }

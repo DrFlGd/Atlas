@@ -22,7 +22,11 @@
 //!   the person's own use (`shareable: false`, such as a location photo
 //!   downloaded from a site) is in the file only when the person ticks
 //!   "Include downloaded photos", for a file they keep to themselves; it
-//!   stays marked `shareable: false` there.
+//!   stays marked `shareable: false` there. A picture's copy for pages
+//!   (`pageCopy`) is never carried, and its carried pictures are at full
+//!   size unless the person chooses "Pictures in the file: Smaller" (see
+//!   [`smaller`]): then they are made smaller as they are written, a JPEG
+//!   among them named `.jpg` in the file and in its `pictures.json` alike.
 //!
 //! A game with no map has no `maps.json` or `layers.json`, and no images.
 //!
@@ -61,6 +65,7 @@
 pub mod export;
 pub mod import;
 pub mod shell;
+pub mod smaller;
 pub mod space;
 
 use std::{
@@ -155,6 +160,11 @@ pub struct Progress {
     pub entries_total: u64,
     pub bytes_done: u64,
     pub bytes_total: u64,
+    /// Before an export with "Pictures in the file: Smaller" writes
+    /// anything: how many of its pictures have been made smaller (see
+    /// [`smaller::make_smaller`]); both 0 otherwise.
+    pub pictures_done: u64,
+    pub pictures_total: u64,
 }
 
 /// The app that wrote a file.
@@ -837,10 +847,23 @@ pub fn is_picture_path(path: &str) -> bool {
 /// still marked so. `list` is the pack's `pictures.json` cut down to them,
 /// and to the pictures fetched later (with a `remote` address) whose files
 /// are not carried, so another app with downloads can fetch them for
-/// itself; none when the pack has no pictures.
+/// itself; none when the pack has no pictures. A picture's copy for pages
+/// (`pageCopy`) is never carried: a carried picture's entry names none, so
+/// pages show its file, and an app with downloads makes the copy again for
+/// a picture fetched later.
 pub struct SharedPictures {
-    pub list: Vec<u8>,
+    pub list: Vec<Value>,
     pub files: Vec<Entry>,
+}
+
+impl SharedPictures {
+    /// The list as the file's `pictures.json`.
+    pub fn list_bytes(&self) -> Vec<u8> {
+        let mut list =
+            serde_json::to_vec_pretty(&Value::Array(self.list.clone())).expect("JSON serialises");
+        list.push(b'\n');
+        list
+    }
 }
 
 /// How many pictures kept for the person's own use have their file here,
@@ -904,6 +927,10 @@ pub fn shared_pictures(
                     data: EntryData::File(on_disk),
                     size,
                 });
+                let mut picture = picture;
+                if let Some(object) = picture.as_object_mut() {
+                    object.remove("pageCopy");
+                }
                 kept.push(picture);
             }
             // Listed without its file: fetched later, where downloads are.
@@ -911,9 +938,7 @@ pub fn shared_pictures(
             None => {}
         }
     }
-    let mut list = serde_json::to_vec_pretty(&Value::Array(kept)).expect("JSON serialises");
-    list.push(b'\n');
-    Ok(Some(SharedPictures { list, files }))
+    Ok(Some(SharedPictures { list: kept, files }))
 }
 
 /// Reads a JSON file of at most `cap` bytes.
@@ -1199,6 +1224,9 @@ pub struct PackSource {
     /// (`shareable: false`, such as location photos) to go in the file
     /// too: it is then a file to keep, not to pass on.
     pub own_use_pictures: bool,
+    /// The person chose "Pictures in the file: Smaller": the pictures it
+    /// carries are made smaller as they are written (see [`smaller`]).
+    pub smaller_pictures: bool,
 }
 
 /// One entry of the file.
@@ -1461,6 +1489,11 @@ pub struct ExportOptions {
     /// and their bytes; 0 when there are none to offer.
     pub own_use_pictures: u64,
     pub own_use_picture_bytes: u64,
+    /// The pictures that may be passed on whose file is here, which every
+    /// file carries, and their bytes at full size: what "Pictures in the
+    /// file" is about, with those for the person's own use.
+    pub pictures: u64,
+    pub picture_bytes: u64,
 }
 
 /// The default file name of an export.
@@ -1510,9 +1543,13 @@ pub fn export_options(source: &PackSource) -> Result<ExportOptions, String> {
         });
     }
     let (own_use_pictures, own_use_picture_bytes) = own_use_pictures(&source.root, &source.images)?;
+    let shared = shared_pictures(&source.root, &source.images, false)?
+        .map_or(Vec::new(), |shared| shared.files);
     Ok(ExportOptions {
         own_use_pictures,
         own_use_picture_bytes,
+        pictures: shared.len() as u64,
+        picture_bytes: shared.iter().map(|entry| entry.size).sum(),
         pack_id: source.pack_id.clone(),
         title: pack.title,
         exportable: reason.is_none(),

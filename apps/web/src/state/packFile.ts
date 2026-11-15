@@ -136,6 +136,8 @@ export async function exportPackFile(
   withMine = false,
   /** The pictures downloaded for the person's own use go in the file. */
   withPhotos = false,
+  /** "Pictures in the file: Smaller": the pictures in the file are made smaller. */
+  smallerPictures = false,
 ): Promise<PackFileExported | null> {
   const progress = withProgress
     ? `${JSON.stringify(await exportProgress({ scope: 'all' }), null, 2)}\n`
@@ -150,7 +152,7 @@ export async function exportPackFile(
       flushOwnNotes(),
     ]);
   }
-  return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos);
+  return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos, smallerPictures);
 }
 
 /** What adding the person's own records from a map pack file did. */

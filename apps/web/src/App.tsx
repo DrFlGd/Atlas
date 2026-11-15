@@ -7,7 +7,7 @@ import { UiIcon } from './components/icons';
 import { MapPageStatus } from './components/MapPageStatus';
 import { MapPane } from './components/MapPane';
 import { MapsDialog } from './components/MapsDialog';
-import { PhotoViewer } from './components/Photos';
+import { PictureViewer } from './components/PictureViewer';
 import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
@@ -220,7 +220,7 @@ function Shell() {
       ) : null}
       <MapsDialog />
       <ActivityLogDialog />
-      <PhotoViewer />
+      <PictureViewer />
       {packFileOpen ? (
         <Suspense fallback={null}>
           <PackFileDialog />

@@ -75,6 +75,7 @@ describe('desktop bridge', () => {
     await bridge.ownGames.deleteMap('cloud-isles', 'cloud-isles:map:caves');
     await bridge.packFiles.export('cloud-isles', 'full', undefined, true);
     await bridge.packFiles.export('cloud-isles', 'full');
+    await bridge.packFiles.export('cloud-isles', 'full', undefined, false, false, true);
     expect(calls).toEqual([
       ['own_locations_read', { gameId: 'demo' }],
       ['own_locations_write', { gameId: 'demo', contents: '{}', keepCopy: null }],
@@ -118,6 +119,7 @@ describe('desktop bridge', () => {
           progress: null,
           includeMine: true,
           includePhotos: false,
+          smallerPictures: false,
         },
       ],
       [
@@ -128,6 +130,18 @@ describe('desktop bridge', () => {
           progress: null,
           includeMine: false,
           includePhotos: false,
+          smallerPictures: false,
+        },
+      ],
+      [
+        'packfile_export',
+        {
+          id: 'cloud-isles',
+          detail: 'full',
+          progress: null,
+          includeMine: false,
+          includePhotos: false,
+          smallerPictures: true,
         },
       ],
     ]);

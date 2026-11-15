@@ -192,6 +192,23 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.12.0
+
+          The contents of a wiki nests the way its index pages do, the line above a page shows the way you came, a picture opens large, and the contents can be arranged many pages at a time.
+
+          - **Index pages with full tables.** An index page whose tables also name other pages in their later columns, such as where a thing is found or who sells it, was not taken for a list page, and everything it lists fell into "Pages". The links in the other cells of a row now count as part of that row, not against the page.
+          - **Levels from the headings of an index page.** The pages an index page lists are no longer one long level under it. A heading that is a link to a page holds the pages listed under it, and a plain heading becomes a level of its own that opens the index page at that heading. A heading that lists nothing, or fewer than three pages, makes no level.
+          - **The narrower list wins.** A page listed by a large index and by a narrower list under it goes under the narrower one.
+          - **The way you came.** When you walk from page to page by links, tiles, "Also linked from" or "Pages under this page", the line above the page shows the pages you came through, with a dotted line under each. Press one to go back to it, as Back pressed that many times would. A page opened from the contents or from search shows where it sits in the contents, as before.
+          - **A larger view of pictures.** Press a picture in a page, or a location's photo, to open it large. A picture larger than the window can be shown at its real size and moved around. Esc, the close button, a press beside the picture or Back closes it. A picture that is a link still follows its link, and a picture whose file is no larger than it is shown opens nothing.
+          - **Arranging the contents, many pages at a time.** While editing a page, tick pages in the contents beside it and move them together, by dragging or with **Move to…**. **New level from these** makes a page of your own with the ticked pages under it, and can list them in its text. **New page under this page** makes a level in one press.
+          - **Your say on list pages.** A page's menu in the contents has **File the pages this page lists under it**, for an index page Atlas did not recognise, **Do not file pages under this page**, for one it took wrongly, and **Let the app decide**.
+          - **A list of the pages under a page.** In the page editor, **More text tools** can insert a list of links to the pages under the page you are editing. It is text from then on and does not change by itself.
+          - **A page you put under a page no longer disturbs the others.** Only the page you moved is kept as your choice. The pages Atlas files there stay filed by Atlas, with their levels. A level made from a heading has **Make this a page of my own**, so you can rename it, move it and write in it.
+          - **Smaller pictures in a map pack file.** Atlas on a computer can now export a file with its pictures made smaller, at most 1,280 pixels wide. Such a file opens here like any other and takes less room on the phone.
+
+          Atlas works the contents out when Guides is opened, so the games you already have nest the new way at once. A game or a file made with 0.12.0 still opens in older versions of Atlas, which show the contents as before.
+
           ## New in 0.11.0
 
           The pages of a wiki are filed more carefully in its contents.

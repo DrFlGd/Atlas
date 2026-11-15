@@ -25,6 +25,8 @@ interface Job {
   entriesTotal: number;
   bytesDone: number;
   bytesTotal: number;
+  picturesDone?: number;
+  picturesTotal?: number;
   cancelling: boolean;
 }
 
@@ -46,6 +48,10 @@ interface PackShell {
   ownUse: { pictures: number; bytes: number } | null;
   /** Whether each export was asked to include them. */
   exportsPhotos: boolean[];
+  /** The pictures to pass on whose file is here, offered at full size or smaller: count and bytes. */
+  pictures: { pictures: number; bytes: number } | null;
+  /** Whether each export was asked to make the pictures smaller. */
+  exportsSmaller: boolean[];
   /** One's own files the next import gives back, as the shell reads them from the file. */
   importMine: {
     ownLists?: string;
@@ -67,6 +73,8 @@ function installPackShell() {
     exportsMine: [],
     ownUse: null,
     exportsPhotos: [],
+    pictures: null,
+    exportsSmaller: [],
     importMine: null,
   };
   (window as unknown as { __packShell: PackShell }).__packShell = shell;
@@ -151,16 +159,19 @@ function installPackShell() {
     bytes: images * 6000 + 40_000,
   });
   /** Runs a job that counts up every 50 ms; it ends when done (and not held) or cancelled. */
-  const run = <T>(kind: Job['kind'], total: number, done: () => T) =>
+  /** With `pictures`, that many pictures are made smaller first, as long as `hold` is set. */
+  const run = <T>(kind: Job['kind'], total: number, done: () => T, pictures = 0) =>
     new Promise<T>((resolve, reject) => {
       shell.job = {
         kind,
         packId: 'demo',
         title: 'Atlas demo world',
         entriesDone: 0,
-        entriesTotal: total,
+        entriesTotal: pictures > 0 ? 0 : total,
         bytesDone: 0,
-        bytesTotal: total * 6000,
+        bytesTotal: pictures > 0 ? 0 : total * 6000,
+        picturesDone: 0,
+        picturesTotal: pictures,
         cancelling: false,
       };
       const timer = window.setInterval(() => {
@@ -171,6 +182,14 @@ function installPackShell() {
           // Tauri rejects with the command's error value, a string.
           // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
           reject('Cancelled. Nothing was written.');
+          return;
+        }
+        if (job.entriesTotal === 0) {
+          job.picturesDone = Math.min(pictures, (job.picturesDone ?? 0) + Math.ceil(pictures / 5));
+          if (job.picturesDone === pictures && !shell.hold) {
+            job.entriesTotal = total;
+            job.bytesTotal = total * 6000;
+          }
           return;
         }
         job.entriesDone = Math.min(total, job.entriesDone + 2);
@@ -230,6 +249,9 @@ function installPackShell() {
           ...(shell.ownUse
             ? { ownUsePictures: shell.ownUse.pictures, ownUsePictureBytes: shell.ownUse.bytes }
             : {}),
+          ...(shell.pictures
+            ? { pictures: shell.pictures.pictures, pictureBytes: shell.pictures.bytes }
+            : {}),
         });
       case 'packfile_export': {
         const detail = args.detail as string;
@@ -238,9 +260,11 @@ function installPackShell() {
         const withMine = args.includeMine === true;
         shell.exportsMine.push(withMine);
         shell.exportsPhotos.push(args.includePhotos === true);
+        const smaller = args.smallerPictures === true;
+        shell.exportsSmaller.push(smaller);
         const images = detail === 'overview' ? 18 : 340;
         const path = `/home/test/Exports/demo-${detail}.atlaspack`;
-        return run('export', 20, () => ({
+        const made = () => ({
           path,
           fileName: `demo-${detail}.atlaspack`,
           size: images * 6000 + 20_000,
@@ -255,7 +279,8 @@ function installPackShell() {
             progress !== null && shell.progressFails
               ? `Your progress could not be saved beside it (demo-${detail}.progress.json): Permission denied`
               : null,
-        }));
+        });
+        return run('export', 20, made, smaller ? (shell.pictures?.pictures ?? 0) : 0);
       }
       case 'packfile_pick':
         return Promise.resolve(shell.pick);
@@ -579,6 +604,71 @@ test('offers the photos downloaded for one’s own use in a map pack file, and o
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
   expect((await packShell(page)).exportsPhotos).toEqual([false, true]);
+  expect(errors).toEqual([]);
+});
+
+test('offers the pictures in a map pack file at full size or smaller, and only when there are any', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await openLibraryGame(page, 'demo');
+  const dialog = page.getByTestId('pack-file-dialog');
+  const choice = dialog.getByTestId('export-picture-size');
+
+  // A shell that cannot make pictures smaller, or a game with none: nothing to choose.
+  await libraryMore(page, 'export-pack');
+  await expect(dialog.getByTestId('export-start')).toBeEnabled();
+  await expect(choice).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await setShell(page, { pictures: { pictures: 0, bytes: 0 } });
+  await libraryMore(page, 'export-pack');
+  await expect(dialog.getByTestId('export-start')).toBeEnabled();
+  await expect(choice).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  // With pictures: full size until asked otherwise, with how many and how large.
+  await setShell(page, { pictures: { pictures: 252, bytes: 41_000_000 }, hold: true });
+  await libraryMore(page, 'export-pack');
+  await expect(choice.locator('legend')).toHaveText('Pictures in the file');
+  const full = choice.getByRole('radio', { name: /Full size/ });
+  const smaller = choice.getByRole('radio', { name: /Smaller/ });
+  await expect(full).toBeChecked();
+  await expect(choice.getByTestId('export-pictures-full')).toContainText(
+    'The pictures go in as this computer keeps them (252 pictures, 41 MB).',
+  );
+  await expect(choice.getByTestId('export-pictures-smaller')).toContainText(
+    'at most 1,280 pixels wide',
+  );
+  await expect(choice.getByTestId('export-pictures-smaller')).toContainText(
+    'The pictures on this computer and your own photos stay as they are.',
+  );
+  // The photos for one's own use count when they go in.
+  await setShell(page, { ownUse: { pictures: 8, bytes: 4_000_000 } });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await libraryMore(page, 'export-pack');
+  await dialog.getByTestId('export-with-photos').check();
+  await expect(choice.getByTestId('export-pictures-full')).toContainText('(260 pictures, 45 MB)');
+  await dialog.getByTestId('export-with-photos').uncheck();
+
+  // Smaller: the pictures are made smaller before the file is written.
+  await smaller.check();
+  await dialog.getByTestId('export-start').click();
+  const progress = dialog.getByTestId('pack-file-progress');
+  await expect(progress).toContainText('Making the pictures smaller: 252 of 252');
+  await expect(progress.getByRole('progressbar')).toHaveAttribute(
+    'aria-valuetext',
+    '252 of 252 pictures',
+  );
+  await setShell(page, { hold: false });
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  // The dialog asks again each time: full size.
+  await libraryMore(page, 'export-pack');
+  await expect(full).toBeChecked();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  expect((await packShell(page)).exportsSmaller).toEqual([true, false]);
   expect(errors).toEqual([]);
 });
 

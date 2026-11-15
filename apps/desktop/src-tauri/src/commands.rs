@@ -1442,8 +1442,11 @@ fn progress_file_beside(pack_file: &std::path::Path) -> PathBuf {
 /// the person's own lists, locations and types of the game go in the file
 /// (the web app saves them first). With `include_photos`, so do the
 /// pictures downloaded for the person's own use (location photos, the
-/// pictures of guide pages), for a file they keep to themselves. `None`
-/// when the person closes the
+/// pictures of guide pages), for a file they keep to themselves. With
+/// `smaller_pictures` ("Pictures in the file: Smaller"), the pictures in
+/// the file are made smaller as they are written (see
+/// `packfile::smaller`); the files on this computer stay as they are.
+/// `None` when the person closes the
 /// dialog. `packfile_progress` reports how far it is and `packfile_cancel`
 /// stops it.
 #[allow(clippy::too_many_arguments)]
@@ -1459,6 +1462,7 @@ pub async fn packfile_export<R: Runtime>(
     progress: Option<String>,
     include_mine: Option<bool>,
     include_photos: Option<bool>,
+    smaller_pictures: Option<bool>,
 ) -> Result<Option<PackFileExported>, String> {
     desktop_only()?;
     listed(&library, &id)?;
@@ -1511,6 +1515,7 @@ pub async fn packfile_export<R: Runtime>(
             &destination,
             include_mine.unwrap_or(false),
             include_photos.unwrap_or(false),
+            smaller_pictures.unwrap_or(false),
             &mut |done| turn.update(done),
             &|| turn.cancelled(),
         );
@@ -1795,6 +1800,7 @@ pub async fn packfile_copy_picked<R: Runtime>(
             entries_total: 0,
             bytes_done,
             bytes_total: total.max(bytes_done),
+            ..Progress::default()
         };
         turn.update(progress(0));
         let result = fs::create_dir_all(&copies)

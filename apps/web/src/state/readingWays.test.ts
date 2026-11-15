@@ -1,9 +1,15 @@
 import { CONFIRMABLE_LICENCES, type AtlasImporter } from '@atlas/importer-api';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { importContext } from './importing';
-import { asksHow, siteInLibrary, siteReading, wayFor } from './readingWays';
+import { asksHow, DEFAULT_PICTURE_SIZE, siteInLibrary, siteReading, wayFor } from './readingWays';
 import { SETTINGS, openProgressStore, progressStore } from './services';
-import { loadWikiNotes, setSiteLicence, setSiteWay, useWikiNotes } from './wikiNotes';
+import {
+  loadWikiNotes,
+  setSiteLicence,
+  setSitePictures,
+  setSiteWay,
+  useWikiNotes,
+} from './wikiNotes';
 
 beforeAll(async () => {
   // No IndexedDB here: the store kept in memory, as in a browser that allows none.
@@ -157,5 +163,50 @@ describe('the licence the person confirmed', () => {
     expect(context.confirmedLicence).toEqual(licence);
     const plain = importContext(PAGE, '', 'licence-context');
     expect('reading' in plain || 'confirmedLicence' in plain).toBe(false);
+  });
+});
+
+describe('the size a site’s pictures are kept at', () => {
+  it('is full size until the person chooses, and kept per site', async () => {
+    expect(DEFAULT_PICTURE_SIZE).toBe('full');
+    const importer = wikis('pictures-size');
+    await expect(siteReading(importer, PAGE)).resolves.toMatchObject({ pictures: 'full' });
+    await setSitePictures(importer.id, 'wiki.example.net', 'shown');
+    await expect(siteReading(importer, PAGE)).resolves.toMatchObject({
+      pictures: 'shown',
+      // Choosing a size is not choosing a way.
+      chosen: false,
+    });
+    await expect(siteReading(importer, 'https://other.example.net/wiki/A')).resolves.toMatchObject({
+      pictures: 'full',
+    });
+    expect(await progressStore().getSetting(SETTINGS.wikiSites(importer.id))).toEqual({
+      'wiki.example.net': { pictures: 'shown' },
+    });
+    // Read back as kept, and a value it does not know is left out.
+    await progressStore().putSetting(SETTINGS.wikiSites('pictures-read'), {
+      'wiki.example.net': { pictures: 'shown' },
+      'other.example.net': { pictures: 'huge' },
+    });
+    const notes = await loadWikiNotes('pictures-read');
+    expect(notes.sites).toEqual({ 'wiki.example.net': { pictures: 'shown' } });
+  });
+
+  it('reaches the importer through the import context, only when given', () => {
+    const given = importContext(
+      PAGE,
+      '',
+      'pictures-context',
+      true,
+      undefined,
+      undefined,
+      undefined,
+      {
+        pictureSize: 'shown',
+      },
+    );
+    expect(given.pictureSize).toBe('shown');
+    expect(given.rebuild).toBe(true);
+    expect('pictureSize' in importContext(PAGE, '', 'pictures-context')).toBe(false);
   });
 });

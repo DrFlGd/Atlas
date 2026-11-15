@@ -12,9 +12,9 @@ use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 
 use super::{
     analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal,
-    shared_pictures, unavailable, AppInfo, DirCache, Entry, EntryData, Header, ImagesFacts,
-    LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE, MINE_PICTURES_DIR,
-    PICTURES_FILE, VERSION_WITHOUT_MINE,
+    shared_pictures, smaller, unavailable, AppInfo, DirCache, Entry, EntryData, Header,
+    ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
+    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE,
 };
 use crate::{
     library::PackLock,
@@ -109,15 +109,28 @@ pub fn export_with_mine(
 
     // The pack's JSON files, the manifest's image summaries rewritten, and
     // its pictures that may be passed on (the list cut down to them).
-    let pictures = shared_pictures(&source.root, &source.images, source.own_use_pictures)?;
+    let mut pictures = shared_pictures(&source.root, &source.images, source.own_use_pictures)?;
+    if let Some(pictures) = pictures.as_mut().filter(|_| source.smaller_pictures) {
+        let saved = smaller::make_smaller(pictures, progress, cancelled)?;
+        if saved.pictures > 0 {
+            crate::activity::info(
+                crate::activity::Area::Library,
+                format!(
+                "Made {} pictures smaller for the map pack file of {}: {} bytes in place of {}.",
+                    saved.pictures, source.pack_id, saved.after, saved.before
+                ),
+            );
+        }
+    }
     let mut entries: Vec<Entry> = Vec::new();
     for entry in pack_file_entries(&source.root)? {
         if entry.name == PICTURES_FILE {
             if let Some(pictures) = &pictures {
+                let list = pictures.list_bytes();
                 entries.push(Entry {
                     name: entry.name,
-                    size: pictures.list.len() as u64,
-                    data: EntryData::Bytes(pictures.list.clone()),
+                    size: list.len() as u64,
+                    data: EntryData::Bytes(list),
                 });
             }
         } else if entry.name == MANIFEST_FILE {
@@ -278,6 +291,7 @@ fn write_file(
         entries_total: entries.len() as u64 + 1,
         bytes_done: 0,
         bytes_total: entries.iter().map(|entry| entry.size).sum::<u64>() + header.len() as u64,
+        ..Progress::default()
     };
     writer
         .add(HEADER_FILE, true, &mut &header[..])

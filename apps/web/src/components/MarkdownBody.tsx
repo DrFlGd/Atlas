@@ -1,6 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { buildRowAt, enhanceBuildRows, type RowThing } from '../buildRows';
 import { appLinkSection, appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
+import {
+  largePictureAt,
+  markLargePicture,
+  openLargePicture,
+  showFileInstead,
+} from '../pictureLarge';
 import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
@@ -23,7 +29,9 @@ export const UNREAD_PAGE = 'This page has not been read yet';
  * `tableSort.ts`): the order chosen stays while the page is shown, as it
  * is shown anew when pictures arrive, and goes with another page. With
  * `onAddRow`, a row of a page's table that names something has a button to
- * add it to a build (see `buildRows.ts`).
+ * add it to a build (see `buildRows.ts`). A picture whose file is larger
+ * than the page shows it opens in the larger view when pressed, or with
+ * Enter or Space (see `pictureLarge.ts`).
  */
 export function MarkdownBody({
   source,
@@ -74,6 +82,8 @@ export function MarkdownBody({
       if (!(img instanceof HTMLImageElement)) return;
       const frame = img.closest('.guide-picture');
       if (!frame || !root.contains(frame)) return;
+      // Its copy for pages is not here: its file, when that is.
+      if (showFileInstead(img)) return;
       frame.setAttribute('data-missing', '');
       const words = document.createElement('span');
       words.className = 'picture-alt';
@@ -94,10 +104,15 @@ export function MarkdownBody({
       }
     };
     const onLoad = (event: Event) => {
-      if (event.target instanceof HTMLImageElement) markUpscaled(event.target);
+      if (!(event.target instanceof HTMLImageElement)) return;
+      markUpscaled(event.target);
+      markLargePicture(event.target);
     };
     for (const img of root.querySelectorAll('.guide-picture img')) {
-      if (img instanceof HTMLImageElement && img.complete) markUpscaled(img);
+      if (img instanceof HTMLImageElement && img.complete) {
+        markUpscaled(img);
+        markLargePicture(img);
+      }
     }
     // An image's error and load do not bubble; they are seen on the way down.
     root.addEventListener('error', onError, true);
@@ -140,16 +155,34 @@ export function MarkdownBody({
           event.preventDefault();
           return;
         }
+        // A picture whose file is larger than shown: the larger view.
+        const large = largePictureAt(event.target);
+        if (large) {
+          event.preventDefault();
+          openLargePicture(large);
+          return;
+        }
         // "Show hidden text": shown in place, until the text is rendered again.
         if (revealHiddenText(event.target, event.currentTarget)) {
           event.preventDefault();
           event.stopPropagation();
+          // A picture it showed now has a size: a later press opens it large.
+          for (const img of event.currentTarget.querySelectorAll('.guide-picture img')) {
+            if (img instanceof HTMLImageElement) markLargePicture(img);
+          }
           return;
         }
         const id = appLinkTarget(event.target);
         if (!id) return;
         event.preventDefault();
         followAppLink(id, appLinkSection(event.target));
+      }}
+      onKeyDown={(event) => {
+        const large = largePictureAt(event.target);
+        if (large && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          openLargePicture(large);
+        }
       }}
       // markdown-it runs with raw HTML disabled, so this holds only renderer-made tags.
       dangerouslySetInnerHTML={{ __html: html }}

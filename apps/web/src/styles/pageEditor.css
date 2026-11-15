@@ -680,6 +680,102 @@
   outline: 2px solid var(--atlas-accent);
 }
 
+/* A tick box on each page row: in view on hover or focus, and while any row is ticked. */
+.pe-tick,
+.pe-tick-spacer {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 2px;
+}
+
+.pe-tick {
+  accent-color: var(--atlas-accent);
+  opacity: 0;
+}
+
+.pe-tree-row:hover .pe-tick,
+.pe-tick:focus-visible,
+.pe-tick-shown,
+.pe-compact .pe-tick {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .pe-tick {
+    opacity: 1;
+  }
+}
+
+.pe-tree-ticked {
+  background: var(--atlas-accent-soft);
+}
+
+.pe-drag-spacer {
+  flex: none;
+  width: 24px;
+}
+
+/* What the ticked rows can do: over the contents, while any is ticked. */
+.pe-ticked-bar {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--atlas-accent);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.pe-ticked-count {
+  flex: 1 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* A heading of a list page shown as a level: no handle, set apart from the pages. */
+.pe-tree-name.pe-tree-level-name {
+  min-width: min-content;
+  color: var(--atlas-muted);
+  font-weight: 600;
+  overflow-wrap: break-word;
+}
+
+/* In a narrow contents, the tag gives way before a level's words break. */
+.pe-tree-level .pe-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pe-drop-refused {
+  outline: 2px dashed var(--atlas-danger);
+}
+
+.pe-menu-note {
+  max-width: 260px;
+  margin: 2px 10px 6px;
+  color: var(--atlas-muted);
+  font-size: 12px;
+}
+
+.pe-menu-checked::before {
+  content: '✓ ';
+}
+
+.pe-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .pe-tree-name {
   display: inline-flex;
   flex: 1;

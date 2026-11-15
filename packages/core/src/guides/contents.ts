@@ -94,6 +94,12 @@ export interface GuidePages {
    * (see `pageTree.ts`). Not used when the guides have no such page.
    */
   homePage?: string | null;
+  /**
+   * The person's say on list pages (an own pages file's `listPages`): by
+   * page id, `true` when it files the pages it lists whatever share of its
+   * links it lists, `false` when it files none.
+   */
+  listPages?: Readonly<Record<string, boolean>>;
 }
 
 /** The id a guide id stands for now, through `aliases` (a few steps at most). */
@@ -177,6 +183,23 @@ export function listingThrough(
 }
 
 /**
+ * What a guide lists, with the person's say on it (see
+ * {@link GuidePages.listPages}): `true` makes it a list page whatever share
+ * of its links it lists, `false` makes it list nothing; with no say, as
+ * {@link listingThrough} finds.
+ */
+export function listingWithSay(
+  guide: GuideEntry,
+  aliases: Readonly<Record<string, string>> | undefined,
+  onlyListPage: boolean,
+  say: boolean | undefined,
+): PageListing {
+  if (say === false) return { listing: [], listPage: false };
+  if (say === true) return { ...listingThrough(guide, aliases, false), listPage: true };
+  return listingThrough(guide, aliases, onlyListPage);
+}
+
+/**
  * The contents as shown: sections that hold sections and pages, and pages
  * that hold pages. A page of a section marked `placeByLinks` is shown
  * under the list page that lists it (see `pageTree.ts`); every entry has one
@@ -213,6 +236,8 @@ export class GuideContents {
   /** By page id, the pages of the contents that link to it, in contents order; when first asked. */
   private linkedTo: Map<string, string[]> | null = null;
   private readonly aliases: Readonly<Record<string, string>> | undefined;
+  /** The person's say on list pages (see {@link GuidePages.listPages}). */
+  private readonly listPages: Readonly<Record<string, boolean>> | undefined;
   /** The home page, when the guides have it and there is a contents to branch from it. */
   private readonly homeGuide: GuideEntry | null;
   /** The headings of list pages shown as levels, by id (see `headingSteps.ts`). */
@@ -222,6 +247,7 @@ export class GuideContents {
     const sections = pack.data.sections ?? [];
     const guides = sortGuides(pack.data.guides);
     this.aliases = pack.aliases;
+    this.listPages = pack.listPages;
     this.sections = new Map(sections.map((s) => [s.id, s]));
     this.guides = new Map(guides.map((g) => [g.id, g]));
     const top = pack.top;
@@ -295,7 +321,12 @@ export class GuideContents {
       linksOf: (id) => linksThrough(this.guides.get(id)!, this.aliases),
       // The home page files what it lists, list page or not.
       filingOf: (id) =>
-        listingThrough(this.guides.get(id)!, this.aliases, id !== this.homeGuide?.id),
+        listingWithSay(
+          this.guides.get(id)!,
+          this.aliases,
+          id !== this.homeGuide?.id,
+          this.listPages?.[id],
+        ),
       filedUnderOf: (id) => filedUnderThrough(this.guides.get(id)!, this.aliases),
       leads: shown,
       movable: shown,
@@ -330,7 +361,12 @@ export class GuideContents {
       const guide = this.guides.get(id);
       if (!guide || id === this.homeGuide?.id) continue;
       if (!items.some((item) => placed.get(item) === id && !filed.has(item))) continue;
-      const { listing, headings, listedUnder } = listingThrough(guide, this.aliases, true);
+      const { listing, headings, listedUnder } = listingWithSay(
+        guide,
+        this.aliases,
+        true,
+        this.listPages?.[id],
+      );
       if (!headings || !listedUnder || headings.length === 0) continue;
       const found = headingSteps({
         page: id,
@@ -649,6 +685,8 @@ export function guidesTogether(pack: GuidePages, others: readonly GuidesOfGame[]
   return {
     data: { ...pack.data, guides, sections },
     ...(pageTop ? { top: pageTop } : {}),
+    ...(pack.under ? { under: pack.under } : {}),
     ...(pack.homePage ? { homePage: pack.homePage } : {}),
+    ...(pack.listPages ? { listPages: pack.listPages } : {}),
   };
 }

@@ -24,6 +24,9 @@ import type { Page } from '@playwright/test';
  *   Its headings are levels of the contents: Short Blades is under the
  *   heading "Weapons", and three charms under the heading "Charms" (Gear ›
  *   Weapons › Short Blades › Dirk); "Care" lists nothing, so is none.
+ * - Basics › Field Notes lists three keepsakes (Old Map, Lost Key, Torn
+ *   Page) but names more pages in its sentences, so it is no list page:
+ *   the keepsakes stay in Pages until the person says it files them.
  */
 
 const g = (local: string) => `demo:guide:${local}`;
@@ -75,6 +78,11 @@ const CHARMS: [string, string][] = [
   ['bone-charm', 'Bone Charm'],
   ['tin-charm', 'Tin Charm'],
   ['reed-charm', 'Reed Charm'],
+];
+const KEEPSAKES: [string, string][] = [
+  ['old-map', 'Old Map'],
+  ['lost-key', 'Lost Key'],
+  ['torn-page', 'Torn Page'],
 ];
 const CREATURES: [string, string][] = [
   ['marsh-toad', 'Marsh Toad'],
@@ -211,6 +219,15 @@ export function pageTreeGuides(): Guide[] {
       page(id, `Item ${String(i + 1).padStart(3, '0')}`, `Thing number ${i + 1}.`, []),
     ),
     page('stray-note', 'Stray Note', 'Nothing links here.', []),
+    page(
+      'field-notes',
+      'Field Notes',
+      `Notes from the field. ${ORE_FROM.slice(0, 5)
+        .map((id, i) => `The way to ${mention(id, `Mine ${i + 1}`)} is marked.`)
+        .join(' ')}`,
+      KEEPSAKES,
+    ),
+    ...KEEPSAKES.map(([id, name]) => page(id, name, `A keepsake: the ${name}.`, [])),
     ...gearGuides(),
   ];
 }
@@ -220,14 +237,20 @@ export function pageTreeSections(): object[] {
     .map((guide) => guide.id)
     .filter(
       (id) =>
-        ![g('armor'), g('weapons'), g('bestiary'), g('catalogue'), g('gear')].includes(id) &&
-        id !== g('stray-note'),
+        ![
+          g('armor'),
+          g('weapons'),
+          g('bestiary'),
+          g('catalogue'),
+          g('gear'),
+          g('field-notes'),
+        ].includes(id) && id !== g('stray-note'),
     );
   return [
     { id: s('equipment'), title: 'Equipment', items: [g('armor'), g('weapons')] },
     { id: s('the-world'), title: 'The world', items: [g('bestiary')] },
     { id: s('things'), title: 'Things', items: [g('catalogue')] },
-    { id: s('basics'), title: 'Basics', items: [g('gear')] },
+    { id: s('basics'), title: 'Basics', items: [g('gear'), g('field-notes')] },
     { id: s('pages'), title: 'Pages', items: [...loose, g('stray-note')], placeByLinks: true },
   ];
 }

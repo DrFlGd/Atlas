@@ -100,6 +100,9 @@ const UI_PATHS = {
   pinPlace:
     'M10 17s5-4.6 5-8.5a5 5 0 0 0-10 0C5 12.4 10 17 10 17zM10 6.7a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6z',
   pause: 'M7 4.5v11M13 4.5v11',
+  // The larger view of a picture (PictureViewer.tsx).
+  zoomIn: 'M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10zM12.2 12.2L16.5 16.5M6.5 8.5h4M8.5 6.5v4',
+  zoomOut: 'M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10zM12.2 12.2L16.5 16.5M6.5 8.5h4',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

@@ -30,6 +30,7 @@ export * from './guides/guideText';
 export * from './guides/landing';
 export * from './guides/linking';
 export * from './guides/ownPages';
+export * from './guides/pagesList';
 export * from './guides/pageFiling';
 export * from './guides/pageTree';
 export * from './guides/headingSteps';

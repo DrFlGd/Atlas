@@ -253,12 +253,19 @@ function checkContents(
     }
   });
 
+  // A picture's smaller copy for pages has a file of its own too.
   const files = new Map<string, number>();
-  (pack.pictures ?? []).forEach((picture, i) => {
-    const key = picture.file.toLowerCase();
+  const named = (pack.pictures ?? []).flatMap((picture, i) => [
+    { file: picture.file, i, path: `pictures[${i}].file` },
+    ...(picture.pageCopy
+      ? [{ file: picture.pageCopy.file, i, path: `pictures[${i}].pageCopy.file` }]
+      : []),
+  ]);
+  for (const { file, i, path } of named) {
+    const key = file.toLowerCase();
     const first = files.get(key);
     if (first !== undefined) {
-      report(`pictures[${i}].file`, `${picture.file} is also the file of pictures[${first}]`);
+      report(path, `${file} is also a file of pictures[${first}]`);
     } else files.set(key, i);
-  });
+  }
 }
