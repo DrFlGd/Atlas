@@ -53,6 +53,8 @@ export function PictureViewer() {
     if (shown && !dialog.open) {
       opener.current = shown.opener ?? null;
       dialog.showModal();
+      // The focus goes to its close button (React's autoFocus ran before the dialog was open).
+      dialog.querySelector<HTMLElement>('[data-close]')?.focus();
     }
     if (!shown && dialog.open) dialog.close();
   }, [shown]);
@@ -264,7 +266,7 @@ function ViewerBody({ shown }: { shown: ShownPicture }) {
           className="photo-viewer-button"
           aria-label="Close picture"
           title="Close"
-          autoFocus
+          data-close=""
           onClick={closePicture}
         >
           <UiIcon name="close" size={20} />
