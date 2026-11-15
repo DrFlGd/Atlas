@@ -16,15 +16,20 @@ const g = (local: string) => `wiki:guide:${local}`;
 const s = (local: string) => `wiki:section:${local}`;
 const pic = (local: string) => `wiki:picture:${local}`;
 
+/**
+ * A page that lists the pages named, a list item each: a list page, with
+ * pages the wiki has but that were not read to make three at least.
+ */
 function page(local: string, links: string[] = [], extra = ''): GuideEntry {
   const title = local
     .split('-')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+  const unread = links.length > 0 && links.length < 3 ? [`${local}-more-1`, `${local}-more-2`] : [];
   return {
     id: g(local),
     title,
-    body: `${extra}\n\n${links.map((to) => `See [${to}](${g(to)}).`).join('\n')}`,
+    body: `${extra}\n\n${[...links, ...unread].map((to) => `- [${to}](${g(to)})`).join('\n')}`,
     locationIds: [],
   };
 }
@@ -36,8 +41,8 @@ const guides = () => [
   page('classes', ['knight', 'archer']),
   page('knight', [], `![A knight](${pic('knight')})`),
   page('archer'),
-  page('items', ['sword']),
-  page('sword', ['knight']),
+  page('items', ['sword'], `![Shelves of items](${pic('items')})`),
+  { ...page('sword'), body: `A sword, as a [knight](${g('knight')}) carries.` },
   page('quests'),
   page('stray'),
 ];
@@ -100,7 +105,8 @@ describe('a home page', () => {
     expect(contents.homePage()).toBeNull();
     expect(tree(contents)).toEqual([
       { Menu: [{ Help: ['Editing'] }] },
-      { Pages: ['Classes', 'Knight', 'Archer', 'Items', 'Sword', 'Quests', 'Stray'] },
+      // A list page nothing leads to keeps the pages it lists under it.
+      { Pages: [{ Classes: ['Knight', 'Archer'] }, { Items: ['Sword'] }, 'Quests', 'Stray'] },
     ]);
   });
 
@@ -199,11 +205,11 @@ describe('the landing page made from the contents', () => {
     expect(menu!.tiles.map((t) => (t.entry.kind === 'page' ? t.entry.guide.title : ''))).toEqual([
       'Help',
     ]);
-    // Three tiles at most, the rest counted.
+    // Three tiles at most, the rest counted: Classes and Items hold the pages they list.
     expect(pages!.tiles).toHaveLength(3);
-    expect(pages!.more).toBe(4);
+    expect(pages!.more).toBe(1);
     expect([menu!.pages, pages!.pages]).toEqual([2, 7]);
-    expect(pages!.tiles.map((t) => t.picture)).toEqual([null, pic('knight'), null]);
+    expect(pages!.tiles.map((t) => t.picture)).toEqual([null, pic('items'), null]);
   });
 
   it('gives a section the picture of its first page that has one, and pages at the top a group', () => {

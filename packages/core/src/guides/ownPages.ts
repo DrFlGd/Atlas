@@ -10,7 +10,14 @@ import {
   type Section,
   type WikiChangeChoice,
 } from '@atlas/schema';
-import { aliasedId, linksThrough, sortGuides, type GuidePages } from './contents';
+import {
+  aliasedId,
+  filedUnderThrough,
+  linksThrough,
+  listingThrough,
+  sortGuides,
+  type GuidePages,
+} from './contents';
 import { guideLinksIn, placePagesByLinks } from './pageTree';
 
 /**
@@ -276,6 +283,14 @@ export function shownContentsFor(
       if (page?.body === undefined) return linksThrough(guide, aliases);
       return guideLinksIn(shownBody(guide, page), id).map((link) => aliasedId(aliases, link));
     },
+    filingOf: (id) => {
+      const guide = guides.get(id)!;
+      const page = pages.get(id);
+      const all = id === homePage;
+      if (page?.body === undefined) return listingThrough(guide, aliases, !all);
+      return listingThrough({ ...guide, body: shownBody(guide, page) }, aliases, !all);
+    },
+    filedUnderOf: (id) => filedUnderThrough(guides.get(id)!, aliases),
     leads: shownPack,
     movable: shownPack,
     root: homePage ?? null,

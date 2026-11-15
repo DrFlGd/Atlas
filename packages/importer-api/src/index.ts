@@ -206,6 +206,14 @@ export interface ImportContext {
    * so an importer writes it only when this is true.
    */
   keepsHomePage?: boolean;
+  /**
+   * Optional: true when the app keeps a guide's `filedUnder`, the guides
+   * the site itself files the page under (a wiki's categories, the title
+   * of a navigation box). An app that does not say so refuses a pack that
+   * has it, as any field it does not know, so an importer writes it only
+   * when this is true.
+   */
+  keepsFiledUnder?: boolean;
 }
 
 // ---------------------------------------------------------------------------

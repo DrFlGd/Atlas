@@ -5,7 +5,7 @@ import { servePageTree } from './pageTreePack';
 
 /**
  * Pages under pages: a made-up wiki whose pages nothing in its menu names
- * are placed under the pages that lead to them (see `pageTreePack.ts`).
+ * are placed under the list pages that list them (see `pageTreePack.ts`).
  * The contents beside the page opens to the page shown, the line above
  * the page shows every step of the way, and a page names the other pages
  * that link to it.
@@ -61,10 +61,11 @@ test.describe('on a desktop', () => {
       'true',
     );
     await expect(side(page).getByTestId('guides-tree-page').getByText('Ash Mail')).toBeVisible();
-    // Pages keeps only what nothing in the menu leads to.
+    // Pages keeps only what no list page the menu leads to lists: a list page with its pages, and a note.
     const pages = side(page).locator('.guides-tree-section').filter({ hasText: 'Pages' });
     await pages.click();
     await expect(page.getByTestId('guides-contents').getByTestId('guides-page-link')).toHaveText([
+      /Materials\s*3 pages under it/,
       'Stray Note',
     ]);
 
@@ -75,8 +76,8 @@ test.describe('on a desktop', () => {
     await crumbs(page).getByRole('button', { name: 'Equipment' }).click();
     await expect(page.getByTestId('guides-contents').locator('h1')).toHaveText('Equipment');
     await expect(page.getByTestId('guides-contents').getByTestId('guides-page-link')).toHaveText([
-      /Armor\s*4 pages under it/,
-      /Weapons\s*1 page under it/,
+      /Armor\s*6 pages under it/,
+      /Weapons\s*3 pages under it/,
     ]);
 
     // A page with pages under it opens when pressed, and folds and unfolds.
@@ -107,9 +108,10 @@ test.describe('on a desktop', () => {
     await expect(shownPage(page).locator('h1')).toHaveText('Longblade');
     await expect(crumbs(page)).toHaveText(/Equipment\s*›\s*Weapons\s*›\s*Longblade/);
 
-    // Linked from sixteen others: twelve, then the rest on request.
+    // Mentioned by sixteen others, among them Warden Plate, and listed by Materials: under
+    // Materials. Twelve of the others named, then the rest on request.
     await openBySearch(page, 'found everywhere', 'Common Ore');
-    await expect(crumbs(page)).toHaveText(/Armor\s*›\s*Warden Plate\s*›\s*Common Ore/);
+    await expect(crumbs(page)).toHaveText(/Pages\s*›\s*Materials\s*›\s*Common Ore/);
     const ore = page.getByTestId('also-linked-from');
     await expect(ore.getByTestId('also-linked-page')).toHaveCount(12);
     await ore.getByTestId('also-linked-more').click();
@@ -172,7 +174,11 @@ test.describe('on a phone', () => {
     await expect(crumbs(page)).toHaveText(/Equipment\s*›\s*Armor\s*›\s*Warden Plate/);
     await expect(crumbs(page).getByRole('button', { name: 'Armor' })).toBeInViewport();
     const under = page.getByTestId('pages-under');
-    await expect(under.getByTestId('guides-page-link')).toHaveText([/Warden Helm/, /Common Ore/]);
+    await expect(under.getByTestId('guides-page-link')).toHaveText([
+      /Warden Helm/,
+      /Warden Boots/,
+      /Warden Gloves/,
+    ]);
     await under.getByTestId('guides-page-link').filter({ hasText: 'Warden Helm' }).tap();
     await expect(shownPage(page).locator('h1')).toHaveText('Warden Helm');
     // Up, and across to the next set.

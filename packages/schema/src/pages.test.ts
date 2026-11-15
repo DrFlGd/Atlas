@@ -79,6 +79,32 @@ describe("a guide's source", () => {
   });
 });
 
+describe('the guides a source files a guide under', () => {
+  const guide = makeGuidesFixturePack().guides[0]!;
+
+  it('are guide ids, in order, at most twenty, whether or not the pack has them', () => {
+    const filed = { ...guide, filedUnder: ['pages:guide:weapons', 'pages:guide:not-read'] };
+    expect(guideEntrySchema.parse(filed).filedUnder).toEqual(filed.filedUnder);
+    const pack = makeGuidesFixturePack();
+    pack.guides[0] = filed;
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    for (const bad of [['pages:loc:1'], 'pages:guide:weapons', Array(21).fill('pages:guide:a')]) {
+      expect(guideEntrySchema.safeParse({ ...guide, filedUnder: bad }).success).toBe(false);
+    }
+  });
+
+  it('are read leniently: what cannot be read is left out, and a guide without them reads as before', () => {
+    const read = packReadSchemas.guideEntrySchema;
+    expect(read.parse({ ...guide, filedUnder: 'weapons' }).filedUnder).toBeUndefined();
+    expect(read.parse({ ...guide, filedUnder: ['pages:guide:a'] }).filedUnder).toEqual([
+      'pages:guide:a',
+    ]);
+    expect(read.parse(guide)).toEqual(guide);
+    expect(guideEntrySchema.parse(guide)).toEqual(guide);
+  });
+});
+
 describe('the contents', () => {
   const sections = () => makeGuidesFixturePack().sections!;
 

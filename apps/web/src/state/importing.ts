@@ -1,4 +1,4 @@
-import { loadPack, type PackEntry } from '@atlas/core';
+import { GuideContents, loadPack, type ContentsFiling, type PackEntry } from '@atlas/core';
 import {
   DEFAULT_WAIT_SECONDS,
   FETCH_PAUSE_MS,
@@ -221,6 +221,8 @@ export type ImportPhase =
       rebuilt: boolean;
       /** Its pictures are being fetched now (see `pagePictures.ts`). */
       pictures?: boolean;
+      /** A game of pages built again: how its pages are filed in its contents (see {@link pagesFiling}). */
+      filing?: PagesFiling;
     }
   /**
    * `refused`: the site refused or asked to confirm the reader is a person;
@@ -1581,6 +1583,8 @@ export function importContext(
     keepsIdSections: true,
     // So is the guide that is the site's own home page.
     keepsHomePage: true,
+    // And the guides the site itself files a page under.
+    keepsFiledUnder: true,
     // Built again from the pages kept, as the person asked: nothing is fetched.
     ...(rebuilt ? { rebuild: true } : {}),
     ...(listed ? { listed } : {}),
@@ -1840,6 +1844,8 @@ async function convertAndSave(
       importer.picturesWithPages === true &&
       (outcome.pack.pictures ?? []).some((picture) => picture.remote !== undefined);
     if (pictures && show) fetchPagePictures(outcome.packId);
+    // A game of pages built again: how its pages are filed now.
+    const filing = rebuilt && outcome.guideId ? pagesFiling(outcome.pack) : null;
     return {
       kind: 'done',
       packId: outcome.packId,
@@ -1852,8 +1858,32 @@ async function convertAndSave(
       summary: outcome.summary,
       rebuilt,
       ...(pictures ? { pictures: true } : {}),
+      ...(filing ? { filing } : {}),
     };
   }
+}
+
+/** How the pages of a game of pages are filed, and the name of its section of pages placed by links. */
+export interface PagesFiling extends ContentsFiling {
+  /** The title of the section of pages no list page lists ("Pages"). */
+  pagesTitle: string;
+}
+
+/**
+ * How the pages of a game of pages are filed in its contents, as Guides
+ * shows them before the person's own changes (see `pageTree.ts` in the
+ * core package): nothing for a pack with no section of pages placed by
+ * links.
+ */
+export function pagesFiling(pack: PackData): PagesFiling | null {
+  const loose = (pack.sections ?? []).find((section) => section.placeByLinks === true);
+  if (!loose) return null;
+  const contents = new GuideContents({
+    data: pack,
+    aliases: pack.manifest.idMigrations,
+    homePage: pack.manifest.homePage ?? null,
+  });
+  return { ...contents.filing(), pagesTitle: loose.title };
 }
 
 // ---------------------------------------------------------------------------

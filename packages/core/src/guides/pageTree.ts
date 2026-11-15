@@ -9,30 +9,66 @@ import type { GuideEntry } from '@atlas/schema';
  * pages lead to which: a viewer with no importer works it out the same way
  * as the app that read the pages.
  *
+ * Only list pages file pages (see `pageFiling.ts`): a page that is mostly
+ * a list or a table of links (Weapons, Armour, Enemies) is an index, and
+ * the pages it lists (the main link of a list item, of a cell of a
+ * table's name column, of a tile) go under it. A link in a sentence, in a
+ * box of facts, in hidden text or in another column of a table is a
+ * mention, and never files a page.
+ *
  * - The pages placed in the contents (in any other section, at the top,
  *   or under a page by the person) are where the contents starts from.
- * - A page of a `placeByLinks` section goes under the page it is reached
- *   from by the fewest links from a placed page (a breadth-first walk).
- *   Of two pages equally close, the one met first wins: pages placed in
- *   the contents in the order the contents shows them, top to bottom, and
- *   further pages in the order they were reached (a page's links in the
- *   order its text has them). So a page has exactly one home, and every
- *   walk of the same pages gives the same tree.
+ * - A page the source itself files under a page that is shown (a guide's
+ *   `filedUnder`: a wiki's category that is a page of the wiki, the title
+ *   of a navigation box) goes under it, before any list page is looked at:
+ *   under one of those that lists it, else under the first the source
+ *   names, never under a page that is under it.
+ * - A page of a `placeByLinks` section goes under the list page that lists
+ *   it and is reached first from a placed page (a breadth-first walk
+ *   through the pages list pages list). Of two list pages equally close,
+ *   the one met first wins: pages placed in the contents in the order the
+ *   contents shows them, top to bottom, and further pages in the order
+ *   they were listed. So a page has exactly one home, and every walk of
+ *   the same pages gives the same tree.
+ * - A page many pages link to (a location every item names, see
+ *   {@link POPULAR_MIN_LINKERS}) goes only under one of the longest list
+ *   pages that list it (see {@link POPULAR_PARENT_SHARE}), never under a
+ *   page that merely names it among many others.
+ * - A list page no placed page leads to stays in its section, with the
+ *   pages it lists under it (those no other list page took first).
  * - Under a page: the pages the person put there first, in their order,
- *   then the pages placed there by links, in the order the page links to
- *   them.
- * - A page no placed page leads to stays in its section.
+ *   then the pages the source files under it, then the pages it lists, in
+ *   its order.
+ * - A page with no clear home (no list page lists it) stays in its
+ *   section: when unsure, the contents stays flat.
  *
  * - A home page (`root`, a wiki's main page, see the manifest's
  *   `homePage`) is where the contents starts from before any other page:
  *   it is not shown in the contents (Guides shows it on its own), and the
- *   pages it leads to (and those put under it by hand) are at the top of
- *   the contents, before the sections whose pages are placed by links.
+ *   pages it lists (whether or not it is a list page itself) and those put
+ *   under it by hand are at the top of the contents, before the sections
+ *   whose pages are placed by links.
  *
  * Every page is reached once, so links in a circle (A to B, B to A) or to
  * the page itself change nothing; one read more adds the new page and may
- * move the pages it reaches sooner, and nothing else.
+ * move the pages it lists, and nothing else.
  */
+
+/**
+ * A page linked from at least this many pages (in any way) is popular: a
+ * location or a character every item names, a page of the game's rules
+ * every other page explains itself with. A thing of its own is named by
+ * fewer: its list pages and a few pages about related things.
+ */
+export const POPULAR_MIN_LINKERS = 8;
+
+/**
+ * A popular page goes only under a list page that lists at least this
+ * share of the pages the longest list page listing it lists: an index of
+ * its type (Locations, of 40), not a page that lists a few things among
+ * them (an enemy's three haunts), however soon the walk meets that one.
+ */
+export const POPULAR_PARENT_SHARE = 0.5;
 
 /** A guide id in a Markdown link: `](game:guide:local`, with or without `<`. */
 const GUIDE_LINK = /\]\(\s*<?([a-z0-9][a-z0-9-]*:guide:[A-Za-z0-9][A-Za-z0-9_.-]*)/g;
@@ -66,6 +102,14 @@ export function guideLinks(guide: GuideEntry): readonly string[] {
   return links;
 }
 
+/** What a page lists, for {@link PageTreeInput.filingOf}. */
+export interface PageListing {
+  /** The pages it lists (its listing links, see `pageFiling.ts`), in order. */
+  listing: readonly string[];
+  /** Whether it is a list page (see `isListPage`), whose listing links file pages. */
+  listPage: boolean;
+}
+
 /** What {@link placePagesByLinks} works on. */
 export interface PageTreeInput {
   /** The top of the contents: sections and pages. */
@@ -76,15 +120,22 @@ export interface PageTreeInput {
   isPage: (id: string) => boolean;
   /** The sections whose pages are placed by their links. */
   byLinks: ReadonlySet<string>;
-  /** The pages a page links to, in order. */
+  /** The pages a page links to, in order, each once. */
   linksOf: (guideId: string) => readonly string[];
+  /** What a page lists, and whether it is a list page. */
+  filingOf: (guideId: string) => PageListing;
   /** Whether a page's links place other pages (a pack's page that is shown). */
   leads: (guideId: string) => boolean;
   /** Whether a page may be placed by links (a pack's page that is shown). */
   movable: (guideId: string) => boolean;
   /**
+   * The pages the source itself files a page under (a guide's
+   * `filedUnder`), the most fitting first; none when it says nothing.
+   */
+  filedUnderOf?: (guideId: string) => readonly string[];
+  /**
    * The home page the top of the contents branches from, if any: walked
-   * first, left out of the contents, and the pages it leads to placed at
+   * first, left out of the contents, and the pages it lists placed at
    * the top.
    */
   root?: string | null;
@@ -97,9 +148,11 @@ export interface PageTree {
   lists: Map<string, string[]>;
   /** The pages placed by links: by page id, the page it is under (the home page for one at the top). */
   placed: Map<string, string>;
+  /** Of those, the pages placed under a page the source itself files them under. */
+  filed: Set<string>;
 }
 
-/** Places the pages of `placeByLinks` sections under the pages that lead to them. */
+/** Places the pages of `placeByLinks` sections under the list pages that list them. */
 export function placePagesByLinks(input: PageTreeInput): PageTree {
   const { isSection, isPage, byLinks } = input;
   const root = input.root != null && isPage(input.root) ? input.root : null;
@@ -161,7 +214,105 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   // A page placed in the contents is not waiting, wherever else it is listed.
   for (const id of reached) waiting.delete(id);
 
-  /** Walks out from `queue`: the pages put under each, then (with links) those it leads to. */
+  // Which pages file which: by page, what it lists when it files pages
+  // (the home page and list pages); by waiting page, how many pages link
+  // to it, and the longest list page that lists it.
+  const filing = new Map<string, readonly string[]>();
+  const linkers = new Map<string, number>();
+  const longest = new Map<string, number>();
+  // By waiting page, the pages the source itself files it under.
+  const filedUnder = new Map<string, readonly string[]>();
+  if (waiting.size > 0) {
+    const counted = new Set<string>();
+    const count = (id: string) => {
+      if (counted.has(id) || !isPage(id) || !input.leads(id)) return;
+      counted.add(id);
+      if (waiting.has(id)) {
+        const under = input.filedUnderOf?.(id) ?? [];
+        if (under.length > 0) filedUnder.set(id, under);
+      }
+      for (const target of input.linksOf(id)) {
+        if (waiting.has(target)) linkers.set(target, (linkers.get(target) ?? 0) + 1);
+      }
+      const { listing, listPage } = input.filingOf(id);
+      if (id !== root && !listPage) return;
+      filing.set(id, listing);
+      for (const target of listing) {
+        if (waiting.has(target) && (longest.get(target) ?? 0) < listing.length) {
+          longest.set(target, listing.length);
+        }
+      }
+    };
+    if (root !== null) count(root);
+    for (const id of top) count(id);
+    for (const [id, items] of lists) {
+      count(id);
+      for (const item of items) count(item);
+    }
+  }
+  /** Whether `page` may file `target`: a popular page goes only under one of its longest list pages. */
+  const mayFile = (page: string, listed: number, target: string) =>
+    page === root ||
+    (linkers.get(target) ?? 0) < POPULAR_MIN_LINKERS ||
+    listed >= POPULAR_PARENT_SHARE * (longest.get(target) ?? 0);
+
+  // The page the source itself files each waiting page under, before any
+  // list page: of the pages it names that are shown, one that lists it
+  // first, then in the source's order (the most fitting first); never one
+  // that is under the page itself.
+  const wikiParent = new Map<string, string>();
+  const wikiChildren = new Map<string, string[]>();
+  const filed = new Set<string>();
+  if (filedUnder.size > 0) {
+    const listsIt = new Map<string, Set<string>>();
+    const lists = (parent: string, id: string) => {
+      const listing = filing.get(parent);
+      if (!listing) return false;
+      let set = listsIt.get(parent);
+      if (!set) listsIt.set(parent, (set = new Set(listing)));
+      return set.has(id);
+    };
+    /** Whether `id` is `page` or under it, by the source's filing or the person's. */
+    const within = (id: string, page: string) => {
+      const seen = new Set<string>();
+      for (
+        let at: string | undefined = id;
+        at !== undefined;
+        at = wikiParent.get(at) ?? handParent.get(at)
+      ) {
+        if (at === page) return true;
+        if (seen.has(at)) return false;
+        seen.add(at);
+      }
+      return false;
+    };
+    for (const id of waiting) {
+      const named = filedUnder.get(id);
+      if (!named) continue;
+      const candidates = [...new Set(named)]
+        .filter((parent) => parent !== id && isPage(parent) && input.leads(parent))
+        .map((parent, at) => ({ parent, at, listing: lists(parent, id) ? 0 : 1 }))
+        .sort((a, b) => a.listing - b.listing || a.at - b.at);
+      const chosen = candidates.find(({ parent }) => !within(parent, id));
+      if (!chosen) continue;
+      wikiParent.set(id, chosen.parent);
+      const children = wikiChildren.get(chosen.parent);
+      if (children) children.push(id);
+      else wikiChildren.set(chosen.parent, [id]);
+    }
+    // Under a page, in the order its text links to them, then the others in contents order.
+    for (const [parent, children] of wikiChildren) {
+      if (children.length < 2) continue;
+      const place = new Map(input.linksOf(parent).map((link, at) => [link, at]));
+      const last = Number.MAX_SAFE_INTEGER;
+      children.sort((a, b) => (place.get(a) ?? last) - (place.get(b) ?? last));
+    }
+  }
+
+  /**
+   * Walks out from `queue`: the pages put under each, then the pages the
+   * source files under it, then (with links) those it lists.
+   */
   const walk = (queue: string[], withLinks: boolean) => {
     // The queue grows as it is walked: breadth first.
     for (const page of queue) {
@@ -173,9 +324,19 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
           queue.push(item);
         }
       }
-      if (withLinks && input.leads(page)) {
-        for (const target of input.linksOf(page)) {
-          if (!waiting.has(target) || reached.has(target)) continue;
+      for (const child of wikiChildren.get(page) ?? []) {
+        if (reached.has(child)) continue;
+        reached.add(child);
+        placed.set(child, page);
+        filed.add(child);
+        under.push(child);
+        queue.push(child);
+      }
+      const listing = withLinks ? filing.get(page) : undefined;
+      if (listing) {
+        for (const target of listing) {
+          if (!waiting.has(target) || reached.has(target) || wikiParent.has(target)) continue;
+          if (!mayFile(page, listing.length, target)) continue;
           reached.add(target);
           placed.set(target, page);
           under.push(target);
@@ -187,23 +348,49 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   };
   walk(seeds, true);
 
-  // The sections as shown: one placed by links keeps only the pages nothing led to.
-  for (const [id, items] of lists) {
-    if (!isSection(id)) continue;
-    out.set(id, byLinks.has(id) ? items.filter((item) => !reached.has(item)) : [...items]);
-  }
-  // The pages left there keep the pages put under them by hand.
-  const left: string[] = [];
+  // The pages nothing placed leads to stay in their section: first those
+  // no page left there files or lists, each with what it files and lists;
+  // then any left (pages that file or list each other only).
+  const left = new Set<string>();
   for (const id of sectionsSeen) {
     if (!byLinks.has(id)) continue;
-    for (const item of out.get(id) ?? []) {
-      if (isPage(item) && !reached.has(item)) {
-        reached.add(item);
-        left.push(item);
+    for (const item of lists.get(id) ?? []) {
+      if (isPage(item) && !reached.has(item)) left.add(item);
+    }
+  }
+  const listedThere = new Set<string>();
+  for (const page of left) {
+    if (wikiParent.has(page)) listedThere.add(page);
+    const listing = filing.get(page);
+    if (!listing) continue;
+    for (const target of listing) {
+      if (target !== page && waiting.has(target) && !reached.has(target)) {
+        if (mayFile(page, listing.length, target)) listedThere.add(target);
       }
     }
   }
-  walk(left, false);
+  const stays = new Set<string>();
+  const stay = (ids: readonly string[]) => {
+    const queue = ids.filter((id) => !reached.has(id));
+    for (const id of queue) {
+      reached.add(id);
+      stays.add(id);
+    }
+    walk(queue, true);
+  };
+  stay([...left].filter((id) => !listedThere.has(id)));
+  for (const id of left) stay([id]);
+
+  // The sections as shown: one placed by links keeps only the pages that stay there.
+  for (const [id, items] of lists) {
+    if (!isSection(id)) continue;
+    out.set(
+      id,
+      byLinks.has(id)
+        ? items.filter((item) => (isPage(item) ? stays.has(item) : !reached.has(item)))
+        : [...items],
+    );
+  }
 
   // A page put under a page that is not shown (hidden, gone, or under
   // itself) is shown where pages nothing leads to are, so none is lost.
@@ -235,5 +422,5 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
     const at = top.findIndex((id) => byLinks.has(id));
     top.splice(at < 0 ? top.length : at, 0, ...branches);
   }
-  return { top, lists: out, placed };
+  return { top, lists: out, placed, filed };
 }
