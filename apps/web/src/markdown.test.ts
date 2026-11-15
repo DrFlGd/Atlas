@@ -394,6 +394,25 @@ describe('pictures', () => {
     expect(html).toContain('&lt;b&gt;c&lt;/b&gt;');
   });
 
+  it('shows a picture’s copy for pages and names its file for the larger view', () => {
+    const kept = {
+      picture: () => ({
+        url: 'https://app.test/packs/demo/pictures/gate.page.png',
+        fullUrl: 'https://app.test/packs/demo/pictures/gate.png',
+      }),
+    };
+    for (const title of ['', ' "=28x13"', ' "=300"']) {
+      const html = renderGuideMarkdown(`![the gate](demo:picture:gate${title})`, kept);
+      expect(html).toContain(
+        '<img src="https://app.test/packs/demo/pictures/gate.page.png" data-full="https://app.test/packs/demo/pictures/gate.png" alt="the gate"',
+      );
+    }
+    // A picture with no copy for pages names no second file.
+    expect(renderGuideMarkdown('![the gate](demo:picture:gate)', options)).not.toContain(
+      'data-full',
+    );
+  });
+
   it('hides a picture inside hidden text with it', () => {
     const html = renderGuideMarkdown('Look: ||![the gate](demo:picture:gate)||', options);
     expect(html).toMatch(

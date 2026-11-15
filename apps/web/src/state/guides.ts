@@ -39,10 +39,12 @@ export function otherGuidesOf(game: LoadedGame): readonly OtherGuides[] {
   return links.gameId === game.pack.manifest.gameId ? links.others : NO_OTHERS;
 }
 
+// A picture with a copy for pages shows the copy there, and its file large.
 const pictureOfPack = (pack: LoadedPack, picture: Picture): [string, GuidePicture] => [
   picture.id,
   {
-    url: pack.resolveUrl(picture.file),
+    url: pack.resolveUrl(picture.pageCopy?.file ?? picture.file),
+    ...(picture.pageCopy ? { fullUrl: pack.resolveUrl(picture.file) } : {}),
     ...(picture.caption ? { caption: picture.caption } : {}),
     ...(picture.credit ? { credit: picture.credit } : {}),
     ...(picture.width && picture.height ? { width: picture.width, height: picture.height } : {}),

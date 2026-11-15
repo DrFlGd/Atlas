@@ -2944,56 +2944,148 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   padding: 8px 10px;
 }
 
+/*
+ * The larger view of a picture (components/PictureViewer.tsx): the whole
+ * window, dimmed, in both themes alike, as a picture is best seen on dark.
+ */
 .photo-viewer {
-  width: auto;
-  max-width: calc(100% - 24px);
-  max-height: calc(100% - 24px);
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 10px;
-  background: #0b0d11;
+  background: transparent;
   color: #f2f4f7;
-  box-shadow: var(--atlas-shadow);
+  overflow: hidden;
 }
 
 .photo-viewer::backdrop {
-  background: rgba(5, 7, 10, 0.82);
+  background: rgba(5, 7, 10, 0.88);
 }
 
 .photo-viewer-figure {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   margin: 0;
 }
 
-.photo-viewer-figure img {
+.photo-viewer-stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 56px 12px 8px;
+  overflow: hidden;
+  outline: none;
+}
+
+.photo-viewer-stage:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--atlas-focus);
+}
+
+.photo-viewer-stage img {
   display: block;
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 80px);
+  flex: none;
+  /* Centred while it fits, and scrolled from its edge when it does not. */
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Its size is not known until it has loaded. */
+.photo-viewer-stage img:not([data-sized]) {
+  visibility: hidden;
+}
+
+.photo-viewer-stage img[data-upscaled] {
+  image-rendering: pixelated;
+}
+
+.photo-viewer-stage img.zoom-in {
+  cursor: zoom-in;
+}
+
+.photo-viewer-stage img.zoom-out {
+  cursor: zoom-out;
+}
+
+/* At real size: one pixel of the file to one pixel of the page, moved by dragging or scrolling. */
+.photo-viewer-figure[data-zoom='real'] .photo-viewer-stage {
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  cursor: grab;
+}
+
+.photo-viewer-figure[data-zoom='real'] .photo-viewer-stage img {
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+}
+
+.photo-viewer-figure[data-zoom='real'] .photo-viewer-stage:active,
+.photo-viewer-figure[data-zoom='real'] .photo-viewer-stage:active img {
+  cursor: grabbing;
 }
 
 .photo-viewer-figure figcaption {
-  padding: 8px 12px 10px;
+  flex: none;
+  max-height: 56px;
+  padding: 8px 16px 12px;
+  overflow-y: auto;
   font-size: 0.9rem;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
-.photo-viewer-credit {
+.photo-viewer-credit,
+.photo-viewer-size {
   color: #aab2bf;
 }
 
-.photo-viewer-close {
+.photo-viewer-tools {
   position: absolute;
   top: 8px;
   right: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.photo-viewer-button {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border: 0;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 50%;
-  background: rgba(10, 12, 16, 0.7);
+  background: rgba(10, 12, 16, 0.72);
   color: #fff;
   cursor: pointer;
+}
+
+.photo-viewer-button:hover {
+  background: rgba(40, 44, 52, 0.9);
+}
+
+.photo-viewer-button:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+.photo-viewer-button[aria-pressed='true'] {
+  background: rgba(60, 66, 78, 0.95);
 }
 
 .details-photos {

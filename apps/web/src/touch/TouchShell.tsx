@@ -2,7 +2,7 @@ import { percent } from '@atlas/core';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { keepScreenOn } from '../androidBars';
 import { ActivityLogDialog } from '../components/ActivityLogDialog';
-import { PhotoViewer } from '../components/Photos';
+import { PictureViewer } from '../components/PictureViewer';
 import { UiIcon, type UiIconName } from '../components/icons';
 import { MapPageStatus } from '../components/MapPageStatus';
 import { MapPane, type TouchMapOptions } from '../components/MapPane';
@@ -262,7 +262,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
         </Suspense>
       ) : null}
       <KeysDialog />
-      <PhotoViewer />
+      <PictureViewer />
     </div>
   );
 }

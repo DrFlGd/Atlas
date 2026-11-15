@@ -598,6 +598,16 @@ button.guides-crumb:hover {
   image-rendering: pixelated;
 }
 
+/* A picture whose file is larger than the page shows it opens in the larger view when pressed. */
+img[data-opens-large] {
+  cursor: zoom-in;
+}
+
+img[data-opens-large]:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
 /* A list of tiles: pictures side by side, each name under its picture. */
 .guide-body ul.guide-tiles {
   display: flex;
