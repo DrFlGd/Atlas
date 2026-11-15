@@ -192,13 +192,18 @@ test.describe('on a desktop', () => {
   });
 });
 
-/** Drags a row by its handle onto the middle of another row. */
-async function dragOnto(page: Page, from: ReturnType<typeof row>, onto: ReturnType<typeof row>) {
+/** Drags a row by its handle onto another row: its middle, or `at` of the way down it. */
+async function dragOnto(
+  page: Page,
+  from: ReturnType<typeof row>,
+  onto: ReturnType<typeof row>,
+  at = 0.5,
+) {
   const handle = await from.getByTestId('contents-handle').boundingBox();
   const target = await onto.boundingBox();
   await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + handle!.height / 2);
   await page.mouse.down();
-  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, {
+  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height * at, {
     steps: 8,
   });
   await page.mouse.up();
@@ -212,7 +217,11 @@ test.describe('dragging and new pages', () => {
     await dragOnto(page, row(page, 'Iron Cap'), row(page, 'Weapons'));
     await expect
       .poll(async () => (await stored(page))?.contents?.sections[g('weapons')])
-      .toEqual([g('longblade'), g('short-bow'), g('hand-axe'), g('ash-mail'), g('iron-cap')]);
+      .toEqual([g('ash-mail'), g('iron-cap')]);
+    // Only the pages put there: what Weapons lists stays placed by the app, after them.
+    expect((await stored(page))?.contents?.sections['demo:section:pages']).toContain(
+      g('longblade'),
+    );
 
     // A level comes from a page's headings: a page dropped on it is refused, and says why.
     await contents(page).getByTestId('contents-page').getByText('Gear', { exact: true }).click();
@@ -223,6 +232,41 @@ test.describe('dragging and new pages', () => {
     await expect
       .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
       .toBeUndefined();
+  });
+
+  test('puts a page under a list page beside its levels, which stay', async ({ page }) => {
+    await edit(page, 'all the gear of the isle', 'Gear');
+    await unfold(page, 'Gear');
+    const levels = contents(page).getByTestId('contents-level');
+    await expect(levels).toHaveText([/Weapons/, /Charms/]);
+    await dragOnto(page, row(page, 'Field Notes'), row(page, 'Gear'));
+    await expect
+      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
+      .toEqual([g('field-notes')]);
+    // The levels stay, with the page beside them, first.
+    await expect(levels).toHaveText([/Weapons/, /Charms/]);
+    const notes = await row(page, 'Field Notes').boundingBox();
+    const weapons = await levels.first().boundingBox();
+    expect(notes!.y).toBeLessThan(weapons!.y);
+    await levels.filter({ hasText: 'Charms' }).getByTestId('contents-fold').click();
+    await expect(row(page, 'Bone Charm')).toBeVisible();
+
+    // Dropped among the pages the app files there: with the pages put there by hand, and said so.
+    await page.getByRole('button', { name: 'Undo' }).last().click();
+    await expect
+      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
+      .toBeUndefined();
+    await row(page, 'Tin Charm').evaluate((element) => {
+      element.scrollIntoView({ block: 'center' });
+    });
+    await dragOnto(page, row(page, 'Field Notes'), row(page, 'Tin Charm'), 0.1);
+    await expect(
+      page.getByText(/by hand come first, and the pages the app files there/),
+    ).toBeVisible();
+    await expect
+      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
+      .toEqual([g('field-notes')]);
+    await expect(levels).toHaveText([/Weapons/, /Charms/]);
   });
 
   test('adds a new page under a page from its menu, opened to be written', async ({ page }) => {
