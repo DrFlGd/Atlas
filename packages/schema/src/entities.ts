@@ -655,6 +655,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     placeByLinks: reading ? z.boolean().optional().catch(undefined) : z.literal(true).optional(),
   });
 
+  /** A smaller copy of a picture for page text (see the picture's `pageCopy`). */
+  const pageCopySchema = record({
+    file: picturePath,
+    width: z.int().positive().max(10_000),
+    height: z.int().positive().max(10_000).optional(),
+  });
+
   /**
    * A picture in the pack's `pictures/` folder. Guide Markdown shows one by
    * its id (`![what it shows](demo:picture:gate)`), and locations and list
@@ -682,6 +689,28 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * `file` names. When reading, an address that cannot be used is left out.
      */
     remote: reading ? remotePictureUrl.optional().catch(undefined) : remotePictureUrl.optional(),
+    /**
+     * Where the picture's page showed it from, when `remote` is a larger
+     * file of the same picture (its full file): asked for once in its
+     * place, by the same download, when the full file is refused, not
+     * there or cannot be kept. Never asked for when the full file was kept.
+     * Added without a schema version change; apps before it drop it when
+     * reading, and fetch `remote` as any picture's.
+     */
+    shownAt: reading ? remotePictureUrl.optional().catch(undefined) : remotePictureUrl.optional(),
+    /**
+     * A smaller copy of the picture for the text of a page, where the file
+     * may be much larger than a page shows it: its own file in the
+     * `pictures/` folder, and the largest size a page shows the picture at
+     * (`width`, and `height` when known, in CSS pixels). An app that
+     * downloads the picture makes this copy itself from the file it
+     * downloaded (at most twice that size, so it stays sharp on a fine
+     * screen; never a request of its own). Pages show the copy when it is
+     * there, else `file`; the larger view of a picture always shows
+     * `file`. It is never in a map pack file. Added without a schema
+     * version change; apps before it drop it when reading and show `file`.
+     */
+    pageCopy: reading ? descriptive(pageCopySchema) : pageCopySchema.optional(),
     /**
      * Whether the picture may be passed on: `false` for one kept for the
      * person's own use, which a map pack file leaves out.

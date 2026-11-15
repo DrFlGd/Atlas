@@ -203,3 +203,64 @@ describe('pictures', () => {
     expect(checkPackIntegrity(pack).map((issue) => issue.path)).toEqual(['pictures[1].file']);
   });
 });
+
+describe('a picture kept at full size', () => {
+  const full = () => ({
+    id: 'pages:picture:map-1a',
+    file: 'pictures/map-1a.png',
+    shareable: false,
+    remote: 'https://wiki.example.org/files/Map.png?7c1e',
+    shownAt: 'https://wiki.example.org/files/small/240/Map.png?7c1e',
+    pageCopy: { file: 'pictures/map-1a.page.png', width: 240, height: 135 },
+  });
+
+  it('may name the address it was shown at and a smaller copy for pages', () => {
+    expect(pictureSchema.parse(full())).toEqual(full());
+    const { height: _height, ...wide } = full().pageCopy;
+    expect(pictureSchema.safeParse({ ...full(), pageCopy: wide }).success).toBe(true);
+    for (const bad of [
+      { shownAt: 'ftp://wiki.example.org/Map.png' },
+      { shownAt: 'http://wiki.example.org/Map.png' },
+      { pageCopy: { file: 'pictures/sub/map.png', width: 240 } },
+      { pageCopy: { file: 'pictures/map.page.png' } },
+      { pageCopy: { file: 'pictures/map.page.png', width: 0 } },
+      { pageCopy: { ...full().pageCopy, extra: 1 } },
+    ]) {
+      expect(pictureSchema.safeParse({ ...full(), ...bad }).success, JSON.stringify(bad)).toBe(
+        false,
+      );
+    }
+  });
+
+  it('keeps its copy for pages apart from every picture file', () => {
+    const pack = makeGuidesFixturePack();
+    pack.pictures!.push(full());
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    pack.pictures!.push({
+      id: 'pages:picture:other',
+      file: 'pictures/MAP-1A.page.png',
+      shareable: false,
+    });
+    expect(checkPackIntegrity(pack).map((issue) => issue.path)).toEqual(['pictures[2].file']);
+  });
+
+  it('reads leniently: what cannot be read is left out', () => {
+    const read = packReadSchemas.pictureSchema;
+    const { shownAt: _s, pageCopy: _p, ...plain } = full();
+    expect(read.parse({ ...full(), shownAt: 'nope', pageCopy: { width: 'x' } })).toEqual(plain);
+    expect(read.parse(full())).toEqual(full());
+  });
+
+  it('opens in an app from before the fields (0.11.0), which drops them', () => {
+    // Atlas 0.11.0 reads a picture with the schema of its time: this one
+    // without the new fields, unknown keys dropped (`z.object`).
+    const older = packReadSchemas.pictureSchema.omit({ shownAt: true, pageCopy: true });
+    const { shownAt: _s, pageCopy: _p, ...plain } = full();
+    expect(older.parse(full())).toEqual(plain);
+    const pack = makeGuidesFixturePack();
+    pack.pictures!.push(full());
+    const read = packDataReadSchema.safeParse(pack);
+    expect(read.success).toBe(true);
+    expect(read.data!.pictures!.at(-1)).toEqual(full());
+  });
+});

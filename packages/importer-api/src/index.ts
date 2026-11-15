@@ -214,7 +214,26 @@ export interface ImportContext {
    * when this is true.
    */
   keepsFiledUnder?: boolean;
+  /**
+   * Optional: the size the person chose to keep the pictures of the site's
+   * pages at, in an app that downloads them (see
+   * {@link AtlasImporter.picturesWithPages}). `full`: where the importer
+   * can tell the address of a picture's full file from the address its page
+   * shows it at, it lists the full file as the picture's `remote`, the
+   * address shown as its `shownAt` and a smaller copy for pages as its
+   * `pageCopy`, and names the picture after the full file, so the same
+   * picture shown at two sizes is one picture. `shown`: each picture as its
+   * page shows it, as before. The app downloads the full file in place of
+   * the copy shown (never both), and the copy shown only when the full file
+   * is refused, not there or cannot be kept. An app that does not say
+   * leaves it out: it does not keep `shownAt` or `pageCopy`, so an importer
+   * writes them only when this is there, and lists pictures as `shown`.
+   */
+  pictureSize?: PictureSize;
 }
+
+/** The sizes the pictures of a site's pages can be kept at (see {@link ImportContext.pictureSize}). */
+export type PictureSize = 'full' | 'shown';
 
 // ---------------------------------------------------------------------------
 // Measuring a map's picture (optional)
