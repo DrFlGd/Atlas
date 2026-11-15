@@ -65,10 +65,14 @@ export function firstPictureIn(body: string): string | null {
   return null;
 }
 
-/** The picture of an entry: its page's, or the first of a section's pages that has one. */
+/**
+ * The picture of an entry: its page's, or the first of a section's pages
+ * (or a heading's, see `headingSteps.ts`) that has one.
+ */
 function pictureOf(contents: GuideContents, entry: ContentsEntry): string | null {
   if (entry.kind === 'page') return firstPictureIn(entry.guide.body);
-  for (const item of contents.items(entry.section.id)) {
+  const id = entry.kind === 'section' ? entry.section.id : entry.heading.id;
+  for (const item of contents.items(id)) {
     if (item.kind !== 'page') continue;
     const picture = firstPictureIn(item.guide.body);
     if (picture) return picture;
@@ -100,7 +104,8 @@ export function madeLanding(
     pages = [];
   };
   for (const entry of contents.top()) {
-    if (entry.kind === 'page') {
+    // A heading of a list page is never at the top: it stands with the pages there if it were.
+    if (entry.kind !== 'section') {
       pages.push(entry);
       continue;
     }

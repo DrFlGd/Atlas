@@ -107,6 +107,12 @@
   padding-left: 4px;
 }
 
+/* A heading of a list page shown as a level: no page of its own, so set apart. */
+.guides-tree-heading {
+  color: var(--atlas-text);
+  font-weight: 600;
+}
+
 .guides-tree-more,
 .guides-more {
   color: var(--atlas-accent);
@@ -276,8 +282,17 @@ button.guides-crumb:hover {
   min-width: 0;
 }
 
-.guides-entry-section .guides-entry-name {
+.guides-entry-section .guides-entry-name,
+.guides-entry-heading .guides-entry-name {
   font-weight: 600;
+}
+
+/* A heading of a list page, over the pages it holds, set in under it. */
+.guides-entry-group > .guides-entries {
+  margin-top: 2px;
+  padding-left: 16px;
+  border-left: 2px solid var(--atlas-border);
+  margin-left: 12px;
 }
 
 /* Search */

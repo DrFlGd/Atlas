@@ -25,13 +25,16 @@ import type { GuideEntry, Section } from '@atlas/schema';
  * - Notes no page links to.
  * - With `gear` (in the menu, under Equipment): an index of all gear whose
  *   tables name, beside each thing, where it is found, which enemy drops
- *   it and who sells it (so it lists fewer than three fifths of the pages it links
- *   to), with a heading that is a link to each of two narrower list
- *   pages, Short Blades (a list of the blades, each with where it is
- *   found) and Bows (a table). Each item page mentions the first blade,
- *   a popular page both Gear and Short Blades list. A boss page names many
- *   pages in long prose and lists the three things it drops in a small
- *   table: it is no list page.
+ *   it and who sells it (so it lists fewer than three fifths of the pages
+ *   it links to). Its headings: "Weapons", over a heading that is a link
+ *   to each of two narrower list pages, Short Blades (a list of the
+ *   blades, each with where it is found) and Bows (a table), each over a
+ *   "List of …" heading over its table; "Trinkets", over "Charms" alone,
+ *   over four charms; "Fittings", over "Belt", over two belt pages (a
+ *   group too small to be a level); and "History", which lists nothing.
+ *   Each item page mentions the first blade, a popular page both Gear and
+ *   Short Blades list. A boss page names many pages in long prose and
+ *   lists the three things it drops in a small table: it is no list page.
  *
  * With `filed`, the wiki also files pages itself (a guide's `filedUnder`,
  * as its categories would): each weapon under Weapons, each character
@@ -305,7 +308,9 @@ export function madeUpWiki(
     ...notes,
     'locations',
     'characters',
-    ...(gear ? ['short-blades', 'bows', ...blades, ...bows, 'mire-tyrant'] : []),
+    ...(gear
+      ? ['short-blades', 'bows', ...blades, ...bows, ...GEAR_CHARMS, ...GEAR_BELT, 'mire-tyrant']
+      : []),
   ];
   const sections: Section[] = [
     {
@@ -333,6 +338,10 @@ export function madeUpWiki(
     },
   };
 }
+
+/** The charms and belt pages of the index of all gear. */
+export const GEAR_CHARMS = ['charm-0001', 'charm-0002', 'charm-0003', 'charm-0004'];
+export const GEAR_BELT = ['belt-pouch', 'belt-hook'];
 
 /**
  * The index of all gear, its two narrower list pages, the gear pages and a
@@ -368,13 +377,37 @@ function addGear(
     [
       `All the gear of the game, by type. Most of it can be bought from ${link(at(characters, 0), titleOf(at(characters, 0)))}.`,
       '',
-      `## ${link('short-blades', 'Short Blades')}`,
+      '## Weapons',
+      '',
+      'What you fight with.',
+      '',
+      `### ${link('short-blades', 'Short Blades')}`,
+      '',
+      '#### List of short blades',
       '',
       ...table(blades, 'short blade', 0),
       '',
-      `## ${link('bows', 'Bows')}`,
+      `### ${link('bows', 'Bows')}`,
+      '',
+      '#### List of bows',
       '',
       ...table(bows, 'bow', blades.length),
+      '',
+      '## Trinkets',
+      '',
+      '### Charms',
+      '',
+      ...GEAR_CHARMS.map((charm) => `- ${link(charm, titleOf(charm))} – worn at the neck`),
+      '',
+      '## Fittings',
+      '',
+      '### Belt',
+      '',
+      ...GEAR_BELT.map((item) => `- ${link(item, titleOf(item))}`),
+      '',
+      '## History',
+      '',
+      'The first gear of the game was a stick.',
     ].join('\n'),
   );
   add(
@@ -398,6 +431,8 @@ function addGear(
       ...bows.map((bow, i) => `| ${link(bow, titleOf(bow))} | ${10 + i} |`),
     ].join('\n'),
   );
+  for (const local of [...GEAR_CHARMS, ...GEAR_BELT])
+    add(local, `A piece of gear: ${titleOf(local)}.`);
   [...blades, ...bows].forEach((local, i) => {
     const type = i < blades.length ? 'Short blade' : 'Bow';
     add(

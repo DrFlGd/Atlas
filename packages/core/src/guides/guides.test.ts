@@ -1,7 +1,7 @@
 import { makeFixturePack, makeGuidesFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
 import { indexPack } from '../pack/loadedPack';
-import { GuideContents, sortGuides } from './contents';
+import { GuideContents, entryIdOf, sortGuides } from './contents';
 import { GuideSearch, guidePlainText } from './guideText';
 
 const BASE = new URL('https://packs.example.test/pages/');
@@ -12,7 +12,7 @@ describe('GuideContents', () => {
     expect(contents.browsable).toBe(true);
     expect(contents.hasContents).toBe(true);
     expect(
-      contents.top().map((e) => (e.kind === 'section' ? [e.section.id, e.pages] : e.guide.id)),
+      contents.top().map((e) => (e.kind === 'section' ? [e.section.id, e.pages] : entryIdOf(e))),
     ).toEqual([['pages:section:basics', 2]]);
     expect(contents.items('pages:section:basics').map((e) => e.kind)).toEqual(['page', 'section']);
     expect(contents.pathTo('pages:guide:bells').map((s) => s.title)).toEqual(['Basics', 'More']);

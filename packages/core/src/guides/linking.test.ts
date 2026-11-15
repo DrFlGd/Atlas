@@ -2,7 +2,7 @@ import type { GuideEntry, Location } from '@atlas/schema';
 import { makeGuidesFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
 import { indexPack } from '../pack/loadedPack';
-import { GuideContents, guidesTogether } from './contents';
+import { GuideContents, entryTitleOf, guidesTogether } from './contents';
 import {
   MapNames,
   baseName,
@@ -267,9 +267,7 @@ describe('guides of another game', () => {
     };
     const together = guidesTogether(indexPack(own, new URL('https://x.test/')), [other]);
     const contents = new GuideContents(together);
-    expect(
-      contents.top().map((e) => (e.kind === 'section' ? e.section.title : e.guide.title)),
-    ).toEqual(['Basics', 'Example Wiki']);
+    expect(contents.top().map((e) => entryTitleOf(e))).toEqual(['Basics', 'Example Wiki']);
     expect(contents.pathTo('wiki:guide:bells').map((s) => s.title)).toEqual([
       'Example Wiki',
       'Basics',
