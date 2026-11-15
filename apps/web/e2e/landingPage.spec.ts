@@ -166,7 +166,8 @@ test.describe('on a desktop', () => {
     // A tile opens its page; a section's heading its contents; the name leads back.
     await waystones.click();
     await expect(shownPage(page).locator('h1')).toHaveText('Waystones');
-    await expect(crumbs(page)).toHaveText(/^Example Wiki\s*›\s*The isle/);
+    // Walked to from the landing page: the way the reader came, not the contents.
+    await expect(crumbs(page)).toHaveText(/^Example Wiki\s*›\s*Waystones$/);
     await page.getByTestId('guides-crumb-game').click();
     await page.getByTestId('guides-landing-section').filter({ hasText: 'Gear' }).click();
     await expect(page.getByTestId('guides-contents').locator('h1')).toHaveText('Gear');

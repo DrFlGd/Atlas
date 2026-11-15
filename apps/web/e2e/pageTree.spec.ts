@@ -106,7 +106,10 @@ test.describe('on a desktop', () => {
     await expect(also.getByTestId('also-linked-page')).toHaveText(['Warden Helm', 'Longblade']);
     await also.getByRole('button', { name: 'Longblade' }).click();
     await expect(shownPage(page).locator('h1')).toHaveText('Longblade');
-    await expect(crumbs(page)).toHaveText(/Equipment\s*›\s*Weapons\s*›\s*Longblade/);
+    // Walked to from Warden Plate: the line shows the way the reader came.
+    await expect(crumbs(page)).toHaveText(
+      /^Example Wiki\s*›\s*Equipment\s*›\s*Armor\s*›\s*Warden Plate\s*›\s*Longblade$/,
+    );
 
     // Mentioned by sixteen others, among them Warden Plate, and listed by Materials: under
     // Materials. Twelve of the others named, then the rest on request.
