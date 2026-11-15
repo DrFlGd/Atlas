@@ -1,4 +1,5 @@
 import type { GuideEntry } from '@atlas/schema';
+import type { ListingHeading } from './pageFiling';
 
 /**
  * Pages under pages: where each page of a section marked `placeByLinks`
@@ -39,6 +40,15 @@ import type { GuideEntry } from '@atlas/schema';
  *   pages put beside it lists is narrower: a page whose "See also" names
  *   its neighbours is one of them, and takes none of them. What the home
  *   page lists stays at the top as it is.
+ * - A heading of a list page that is one link to a page
+ *   (`### [Short blades](…)`) says so itself, and comes before the
+ *   narrower list: the pages listed under it, at any depth below it, go
+ *   under that page, which stays under the list page. Only when that page
+ *   is put under the list page too: one placed elsewhere (by the person,
+ *   by the source's `filedUnder`, in the menu) or above the list page, or
+ *   one that would close a circle, makes the heading a plain one, and the
+ *   narrower list decides as above. A plain heading files nothing here: it
+ *   is a level of the contents only (see `headingSteps.ts`).
  * - A page many pages link to (a location every item names, see
  *   {@link POPULAR_MIN_LINKERS}) goes only under one of the longest list
  *   pages that list it (see {@link POPULAR_PARENT_SHARE}), never under a
@@ -81,6 +91,21 @@ export const POPULAR_MIN_LINKERS = 8;
  */
 export const POPULAR_PARENT_SHARE = 0.5;
 
+/**
+ * The heading around each heading of a page, by index: the nearest one
+ * before it of a lower level; -1 for none.
+ */
+export function headingParents(headings: readonly ListingHeading[]): number[] {
+  const parents: number[] = [];
+  const open: number[] = [];
+  headings.forEach((heading, i) => {
+    while (open.length > 0 && headings[open.at(-1)!]!.level >= heading.level) open.pop();
+    parents.push(open.at(-1) ?? -1);
+    open.push(i);
+  });
+  return parents;
+}
+
 /** A guide id in a Markdown link: `](game:guide:local`, with or without `<`. */
 const GUIDE_LINK = /\]\(\s*<?([a-z0-9][a-z0-9-]*:guide:[A-Za-z0-9][A-Za-z0-9_.-]*)/g;
 
@@ -119,6 +144,9 @@ export interface PageListing {
   listing: readonly string[];
   /** Whether it is a list page (see `isListPage`), whose listing links file pages. */
   listPage: boolean;
+  /** Its headings, and by listed page the innermost heading it is listed under (see `PageFiling`). */
+  headings?: readonly ListingHeading[];
+  listedUnder?: readonly number[];
 }
 
 /** What {@link placePagesByLinks} works on. */
@@ -229,6 +257,8 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   // (the home page and list pages); by waiting page, how many pages link
   // to it, and the longest list page that lists it.
   const filing = new Map<string, readonly string[]>();
+  /** By list page with headings: where its listed pages are listed (see `PageListing`). */
+  const headed = new Map<string, Required<Pick<PageListing, 'headings' | 'listedUnder'>>>();
   const linkers = new Map<string, number>();
   const longest = new Map<string, number>();
   // By waiting page, the pages the source itself files it under.
@@ -245,9 +275,12 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
       for (const target of input.linksOf(id)) {
         if (waiting.has(target)) linkers.set(target, (linkers.get(target) ?? 0) + 1);
       }
-      const { listing, listPage } = input.filingOf(id);
+      const { listing, listPage, headings, listedUnder } = input.filingOf(id);
       if (id !== root && !listPage) return;
       filing.set(id, listing);
+      if (headings && listedUnder && headings.some((heading) => heading.guide !== null)) {
+        headed.set(id, { headings, listedUnder });
+      }
       for (const target of listing) {
         if (waiting.has(target) && (longest.get(target) ?? 0) < listing.length) {
           longest.set(target, listing.length);
@@ -321,11 +354,10 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   }
 
   /**
-   * By page, the narrower list page it is kept for: a list page put under
-   * the page that lists it (see {@link narrower}), which files it when its
-   * turn comes, or keeps it for a narrower one of its own.
+   * By page, the pages kept for it, in order (see {@link keptHere}): it
+   * files them when its turn comes, or keeps them for one of its own.
    */
-  const keptFor = new Map<string, string>();
+  const keptBy = new Map<string, string[]>();
   /** The pages each list page lists, as a set, made when first asked. */
   const listSets = new Map<string, ReadonlySet<string>>();
   const listsPage = (page: string, id: string) => {
@@ -336,6 +368,35 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
       listSets.set(page, (set = new Set(listing)));
     }
     return set.has(id);
+  };
+
+  /**
+   * By page a list page lists under a heading that is a link to another
+   * page (`### [Short blades](…)`), at any depth below it: the page of the
+   * innermost such heading, which the page goes under (see the top of this
+   * file). Made when first asked.
+   */
+  const headingHosts = new Map<string, ReadonlyMap<string, string>>();
+  const headingHostsOf = (page: string): ReadonlyMap<string, string> => {
+    let hosts = headingHosts.get(page);
+    if (hosts) return hosts;
+    const found = new Map<string, string>();
+    const info = headed.get(page);
+    const listing = filing.get(page);
+    if (info && listing) {
+      const parents = headingParents(info.headings);
+      listing.forEach((target, i) => {
+        for (let at = info.listedUnder[i] ?? -1; at >= 0; at = parents[at]!) {
+          const guide = info.headings[at]!.guide;
+          if (guide !== null && guide !== target && guide !== page && isPage(guide)) {
+            found.set(target, guide);
+            break;
+          }
+        }
+      });
+    }
+    headingHosts.set(page, (hosts = found));
+    return hosts;
   };
 
   /**
@@ -365,8 +426,41 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   };
 
   /**
+   * Which of the pages `page` files now (`listed`) go under another of the
+   * pages put under it together, by page: first the page of the heading it
+   * is listed under (the list page says so itself), then a narrower list
+   * page. Never in a circle: each page goes under at most one, and a page
+   * is never kept for one that is kept, however far, for it.
+   */
+  const keptHere = (page: string, under: readonly string[], listed: readonly string[]) => {
+    const kept = new Map<string, string>();
+    if (page === root || listed.length === 0) return kept;
+    const leadsTo = (from: string, to: string) => {
+      for (let at: string | undefined = from; at !== undefined; at = kept.get(at)) {
+        if (at === to) return true;
+      }
+      return false;
+    };
+    const together = [...under, ...listed];
+    const here = new Set(together);
+    const hosts = headingHostsOf(page);
+    if (hosts.size > 0) {
+      for (const target of listed) {
+        const host = hosts.get(target);
+        if (host !== undefined && here.has(host) && !leadsTo(host, target)) kept.set(target, host);
+      }
+    }
+    const rest = kept.size > 0 ? listed.filter((target) => !kept.has(target)) : listed;
+    for (const [target, host] of narrower(together, rest)) {
+      if (!leadsTo(host, target)) kept.set(target, host);
+    }
+    return kept;
+  };
+
+  /**
    * Walks out from `queue`: the pages put under each, then the pages the
-   * source files under it, then (with links) those it lists.
+   * source files under it, then (with links) the pages kept for it and
+   * those it lists.
    */
   const walk = (queue: string[], withLinks: boolean) => {
     // The queue grows as it is walked: breadth first.
@@ -387,27 +481,26 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
         under.push(child);
         queue.push(child);
       }
+      // The pages it files: those kept for it, then those it lists that no page took first.
+      const listed = keptBy.get(page) ?? [];
+      keptBy.delete(page);
       const listing = withLinks ? filing.get(page) : undefined;
       if (listing) {
-        // The pages it files: those kept for it, and those no page took first.
-        const listed: string[] = [];
         for (const target of listing) {
-          if (keptFor.get(target) === page) {
-            keptFor.delete(target);
-            listed.push(target);
-            continue;
-          }
           if (!waiting.has(target) || reached.has(target) || wikiParent.has(target)) continue;
           if (!mayFile(page, listing.length, target)) continue;
           reached.add(target);
           listed.push(target);
         }
-        // The home page's own list stays at the top as it is.
-        const kept = page === root ? null : narrower([...under, ...listed], listed);
+      }
+      if (listed.length > 0) {
+        const kept = keptHere(page, under, listed);
         for (const target of listed) {
-          const host = kept?.get(target);
+          const host = kept.get(target);
           if (host !== undefined) {
-            keptFor.set(target, host);
+            const list = keptBy.get(host);
+            if (list) list.push(target);
+            else keptBy.set(host, [target]);
             continue;
           }
           placed.set(target, page);

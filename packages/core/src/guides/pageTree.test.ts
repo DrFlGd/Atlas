@@ -1,6 +1,6 @@
 import { NO_OWN_PAGES, type GuideEntry, type OwnPages, type Section } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
-import { GuideContents, type GuidePages } from './contents';
+import { GuideContents, entryIdOf, entryTitleOf, type GuidePages } from './contents';
 import {
   addOwnPage,
   applyOwnPages,
@@ -13,9 +13,12 @@ import {
   stepInLayout,
   parentOf,
 } from './ownPages';
+import { headingStepId } from './headingSteps';
 import { guideFiling, isListPage } from './pageFiling';
 import { guideLinksIn } from './pageTree';
 import {
+  GEAR_BELT,
+  GEAR_CHARMS,
   PAGES_SECTION,
   guideId,
   madeUpWiki,
@@ -72,16 +75,14 @@ function tree(contents: GuideContents): unknown[] {
       if (entry.kind === 'section') {
         return { [entry.section.title]: level(contents.items(entry.section.id)) };
       }
-      const under = contents.items(entry.guide.id);
-      return under.length > 0 ? { [entry.guide.title]: level(under) } : entry.guide.title;
+      const under = contents.items(entryIdOf(entry));
+      return under.length > 0 ? { [entryTitleOf(entry)]: level(under) } : entryTitleOf(entry);
     });
   return level(contents.top());
 }
 
 const trail = (contents: GuideContents, id: string) =>
-  contents
-    .trail(id)
-    .map((step) => (step.kind === 'section' ? step.section.title : step.guide.title));
+  contents.trail(id).map((step) => entryTitleOf(step));
 
 /**
  * The made-up wiki: Equipment › Armor › Warden Plate › Warden Helm,
@@ -769,9 +770,7 @@ describe('on a made-up wiki of hundreds of pages', () => {
       homePage: made.homePage,
     });
   const titles = (contents: GuideContents, local: string) =>
-    contents
-      .trail(guideId(local))
-      .map((step) => (step.kind === 'section' ? step.section.title : step.guide.title));
+    contents.trail(guideId(local)).map((step) => entryTitleOf(step));
 
   it('shows every page it holds in the contents, exactly once', () => {
     const made = madeUpWiki(size);
@@ -856,7 +855,8 @@ describe('on a made-up wiki of hundreds of pages', () => {
     // Named by many weapons in a box, a sentence and a later column: under their list pages,
     // which no page lists, in Pages.
     expect(titles(contents, 'vale-0001')).toEqual(['Pages', 'Locations']);
-    expect(titles(contents, 'smith-0002')).toEqual(['Pages', 'Characters']);
+    // Characters lists them ten under each heading: each heading a level under it.
+    expect(titles(contents, 'smith-0002')).toEqual(['Pages', 'Characters', 'Group 1']);
     // No item page is a list page (its table of upgrades lists nothing), and nothing is under one.
     const made = madeUpWiki(size);
     const lists = new Set(
@@ -889,15 +889,39 @@ describe('on a made-up wiki of hundreds of pages', () => {
     const guide = (local: string) => made.guides.find((x) => x.id === guideId(local))!;
     // Gear lists fewer than three fifths of the pages it links to: its rows name many more.
     const gear = guideFiling(guide('gear'));
-    expect(gear.listing).toHaveLength(2 + 24 + 24);
+    expect(gear.listing).toHaveLength(2 + 24 + 24 + GEAR_CHARMS.length + GEAR_BELT.length);
     expect(gear.listing.length).toBeLessThan(0.6 * gear.linked);
     expect(isListPage(gear)).toBe(true);
-    expect(titles(contents, 'short-blades')).toEqual(['Equipment', 'Gear']);
-    expect(titles(contents, 'dirk-0002')).toEqual(['Equipment', 'Gear', 'Short Blades']);
-    expect(titles(contents, 'longbow-0024')).toEqual(['Equipment', 'Gear', 'Bows']);
+    // Its headings are levels: "Weapons" over the two headings that link to a
+    // list page, "Trinkets" over its one sub-heading of charms. The belt pages
+    // are too few for a level of their own, and "History" lists nothing.
+    const weapons = headingStepId(guideId('gear'), 'weapons');
+    const trinkets = headingStepId(guideId('gear'), 'trinkets');
+    expect(contents.items(guideId('gear')).map((entry) => entryIdOf(entry))).toEqual([
+      weapons,
+      trinkets,
+      ...GEAR_BELT.map(guideId),
+    ]);
+    expect(contents.items(weapons).map((entry) => entryTitleOf(entry))).toEqual([
+      'Short Blades',
+      'Bows',
+    ]);
+    expect(contents.items(trinkets).map((entry) => entryIdOf(entry))).toEqual(
+      GEAR_CHARMS.map(guideId),
+    );
+    expect(contents.heading(trinkets)?.title).toBe('Trinkets');
+    expect(contents.heading(trinkets)?.section).toBe('trinkets');
+    expect(titles(contents, 'short-blades')).toEqual(['Equipment', 'Gear', 'Weapons']);
+    expect(titles(contents, 'dirk-0002')).toEqual(['Equipment', 'Gear', 'Weapons', 'Short Blades']);
+    expect(titles(contents, 'longbow-0024')).toEqual(['Equipment', 'Gear', 'Weapons', 'Bows']);
+    expect(titles(contents, 'charm-0003')).toEqual(['Equipment', 'Gear', 'Trinkets']);
+    expect(titles(contents, 'belt-hook')).toEqual(['Equipment', 'Gear']);
+    // A page's parent is the page it is under, not the heading.
+    expect(contents.parentOf(guideId('charm-0003'))).toBe(trinkets);
+    expect(contents.pageParentOf(guideId('charm-0003'))).toBe(guideId('gear'));
     // The first blade, which every gear page names, too.
     expect(contents.linkedFrom(guideId('dirk-0001')).length).toBeGreaterThanOrEqual(8);
-    expect(titles(contents, 'dirk-0001')).toEqual(['Equipment', 'Gear', 'Short Blades']);
+    expect(titles(contents, 'dirk-0001')).toEqual(['Equipment', 'Gear', 'Weapons', 'Short Blades']);
     // The boss lists what it drops in a small table, but is no list page.
     expect(isListPage(guideFiling(guide('mire-tyrant')))).toBe(false);
     expect(contents.parentOf(guideId('mire-tyrant'))).toBe(PAGES_SECTION);
@@ -909,8 +933,8 @@ describe('on a made-up wiki of hundreds of pages', () => {
     }
     const counts = contents.filing();
     expect(counts).toEqual({
-      pages: 510 + 3 + 48 + 1,
-      underListPage: 500 + 2 + 48,
+      pages: 510 + 3 + 48 + 1 + 6,
+      underListPage: 500 + 2 + 48 + 6,
       underFiledPage: 0,
       inSection: 4,
       inPagesSection: 8,

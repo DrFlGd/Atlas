@@ -1,6 +1,12 @@
 import { NO_OWN_PAGES, type GuideEntry, type Section } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
-import { GuideContents, guidesTogether, type GuidePages } from './contents';
+import {
+  GuideContents,
+  entryIdOf,
+  entryTitleOf,
+  guidesTogether,
+  type GuidePages,
+} from './contents';
 import { firstPictureIn, madeLanding } from './landing';
 import { shownContentsFor } from './ownPages';
 
@@ -67,8 +73,8 @@ function tree(contents: GuideContents): unknown[] {
       if (entry.kind === 'section') {
         return { [entry.section.title]: level(contents.items(entry.section.id)) };
       }
-      const under = contents.items(entry.guide.id);
-      return under.length > 0 ? { [entry.guide.title]: level(under) } : entry.guide.title;
+      const under = contents.items(entryIdOf(entry));
+      return under.length > 0 ? { [entryTitleOf(entry)]: level(under) } : entryTitleOf(entry);
     });
   return level(contents.top());
 }

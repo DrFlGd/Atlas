@@ -271,6 +271,58 @@ describe('listing links of an index written without lists', () => {
   });
 });
 
+describe('the headings of a listing', () => {
+  it('say what each listed page is first listed under, with the section each opens', () => {
+    const body = [
+      '# Self',
+      `- ${to('a')}`,
+      '## Weapons',
+      `### ${to('blades', 'Short Blades')}`,
+      '#### List of short blades',
+      `- ${to('b')}`,
+      `- ${to('c')}`,
+      '### Bows',
+      `- ${to('d')}`,
+      '## Weapons',
+      `- ${to('e')}`,
+      `- ${to('b')}`,
+      `## ${to('self', 'Self again')}`,
+      `- ${to('f')}`,
+    ].join('\n');
+    const filing = pageFilingIn(body, g('self'));
+    // A heading ends the list item above it, blank line or not.
+    expect(filing.listing.map((id) => id.slice(11))).toEqual([
+      'a',
+      'blades',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+    ]);
+    expect(filing.headings).toEqual([
+      { level: 1, words: 'Self', section: 'self', guide: null },
+      { level: 2, words: 'Weapons', section: 'weapons', guide: null },
+      { level: 3, words: 'Short Blades', section: 'short-blades', guide: g('blades') },
+      { level: 4, words: 'List of short blades', section: 'list-of-short-blades', guide: null },
+      { level: 3, words: 'Bows', section: 'bows', guide: null },
+      // A second heading of the same words opens its own section.
+      { level: 2, words: 'Weapons', section: 'weapons-2', guide: null },
+      // A heading that links to the page itself links to no other page.
+      { level: 2, words: 'Self again', section: 'self-again', guide: null },
+    ]);
+    // The heading that is a link lists its page under the heading above it;
+    // a page listed twice is under the heading it is first listed under.
+    expect(filing.listedUnder).toEqual([0, 1, 3, 3, 4, 5, 6]);
+  });
+
+  it('are none on a page with no headings', () => {
+    const filing = pageFilingIn(`- ${to('a')}\n- ${to('b')}`, g('self'));
+    expect(filing.headings).toEqual([]);
+    expect(filing.listedUnder).toEqual([-1, -1]);
+  });
+});
+
 describe('a list page', () => {
   const filing = (listing: number, linked: number): PageFiling => ({
     listing: Array.from({ length: listing }, (_, i) => g(`p${i}`)),

@@ -9,7 +9,7 @@ import { servePageTree } from './pageTreePack';
  * under a page), it names each page walked, and pressing one goes back to
  * it as Back would. Opened afresh (from the contents, a search), it is the
  * way to the page in the contents, as before. On the made-up wiki of
- * `pageTreePack.ts`: Basics › Gear › Short Blades › Dirk.
+ * `pageTreePack.ts`: Basics › Gear › Weapons › Short Blades › Dirk.
  */
 
 test.use({ layout: 'standard' });
@@ -128,12 +128,13 @@ test.describe('on a desktop', () => {
     await page.getByTestId('guides-result').filter({ hasText: 'Dirk' }).first().click();
     await expect(shownPage(page).locator('h1')).toHaveText('Dirk');
     await expect(crumbs(page)).toHaveText(
-      line('Example Wiki', 'Basics', 'Gear', 'Short Blades', 'Dirk'),
+      line('Example Wiki', 'Basics', 'Gear', 'Weapons', 'Short Blades', 'Dirk'),
     );
     await expect(walked(page)).toHaveCount(0);
     await expect(crumbs(page).getByTestId('guides-crumb')).toHaveText([
       'Basics',
       'Gear',
+      'Weapons',
       'Short Blades',
     ]);
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);

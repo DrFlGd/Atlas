@@ -1,7 +1,24 @@
-import type { ContentsEntry, ContentsStep, GuideHit, LandingGroup, LandingTile } from '@atlas/core';
+import type {
+  ContentsEntry,
+  ContentsHeading,
+  ContentsStep,
+  GuideContents,
+  GuideHit,
+  LandingGroup,
+  LandingTile,
+} from '@atlas/core';
 import type { GuideEntry, GuideSource } from '@atlas/schema';
 import { parseId } from '@atlas/schema';
-import { findSection, keepOwnVersion, madeLanding, pageChange, revertPage } from '@atlas/core';
+import {
+  entryIdOf,
+  entryTitleOf,
+  findSection,
+  headingStepId,
+  keepOwnVersion,
+  madeLanding,
+  pageChange,
+  revertPage,
+} from '@atlas/core';
 import {
   lazy,
   Suspense,
@@ -387,29 +404,22 @@ function Breadcrumbs({
           {name}
         </button>
       )}
-      {path.map((step) => {
-        const id = step.kind === 'section' ? step.section.id : step.guide.id;
-        return (
-          <span key={id} className="guides-crumb-part">
-            {separator}
-            <button
-              type="button"
-              className="guides-crumb"
-              data-testid="guides-crumb"
-              data-kind={step.kind}
-              onClick={() => {
-                openPlace(
-                  step.kind === 'section'
-                    ? { kind: 'contents', sectionId: id }
-                    : { kind: 'page', guideId: id },
-                );
-              }}
-            >
-              {step.kind === 'section' ? step.section.title : step.guide.title}
-            </button>
-          </span>
-        );
-      })}
+      {path.map((step) => (
+        <span key={entryIdOf(step)} className="guides-crumb-part">
+          {separator}
+          <button
+            type="button"
+            className="guides-crumb"
+            data-testid="guides-crumb"
+            data-kind={step.kind}
+            onClick={() => {
+              openPlace(placeOf(step));
+            }}
+          >
+            {entryTitleOf(step)}
+          </button>
+        </span>
+      ))}
       {walked.length > 0 ? (
         <span
           className="guides-crumb-way"
@@ -504,7 +514,7 @@ function ContentsPlace({
         </button>
       ) : null}
       {entries.length === 0 ? <p className="touch-empty">Nothing here yet.</p> : null}
-      <EntryList entries={entries} />
+      <EntryList contents={contents} entries={entries} />
       {!section && hasMap(game) ? <GuidesFromGames game={game} /> : null}
       {!section && !hasMap(game) ? <TitleMaps game={game} /> : null}
     </div>
@@ -542,9 +552,11 @@ function MoreRows({
  * contents).
  */
 function EntryList({
+  contents,
   entries,
   by = 'fresh',
 }: {
+  contents: GuideContents;
   entries: readonly ContentsEntry[];
   by?: OpenedBy;
 }) {
@@ -552,7 +564,24 @@ function EntryList({
   return (
     <ul className="touch-plain-list guides-entries">
       {entries.slice(0, count).map((entry) =>
-        entry.kind === 'section' ? (
+        entry.kind === 'heading' ? (
+          // A heading of a list page: its words, which open the page there, over what it holds.
+          <li key={entry.heading.id} className="guides-entry-group">
+            <button
+              type="button"
+              className="guides-entry guides-entry-heading"
+              data-testid="guides-heading-link"
+              onClick={() => {
+                openPlace(placeOf(entry), by);
+              }}
+            >
+              <UiIcon name="heading" size={20} />
+              <span className="guides-entry-name">{entry.heading.title}</span>
+              <span className="touch-figure">{pagesText(entry.pages)}</span>
+            </button>
+            <EntryList contents={contents} entries={contents.items(entry.heading.id)} by={by} />
+          </li>
+        ) : entry.kind === 'section' ? (
           <li key={entry.section.id}>
             <button
               type="button"
@@ -602,6 +631,24 @@ const pagesText = (count: number) =>
   count === 1 ? '1 page' : `${count.toLocaleString('en')} pages`;
 
 /**
+ * Where an entry or a step of the contents opens: a section its contents,
+ * a page the page, a heading of a list page that page at the heading.
+ */
+function placeOf(entry: ContentsEntry | ContentsStep): ReaderPlace {
+  if (entry.kind === 'section') return { kind: 'contents', sectionId: entry.section.id };
+  if (entry.kind === 'heading') {
+    return { kind: 'page', guideId: entry.heading.guide.id, section: entry.heading.section };
+  }
+  return { kind: 'page', guideId: entry.guide.id };
+}
+
+/** The heading of a list page shown as a level that a place is at, if any. */
+function headingAt(contents: GuideContents, place: ReaderPlace): ContentsHeading | undefined {
+  if (place.kind !== 'page' || !place.section) return undefined;
+  return contents.heading(headingStepId(place.guideId, place.section));
+}
+
+/**
  * The contents beside the page (wide): a tree open to the place shown,
  * with the entries around it. A section opens its contents when pressed;
  * a page opens the page, and a page with pages under it has a button of
@@ -613,12 +660,15 @@ function ContentsTree({ game }: { game: LoadedGame }) {
   const root = useRef<HTMLDivElement>(null);
   const onPath = useMemo(() => {
     const ids = new Set<string>();
+    // A list page opened at a heading shown as a level: the way to that level.
     const id =
-      place.kind === 'page' ? place.guideId : place.kind === 'contents' ? place.sectionId : null;
+      place.kind === 'page'
+        ? (headingAt(contents, place)?.id ?? place.guideId)
+        : place.kind === 'contents'
+          ? place.sectionId
+          : null;
     if (id) {
-      for (const step of contents.trail(id)) {
-        ids.add(step.kind === 'section' ? step.section.id : step.guide.id);
-      }
+      for (const step of contents.trail(id)) ids.add(entryIdOf(step));
       ids.add(id);
     }
     return ids;
@@ -682,9 +732,6 @@ interface TreeState {
   toggle: (id: string, open: boolean) => void;
 }
 
-const entryId = (entry: ContentsEntry) =>
-  entry.kind === 'section' ? entry.section.id : entry.guide.id;
-
 function TreeLevel({
   tree,
   entries,
@@ -699,14 +746,14 @@ function TreeLevel({
   const { contents } = guidesOf(tree.game);
   const [count, setCount] = useState(ROWS_AT_ONCE);
   // Long lists show their rows a few hundred at a time, always as far as the way to the place shown.
-  const onWay = entries.findIndex((entry) => tree.onPath.has(entryId(entry)));
+  const onWay = entries.findIndex((entry) => tree.onPath.has(entryIdOf(entry)));
   const shown = Math.max(count, Math.ceil((onWay + 1) / ROWS_AT_ONCE) * ROWS_AT_ONCE);
   const indent = (extra: number) => ({ paddingLeft: extra + depth * 14 });
   return (
     <ul id={id} className="touch-plain-list guides-tree-level">
       {entries.slice(0, shown).map((entry) => {
-        if (entry.kind === 'page') {
-          return <TreePage key={entry.guide.id} tree={tree} entry={entry} depth={depth} />;
+        if (entry.kind !== 'section') {
+          return <TreePage key={entryIdOf(entry)} tree={tree} entry={entry} depth={depth} />;
         }
         const sectionId = entry.section.id;
         const expanded = tree.isOpen(sectionId);
@@ -743,23 +790,31 @@ function TreeLevel({
   );
 }
 
-/** A page in the tree; one with pages under it can show or hide them. */
+/**
+ * A page in the tree, or a heading of a list page shown as a level (which
+ * opens that page at the heading); one with pages under it can show or
+ * hide them.
+ */
 function TreePage({
   tree,
   entry,
   depth,
 }: {
   tree: TreeState;
-  entry: Extract<ContentsEntry, { kind: 'page' }>;
+  entry: Exclude<ContentsEntry, { kind: 'section' }>;
   depth: number;
 }) {
   const { contents } = guidesOf(tree.game);
   const listId = useId();
-  const id = entry.guide.id;
-  const current = tree.place.kind === 'page' && tree.place.guideId === id;
+  const id = entryIdOf(entry);
+  const heading = entry.kind === 'heading';
+  const at = headingAt(contents, tree.place);
+  const current = heading
+    ? at?.id === id
+    : tree.place.kind === 'page' && tree.place.guideId === id && !at;
   const holds = entry.pages > 0 && contents.itemCount(id) > 0;
   const open = holds && tree.isOpen(id);
-  const title = entry.guide.title;
+  const title = entryTitleOf(entry);
   return (
     <li>
       <div className="guides-tree-page" style={{ paddingLeft: depth * 14 }}>
@@ -785,12 +840,12 @@ function TreePage({
         )}
         <button
           type="button"
-          className="guides-tree-row guides-tree-page-name"
+          className={`guides-tree-row guides-tree-page-name${heading ? ' guides-tree-heading' : ''}`}
           aria-current={current ? 'page' : undefined}
-          data-testid="guides-tree-page"
+          data-testid={heading ? 'guides-tree-heading' : 'guides-tree-page'}
           onClick={() => {
             if (holds) tree.toggle(id, true);
-            openPlace({ kind: 'page', guideId: id });
+            openPlace(placeOf(entry));
           }}
         >
           {title}
@@ -924,7 +979,7 @@ function LandingGroupView({
         className={`touch-plain-list guides-tiles${withPictures ? ' guides-tiles-pictures' : ''}`}
       >
         {group.tiles.map((tile) => (
-          <li key={tile.entry.kind === 'section' ? tile.entry.section.id : tile.entry.guide.id}>
+          <li key={entryIdOf(tile.entry)}>
             <Tile game={game} tile={tile} withPicture={withPictures} />
           </li>
         ))}
@@ -956,8 +1011,9 @@ function Tile({
   withPicture: boolean;
 }) {
   const { entry } = tile;
-  const section = entry.kind === 'section';
-  const title = section ? entry.section.title : entry.guide.title;
+  // A section, or a heading of a list page: a group of pages.
+  const section = entry.kind !== 'page';
+  const title = entryTitleOf(entry);
   const count = section
     ? pagesText(entry.pages)
     : entry.pages > 0
@@ -970,12 +1026,7 @@ function Tile({
       data-testid="guides-tile"
       data-kind={entry.kind}
       onClick={() => {
-        openPlace(
-          section
-            ? { kind: 'contents', sectionId: entry.section.id }
-            : { kind: 'page', guideId: entry.guide.id },
-          'walk',
-        );
+        openPlace(placeOf(entry), 'walk');
       }}
     >
       {withPicture ? (
@@ -1212,7 +1263,7 @@ function PagesUnder({ game, guideId }: { game: LoadedGame; guideId: string }) {
   return (
     <section className="guides-under" aria-label="Pages under this page" data-testid="pages-under">
       <h2 className="guides-under-title">Pages under this page</h2>
-      <EntryList key={guideId} entries={entries} by="walk" />
+      <EntryList key={guideId} contents={contents} entries={entries} by="walk" />
     </section>
   );
 }

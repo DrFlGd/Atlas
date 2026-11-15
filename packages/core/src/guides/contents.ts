@@ -1,6 +1,7 @@
 import { isOwnId, type GuideEntry, type Section } from '@atlas/schema';
 import type { LoadedPack } from '../pack/loadedPack';
 import { guideFiling, isListPage } from './pageFiling';
+import { headingSteps } from './headingSteps';
 import { guideLinks, placePagesByLinks, type PageListing } from './pageTree';
 
 /**
@@ -14,7 +15,24 @@ import { guideLinks, placePagesByLinks, type PageListing } from './pageTree';
  */
 export type ContentsEntry =
   | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
-  | { kind: 'page'; guide: GuideEntry; /** Pages under it, however deep. */ pages: number };
+  | { kind: 'page'; guide: GuideEntry; /** Pages under it, however deep. */ pages: number }
+  | { kind: 'heading'; heading: ContentsHeading; /** Pages in it, however deep. */ pages: number };
+
+/**
+ * A heading of a list page shown as a level under it (see
+ * `headingSteps.ts`): no page, but the pages the list page lists under
+ * that heading. It opens the list page at the heading.
+ */
+export interface ContentsHeading {
+  /** Its id in the contents: the list page's id, `#`, the heading's section. */
+  id: string;
+  /** The heading's words. */
+  title: string;
+  /** The list page it is a heading of. */
+  guide: GuideEntry;
+  /** The heading's section (see `sections.ts`), which the list page opens at. */
+  section: string;
+}
 
 /**
  * How the pages of the contents are filed (see {@link GuideContents.filing}):
@@ -35,9 +53,23 @@ export interface ContentsFiling {
   byHand: number;
 }
 
-/** A step of the way from the top of the contents to an entry: a section, or a page. */
+/** A step of the way from the top of the contents to an entry: a section, a page, or a heading of one. */
 export type ContentsStep =
-  { kind: 'section'; section: Section } | { kind: 'page'; guide: GuideEntry };
+  | { kind: 'section'; section: Section }
+  | { kind: 'page'; guide: GuideEntry }
+  | { kind: 'heading'; heading: ContentsHeading };
+
+/** The id of an entry or a step of the contents: its section's, its page's or its heading's. */
+export function entryIdOf(entry: ContentsEntry | ContentsStep): string {
+  if (entry.kind === 'section') return entry.section.id;
+  return entry.kind === 'page' ? entry.guide.id : entry.heading.id;
+}
+
+/** The title of an entry or a step of the contents, as the contents shows it. */
+export function entryTitleOf(entry: ContentsEntry | ContentsStep): string {
+  if (entry.kind === 'section') return entry.section.title;
+  return entry.kind === 'page' ? entry.guide.title : entry.heading.title;
+}
 
 /**
  * Guides to browse as pages: a pack's data, or a pack's pages with a
@@ -114,17 +146,34 @@ export function listingThrough(
 ): PageListing {
   const filing = guideFiling(guide, onlyListPage);
   const listPage = isListPage(filing);
-  if (!aliases || Object.keys(aliases).length === 0) return { listing: filing.listing, listPage };
+  const { headings, listedUnder } = filing;
+  if (!aliases || Object.keys(aliases).length === 0) {
+    return {
+      listing: filing.listing,
+      listPage,
+      ...(headings && listedUnder ? { headings, listedUnder } : {}),
+    };
+  }
   const listing: string[] = [];
+  const under: number[] = [];
   const seen = new Set<string>([guide.id]);
-  for (const link of filing.listing) {
+  filing.listing.forEach((link, i) => {
     const id = aliasedId(aliases, link);
     if (!seen.has(id)) {
       seen.add(id);
       listing.push(id);
+      under.push(listedUnder?.[i] ?? -1);
     }
-  }
-  return { listing, listPage };
+  });
+  if (!headings || !listedUnder) return { listing, listPage };
+  return {
+    listing,
+    listPage,
+    headings: headings.map((heading) =>
+      heading.guide === null ? heading : { ...heading, guide: aliasedId(aliases, heading.guide) },
+    ),
+    listedUnder: under,
+  };
 }
 
 /**
@@ -166,6 +215,8 @@ export class GuideContents {
   private readonly aliases: Readonly<Record<string, string>> | undefined;
   /** The home page, when the guides have it and there is a contents to branch from it. */
   private readonly homeGuide: GuideEntry | null;
+  /** The headings of list pages shown as levels, by id (see `headingSteps.ts`). */
+  private readonly headings = new Map<string, ContentsHeading>();
 
   constructor(pack: GuidePages) {
     const sections = pack.data.sections ?? [];
@@ -255,7 +306,56 @@ export class GuideContents {
     this.filed = tree.filed;
     for (const id of tree.top) if (this.guides.has(id)) this.listed.add(id);
     this.walk(tree.top, tree.lists);
+    if (this.addHeadingSteps(tree.lists, tree.placed, tree.filed)) {
+      // Walked again with the levels: the pages under each page stay as counted.
+      this.home.clear();
+      this.inOrder.length = 0;
+      this.pageCounts.clear();
+      this.walk(tree.top, tree.lists);
+    }
     return tree;
+  }
+
+  /**
+   * The headings of each list page as levels under it (see
+   * `headingSteps.ts`), put in `lists`; whether any was made.
+   */
+  private addHeadingSteps(
+    lists: Map<string, string[]>,
+    placed: ReadonlyMap<string, string>,
+    filed: ReadonlySet<string>,
+  ): boolean {
+    let made = false;
+    for (const [id, items] of [...lists]) {
+      const guide = this.guides.get(id);
+      if (!guide || id === this.homeGuide?.id) continue;
+      if (!items.some((item) => placed.get(item) === id && !filed.has(item))) continue;
+      const { listing, headings, listedUnder } = listingThrough(guide, this.aliases, true);
+      if (!headings || !listedUnder || headings.length === 0) continue;
+      const found = headingSteps({
+        page: id,
+        title: guide.title,
+        items,
+        grouped: (item) => placed.get(item) === id && !filed.has(item),
+        weight: (item) => 1 + (this.home.get(item) === id ? (this.pageCounts.get(item) ?? 0) : 0),
+        listing,
+        headings,
+        listedUnder,
+      });
+      if (!found) continue;
+      made = true;
+      lists.set(id, found.items);
+      for (const step of found.steps) {
+        lists.set(step.id, step.items);
+        this.headings.set(step.id, {
+          id: step.id,
+          title: step.words || guide.title,
+          guide,
+          section: step.section,
+        });
+      }
+    }
+    return made;
   }
 
   /** Each entry's home and place, top to bottom, and the pages under each. */
@@ -271,7 +371,12 @@ export class GuideContents {
         continue;
       }
       const id = frame.items[frame.at++]!;
-      if (this.home.has(id) || (!this.sections.has(id) && !this.guides.has(id))) continue;
+      if (
+        this.home.has(id) ||
+        (!this.sections.has(id) && !this.guides.has(id) && !this.headings.has(id))
+      ) {
+        continue;
+      }
       this.home.set(id, frame.parent);
       inOrder.push(id);
       const items = lists.get(id);
@@ -352,16 +457,38 @@ export class GuideContents {
 
   private entry(id: string): ContentsEntry[] {
     this.shown();
+    const pages = this.pageCounts.get(id) ?? 0;
     const section = this.sections.get(id);
-    if (section) return [{ kind: 'section', section, pages: this.pageCounts.get(id) ?? 0 }];
+    if (section) return [{ kind: 'section', section, pages }];
     const guide = this.guides.get(id);
-    return guide ? [{ kind: 'page', guide, pages: this.pageCounts.get(id) ?? 0 }] : [];
+    if (guide) return [{ kind: 'page', guide, pages }];
+    const heading = this.headings.get(id);
+    return heading ? [{ kind: 'heading', heading, pages }] : [];
   }
 
-  /** Where an entry is at home: its section or page, null at the top, undefined when not listed. */
+  /**
+   * Where an entry is at home: its section, page or heading of a list
+   * page; null at the top, undefined when not listed.
+   */
   parentOf(id: string): string | null | undefined {
     this.shown();
     return this.home.get(id);
+  }
+
+  /** The page or section an entry is under, past the headings of a list page; null at the top. */
+  pageParentOf(id: string): string | null | undefined {
+    this.shown();
+    let at = this.home.get(id);
+    for (let hops = 0; at != null && this.headings.has(at) && hops < 64; hops++) {
+      at = this.home.get(at);
+    }
+    return at;
+  }
+
+  /** A heading of a list page shown as a level, by its id (see {@link ContentsHeading}). */
+  heading(id: string): ContentsHeading | undefined {
+    this.shown();
+    return this.headings.get(id);
   }
 
   /**
@@ -375,7 +502,9 @@ export class GuideContents {
     for (let at = this.home.get(id); at != null && !seen.has(at); at = this.home.get(at)) {
       seen.add(at);
       const section = this.sections.get(at);
+      const heading = section ? undefined : this.headings.get(at);
       if (section) path.push({ kind: 'section', section });
+      else if (heading) path.push({ kind: 'heading', heading });
       else {
         const guide = this.guides.get(at);
         if (!guide) break;
@@ -414,7 +543,7 @@ export class GuideContents {
       }
       this.linkedTo = linkedTo;
     }
-    const home = this.home.get(guideId);
+    const home = this.pageParentOf(guideId);
     const homePage = this.homeGuide?.id;
     return (this.linkedTo.get(guideId) ?? [])
       .filter((id) => id !== home && id !== homePage)
@@ -436,7 +565,7 @@ export class GuideContents {
     for (const id of this.inOrder) {
       if (!this.guides.has(id) || id === this.homeGuide?.id) continue;
       counts.pages += 1;
-      const parent = this.home.get(id) ?? null;
+      const parent = this.pageParentOf(id) ?? null;
       if (this.filed.has(id)) counts.underFiledPage += 1;
       else if (this.byLinks.has(id)) counts.underListPage += 1;
       else if (parent !== null && this.guides.has(parent)) counts.byHand += 1;

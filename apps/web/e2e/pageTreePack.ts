@@ -21,6 +21,9 @@ import type { Page } from '@playwright/test';
  *   is a link to Short Blades, which lists the blades too: each blade is
  *   under Short Blades, under Gear. Gear ends with a link to Short Blades,
  *   and each blade's text links back to Gear and on to the next blade.
+ *   Its headings are levels of the contents: Short Blades is under the
+ *   heading "Weapons", and three charms under the heading "Charms" (Gear ›
+ *   Weapons › Short Blades › Dirk); "Care" lists nothing, so is none.
  */
 
 const g = (local: string) => `demo:guide:${local}`;
@@ -68,6 +71,11 @@ const BLADES: [string, string][] = [
   ['fang', 'Fang'],
   ['sliver', 'Sliver'],
 ];
+const CHARMS: [string, string][] = [
+  ['bone-charm', 'Bone Charm'],
+  ['tin-charm', 'Tin Charm'],
+  ['reed-charm', 'Reed Charm'],
+];
 const CREATURES: [string, string][] = [
   ['marsh-toad', 'Marsh Toad'],
   ['cave-bat', 'Cave Bat'],
@@ -91,11 +99,19 @@ function gearGuides(): Guide[] {
       body: [
         'All the gear of the isle, by type.',
         '',
-        `## ${mention('short-blades', 'Short Blades')}`,
+        '## Weapons',
+        '',
+        'Arms of every reach.',
+        '',
+        `### ${mention('short-blades', 'Short Blades')}`,
         '',
         '| Name | Description | Found at | Dropped by |',
         '| --- | --- | --- | --- |',
         ...rows,
+        '',
+        '## Charms',
+        '',
+        ...CHARMS.map(([id, name]) => `- ${mention(id, name)}`),
         '',
         '## Care',
         '',
@@ -111,6 +127,7 @@ function gearGuides(): Guide[] {
       'The short blades, quick and light.',
       BLADES.map(([id, name]) => [id, name]),
     ),
+    ...CHARMS.map(([id, name]) => page(id, name, `A charm worn at the neck.`, [])),
     ...BLADES.map(([id, name], i) => {
       const [nextId, nextName] = BLADES[(i + 1) % BLADES.length]!;
       return page(

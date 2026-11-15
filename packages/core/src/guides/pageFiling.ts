@@ -1,5 +1,6 @@
 import type { GuideEntry } from '@atlas/schema';
 import { guideLinks, guideLinksIn } from './pageTree';
+import { headingNames } from './sections';
 
 /**
  * Which links of a page list other pages, read from its Markdown: what
@@ -92,6 +93,29 @@ export interface PageFiling {
    * to and does not list.
    */
   mentioned: number;
+  /**
+   * The headings of the page, in order (none when it is not read closely):
+   * where its listed pages are listed, see {@link listedUnder}.
+   */
+  headings?: readonly ListingHeading[];
+  /**
+   * By listed page, as `listing` has them: the innermost heading it is
+   * first listed under, by its index in `headings`; -1 for none. The
+   * headings around that one are those before it of a lower level.
+   */
+  listedUnder?: readonly number[];
+}
+
+/** A heading of a page, as {@link PageFiling.headings} has it. */
+export interface ListingHeading {
+  /** 1 to 6, as `#` to `######`. */
+  level: number;
+  /** Its words, links by their words, marks left out. */
+  words: string;
+  /** Its section's name, as `sections.ts` names a heading: a link to it opens the page there. */
+  section: string;
+  /** The page it links to, when it is one link and nothing else (`### [Short blades](…)`). */
+  guide: string | null;
 }
 
 /** Whether a page lists enough pages to be a list page (see the constants above). */
@@ -462,10 +486,15 @@ export function pageFilingIn(
   if (linked === 0) return { listing: [], linked: 0, mentioned: 0 };
   const listing: string[] = [];
   const seen = new Set<string>();
+  /** The headings read, and those open around the line read (innermost last), by index. */
+  const headings: { level: number; words: string; guide: string | null }[] = [];
+  const openHeadings: number[] = [];
+  const listedUnder: number[] = [];
   const list = (id: string | null) => {
     if (id === null || id === self || seen.has(id)) return;
     seen.add(id);
     listing.push(id);
+    listedUnder.push(openHeadings.at(-1) ?? -1);
   };
   /** The listing units read (a row, an item, a line, a heading), as written. */
   const units: string[] = [];
@@ -523,11 +552,12 @@ export function pageFilingIn(
         if (!start) break;
         let text = lines[j]!.slice(start[0].length);
         j++;
-        // Lines that continue the item: not blank, not an item, not a table or code.
+        // Lines that continue the item: not blank, not an item, a heading, a table or code.
         while (
           j < lines.length &&
           lines[j]!.trim() !== '' &&
           !LIST_ITEM.test(lines[j]!) &&
+          !HEADING.test(lines[j]!) &&
           !FENCE.test(lines[j]!) &&
           !TABLE_ROW.test(lines[j]!)
         ) {
@@ -548,10 +578,17 @@ export function pageFilingIn(
     // A heading: one link alone in it is listed.
     const heading = HEADING.exec(line);
     if (heading) {
-      if (shown()) {
-        const text = line.slice(heading[0].length).replace(/\s+#+\s*$/, '');
-        listUnit(lineListing(text, true), text);
+      const level = heading[1]!.length;
+      while (openHeadings.length > 0 && headings[openHeadings.at(-1)!]!.level >= level) {
+        openHeadings.pop();
       }
+      const text = line.slice(heading[0].length).replace(/\s+#+\s*$/, '');
+      // A heading that is one link lists that page, under the headings around it.
+      const ids = shown() ? lineListing(text, true) : [];
+      listUnit(ids, text);
+      const guide = ids.length === 1 && ids[0] !== self ? ids[0]! : null;
+      openHeadings.push(headings.length);
+      headings.push({ level, words: wordsOf(text), guide });
       passBars(line);
       afterPicture = false;
       i++;
@@ -596,7 +633,14 @@ export function pageFilingIn(
     if (line.trim() !== '') afterPicture = false;
     i++;
   }
-  return { listing, linked, mentioned: mentionedOutside(body, self, linked, listing, seen, units) };
+  const names = headingNames(headings.map((heading) => heading.words));
+  return {
+    listing,
+    linked,
+    mentioned: mentionedOutside(body, self, linked, listing, seen, units),
+    headings: headings.map((heading, i) => ({ ...heading, section: names[i]! })),
+    listedUnder,
+  };
 }
 
 /**

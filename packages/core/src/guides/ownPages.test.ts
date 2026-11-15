@@ -1,7 +1,7 @@
 import { NO_OWN_PAGES, type OwnPages, type PackData } from '@atlas/schema';
 import { makeGuidesFixturePack } from '@atlas/schema/testing';
 import { describe, expect, it } from 'vitest';
-import { GuideContents } from './contents';
+import { GuideContents, entryIdOf, entryTitleOf } from './contents';
 import {
   addOwnPage,
   addOwnSection,
@@ -37,7 +37,7 @@ function tree(contents: GuideContents): unknown[] {
     entries.map((entry) =>
       entry.kind === 'page'
         ? entry.guide.title
-        : { [entry.section.title]: level(contents.items(entry.section.id)) },
+        : { [entryTitleOf(entry)]: level(contents.items(entryIdOf(entry))) },
     );
   return level(contents.top());
 }
