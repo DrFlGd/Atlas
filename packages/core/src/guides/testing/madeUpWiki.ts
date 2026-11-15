@@ -23,6 +23,15 @@ import type { GuideEntry, Section } from '@atlas/schema';
  *   characters met there; character and enemy pages that mention
  *   locations and items.
  * - Notes no page links to.
+ * - With `gear` (in the menu, under Equipment): an index of all gear whose
+ *   tables name, beside each thing, where it is found, which enemy drops
+ *   it and who sells it (so it lists fewer than three fifths of the pages it links
+ *   to), with a heading that is a link to each of two narrower list
+ *   pages, Short Blades (a list of the blades, each with where it is
+ *   found) and Bows (a table). Each item page mentions the first blade,
+ *   a popular page both Gear and Short Blades list. A boss page names many
+ *   pages in long prose and lists the three things it drops in a small
+ *   table: it is no list page.
  *
  * With `filed`, the wiki also files pages itself (a guide's `filedUnder`,
  * as its categories would): each weapon under Weapons, each character
@@ -39,6 +48,8 @@ export interface MadeUpWikiSize {
   characters: number;
   enemies: number;
   notes: number;
+  /** Short blades, and as many bows, under the index of all gear; none when left out. */
+  gear?: number;
 }
 
 /** About two thousand pages. */
@@ -49,6 +60,7 @@ export const LARGE_WIKI: MadeUpWikiSize = {
   characters: 200,
   enemies: 160,
   notes: 14,
+  gear: 40,
 };
 
 export const SMALL_WIKI: MadeUpWikiSize = {
@@ -58,6 +70,7 @@ export const SMALL_WIKI: MadeUpWikiSize = {
   characters: 8,
   enemies: 6,
   notes: 3,
+  gear: 6,
 };
 
 export const PACK = 'madeup';
@@ -80,6 +93,8 @@ export interface MadeUpWiki {
     enemies: string[];
     notes: string[];
     lists: string[];
+    blades: string[];
+    bows: string[];
   };
 }
 
@@ -102,6 +117,8 @@ export function madeUpWiki(
   const characters = Array.from({ length: size.characters }, (_, i) => `smith-${pad(i + 1)}`);
   const enemies = Array.from({ length: size.enemies }, (_, i) => `ghoul-${pad(i + 1)}`);
   const notes = Array.from({ length: size.notes }, (_, i) => `note-${pad(i + 1)}`);
+  const blades = Array.from({ length: size.gear ?? 0 }, (_, i) => `dirk-${pad(i + 1)}`);
+  const bows = Array.from({ length: size.gear ?? 0 }, (_, i) => `longbow-${pad(i + 1)}`);
   const lists = ['weapons', 'armour', 'locations', 'characters', 'enemies'];
   const tiles = ['weapons', 'armour', 'enemies'];
   // Where each item is found and who sells it: a few locations hold most items.
@@ -276,6 +293,9 @@ export function madeUpWiki(
   });
   notes.forEach((local) => add(local, 'A note no page lists.', [notes[0]!]));
 
+  const gear = blades.length > 0;
+  if (gear) addGear(add, { blades, bows, locations, enemies, characters, notes });
+
   const loose = [
     ...weapons,
     ...armour,
@@ -285,12 +305,13 @@ export function madeUpWiki(
     ...notes,
     'locations',
     'characters',
+    ...(gear ? ['short-blades', 'bows', ...blades, ...bows, 'mire-tyrant'] : []),
   ];
   const sections: Section[] = [
     {
       id: sectionId('equipment'),
       title: 'Equipment',
-      items: [guideId('weapons'), guideId('armour')],
+      items: [guideId('weapons'), guideId('armour'), ...(gear ? [guideId('gear')] : [])],
     },
     { id: sectionId('the-world'), title: 'The world', items: [guideId('enemies')] },
     { id: PAGES_SECTION, title: 'Pages', items: loose.map(guideId), placeByLinks: true },
@@ -299,6 +320,120 @@ export function madeUpWiki(
     guides,
     sections,
     homePage: HOME,
-    ids: { weapons, armour, locations, characters, enemies, notes, lists },
+    ids: {
+      weapons,
+      armour,
+      locations,
+      characters,
+      enemies,
+      notes,
+      lists: gear ? [...lists, 'gear', 'short-blades', 'bows'] : lists,
+      blades,
+      bows,
+    },
   };
+}
+
+/**
+ * The index of all gear, its two narrower list pages, the gear pages and a
+ * boss page (see the top of this file).
+ */
+function addGear(
+  add: (local: string, body: string) => void,
+  {
+    blades,
+    bows,
+    locations,
+    enemies,
+    characters,
+    notes,
+  }: Record<'blades' | 'bows' | 'locations' | 'enemies' | 'characters' | 'notes', string[]>,
+): void {
+  const at = <T>(list: T[], i: number) => list[i % Math.max(1, list.length)]!;
+  // Each row names a location and an enemy of its own, as far as there are.
+  const foundAt = (i: number) => at(locations, i * 2 + 1);
+  const droppedBy = (i: number) => at(enemies, i * 3 + 2);
+  const soldBy = (i: number) => at(characters, i + 1);
+  const popular = blades[0]!;
+  const table = (items: string[], type: string, from: number) => [
+    '| Icon | Name | Description | Found at | Dropped by | Sold by |',
+    '| --- | --- | --- | --- | --- | --- |',
+    ...items.map(
+      (item, i) =>
+        `| [![${titleOf(item)}](${PACK}:picture:${item} "=24x24")](${guideId(item)}) | ${link(item, titleOf(item))} | A ${type} of fair weight. | Near the gate of ${link(foundAt(from + i), titleOf(foundAt(from + i)))} | ${link(droppedBy(from + i), titleOf(droppedBy(from + i)))} | ${link(soldBy(from + i), titleOf(soldBy(from + i)))} |`,
+    ),
+  ];
+  add(
+    'gear',
+    [
+      `All the gear of the game, by type. Most of it can be bought from ${link(at(characters, 0), titleOf(at(characters, 0)))}.`,
+      '',
+      `## ${link('short-blades', 'Short Blades')}`,
+      '',
+      ...table(blades, 'short blade', 0),
+      '',
+      `## ${link('bows', 'Bows')}`,
+      '',
+      ...table(bows, 'bow', blades.length),
+    ].join('\n'),
+  );
+  add(
+    'short-blades',
+    [
+      'The short blades, quick and light.',
+      '',
+      ...blades.map(
+        (blade, i) =>
+          `- ${link(blade, titleOf(blade))} – found in ${link(foundAt(i), titleOf(foundAt(i)))}`,
+      ),
+    ].join('\n'),
+  );
+  add(
+    'bows',
+    [
+      'The bows, for a fight from afar.',
+      '',
+      '| Name | Range |',
+      '| --- | --- |',
+      ...bows.map((bow, i) => `| ${link(bow, titleOf(bow))} | ${10 + i} |`),
+    ].join('\n'),
+  );
+  [...blades, ...bows].forEach((local, i) => {
+    const type = i < blades.length ? 'Short blade' : 'Bow';
+    add(
+      local,
+      [
+        `| ${titleOf(local)} | {box} |`,
+        '| --- | --- |',
+        `| Type | ${type} |`,
+        `| Found at | ${link(foundAt(i), titleOf(foundAt(i)))} |`,
+        '',
+        `The ${titleOf(local)} is a ${type.toLowerCase()}.` +
+          (local === popular
+            ? ' Every other piece of gear is measured against it.'
+            : ` It is often compared with the ${link(popular, titleOf(popular))}.`),
+      ].join('\n'),
+    );
+  });
+  // A boss: long prose that names many pages, and a small table of what it drops.
+  add(
+    'mire-tyrant',
+    [
+      '| Mire Tyrant | {box} |',
+      '| --- | --- |',
+      `| Location | ${link(at(locations, 0), titleOf(at(locations, 0)))} |`,
+      '',
+      `The Mire Tyrant rules the bog below ${link(at(locations, 0), titleOf(at(locations, 0)))}, and its servants roam as far as ${link(at(locations, 1), titleOf(at(locations, 1)))}. It is guarded by ${link(at(enemies, 0), titleOf(at(enemies, 0)))} and ${link(at(enemies, 1), titleOf(at(enemies, 1)))}, which come back after each fight.`,
+      '',
+      `${link(at(characters, 1), titleOf(at(characters, 1)))} tells of it, and ${link(at(characters, 2), titleOf(at(characters, 2)))} sells a charm against its poison. Read ${link(at(notes, 0), titleOf(at(notes, 0)))} before the fight.`,
+      '',
+      '## Drops',
+      '',
+      '| Item | Chance |',
+      '| --- | --- |',
+      `| ${link(blades[0]!, titleOf(blades[0]!))} | 10% |`,
+      `| ${link(at(blades, 1), titleOf(at(blades, 1)))} | 5% |`,
+      `| ${link(bows[0]!, titleOf(bows[0]!))} | 1% |`,
+    ].join('\n'),
+  );
 }

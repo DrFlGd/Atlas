@@ -38,8 +38,16 @@ import { guideLinks, guideLinksIn } from './pageTree';
  * line right after a line that is only a picture (its caption); in
  * another column of a table. A mention never files a page.
  *
+ * A *listing unit* is what lists a page: a table row whose name cell lists
+ * one, a list item whose main link (or run of links) lists one, a tile, a
+ * line of a paragraph and a heading that list one. Its other links (a
+ * row's "found at" column, the location named in an item after its name)
+ * describe the page it lists: they file nothing, and they do not count
+ * against the page being a list page.
+ *
  * A *list page* is a page that lists enough pages, and whose listing links
- * are a large share of the pages it links to (see the constants below).
+ * are a large share of the pages it lists or mentions outside its listing
+ * units (see the constants below).
  */
 
 /**
@@ -57,13 +65,17 @@ export const LISTING_WORDS_MAX = 100;
 export const LIST_PAGE_MIN_LISTED = 3;
 
 /**
- * A list page lists at least this share of the pages it links to. An item
- * page has a few listing links of its own (a "See also" list, a list of
- * upgrades) among many mentions (its box, its sentences), and an article
- * with one table about things of a type (a page of the game's rules with a
- * table of each location's rewards) lists about half of what it links to:
- * both stay below. An index of a type of thing lists most of what it links
- * to, its introduction of a few sentences aside.
+ * A list page lists at least this share of the pages it lists or mentions
+ * outside its listing units (a link in a row, an item or a line that lists
+ * a page describes that page, and is left out). An item page has a few
+ * listing links of its own (a "See also" list) among many mentions (its
+ * box, its sentences, a table of upgrades whose first column is a level),
+ * and an article with one table about things of a type (a boss page with a
+ * small table of what it drops, among long prose) lists a small part of
+ * what it names: both stay below. An index of a type of thing lists most
+ * of what it names outside its rows, its introduction of a few sentences
+ * aside, however many locations and characters its rows name beside each
+ * thing.
  */
 export const LIST_PAGE_SHARE = 0.6;
 
@@ -73,14 +85,19 @@ export interface PageFiling {
   listing: readonly string[];
   /** How many pages it links to in any way, each once (see `guideLinksIn`). */
   linked: number;
+  /**
+   * How many pages it links to outside its listing units (a sentence, a
+   * box, a table that lists nothing) and does not list, each once. For a
+   * page that lists too few pages to be a list page: every page it links
+   * to and does not list.
+   */
+  mentioned: number;
 }
 
 /** Whether a page lists enough pages to be a list page (see the constants above). */
 export function isListPage(filing: PageFiling): boolean {
-  return (
-    filing.listing.length >= LIST_PAGE_MIN_LISTED &&
-    filing.listing.length >= LIST_PAGE_SHARE * filing.linked
-  );
+  const listed = filing.listing.length;
+  return listed >= LIST_PAGE_MIN_LISTED && listed >= LIST_PAGE_SHARE * (listed + filing.mentioned);
 }
 
 /** A guide id as a link's address, with or without `<…>`. */
@@ -390,42 +407,73 @@ function emptyOrPictures(cell: string): boolean {
  * of its name column, the first column with more than pictures (none for
  * a box of facts). A table whose name column holds no links lists nothing:
  * when it is unsure what a table lists, the contents stays flat.
+ *
+ * By row under the heading row: what it lists.
  */
-function tableListing(rows: readonly string[], hidden: boolean): string[] {
-  if (hidden || !rows.some((row) => row.includes(':guide:'))) return [];
+function tableListing(rows: readonly string[], hidden: boolean): (readonly string[])[] | null {
+  if (hidden || !rows.some((row) => row.includes(':guide:'))) return null;
   if (rows[0]!.includes(BOX_MARK)) {
     const head = cellsOf(rows[0]!);
-    if (head.length === 2 && head[1]!.trim() === BOX_MARK) return [];
+    if (head.length === 2 && head[1]!.trim() === BOX_MARK) return null;
   }
   // The rows under the heading row, by cell.
   const cells = rows.slice(1).map(cellsOf);
   const width = Math.max(0, ...cells.map((row) => row.length));
   let column = 0;
   while (column < width && cells.every((row) => emptyOrPictures(row[column] ?? ''))) column++;
-  if (column >= width) return [];
-  return cells.flatMap((row) => {
+  if (column >= width) return null;
+  return cells.map((row) => {
     const cell = row[column];
-    if (!cell?.includes(':guide:')) return [];
+    if (!cell?.includes(':guide:')) return NO_IDS;
     return cell.split('<br>').flatMap((line) => itemListing(line, false, true));
   });
 }
 
+const NO_IDS: readonly string[] = [];
+
+/** A guide id in a Markdown link, read as `guideLinksIn` reads it. */
+const GUIDE_LINK = /\]\(\s*<?([a-z0-9][a-z0-9-]*:guide:[A-Za-z0-9][A-Za-z0-9_.-]*)/g;
+
+/** Adds `by` to the count of each link to a guide in a piece of Markdown, the page itself left out. */
+function countLinks(
+  text: string,
+  self: string | undefined,
+  counts: Map<string, number>,
+  by: number,
+): void {
+  if (!text.includes(':guide:')) return;
+  GUIDE_LINK.lastIndex = 0;
+  for (let match = GUIDE_LINK.exec(text); match; match = GUIDE_LINK.exec(text)) {
+    const id = match[1]!;
+    if (id !== self) counts.set(id, (counts.get(id) ?? 0) + by);
+  }
+}
+
 /**
- * The listing links of a page's Markdown, and how many pages it links to
- * (see the top of this file); `linked` when that is known already.
+ * The listing links of a page's Markdown, how many pages it links to, and
+ * how many it mentions outside its listing units (see the top of this
+ * file); `linked` when that is known already.
  */
 export function pageFilingIn(
   body: string,
   self?: string,
   linked: number = guideLinksIn(body, self).length,
 ): PageFiling {
-  if (linked === 0) return { listing: [], linked: 0 };
+  if (linked === 0) return { listing: [], linked: 0, mentioned: 0 };
   const listing: string[] = [];
   const seen = new Set<string>();
   const list = (id: string | null) => {
     if (id === null || id === self || seen.has(id)) return;
     seen.add(id);
     listing.push(id);
+  };
+  /** The listing units read (a row, an item, a line, a heading), as written. */
+  const units: string[] = [];
+  /** Lists what a listing unit lists; a unit that lists nothing is no unit. */
+  const listUnit = (ids: readonly string[], text: string) => {
+    if (ids.length === 0) return;
+    for (const id of ids) list(id);
+    units.push(text);
   };
   const lines = body.split('\n');
   /** Inside `||…||` that runs over lines. */
@@ -457,7 +505,12 @@ export function pageFilingIn(
       const rows = [line];
       let j = i + 2;
       while (j < lines.length && TABLE_ROW.test(lines[j]!)) rows.push(lines[j++]!);
-      for (const id of tableListing(rows, hidden)) list(id);
+      const byRow = tableListing(rows, hidden);
+      if (byRow) {
+        byRow.forEach((ids, at) => {
+          listUnit(ids, rows[at + 1]!);
+        });
+      }
       afterPicture = false;
       i = j;
       continue;
@@ -481,7 +534,7 @@ export function pageFilingIn(
           text += ` ${lines[j]!.trim()}`;
           j++;
         }
-        for (const id of itemListing(text, hidden, false)) list(id);
+        listUnit(itemListing(text, hidden, false), text);
         passBars(text);
         // A blank line between items keeps the list going.
         let next = j;
@@ -497,7 +550,7 @@ export function pageFilingIn(
     if (heading) {
       if (shown()) {
         const text = line.slice(heading[0].length).replace(/\s+#+\s*$/, '');
-        for (const id of lineListing(text, true)) list(id);
+        listUnit(lineListing(text, true), text);
       }
       passBars(line);
       afterPicture = false;
@@ -531,7 +584,7 @@ export function pageFilingIn(
       }
       if (text) pieces.push(text);
       for (const piece of pieces.flatMap((piece) => piece.split('<br>'))) {
-        if (shown() && !afterPicture) for (const id of lineListing(piece, false)) list(id);
+        if (shown() && !afterPicture) listUnit(lineListing(piece, false), piece);
         afterPicture = onlyPictures(piece);
         passBars(piece);
       }
@@ -543,20 +596,53 @@ export function pageFilingIn(
     if (line.trim() !== '') afterPicture = false;
     i++;
   }
-  return { listing, linked };
+  return { listing, linked, mentioned: mentionedOutside(body, self, linked, listing, seen, units) };
+}
+
+/**
+ * How many pages a page links to outside its listing units, and does not
+ * list: each link of the page counted, less those of its listing units.
+ * A page that lists too few pages is no list page, whatever it mentions:
+ * then every page it links to and does not list is counted.
+ */
+function mentionedOutside(
+  body: string,
+  self: string | undefined,
+  linked: number,
+  listing: readonly string[],
+  listed: ReadonlySet<string>,
+  units: readonly string[],
+): number {
+  if (listing.length < LIST_PAGE_MIN_LISTED) return Math.max(0, linked - listing.length);
+  const counts = new Map<string, number>();
+  countLinks(body, self, counts, 1);
+  for (const unit of units) countLinks(unit, self, counts, -1);
+  let mentioned = 0;
+  for (const [id, count] of counts) if (count > 0 && !listed.has(id)) mentioned++;
+  return mentioned;
 }
 
 /**
  * Whether a page may be a list page, by a quick look at its lines: a line
- * that starts with a word lists no page (it is a sentence, or a list item,
- * a line or a heading that starts with words), and any other line lists at
- * most the pages it links to. So a page with too few links in other lines
- * is no list page, and need not be read closely (most pages of a wiki).
+ * that starts with a word lists no page up to a `<br>` (it is a sentence,
+ * or a list item, a line or a heading that starts with words), and any
+ * other line (or the rest of one after a `<br>`) lists at most the pages
+ * it links to. A line that starts with a word right after a
+ * blank line (or first in the page) opens a paragraph: its links, up to a
+ * `<br>`, are outside any listing unit, so the pages it names are listed
+ * or mentioned. A page whose other lines hold too few links to list enough
+ * of those pages is no list page, and need not be read closely (most pages
+ * of a wiki).
  */
-export function mayBeListPage(body: string, linked: number): boolean {
+export function mayBeListPage(body: string, linked: number, self?: string): boolean {
   if (linked < LIST_PAGE_MIN_LISTED) return false;
-  const least = Math.max(LIST_PAGE_MIN_LISTED, LIST_PAGE_SHARE * linked);
+  // Never more pages are named outside listing units than are linked: as many links surely do.
+  const surely = Math.max(LIST_PAGE_MIN_LISTED, LIST_PAGE_SHARE * linked);
   let links = 0;
+  /** The pages named in lines that open a paragraph. */
+  const outside = new Set<string>();
+  /** The next `<br>` from the line read: the lines are read in order. */
+  let nextBreak = -1;
   // The next link to a guide, and the lines before it skipped at once.
   let link = body.indexOf(':guide:');
   while (link >= 0) {
@@ -565,18 +651,25 @@ export function mayBeListPage(body: string, linked: number): boolean {
     if (end < 0) end = body.length;
     let at = start;
     while (body[at] === ' ' || body[at] === '\t') at++;
-    if (!WORD_START.test(body[at] ?? '')) {
-      for (
-        let found = link;
-        found >= 0 && found < end;
-        found = body.indexOf(':guide:', found + 7)
-      ) {
-        if (++links >= least) return true;
+    // A line that starts with a word may list after a `<br>`, as a line of its own.
+    let from = link;
+    if (WORD_START.test(body[at] ?? '')) {
+      if (nextBreak !== Infinity && nextBreak < at) {
+        nextBreak = body.indexOf('<br>', at);
+        if (nextBreak < 0) nextBreak = Infinity;
       }
+      const head = Math.min(nextBreak, end);
+      if (start === 0 || body.slice(body.lastIndexOf('\n', start - 2) + 1, start).trim() === '') {
+        for (const id of guideLinksIn(body.slice(at, head), self)) outside.add(id);
+      }
+      from = head === end ? -1 : body.indexOf(':guide:', head);
+    }
+    for (let found = from; found >= 0 && found < end; found = body.indexOf(':guide:', found + 7)) {
+      if (++links >= surely) return true;
     }
     link = body.indexOf(':guide:', end);
   }
-  return false;
+  return links >= LIST_PAGE_MIN_LISTED && links >= LIST_PAGE_SHARE * outside.size;
 }
 
 /** A letter: a line that starts with one starts with a word. */
@@ -597,8 +690,8 @@ export function guideFiling(guide: GuideEntry, onlyListPage = false): PageFiling
   let filing = filingOfGuide.get(guide) ?? (onlyListPage ? noListOfGuide.get(guide) : undefined);
   if (filing) return filing;
   const linked = guideLinks(guide).length;
-  if (onlyListPage && !mayBeListPage(guide.body, linked)) {
-    filing = { listing: NO_LISTING, linked };
+  if (onlyListPage && !mayBeListPage(guide.body, linked, guide.id)) {
+    filing = { listing: NO_LISTING, linked, mentioned: linked };
     noListOfGuide.set(guide, filing);
     return filing;
   }

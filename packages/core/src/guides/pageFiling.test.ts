@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LIST_PAGE_MIN_LISTED,
+  LIST_PAGE_SHARE,
   LISTING_WORDS_MAX,
   isListPage,
   mayBeListPage,
@@ -274,6 +275,7 @@ describe('a list page', () => {
   const filing = (listing: number, linked: number): PageFiling => ({
     listing: Array.from({ length: listing }, (_, i) => g(`p${i}`)),
     linked,
+    mentioned: linked - listing,
   });
 
   it('lists enough pages, and most of the pages it links to', () => {
@@ -350,17 +352,139 @@ describe('a list page', () => {
     expect(isListPage(read)).toBe(false);
   });
 
+  it('is an index whose rows name, beside each thing, where it is found and who drops it', () => {
+    const things = ['dirk', 'kris', 'stiletto', 'shiv', 'cutter'];
+    const body = [
+      `All the short blades. Most are sold by ${to('smith')}.`,
+      '',
+      '| Icon | Name | Found at | Dropped by |',
+      '| --- | --- | --- | --- |',
+      ...things.map(
+        (thing, i) =>
+          `| [![${thing}](wiki:picture:${thing})](${g(thing)}) | ${to(thing)} | Near the gate of ${to(`vale-${i}`)} | ${to(`ghoul-${i}`)} |`,
+      ),
+    ].join('\n');
+    const read = pageFilingIn(body, g('self'));
+    expect(read.listing).toHaveLength(5);
+    expect(read.linked).toBe(16);
+    // By the share of every page it links to, it would be none.
+    expect(read.listing.length).toBeLessThan(LIST_PAGE_SHARE * read.linked);
+    // Its rows' locations and enemies describe the blades: only the seller counts against it.
+    expect(read.mentioned).toBe(1);
+    expect(isListPage(read)).toBe(true);
+    expect(mayBeListPage(body, read.linked, g('self'))).toBe(true);
+  });
+
+  it('is an index whose list items name where each thing is found', () => {
+    const body = [
+      'The short blades.',
+      '',
+      ...['dirk', 'kris', 'shiv'].map(
+        (thing, i) => `- ${to(thing)} – found in ${to(`vale-${i}`)} and ${to(`peak-${i}`)}`,
+      ),
+    ].join('\n');
+    const read = pageFilingIn(body, g('self'));
+    expect(read.listing.map((id) => id.slice(11))).toEqual(['dirk', 'kris', 'shiv']);
+    expect(read.mentioned).toBe(0);
+    expect(isListPage(read)).toBe(true);
+  });
+
+  it('counts a page named in a row and in a sentence as mentioned', () => {
+    const body = [
+      `Blades found in ${to('vale')} and ${to('peak')}.`,
+      '',
+      '| Name | Found at |',
+      '| --- | --- |',
+      `| ${to('dirk')} | ${to('vale')} |`,
+      `| ${to('kris')} | ${to('marsh')} |`,
+      `| ${to('shiv')} | ${to('vale')} |`,
+      '',
+      // A page it lists, named in a sentence too, is listed, not mentioned.
+      `The ${to('dirk')} is the oldest.`,
+    ].join('\n');
+    const read = pageFilingIn(body, g('self'));
+    expect(read.listing).toHaveLength(3);
+    expect(read.mentioned).toBe(2);
+    expect(isListPage(read)).toBe(true);
+    expect(isListPage(pageFilingIn(`${body}\n\nSee ${to('dunes')} and ${to('bog')}.`))).toBe(false);
+  });
+
+  it('is not a boss page with long prose and a small table of what it drops', () => {
+    const body = [
+      '| Mire Tyrant | {box} |',
+      '| --- | --- |',
+      `| Location | ${to('bog')} |`,
+      '',
+      `The Mire Tyrant rules the bog below ${to('bog')}, and its servants roam as far as ${to('dunes')}. It is guarded by ${to('ghoul')} and ${to('wisp')}, which come back after each fight.`,
+      '',
+      `${to('hermit')} tells of it, and ${to('smith')} sells a charm against its poison.`,
+      '',
+      '## Drops',
+      '',
+      '| Item | Chance | Also from |',
+      '| --- | --- | --- |',
+      `| ${to('dirk')} | 10% | ${to('ghoul')} |`,
+      `| ${to('kris')} | 5% | ${to('wisp')} |`,
+      `| ${to('longbow')} | 1% | ${to('crow')} |`,
+    ].join('\n');
+    const read = pageFilingIn(body, g('self'));
+    expect(read.listing.map((id) => id.slice(11))).toEqual(['dirk', 'kris', 'longbow']);
+    expect(read.mentioned).toBe(6);
+    expect(isListPage(read)).toBe(false);
+  });
+
+  it('is not an item page whose table of upgrades names a location on each row', () => {
+    const body = [
+      '| Blade | {box} |',
+      '| --- | --- |',
+      `| Location | ${to('vale')} |`,
+      '',
+      '| Level | Cost | Where |',
+      '| --- | --- | --- |',
+      `| 1 | 10 | ${to('vale')} |`,
+      `| 2 | 20 | ${to('peak')} |`,
+      `| 3 | 40 | ${to('marsh')} |`,
+      '',
+      '## See also',
+      '',
+      `- ${to('axe')}`,
+      `- ${to('bow')}`,
+      `- ${to('cudgel')}`,
+    ].join('\n');
+    const read = pageFilingIn(body, g('self'));
+    // The table lists nothing: its rows are no listing units, and their links are mentions.
+    expect(read.listing.map((id) => id.slice(11))).toEqual(['axe', 'bow', 'cudgel']);
+    expect(read.mentioned).toBe(3);
+    expect(isListPage(read)).toBe(false);
+  });
+
   it('may be one at a quick look whenever it is one', () => {
+    const rows = ['dirk', 'kris', 'shiv']
+      .map((thing, i) => `| ${to(thing)} | ${to(`vale-${i}`)} | ${to(`ghoul-${i}`)} |`)
+      .join('\n');
     const bodies = [
       [`### ${to('a')}`, `### ${to('b')}`, `### ${to('c')}`].join('\n\n'),
       `${to('a')} · ${to('b')} · ${to('c')}`,
       `| x | y |\n| --- | --- |\n| ${to('a')}<br>${to('b')}<br>${to('c')} | 1 |`,
       `**${to('a')}**  \n_${to('b')}_  \n![p](wiki:picture:p) ${to('c')}`,
+      `Blades by ${to('smith')}.\n\n| Name | At | By |\n| --- | --- | --- |\n${rows}`,
+      `Every blade:<br>${to('a')}<br>${to('b')}<br>${to('c')}`,
+      `- ${to('a')} – found in ${to('v')} and\n  sold by ${to('w')}\n- ${to('b')}\n- ${to('c')}`,
     ];
     for (const body of bodies) {
       const read = pageFilingIn(body);
       expect(isListPage(read), body).toBe(true);
       expect(mayBeListPage(body, read.linked), body).toBe(true);
     }
+  });
+
+  it('is not read closely when its prose names more pages than its other lines could list', () => {
+    const prose = ['vale', 'peak', 'marsh', 'bog', 'dunes', 'ghoul']
+      .map((place) => `It roams ${to(place)}.`)
+      .join(' ');
+    const body = [prose, '', `- ${to('a')}`, `- ${to('b')}`, `- ${to('c')}`].join('\n');
+    const read = pageFilingIn(body);
+    expect(isListPage(read)).toBe(false);
+    expect(mayBeListPage(body, read.linked)).toBe(false);
   });
 });

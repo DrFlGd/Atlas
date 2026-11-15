@@ -389,7 +389,14 @@ function useTouchEffects(wide: boolean, room: boolean) {
       const shown = useAtlas.getState().game;
       const contents = shown ? guidesOf(shown).contents : null;
       if (!contents?.browsable || !contents.isPage(id)) return false;
-      openPlace(section ? { kind: 'page', guideId: id, section } : { kind: 'page', guideId: id });
+      // A link in a page read in Guides is a step on the way the reader came; from elsewhere, a fresh start.
+      const { section: shownSection, search } = useTouch.getState();
+      const by =
+        shownSection === 'guides' && !search && !contents.isHomePage(id) ? 'walk' : 'fresh';
+      openPlace(
+        section ? { kind: 'page', guideId: id, section } : { kind: 'page', guideId: id },
+        by,
+      );
       showSection('guides');
       return true;
     });

@@ -16,6 +16,11 @@ import type { Page } from '@playwright/test';
  *   Pages.
  * - Things › Catalogue has 450 pages under it.
  * - Stray Note is linked from nothing placed, so it stays in Pages.
+ * - Basics › Gear, an index whose table names, beside each blade, the mine
+ *   it is found in and the creature that drops it, under a heading that
+ *   is a link to Short Blades, which lists the blades too: each blade is
+ *   under Short Blades, under Gear. Gear ends with a link to Short Blades,
+ *   and each blade's text links back to Gear and on to the next blade.
  */
 
 const g = (local: string) => `demo:guide:${local}`;
@@ -53,6 +58,70 @@ function page(local: string, title: string, text: string, listed: [string, strin
 const mention = (local: string, name: string) => `[${name}](${g(local)})`;
 
 const ORE_FROM = Array.from({ length: 13 }, (_, i) => `mine-${i + 1}`);
+const BLADES: [string, string][] = [
+  ['dirk', 'Dirk'],
+  ['kris', 'Kris'],
+  ['shiv', 'Shiv'],
+  ['stiletto', 'Stiletto'],
+  ['cutter', 'Cutter'],
+  ['needle', 'Needle'],
+  ['fang', 'Fang'],
+  ['sliver', 'Sliver'],
+];
+const CREATURES: [string, string][] = [
+  ['marsh-toad', 'Marsh Toad'],
+  ['cave-bat', 'Cave Bat'],
+];
+
+/** Gear, Short Blades and the blades (see the top of this file). */
+function gearGuides(): Guide[] {
+  const rows = BLADES.map(
+    ([id, name], i) =>
+      `| ${mention(id, name)} | A quick blade of fair weight. | Deep in ${mention(ORE_FROM[i]!, `Mine ${i + 1}`)} | ${mention(...CREATURES[i % 2]!)} |`,
+  );
+  const care = Array.from(
+    { length: 8 },
+    (_, i) =>
+      `Care, part ${i + 1}. Keep each blade dry and oiled, and its edge keen. A blade left wet in the mines rusts within a week, and a dull one slips off a hide.`,
+  );
+  return [
+    {
+      id: g('gear'),
+      title: 'Gear',
+      body: [
+        'All the gear of the isle, by type.',
+        '',
+        `## ${mention('short-blades', 'Short Blades')}`,
+        '',
+        '| Name | Description | Found at | Dropped by |',
+        '| --- | --- | --- | --- |',
+        ...rows,
+        '',
+        '## Care',
+        '',
+        ...care.flatMap((text) => [text, '']),
+        `Back to the ${mention('short-blades', 'short blades')}.`,
+      ].join('\n'),
+      locationIds: [],
+      source: source('gear'),
+    },
+    page(
+      'short-blades',
+      'Short Blades',
+      'The short blades, quick and light.',
+      BLADES.map(([id, name]) => [id, name]),
+    ),
+    ...BLADES.map(([id, name], i) => {
+      const [nextId, nextName] = BLADES[(i + 1) % BLADES.length]!;
+      return page(
+        id,
+        name,
+        `The ${name} is one of the ${mention('gear', 'gear')} of the isle. Next to it lies the ${mention(nextId, nextName)}.`,
+        [],
+      );
+    }),
+  ];
+}
 const ITEMS = Array.from({ length: 450 }, (_, i) => `item-${String(i + 1).padStart(3, '0')}`);
 
 export function pageTreeGuides(): Guide[] {
@@ -125,6 +194,7 @@ export function pageTreeGuides(): Guide[] {
       page(id, `Item ${String(i + 1).padStart(3, '0')}`, `Thing number ${i + 1}.`, []),
     ),
     page('stray-note', 'Stray Note', 'Nothing links here.', []),
+    ...gearGuides(),
   ];
 }
 
@@ -133,13 +203,14 @@ export function pageTreeSections(): object[] {
     .map((guide) => guide.id)
     .filter(
       (id) =>
-        ![g('armor'), g('weapons'), g('bestiary'), g('catalogue')].includes(id) &&
+        ![g('armor'), g('weapons'), g('bestiary'), g('catalogue'), g('gear')].includes(id) &&
         id !== g('stray-note'),
     );
   return [
     { id: s('equipment'), title: 'Equipment', items: [g('armor'), g('weapons')] },
     { id: s('the-world'), title: 'The world', items: [g('bestiary')] },
     { id: s('things'), title: 'Things', items: [g('catalogue')] },
+    { id: s('basics'), title: 'Basics', items: [g('gear')] },
     { id: s('pages'), title: 'Pages', items: [...loose, g('stray-note')], placeByLinks: true },
   ];
 }

@@ -237,6 +237,155 @@ describe('pages placed by their links', () => {
     expect(contents(without).parentOf(g('vale'))).toBe(g('item-0'));
   });
 
+  it('puts a page under the narrower list page a list page lists and puts under itself', () => {
+    const blades = ['dirk', 'kris', 'shiv'];
+    const bows = ['longbow', 'recurve', 'sling'];
+    const guides = [
+      page('gear', ['short-blades', ...blades, 'bows', ...bows]),
+      page('short-blades', blades),
+      page('bows', bows),
+      ...[...blades, ...bows].map((id) => page(id)),
+    ];
+    const contents = new GuideContents({
+      data: wiki(guides, { Things: ['gear'] }, ['short-blades', 'bows', ...blades, ...bows]),
+    });
+    expect(tree(contents)[0]).toEqual({
+      Things: [
+        {
+          Gear: [
+            { 'Short Blades': ['Dirk', 'Kris', 'Shiv'] },
+            { Bows: ['Longbow', 'Recurve', 'Sling'] },
+          ],
+        },
+      ],
+    });
+    // And so on down: Gear › Weapons › Short Blades › Dirk.
+    const deeper = [
+      page('gear', ['weapons', 'short-blades', ...blades, 'bows']),
+      page('weapons', ['short-blades', ...blades, 'bows', ...bows]),
+      ...guides.slice(1),
+    ];
+    const deep = new GuideContents({
+      data: wiki(deeper, { Things: ['gear'] }, [
+        'weapons',
+        'short-blades',
+        'bows',
+        ...blades,
+        ...bows,
+      ]),
+    });
+    expect(trail(deep, g('dirk'))).toEqual(['Things', 'Gear', 'Weapons', 'Short Blades']);
+    expect(trail(deep, g('sling'))).toEqual(['Things', 'Gear', 'Weapons', 'Bows']);
+    expect(deep.pages()).toHaveLength(deeper.length);
+  });
+
+  it('puts a page many pages link to under such a narrower list page, however short', () => {
+    // Gear lists 30 things, Short Blades three of them; ten pages name the Dirk.
+    const others = Array.from({ length: 27 }, (_, i) => `thing-${i}`);
+    const blades = ['dirk', 'kris', 'shiv'];
+    const fans = Array.from({ length: 10 }, (_, i) => `fan-${i}`);
+    const guides = [
+      page('gear', ['short-blades', ...blades, ...others]),
+      page('short-blades', blades),
+      page('favourites', ['dirk', 'thing-0', 'thing-1']),
+      ...[...blades, ...others].map((id) => page(id)),
+      ...fans.map((id) => mentions(id, 'dirk')),
+    ];
+    const loosePages = ['short-blades', 'favourites', ...blades, ...others, ...fans];
+    const contents = (menuOf: Record<string, string[]>) =>
+      new GuideContents({ data: wiki(guides, menuOf, loosePages) });
+    expect(contents({ Things: ['gear'] }).parentOf(g('dirk'))).toBe(g('short-blades'));
+    // A short list page Gear does not put under itself is shut out, though met first.
+    const both = contents({ Mine: ['favourites'], Things: ['gear'] });
+    expect(both.parentOf(g('dirk'))).toBe(g('short-blades'));
+    expect(both.parentOf(g('thing-0'))).toBe(g('favourites'));
+    expect(both.pages()).toHaveLength(guides.length);
+  });
+
+  it('never takes a neighbour that lists its neighbours for a narrower list page', () => {
+    // Each blade's "See also" lists the next three: each is a list page, and Gear lists them all.
+    const blades = ['dirk', 'kris', 'shiv', 'stiletto', 'cutter'];
+    const guides = [
+      page('gear', blades),
+      ...blades.map((id, i) =>
+        page(
+          id,
+          [1, 2, 3].map((step) => blades[(i + step) % blades.length]!),
+        ),
+      ),
+    ];
+    const contents = new GuideContents({ data: wiki(guides, { Things: ['gear'] }, blades) });
+    expect(tree(contents)[0]).toEqual({
+      Things: [{ Gear: ['Dirk', 'Kris', 'Shiv', 'Stiletto', 'Cutter'] }],
+    });
+    // Two list pages that list each other are neighbours too: both stay under Gear.
+    const pair = [
+      page('gear', ['short-blades', 'long-blades', 'dirk']),
+      page('short-blades', ['long-blades', 'dirk', 'kris']),
+      page('long-blades', ['short-blades', 'dirk', 'shiv']),
+      page('dirk'),
+      page('kris'),
+      page('shiv'),
+    ];
+    const paired = new GuideContents({
+      data: wiki(pair, { Things: ['gear'] }, [
+        'short-blades',
+        'long-blades',
+        'dirk',
+        'kris',
+        'shiv',
+      ]),
+    });
+    expect(tree(paired)[0]).toEqual({
+      Things: [{ Gear: [{ 'Short Blades': ['Kris'] }, { 'Long Blades': ['Shiv'] }, 'Dirk'] }],
+    });
+  });
+
+  it('leaves where the person or the wiki put a page before the narrower list page', () => {
+    const blades = ['dirk', 'kris', 'shiv'];
+    const guides = [
+      page('gear', ['short-blades', ...blades]),
+      page('short-blades', blades),
+      ...blades.map((id) => (id === 'kris' ? { ...page(id), filedUnder: [g('gear')] } : page(id))),
+    ];
+    const data = wiki(guides, { Things: ['gear'] }, ['short-blades', ...blades]);
+    const own = moveShownEntry(
+      NO_OWN_PAGES,
+      layoutFor(data, NO_OWN_PAGES),
+      shownContentsFor(data, NO_OWN_PAGES).layout,
+      g('shiv'),
+      g('gear'),
+      null,
+      looseSections(data),
+    );
+    const contents = new GuideContents(applyOwnPages(data, own));
+    expect(contents.parentOf(g('dirk'))).toBe(g('short-blades'));
+    expect(contents.parentOf(g('kris'))).toBe(g('gear'));
+    expect(contents.parentOf(g('shiv'))).toBe(g('gear'));
+    expect(contents.placedByLinks(g('shiv'))).toBe(false);
+    expect(contents.pages()).toHaveLength(guides.length);
+  });
+
+  it('keeps what the home page lists at the top, though one of them lists another', () => {
+    const blades = ['dirk', 'kris', 'shiv'];
+    const guides = [
+      page('main-page', ['gear', 'short-blades', 'stray']),
+      page('gear', ['short-blades', ...blades]),
+      page('short-blades', blades),
+      ...blades.map((id) => page(id)),
+      page('stray'),
+    ];
+    const contents = new GuideContents({
+      data: wiki(guides, {}, ['gear', 'short-blades', 'stray', ...blades]),
+      homePage: g('main-page'),
+    });
+    // Short Blades is not under Gear: the list page met first files the blades.
+    expect(contents.parentOf(g('short-blades'))).toBeNull();
+    expect(contents.parentOf(g('gear'))).toBeNull();
+    expect(contents.parentOf(g('dirk'))).toBe(g('gear'));
+    expect(contents.pages()).toHaveLength(guides.length);
+  });
+
   it('files the pages the home page lists, but not those it mentions', () => {
     const guides = [page('main-page', ['armor', 'bestiary', 'lost-note'], ['stray']), ...base()];
     const contents = new GuideContents({
@@ -727,6 +876,44 @@ describe('on a made-up wiki of hundreds of pages', () => {
       underFiledPage: 0,
       inSection: 3,
       inPagesSection: 7,
+      byHand: 0,
+    });
+  });
+
+  it('files gear under the narrower list pages of an index whose rows name many pages', () => {
+    const made = madeUpWiki({ ...size, gear: 24 });
+    const contents = contentsOf(made);
+    const shown = contents.pages().map((guide) => guide.id);
+    expect(shown).toHaveLength(made.guides.length);
+    expect(new Set(shown).size).toBe(made.guides.length);
+    const guide = (local: string) => made.guides.find((x) => x.id === guideId(local))!;
+    // Gear lists fewer than three fifths of the pages it links to: its rows name many more.
+    const gear = guideFiling(guide('gear'));
+    expect(gear.listing).toHaveLength(2 + 24 + 24);
+    expect(gear.listing.length).toBeLessThan(0.6 * gear.linked);
+    expect(isListPage(gear)).toBe(true);
+    expect(titles(contents, 'short-blades')).toEqual(['Equipment', 'Gear']);
+    expect(titles(contents, 'dirk-0002')).toEqual(['Equipment', 'Gear', 'Short Blades']);
+    expect(titles(contents, 'longbow-0024')).toEqual(['Equipment', 'Gear', 'Bows']);
+    // The first blade, which every gear page names, too.
+    expect(contents.linkedFrom(guideId('dirk-0001')).length).toBeGreaterThanOrEqual(8);
+    expect(titles(contents, 'dirk-0001')).toEqual(['Equipment', 'Gear', 'Short Blades']);
+    // The boss lists what it drops in a small table, but is no list page.
+    expect(isListPage(guideFiling(guide('mire-tyrant')))).toBe(false);
+    expect(contents.parentOf(guideId('mire-tyrant'))).toBe(PAGES_SECTION);
+    expect(contents.items(guideId('mire-tyrant'))).toEqual([]);
+    // No gear page is a list page, and nothing is under one.
+    for (const id of [...made.ids.blades, ...made.ids.bows]) {
+      expect(isListPage(guideFiling(guide(id))), id).toBe(false);
+      expect(contents.items(guideId(id))).toEqual([]);
+    }
+    const counts = contents.filing();
+    expect(counts).toEqual({
+      pages: 510 + 3 + 48 + 1,
+      underListPage: 500 + 2 + 48,
+      underFiledPage: 0,
+      inSection: 4,
+      inPagesSection: 8,
       byHand: 0,
     });
   });
