@@ -1977,6 +1977,7 @@ fn tells_picture_paths_from_other_paths() {
 }
 
 /// The bytes of one entry of a map pack file.
+#[cfg(not(target_os = "android"))]
 fn entry_bytes(file: &Path, name: &str) -> Vec<u8> {
     let mut archive = ZipArchive::new(fs::File::open(file).unwrap()).unwrap();
     let mut entry = archive.by_name(name).unwrap();
