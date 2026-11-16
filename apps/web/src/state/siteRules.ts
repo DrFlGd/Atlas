@@ -20,6 +20,7 @@ import {
   type SiteRules,
   type SiteFile,
   type SiteRulesProblem,
+  type SiteMapTrial,
   type SiteTrial,
 } from '@atlas/importer-api';
 import guideText from '@atlas/importer-api/site-rules/atlas-site-rules.md?raw';
@@ -361,11 +362,29 @@ function describe(rules: SiteRules | null, name: string) {
   };
 }
 
-/** Whether a file has a wiki or guide part read by `rules`, which can be tried on a saved page. */
+/**
+ * Whether a file has a part read by `rules`, which can be tried on a saved
+ * page, or for a map part on a saved data file.
+ */
 const hasRulesPage = (rules: SiteRules | null): rules is SiteFile =>
-  rules !== null &&
-  isSiteFile(rules) &&
-  rules.parts.some((part) => readByRules(part) && part.type !== 'map');
+  rules !== null && isSiteFile(rules) && rules.parts.some((part) => readByRules(part));
+
+/**
+ * The address a saved data file is tried at: the start of the file's first
+ * map part read by `rules`, on the site's first host. Null when it has none.
+ */
+function mapStartOf(rules: SiteFile): string | null {
+  const part = rules.parts.find((p) => readByRules(p) && p.type === 'map');
+  if (!part || !('start' in part) || typeof part.start !== 'string') return null;
+  try {
+    return new URL(part.start, `https://${rules.site.hosts[0]}/`).href;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a picked file is a saved data file (`.json`), not a saved page. */
+const isDataFile = (name: string) => /\.json$/iu.test(name);
 
 /** The importer that tries a file on a saved page: one that reads by `rules` and tries pages. */
 const trierOf = (importers: readonly AtlasImporter[]) =>
@@ -666,14 +685,15 @@ export function httpsAddress(text: string): string | null {
 }
 
 /** The page the person picked, kept only while the trial is on the screen. */
-let trialPage: { key: string; html: string } | null = null;
+let trialPage: { key: string; html: string; data?: string } | null = null;
 
 /**
  * "Try on a saved page…" on a file's row: the person picks one page they
  * saved from the site, the app takes its address from its canonical link
  * (or asks for it), and the importer that reads by `rules` tries the file
- * on it and says what it understood. Nothing is kept and nothing is
- * fetched.
+ * on it and says what it understood. A saved data file (`.json`) is tried
+ * on the file's map part, at the map part's start. Nothing is kept and
+ * nothing is fetched.
  */
 export async function trySavedPage(entry: Pick<SiteEntry, 'key' | 'title'>): Promise<void> {
   trialPage = null;
@@ -696,6 +716,26 @@ export async function trySavedPage(entry: Pick<SiteEntry, 'key' | 'title'>): Pro
     return;
   }
   if (!picked) return;
+  if (isDataFile(picked.name)) {
+    trialPage = { key: entry.key, html: '', data: picked.text };
+    const rules = await rulesOfKey(entry.key).catch(() => null);
+    const start = hasRulesPage(rules) ? mapStartOf(rules) : null;
+    useSites.setState({
+      trying: {
+        key: entry.key,
+        title: entry.title,
+        page: picked.name,
+        phase: start ? 'trying' : 'failed',
+        address: null,
+        result: null,
+        error: start
+          ? null
+          : 'This file has no map part read by rules, so a data file cannot be tried on it. Choose a page saved from the site instead.',
+      },
+    });
+    if (start) await runTrial(start);
+    return;
+  }
   trialPage = { key: entry.key, html: picked.text };
   const address = canonicalAddressOf(picked.text);
   useSites.setState({
@@ -731,18 +771,29 @@ async function runTrial(address: string): Promise<void> {
       useSites.setState({ trying: { ...now, ...patch } });
     }
   };
-  settle({ phase: 'trying', address, result: null, error: null });
+  // A data file is tried at the map part's start, which is not where it was saved from.
+  settle({
+    phase: 'trying',
+    address: page.data === undefined ? address : null,
+    result: null,
+    error: null,
+  });
   try {
     const rules = await rulesOfKey(trying.key);
     const importer = trierOf(screenImporters);
     if (!hasRulesPage(rules) || !importer) {
       settle({
         phase: 'failed',
-        error: 'This file has no wiki or guide part that an importer of this app can try.',
+        error: 'This file has no part read by rules that an importer of this app can try.',
       });
       return;
     }
-    const result = await trySitePage(importer, { rules, url: address, html: page.html });
+    const result = await trySitePage(importer, {
+      rules,
+      url: address,
+      html: page.html,
+      ...(page.data === undefined ? {} : { data: page.data }),
+    });
     if (result) settle({ phase: 'done', result });
     else settle({ phase: 'failed', error: 'The importer could not try the file on this page.' });
   } catch (error) {
@@ -761,6 +812,7 @@ const plural = (n: number, one: string, many = `${one}s`) =>
 /** What the reader understood of a saved page, in plain sentences, in the order the screen shows them. */
 export function trialInWords(trial: SiteTrial): string[] {
   if (trial.part === null) return [];
+  if (trial.map) return mapTrialInWords(trial.part, trial.game, trial.map);
   const lines: string[] = [];
   const type = trial.type === 'guide' ? 'a guide' : 'a wiki';
   lines.push(`Part ${trial.part + 1} of the file read it, as a page of ${type}.`);
@@ -793,6 +845,52 @@ export function trialInWords(trial: SiteTrial): string[] {
   else if (trial.type === 'guide') lines.push('No next page was found.');
   if (trial.credit) lines.push(`The credit line reads “${trial.credit}”.`);
   if (trial.licence) lines.push(`Licence: ${trial.licence}`);
+  return lines;
+}
+
+/** What the reader found in a saved data file, in plain sentences. */
+function mapTrialInWords(part: number, game: string | undefined, map: SiteMapTrial): string[] {
+  const lines = [`Part ${part + 1} of the file read it, as the data of a map.`];
+  if (game) lines.push(`The game is “${game}”.`);
+  const { maps, types, locations } = map;
+  lines.push(
+    `It has ${plural(maps.count, 'map')}, ${plural(types.count, 'type')} of location and ${plural(locations.count, 'location')}.`,
+  );
+  for (const one of maps.listed) {
+    const floor = one.group ? ` It is a floor of “${one.group}”.` : '';
+    const has = [
+      plural(one.described, 'description'),
+      plural(one.linked, 'link'),
+      plural(one.pictured, 'picture'),
+    ].join(', ');
+    const outside =
+      one.outside > 0
+        ? ` ${plural(one.outside, 'location')} ${one.outside === 1 ? 'falls' : 'fall'} outside it.`
+        : '';
+    lines.push(
+      `“${one.name}”, ${one.width.toLocaleString('en')} × ${one.height.toLocaleString('en')} pixels: ${plural(one.locations, 'location')}, with ${has}.${floor}${outside}`,
+    );
+    if (one.image) lines.push(`One image of “${one.name}”: ${one.image}`);
+  }
+  if (maps.listed.length < maps.count) {
+    lines.push(
+      `${plural(maps.count - maps.listed.length, 'other map')} ${maps.count - maps.listed.length === 1 ? 'is' : 'are'} not listed here.`,
+    );
+  }
+  if (types.first.length > 0) {
+    lines.push(`The first types: ${types.first.join(', ')}.`);
+  }
+  if (locations.first.length > 0) {
+    lines.push(
+      `The first locations: ${locations.first.map((l) => `${l.name} (${l.type}) on “${l.map}” at ${l.x.toLocaleString('en')}, ${l.y.toLocaleString('en')}`).join('; ')}.`,
+    );
+  }
+  const outside = maps.listed.reduce((sum, one) => sum + one.outside, 0);
+  lines.push(
+    outside === 0
+      ? 'Every position falls inside its map.'
+      : 'Not every position falls inside its map: the maps above say how many fall outside.',
+  );
   return lines;
 }
 

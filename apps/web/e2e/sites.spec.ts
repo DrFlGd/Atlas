@@ -229,6 +229,105 @@ ${canonical ? '<link rel="canonical" href="https://guide.example.org/cove/old-qu
 </main>
 </body></html>`;
 
+/** A made-up site with a wiki and a map, both read by rules. */
+const MAP_RULES = {
+  format: 'atlas-site-rules',
+  version: 1,
+  site: {
+    id: 'reed-isle',
+    name: 'Reed Isle Wiki',
+    game: 'Reed Isle',
+    hosts: ['reed.example.org'],
+    licence: { blank: true },
+  },
+  parts: [
+    {
+      type: 'wiki',
+      reader: 'rules',
+      start: '/',
+      reading: { ways: ['fetch'] },
+      pages: { include: ['/*'], exclude: ['/map'] },
+      contents: { from: 'menu', links: 'nav a' },
+      article: { content: 'main' },
+    },
+    {
+      type: 'map',
+      reader: 'rules',
+      start: '/map',
+      data: { from: 'file', address: '/map/data.json' },
+      maps: {
+        path: 'areas[*]',
+        id: 'key',
+        name: 'title',
+        size: 'pixels',
+        maxZoom: 'zoom',
+        group: 'tower',
+        floor: 'level',
+        picture: { images: '/tiles/{map}/{z}/{x}/{y}.png?v=7', tile: 256 },
+      },
+      types: { from: 'locations', names: { 'key-items': 'Key items' } },
+      locations: {
+        path: 'spots[*]',
+        fields: {
+          map: 'area',
+          type: 'kind',
+          name: 'label',
+          x: 'at[0]',
+          y: 'at[1]',
+          description: 'text',
+          page: 'link',
+          picture: 'photo',
+        },
+      },
+      position: { units: 'pixels', origin: 'top-left' },
+      reading: { ways: ['fetch'] },
+    },
+  ],
+};
+
+/** A made-up data file for that map, as saved from the made-up site. */
+const MAP_DATA = {
+  areas: [
+    { key: 'harbour', title: 'Harbour', pixels: [4096, 3072], zoom: 4 },
+    {
+      key: 'tower-1',
+      title: 'Old Tower',
+      pixels: [1024, 1024],
+      zoom: 2,
+      tower: 'old-tower',
+      level: 'Ground floor',
+    },
+    {
+      key: 'tower-2',
+      title: 'Old Tower',
+      pixels: [1024, 1024],
+      zoom: 2,
+      tower: 'old-tower',
+      level: 'Top floor',
+    },
+  ],
+  spots: [
+    {
+      area: 'harbour',
+      kind: 'key-items',
+      label: 'Rusty key',
+      at: [1200, 2210],
+      text: '<p>Under the third crate.</p>',
+      link: '/rusty-key',
+    },
+    { area: 'harbour', kind: 'chests', label: 'Net chest', at: [300, 410] },
+    { area: 'harbour', kind: 'chests', label: 'Far chest', at: [5000, 10] },
+    {
+      area: 'tower-1',
+      kind: 'chests',
+      label: 'Stair chest',
+      at: [512, 512],
+      text: '<p>By the stairs.</p>',
+    },
+    { area: 'tower-2', kind: 'key-items', label: 'Bell key', at: [100, 900], link: '/bell-key' },
+  ],
+};
+
 test.describe('what a file widens, and trying a file on a saved page', () => {
   test.use({ deviceScaleFactor: 2 });
 
@@ -340,6 +439,73 @@ test.describe('what a file widens, and trying a file on a saved page', () => {
     );
     await trial.getByTestId('site-trial-close').click();
     await expect(trial).toHaveCount(0);
+    expect(realErrors(errors)).toEqual([]);
+  });
+  test('tries a file’s map part on a saved data file, and says what it found', async ({ page }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const sites = await openSites(page);
+    await pickSiteFile(page, { name: 'reed.json', text: JSON.stringify(MAP_RULES) });
+    await sites.getByTestId('sites-add').click();
+    await sites.getByTestId('sites-confirm-off').click();
+    const reed = row(page, 'own/reed-isle.atlas-site.json');
+    await expect(reed.getByTestId('site-problems')).toContainText(
+      'Part 2: is a map part read by rules, which this importer only tries on a saved data file: it does not read the map by it.',
+    );
+
+    await pickSavedPage(page, { name: 'data.json', text: JSON.stringify(MAP_DATA) });
+    await reed.getByTestId('site-try').click();
+    const trial = reed.getByTestId('site-trial');
+    await expect(trial).toContainText(
+      'tried on data.json. Nothing was kept, and nothing was downloaded.',
+    );
+    await expect(trial.getByTestId('site-trial-facts').locator('li')).toHaveText([
+      'Part 2 of the file read it, as the data of a map.',
+      'The game is “Reed Isle”.',
+      'It has 3 maps, 2 types of location and 4 locations.',
+      '“Harbour”, 4,096 × 3,072 pixels: 2 locations, with 1 description, 1 link, 0 pictures. 1 location falls outside it.',
+      'One image of “Harbour”: https://reed.example.org/tiles/harbour/0/0/0.png?v=7',
+      '“Old Tower, Ground floor”, 1,024 × 1,024 pixels: 1 location, with 1 description, 0 links, 0 pictures. It is a floor of “old-tower”.',
+      'One image of “Old Tower, Ground floor”: https://reed.example.org/tiles/tower-1/0/0/0.png?v=7',
+      '“Old Tower, Top floor”, 1,024 × 1,024 pixels: 1 location, with 0 descriptions, 1 link, 0 pictures. It is a floor of “old-tower”.',
+      'One image of “Old Tower, Top floor”: https://reed.example.org/tiles/tower-2/0/0/0.png?v=7',
+      'The first types: Key items, chests.',
+      'The first locations: Rusty key (Key items) on “Harbour” at 1,200, 2,210; Net chest (chests) on “Harbour” at 300, 410; Stair chest (chests) on “Old Tower, Ground floor” at 512, 512; Bell key (Key items) on “Old Tower, Top floor” at 100, 900.',
+      'Not every position falls inside its map: the maps above say how many fall outside.',
+    ]);
+    await expect(trial.getByTestId('site-trial-problems').locator('li')).toHaveText([
+      '1 location falls outside its map, so it would be left out: x and y may be the other way round, or counted at another zoom.',
+      '“locations.fields.picture” (photo) matched nothing in the data.',
+    ]);
+    await trial.screenshot({ path: `${SHOTS}/map-try-data.png` });
+
+    // A data file whose positions all fall inside, and every path matches.
+    const inside = {
+      ...MAP_DATA,
+      spots: MAP_DATA.spots
+        .filter((spot) => spot.label !== 'Far chest')
+        .map((spot) => ({ ...spot, photo: '/img/spot.png' })),
+    };
+    await pickSavedPage(page, { name: 'data.json', text: JSON.stringify(inside) });
+    await reed.getByTestId('site-try').click();
+    await expect(trial.getByTestId('site-trial-facts')).toContainText(
+      'Every position falls inside its map.',
+    );
+    await expect(trial.getByTestId('site-trial-problems')).toHaveCount(0);
+    await trial.screenshot({ path: `${SHOTS}/map-try-data-inside.png` });
+
+    // A data file for a file with no map part is answered in words.
+    await pickSiteFile(page, { name: 'cove.json', text: JSON.stringify(GUIDE_RULES) });
+    await sites.getByTestId('sites-add').click();
+    await sites.getByTestId('sites-confirm-off').click();
+    const cove = row(page, 'own/cove-guide.atlas-site.json');
+    await pickSavedPage(page, { name: 'data.json', text: JSON.stringify(MAP_DATA) });
+    await cove.getByTestId('site-try').click();
+    await expect(cove.getByTestId('site-trial').getByRole('alert')).toHaveText(
+      'This file has no map part read by rules, so a data file cannot be tried on it. Choose a page saved from the site instead.',
+    );
+    await cove.getByTestId('site-trial').screenshot({ path: `${SHOTS}/map-try-no-map.png` });
     expect(realErrors(errors)).toEqual([]);
   });
 });
