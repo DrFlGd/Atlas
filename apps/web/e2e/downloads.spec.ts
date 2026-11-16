@@ -768,7 +768,7 @@ test.describe('location photos', () => {
     // Before: the location card says its photo is not downloaded, and nothing was asked for.
     await selectByName(page, 'Beacon 1');
     const missing = page.getByTestId('photo-missing');
-    await expect(missing).toHaveText('Photo not downloaded');
+    await expect(missing).toContainText('Photo not downloaded');
     expect((await shellCalls(page)).filter((call) => call.startsWith('photos_'))).toEqual([]);
 
     // The game's Location photos card offers them; nothing is fetched until asked.
@@ -815,6 +815,43 @@ test.describe('location photos', () => {
     await expect
       .poll(() => img.evaluate((element: HTMLImageElement) => element.naturalWidth))
       .toBeGreaterThan(0);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+
+  test('a location card offers the photos of a game added before, and shows them as they come', async ({
+    page,
+  }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads photos');
+    const errors = collectErrors(page);
+    let photosThere = false;
+    await page.addInitScript(installFakeShell, true);
+    await servePack(
+      page,
+      () => null,
+      () => false,
+      () => photosThere,
+    );
+    await page.goto('./');
+    await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
+    await selectByName(page, 'Beacon 1');
+    const missing = page.getByTestId('photo-missing');
+    await expect(missing).toContainText('Photo not downloaded');
+    const offer = missing.getByRole('button', { name: 'Download the photos of this game' });
+    await expect(offer).toBeVisible();
+    // Nothing is asked for until it is pressed.
+    expect((await shellCalls(page)).filter((call) => call.startsWith('photos_'))).toEqual([]);
+    await page.screenshot({ path: `${PHOTO_SHOTS}/11-photo-not-downloaded-offer.png` });
+    photosThere = true;
+    await offer.focus();
+    await page.keyboard.press('Enter');
+    // After the map images (none here), one download of the game's photos.
+    await expect(page.getByTestId('photo').locator('img')).toHaveAttribute(
+      'alt',
+      'Beacon 1 at noon',
+    );
+    const calls = await shellCalls(page);
+    expect(calls.filter((call) => call === 'photos_start')).toHaveLength(1);
+    expect(calls.indexOf('tiles_snapshot')).toBeLessThan(calls.indexOf('photos_start'));
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
 
@@ -935,6 +972,10 @@ test('a build without downloads offers none, even in a shell that has them', asy
   await servePack(page, () => null);
   await page.goto('./');
   await expectNoDownloads(page);
+  // A location's card says its photo is not downloaded, and offers nothing.
+  await selectByName(page, 'Beacon 1');
+  await expect(page.getByTestId('photo-missing')).toHaveText('Photo not downloaded');
+  await expect(page.getByTestId('photo-download')).toHaveCount(0);
   // No "Download location photos" either.
   await openLibraryGame(page, 'remote');
   await expect(page.getByTestId('library-contents-card')).toBeVisible();

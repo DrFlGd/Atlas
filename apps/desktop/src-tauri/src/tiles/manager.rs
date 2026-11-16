@@ -2152,6 +2152,7 @@ mod tests {
             requests_per_minute: None,
             kilobytes_per_second: None,
             photos: PhotoSize::Full,
+            photos_with_map: true,
         });
         let slow = manager.plan_info("test").unwrap().options[1].estimated_seconds;
         assert!(slow > fast * 5.0, "{fast} -> {slow}");

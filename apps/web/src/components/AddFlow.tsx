@@ -648,6 +648,11 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
       ) : (
         <MapFigures phase={phase} downloadable={downloadable} />
       )}
+      {phase.photos ? (
+        <p className="muted small" data-testid="add-map-photos-note">
+          {PHOTOS_COMING}
+        </p>
+      ) : null}
       <SameTitleOfferCard gameId={phase.packId} />
       <div className="row-actions wrap">
         {phase.guideId && !phase.rebuilt ? (
@@ -703,6 +708,10 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
     </section>
   );
 }
+
+/** Said when the location photos of a map just added are fetched (see `mapPhotos.ts`). */
+const PHOTOS_COMING =
+  'Its location photos are downloading now, one at a time with the pause set for downloads. When you download its map images, they go first and the photos go on after them. The Location photos card of the game in the Library shows how far it is.';
 
 /** Said when the pictures of pages just added are being fetched (see `pagePictures.ts`). */
 const PICTURES_COMING =
@@ -1026,6 +1035,13 @@ function Run({
         <p className="muted small" data-testid="add-map-pictures-note">
           The pictures of these pages are downloading now, one at a time, and show on the pages as
           they arrive. The strip at the bottom of the Library shows how far it is.
+        </p>
+      ) : null}
+      {!running && run.pages.some(({ state }) => state.kind === 'added' && state.photos) ? (
+        <p className="muted small" data-testid="add-map-photos-note">
+          The location photos of these maps are downloading now, one at a time with the pause set
+          for downloads. When you download the map images of a game, they go first and its photos go
+          on after them. The Location photos card of each game in the Library shows how far it is.
         </p>
       ) : null}
       {!running && run.pages.some(({ state }) => state.kind === 'added' && !state.guide) ? (

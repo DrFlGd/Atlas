@@ -77,6 +77,7 @@ function SettingsForm({
     rpm: useId(),
     speed: useId(),
     photos: useId(),
+    withMap: useId(),
   };
   const { bounds } = info;
   const changed = JSON.stringify(draft) !== JSON.stringify(info.settings);
@@ -200,6 +201,27 @@ function SettingsForm({
           </div>
           <p className="muted small">{PHOTO_SIZE_NOTE}</p>
         </fieldset>
+      ) : null}
+      {info.settings.photosWithMap !== undefined ? (
+        <div className="download-photos-with-map">
+          <label className="checkbox-row" htmlFor={ids.withMap}>
+            <input
+              id={ids.withMap}
+              type="checkbox"
+              checked={draft.photosWithMap !== false}
+              data-testid="setting-photos-with-map"
+              onChange={(event) => {
+                change({ photosWithMap: event.target.checked });
+              }}
+            />{' '}
+            Download location photos with a map
+          </label>
+          <p className="muted small">
+            After a map is added, its location photos are downloaded too: once its map images are
+            downloaded, or at once when it has none to download. One request for each photo, one at
+            a time with the pause above, and nothing more after a refusal or after you stop it.
+          </p>
+        </div>
       ) : null}
       <p className="muted small">
         Parallel downloads is how many images are fetched at the same time. Pause after each image

@@ -527,13 +527,19 @@ export interface DownloadSettings {
    * most 1,280 pixels wide. A shell before it leaves it out (full size).
    */
   photos?: PhotoSize;
+  /**
+   * Whether a map's location photos are downloaded after it is added, once
+   * its map images are downloaded or need no download (see `mapPhotos.ts`).
+   * A shell before it leaves it out (on).
+   */
+  photosWithMap?: boolean;
 }
 
 /** The sizes downloaded location photos can be kept at (see {@link DownloadSettings.photos}). */
 export type PhotoSize = 'full' | 'smaller';
 
 /** The download settings that are numbers. */
-export type DownloadNumbers = Exclude<keyof DownloadSettings, 'photos'>;
+export type DownloadNumbers = Exclude<keyof DownloadSettings, 'photos' | 'photosWithMap'>;
 
 export interface DownloadSettingsInfo {
   settings: DownloadSettings;

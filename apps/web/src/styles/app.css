@@ -3198,3 +3198,13 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   flex-basis: 100%;
   margin: 0;
 }
+
+/* A photo not downloaded, on a location's card: the offer to download the game's photos. */
+.photo-strip > .photo-missing {
+  flex-wrap: wrap;
+}
+
+.photo-missing-note {
+  flex-basis: 100%;
+  text-align: center;
+}

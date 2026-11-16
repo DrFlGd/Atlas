@@ -9,6 +9,8 @@ import { useAtlas, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
 import { openPicture } from '../state/pictureViewer';
 import { cardCopyFile } from '../state/photoCopy';
+import { downloadGamePhotos, mapPhotosOffered, useMapPhotos } from '../state/mapPhotos';
+import { packFolderOf } from '../desktop';
 
 /**
  * Photos of locations and of list entries: pictures of the pack, or a
@@ -122,6 +124,9 @@ export function PhotoTile({
       >
         <UiIcon name="image" size={18} />
         <span>{picture?.remote ? 'Photo not downloaded' : 'Photo not found'}</span>
+        {__ATLAS_DOWNLOADS__ && picture?.remote && size === 'strip' ? (
+          <DownloadPhotosOffer game={game} />
+        ) : null}
       </div>
     );
   }
@@ -174,6 +179,40 @@ export function PhotoTile({
         ) : null}
       </button>
     </figure>
+  );
+}
+
+/**
+ * In the box of a photo not downloaded, in an app that downloads: the
+ * download of the game's location photos, for a game added before they
+ * came with its maps (see `mapPhotos.ts`), or what it is doing.
+ */
+function DownloadPhotosOffer({ game }: { game: LoadedGame }) {
+  const packId = packFolderOf(game.entry.url);
+  const step = useMapPhotos((s) => (packId ? s.following[packId] : undefined));
+  const offered = useAtlas((s) => mapPhotosOffered(s));
+  if (!offered || !packId) return null;
+  if (step) {
+    return (
+      <span className="photo-missing-note" role="status" data-testid="photo-download-step">
+        {step === 'waiting'
+          ? 'Waiting for the map images to download.'
+          : 'The photos of this game are downloading.'}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="button button-small"
+      data-testid="photo-download"
+      onClick={(event) => {
+        event.stopPropagation();
+        downloadGamePhotos(packId);
+      }}
+    >
+      Download the photos of this game
+    </button>
   );
 }
 

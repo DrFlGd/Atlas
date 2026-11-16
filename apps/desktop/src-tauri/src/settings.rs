@@ -165,6 +165,11 @@ pub struct DownloadSettings {
     /// The size location photos are kept at. A file written by an app that
     /// does not know it has none: full size then.
     pub photos: PhotoSize,
+    /// Whether a map's location photos are downloaded after it is added,
+    /// once its map images are downloaded or need no download ("Download
+    /// location photos with a map"). The web app starts that download; the
+    /// shell only keeps the choice. On unless the person turned it off.
+    pub photos_with_map: bool,
 }
 
 impl DownloadSettings {
@@ -208,6 +213,7 @@ impl Default for DownloadSettings {
             requests_per_minute: None,
             kilobytes_per_second: None,
             photos: PhotoSize::Full,
+            photos_with_map: true,
         }
     }
 }
@@ -388,6 +394,14 @@ mod tests {
         .unwrap();
         assert_eq!(file.read().downloads.photos, PhotoSize::Smaller);
         assert_eq!(file.read().downloads.pause_ms, 250);
+        // A map's photos are downloaded with it unless turned off.
+        assert!(file.read().downloads.photos_with_map);
+        fs::write(
+            file.path(),
+            br#"{"format":"atlas-settings","version":1,"downloads":{"photosWithMap":false}}"#,
+        )
+        .unwrap();
+        assert!(!file.read().downloads.photos_with_map);
         fs::write(
             file.path(),
             br#"{"format":"atlas-settings","version":1,"downloads":{"photos":"tiny","pauseMs":500}}"#,
@@ -466,6 +480,7 @@ mod tests {
             requests_per_minute: Some(10),
             kilobytes_per_second: Some(50),
             photos: PhotoSize::Smaller,
+            photos_with_map: false,
         };
         assert_eq!(slow.validate(), Ok(slow));
         let unlimited = DownloadSettings {

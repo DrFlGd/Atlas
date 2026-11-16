@@ -91,6 +91,7 @@ import {
   type PageWaiting,
   type Reading,
 } from './pageWindow';
+import { fetchMapPhotos, listsLocationPhotos, photosWithMapOn } from './mapPhotos';
 import { fetchPagePictures } from './pagePictures';
 import {
   fetchSessionStyles,
@@ -225,6 +226,8 @@ export type ImportPhase =
       rebuilt: boolean;
       /** Its pictures are being fetched now (see `pagePictures.ts`). */
       pictures?: boolean;
+      /** Its location photos are downloaded after its map images (see `mapPhotos.ts`). */
+      photos?: boolean;
       /** A game of pages built again: how its pages are filed in its contents (see {@link pagesFiling}). */
       filing?: PagesFiling;
     }
@@ -1339,6 +1342,7 @@ async function startRun(
             ...(outcome.summary.picture ? { picture: outcome.summary.picture } : {}),
             ...(outcome.guideId ? { guide: true } : {}),
             ...(outcome.pictures ? { pictures: true } : {}),
+            ...(outcome.photos ? { photos: true } : {}),
           };
         }
         if (outcome.kind === 'failed' && outcome.refused) {
@@ -1430,6 +1434,13 @@ async function startRun(
     ),
   );
   for (const packId of withPictures) fetchPagePictures(packId);
+  // The location photos of the maps added, after their map images: one download a game.
+  const withPhotos = new Set(
+    final.pages.flatMap(({ state }) =>
+      state.kind === 'added' && state.photos ? [state.packId] : [],
+    ),
+  );
+  for (const packId of withPhotos) fetchMapPhotos(packId);
   // The game shown, if the go added to it, takes in every page read: it is loaded again.
   const shownId = useAtlas.getState().game?.entry.id;
   const addedToShown = final.pages.some(
@@ -1867,6 +1878,15 @@ async function convertAndSave(
       importer.picturesWithPages === true &&
       (outcome.pack.pictures ?? []).some((picture) => picture.remote !== undefined);
     if (pictures && show) fetchPagePictures(outcome.packId);
+    // A map's location photos: after its map images; a run does that at its end.
+    const photos =
+      __ATLAS_DOWNLOADS__ &&
+      !pictures &&
+      !rebuilt &&
+      outcome.mapId !== undefined &&
+      listsLocationPhotos(outcome.pack) &&
+      (await photosWithMapOn());
+    if (photos && show) fetchMapPhotos(outcome.packId);
     // A game of pages built again: how its pages are filed now.
     const filing = rebuilt && outcome.guideId ? pagesFiling(outcome.pack) : null;
     return {
@@ -1881,6 +1901,7 @@ async function convertAndSave(
       summary: outcome.summary,
       rebuilt,
       ...(pictures ? { pictures: true } : {}),
+      ...(photos ? { photos: true } : {}),
       ...(filing ? { filing } : {}),
     };
   }
