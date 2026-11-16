@@ -108,14 +108,29 @@ export interface SiteMapTrialLocation {
 export interface SiteMapTrial {
   /** Every map found, at most {@link MAX_TRIAL_MAPS} of them listed. */
   maps: { count: number; listed: SiteMapTrialMap[] };
-  /** The types: how many, and the names of the first. */
-  types: { count: number; first: string[] };
+  /**
+   * The types: how many, the names of the first, and, when the reader says,
+   * which of them can be ticked as found (see {@link SiteMapTrialFound}).
+   */
+  types: { count: number; first: string[]; found?: SiteMapTrialFound };
   /** The locations: how many, and the first few. */
   locations: { count: number; first: SiteMapTrialLocation[] };
 }
 
+/** Which types of a map part's data can be ticked as found, by their names. */
+export interface SiteMapTrialFound {
+  /** The types that can be ticked as found, at most {@link MAX_TRIAL_TYPES} of them. */
+  can: string[];
+  /** The types that cannot, at most {@link MAX_TRIAL_TYPES} of them. */
+  cannot: string[];
+  /** True when the file does not say (`types.found`), so the reader chose from each type's name. */
+  byName: boolean;
+}
+
 /** Maps of a trial listed at most. */
 export const MAX_TRIAL_MAPS = 40;
+/** Types of a trial named at most in each of `found.can` and `found.cannot`. */
+export const MAX_TRIAL_TYPES = 200;
 
 export const MAX_TRIAL_TEXT = 600;
 const MAX_WORDS = 300;
@@ -253,6 +268,7 @@ function mapTrialOf(value: unknown): { map?: SiteMapTrial } {
       types: {
         count: count(types.count),
         first: list(types.first, MAX_LIST).flatMap((name) => words(name, 200) ?? []),
+        ...foundOf(types.found),
       },
       locations: {
         count: count(locations.count),
@@ -266,6 +282,19 @@ function mapTrialOf(value: unknown): { map?: SiteMapTrial } {
         }),
       },
     },
+  };
+}
+
+/** Which types can be ticked as found, in bounds; nothing when the answer does not say. */
+function foundOf(value: unknown): { found?: SiteMapTrialFound } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const given = value as Record<string, unknown>;
+  const names = (entries: unknown) =>
+    (Array.isArray(entries) ? (entries as unknown[]) : [])
+      .slice(0, MAX_TRIAL_TYPES)
+      .flatMap((name) => words(name, 200) ?? []);
+  return {
+    found: { can: names(given.can), cannot: names(given.cannot), byName: given.byName === true },
   };
 }
 

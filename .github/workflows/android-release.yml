@@ -165,7 +165,7 @@ jobs:
           fi
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas $VERSION for Android phones: the Atlas map viewer. It comes with the made-up demo world only. Add your own games by importing map pack files (.atlaspack) exported from Atlas on a computer. A prototype.
+          Atlas $VERSION for Android phones: the Atlas map viewer. It comes with the made-up demo world only. Add your own games by importing pack files (.atlaspack) exported from Atlas on a computer. A prototype.
 
           It needs Android 10 or later on a 64-bit phone.
 
@@ -187,10 +187,16 @@ jobs:
           - Tap a marker for the location: **Mark found**, the next location (the next entry of the open list, or the nearest), and, pulled up, its photo, guide and lists. Press and hold a marker to mark it found at once. **Undo** on the notice takes a change back.
           - Search locations, lists and guides, nearest to the middle of the map first, and tick locations off from the results. Filters, a chip per type to show that type alone, and **Nearest unfound**.
           - Lists and guides under **Lists**; figures for the game, each map, region and type under **Progress**.
-          - **Games**, then **Import map pack file…**: pick an .atlaspack file from the phone or a cloud drive. Games lists the games on the phone, with their detail and size, and deletes them. The theme and **Keep the screen on** are there too.
+          - **Games**, then **Import pack file…**: pick an .atlaspack file from the phone or a cloud drive. Games lists the games on the phone, with their detail and size, and deletes them. The theme and **Keep the screen on** are there too.
           - The Back button closes what is open (a dialog, the location, search, the filters) before it leaves the app.
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
+
+          ## New in 0.14.0
+
+          - **For personal use.** A game whose pages are kept under words filled in on a computer, or under no licence, is marked **For personal use** in **Games**. Under each page, Guides shows the words the page is kept under, or that no licence was recorded.
+          - **Pack files.** The file you import is now called a pack file, not a map pack file: **Games**, then **Import pack file…**. Its ending, .atlaspack, is unchanged, and files from older versions open as before. Importing the file of a wiki, a game of pages with no map, speaks of its pages and pictures.
+          - **The photo box on a location's card** keeps its height when the card's details are long, and the details scroll.
 
           ## New in 0.12.0
 

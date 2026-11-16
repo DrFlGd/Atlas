@@ -408,7 +408,7 @@ A part with `"reader": "rules"` and the type `map` describes a map whose data th
     "floor": "level",
     "picture": { "images": "/tiles/{map}/{z}/{x}/{y}.png?v=7", "tile": 256 }
   },
-  "types": { "from": "locations", "names": { "key-items": "Key items" } },
+  "types": { "from": "locations", "names": { "key-items": "Key items" }, "found": ["key-items"] },
   "locations": {
     "path": "spots[*]",
     "fields": {
@@ -484,6 +484,8 @@ The marks stand in the path of the address only. What follows `?` is fixed: a qu
 
 The types of location. Either `"from": "locations"`: the types are the values of the locations' `type` field, each named by `names` (the value and its shown name) or else made from the value (`key-items` becomes "Key Items"). Or `path` to a list of types in the data, with these data paths in each entry: `id` (the value a location's `type` has), `name`, and if there is one, `group` (the name of a group of types) and `icon`.
 
+**Which types can be ticked as found.** In Atlas the owner ticks a location as found, and only the locations of a type that can be ticked have that box. `found` says which types can: the word `"all"`, the word `"none"`, or a list of 1 to 200 type values, each listed once and at most 200 characters long. A type value is the value of the locations' `type` field with `"from": "locations"`, or the id `types.id` gives with a `path`, never the shown name; a value that is a number is written as text, such as `"3"`. It is allowed with both forms of `types`, for example `"types": { "from": "locations", "found": ["key-items", "chests", "bosses"] }`. Without `found` the reader chooses from each type's name, a guess that fits some sites and not others, so state `found` in every map part you write rather than leave it to that guess. Things that are collected once, such as treasure, chests and keys, can usually be ticked; things that stay or come back, such as enemies and shops, usually cannot. A value that names no type in the data is not refused when the file is added, and "Try on a saved page" names it.
+
 **Icons.** Atlas draws its own icons. A type's icon is chosen from the words of its name and of the name the site gives its icon (`types.icon`, or `locations.fields.icon`), never from the site's icon picture, which is not fetched or kept. A name that says nothing gets a plain pin.
 
 ### `locations`
@@ -502,7 +504,7 @@ The types of location. Either `"from": "locations"`: the types are the values of
 | `page`        | no                | The address of its page on the site (a full address, or a path from `/`). Its description ends with a link to that page. When the same file has a wiki part that reads that page, the link leads to the page in Atlas once the map and the wiki are shown under one title |
 | `count`       | no                | How many of the thing are there. A count above 1 is added to the name: "Gold coin (×3)"                                                                                                                                                                                   |
 | `hidden`      | no                | Whether the site keeps the location hidden until the reader asks, as a secret. `true`, `1`, `"true"` or `"yes"` count as hidden: the location is kept, and its description and picture are hidden until the reader asks for them                                          |
-| `icon`        | no                | The name of the location's icon on the site: its words help choose the icon of its type                                                                                                                                                                                   |
+| `icon`        | no                | The name of the location's icon on the site: its words help choose the icon of its type. Leave it out when the field names a picture of the thing at the location rather than an icon of its type                                                                         |
 
 A value of the wrong kind (a name that is a list, a position that is not a number) leaves that fact out, or, for `type`, `x`, `y` and `map`, the location; the Importer counts what it left out and says so.
 
@@ -588,7 +590,7 @@ A file is checked three times: its form, its selectors against saved pages, and 
 
 **3. One page in the Importer.** After "Add a rules file…", the owner presses "Try on a saved page…" on the file's row and picks one page saved from the site as an `.html` file. The Importer takes the page's address from its canonical link, or asks for it, reads the page with the file and shows what it understood, in plain words: which part read it, the title, the game's name, the first words of the text, the numbers of headings, pictures (and how many have a full-size file), tables and chapters, the contents the page shows with their groups, the next page, the licence it would record, and every selector that matched nothing. Nothing is kept and nothing is downloaded. Tell the owner in your report which page to try and what they should see.
 
-**A map part** is tried on its data instead: the owner presses "Try on a saved page…" and picks the data file saved from the site as a `.json` file (for `"from": "page"`, the saved map page). The Importer shows the maps it found (how many, their names and sizes, and which are floors of one group), the types (how many, and the first few), the locations of each map (how many, and how many have a description, a link to a page and a picture), the first few locations with their positions, whether every position falls inside its map, the address of one image of each map as the template makes it, and every data path that matched nothing. Nothing is kept and nothing is downloaded. Tell the owner in your report what they should see.
+**A map part** is tried on its data instead: the owner presses "Try on a saved page…" and picks the data file saved from the site as a `.json` file (for `"from": "page"`, the saved map page). The Importer shows the maps it found (how many, their names and sizes, and which are floors of one group), the types (how many, the first few, and which of them can be ticked as found, with a word when the file does not say), the locations of each map (how many, and how many have a description, a link to a page and a picture), the first few locations with their positions, whether every position falls inside its map, the address of one image of each map as the template makes it, every data path that matched nothing, and every value of `types.found` that names no type in the data. Nothing is kept and nothing is downloaded. Tell the owner in your report what they should see.
 
 **Not there yet.** A checker that tries a file on a whole folder of saved pages, and trying a live page from that screen, are not part of this version. Until then, try the pages one at a time, and say in your report how they were checked.
 
@@ -713,7 +715,7 @@ This file adds a made-up site with three parts read by the general reader: a wal
         "maxZoom": "maxZoom",
         "picture": { "images": "/tiles/{map}/{z}/{x}/{y}.png", "tile": 256 }
       },
-      "types": { "from": "locations" },
+      "types": { "from": "locations", "found": ["key-items", "chests", "bosses"] },
       "locations": {
         "path": "pins[*]",
         "fields": {

@@ -139,6 +139,17 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.14.0
+
+          A game kept for your own use says so, exporting and importing speak for a wiki as well as a map, and a location's photo keeps its place.
+
+          - **For personal use.** A game whose pages are kept under words you filled in, or under no licence, is marked **For personal use** in the Library. Exporting it is not held back: the export screen says that the file is for your own devices. Under each page, Guides shows the words the page is kept under, linked to the terms when there are any, or that no licence was recorded.
+          - **Export and import for a wiki.** For a game of pages with no map, the export and import screens now speak of pages and pictures. There is no map detail to choose, and **Include downloaded pictures** comes first, because it decides whether the pages show their pictures on the other device. A game with a map says when a wiki shown with it under one title is not in its file: export the wiki by itself from the Library, under **More**, **Export to a file**.
+          - **Pack files.** The file is now called a pack file everywhere, not a map pack file. Its ending, .atlaspack, and what it holds are unchanged, and files from older versions open as before.
+          - **The photo box on a location's card.** When a card's details were long, the box with the location's photos shrank to a thin line. It now keeps its height and the details scroll.
+
+          A game or a file made with 0.14.0 still opens in older versions of Atlas, which show the filled-in words as the page's licence.
+
           ## New in 0.12.0
 
           The contents of a wiki nests the way its index pages do, the line above a page shows the way you came, a picture opens large, and the contents can be arranged many pages at a time.
