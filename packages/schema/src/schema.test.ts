@@ -3,12 +3,15 @@ import {
   COLLECTION_NAMES,
   FALLBACK_ICON,
   ICON_NAMES,
+  PAGE_WIDTHS,
+  PAGE_WIDTH_PIXELS,
   PACK_COLLECTIONS,
   checkPackIntegrity,
   checklistItemSchema,
   checklistSchema,
   guideEntrySchema,
   idOf,
+  isPageWidth,
   layerSchema,
   locationSchema,
   makeId,
@@ -338,6 +341,26 @@ describe('reading tolerantly, writing strictly', () => {
     const lost = { ...pack, manifest: { ...pack.manifest, homePage: 'demo:guide:nowhere' } };
     expect(checkPackIntegrity(lost).map((issue) => issue.path)).toEqual(['manifest.homePage']);
     expect(checkPackIntegrity({ ...pack, manifest })).toEqual([]);
+  });
+
+  it('writes and reads the width of the pages', () => {
+    const pack = makeFixturePack();
+    for (const pageWidth of PAGE_WIDTHS) {
+      const manifest = { ...pack.manifest, pageWidth };
+      expect(manifestSchema.parse(manifest).pageWidth).toBe(pageWidth);
+      expect(packReadSchemas.manifestSchema.parse(manifest).pageWidth).toBe(pageWidth);
+    }
+    expect(manifestSchema.parse(pack.manifest)).not.toHaveProperty('pageWidth');
+    // Only a width Atlas names, never pixels.
+    for (const pageWidth of ['Wide', 'narrow', 1000, '', null]) {
+      const manifest = { ...pack.manifest, pageWidth };
+      expect(manifestSchema.safeParse(manifest).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      expect(packReadSchemas.manifestSchema.parse(manifest).pageWidth).toBe(undefined);
+    }
+    expect(isPageWidth('full')).toBe(true);
+    expect(isPageWidth('huge')).toBe(false);
+    expect(PAGE_WIDTH_PIXELS.reading).toBe(760);
   });
 
   it('still refuses what is wrong rather than new when reading', () => {

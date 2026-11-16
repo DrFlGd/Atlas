@@ -1,5 +1,7 @@
+import { PAGE_WIDTH_PIXELS } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
 import {
+  LAYOUT_FRAME_WIDTH,
   LAYOUT_NOTE_ATTRIBUTES,
   LAYOUT_NOTES_SCRIPT,
   MAX_ARTICLE_SELECTORS,
@@ -371,5 +373,9 @@ describe('a page an importer asks the app to lay out', () => {
     ]) {
       expect(pageLayoutRequestOf(bad)).toBeNull();
     }
+  });
+
+  it('is laid out as wide as a page shown at full width is laid out', () => {
+    expect(LAYOUT_FRAME_WIDTH).toBe(PAGE_WIDTH_PIXELS.full);
   });
 });

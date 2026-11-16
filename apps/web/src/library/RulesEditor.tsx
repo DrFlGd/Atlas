@@ -2,6 +2,7 @@ import {
   type SiteMapTrial,
   type SiteTrial,
   type SiteTrialPicture,
+  type SiteTrialLayout,
   type SiteTrialUnmatched,
 } from '@atlas/importer-api';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -26,6 +27,8 @@ import {
   pickTrialPage,
   saveRulesText,
   savingOf,
+  layoutInWords,
+  SAVED_PAGE_LAYOUT_NOTE,
   trialInWords,
   tryRulesOn,
   useSites,
@@ -961,6 +964,7 @@ function PageResult({ result }: { result: SiteTrial }) {
           <p className="muted small">The reader kept no text of this page.</p>
         )}
       </div>
+      {result.layout ? <LayoutFound layout={result.layout} /> : null}
       {pictures.length > 0 ? <PictureList pictures={pictures} /> : null}
       {result.contents ? <ContentsList contents={result.contents} /> : null}
       <div className="rules-result-block" data-testid="rules-result-order">
@@ -988,6 +992,27 @@ function PageResult({ result }: { result: SiteTrial }) {
         ) : null}
       </div>
     </>
+  );
+}
+
+/** The layout the reader found on the page, and what a saved page cannot show of it. */
+function LayoutFound({ layout }: { layout: SiteTrialLayout }) {
+  const lines = layoutInWords(layout);
+  const said = lines.filter((line) => line !== SAVED_PAGE_LAYOUT_NOTE);
+  return (
+    <div className="rules-result-block" data-testid="rules-result-layout">
+      <h4>Layout</h4>
+      <ul className="rules-result-list">
+        {said.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      {said.length < lines.length ? (
+        <p className="muted small" data-testid="rules-result-layout-note">
+          {SAVED_PAGE_LAYOUT_NOTE}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

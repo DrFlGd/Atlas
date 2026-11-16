@@ -23,6 +23,7 @@ import {
   type SiteMapTrial,
   type SiteMapTrialFound,
   type SiteTrial,
+  type SiteTrialLayout,
 } from '@atlas/importer-api';
 import guideText from '@atlas/importer-api/site-rules/atlas-site-rules.md?raw';
 import schemaText from '@atlas/importer-api/site-rules/atlas-site-rules.schema.json?raw';
@@ -870,6 +871,62 @@ export function trialInWords(trial: SiteTrial): string[] {
   else if (trial.type === 'guide') lines.push('No next page was found.');
   if (trial.credit) lines.push(`The credit line reads “${trial.credit}”.`);
   if (trial.licence) lines.push(`Licence: ${trial.licence}`);
+  if (trial.layout) lines.push(...layoutInWords(trial.layout));
+  return lines;
+}
+
+/** A list of words in one sentence: "a, b and c". */
+const listOf = (items: string[]) =>
+  items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+
+/**
+ * Said of a page saved from a browser, which has no notes of its layout:
+ * what the trial cannot see of it.
+ */
+export const SAVED_PAGE_LAYOUT_NOTE =
+  'A page saved from a browser has no notes of its layout, so layout that comes only from the wiki’s style sheet is not seen here: it shows once the wiki is read in the app.';
+
+/** The layout a trial found on a saved page, in plain sentences, the note on a saved page last. */
+export function layoutInWords(layout: SiteTrialLayout): string[] {
+  const lines: string[] = [];
+  if (layout.read === 'off') {
+    lines.push('The layout is not read: the page is kept in one column, in reading order.');
+  } else {
+    lines.push(
+      layout.read === 'stated'
+        ? 'The layout is read only as the page’s HTML states it.'
+        : 'The layout is read as the browser shows it.',
+    );
+    const found = [
+      layout.sideBySide > 0 ? plural(layout.sideBySide, 'row') + ' of blocks side by side' : '',
+      layout.cards > 0 ? plural(layout.cards, 'card') : '',
+      layout.rows > 0 ? plural(layout.rows, 'list') + ' set in a row' : '',
+      layout.columns > 0 ? plural(layout.columns, 'list') + ' in columns' : '',
+      layout.centred > 0 ? plural(layout.centred, 'centred block') : '',
+      layout.headings > 0 ? plural(layout.headings, 'line') + ' made headings' : '',
+    ].filter(Boolean);
+    lines.push(
+      found.length > 0
+        ? `Layout found: ${listOf(found)}.`
+        : 'No layout was found: the page is kept in one column.',
+    );
+    if (layout.cardTitles.length > 0) {
+      lines.push(`The cards are titled: ${layout.cardTitles.slice(0, 5).join(', ')}.`);
+    }
+  }
+  if (layout.hidden > 0) {
+    lines.push(
+      `${plural(layout.hidden, 'block')} the browser does not show ${layout.hidden === 1 ? 'was' : 'were'} left out.`,
+    );
+  }
+  if (layout.leftOut > 0) {
+    lines.push(
+      `${plural(layout.leftOut, 'block')} named in layout.leaveOut ${layout.leftOut === 1 ? 'was' : 'were'} left out.`,
+    );
+  }
+  if (!layout.notes && layout.read === 'seen') {
+    lines.push(SAVED_PAGE_LAYOUT_NOTE);
+  }
   return lines;
 }
 

@@ -13,9 +13,10 @@
  * and the app asks it only to show the choices, never to fetch.
  */
 
-import { NO_LICENCE_RECORDED } from '@atlas/schema';
+import { NO_LICENCE_RECORDED, isPageWidth, type PageWidth } from '@atlas/schema';
 import { isReadingWay, readsInWindow, type ReadingWay } from './fetching';
 import type { AtlasImporter } from './index';
+import type { LayoutRead } from './siteRules';
 
 /** What an importer says about the site of an address (see {@link AtlasImporter.siteInfo}). */
 export interface SiteInfo {
@@ -72,6 +73,24 @@ export interface SiteInfo {
    * coming from that file. An answer the person gives wins over it.
    */
   rulesLicence?: RulesLicence;
+  /**
+   * Optional: how the layout of the site's pages is kept, as its site
+   * rules file says (`layout.read`, see `siteRules.ts`): `seen`, as the
+   * browser shows it (the default, also when this is left out); `stated`,
+   * only as a page's HTML states it; `off`, one column. An app that lays a
+   * page out itself to note where its blocks stand does so only for
+   * `seen`. An app that does not know it leaves it out.
+   */
+  layoutRead?: LayoutRead;
+  /**
+   * Optional: the width the site's pages are shown at by default, as its
+   * site rules file says (`layout.pageWidth`; see `pageWidth.ts` in
+   * `@atlas/schema`). The importer writes it into the pack as well; this
+   * is for an app that needs it before a pack is there, such as one that
+   * lays a page out at that width. An app that does not know it leaves it
+   * out.
+   */
+  pageWidth?: PageWidth;
 }
 
 /** A licence answer as a site rules file gives it: a {@link SiteLicence} without a time. */
@@ -307,10 +326,8 @@ export function siteInfoOf(
     given = null;
   }
   if (typeof given !== 'object' || given === null) return fallback;
-  const { key, ways, notice, fileHosts, pause, rulesFile, rulesLicence } = given as Record<
-    string,
-    unknown
-  >;
+  const { key, ways, notice, fileHosts, pause, rulesFile, rulesLicence, layoutRead, pageWidth } =
+    given as Record<string, unknown>;
   if (typeof key !== 'string' || key.length > MAX_SITE_KEY_CHARS || !SITE_KEY.test(key)) {
     return fallback;
   }
@@ -340,6 +357,10 @@ export function siteInfoOf(
       : {}),
     ...(file ? { rulesFile: file } : {}),
     ...(answer ? { rulesLicence: answer } : {}),
+    ...(layoutRead === 'seen' || layoutRead === 'stated' || layoutRead === 'off'
+      ? { layoutRead }
+      : {}),
+    ...(isPageWidth(pageWidth) ? { pageWidth } : {}),
   };
 }
 

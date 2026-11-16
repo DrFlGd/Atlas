@@ -37,12 +37,13 @@ import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
 import { useTitleOf } from '../state/gameGroups';
 import { guidesOf, hasMap, pictureOf } from '../state/guides';
-import { canChangeOwnPages, changeContents, useOwnPages } from '../state/ownPages';
+import { canChangeOwnPages, changeContents, pageWidthOf, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { AddToBuildBar, AddToBuildButton } from './AddToBuild';
 import { useAddToBuild } from './buildChoice';
 import { GuideLinksReview } from './GuideLinksReview';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
+import { PageWidthMenu } from './PageWidthMenu';
 import { showPageOnMap } from './listViews';
 import {
   arrivedAtSection,
@@ -175,6 +176,8 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
   const name = useGameName(game);
   const atHome = isLanding(game, place);
   const title = placeTitle(game, place, name);
+  // On a computer or a tablet, the pages are as wide as the person (or the site) chose.
+  const width = pageWidthOf(game, useOwnPages()).width;
   return (
     <section className="guides-reader" aria-label={title}>
       <header className="guides-head">
@@ -201,6 +204,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
           <UiIcon name="forward" size={20} />
         </button>
         <Breadcrumbs game={game} place={place} name={name} way={wayCame(reader)} />
+        {wide ? <PageWidthMenu game={game} /> : null}
         {wide ? null : (
           <button
             type="button"
@@ -223,7 +227,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         data-testid="guides-body"
         onScroll={onScroll}
       >
-        <div className="guides-column">
+        <div className="guides-column" data-width={wide ? width : undefined}>
           {!wide &&
           (atHome || place.kind === 'search' || (place.kind === 'contents' && !place.sectionId)) ? (
             <SearchField game={game} />

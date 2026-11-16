@@ -69,8 +69,8 @@ describe('the guide', () => {
 
   it('holds the examples it promises', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
-    // And one file for every game of a site, and a refusal.
-    expect(blocks.length).toBe(7);
+    // And one file for every game of a site, a refusal, and a part with a layout section.
+    expect(blocks.length).toBe(8);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -1080,5 +1080,124 @@ describe('the additions of the general reader', () => {
       fields({ ...refusal, refusal: { ...refusal.refusal, domains: ['*.example.org'] } }),
     ).toEqual(['refusal.domains[0]']);
     expect(fields({ ...refusal, site: SMALLEST.site })).toEqual(['site']);
+  });
+});
+
+describe('the layout section of a wiki or guide part', () => {
+  const file = (layout: unknown, part: Record<string, unknown> = RULES_WIKI) => ({
+    ...SMALLEST,
+    parts: [{ ...part, layout }],
+  });
+  const said = (value: unknown) => problems(value).map(problemText);
+
+  it('takes every entry, in a part read by rules, a part with a built-in reader and a reader’s defaults', () => {
+    const layout = {
+      read: 'seen',
+      cards: { select: 'div.panel', title: '.panel-head', framed: false, titleSize: 1.3 },
+      sideBySide: ['div.two-up'],
+      oneColumn: ['nav.side-menu'],
+      row: ['ul.chapter-links'],
+      leaveOut: ['.share-buttons'],
+      hidden: ['.spoiler-box'],
+      headings: { lines: true, size: 1.3, length: 60 },
+      longLines: 'fours',
+      pictures: 'linked',
+      pageWidth: 'wide',
+    };
+    for (const value of [
+      file(layout),
+      file(layout, SMALLEST.parts[0]),
+      file(
+        { hidden: 'keep', read: 'stated' },
+        { ...RULES_WIKI, type: 'guide', order: { from: 'menu' } },
+      ),
+      {
+        format: 'atlas-site-rules',
+        version: 1,
+        readerDefaults: {
+          reader: 'example-engine',
+          reading: { ways: ['fetch'] },
+          layout: { read: 'off', pageWidth: 'full' },
+        },
+      },
+    ]) {
+      const checked = checkSiteRules(value);
+      expect(checked.ok ? [] : checked.problems).toEqual([]);
+    }
+  });
+
+  it('says in plain words what is wrong with an entry', () => {
+    expect(said(file({ read: 'sometimes' }))).toEqual([
+      'Part 1, layout.read: must be one of "seen", "stated" or "off".',
+    ]);
+    expect(said(file({ hidden: 'some' }))).toEqual([
+      'Part 1, layout.hidden: must be "leaveOut", "keep" or a list of selectors, not "some".',
+    ]);
+    expect(said(file({ hidden: ['.a', '.a'] }))).toEqual([
+      'Part 1, layout.hidden, entry 2: ".a" is listed twice; list each selector once.',
+    ]);
+    expect(said(file({ pageWidth: 1200 }))).toEqual([
+      'Part 1, layout.pageWidth: must be one of "reading", "wide" or "full".',
+    ]);
+    expect(said(file({ sideBySide: [] }))).toEqual([
+      'Part 1, layout.sideBySide: must hold at least 1 entry.',
+    ]);
+    expect(fields(file({ row: ['a:hover'] }))).toEqual(['parts[0].layout.row[0]']);
+    expect(said(file({ headings: { size: 9 } }))).toEqual([
+      'Part 1, layout.headings.size: must be at most 4.',
+    ]);
+    expect(said(file({ columns: ['ul.items'] }))).toEqual([
+      'Part 1, layout.columns: is not a field of this format; a file holds only the fields the guide names.',
+    ]);
+  });
+
+  it('names a field that needs another, or that nothing uses', () => {
+    expect(said(file({ cards: { title: '.head' } }))).toEqual([
+      'Part 1, layout.cards.title: is only for cards.select: the title is looked for inside the blocks it names.',
+    ]);
+    expect(fields(file({ headings: { lines: false, size: 1.4, length: 40 } }))).toEqual([
+      'parts[0].layout.headings.size',
+      'parts[0].layout.headings.length',
+    ]);
+    expect(fields(file({ read: 'off', sideBySide: ['div.two'], pageWidth: 'wide' }))).toEqual([
+      'parts[0].layout.sideBySide',
+    ]);
+    expect(
+      fields({
+        format: 'atlas-site-rules',
+        version: 1,
+        readerDefaults: {
+          reader: 'example-engine',
+          reading: { ways: ['fetch'] },
+          layout: { cards: { title: '.head' } },
+        },
+      }),
+    ).toEqual(['readerDefaults.layout.cards.title']);
+  });
+
+  it('is for a wiki or a guide, not a map', () => {
+    const map = {
+      type: 'map',
+      reader: 'rules',
+      start: '/map',
+      data: { from: 'file', address: '/map/data.json' },
+      maps: {
+        id: 'world',
+        name: 'World',
+        size: [512, 512],
+        maxZoom: 2,
+        picture: { images: '/tiles/{z}/{x}/{y}.png', tile: 256 },
+      },
+      types: { from: 'locations' },
+      locations: { path: 'pins[*]', fields: { type: 'type', x: 'x', y: 'y' } },
+      position: { units: 'pixels' },
+      reading: { ways: ['fetch'] },
+    };
+    expect(said(file({ pageWidth: 'wide' }, map))).toEqual([
+      'Part 1, layout: is a field of a wiki or guide part, not of this part.',
+    ]);
+    expect(
+      fields(file({ pageWidth: 'wide' }, { type: 'map', reader: 'example-maps', start: '/' })),
+    ).toEqual(['parts[0].layout']);
   });
 });

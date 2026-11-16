@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SiteTrial } from '@atlas/importer-api';
-import { httpsAddress, trialInWords } from './siteRules';
+import type { SiteTrial, SiteTrialLayout } from '@atlas/importer-api';
+import { httpsAddress, layoutInWords, SAVED_PAGE_LAYOUT_NOTE, trialInWords } from './siteRules';
 
 const trial = (fields: Partial<SiteTrial>): SiteTrial => ({
   part: 0,
@@ -166,5 +166,69 @@ describe('what the reader understood of a saved page, in words', () => {
 
   it('says nothing when no part read the page: its problems say why', () => {
     expect(trialInWords(trial({ part: null, problems: ['Not a page of the file.'] }))).toEqual([]);
+  });
+});
+
+describe('the layout a trial found, in words', () => {
+  const layout = (fields: Partial<SiteTrialLayout>): SiteTrialLayout => ({
+    read: 'seen',
+    notes: true,
+    sideBySide: 0,
+    cards: 0,
+    cardTitles: [],
+    rows: 0,
+    columns: 0,
+    centred: 0,
+    headings: 0,
+    hidden: 0,
+    leftOut: 0,
+    ...fields,
+  });
+
+  it('counts each form found, the titles of the cards and what was left out', () => {
+    expect(
+      layoutInWords(
+        layout({
+          sideBySide: 2,
+          cards: 3,
+          cardTitles: ['Tides', 'Lanterns', 'Nets'],
+          rows: 1,
+          columns: 1,
+          centred: 2,
+          headings: 4,
+          hidden: 1,
+          leftOut: 3,
+        }),
+      ),
+    ).toEqual([
+      'The layout is read as the browser shows it.',
+      'Layout found: 2 rows of blocks side by side, 3 cards, 1 list set in a row, 1 list in columns, 2 centred blocks and 4 lines made headings.',
+      'The cards are titled: Tides, Lanterns, Nets.',
+      '1 block the browser does not show was left out.',
+      '3 blocks named in layout.leaveOut were left out.',
+    ]);
+  });
+
+  it('says that a page saved from a browser does not show the layout of a style sheet', () => {
+    expect(layoutInWords(layout({ notes: false }))).toEqual([
+      'The layout is read as the browser shows it.',
+      'No layout was found: the page is kept in one column.',
+      SAVED_PAGE_LAYOUT_NOTE,
+    ]);
+    expect(layoutInWords(layout({ notes: false, read: 'stated' }))).toEqual([
+      'The layout is read only as the page’s HTML states it.',
+      'No layout was found: the page is kept in one column.',
+    ]);
+  });
+
+  it('says when the layout is not read at all', () => {
+    expect(layoutInWords(layout({ read: 'off', notes: false }))).toEqual([
+      'The layout is not read: the page is kept in one column, in reading order.',
+    ]);
+  });
+
+  it('comes after the rest of what the reader understood', () => {
+    const lines = trialInWords(trial({ type: 'wiki', layout: layout({ cards: 1 }) }));
+    expect(lines.at(-1)).toBe('Layout found: 1 card.');
   });
 });

@@ -12,3 +12,4 @@ export * from './ownPages';
 export * from './ownNotes';
 export * from './gameGroups';
 export * from './layoutForms';
+export * from './pageWidth';
