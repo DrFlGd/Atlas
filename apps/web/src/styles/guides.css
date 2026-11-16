@@ -966,6 +966,30 @@ img[data-opens-large]:focus-visible {
   break-inside: avoid;
 }
 
+/*
+ * Items that each start with a small picture (an icon and its name): the
+ * picture stands for the bullet, and the words stay beside it, wrapping
+ * beside it where they are long.
+ */
+.guide-body .guide-columns > :is(ul, ol).guide-columns-pictures {
+  padding-left: 0;
+  list-style: none;
+}
+
+.guide-columns-pictures > li {
+  display: flex;
+  align-items: center;
+  gap: 0 6px;
+}
+
+.guide-columns-pictures > li > * {
+  min-width: 0;
+}
+
+.guide-columns-pictures > li > :first-child {
+  flex: none;
+}
+
 /* A phone or a narrow pane or block: one column. */
 @container (max-width: 30rem) {
   .guide-columns {

@@ -17,7 +17,9 @@ import type { MarkdownIt, StateBlock, StateCore, Token } from 'markdown-it';
  * - A row: a `div.guide-row`, whose lists are set on one line; a list whose
  *   every item starts with a small picture is `guide-row-pictures`.
  * - Columns: a `div.guide-columns` with the class `guide-columns-2` to
- *   `guide-columns-6`.
+ *   `guide-columns-6`; a list in it whose every item is one line that
+ *   starts with a small picture (an icon and its name) is
+ *   `guide-columns-pictures`, its pictures beside their words.
  * - Centred: a `div.guide-centred`.
  *
  * Widths are classes only: no `style` attribute is written. A form hidden
@@ -117,9 +119,22 @@ function startsWithSmallPicture(inline: Token | undefined, small: (picture: Toke
   return first !== undefined && small(first);
 }
 
+/** Whether a list item holds only one line of words: a single paragraph a tight list does not show. */
+function oneLine(tokens: readonly Token[], at: number): boolean {
+  const inner = tokens.slice(at + 1, closing(tokens, at));
+  return (
+    inner.length === 3 &&
+    inner[0]!.type === 'paragraph_open' &&
+    inner[0]!.hidden &&
+    inner[1]!.type === 'inline'
+  );
+}
+
 /**
  * A card's first block, when a heading, is its title bar; a list in a row
- * whose every item starts with a small picture shows the pictures, not dots.
+ * whose every item starts with a small picture shows the pictures, not dots;
+ * a list in columns whose every item is a line that starts with a small
+ * picture shows each picture beside its words, for a bullet.
  */
 const formParts =
   (small: (picture: Token) => boolean) =>
@@ -131,7 +146,7 @@ const formParts =
       if (form === 'card' && tokens[i + 1]?.type === 'heading_open') {
         tokens[i + 1]!.attrJoin('class', 'guide-card-title');
       }
-      if (form !== 'row') return;
+      if (form !== 'row' && form !== 'columns') return;
       const end = closing(tokens, i);
       for (let j = i + 1; j < end; j++) {
         const list = tokens[j]!;
@@ -143,13 +158,17 @@ const formParts =
           .flatMap((item, k) =>
             item.type === 'list_item_open' && item.level === list.level + 1 ? [j + k] : [],
           );
-        const pictured = items.every((at) =>
-          startsWithSmallPicture(
-            tokens.slice(at, closing(tokens, at)).find((t) => t.type === 'inline'),
-            small,
-          ),
+        const pictured = items.every(
+          (at) =>
+            (form === 'row' || oneLine(tokens, at)) &&
+            startsWithSmallPicture(
+              tokens.slice(at, closing(tokens, at)).find((t) => t.type === 'inline'),
+              small,
+            ),
         );
-        if (items.length > 0 && pictured) list.attrJoin('class', 'guide-row-pictures');
+        if (items.length > 0 && pictured) {
+          list.attrJoin('class', form === 'row' ? 'guide-row-pictures' : 'guide-columns-pictures');
+        }
         j = listEnd;
       }
     });

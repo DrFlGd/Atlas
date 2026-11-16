@@ -80,6 +80,35 @@ describe('layout forms', () => {
     expect(render(mixed)).not.toContain('guide-row-pictures');
   });
 
+  it('marks a list in columns whose every item is a line that starts with a small picture', () => {
+    const pictured = lines(
+      '::: columns 3',
+      '- [![stone](demo:picture:stone "=24")](demo:guide:a)[Stones](demo:guide:a)\n- ![reed](demo:picture:reed "=20x16") Reeds\n- ![eel](demo:picture:eel "=24") Eels',
+      '::: end',
+    );
+    expect(render(pictured)).toContain('<ul class="guide-columns-pictures">');
+    const mixed = lines(
+      '::: columns 3',
+      '- ![stone](demo:picture:stone "=24") Stones\n- Reeds\n- ![eel](demo:picture:eel "=24") Eels',
+      '::: end',
+    );
+    expect(render(mixed)).not.toContain('guide-columns-pictures');
+    // An item that holds more than its line (a list inside it) keeps its bullet.
+    const nested = lines(
+      '::: columns 2',
+      '- ![stone](demo:picture:stone "=24") Stones\n  - Grey\n- ![eel](demo:picture:eel "=24") Eels',
+      '::: end',
+    );
+    expect(render(nested)).not.toContain('guide-columns-pictures');
+    // A large picture is no bullet.
+    const large = lines(
+      '::: columns 2',
+      '- ![stone](demo:picture:stone "=120") Stones\n- ![eel](demo:picture:eel "=120") Eels',
+      '::: end',
+    );
+    expect(render(large)).not.toContain('guide-columns-pictures');
+  });
+
   it('nests forms two deep and more, and keeps every mark working inside', () => {
     const text = lines(
       '::: side 1:2',

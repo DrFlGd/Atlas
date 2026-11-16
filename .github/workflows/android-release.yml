@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.17.0
+
+          - **Lists of icons in columns.** A list flowed in columns whose every item is one line that begins with a small picture is shown without bullets, each picture beside its words.
+
           ## New in 0.16.0
 
           - **Page width.** On a tablet, a game's guide pages can be shown at three widths, chosen with the button at the top right of **Guides**: **Reading**, **Wide** and **Full**. A pack can say which width its pages were made for. A phone always shows a page as wide as the phone.

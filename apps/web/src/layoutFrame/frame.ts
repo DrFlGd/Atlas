@@ -15,6 +15,7 @@ import {
   elementFate,
   isAtlasAttribute,
   keptAttribute,
+  ownSheetsFor,
   pictureBox,
   sheetsFor,
   type FrameSheet,
@@ -54,11 +55,22 @@ import {
 /** How laying one page out went. */
 export type LaidOut =
   | { kind: 'noted'; html: string }
-  | { kind: 'skipped'; reason: 'no-sheets' | 'time' | 'no-notes' | 'failed' };
+  | {
+      kind: 'skipped';
+      /** `linked-sheets`: laid out with its own sheets, it links to sheets it does not hold. */
+      reason: 'no-sheets' | 'linked-sheets' | 'time' | 'no-notes' | 'failed';
+    };
+
+/**
+ * The sheets a page is laid out with: those kept for its game (see
+ * `sheetsFor`), or `own` for a page saved with its sheets inside it, laid
+ * out with its own `<style>` blocks only (see `ownSheetsFor`).
+ */
+export type FrameSheets = readonly KeptSheetText[] | 'own';
 
 /** The frame of one pass, for its pages one at a time. */
 export interface LayoutFrame {
-  layOut(request: PageLayoutRequest, kept: readonly KeptSheetText[]): Promise<LaidOut>;
+  layOut(request: PageLayoutRequest, kept: FrameSheets): Promise<LaidOut>;
   /** Removes the frame. */
   close(): void;
 }
@@ -272,10 +284,7 @@ export async function openLayoutFrame(host: Document = document): Promise<Layout
     doc.documentElement.replaceChildren(doc.createElement('head'), doc.createElement('body'));
   };
 
-  async function layOut(
-    request: PageLayoutRequest,
-    kept: readonly KeptSheetText[],
-  ): Promise<LaidOut> {
+  async function layOut(request: PageLayoutRequest, kept: FrameSheets): Promise<LaidOut> {
     const started = performance.now();
     const elapsed = () => performance.now() - started;
     try {
@@ -291,7 +300,10 @@ export async function openLayoutFrame(host: Document = document): Promise<Layout
           if (isAtlasAttribute(attribute.name)) el.removeAttribute(attribute.name);
         }
       }
-      const sheets = sheetsFor(pageSheetsOf(page, request.url), kept);
+      const named = pageSheetsOf(page, request.url);
+      const own = kept === 'own' ? ownSheetsFor(named) : null;
+      if (own === 'linked') return { kind: 'skipped', reason: 'linked-sheets' };
+      const sheets = kept === 'own' ? (own === 'none' ? null : own) : sheetsFor(named, kept);
       if (!sheets) return { kind: 'skipped', reason: 'no-sheets' };
       await turn();
       if (elapsed() > LAYOUT_PAGE_MS) return { kind: 'skipped', reason: 'time' };

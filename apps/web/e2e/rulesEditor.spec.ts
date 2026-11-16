@@ -403,11 +403,11 @@ test.describe('in the standard layout', () => {
     );
     const text = editor.getByTestId('rules-editor-text');
     await expect(text).toHaveValue(/"id": "harbour-wiki"/);
-    // A file with no part read by rules is not tried on a page.
+    // A file whose site its importer's own reader reads is tried too: a page of another site is not read by it.
     await pickSavedPage(page, { name: 'old-quay.html', text: SAVED_PAGE(true) });
     await editor.getByTestId('rules-editor-add-page').click();
-    await expect(editor.getByTestId('rules-editor-trial-problem')).toHaveText(
-      'Only a part read by rules can be tried on a page, and this file has none.',
+    await expect(editor.getByTestId('rules-result-problems')).toHaveText(
+      'The address https://guide.example.org/cove/old-quay is not on a host the file names, so its reader does not read it by this file. Give the address the page was saved from, or add its host to site.hosts.',
     );
     const changed = (await text.inputValue()).replace('"Harbour Wiki"', '"Harbour Wiki, mine"');
     await setText(editor, changed);
@@ -493,6 +493,371 @@ test.describe('in the standard layout', () => {
     );
     await layout.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${SHOTS}/editor-layout-report.png` });
+    expect(out).toEqual([]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+});
+
+/** A made-up page of a wiki the "Other wikis" reader reads, saved as one file with its style sheets inside it. */
+const STYLED_PAGE = (pictures = 120) => `<!doctype html>
+<html><head><title>Reed Beds - Marsh Wiki</title>
+<base href="https://wiki.example.net/">
+<link rel="canonical" href="https://wiki.example.net/wiki/Reed_Beds">
+<link rel="icon" href="/favicon.ico">
+<link rel="preload" href="https://fonts.example.org/fen.woff2" as="font">
+<meta http-equiv="refresh" content="0;url=https://elsewhere.example.org/">
+<style>
+@import url("https://styles.example.org/more.css");
+@font-face { font-family: Fen; src: url(https://fonts.example.org/fen.woff2); }
+body { margin: 0; font: 16px/22px sans-serif; background: #fff url(/paper.png); }
+#wiki-text { width: 960px; padding: 0 20px; }
+.pair { display: flex; gap: 20px; }
+.pair > div { flex: 1 1 0; }
+.panel { border: 1px solid #887; padding: 8px; background-image: image-set("https://pictures.example.org/a.png" 1x); }
+.gallery img { display: inline-block; }
+</style>
+<style media="print">.pair { display: block; }</style>
+<script>document.title = 'changed';</script>
+</head>
+<body>
+<h1 id="page-title">Reed Beds</h1>
+<div id="wiki-text">
+<p>The reeds grow tall where the river slows.</p>
+<div class="pair">
+<div class="panel"><h3>North bank</h3><p>Herons nest here.</p></div>
+<div class="panel"><h3>South bank</h3><p>Frogs sing at dusk.</p></div>
+</div>
+<p class="gallery">${Array.from({ length: pictures }, (_, n) => `<img src="/images/reed-${n}.png" srcset="/images/reed-${n}-2x.png 2x" alt="Reed ${n}" width="40" height="40">`).join('')}</p>
+<iframe src="https://elsewhere.example.org/embed"></iframe>
+<iframe srcdoc="<p>inner</p>"></iframe>
+<video poster="https://pictures.example.org/poster.png"><source src="https://media.example.org/clip.webm"></video>
+<object data="https://elsewhere.example.org/thing.swf"></object>
+<svg width="10" height="10"><image href="https://pictures.example.org/drawing.png" width="10" height="10"/></svg>
+<div style="background: url(https://pictures.example.org/inline.png); height: 20px">Banner</div>
+</div>
+</body></html>`;
+
+/** The same page saved with no style sheets at all. */
+const PLAIN_PAGE = STYLED_PAGE(3).replace(/<style[^]*?<\/style>/gu, '');
+
+/** The same page saved as "Webpage, complete": its sheet a file beside it. */
+const LINKED_PAGE = PLAIN_PAGE.replace(
+  '<link rel="icon"',
+  '<link rel="stylesheet" href="Reed_Beds_files/skin.css"><link rel="icon"',
+);
+
+/** Every request that leaves the app, to any host: none may. */
+function everyRequestOut(page: Page): string[] {
+  const out: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.protocol === 'data:' || url.protocol === 'blob:') return;
+    if (url.hostname === 'localhost') return;
+    out.push(request.url());
+  });
+  // Anything that is not the app is stopped, whatever it is.
+  void page.route(/^https?:\/\/(?!localhost[:/])/u, (route) => route.abort());
+  return out;
+}
+
+test.describe('trying any file on a saved page', () => {
+  test.use({ layout: 'standard' });
+
+  test('tries a reader’s file on a saved page laid out with its own style sheets, and asks for nothing', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const out = everyRequestOut(page);
+    const sites = await openSites(page);
+    const reader = sites.locator(
+      '[data-testid="site-row"][data-key="other-wikis/other-wiki.reader.atlas-site.json"]',
+    );
+    const refusal = sites.locator(
+      '[data-testid="site-row"][data-key="other-wikis/quiet-archive.refused.atlas-site.json"]',
+    );
+    // Every file offers a trial; a refusal, which names no page, says at once why it has none.
+    await expect(reader.getByTestId('site-try')).toHaveAttribute('data-tryable', 'true');
+    await expect(refusal.getByTestId('site-try')).toHaveAttribute('data-tryable', 'false');
+    await refusal.getByTestId('site-try').click();
+    const untried = refusal.getByTestId('site-trial');
+    await expect(untried).toContainText(
+      'Quiet Archive wikis cannot be tried on a saved page, so no page was asked for.',
+    );
+    await expect(untried.getByRole('alert')).toHaveText(
+      'A refusal file names sites that are not read at all, so there is no page to try it on. To see how a page is read, try the file that reads its site.',
+    );
+    await expect(untried.getByTestId('site-trial-editor')).toHaveCount(0);
+    await untried.getByTestId('site-trial-close').click();
+
+    await reader.getByTestId('site-edit').click();
+    const editor = page.getByTestId('rules-editor');
+    await expect(editor.getByTestId('rules-editor-title')).toHaveText(
+      'Copy of other-wiki.reader.atlas-site.json',
+    );
+    await pickSavedPage(page, { name: 'reed-beds.html', text: STYLED_PAGE() });
+    await editor.getByTestId('rules-editor-add-page').click();
+    const result = editor.getByTestId('rules-editor-result');
+    await expect(result.getByTestId('rules-result-lead')).toHaveText(
+      'The reader “other-wiki” read it with this file’s settings, as a page of a wiki.',
+    );
+    await expect(result.getByTestId('rules-result-facts')).toContainText('TitleReed Beds');
+    const layout = result.getByTestId('rules-result-layout');
+    await expect(layout.locator('li').first()).toHaveText(
+      'The app laid the page out with the style sheets saved inside it, so it was read by position, as a page read in the app’s window is.',
+    );
+    await expect(layout).toContainText('Layout found: 1 row of blocks side by side and 2 cards.');
+    await expect(layout.getByTestId('rules-result-layout-note')).toHaveCount(0);
+    // Drawn as Guides draws it: the two cards side by side, at the width of the game's pages.
+    const shown = result.getByTestId('rules-result-page');
+    await expect(shown.locator('.guide-side .guide-card')).toHaveCount(2);
+    const [north, south] = await shown.locator('.guide-card').all();
+    const a = await north!.boundingBox();
+    const b = await south!.boundingBox();
+    expect(Math.abs(a!.y - b!.y)).toBeLessThan(2);
+    expect(b!.x).toBeGreaterThan(a!.x + a!.width - 1);
+    await expect(result.getByTestId('rules-result-sheet')).toHaveAttribute('data-width', 'reading');
+    await expect(result.getByTestId('rules-result-width')).toContainText(
+      'The file gives no width for the game’s pages, so this is drawn as Guides draws it at reading width, 760 pixels',
+    );
+    for (const img of await shown.locator('img').all()) {
+      expect(await img.getAttribute('src')).toMatch(/^data:image\/svg\+xml,/u);
+    }
+    await toResultStart(editor);
+    await page.screenshot({ path: `${SHOTS}/trial-readers-laid-out.png` });
+
+    // A change to the layout section: tried again, at the new width.
+    const text = editor.getByTestId('rules-editor-text');
+    const wide = (await text.inputValue()).replace(
+      '"licence": {',
+      '"layout": {\n      "pageWidth": "wide"\n    },\n    "licence": {',
+    );
+    expect(wide).toContain('"pageWidth": "wide"');
+    await setText(editor, wide);
+    await expect(result.getByTestId('rules-result-sheet')).toHaveAttribute('data-width', 'wide');
+    await expect(result.getByTestId('rules-result-width')).toContainText(
+      'Drawn as Guides draws it at the width of the game’s pages, 1,000 pixels',
+    );
+    await expect(layout).toContainText(
+      'The game’s pages are shown wide, about 1,000 pixels, as the file says (layout.pageWidth).',
+    );
+    await toResultStart(editor);
+    await page.screenshot({ path: `${SHOTS}/trial-readers-wide.png` });
+
+    // A page saved with no sheets, and one whose sheet is a file beside it: read as their HTML states.
+    await pickSavedPage(page, { name: 'reed-beds-plain.html', text: PLAIN_PAGE });
+    await editor.getByTestId('rules-editor-add-page').click();
+    await expect(layout.locator('li').first()).toHaveText(
+      'The saved page holds no style sheets, so it was read by the layout its HTML states, not by position. To try it by position, save the page as one file with its style sheets inside it.',
+    );
+    await expect(shown.locator('.guide-side')).toHaveCount(0);
+    await expect(shown).toContainText('North bank');
+    await pickSavedPage(page, { name: 'reed-beds-complete.html', text: LINKED_PAGE });
+    await editor.getByTestId('rules-editor-add-page').click();
+    await expect(layout.locator('li').first()).toHaveText(
+      'The saved page links to style sheets it does not hold, so it was read by the layout its HTML states, not by position. To try it by position, save the page as one file with its style sheets inside it.',
+    );
+    // The pages stay side by side in the menu.
+    await expect(editor.getByTestId('rules-editor-page').locator('option')).toHaveText([
+      'reed-beds.html',
+      'reed-beds-plain.html',
+      'reed-beds-complete.html',
+    ]);
+    await editor.getByTestId('rules-editor-page').selectOption({ label: 'reed-beds.html' });
+    await expect(shown.locator('.guide-side')).toHaveCount(1);
+
+    // Nothing of any page ran, and nothing was asked of any host.
+    expect(await page.evaluate(() => document.title)).not.toBe('changed');
+    await expect(page.locator('iframe')).toHaveCount(0);
+    expect(out).toEqual([]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('says why a file cannot be tried, and opens a trial from the Sites list in the editor', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const out = everyRequestOut(page);
+    const sites = await openSites(page);
+    // A refusal, edited: there is no page to try it on, and the editor says what to do.
+    await sites
+      .locator(
+        '[data-testid="site-row"][data-key="other-wikis/quiet-archive.refused.atlas-site.json"]',
+      )
+      .getByTestId('site-edit')
+      .click();
+    const editor = page.getByTestId('rules-editor');
+    await pickSavedPage(page, { name: 'reed-beds.html', text: STYLED_PAGE(3) });
+    await editor.getByTestId('rules-editor-add-page').click();
+    await expect(editor.getByTestId('rules-editor-trial-problem')).toHaveText(
+      'A refusal file names sites that are not read at all, so there is no page to try it on. To see how a page is read, try the file that reads its site.',
+    );
+    await editor.getByTestId('rules-editor-done').click();
+    await expect(editor).toBeHidden();
+
+    // "Try on a saved page…" on the reader's file, then "Open in the editor" with that page.
+    const reader = sites.locator(
+      '[data-testid="site-row"][data-key="other-wikis/other-wiki.reader.atlas-site.json"]',
+    );
+    await pickSavedPage(page, { name: 'reed-beds.html', text: STYLED_PAGE(3) });
+    await reader.getByTestId('site-try').click();
+    const card = reader.getByTestId('site-trial');
+    await expect(card.getByTestId('site-trial-facts')).toContainText(
+      'The reader “other-wiki” read it with this file’s settings, as a page of a wiki.',
+    );
+    await expect(card.getByTestId('site-trial-facts')).toContainText(
+      'The app laid the page out with the style sheets saved inside it, so it was read by position, as a page read in the app’s window is.',
+    );
+    await card.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${SHOTS}/trial-readers-sites-card.png` });
+    await card.getByTestId('site-trial-editor').click();
+    await expect(editor.getByTestId('rules-editor-title')).toHaveText(
+      'Copy of other-wiki.reader.atlas-site.json',
+    );
+    await expect(editor.getByTestId('rules-editor-page').locator('option')).toHaveText([
+      'reed-beds.html',
+    ]);
+    await expect(editor.getByTestId('rules-result-page').locator('.guide-card')).toHaveCount(2);
+    await expect(card).toHaveCount(0);
+    expect(out).toEqual([]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+});
+
+test.describe('starting a new file from another', () => {
+  test.use({ layout: 'standard' });
+
+  test('starts from a copy of any file listed, made for another site, and starts again', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const out = everyRequestOut(page);
+    const sites = await openSites(page);
+    await sites.getByTestId('sites-new').click();
+    const editor = page.getByTestId('rules-editor');
+    const templates = editor.getByTestId('rules-editor-templates');
+    // Every file listed, as the importers report them, each with what it reads.
+    const sources = templates.getByTestId('rules-copy-source');
+    await expect(sources).toHaveCount(3);
+    const harbour = templates.locator(
+      '[data-testid="rules-copy-source"][data-key="other-wikis/harbour-wiki.atlas-site.json"]',
+    );
+    await expect(harbour).toContainText('Start from a copy of Harbour Wiki');
+    await expect(harbour).toContainText(
+      'It reads a wiki read by the reader “other-wiki” on harbour.example.net.',
+    );
+    await expect(
+      templates.locator(
+        '[data-testid="rules-copy-source"][data-key="other-wikis/other-wiki.reader.atlas-site.json"]',
+      ),
+    ).toContainText(
+      'It holds the settings of the reader “other-wiki” for every site that reader reads. A copy is a file for one site.',
+    );
+    await page.screenshot({ path: `${SHOTS}/trial-readers-templates.png` });
+
+    // A copy of a shipped site file: its own id, unless the person gives the shipped one.
+    await harbour.click();
+    const form = editor.getByTestId('rules-copy-form');
+    await form.getByTestId('rules-copy-name').fill('Harbour Wiki');
+    await expect(form.getByTestId('rules-copy-id')).toHaveValue('harbour-wiki');
+    await expect(form.getByTestId('rules-copy-id-note')).toHaveText(
+      'The file harbour-wiki.atlas-site.json comes with Other wikis: a copy saved with this id takes its place while your copy is switched on. To keep both, give another id.',
+    );
+    await form.getByTestId('rules-copy-name').fill('Marsh Wiki');
+    await expect(form.getByTestId('rules-copy-id')).toHaveValue('marsh-wiki');
+    await expect(form.getByTestId('rules-copy-id-note')).toHaveCount(0);
+    await expect(form.getByTestId('rules-copy-name-note')).toHaveText(
+      'The id comes from the site’s name unless you change it. The copy is saved as marsh-wiki.atlas-site.json.',
+    );
+    await form.getByTestId('rules-copy-make').click();
+    await expect(form.getByTestId('rules-copy-problems')).toHaveText(
+      'Give the site’s address or host, such as wiki.example.org.',
+    );
+    await form.getByTestId('rules-copy-host').fill('https://wiki.example.net/wiki/Reed_Beds');
+    await form.getByTestId('rules-copy-game').fill('Marsh');
+    await page.screenshot({ path: `${SHOTS}/trial-readers-copy-form.png` });
+    await form.getByTestId('rules-copy-make').click();
+
+    const text = editor.getByTestId('rules-editor-text');
+    const copied = JSON.parse(await text.inputValue()) as {
+      site: Record<string, unknown>;
+      parts: { reader: string; reading: unknown }[];
+    };
+    expect(copied.site).toEqual({
+      id: 'marsh-wiki',
+      name: 'Marsh Wiki',
+      game: 'Marsh',
+      hosts: ['wiki.example.net'],
+    });
+    expect(copied.parts).toEqual([
+      { type: 'wiki', reader: 'other-wiki', reading: { ways: ['fetch', 'browse'], pause: 5 } },
+    ]);
+    await expect(editor.getByTestId('rules-editor-title')).toHaveText('New rules file');
+    await expect(editor.getByTestId('rules-editor-copied')).toContainText(
+      'This file started from a copy of harbour-wiki.atlas-site.json, made for the site you named.',
+    );
+    await expect(editor.getByTestId('rules-editor-save-note')).toContainText(
+      'It is saved as marsh-wiki.atlas-site.json in the Sites folder, switched off until you switch it on.',
+    );
+    await expect(editor.getByTestId('rules-editor-save')).toBeEnabled();
+
+    // Tried on a page saved from the new site, in one step.
+    await pickSavedPage(page, { name: 'reed-beds.html', text: STYLED_PAGE(3) });
+    await editor.getByTestId('rules-editor-add-page').click();
+    const result = editor.getByTestId('rules-editor-result');
+    await expect(result.getByTestId('rules-result-lead')).toHaveText(
+      'Part 1 of the file read it with the reader “other-wiki”, as a page of a wiki.',
+    );
+    await expect(result.getByTestId('rules-result-page').locator('.guide-card')).toHaveCount(2);
+    await toResultStart(editor);
+    await page.screenshot({ path: `${SHOTS}/trial-readers-copy.png` });
+
+    // Start again from another template: asked first, as the copy is not saved.
+    await editor.getByTestId('rules-editor-restart').click();
+    await expect(editor.getByTestId('rules-editor-restart-ask')).toContainText(
+      'Start again from another template? The text of this file as it stands is not kept. The example pages stay.',
+    );
+    await editor.getByTestId('rules-editor-restart-no').click();
+    await expect(text).toHaveValue(/"marsh-wiki"/u);
+    await editor.getByTestId('rules-editor-restart').click();
+    await editor.getByTestId('rules-editor-restart-yes').click();
+    // A reader's defaults, copied: a site file for the one site.
+    await templates
+      .locator(
+        '[data-testid="rules-copy-source"][data-key="other-wikis/other-wiki.reader.atlas-site.json"]',
+      )
+      .click();
+    await form.getByTestId('rules-copy-name').fill('Fen Wiki');
+    await form.getByTestId('rules-copy-host').fill('wiki.example.net');
+    await expect(form.getByTestId('rules-copy-what')).toContainText(
+      'The copy is a file for the one site you name here',
+    );
+    await form.getByTestId('rules-copy-make').click();
+    const fen = JSON.parse(await text.inputValue()) as Record<string, unknown>;
+    expect(fen).toMatchObject({
+      site: { id: 'fen-wiki', name: 'Fen Wiki', hosts: ['wiki.example.net'] },
+      parts: [{ type: 'wiki', reader: 'other-wiki', start: '/' }],
+    });
+    expect(fen).not.toHaveProperty('readerDefaults');
+    await expect(editor.getByTestId('rules-editor-page').locator('option')).toHaveText([
+      'reed-beds.html',
+    ]);
+    await expect(result.getByTestId('rules-result-lead')).toHaveText(
+      'Part 1 of the file read it with the reader “other-wiki”, as a page of a wiki.',
+    );
+
+    // And again, from an example for a type of site.
+    await editor.getByTestId('rules-editor-restart').click();
+    await editor.getByTestId('rules-editor-restart-yes').click();
+    await templates.getByTestId('rules-template-wiki').click();
+    await expect(text).toHaveValue(/"example-wiki"/u);
+    await expect(editor.getByTestId('rules-editor-copied')).toHaveCount(0);
+    await expect(editor.getByTestId('rules-editor-save')).toBeDisabled();
     expect(out).toEqual([]);
     expect(realErrors(errors)).toEqual([]);
   });

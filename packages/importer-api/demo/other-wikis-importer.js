@@ -42,6 +42,14 @@
  *   person saved (`sites.tryPage`), with the browser's own HTML parser, or
  *   a map part on a data file the person saved (`request.data`); it does
  *   not read a site by such a file, and says so of each part.
+ * - It also tries a file of its own reader (its defaults, or a site file
+ *   with a part read by it) on a page of such a wiki the person saved as a
+ *   web page: the wiki's text in `#wiki-text`, its title in `#page-title`.
+ *   It asks the app to lay the page out first (`request.layOut`), and
+ *   reads blocks the browser set in a row as blocks side by side, and
+ *   framed blocks with a heading first as cards; without the app's notes,
+ *   it keeps the page in one column. It says which files it cannot try
+ *   (`sites.cannotTry`).
  *
  * It is a single plain ES module with no imports, as every importer module
  * must be.
@@ -295,11 +303,162 @@ const wordsOf = (/** @type {Element | null} */ element) =>
   (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 /**
- * Tries a file's first wiki or guide part read by rules on one saved page,
- * with the browser's HTML parser: nothing of the page is run or fetched.
+ * A page of a wiki of its own reader, saved as a web page, read with the
+ * file given (its defaults, or the site file's part `index`): laid out by
+ * the app where it can, its blocks in a row side by side and its framed
+ * blocks cards.
  */
-function tryPage(/** @type {SiteTrialRequest} */ request) {
-  const { rules, url, html } = request;
+async function tryReaderPage(
+  /** @type {SiteTrialRequest} */ request,
+  /** @type {number | null} */ index,
+) {
+  const { rules, url } = request;
+  /** @type {SiteTrial} */
+  const trial = {
+    part: null,
+    headings: 0,
+    pictures: 0,
+    fullPictures: 0,
+    tables: 0,
+    chapters: 0,
+    problems: [],
+  };
+  let host = '';
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    // An address that is not one is answered below.
+  }
+  if ('site' in rules && !rules.site.hosts.includes(host)) {
+    trial.problems.push(
+      `The address ${url} is not on a host the file names, so its reader does not read it by this file. Give the address the page was saved from, or add its host to site.hosts.`,
+    );
+    return trial;
+  }
+  const part = 'site' in rules && index !== null ? rules.parts[index] : null;
+  const defaults = 'readerDefaults' in rules ? rules.readerDefaults : null;
+  const layoutSection = (part && 'layout' in part ? part.layout : defaults?.layout) ?? {};
+  const read = layoutSection.read ?? 'seen';
+  let html = request.html;
+  let notes = false;
+  if (read === 'seen' && request.layOut) {
+    const laid = await request.layOut({ html, url, article: ['#wiki-text'] });
+    if (typeof laid === 'string') {
+      html = laid;
+      notes = true;
+    }
+  }
+  const doc = new globalThis.DOMParser().parseFromString(html, 'text/html');
+  const content = doc.querySelector('#wiki-text');
+  if (!content) {
+    trial.problems.push(
+      `The reader “${READER}” looks for the wiki’s text in an element with the id wiki-text, and found none on this page. Check that the page was saved whole from a page of the wiki.`,
+    );
+    return trial;
+  }
+  trial.part = index;
+  trial.reader = READER;
+  trial.type = 'wiki';
+  const title = wordsOf(doc.querySelector('#page-title')) || wordsOf(doc.querySelector('title'));
+  if (title) trial.title = title;
+  if (notes) {
+    for (const hidden of [...content.querySelectorAll('[data-atlas-hidden]')]) hidden.remove();
+  } else {
+    for (const noted of [content, ...content.querySelectorAll('*')]) {
+      for (const name of [...noted.getAttributeNames()]) {
+        if (name.startsWith('data-atlas-')) noted.removeAttribute(name);
+      }
+    }
+  }
+  const pictures = [...content.querySelectorAll('img')];
+  trial.pictures = pictures.length;
+  trial.headings = content.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
+  trial.tables = content.querySelectorAll('table').length;
+  trial.text = wordsOf(content).slice(0, 600);
+  trial.pictureList = pictures.map((img, n) => {
+    const address = absolute(img.getAttribute('src'), url);
+    const width = Number(img.getAttribute('width'));
+    const height = Number(img.getAttribute('height'));
+    return {
+      id: `trial:picture:${n + 1}`,
+      words: (img.getAttribute('alt') ?? '').trim(),
+      ...(address ? { address } : {}),
+      ...(Number.isInteger(width) && width > 0 ? { width } : {}),
+      ...(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
+        ? { height }
+        : {}),
+    };
+  });
+  const found = { sideBySide: 0, cards: 0, cardTitles: /** @type {string[]} */ ([]) };
+  trial.page = markdownOf(content, url, pictures, read === 'off' ? null : found).trim();
+  const block =
+    part?.licence ?? ('site' in rules ? rules.site.licence : undefined) ?? defaults?.licence;
+  trial.licence =
+    block && 'known' in block
+      ? `${block.known}, as the file says.`
+      : 'The page states none, so you would be asked for one.';
+  trial.layout = {
+    read,
+    notes,
+    sideBySide: found.sideBySide,
+    cards: found.cards,
+    cardTitles: found.cardTitles,
+    rows: 0,
+    columns: 0,
+    centred: 0,
+    headings: 0,
+    hidden: 0,
+    leftOut: 0,
+    ...(layoutSection.pageWidth ? { pageWidth: layoutSection.pageWidth } : {}),
+  };
+  return trial;
+}
+
+/**
+ * Why a file cannot be tried on a saved page by this importer, in full
+ * sentences; null when it can.
+ */
+function cannotTry(/** @type {SiteRules} */ rules) {
+  if ('refusal' in rules) {
+    return 'A refusal file names sites that are not read at all, so there is no page to try it on. To see how a page is read, try the file that reads its site.';
+  }
+  if ('readerDefaults' in rules) {
+    return rules.readerDefaults.reader === READER
+      ? null
+      : `The importer “Other wikis” has no reader “${rules.readerDefaults.reader}”, so it cannot try this file.`;
+  }
+  const tried = rules.parts.some((part) => part.reader === READER || part.reader === RULES);
+  return tried
+    ? null
+    : 'No part of this file is read by a reader of the importer “Other wikis”, so it cannot try this file.';
+}
+
+/**
+ * Tries a file on one saved page, with the browser's HTML parser: nothing
+ * of the page is run or fetched. A file of its own reader reads the page
+ * as a wiki's page; otherwise the file's first wiki or guide part read by
+ * rules.
+ */
+async function tryPage(/** @type {SiteTrialRequest} */ request) {
+  const { url, html } = request;
+  if ('refusal' in request.rules) {
+    return {
+      part: null,
+      headings: 0,
+      pictures: 0,
+      fullPictures: 0,
+      tables: 0,
+      chapters: 0,
+      problems: [cannotTry(request.rules) ?? ''],
+    };
+  }
+  if ('readerDefaults' in request.rules) return tryReaderPage(request, null);
+  const rules = request.rules;
+  const own = rules.parts.findIndex((part) => part.reader === READER);
+  const byRules = rules.parts.some((part) => part.reader === RULES && part.type !== 'map');
+  if (own >= 0 && !byRules && typeof request.data !== 'string') {
+    return tryReaderPage(request, own);
+  }
   if (typeof request.data === 'string') return tryMapData(rules, request.data);
   /** @type {SiteTrial} */
   const trial = {
@@ -555,6 +714,7 @@ function markdownOf(
   /** @type {Element} */ content,
   /** @type {string} */ base,
   /** @type {Element[]} */ pictures,
+  /** @type {{ sideBySide: number, cards: number, cardTitles: string[] } | null} */ forms = null,
 ) {
   const escape = (/** @type {string} */ text) => text.replace(/([\\`*_[\]<|])/g, '\\$1');
   /** @type {(node: Node) => string} */
@@ -620,6 +780,21 @@ function markdownOf(
       }
     } else if (name === 'img') {
       blocks.push(inline(element));
+    } else if (forms && isRow(element)) {
+      // Blocks the browser set in a row, as the app's notes say: side by side.
+      forms.sideBySide += 1;
+      blocks.push('::: side');
+      [...element.children].forEach((child, n) => {
+        if (n > 0) blocks.push('::: next');
+        block(child);
+      });
+      blocks.push('::: end');
+    } else if (forms && isCard(element)) {
+      forms.cards += 1;
+      forms.cardTitles.push(wordsOf(element.firstElementChild));
+      blocks.push('::: card');
+      for (const child of element.children) block(child);
+      blocks.push('::: end');
     } else {
       // A box of other blocks, or words outside any block.
       let words = '';
@@ -638,6 +813,17 @@ function markdownOf(
   block(content);
   return blocks.join('\n\n');
 }
+
+/** Whether the app's notes say an element sets two to four blocks in a row. */
+const isRow = (/** @type {Element} */ element) =>
+  /^row\b/.test(element.getAttribute('data-atlas-flow') ?? '') &&
+  element.children.length >= 2 &&
+  element.children.length <= 4;
+
+/** Whether the app's notes say an element is framed, with a heading first: a card. */
+const isCard = (/** @type {Element} */ element) =>
+  /\bframed\b/.test(element.getAttribute('data-atlas-look') ?? '') &&
+  /^h[1-6]$/i.test(element.firstElementChild?.tagName ?? '');
 
 /** Whether an element stands in the line of text. */
 const isInline = (/** @type {Element} */ element) =>
@@ -1043,6 +1229,7 @@ const importer = {
     ].join('\n'),
     widens: wideningsOf,
     tryPage,
+    cannotTry,
   },
   fetch: { addresses: (url) => (isPage(url) ? [url.trim()] : []) },
   // A window shows the page itself; the tests' shell hands over what the site answers.

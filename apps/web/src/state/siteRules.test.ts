@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { SiteTrial, SiteTrialLayout } from '@atlas/importer-api';
-import { httpsAddress, layoutInWords, SAVED_PAGE_LAYOUT_NOTE, trialInWords } from './siteRules';
+import {
+  checkSiteRules,
+  type AtlasImporter,
+  type SiteRules,
+  type SiteTrial,
+  type SiteTrialLayout,
+  type SiteTrialRequest,
+} from '@atlas/importer-api';
+import {
+  httpsAddress,
+  layoutInWords,
+  pageWidthInWords,
+  readByInWords,
+  SAVED_PAGE_LAYOUT_NOTE,
+  trialInWords,
+  trialRead,
+  trierFor,
+  tryRulesOn,
+} from './siteRules';
 
 const trial = (fields: Partial<SiteTrial>): SiteTrial => ({
   part: 0,
@@ -230,5 +247,170 @@ describe('the layout a trial found, in words', () => {
   it('comes after the rest of what the reader understood', () => {
     const lines = trialInWords(trial({ type: 'wiki', layout: layout({ cards: 1 }) }));
     expect(lines.at(-1)).toBe('Layout found: 1 card.');
+  });
+});
+
+describe('which part or reader read a saved page, in words', () => {
+  it('names the part, the reader of a part of its own, or the reader of a file of defaults', () => {
+    expect(readByInWords(trial({ part: 1, type: 'guide' }))).toBe(
+      'Part 2 of the file read it, as a page of a guide.',
+    );
+    expect(readByInWords(trial({ part: 0, reader: 'rules' }))).toBe(
+      'Part 1 of the file read it, as a page of a wiki.',
+    );
+    expect(readByInWords(trial({ part: 0, reader: 'lantern-pages' }))).toBe(
+      'Part 1 of the file read it with the reader “lantern-pages”, as a page of a wiki.',
+    );
+    const defaults = trial({
+      part: null,
+      reader: 'lantern-pages',
+      notes: ['Read under its heading.'],
+    });
+    expect(trialRead(defaults)).toBe(true);
+    expect(trialInWords(defaults).slice(0, 2)).toEqual([
+      'The reader “lantern-pages” read it with this file’s settings, as a page of a wiki.',
+      'Read under its heading.',
+    ]);
+    expect(trialRead(trial({ part: null }))).toBe(false);
+    expect(readByInWords(trial({ part: null }))).toBeNull();
+  });
+});
+
+describe('how a trial laid the page out, in words', () => {
+  const seen: SiteTrialLayout = {
+    read: 'seen',
+    notes: false,
+    sideBySide: 0,
+    cards: 0,
+    cardTitles: [],
+    rows: 0,
+    columns: 0,
+    centred: 0,
+    headings: 0,
+    hidden: 0,
+    leftOut: 0,
+  };
+
+  it('says which of the two ways the layout was read, in place of the note on saved pages', () => {
+    const laidOut = layoutInWords({ ...seen, notes: true, sideBySide: 1 }, 'laid-out');
+    expect(laidOut[0]).toMatch(/^The app laid the page out with the style sheets saved inside it/u);
+    expect(laidOut).not.toContain(SAVED_PAGE_LAYOUT_NOTE);
+    const linked = layoutInWords(seen, 'linked-sheets');
+    expect(linked[0]).toMatch(/^The saved page links to style sheets it does not hold/u);
+    expect(linked).not.toContain(SAVED_PAGE_LAYOUT_NOTE);
+    // A file that reads the layout as stated is not laid out: no sentence on how.
+    expect(layoutInWords({ ...seen, read: 'stated' }, 'laid-out')[0]).toBe(
+      'The layout is read only as the page’s HTML states it.',
+    );
+  });
+
+  it('says how wide the game’s pages are shown', () => {
+    expect(layoutInWords({ ...seen, pageWidth: 'wide' }, 'laid-out')).toContain(
+      'The game’s pages are shown wide, about 1,000 pixels, as the file says (layout.pageWidth).',
+    );
+    expect(pageWidthInWords('full')).toBe(
+      'The game’s pages are shown as wide as the window, as the file says (layout.pageWidth).',
+    );
+  });
+});
+
+describe('the importer that tries a file', () => {
+  const rulesOf = (value: unknown): SiteRules => {
+    const checked = checkSiteRules(value);
+    if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
+    return checked.rules;
+  };
+  const READER_FILE = rulesOf({
+    format: 'atlas-site-rules',
+    version: 1,
+    site: { id: 'reed-wiki', name: 'Reed Wiki', game: 'Reeds', hosts: ['wiki.reed.example'] },
+    parts: [{ type: 'wiki', reader: 'lantern-pages', start: '/' }],
+  });
+  const REFUSAL = rulesOf({
+    format: 'atlas-site-rules',
+    version: 1,
+    refusal: {
+      id: 'tide-guides',
+      name: 'Tide Guides',
+      domains: ['tide.example'],
+      notice: 'Not read.',
+    },
+  });
+  const asked: SiteTrialRequest[] = [];
+  const importer = (cannotTry?: (rules: SiteRules) => string | null) =>
+    ({
+      id: 'reeds',
+      sites: {
+        readers: ['lantern-pages'],
+        files: [],
+        ...(cannotTry ? { cannotTry } : {}),
+        tryPage: async (request: SiteTrialRequest) => {
+          asked.push(request);
+          const html = request.layOut
+            ? await request.layOut({ html: request.html, url: request.url })
+            : null;
+          return { part: 0, reader: 'lantern-pages', headings: html ? 1 : 0, problems: [] };
+        },
+      },
+    }) as unknown as AtlasImporter;
+
+  it('is the first that says it can, else why none can, in a full sentence', () => {
+    expect(trierFor(READER_FILE, [])).toEqual({
+      problem: 'No importer of this app can try a file on a saved page.',
+    });
+    expect(trierFor(null, [importer(() => null)])).toEqual({
+      problem: 'The file has problems, so it cannot be tried. Once its form is right, it can be.',
+    });
+    expect('importer' in trierFor(READER_FILE, [importer(() => null)])).toBe(true);
+    expect(trierFor(READER_FILE, [importer(() => 'It reads no saved pages.')])).toEqual({
+      problem: 'It reads no saved pages.',
+    });
+    // An importer that does not say tries parts read by rules only.
+    expect(trierFor(READER_FILE, [importer()])).toEqual({
+      problem: 'This importer can try only a part read by rules on a saved page.',
+    });
+    expect(trierFor(REFUSAL, [importer()])).toEqual({
+      problem: 'This importer can try only a part read by rules on a saved page.',
+    });
+    const other = rulesOf({
+      ...READER_FILE,
+      parts: [{ type: 'wiki', reader: 'marsh-pages', start: '/' }],
+    });
+    expect('importer' in trierFor(other, [importer(() => null)])).toBe(true);
+    expect(trierFor(other, [importer(() => 'No.')])).toEqual({
+      problem:
+        'No importer of this app has the reader “marsh-pages”, so this file cannot be tried. Check the name of the reader in the file against the guide to writing a file.',
+    });
+  });
+
+  it('lays the page out in a frame of its own when the importer asks, and closes it', async () => {
+    const frame = { opened: 0, closed: 0 };
+    const openFrame = () => {
+      frame.opened++;
+      return Promise.resolve({
+        layOut: () => Promise.resolve({ kind: 'noted' as const, html: '<main></main>' }),
+        close: () => {
+          frame.closed++;
+        },
+      });
+    };
+    const tried = await tryRulesOn(
+      READER_FILE,
+      { html: '<main></main>', address: 'https://wiki.reed.example/wiki/Reeds' },
+      [importer(() => null)],
+      openFrame,
+    );
+    expect(tried).toMatchObject({
+      result: { reader: 'lantern-pages', headings: 1 },
+      layout: 'laid-out',
+    });
+    expect(asked.at(-1)?.url).toBe('https://wiki.reed.example/wiki/Reeds');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(frame).toEqual({ opened: 1, closed: 1 });
+    expect(
+      await tryRulesOn(READER_FILE, { html: '<main></main>', address: null }, [
+        importer(() => null),
+      ]),
+    ).toEqual({ problem: 'Give the address the page was saved from first.' });
   });
 });
