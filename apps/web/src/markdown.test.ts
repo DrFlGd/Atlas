@@ -43,6 +43,26 @@ describe('renderGuideMarkdown', () => {
   });
 });
 
+describe('fixed-width text', () => {
+  it('keeps a fenced block character for character, in a fence longer than any run inside', () => {
+    const text = [
+      '+----------+-----+',
+      '| A  table |  3  |',
+      '+----------+-----+',
+      '',
+      '',
+      '    ``` <not a tag> & *not emphasis*',
+      '  trailing spaces   ',
+    ].join('\n');
+    const html = renderGuideMarkdown(
+      ['Before.', '', '````', text, '````', '', 'After.'].join('\n'),
+    );
+    const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    expect(html).toContain(`<pre><code>${escaped}\n</code></pre>`);
+    expect(html).toContain('<p>After.</p>');
+  });
+});
+
 describe('in-app links', () => {
   const known = new Set(['demo:loc:0412', 'demo:guide:walk', 'demo:checklist:waystones']);
   const options = { isAppTarget: (id: string) => known.has(id) };
