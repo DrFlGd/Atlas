@@ -2,15 +2,17 @@ import { mkdir } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { collectErrors } from './helpers';
 import { expect, test } from './layout';
-import { DOWNLOADS_BUILD, mock, pickSiteFile, realErrors, setUp } from './fakeShell';
+import { DOWNLOADS_BUILD, mock, pickSavedPage, pickSiteFile, realErrors, setUp } from './fakeShell';
 
 /**
  * Settings, "Sites": the site rules files the importers read sites by,
  * against the stand-in shell of `fakeShell.ts` and the made-up "Other
  * wikis" importer (`other-wikis-importer.js` in the importer contract's
- * demo folder), which comes with the defaults of its reader and a file for
- * a made-up wiki. Only Atlas Importer has the Sites folder, so these tests
- * run in the build with downloads.
+ * demo folder), which comes with the defaults of its reader, a file for a
+ * made-up wiki and a refusal file for a made-up wiki farm, and tries a file
+ * read by rules on a saved page. Every page here is made up. Only Atlas
+ * Importer has the Sites folder, so these tests run in the build with
+ * downloads.
  */
 
 test.use({ layout: 'standard' });
@@ -137,13 +139,13 @@ test('lists the files, adds one of the person’s off until switched on, and sav
   await expect(defaults).toHaveAttribute('data-on', 'true');
   expect((await mock(page)).sites.switches.off).toEqual([]);
 
-  // A part read by rules is checked, and this version says it cannot read it yet.
+  // A part read by rules is checked, and the importer says it only tries it on a saved page.
   await pickSiteFile(page, { name: 'lantern.json', text: JSON.stringify(BY_RULES) });
   await sites.getByTestId('sites-add').click();
   await sites.getByTestId('sites-confirm-off').click();
   const lantern = row(page, 'own/lantern-guide.atlas-site.json');
   await expect(lantern.getByTestId('site-problems')).toHaveText(
-    'Part 1: This version cannot read a part read by rules yet.',
+    'Part 1: is read by rules, which this importer only tries on a saved page: it does not read the site by it.',
   );
 
   // The guide, with what the importer says of its readers, and the schema.
@@ -165,4 +167,179 @@ test('lists the files, adds one of the person’s off until switched on, and sav
   await sites.screenshot({ path: `${SHOTS}/sites-removed.png` });
 
   expect(realErrors(errors)).toEqual([]);
+});
+
+/** Made-up guide pages, as saved from a made-up site. */
+const GUIDE_RULES = {
+  format: 'atlas-site-rules',
+  version: 1,
+  site: {
+    id: 'cove-guide',
+    name: 'Cove Guide',
+    game: 'Cove',
+    hosts: ['guide.example.org'],
+    licence: { blank: true },
+  },
+  parts: [
+    {
+      type: 'guide',
+      reader: 'rules',
+      start: '/cove',
+      reading: { ways: ['browse'] },
+      pages: { include: ['/cove/*'] },
+      contents: { from: 'menu', links: 'nav.menu li a', groups: 'nav.menu li.group' },
+      article: {
+        content: 'main .text',
+        title: 'main h1',
+        remove: ['.notice', '.promo'],
+        credit: 'main .byline',
+      },
+      pictures: { full: 'attribute', fullAttribute: 'data-large' },
+      order: { from: 'next', next: 'a.next-page' },
+    },
+  ],
+};
+
+const SAVED_PAGE = (canonical: boolean) => `<!doctype html>
+<html><head><title>The Old Quay | Cove Guide</title>
+${canonical ? '<link rel="canonical" href="https://guide.example.org/cove/old-quay">' : ''}
+<script>window.ran = true;</script></head>
+<body>
+<nav class="menu"><ul>
+<li class="group">Arrival</li>
+<li><a href="/cove/harbour">The Harbour</a></li>
+<li><a href="/cove/old-quay">The Old Quay</a></li>
+<li class="group">The Hills</li>
+<li><a href="/cove/lookout">The Lookout</a></li>
+</ul></nav>
+<main>
+<h1>The Old Quay</h1>
+<p class="byline">By A. Writer, 3 March 2026</p>
+<div class="text">
+<p class="notice">Made-up notice to leave out.</p>
+<h2>Getting there</h2>
+<p>Walk past the nets and the lamp posts until the stones turn green.</p>
+<img src="/img/quay-small.png" data-large="/img/quay.png" alt="The quay">
+<h2>What to find</h2>
+<p>Three crates, a rope and a bell.</p>
+<img src="/img/bell-small.png" data-large="/img/bell.png" alt="The bell">
+<table><tr><td>Crate</td><td>3</td></tr></table>
+</div>
+<a class="next-page" href="/cove/lookout">Next</a>
+</main>
+</body></html>`;
+
+test.describe('what a file widens, and trying a file on a saved page', () => {
+  test.use({ deviceScaleFactor: 2 });
+
+  test('lists what a file of the person’s widens before it is on, and on its row', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const sites = await openSites(page);
+
+    // The refusal file the importer comes with.
+    const refusal = row(page, 'other-wikis/quiet-archive.refused.atlas-site.json');
+    await expect(refusal).toContainText('Quiet Archive wikis');
+    await expect(refusal).toContainText('Refused: the importers never read these sites');
+    await expect(refusal.getByTestId('site-hosts')).toHaveText('Host: quiet-archive.example');
+
+    // A file that adds a way for a host, and reads a host the importer refuses.
+    await pickSiteFile(page, {
+      name: 'wider.json',
+      text: JSON.stringify({
+        ...OWN_HARBOUR,
+        site: {
+          ...OWN_HARBOUR.site,
+          hosts: ['harbour.example.net', 'north.quiet-archive.example'],
+        },
+        parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['window', 'browse'] } }],
+      }),
+    });
+    await sites.getByTestId('sites-add').click();
+    const confirm = sites.getByTestId('sites-confirm');
+    await expect(confirm).toContainText('It widens the limits of the importers’ files.');
+    await expect(confirm.getByTestId('sites-confirm-widens').locator('li')).toHaveText([
+      'Part 1, reading.ways: adds In a window for harbour.example.net.',
+      'site.hosts, entry 2: reads north.quiet-archive.example, which the file “quiet-archive.refused.atlas-site.json” of the importer refuses: This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
+    ]);
+    await confirm.screenshot({ path: `${SHOTS}/reader-widens-confirm.png` });
+
+    await confirm.getByTestId('sites-confirm-on').click();
+    const own = row(page, 'own/harbour-wiki.atlas-site.json');
+    await expect(own).toHaveAttribute('data-on', 'true');
+    await expect(own.getByTestId('site-widens').locator('li')).toHaveCount(2);
+    await own.screenshot({ path: `${SHOTS}/reader-widens-row.png` });
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('tries a file read by rules on a saved page, and says what it understood', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const sites = await openSites(page);
+    await pickSiteFile(page, { name: 'cove.json', text: JSON.stringify(GUIDE_RULES) });
+    await sites.getByTestId('sites-add').click();
+    await sites.getByTestId('sites-confirm-off').click();
+    const cove = row(page, 'own/cove-guide.atlas-site.json');
+
+    // A page with a canonical link is tried at once; nothing of it runs.
+    await pickSavedPage(page, { name: 'old-quay.html', text: SAVED_PAGE(true) });
+    await cove.getByTestId('site-try').click();
+    const trial = cove.getByTestId('site-trial');
+    await expect(trial).toContainText('the page at https://guide.example.org/cove/old-quay');
+    await expect(trial.getByTestId('site-trial-facts').locator('li')).toHaveText([
+      'Part 1 of the file read it, as a page of a guide.',
+      'Its title is “The Old Quay”.',
+      'The game is “Cove”.',
+      'It has 2 headings, 2 pictures and 1 table.',
+      'Every picture has the address of its full-size file.',
+      'The contents it shows list 3 pages in 2 groups.',
+      'The first: The Harbour, The Old Quay, The Lookout.',
+      'The next page is https://guide.example.org/cove/lookout.',
+      'The credit line reads “By A. Writer, 3 March 2026”.',
+      'Licence: None recorded, as the file says.',
+    ]);
+    await expect(trial.getByTestId('site-trial-text')).toContainText(
+      'Getting there Walk past the nets',
+    );
+    await expect(trial.getByTestId('site-trial-text')).not.toContainText('Made-up notice');
+    await expect(trial.getByTestId('site-trial-problems')).toHaveText(
+      '“article.remove” (.promo) matched nothing on this page.',
+    );
+    expect(await page.evaluate(() => (window as { ran?: boolean }).ran)).toBeUndefined();
+    await trial.screenshot({ path: `${SHOTS}/reader-try-page.png` });
+
+    // A page without one: the person is asked for its address first.
+    await pickSavedPage(page, { name: 'old-quay.html', text: SAVED_PAGE(false) });
+    await cove.getByTestId('site-try').click();
+    await expect(trial).toContainText('The page does not say its own address.');
+    await trial.getByTestId('site-trial-address').fill('guide.example.org/cove/old-quay');
+    await trial.getByTestId('site-trial-go').click();
+    await expect(trial.getByRole('alert')).toHaveText(
+      'Give the whole address, starting with https://.',
+    );
+    await trial.screenshot({ path: `${SHOTS}/reader-try-address.png` });
+    await trial.getByTestId('site-trial-address').fill('https://guide.example.org/cove/old-quay');
+    await trial.getByTestId('site-trial-go').click();
+    await expect(trial.getByTestId('site-trial-facts')).toContainText(
+      'Its title is “The Old Quay”.',
+    );
+
+    // An address the file does not name is answered in words.
+    await pickSavedPage(page, { name: 'elsewhere.html', text: SAVED_PAGE(false) });
+    await cove.getByTestId('site-try').click();
+    await trial.getByTestId('site-trial-address').fill('https://elsewhere.example.org/page');
+    await trial.getByTestId('site-trial-go').click();
+    await expect(trial.getByTestId('site-trial-problems')).toHaveText(
+      'The address https://elsewhere.example.org/page is not on a host the file names.',
+    );
+    await trial.getByTestId('site-trial-close').click();
+    await expect(trial).toHaveCount(0);
+    expect(realErrors(errors)).toEqual([]);
+  });
 });

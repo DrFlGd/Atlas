@@ -2,18 +2,25 @@ import {
   applySiteRules,
   checkSiteRules,
   isReaderDefaults,
+  isRefusal,
+  isSiteFile,
   parseSiteRules,
   problemText,
   readByRules,
+  RULES_READER,
   siteRulesFileName,
   siteRulesHosts,
   siteRulesKey,
   siteRulesProblemsOf,
+  siteRulesWideningsOf,
+  trySitePage,
   type AppliedSiteRules,
   type AtlasImporter,
   type ReadingWay,
   type SiteRules,
+  type SiteFile,
   type SiteRulesProblem,
+  type SiteTrial,
 } from '@atlas/importer-api';
 import guideText from '@atlas/importer-api/site-rules/atlas-site-rules.md?raw';
 import schemaText from '@atlas/importer-api/site-rules/atlas-site-rules.schema.json?raw';
@@ -46,8 +53,16 @@ import { useAtlas } from './store';
  *
  * The app hands each importer the files switched on that it can read
  * (`applySiteRules`) once it is loaded, before anything else, and again
- * whenever the person changes them. Nothing in a file is run: an importer
- * only reads what it says.
+ * whenever the person changes them. A refusal file names no reader, so
+ * every importer with site rules files reads it. Nothing in a file is run:
+ * an importer only reads what it says.
+ *
+ * A file states the limits of reading its site (the ways, the pause, a
+ * refusal), and the person checks each file before it is switched on: a
+ * file of theirs may widen the limits of a file an importer comes with, as
+ * when a site's owner gave permission, and the screen lists what it widens
+ * (`siteRulesWideningsOf`) before it is on and on its row. What no file
+ * can change stays in the app and the importers.
  */
 
 /** A file's key in `sites.json`. */
@@ -77,6 +92,8 @@ export interface SiteEntry {
   title: string;
   /** Whether it holds a reader's defaults rather than a site. */
   defaults: boolean;
+  /** The notice of a refusal file: the hosts it names are never read. Null for any other file. */
+  refusal: string | null;
   /** Its form is right, so it can be switched on (a file that comes with an importer always). */
   readable: boolean;
   /** The types of its parts, in words, each once. */
@@ -93,6 +110,10 @@ export interface SiteEntry {
   replaces: string | null;
   /** What is wrong with it, in plain words: what cannot be read is not read. */
   problems: string[];
+  /** What a file of the person's widens against the files the importers come with, in plain words. */
+  widens: string[];
+  /** It can be tried on a saved page: it has a wiki or guide part read by `rules`, and an importer tries it. */
+  tryable: boolean;
 }
 
 /** A file of the person's that was just checked and kept, waiting to be switched on. */
@@ -101,8 +122,29 @@ export interface SiteToSwitchOn {
   name: string;
   title: string;
   hosts: string[];
+  /** What it widens against the files the importers come with, in plain words. */
+  widens: string[];
   /** It was just added (rather than switched on from the list). */
   added: boolean;
+}
+
+/** "Try on a saved page": one file, one page, and what the reader understood of it. */
+export interface SiteTrying {
+  /** The file's key and title. */
+  key: string;
+  title: string;
+  /** The saved page's file name. */
+  page: string;
+  /**
+   * `address`: the page has no canonical link, and the person is asked for
+   * its address; `trying`; `done` with {@link result}; `failed` with
+   * {@link error}.
+   */
+  phase: 'address' | 'trying' | 'done' | 'failed';
+  /** The page's address, once known. */
+  address: string | null;
+  result: SiteTrial | null;
+  error: string | null;
 }
 
 export const useSites = create<{
@@ -113,6 +155,7 @@ export const useSites = create<{
   /** The problems of a file the person chose that could not be added. */
   refused: { name: string; problems: string[] } | null;
   confirm: SiteToSwitchOn | null;
+  trying: SiteTrying | null;
 }>(() => ({
   phase: 'idle',
   folder: null,
@@ -120,6 +163,7 @@ export const useSites = create<{
   error: null,
   refused: null,
   confirm: null,
+  trying: null,
 }));
 
 /** The shell's Sites folder; only asked for where Sites is offered, which is in the desktop app. */
@@ -216,16 +260,23 @@ function sitesState(): Promise<SitesState> {
 const isOn = (file: OwnFile, switches: SiteSwitches) =>
   file.rules !== null && file.digest !== null && switches.on[file.key] === file.digest;
 
-/** The readers a file names. */
+/** The readers a file names; none for a refusal file. */
 function readersOf(rules: SiteRules): string[] {
+  if (isRefusal(rules)) return [];
   return isReaderDefaults(rules)
     ? [rules.readerDefaults.reader]
     : [...new Set(rules.parts.map((part) => part.reader))];
 }
 
-/** Whether an importer has a reader a file of the person's names. */
+/**
+ * Whether an importer reads a file of the person's: it has a reader the
+ * file names, or the file is a refusal, which every importer with site
+ * rules files reads.
+ */
 const readsFile = (importer: AtlasImporter, rules: SiteRules) =>
-  readersOf(rules).some((reader) => importer.sites?.readers.includes(reader));
+  isRefusal(rules)
+    ? importer.sites !== undefined
+    : readersOf(rules).some((reader) => importer.sites?.readers.includes(reader));
 
 /** The files an importer comes with, checked: those whose form is wrong are left out. */
 function builtInFiles(importer: AtlasImporter): { name: string; rules: SiteRules }[] {
@@ -278,32 +329,69 @@ export async function applySitesTo(importer: AtlasImporter): Promise<void> {
 // ---------------------------------------------------------------------------
 // The screen
 
-/** A part read by `rules`, in this version: its form is checked, and it is not read yet. */
-const RULES_NOT_YET = 'This version cannot read a part read by rules yet.';
+/** A part read by `rules` that no importer reads: its form is checked, and it is not read. */
+const RULES_NOT_YET = 'no importer of this app reads parts by rules yet, so this part is not read.';
 
 function describe(rules: SiteRules | null, name: string) {
-  if (!rules) return { title: name, defaults: false, types: [], hosts: [], ways: [] };
+  const none = { defaults: false, refusal: null, types: [] as string[], ways: [] as ReadingWay[] };
+  if (!rules) return { ...none, title: name, hosts: [] };
   if (isReaderDefaults(rules)) {
     return {
+      ...none,
       title: `Defaults of the reader “${rules.readerDefaults.reader}”`,
       defaults: true,
-      types: [],
       hosts: siteRulesHosts(rules),
       ways: rules.readerDefaults.reading.ways,
     };
   }
+  if (isRefusal(rules)) {
+    return {
+      ...none,
+      title: rules.refusal.name,
+      refusal: rules.refusal.notice,
+      hosts: siteRulesHosts(rules),
+    };
+  }
   return {
+    ...none,
     title: rules.site.name,
-    defaults: false,
     types: [...new Set(rules.parts.map((part) => TYPE_NAMES[part.type] ?? part.type))],
     hosts: siteRulesHosts(rules),
     ways: [...new Set(rules.parts.flatMap((part) => part.reading?.ways ?? []))],
   };
 }
 
+/** Whether a file has a wiki or guide part read by `rules`, which can be tried on a saved page. */
+const hasRulesPage = (rules: SiteRules | null): rules is SiteFile =>
+  rules !== null &&
+  isSiteFile(rules) &&
+  rules.parts.some((part) => readByRules(part) && part.type !== 'map');
+
+/** The importer that tries a file on a saved page: one that reads by `rules` and tries pages. */
+const trierOf = (importers: readonly AtlasImporter[]) =>
+  importers.find(
+    (importer) => importer.sites?.tryPage && importer.sites.readers.includes(RULES_READER),
+  );
+
+/** What a file of the person's widens, in plain words, by each importer that reads it. */
+function wideningsOf(rules: SiteRules, importers: readonly AtlasImporter[]): string[] {
+  return [
+    ...new Set(
+      importers
+        .filter((importer) => readsFile(importer, rules))
+        .flatMap((importer) => siteRulesWideningsOf(importer, rules).map(problemText)),
+    ),
+  ];
+}
+
 /** The problems a file has that no importer would say: parts no importer has a reader for. */
 function readerProblems(rules: SiteRules, importers: readonly AtlasImporter[]): string[] {
   const has = (reader: string) => importers.some((i) => i.sites?.readers.includes(reader));
+  if (isRefusal(rules)) {
+    return importers.some((importer) => importer.sites)
+      ? []
+      : ['No importer of this app reads sites by site rules files, so nothing reads by this file.'];
+  }
   if (isReaderDefaults(rules)) {
     const reader = rules.readerDefaults.reader;
     return has(reader)
@@ -369,6 +457,8 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
       replacedBy: null,
       replaces: on && replacing ? replacing.title : null,
       problems: [...new Set(problems)],
+      widens: rules ? wideningsOf(rules, importers) : [],
+      tryable: hasRulesPage(rules) && trierOf(importers) !== undefined,
     };
   });
   const builtIn = importers.flatMap((importer) =>
@@ -394,6 +484,8 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
                 ...checked(key, file.rules, [importer]),
               ]),
             ],
+        widens: [],
+        tryable: hasRulesPage(file.rules) && trierOf(importers) !== undefined,
       };
     }),
   );
@@ -456,11 +548,18 @@ export async function switchSite(key: string, on: boolean): Promise<void> {
 
 /** Asks the person to switch a file of theirs on, showing the hosts it names first. */
 export function askSwitchOn(
-  entry: Pick<SiteEntry, 'key' | 'name' | 'title' | 'hosts'>,
+  entry: Pick<SiteEntry, 'key' | 'name' | 'title' | 'hosts' | 'widens'>,
   added = false,
 ): void {
   useSites.setState({
-    confirm: { key: entry.key, name: entry.name, title: entry.title, hosts: entry.hosts, added },
+    confirm: {
+      key: entry.key,
+      name: entry.name,
+      title: entry.title,
+      hosts: entry.hosts,
+      widens: entry.widens,
+      added,
+    },
   });
 }
 
@@ -509,7 +608,8 @@ export async function addSiteFile(): Promise<void> {
   }
   await reload();
   const { title, hosts } = describe(checked.rules, name);
-  askSwitchOn({ key: ownKey(name), name, title, hosts }, true);
+  const widens = wideningsOf(checked.rules, screenImporters);
+  askSwitchOn({ key: ownKey(name), name, title, hosts, widens }, true);
 }
 
 /** Removes a file of the person's: a file an importer comes with that it took the place of counts again. */
@@ -521,6 +621,179 @@ export async function removeSiteFile(name: string): Promise<void> {
     notify(`Could not remove ${name}: ${errorText(error)}`, 'error');
   }
   await reload();
+}
+
+// ---------------------------------------------------------------------------
+// Try on a saved page
+
+/** The rules of a file on the screen, by its key: a file of the person's or one an importer comes with. */
+async function rulesOfKey(key: string): Promise<SiteRules | null> {
+  const state = await sitesState();
+  const own = state.own.find((file) => file.key === key);
+  if (own) return own.rules;
+  for (const importer of screenImporters) {
+    const file = builtInFiles(importer).find((b) => builtInKey(importer.id, b.name) === key);
+    if (file) return file.rules;
+  }
+  return null;
+}
+
+/**
+ * The address a saved page gives itself: its canonical link, when it is a
+ * whole `https` address. Null when it has none, and the person is asked.
+ */
+export function canonicalAddressOf(html: string): string | null {
+  // DOMParser runs nothing of the page: no script, no request.
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const link of doc.querySelectorAll('link[rel][href]')) {
+    const rels = (link.getAttribute('rel') ?? '').toLowerCase().split(/\s+/u);
+    if (!rels.includes('canonical')) continue;
+    return httpsAddress(link.getAttribute('href') ?? '');
+  }
+  return null;
+}
+
+/** A whole `https` address, without its fragment; null for anything else. */
+export function httpsAddress(text: string): string | null {
+  try {
+    const url = new URL(text.trim());
+    if (url.protocol !== 'https:' || !url.hostname) return null;
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** The page the person picked, kept only while the trial is on the screen. */
+let trialPage: { key: string; html: string } | null = null;
+
+/**
+ * "Try on a saved page…" on a file's row: the person picks one page they
+ * saved from the site, the app takes its address from its canonical link
+ * (or asks for it), and the importer that reads by `rules` tries the file
+ * on it and says what it understood. Nothing is kept and nothing is
+ * fetched.
+ */
+export async function trySavedPage(entry: Pick<SiteEntry, 'key' | 'title'>): Promise<void> {
+  trialPage = null;
+  useSites.setState({ trying: null });
+  let picked: { name: string; text: string } | null;
+  try {
+    picked = await shellSites().pickPage();
+  } catch (error) {
+    useSites.setState({
+      trying: {
+        key: entry.key,
+        title: entry.title,
+        page: 'The page',
+        phase: 'failed',
+        address: null,
+        result: null,
+        error: errorText(error),
+      },
+    });
+    return;
+  }
+  if (!picked) return;
+  trialPage = { key: entry.key, html: picked.text };
+  const address = canonicalAddressOf(picked.text);
+  useSites.setState({
+    trying: {
+      key: entry.key,
+      title: entry.title,
+      page: picked.name,
+      phase: address ? 'trying' : 'address',
+      address,
+      result: null,
+      error: null,
+    },
+  });
+  if (address) await runTrial(address);
+}
+
+/** The address the person gave for a saved page without a canonical link. */
+export async function tryWithAddress(text: string): Promise<boolean> {
+  const address = httpsAddress(text);
+  if (!address) return false;
+  await runTrial(address);
+  return true;
+}
+
+async function runTrial(address: string): Promise<void> {
+  const trying = useSites.getState().trying;
+  const page = trialPage;
+  if (!trying || page?.key !== trying.key) return;
+  const settle = (patch: Partial<SiteTrying>) => {
+    const now = useSites.getState().trying;
+    // The person may have closed it, or started another, meanwhile.
+    if (now?.key === trying.key && now.page === trying.page) {
+      useSites.setState({ trying: { ...now, ...patch } });
+    }
+  };
+  settle({ phase: 'trying', address, result: null, error: null });
+  try {
+    const rules = await rulesOfKey(trying.key);
+    const importer = trierOf(screenImporters);
+    if (!hasRulesPage(rules) || !importer) {
+      settle({
+        phase: 'failed',
+        error: 'This file has no wiki or guide part that an importer of this app can try.',
+      });
+      return;
+    }
+    const result = await trySitePage(importer, { rules, url: address, html: page.html });
+    if (result) settle({ phase: 'done', result });
+    else settle({ phase: 'failed', error: 'The importer could not try the file on this page.' });
+  } catch (error) {
+    settle({ phase: 'failed', error: errorText(error) });
+  }
+}
+
+export function closeTrial(): void {
+  trialPage = null;
+  useSites.setState({ trying: null });
+}
+
+const plural = (n: number, one: string, many = `${one}s`) =>
+  `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
+
+/** What the reader understood of a saved page, in plain sentences, in the order the screen shows them. */
+export function trialInWords(trial: SiteTrial): string[] {
+  if (trial.part === null) return [];
+  const lines: string[] = [];
+  const type = trial.type === 'guide' ? 'a guide' : 'a wiki';
+  lines.push(`Part ${trial.part + 1} of the file read it, as a page of ${type}.`);
+  if (trial.title) lines.push(`Its title is “${trial.title}”.`);
+  if (trial.game) lines.push(`The game is “${trial.game}”.`);
+  lines.push(
+    `It has ${plural(trial.headings, 'heading')}, ${plural(trial.pictures, 'picture')} and ${plural(trial.tables, 'table')}.`,
+  );
+  if (trial.pictures > 0) {
+    lines.push(
+      trial.fullPictures === trial.pictures
+        ? trial.pictures === 1
+          ? 'The picture has the address of its full-size file.'
+          : 'Every picture has the address of its full-size file.'
+        : `${plural(trial.fullPictures, 'picture')} of ${trial.pictures.toLocaleString('en')} ${trial.fullPictures === 1 ? 'has' : 'have'} the address of a full-size file.`,
+    );
+  }
+  if (trial.chapters > 0) lines.push(`It is split into ${plural(trial.chapters, 'chapter')}.`);
+  if (trial.contents) {
+    const { count, groups, first } = trial.contents;
+    const inGroups = groups.length > 0 ? ` in ${plural(groups.length, 'group')}` : '';
+    lines.push(`The contents it shows list ${plural(count, 'page')}${inGroups}.`);
+    if (first.length > 0) {
+      lines.push(
+        `The first: ${first.map((entry) => (entry.group ? `${entry.title} (${entry.group})` : entry.title)).join(', ')}.`,
+      );
+    }
+  }
+  if (trial.next) lines.push(`The next page is ${trial.next}.`);
+  else if (trial.type === 'guide') lines.push('No next page was found.');
+  if (trial.credit) lines.push(`The credit line reads “${trial.credit}”.`);
+  if (trial.licence) lines.push(`Licence: ${trial.licence}`);
+  return lines;
 }
 
 /**

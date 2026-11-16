@@ -123,6 +123,7 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "view_open_in_browser",
     "sites_list",
     "sites_pick",
+    "sites_pick_page",
     "sites_add",
     "sites_remove",
     "sites_switch",

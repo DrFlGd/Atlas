@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { sitesOffered } from '../features';
 import { loadImporters } from '../state/importing';
 import {
@@ -6,12 +6,17 @@ import {
   addSiteFile,
   askSwitchOn,
   closeSwitchOn,
+  closeTrial,
   loadSites,
   removeSiteFile,
   saveSiteRulesFile,
   switchSite,
+  trialInWords,
+  trySavedPage,
+  tryWithAddress,
   useSites,
   type SiteEntry,
+  type SiteTrying,
 } from '../state/siteRules';
 import { useAtlas } from '../state/store';
 
@@ -21,7 +26,9 @@ import { useAtlas } from '../state/store';
  * the types of its parts, the hosts it names and the ways of reading it
  * offers, a switch, and what is wrong with it; "Add a rules file…" for a
  * file of the person's, which is off until they have seen its hosts and
- * switched it on; and the guide and the schema to save for writing one.
+ * what it widens and switched it on; "Try on a saved page…" for a file with
+ * a part read by rules; and the guide and the schema to save for writing
+ * one.
  */
 export function SitesSettings() {
   const offered = useAtlas(sitesOffered);
@@ -41,8 +48,13 @@ export function SitesSettings() {
       <p className="muted small">
         The sites the importers read, each described by a site rules file: its name, its addresses,
         the ways its pages can be read and its licence. Files come with the importers, and you can
-        add your own. A file only describes a site: it holds no program, and it can make reading
-        more careful, never less.
+        add your own. A file only describes a site: it holds no program. The limits of reading a
+        site are held in its file, so that they can change when the site or a guide’s author gives
+        permission, and you check each file before you switch it on. A file of yours that reads more
+        than a file of the importers, or reads a site they refuse, says so before it is on. Some
+        things no file changes: the app always says who it is, follows a site’s robots.txt when it
+        reads by itself, pauses between pages, stops at the first refusal and never answers a check
+        that you are a person.
       </p>
       {folder ? (
         <p className="muted small">
@@ -149,6 +161,19 @@ function AddedFile() {
           </li>
         ))}
       </ul>
+      {confirm.widens.length > 0 ? (
+        <>
+          <p>
+            <strong>It widens the limits of the importers’ files.</strong> Switch it on only if the
+            site or the guide’s author gave permission:
+          </p>
+          <ul className="sites-widens" data-testid="sites-confirm-widens">
+            {confirm.widens.map((widening) => (
+              <li key={widening}>{widening}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <div className="row-actions wrap">
         <button
           type="button"
@@ -184,14 +209,17 @@ function SiteList({ entries }: { entries: readonly SiteEntry[] }) {
 }
 
 function SiteRow({ entry }: { entry: SiteEntry }) {
-  const facts = [
-    entry.defaults ? 'For every site its reader recognises by address' : entry.types.join(', '),
-    entry.ways.length > 0
-      ? entry.ways.map((way) => WAY_NAMES[way]).join(', ')
-      : entry.defaults
-        ? ''
-        : 'Ways of its reader',
-  ].filter(Boolean);
+  const trying = useSites((s) => (s.trying?.key === entry.key ? s.trying : null));
+  const facts = entry.refusal
+    ? ['Refused: the importers never read these sites']
+    : [
+        entry.defaults ? 'For every site its reader recognises by address' : entry.types.join(', '),
+        entry.ways.length > 0
+          ? entry.ways.map((way) => WAY_NAMES[way]).join(', ')
+          : entry.defaults
+            ? ''
+            : 'Ways of its reader',
+      ].filter(Boolean);
   const usable = entry.readable || entry.on;
   return (
     <li
@@ -217,10 +245,21 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
             {entry.hosts.join(', ')}
           </span>
         ) : null}
+        {entry.refusal ? <span className="small">{entry.refusal}</span> : null}
         {entry.replacedBy ? (
           <span className="small">
             Your file {entry.replacedBy} is switched on and is used in place of this one.
           </span>
+        ) : null}
+        {entry.widens.length > 0 ? (
+          <div className="small" data-testid="site-widens">
+            It widens the limits of the importers’ files:
+            <ul className="sites-widens">
+              {entry.widens.map((widening) => (
+                <li key={widening}>{widening}</li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         {entry.problems.length > 0 ? (
           <ul className="small sites-problems" data-testid="site-problems">
@@ -246,6 +285,16 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
             <span className="switch-track" aria-hidden="true" />
             {entry.on ? 'On' : 'Off'}
           </label>
+          {entry.tryable ? (
+            <button
+              type="button"
+              className="button button-small"
+              data-testid="site-try"
+              onClick={() => void trySavedPage(entry)}
+            >
+              Try on a saved page…
+            </button>
+          ) : null}
           {entry.own ? (
             <button
               type="button"
@@ -257,7 +306,120 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
             </button>
           ) : null}
         </div>
+        {trying ? <SiteTrialCard trying={trying} /> : null}
       </div>
     </li>
+  );
+}
+
+/** "Try on a saved page": the page's address when it gives none, then what the reader understood. */
+function SiteTrialCard({ trying }: { trying: SiteTrying }) {
+  const [address, setAddress] = useState('');
+  const [wrong, setWrong] = useState(false);
+  const result = trying.result;
+  const lines = result ? trialInWords(result) : [];
+  return (
+    <div
+      className="download-confirm sites-trial"
+      role="group"
+      aria-label={`${trying.title} tried on ${trying.page}`}
+      data-testid="site-trial"
+    >
+      <p>
+        <strong>{trying.title}</strong> tried on <span className="path-inline">{trying.page}</span>
+        {trying.address ? (
+          <>
+            , the page at <span className="path-inline">{trying.address}</span>
+          </>
+        ) : null}
+        . Nothing was kept, and nothing was downloaded.
+      </p>
+      {trying.phase === 'address' ? (
+        <form
+          className="sites-trial-address"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void tryWithAddress(address).then((ok) => {
+              setWrong(!ok);
+            });
+          }}
+        >
+          <label htmlFor="site-trial-address">
+            The page does not say its own address. Which address was it saved from?
+          </label>
+          <div className="row-actions wrap">
+            <input
+              id="site-trial-address"
+              className="text-input"
+              type="url"
+              inputMode="url"
+              placeholder="https://"
+              data-testid="site-trial-address"
+              value={address}
+              onChange={(event) => {
+                setAddress(event.target.value);
+              }}
+            />
+            <button type="submit" className="button button-primary" data-testid="site-trial-go">
+              Try it
+            </button>
+          </div>
+          {wrong ? (
+            <p className="small" role="alert">
+              Give the whole address, starting with https://.
+            </p>
+          ) : null}
+        </form>
+      ) : null}
+      {trying.phase === 'trying' ? <p className="muted">Trying the file on the page…</p> : null}
+      {trying.phase === 'failed' ? (
+        <p className="download-error" role="alert">
+          {trying.error}
+        </p>
+      ) : null}
+      {result && lines.length > 0 ? (
+        <ul className="sites-trial-facts" data-testid="site-trial-facts">
+          {lines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
+      {result?.text ? (
+        <blockquote className="sites-trial-text" data-testid="site-trial-text">
+          {result.text}
+        </blockquote>
+      ) : null}
+      {result && result.problems.length > 0 ? (
+        <>
+          <p>
+            {result.part === null
+              ? 'The file did not read the page:'
+              : result.problems.length === 1
+                ? 'One thing went wrong:'
+                : 'These things went wrong:'}
+          </p>
+          <ul className="sites-problems" data-testid="site-trial-problems">
+            {result.problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </>
+      ) : result ? (
+        <p className="muted small">Every selector of the file matched on this page.</p>
+      ) : null}
+      <div className="row-actions wrap">
+        <button
+          type="button"
+          className="button"
+          data-testid="site-trial-close"
+          onClick={() => {
+            closeTrial();
+          }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
   );
 }

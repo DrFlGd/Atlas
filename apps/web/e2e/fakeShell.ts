@@ -199,6 +199,8 @@ export interface MockShell {
     switches: { on: Record<string, string>; off: string[] };
     /** The file the person chooses at the next "Add a rules file…", or null (they close the dialog). */
     pick: { name: string; text: string } | null;
+    /** The page the person chooses at the next "Try on a saved page…", or null. */
+    page: { name: string; text: string } | null;
     /** What the person saved with "Save the guide…" and "Save the schema…". */
     saved: { what: string; contents: string }[];
   };
@@ -230,7 +232,7 @@ function installFakeShell({
     pictures: {},
     slowSources: 0,
     reports: [],
-    sites: { files: {}, switches: { on: {}, off: [] }, pick: null, saved: [] },
+    sites: { files: {}, switches: { on: {}, off: [] }, pick: null, page: null, saved: [] },
   };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
   const write = (
@@ -425,6 +427,11 @@ function installFakeShell({
       case 'sites_pick': {
         const picked = shell.sites.pick;
         shell.sites.pick = null;
+        return picked;
+      }
+      case 'sites_pick_page': {
+        const picked = shell.sites.page;
+        shell.sites.page = null;
         return picked;
       }
       case 'sites_add':
@@ -816,6 +823,12 @@ export const pickSiteFile = (page: Page, file: { name: string; text: string }) =
   page.evaluate((file) => {
     (window as unknown as { __mockShell: MockShell }).__mockShell.sites.pick = file;
   }, file);
+
+/** The page the person chooses at the next "Try on a saved page…". */
+export const pickSavedPage = (page: Page, saved: { name: string; text: string }) =>
+  page.evaluate((saved) => {
+    (window as unknown as { __mockShell: MockShell }).__mockShell.sites.page = saved;
+  }, saved);
 
 export const setMock = (
   page: Page,
