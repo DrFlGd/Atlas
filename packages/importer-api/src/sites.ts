@@ -49,7 +49,39 @@ export interface SiteInfo {
    * host is not. An app that does not know it leaves it out.
    */
   fileHosts?: string[];
+  /**
+   * Optional: the pause between two pages of the site, in seconds, as the
+   * site rules file it is read by sets it (`reading.pause`, see
+   * `siteRules.ts`), from {@link MIN_SITE_PAUSE} to {@link MAX_SITE_PAUSE}.
+   * The app waits at least this long between two pages of a session of the
+   * site, and never less than its own pause: a file can make it slower,
+   * never faster. An app that does not know it leaves it out.
+   */
+  pause?: number;
+  /**
+   * Optional: the name of the site rules file the importer reads the site
+   * by (`<site id>.atlas-site.json`, or a reader's defaults), for the
+   * person to see where its ways, notice and licence come from.
+   */
+  rulesFile?: string;
+  /**
+   * Optional: the answer for the site's licence that its site rules file
+   * gives (a known licence, words filled in, or none). The importer uses
+   * it for a page that states no licence while the person has not answered
+   * for the site themselves, and the app shows it on the site's screen as
+   * coming from that file. An answer the person gives wins over it.
+   */
+  rulesLicence?: RulesLicence;
 }
+
+/** A licence answer as a site rules file gives it: a {@link SiteLicence} without a time. */
+export type RulesLicence =
+  | Omit<ConfirmedLicence, 'confirmedAt'>
+  | Omit<FilledInLicence, 'confirmedAt'>
+  | Omit<NoLicence, 'confirmedAt'>;
+
+export const MIN_SITE_PAUSE = 1;
+export const MAX_SITE_PAUSE = 60;
 
 export const MAX_SITE_KEY_CHARS = 200;
 export const MAX_NOTICE_CHARS = 500;
@@ -252,7 +284,9 @@ function canRead(
  * What the importer says about the site of `url`, checked: a usable key,
  * the ways it offers that it can read in (it has `fetch` for `fetch`, a
  * `pageReader` for `window`, a `browseReader` for `browse`), each once, its notice trimmed,
- * and its file hosts that are host names, each once. Without
+ * its file hosts that are host names, each once, and what its site rules
+ * file gives (a pause in its bounds, the file's name, a usable licence
+ * answer); anything of those that is not usable is left out. Without
  * {@link AtlasImporter.siteInfo}, or when it gives nothing usable, the site
  * is its host and has one way, as before: `window` for a page that
  * `fetch.inWindow` opens in a window or an importer without `fetch`, else
@@ -273,7 +307,10 @@ export function siteInfoOf(
     given = null;
   }
   if (typeof given !== 'object' || given === null) return fallback;
-  const { key, ways, notice, fileHosts } = given as Record<string, unknown>;
+  const { key, ways, notice, fileHosts, pause, rulesFile, rulesLicence } = given as Record<
+    string,
+    unknown
+  >;
   if (typeof key !== 'string' || key.length > MAX_SITE_KEY_CHARS || !SITE_KEY.test(key)) {
     return fallback;
   }
@@ -288,12 +325,34 @@ export function siteInfoOf(
     if (hosts.length >= MAX_FILE_HOSTS) break;
     if (typeof host === 'string' && HOST_NAME.test(host) && !hosts.includes(host)) hosts.push(host);
   }
+  const file =
+    typeof rulesFile === 'string' && /^[a-z0-9][a-z0-9.-]{0,79}$/u.test(rulesFile)
+      ? rulesFile
+      : null;
+  const answer = rulesLicenceOf(rulesLicence);
   return {
     key,
     ways: offered,
     ...(text ? { notice: text.slice(0, MAX_NOTICE_CHARS) } : {}),
     ...(hosts.length > 0 ? { fileHosts: hosts } : {}),
+    ...(typeof pause === 'number' && pause >= MIN_SITE_PAUSE && pause <= MAX_SITE_PAUSE
+      ? { pause }
+      : {}),
+    ...(file ? { rulesFile: file } : {}),
+    ...(answer ? { rulesLicence: answer } : {}),
   };
+}
+
+/**
+ * A licence answer a site rules file gives, checked as the person's answer
+ * is ({@link siteLicenceOf}), without a time; null for anything else.
+ */
+export function rulesLicenceOf(value: unknown): RulesLicence | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const answer = siteLicenceOf({ ...value, confirmedAt: '2000-01-01T00:00:00.000Z' });
+  if (!answer) return null;
+  const { confirmedAt: _, ...rest } = answer;
+  return rest;
 }
 
 /** The way a site is read: the one the person chose when the importer still offers it, else the importer's first. */

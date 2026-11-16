@@ -45,6 +45,8 @@ pub mod picked;
 mod removal;
 pub mod saves;
 pub mod settings;
+// The person's site rules files, for importers (commands in a build with downloads).
+pub mod sites;
 pub mod styles;
 pub mod tiles;
 
@@ -170,7 +172,8 @@ macro_rules! viewer_commands {
 }
 
 /// The commands the web app can call. A build with the `downloads` feature
-/// adds those for map image downloads and map pages, which `build.rs` and
+/// adds those for map image downloads and map pages, and for the Sites
+/// folder of the person's site rules files, which `build.rs` and
 /// `capabilities/downloads/` list and grant.
 fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync {
     #[cfg(feature = "downloads")]
@@ -200,6 +203,12 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         pageview::view_stop_saving,
         pageview::view_close,
         pageview::view_open_in_browser,
+        sites::commands::sites_list,
+        sites::commands::sites_pick,
+        sites::commands::sites_add,
+        sites::commands::sites_remove,
+        sites::commands::sites_switch,
+        sites::commands::sites_save,
     ];
     #[cfg(not(feature = "downloads"))]
     viewer_commands![]

@@ -9,6 +9,7 @@ import {
   siteLicenceOf,
   type PictureSize,
   type ReadingWay,
+  type RulesLicence,
   type SiteInfo,
   type SiteLicence,
 } from '@atlas/importer-api';
@@ -411,7 +412,7 @@ const LICENCE_TYPE_TEXTS: Record<LicenceType, string> = {
   none: 'Nothing is recorded about permission, and the pages are kept for your own use.',
 };
 
-const typeOf = (licence: SiteLicence | undefined): LicenceType =>
+const typeOf = (licence: SiteLicence | RulesLicence | undefined): LicenceType =>
   licence?.basis === 'permission' ? 'permission' : licence?.basis === 'none' ? 'none' : 'known';
 
 /**
@@ -629,6 +630,88 @@ function licenceAnswerText(licence: SiteLicence): string {
   }
 }
 
+/** What a site's rules file answers for its licence, in words (see `SiteInfo.rulesLicence`). */
+function rulesLicenceText(licence: RulesLicence, file: string): string {
+  switch (licence.basis) {
+    case 'permission':
+      return `This wiki’s licence comes from its site rules file, ${file}: “${licence.name}”. Its pages that state no licence are read under it and kept for your own use.`;
+    case 'none':
+      return `This wiki’s site rules file, ${file}, records no licence for it. Its pages that state no licence are kept for your own use.`;
+    default:
+      return `This wiki’s licence comes from its site rules file, ${file}: ${licence.name}. Its pages that state no licence are read under it.`;
+  }
+}
+
+/**
+ * On a wiki's screen, the licence its site rules file answers, while the
+ * person has not answered for the site themselves: "Change it" keeps an
+ * answer of their own, which counts instead of the file's.
+ */
+function RulesFileLicence({
+  importerId,
+  siteKey,
+  licence,
+  file,
+  disabled,
+}: {
+  importerId: string;
+  siteKey: string;
+  licence: RulesLicence;
+  file: string;
+  disabled: boolean;
+}) {
+  const [changing, setChanging] = useState(false);
+  if (changing) {
+    return (
+      <div className="wiki-licence-change" data-testid="wiki-licence-change">
+        <p className="muted small">
+          Your answer counts instead of the file’s, for pages read from now on. Pages already read
+          keep theirs until they are read again.
+        </p>
+        <LicenceForm
+          initial={{ ...licence, confirmedAt: new Date().toISOString() }}
+          submit="Keep this answer"
+          disabled={disabled}
+          onAnswer={(answer) => {
+            const kept = siteLicenceOf({ ...answer, confirmedAt: new Date().toISOString() });
+            if (!kept) return;
+            void setSiteLicence(importerId, siteKey, kept).then(() => {
+              setChanging(false);
+            });
+          }}
+        >
+          <button
+            type="button"
+            className="button"
+            data-testid="wiki-licence-cancel"
+            onClick={() => {
+              setChanging(false);
+            }}
+          >
+            Cancel
+          </button>
+        </LicenceForm>
+      </div>
+    );
+  }
+  return (
+    <p className="muted small" data-testid="wiki-licence-file" data-type={typeOf(licence)}>
+      {rulesLicenceText(licence, file)}{' '}
+      <button
+        type="button"
+        className="link-button"
+        data-testid="wiki-licence-edit"
+        disabled={disabled}
+        onClick={() => {
+          setChanging(true);
+        }}
+      >
+        Change it
+      </button>
+    </p>
+  );
+}
+
 /**
  * On a wiki's screen, what the person answered for its licence: changed
  * there ("Change it", the same answers as the question) or forgotten, so
@@ -732,7 +815,8 @@ export function WikiReading({
   const way = readingWayOf(site, choices?.way);
   const licence = choices?.licence;
   const sizes = __ATLAS_DOWNLOADS__ && pictures;
-  if (site.ways.length < 2 && !site.notice && !licence && !sizes) return null;
+  const fileLicence = !licence && site.rulesLicence && site.rulesFile ? site.rulesLicence : null;
+  if (site.ways.length < 2 && !site.notice && !licence && !fileLicence && !sizes) return null;
   return (
     <div className="wiki-reading" data-testid="wiki-reading">
       <SiteNotice site={site} />
@@ -756,6 +840,14 @@ export function WikiReading({
           importerId={importerId}
           siteKey={site.key}
           licence={licence}
+          disabled={disabled}
+        />
+      ) : fileLicence ? (
+        <RulesFileLicence
+          importerId={importerId}
+          siteKey={site.key}
+          licence={fileLicence}
+          file={site.rulesFile!}
           disabled={disabled}
         />
       ) : null}
