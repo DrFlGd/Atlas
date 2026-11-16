@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   COLLECTION_NAMES,
   MAP_COLLECTIONS,
+  NO_LICENCE_RECORDED,
   PACK_COLLECTIONS,
   checkPackIntegrity,
+  describePack,
   guideEntrySchema,
+  isForPersonalUse,
+  licenseBasisOf,
+  manifestSchema,
   packDataReadSchema,
   packDataSchema,
   packReadSchemas,
@@ -76,6 +81,124 @@ describe("a guide's source", () => {
     const read = packReadSchemas.guideEntrySchema.safeParse(withExtra);
     expect(read.success).toBe(true);
     expect(read.data!.source).toEqual(guide.source);
+  });
+});
+
+describe('a licence the person filled in, or none recorded', () => {
+  const guide = makeGuidesFixturePack().guides[0]!;
+  const filledIn = {
+    ...guide.source!,
+    license: {
+      name: 'Permission from the site’s owner for personal use',
+      url: 'https://wiki.example.org/wiki/Terms',
+    },
+    licenseBasis: 'permission' as const,
+    licenseGivenBy: 'The site’s owner',
+    licenseGivenOn: '2026-11-16',
+    licenseNote: 'Asked by mail.',
+  };
+  const none = {
+    ...guide.source!,
+    license: { name: NO_LICENCE_RECORDED },
+    licenseBasis: 'none' as const,
+  };
+  /** The pack with its first guide read under `source`. */
+  const packWith = (source: typeof filledIn | typeof none) => {
+    const pack = makeGuidesFixturePack();
+    pack.guides[0] = { ...pack.guides[0]!, source };
+    return pack;
+  };
+
+  it('is a valid pack, written and read, with its new fields kept', () => {
+    for (const source of [filledIn, none]) {
+      const pack = packWith(source);
+      expect(packDataSchema.safeParse(pack).success).toBe(true);
+      const read = packDataReadSchema.safeParse(pack);
+      expect(read.success).toBe(true);
+      expect(read.data!.guides[0]!.source).toEqual(source);
+      expect(checkPackIntegrity(pack)).toEqual([]);
+    }
+  });
+
+  it('leaves a pack without the new fields valid, as before', () => {
+    const pack = makeGuidesFixturePack();
+    expect(pack.guides.some((g) => g.source?.licenseBasis !== undefined)).toBe(false);
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+    expect(packDataReadSchema.safeParse(pack).success).toBe(true);
+    expect(licenseBasisOf(pack.guides[0]!.source!)).toBe('stated');
+    expect(licenseBasisOf({ ...pack.guides[0]!.source!, licenseConfirmed: true })).toBe(
+      'confirmed',
+    );
+  });
+
+  it('opens in an app from before the fields (0.13.0), which drops them and shows the name', () => {
+    // Atlas 0.13.0 reads with the schemas of its time: these without the
+    // new fields, unknown keys dropped (`z.object`).
+    const older = packReadSchemas.guideSourceSchema.omit({
+      licenseBasis: true,
+      licenseGivenBy: true,
+      licenseGivenOn: true,
+      licenseNote: true,
+    });
+    expect(older.parse(filledIn).license.name).toBe(filledIn.license.name);
+    expect(older.parse(none).license).toEqual({ name: NO_LICENCE_RECORDED });
+    expect(older.parse(none)).not.toHaveProperty('licenseBasis');
+    const olderManifest = packReadSchemas.manifestV2Schema.omit({ personalUse: true });
+    const manifest = describePack(packWith(none), {
+      updated: '2026-11-16T10:00:00Z',
+      writtenBy: { name: 'Atlas test', version: '0.0.1' },
+    });
+    expect(manifest.personalUse).toBe(true);
+    expect(olderManifest.parse(manifest)).not.toHaveProperty('personalUse');
+  });
+
+  it('refuses what is wrong when writing, and reads an unknown basis as absent', () => {
+    for (const bad of [
+      { ...filledIn, licenseBasis: 'maybe' },
+      { ...filledIn, licenseGivenOn: 'yesterday' },
+      { ...filledIn, licenseGivenBy: '' },
+      { ...filledIn, licenseNote: 'x'.repeat(1001) },
+      { ...none, license: {} },
+    ]) {
+      expect(
+        guideEntrySchema.safeParse({ ...guide, source: bad }).success,
+        JSON.stringify(bad),
+      ).toBe(false);
+    }
+    const read = packReadSchemas.guideEntrySchema.parse({
+      ...guide,
+      source: { ...filledIn, licenseBasis: 'shared' },
+    });
+    expect(read.source!.licenseBasis).toBeUndefined();
+  });
+
+  it('marks the game for personal use, in its manifest, only for a page filled in or with none', () => {
+    const info = {
+      updated: '2026-11-16T10:00:00Z',
+      writtenBy: { name: 'Atlas test', version: '0.0.1' },
+    };
+    const plain = makeGuidesFixturePack();
+    expect(isForPersonalUse(plain)).toBe(false);
+    expect(describePack(plain, info)).not.toHaveProperty('personalUse');
+    const confirmed = makeGuidesFixturePack();
+    confirmed.guides[0] = {
+      ...confirmed.guides[0]!,
+      source: { ...confirmed.guides[0]!.source!, licenseConfirmed: true },
+    };
+    expect(describePack(confirmed, info)).not.toHaveProperty('personalUse');
+    for (const source of [filledIn, none]) {
+      const pack = packWith(source);
+      const manifest = describePack(pack, info);
+      expect(manifest.personalUse).toBe(true);
+      expect(manifestSchema.parse(manifest)).toEqual(manifest);
+      expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
+    }
+    // Read loosely: anything but `true` reads as absent.
+    const read = packReadSchemas.manifestSchema.parse({
+      ...describePack(plain, info),
+      personalUse: 'yes',
+    });
+    expect(read.schemaVersion === 2 && read.personalUse).toBeFalsy();
   });
 });
 

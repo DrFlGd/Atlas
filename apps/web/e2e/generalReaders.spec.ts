@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
-import { collectErrors, openLibraryGame, storedSetting } from './helpers';
+import { collectErrors, libraryMore, openLibraryGame, storedSetting } from './helpers';
 import { expect, test } from './layout';
 import {
   DOWNLOADS_BUILD,
@@ -262,6 +262,116 @@ test('a page that states no licence is kept only once the person confirms one, w
   await page.locator('[data-testid="library-game"][data-pack="wiki-marsh-example-wiki"]').click();
   await page.getByTestId('wiki-licence-forget').click();
   await expect(page.getByTestId('wiki-licence')).toHaveCount(0);
+  expect(realErrors(errors)).toEqual([]);
+});
+
+test('a page that states no licence can be read under words the person fills in, or with none recorded, and its game is kept for personal use', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  await setUp(page, true, { others: OTHERS });
+  const flow = page.getByTestId('library-flow');
+  const question = page.getByTestId('licence-question');
+  const marshRow = page.locator(`[data-testid="library-game"][data-pack="${MARSH_PACK}"]`);
+
+  // Fill in: the words are required, the address of the terms is https only, the rest optional.
+  await add(page, `${MARSH_WIKI}/Wicks`);
+  await flow.getByTestId('add-how-go').click();
+  await expect(question).toBeVisible({ timeout: 30_000 });
+  await expect(question.getByTestId('licence-answer')).toHaveAttribute('data-type', 'known');
+  await expect(question.getByTestId('licence-type-none')).toContainText(
+    'Nothing is recorded about permission, and the pages are kept for your own use.',
+  );
+  await question.getByTestId('licence-type-permission').click();
+  await expect(question.getByTestId('licence-confirm')).toBeDisabled();
+  await question
+    .getByTestId('licence-words')
+    .fill('Permission from the site’s owner for personal use');
+  await expect(question.getByTestId('licence-confirm')).toBeEnabled();
+  await question.getByTestId('licence-terms').fill(`http://${MARSH_HOST}/wiki/Terms`);
+  await expect(question.getByTestId('licence-terms-error')).toBeVisible();
+  await expect(question.getByTestId('licence-confirm')).toBeDisabled();
+  await question.getByTestId('licence-terms').fill(`https://${MARSH_HOST}/wiki/Terms`);
+  await question.getByTestId('licence-given-by').fill('The wiki’s owner');
+  await question.getByTestId('licence-given-on').fill('2026-11-16');
+  await question.getByTestId('licence-note').fill('Asked by mail.');
+  await page.screenshot({ path: `${SHOTS}/licence-fill-in.png` });
+  await question.getByTestId('licence-confirm').click();
+  await expect(flow).toHaveAttribute('data-phase', 'done', { timeout: 30_000 });
+
+  // Under the page: the words, linked to the terms, with who gave it, when and the note.
+  await page.getByTestId('section-guides').click();
+  await page.getByTestId('guides-tile').filter({ hasText: 'Wicks' }).click();
+  const licence = page.getByTestId('guides-licence');
+  await expect(licence).toHaveAttribute('data-basis', 'permission');
+  await expect(licence).toContainText(
+    'Licence: Permission from the site’s owner for personal use (filled in by you',
+  );
+  await expect(licence).toContainText('given by The wiki’s owner on 16 November 2026');
+  await expect(licence.getByRole('link')).toHaveAttribute(
+    'href',
+    `https://${MARSH_HOST}/wiki/Terms`,
+  );
+  await expect(page.getByTestId('guides-licence-note')).toHaveText('Note: Asked by mail.');
+
+  // The game is kept for personal use: said in the Library's list and on its screen.
+  await openLibrary(page);
+  await expect(marshRow.getByTestId('library-personal-use')).toHaveText('For personal use');
+  await marshRow.click();
+  await expect(
+    page.getByTestId('library-game-pane').getByTestId('library-personal-use'),
+  ).toHaveText('For personal use');
+
+  // The answer is changed on the wiki's screen, to blank; the next page reads under it.
+  const kept = page.getByTestId('wiki-licence');
+  await expect(kept).toHaveAttribute('data-type', 'permission');
+  await expect(kept).toContainText(
+    'You filled in this wiki’s licence: “Permission from the site’s owner for personal use”',
+  );
+  await kept.getByTestId('wiki-licence-edit').click();
+  const change = page.getByTestId('wiki-licence-change');
+  await expect(change.getByTestId('licence-words')).toHaveValue(
+    'Permission from the site’s owner for personal use',
+  );
+  await change.getByTestId('licence-type-none').click();
+  await change.getByTestId('licence-confirm').click();
+  await expect(kept).toHaveAttribute('data-type', 'none');
+  await expect(kept).toContainText('You chose to record no licence for this wiki');
+  await add(page, `${MARSH_WIKI}/Glass`);
+  await expect(flow).toHaveAttribute('data-phase', 'done', { timeout: 30_000 });
+  await expect(question).toHaveCount(0);
+  await flow.getByTestId('library-flow-close').click();
+  await page.getByTestId('section-guides').click();
+  await page.getByTestId('guides-tile').filter({ hasText: 'Glass' }).click();
+  await expect(page.getByTestId('guides-licence')).toHaveAttribute('data-basis', 'none');
+  await expect(page.getByTestId('guides-licence')).toHaveText(
+    'No licence recorded. Kept for personal use.',
+  );
+
+  // Export is not held back; its dialog says what the file is for.
+  await openLibrary(page);
+  await marshRow.click();
+  await libraryMore(page, 'export-pack');
+  await expect(page.getByTestId('export-personal-use')).toHaveText(
+    'This game is kept for personal use. The file is for your own devices.',
+  );
+  await page.keyboard.press('Escape');
+
+  // Blank, answered in the question for another wiki: its game is kept for personal use too.
+  await add(page, `${DUNES_WIKI}/Wicks`);
+  await flow.getByTestId('add-how-go').click();
+  await expect(question).toBeVisible({ timeout: 30_000 });
+  await question.getByTestId('licence-type-none').click();
+  await page.screenshot({ path: `${SHOTS}/licence-blank.png` });
+  await question.getByTestId('licence-confirm').click();
+  await expect(flow).toHaveAttribute('data-phase', 'done', { timeout: 30_000 });
+  await flow.getByTestId('library-flow-close').click();
+  await expect(
+    page
+      .locator(`[data-testid="library-game"][data-pack="${DUNES_PACK}"]`)
+      .getByTestId('library-personal-use'),
+  ).toHaveText('For personal use');
   expect(realErrors(errors)).toEqual([]);
 });
 

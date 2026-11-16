@@ -137,6 +137,11 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
             <span className={`library-kind library-kind-${kind}`}>{KIND_LABEL[kind]}</span>
             {contents ? <span>{contents}</span> : null}
             <span>{originText(listed)}</span>
+            {listed?.personalUse ? (
+              <span className="badge" data-testid="library-personal-use">
+                For personal use
+              </span>
+            ) : null}
             {busy ? <span>Moving files from an older version…</span> : null}
             {shown ? <span className="badge badge-done">Shown</span> : null}
           </p>

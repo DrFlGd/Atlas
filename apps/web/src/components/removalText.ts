@@ -24,7 +24,7 @@ export function imagesAmount(images: { files: number; bytes: number }): string {
 
 /** What the app remembers of a wiki's site, which goes when the wiki is deleted or started again. */
 export const SITE_MEMORY =
-  'its list of pages, the pages that could not be read, the pages you left out, the links and other names of its pages, the pages kept for later, how its pages are read, and the licence you confirmed for it';
+  'its list of pages, the pages that could not be read, the pages you left out, the links and other names of its pages, the pages kept for later, how its pages are read, and what you answered for its licence';
 
 /** What this app still remembers of a site, in words, each part a phrase (see `siteMemory` in `importing.ts`). */
 export function memoryParts(
@@ -40,7 +40,7 @@ export function memoryParts(
     ...(held.leftOut > 0 ? [pages(held.leftOut, 'you left out')] : []),
     ...(held.links > 0 ? ['the links and other names of pages read before'] : []),
     ...(queued > 0 ? [pages(queued, 'kept for later')] : []),
-    ...(held.licence ? ['the licence you confirmed for it'] : []),
+    ...(held.licence ? ['what you answered for its licence'] : []),
     ...(way && held.way ? ['how its pages are read'] : []),
   ];
 }

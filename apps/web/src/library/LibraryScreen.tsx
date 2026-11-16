@@ -262,6 +262,11 @@ function GameList({ openId }: { openId: string | null }) {
               >
                 <span className="library-row-top">
                   <span className="library-row-title">{entry.title}</span>
+                  {listed?.personalUse ? (
+                    <span className="badge" data-testid="library-personal-use">
+                      For personal use
+                    </span>
+                  ) : null}
                   {entry.id === shown ? <span className="badge badge-done">Shown</span> : null}
                 </span>
                 <span className="library-row-line">
@@ -345,7 +350,7 @@ function LibraryStrip() {
         {found ? `, ${found}` : ''}
         {phase.run.stopRequested ? ', stopping after this page' : ''}
         {waitingForPerson(phase.run) ? '. The page window is waiting for you' : ''}
-        {licence ? '. A page waits for you to confirm the wiki’s licence' : ''}
+        {licence ? '. A page waits for you to choose the wiki’s licence' : ''}
       </span>
       <span className="meter meter-small library-strip-meter" aria-hidden="true">
         <span className="meter-fill" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} />

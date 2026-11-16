@@ -188,6 +188,8 @@ pub struct ListedPack {
     pub pages: Vec<SourcePage>,
     /// The game was made in the app from pictures (see `owngame.rs`).
     pub made_in_app: bool,
+    /// The game is kept for personal use (its manifest's `personalUse`).
+    pub personal_use: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -647,6 +649,7 @@ impl Library {
                 pack_version: head.pack_version,
                 pages: head.pages,
                 made_in_app: head.made_in_app,
+                personal_use: head.personal_use,
             });
             true
         };

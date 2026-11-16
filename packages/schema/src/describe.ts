@@ -1,6 +1,8 @@
 import {
   SCHEMA_VERSION,
+  type GuideSource,
   type LayerImages,
+  type LicenseBasis,
   type PackContents,
   type PackManifestV2,
   type PackSource,
@@ -74,6 +76,26 @@ export function recordedImages(manifest: PackData['manifest']): Map<string, Laye
 }
 
 /**
+ * Where the licence of a guide's text comes from: its `licenseBasis`, else
+ * `confirmed` when the person confirmed it, else `stated`.
+ */
+export function licenseBasisOf(source: GuideSource): LicenseBasis {
+  return source.licenseBasis ?? (source.licenseConfirmed ? 'confirmed' : 'stated');
+}
+
+/**
+ * Whether a game is kept for personal use: a page of it was read under a
+ * licence the person filled in, or with none recorded (see
+ * `licenseBasisSchema`).
+ */
+export function isForPersonalUse(data: Pick<PackData, 'guides'>): boolean {
+  return data.guides.some((guide) => {
+    const basis = guide.source ? licenseBasisOf(guide.source) : 'stated';
+    return basis === 'permission' || basis === 'none';
+  });
+}
+
+/**
  * A version 2 manifest for `data`: its identity fields, plus a description
  * of the pack computed from the data and `info`. Field order is fixed, so
  * the same input always gives the same file.
@@ -99,5 +121,6 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
     writtenBy: info.writtenBy,
     ...(info.source ? { source: info.source } : {}),
     contents: describeContents(data, info.images ?? recordedImages(previous)),
+    ...(isForPersonalUse(data) ? { personalUse: true as const } : {}),
   };
 }

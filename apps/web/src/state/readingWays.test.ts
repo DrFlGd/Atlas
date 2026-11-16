@@ -1,4 +1,4 @@
-import { CONFIRMABLE_LICENCES, type AtlasImporter } from '@atlas/importer-api';
+import { CONFIRMABLE_LICENCES, NO_LICENCE_RECORDED, type AtlasImporter } from '@atlas/importer-api';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { importContext } from './importing';
 import { asksHow, DEFAULT_PICTURE_SIZE, siteInLibrary, siteReading, wayFor } from './readingWays';
@@ -143,6 +143,41 @@ describe('the licence the person confirmed', () => {
     const notes = await loadWikiNotes(id);
     expect(notes.sites).toEqual({ 'a.example': { licence, way: 'window' } });
     expect(useWikiNotes.getState().byImporter[id]?.sites).toEqual(notes.sites);
+  });
+
+  it('may be words filled in or no licence, kept and read back beside an answer of 0.13.0', async () => {
+    const id = 'licence-answers';
+    const filledIn = {
+      basis: 'permission' as const,
+      name: 'Permission from the site’s owner for personal use',
+      url: 'https://wiki.example.net/wiki/Terms',
+      givenOn: '2026-11-16',
+      confirmedAt: '2026-11-16T09:00:00.000Z',
+    };
+    const none = {
+      basis: 'none' as const,
+      name: NO_LICENCE_RECORDED,
+      confirmedAt: '2026-11-16T09:00:00.000Z',
+    };
+    // As 0.13.0 kept it: a confirmed licence with no type, which is read as it was.
+    await progressStore().putSetting(SETTINGS.wikiSites(id), {
+      'a.example': { licence, way: 'window' },
+      'b.example': { licence: { ...filledIn, url: 'http://wiki.example.net/' } },
+    });
+    const before = await loadWikiNotes(id);
+    expect(before.sites).toEqual({ 'a.example': { licence, way: 'window' } });
+    await setSiteLicence(id, 'b.example', filledIn);
+    await setSiteLicence(id, 'c.example', none);
+    const expected = {
+      'a.example': { licence, way: 'window' },
+      'b.example': { licence: filledIn },
+      'c.example': { licence: none },
+    };
+    expect(useWikiNotes.getState().byImporter[id]?.sites).toEqual(expected);
+    // Read back from the settings as they were written.
+    const { [id]: _kept, ...others } = useWikiNotes.getState().byImporter;
+    useWikiNotes.setState({ byImporter: others });
+    expect((await loadWikiNotes(id)).sites).toEqual(expected);
   });
 
   it('and the way the page was read reach the importer in its context', () => {

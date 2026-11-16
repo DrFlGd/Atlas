@@ -1,12 +1,12 @@
 import {
   MAX_PAGE_LINKS,
   MAX_SITE_KEY_CHARS,
-  isConfirmedLicence,
   isReadingWay,
   pageKey,
-  type ConfirmedLicence,
+  siteLicenceOf,
   type PictureSize,
   type ReadingWay,
+  type SiteLicence,
 } from '@atlas/importer-api';
 import { create } from 'zustand';
 import { DEFAULT_FOLLOW, isFollowLinks, type FollowLinks } from './followLinks';
@@ -46,8 +46,9 @@ import { SETTINGS, progressStore } from './services';
  * - `wikiSites:<importer id>`: the person's choices for each site of the
  *   importer, by the key the importer gives the site (`siteInfo` of the
  *   contract): how its pages are read, among the ways the importer offers
- *   (`way`), the Creative Commons licence the person confirmed for a
- *   site whose pages state none (`licence`), and the size its pictures are
+ *   (`way`), what the person answered for the licence of a site whose
+ *   pages state none (`licence`: a known licence, words they filled in, or
+ *   none), and the size its pictures are
  *   kept at (`pictures`, see `readingWays.ts`). A choice stays until the
  *   person changes it; the app never changes it by itself.
  *
@@ -84,8 +85,8 @@ export interface WikiFailure {
 export interface SiteChoices {
   /** How its pages are read, as the person chose; the importer's first way until then. */
   way?: ReadingWay;
-  /** The licence the person confirmed for it, when its pages state none. */
-  licence?: ConfirmedLicence;
+  /** What the person answered for it, when its pages state no licence. */
+  licence?: SiteLicence;
   /** The size its pages' pictures are kept at, as the person chose; the app's default until then. */
   pictures?: PictureSize;
 }
@@ -193,17 +194,11 @@ function readSites(value: unknown): Record<string, SiteChoices> {
   const kept: Record<string, SiteChoices> = {};
   for (const [key, entry] of Object.entries(value).slice(-MAX_SITES)) {
     if (!isRecord(entry) || key.length > MAX_SITE_KEY_CHARS) continue;
+    // A licence kept by 0.12.0 or 0.13.0 has no `basis`: it is a confirmed one, as then.
+    const licence = siteLicenceOf(entry.licence);
     const choices: SiteChoices = {
       ...(isReadingWay(entry.way) ? { way: entry.way } : {}),
-      ...(isConfirmedLicence(entry.licence)
-        ? {
-            licence: {
-              name: entry.licence.name,
-              url: entry.licence.url,
-              confirmedAt: entry.licence.confirmedAt,
-            },
-          }
-        : {}),
+      ...(licence ? { licence } : {}),
       ...(isPictureSize(entry.pictures) ? { pictures: entry.pictures } : {}),
     };
     if (holdsChoice(choices)) kept[key] = choices;
@@ -624,11 +619,11 @@ export function setSitePictures(
   return changeSite(importerId, key, (choices) => ({ ...choices, pictures }));
 }
 
-/** Keeps the licence the person confirmed for a site, or forgets it (null). */
+/** Keeps what the person answered for a site's licence, or forgets it (null). */
 export function setSiteLicence(
   importerId: string,
   key: string,
-  licence: ConfirmedLicence | null,
+  licence: SiteLicence | null,
 ): Promise<void> {
   return changeSite(importerId, key, ({ licence: _old, ...choices }) =>
     licence ? { ...choices, licence } : choices,
@@ -639,7 +634,7 @@ export function setSiteLicence(
  * An importer's notes without those of one of its sites (`siteKey`, the
  * key its importer gives the site): its contents, its pages that could
  * not be read, their links and other names, the pages left out, and the
- * person's choices for it (the way and a confirmed licence). `ofSite` says
+ * person's choices for it (the way and the licence answered). `ofSite` says
  * whether an address (or a page key) is of that site. The notes of the
  * importer's other sites, and how far a session follows links, stay.
  */

@@ -542,6 +542,7 @@ function installFakeShell({
           title: string;
           packVersion: string;
           source?: { pages: { url: string; mapId?: string; importedAt?: string }[] };
+          personalUse?: unknown;
         };
         written[request.packId] = manifest.source?.pages ?? [];
         const listed = {
@@ -557,6 +558,8 @@ function installFakeShell({
             url: page.url,
             mapId: page.mapId ?? null,
           })),
+          // As the shell reads it: only `true` marks the game kept for personal use.
+          personalUse: manifest.personalUse === true,
         };
         const count = (file: string) => {
           try {
@@ -617,6 +620,20 @@ function installFakeShell({
           imagesAt: null,
           archive: false,
           packFile: null,
+        };
+      }
+      case 'packfile_options': {
+        // Export is not offered here: this stand-in writes no map pack files.
+        const listed = packs.find((pack) => pack.id === args.id);
+        return {
+          packId: args.id,
+          title: listed?.title ?? '',
+          exportable: false,
+          reason: 'This stand-in shell writes no map pack files.',
+          details: [],
+          wholeLayers: [],
+          defaultNames: { overview: '', standard: '', full: '' },
+          downloading: false,
         };
       }
       default:

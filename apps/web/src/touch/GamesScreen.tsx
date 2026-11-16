@@ -61,6 +61,7 @@ export function GamesScreen() {
                         : 'Comes with the app'
                   }
                   ownGame={canMake && listed?.madeInApp === true && listed.origin === 'maps-folder'}
+                  personalUse={listed?.personalUse === true}
                   listed={listed !== undefined}
                   deletable={listed?.origin === 'maps-folder' && !listed.bundled}
                   busy={library?.busy.includes(entry.id) ?? false}
@@ -104,6 +105,7 @@ function GameRow({
   deletable,
   busy,
   ownGame = false,
+  personalUse = false,
   groupable,
 }: {
   id: string;
@@ -115,6 +117,8 @@ function GameRow({
   busy: boolean;
   /** Made in this app: maps and levels can be added, and it can be renamed. */
   ownGame?: boolean;
+  /** Kept for personal use (see `ListedPack.personalUse`). */
+  personalUse?: boolean;
   /** Another game is here, so it can be shown with it under one title. */
   groupable: boolean;
 }) {
@@ -136,6 +140,7 @@ function GameRow({
           <span className="touch-row-detail">
             {current ? 'Shown · ' : ''}
             {origin}
+            {personalUse ? ' · For personal use' : ''}
             {busy ? ' · moving files…' : ''}
           </span>
           {listed && desktop ? <PackSummary id={id} /> : null}

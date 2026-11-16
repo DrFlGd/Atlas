@@ -83,7 +83,7 @@ describe('DeletePackConfirmView', () => {
     expect(shown).not.toContain('locations, checklists');
     expect(shown).toContain('Only this wiki is deleted. Your other games stay.');
     expect(shown).toContain(
-      'This app also forgets what it remembers of the wiki’s site, wiki.marsh.example: its list of pages, the pages that could not be read, the pages you left out, the links and other names of its pages, the pages kept for later, how its pages are read, and the licence you confirmed for it. Adding the wiki again then asks again how its pages are read.',
+      'This app also forgets what it remembers of the wiki’s site, wiki.marsh.example: its list of pages, the pages that could not be read, the pages you left out, the links and other names of its pages, the pages kept for later, how its pages are read, and what you answered for its licence. Adding the wiki again then asks again how its pages are read.',
     );
     expect(shown).toContain('Also delete my progress for this wiki in this app');
     expect(wiki({ inTitle: 'Sundered Isles' })).toContain(
@@ -236,7 +236,7 @@ describe('what this app still remembers of a site, in words', () => {
       '2 pages you left out',
       'the links and other names of pages read before',
       '4 pages kept for later',
-      'the licence you confirmed for it',
+      'what you answered for its licence',
       'how its pages are read',
     ]);
     expect(memoryParts({ held, queued: 0 }, { way: false })).not.toContain(
