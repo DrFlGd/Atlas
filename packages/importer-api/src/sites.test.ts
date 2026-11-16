@@ -153,6 +153,25 @@ describe('what an importer says about a site', () => {
     expect(() => asImporter({ ...wikis, browseReader: '' })).toThrow(/browseReader/);
   });
 
+  it('may say how the layout of its pages is kept, and their width, as its rules file says', () => {
+    const info = (layoutRead: unknown, pageWidth: unknown) =>
+      siteInfoOf(
+        {
+          ...wikis,
+          siteInfo: () => ({ key: 'a.example', ways: ['fetch'], layoutRead, pageWidth }) as never,
+        },
+        'https://a.example/wiki/A',
+      );
+    expect(info('off', 'wide')).toEqual({
+      key: 'a.example',
+      ways: ['fetch'],
+      layoutRead: 'off',
+      pageWidth: 'wide',
+    });
+    expect(info('stated', 'full')).toMatchObject({ layoutRead: 'stated', pageWidth: 'full' });
+    expect(info('sometimes', 1000)).toEqual({ key: 'a.example', ways: ['fetch'] });
+  });
+
   it('may name the hosts its pages load their files from: host names only, each once', () => {
     const hosts = (fileHosts: unknown) =>
       siteInfoOf(

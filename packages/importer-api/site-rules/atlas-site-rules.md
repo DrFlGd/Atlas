@@ -15,7 +15,7 @@ A site rules file is one JSON file that describes one site to the Atlas Importer
 
 **Words used here.** A _part_ is one map, wiki or guide of a site. A _reader_ is the piece of the Importer that reads a part. A _location_ is a point on a map, and each location has a _type_ (item, enemy, boss and so on). A _session_ is one run of reading pages.
 
-**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
+**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
 
 **Who decides.** The owner checks every file by hand before switching it on. A file states the site's limits: which pages, which ways of reading, which pause, which licence, or that the site is not read at all. The files that come with the Importer state the limits the owner has accepted so far, and a file of the owner's that is switched on wins over them for its site. Some things are no site's to decide and no file can change them: the app's honest name `Atlas/<version>`, `robots.txt` when the app reads by itself, the app's own shortest pause, stopping at the first refusal, never answering a check that asks whether the reader is a person, and never using a window's cookies.
 
@@ -118,7 +118,7 @@ Each entry of `parts` describes one map, wiki or guide. These fields are the sam
 | `licence`  | no                | object                               | What to record as the licence. Wins over `site.licence`                                                                       |
 | `notes`    | no                | text, at most 2,000 characters       | Your remarks on this part                                                                                                     |
 
-A part with `"reader": "rules"` also holds the fields of the sections on the general reader below.
+A part with `"reader": "rules"` also holds the fields of the sections on the general reader below. A wiki or guide part, whichever reader reads it, may also hold `layout` (see "The layout of the pages").
 
 ### Parts with a built-in reader
 
@@ -131,7 +131,7 @@ A built-in reader knows where the content is, so its part holds none of the fiel
 
 **`site.game` and `start` may be left out** when the reader finds the game and its pages from the address itself, as a reader does for an engine whose addresses name the game. The reader then names the game, and `site.name` is only the name the owner sees for the file. A reader that cannot find them from the address says so when the file is added.
 
-A part with a built-in reader may leave out `reading`, `pictures` and `licence`: they then come from that reader's defaults (see "A reader's defaults"). Its `pictures` holds `hosts` only.
+A part with a built-in reader may leave out `reading`, `pictures`, `licence` and `layout`: they then come from that reader's defaults (see "A reader's defaults"). Its `pictures` holds `hosts` only.
 
 ### `reading`
 
@@ -220,6 +220,7 @@ A second shape of the same format gives the defaults of one built-in reader: the
 | `readerDefaults.notice`   | no     | text, at most 500 characters   | The sentence the owner sees for every such site                                      |
 | `readerDefaults.pictures` | no     | object with `hosts`            | Picture hosts every such site's pages use                                            |
 | `readerDefaults.licence`  | no     | object                         | The licence form for every such site, as in `licence`. Without it the owner is asked |
+| `readerDefaults.layout`   | no     | object                         | The layout section for every such site (see "The layout of the pages")               |
 | `notes`                   | no     | text, at most 2,000 characters | Your remarks                                                                         |
 
 ## The general reader for a wiki or a guide
@@ -356,6 +357,60 @@ A site that holds guides for many games, each under its own path, needs one file
 - `game` (optional) reads the game's name from a page: `name` is a selector, `nameEnd` text to cut from the end of its words. Without it, the name is made from the piece (`lantern-quest` becomes "Lantern Quest").
 - A part whose `start` holds `{guide}` is one guide per address, such as a guide written as one long page. Each such guide is a game of its own, named by its title.
 - The pieces are `{game}` and `{guide}` only. A file with no piece describes one site and one game, as before.
+
+## The layout of the pages
+
+Every reader keeps the layout of a page as well as it can tell it, by general rules that need no file: blocks the page sets side by side stay side by side (two to four on a line), a box with a title is a card, a list set on one line is a row, a list flowed in columns stays in columns, and a centred block stays centred. A page read in the app's window carries notes of how the browser laid it out, with the site's style sheets, and those notes count first; a page fetched by itself keeps only the layout its HTML states. Atlas shows each form in its own frames and colours, never the site's.
+
+A wiki or guide part, whichever reader reads it, may hold a `layout` section for what the general rules get wrong on one site, and for the owner's choices about its pages. So may a reader's defaults, for every site of that reader; a part's own entries then win, entry by entry. Leave the section out until a saved page shows a need for it. Every entry is optional.
+
+```json
+{
+  "type": "wiki",
+  "reader": "rules",
+  "start": "/",
+  "pages": { "include": ["/**"] },
+  "contents": { "from": "sitemap" },
+  "article": { "content": "main article", "title": "main h1" },
+  "reading": { "ways": ["fetch", "window", "browse"] },
+  "layout": {
+    "cards": { "select": "div.panel", "title": ".panel-head" },
+    "sideBySide": ["div.two-up"],
+    "oneColumn": ["nav.side-menu"],
+    "row": ["ul.chapter-links"],
+    "leaveOut": [".share-buttons", ".page-tools"],
+    "headings": { "size": 1.3 },
+    "pageWidth": "wide"
+  }
+}
+```
+
+| Field        | Form                                              | Meaning                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`       | `seen`, `stated` or `off`, default `seen`         | `seen` keeps the layout as the browser shows it, where a page carries its notes, else as its HTML states it. `stated` keeps only what the HTML states, for a site whose style sheet misleads. `off` keeps every page in one column, in reading order                                                                                                                                                       |
+| `cards`      | object, see below                                 | Which blocks are cards and which part of each is its title                                                                                                                                                                                                                                                                                                                                                 |
+| `sideBySide` | list of 1 to 20 selectors                         | Blocks whose parts are set side by side, even where the notes or the HTML do not show it clearly: two to four on a line, more in lines one under another                                                                                                                                                                                                                                                   |
+| `oneColumn`  | list of 1 to 20 selectors                         | Blocks never set side by side: neither their parts, nor they beside the blocks next to them, nor their lists in columns. For a narrow menu the owner would sooner read first. Wins over `sideBySide`                                                                                                                                                                                                       |
+| `row`        | list of 1 to 20 selectors                         | Lists, or blocks of short parts, written on one line, a dot between their items                                                                                                                                                                                                                                                                                                                            |
+| `leaveOut`   | list of 1 to 40 selectors                         | Parts that are only the site's controls or decoration, left out of every page, as `article.remove` does for a part read by `rules`                                                                                                                                                                                                                                                                         |
+| `hidden`     | `leaveOut`, `keep` or a list of 1 to 20 selectors | Blocks the browser does not show. `leaveOut` (the default) leaves them out, except tabs, folds, pop-ups and the like that the page shows on request. `keep` keeps them all. A list keeps the blocks it names and leaves the rest to the general rule                                                                                                                                                       |
+| `headings`   | object with `lines`, `size`, `length`             | A line standing alone, all bold and larger than the text, becomes a heading. `lines`: `false` switches that off. `size`: how much larger, from 1 to 4, default 1.2. `length`: the most characters such a line has, 10 to 200, default 80                                                                                                                                                                   |
+| `longLines`  | `even` or `fours`, default `even`                 | More than four blocks on one line: in lines as even as they go (five as three and two, six as three and three), or in lines of four (five as four and one, six as four and two)                                                                                                                                                                                                                            |
+| `pictures`   | `linked`, `all` or `none`                         | Which pictures of the site's home page are kept: `linked`, only those that are a link to a page of the site (a row of tiles that lead to the main areas), with their links; `all`, every one; `none`, none. A link whose picture goes keeps its words. Without it, a reader keeps every picture of a home page, unless the last section of the guide your Importer saves gives that reader another default |
+| `pageWidth`  | `reading`, `wide` or `full`, default `reading`    | How wide the pages are shown in Atlas on a computer or a tablet: `reading`, a column of about 760 pixels; `wide`, about 1,000; `full`, the width of the window. The owner can change it for the game in Guides, and their choice wins. A phone always shows a page as wide as the phone                                                                                                                    |
+
+**`cards`**
+
+| Field       | Form                              | Meaning                                                                                                                                                                                                                |
+| ----------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `select`    | selector                          | Blocks that are cards on this site, whatever the general rule says                                                                                                                                                     |
+| `title`     | selector                          | With `select`: the part of each card that is its title, looked for inside the card. Without it, or where it matches nothing, a heading or a bold line at the card's top is its title, and a card with neither has none |
+| `framed`    | `true` or `false`, default `true` | `false`: a box is not a card because it is framed (a border, a background of its own, a table of one column or a `fieldset`). Only `select` then makes cards                                                           |
+| `titleSize` | number from 1 to 4, default 1.15  | How much larger than the text a line at the top of a framed box must be, when it is not bold, to be the card's title                                                                                                   |
+
+Selectors here are the same as everywhere in a file (see "Selectors"), and are tried on the content of each page. Each selector should match on at least one saved page: "Try on a saved page" lists every entry of `layout` that matched nothing, with the other selectors that matched nothing. Some fields need others: `cards.title` needs `cards.select`, `headings.size` and `headings.length` are not used with `"lines": false`, and with `"read": "off"` the entries that place blocks (`cards`, `sideBySide`, `oneColumn`, `row` and `longLines`) are not used. The Importer names such a field as a problem.
+
+**What to look at on a saved page.** "Try on a saved page" says which layout the reader found: how many sets of blocks side by side, cards and their titles, rows, lists in columns and centred blocks, lines made headings, and blocks left out as hidden or by `leaveOut`. A page saved from a browser carries no notes of its layout, so the trial shows the layout the page's HTML states; layout that comes only from the site's style sheet shows once the owner reads the wiki in the app. Write an entry for what the trial gets wrong, and say in your report which page shows it.
 
 ## A site that is not read
 
@@ -588,7 +643,7 @@ A file is checked three times: its form, its selectors against saved pages, and 
 | The hosts of the pictures in the content       | Each is in `site.hosts` or `pictures.hosts`                                                                        |
 | The list of pages from `contents`              | Its count fits what the site itself shows. Put the count in your report                                            |
 
-**3. One page in the Importer.** After "Add a rules file…", the owner presses "Try on a saved page…" on the file's row and picks one page saved from the site as an `.html` file. The Importer takes the page's address from its canonical link, or asks for it, reads the page with the file and shows what it understood, in plain words: which part read it, the title, the game's name, the first words of the text, the numbers of headings, pictures (and how many have a full-size file), tables and chapters, the contents the page shows with their groups, the next page, the licence it would record, and every selector that matched nothing. Nothing is kept and nothing is downloaded. Tell the owner in your report which page to try and what they should see.
+**3. One page in the Importer.** After "Add a rules file…", the owner presses "Try on a saved page…" on the file's row and picks one page saved from the site as an `.html` file. The Importer takes the page's address from its canonical link, or asks for it, reads the page with the file and shows what it understood, in plain words: which part read it, the title, the game's name, the first words of the text, the numbers of headings, pictures (and how many have a full-size file), tables and chapters, the contents the page shows with their groups, the next page, the licence it would record, the layout it found (see "The layout of the pages"), and every selector that matched nothing. Nothing is kept and nothing is downloaded. Tell the owner in your report which page to try and what they should see.
 
 **A map part** is tried on its data instead: the owner presses "Try on a saved page…" and picks the data file saved from the site as a `.json` file (for `"from": "page"`, the saved map page). The Importer shows the maps it found (how many, their names and sizes, and which are floors of one group), the types (how many, the first few, and which of them can be ticked as found, with a word when the file does not say), the locations of each map (how many, and how many have a description, a link to a page and a picture), the first few locations with their positions, whether every position falls inside its map, the address of one image of each map as the template makes it, every data path that matched nothing, and every value of `types.found` that names no type in the data. Nothing is kept and nothing is downloaded. Tell the owner in your report what they should see.
 
@@ -600,23 +655,23 @@ A file is checked three times: its form, its selectors against saved pages, and 
 
 Some sites need a change to the software, and a few must not be read at all. Do not bend a file to get around either. Write the file for what does fit, and report the rest.
 
-| What you see                                                                                      | What it means                                                    | What you do                                                                                |
-| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Pages need a sign-in or a payment                                                                 | The Importer does not read them, in any way                      | Write no file for those pages. Report it                                                   |
-| The terms forbid automated reading                                                                | The owner decides, not you                                       | Offer `browse` only, put a sentence in `site.notice`, report it                            |
-| The site asks whether the reader is a person, again and again                                     | Reading in a window does not get through, and must not be forced | Offer `browse` only. Report it                                                             |
-| Content appears only after scrolling, or after pressing a tab or "Show more"                      | The general reader keeps what is on the page after loading       | Report which pages and what must be pressed. Needs a change to the software                |
-| The text is drawn as a picture or on a canvas                                                     | There is no text to keep                                         | Report it                                                                                  |
-| The pages read well but lose their layout (cards side by side, tabs, columns)                     | A known limit of every reader today                              | Write the file. Name two example pages in the report                                       |
-| A built-in reader fits the engine but reads the site wrongly                                      | The site changed the engine's look                               | Try `rules` for the part. Report what the built-in reader got wrong                        |
-| A map with a formula for each map, data that is not JSON, or data put together from many requests | Outside the general map reader                                   | Report where the data is, its fields and how a position is counted. Needs a reader in code |
-| A map whose data is read only in a window, or as the owner browses                                | The general map reader reads its data by itself only             | Report it. Needs a change to the software                                                  |
-| A map whose picture is one image, not images by zoom, column and row                              | The format takes it, and the Importer does not read it yet       | Write the part with `image`. Report it                                                     |
-| Positions written as negative numbers counted from the top, as some map scripts keep them         | No arithmetic beyond what `position` describes                   | Report it. Needs a change to the software                                                  |
-| Addresses of data or pictures carry a key that runs out                                           | The site gives access for one visit only                         | Do not copy the key into a file. Report it                                                 |
-| Pages change with a setting the site keeps for the visitor, such as a language or a game version  | A file cannot choose the setting                                 | Report which setting the owner needs                                                       |
-| The site covers several games                                                                     | One file can describe them all                                   | Use `{game}` in `start` (see "One file for every game of a site")                          |
-| The Importer refuses to read the site at all                                                      | A refusal file of the Importer covers it                         | Write no file unless the owner tells you the site gave permission. Report it               |
+| What you see                                                                                      | What it means                                                    | What you do                                                                                   |
+| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Pages need a sign-in or a payment                                                                 | The Importer does not read them, in any way                      | Write no file for those pages. Report it                                                      |
+| The terms forbid automated reading                                                                | The owner decides, not you                                       | Offer `browse` only, put a sentence in `site.notice`, report it                               |
+| The site asks whether the reader is a person, again and again                                     | Reading in a window does not get through, and must not be forced | Offer `browse` only. Report it                                                                |
+| Content appears only after scrolling, or after pressing a tab or "Show more"                      | The general reader keeps what is on the page after loading       | Report which pages and what must be pressed. Needs a change to the software                   |
+| The text is drawn as a picture or on a canvas                                                     | There is no text to keep                                         | Report it                                                                                     |
+| The pages read well but lose their layout (cards side by side, columns)                           | The general rules missed something on this site                  | Describe it in `layout` (see "The layout of the pages"). Name two example pages in the report |
+| A built-in reader fits the engine but reads the site wrongly                                      | The site changed the engine's look                               | Try `rules` for the part. Report what the built-in reader got wrong                           |
+| A map with a formula for each map, data that is not JSON, or data put together from many requests | Outside the general map reader                                   | Report where the data is, its fields and how a position is counted. Needs a reader in code    |
+| A map whose data is read only in a window, or as the owner browses                                | The general map reader reads its data by itself only             | Report it. Needs a change to the software                                                     |
+| A map whose picture is one image, not images by zoom, column and row                              | The format takes it, and the Importer does not read it yet       | Write the part with `image`. Report it                                                        |
+| Positions written as negative numbers counted from the top, as some map scripts keep them         | No arithmetic beyond what `position` describes                   | Report it. Needs a change to the software                                                     |
+| Addresses of data or pictures carry a key that runs out                                           | The site gives access for one visit only                         | Do not copy the key into a file. Report it                                                    |
+| Pages change with a setting the site keeps for the visitor, such as a language or a game version  | A file cannot choose the setting                                 | Report which setting the owner needs                                                          |
+| The site covers several games                                                                     | One file can describe them all                                   | Use `{game}` in `start` (see "One file for every game of a site")                             |
+| The Importer refuses to read the site at all                                                      | A refusal file of the Importer covers it                         | Write no file unless the owner tells you the site gave permission. Report it                  |
 
 **The report.** Hand this over with the file, filled in. It is what the owner reads, so write it in plain words.
 

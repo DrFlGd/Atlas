@@ -35,7 +35,7 @@
  * that asks whether the reader is a person.
  */
 
-import { GAME_ID_PATTERN } from '@atlas/schema';
+import { GAME_ID_PATTERN, PAGE_WIDTHS } from '@atlas/schema';
 import { z } from 'zod';
 import { dataPathProblem, patternProblem, piecesOf, selectorProblem } from './sitePatterns';
 import { CONFIRMABLE_LICENCES, MAX_NOTICE_CHARS, rulesLicenceOf, type RulesLicence } from './sites';
@@ -224,6 +224,103 @@ function licenceFormOf(value: unknown): keyof typeof licenceForms | 'several' | 
   return key ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// The layout of a wiki's or a guide's pages
+
+/**
+ * How a page's layout is kept (`layout.read`): as the browser shows it,
+ * style sheets included (`seen`, from the notes of a page read in the
+ * app's window); only as its HTML states it (`stated`); or not at all, one
+ * column in reading order (`off`).
+ */
+export const LAYOUT_READS = ['seen', 'stated', 'off'] as const;
+export type LayoutRead = (typeof LAYOUT_READS)[number];
+/** Blocks the browser does not show (`layout.hidden`): left out by the general rule, or all kept. */
+export const LAYOUT_HIDDEN = ['leaveOut', 'keep'] as const;
+/** Which pictures of a home page are kept (`layout.pictures`). */
+export const LAYOUT_PICTURES = ['linked', 'all', 'none'] as const;
+export type LayoutPictures = (typeof LAYOUT_PICTURES)[number];
+/** How more than four blocks on one line are set (`layout.longLines`): in even lines, or in fours. */
+export const LAYOUT_LONG_LINES = ['even', 'fours'] as const;
+/** Selectors one list of the layout section holds at most; `leaveOut` holds more. */
+export const MAX_LAYOUT_SELECTORS = 20;
+export const MAX_LAYOUT_LEAVE_OUT = 40;
+
+const layoutSelectors = (max: number) => once(selector, 'selector').min(1).max(max);
+/** A size of words against the page's text, such as 1.2. */
+const sizeOfText = z.number().min(1).max(4);
+
+/**
+ * The `layout` section of a wiki or guide part, and of a reader's
+ * defaults: what one site needs said about the layout of its pages, and
+ * the owner's choices for them. Every entry may be left out, and the
+ * general rules then hold.
+ */
+const layoutSchema = z.strictObject({
+  read: z.enum(LAYOUT_READS).optional(),
+  cards: z
+    .strictObject({
+      select: selector.optional(),
+      title: selector.optional(),
+      framed: z.boolean().optional(),
+      titleSize: sizeOfText.optional(),
+    })
+    .optional(),
+  sideBySide: layoutSelectors(MAX_LAYOUT_SELECTORS).optional(),
+  oneColumn: layoutSelectors(MAX_LAYOUT_SELECTORS).optional(),
+  row: layoutSelectors(MAX_LAYOUT_SELECTORS).optional(),
+  leaveOut: layoutSelectors(MAX_LAYOUT_LEAVE_OUT).optional(),
+  hidden: z.union([z.enum(LAYOUT_HIDDEN), layoutSelectors(MAX_LAYOUT_SELECTORS)]).optional(),
+  headings: z
+    .strictObject({
+      lines: z.boolean().optional(),
+      size: sizeOfText.optional(),
+      length: z.int().min(10).max(200).optional(),
+    })
+    .optional(),
+  longLines: z.enum(LAYOUT_LONG_LINES).optional(),
+  pictures: z.enum(LAYOUT_PICTURES).optional(),
+  pageWidth: z.enum(PAGE_WIDTHS).optional(),
+});
+
+export type SiteLayout = z.infer<typeof layoutSchema>;
+
+/** The problems of a layout section that its fields' forms alone do not show. */
+function layoutProblems(layout: SiteLayout | undefined, at: Path): SiteRulesProblem[] {
+  if (!layout) return [];
+  const problems: SiteRulesProblem[] = [];
+  const add = (path: Path, message: string) => {
+    problems.push({ field: fieldPath([...at, ...path]), message });
+  };
+  if (layout.cards?.title !== undefined && layout.cards.select === undefined) {
+    add(
+      ['cards', 'title'],
+      'is only for cards.select: the title is looked for inside the blocks it names',
+    );
+  }
+  if (layout.headings?.lines === false) {
+    for (const key of ['size', 'length'] as const) {
+      if (layout.headings[key] !== undefined) {
+        add(
+          ['headings', key],
+          'is only for lines made headings, which "lines": false switches off',
+        );
+      }
+    }
+  }
+  if (layout.read === 'off') {
+    for (const key of ['cards', 'sideBySide', 'oneColumn', 'row', 'longLines'] as const) {
+      if (layout[key] !== undefined) {
+        add(
+          [key],
+          'is never used with "read": "off", which keeps every page in one column; leave it out or choose another read',
+        );
+      }
+    }
+  }
+  return problems;
+}
+
 const aboutSchema = z.strictObject({
   by: text(120).optional(),
   on: date.optional(),
@@ -254,6 +351,7 @@ function builtInPartSchema<L extends z.ZodType>(licence: L) {
     reading: readingSchema.optional(),
     pictures: pictureHostsSchema.optional(),
     options: z.record(z.string(), z.unknown()).optional(),
+    layout: layoutSchema.optional(),
     pack: z
       .string()
       .max(64)
@@ -323,6 +421,7 @@ function rulesWikiPartSchema<L extends z.ZodType>(licence: L) {
     pages: pagesSchema,
     contents: contentsSchema,
     article: articleSchema,
+    layout: layoutSchema.optional(),
   });
 }
 
@@ -334,6 +433,7 @@ function rulesGuidePartSchema<L extends z.ZodType>(licence: L) {
     contents: contentsSchema,
     article: articleSchema,
     order: orderSchema,
+    layout: layoutSchema.optional(),
   });
 }
 
@@ -479,6 +579,7 @@ function readerDefaultsFileSchemaWith<L extends z.ZodType>(licence: L) {
       notice: text(MAX_NOTICE_CHARS).optional(),
       pictures: pictureHostsSchema.optional(),
       licence: licence.optional(),
+      layout: layoutSchema.optional(),
     }),
     notes: text(2000).optional(),
   });
@@ -639,6 +740,7 @@ const FIELDS_ELSEWHERE: Record<string, string> = {
   position: 'a map part read by rules',
   options: 'a part with a built-in reader',
   pack: 'a part with a built-in reader',
+  layout: 'a wiki or guide part',
 };
 
 const describeValue = (value: unknown): string =>
@@ -672,6 +774,7 @@ const EXPECTED: Record<string, string> = {
  */
 const FORMS_IN_WORDS: Record<string, string> = {
   'types.found': '"all", "none" or a list of type values',
+  'layout.hidden': '"leaveOut", "keep" or a list of selectors',
 };
 
 /** One zod issue as problems in plain words, with the path it is under. */
@@ -997,6 +1100,10 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
         );
       }
     }
+    if (part.type !== 'map') problems.push(...layoutProblems(part.layout, [...at, 'layout']));
+    else if (!readByRules(part) && part.layout !== undefined) {
+      add([...at, 'layout'], 'is only for a wiki or guide part');
+    }
     if (!readByRules(part)) return;
     const pieces = startPieces(part);
     const onlyStartPieces = (path: Path, text: string) => {
@@ -1113,7 +1220,9 @@ export function checkSiteRules(value: unknown): SiteRulesCheck {
     ];
     if (problems.length > 0) return fail(problems);
     const full = checkAgainst(readerDefaultsFileSchema, value, []);
-    return full.value ? { ok: true, rules: full.value } : fail(full.problems);
+    if (!full.value) return fail(full.problems);
+    const whole = layoutProblems(full.value.readerDefaults.layout, ['readerDefaults', 'layout']);
+    return whole.length > 0 ? fail(whole) : { ok: true, rules: full.value };
   }
 
   const shape = checkAgainst(looseSiteFile, value, []);
