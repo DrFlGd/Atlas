@@ -323,7 +323,7 @@ function attributesOf(tag: string): Map<string, string> {
 }
 
 /** Whether a sheet's address is one this app may keep: `https`, or `http` on this computer (tests). */
-function sheetAddress(href: string, base: string): string | null {
+export function sheetAddress(href: string, base: string): string | null {
   let url: URL;
   try {
     url = new URL(href.trim(), base);

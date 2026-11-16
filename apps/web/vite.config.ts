@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { downloadsEnabled } from './tooling/buildFlags.ts';
+import { layoutNotesPlugin } from './tooling/layoutNotesPlugin.ts';
 import { bundledPackNames, packsPlugin } from './tooling/packsPlugin.ts';
 
 const packsDir = fileURLToPath(new URL('../../packs', import.meta.url));
@@ -13,7 +14,7 @@ const downloads = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
 export default defineConfig({
   // Relative asset URLs let the built app run from any sub-path or a file-like origin.
   base: './',
-  plugins: [react(), packsPlugin({ packsDir, bundle })],
+  plugins: [react(), packsPlugin({ packsDir, bundle }), layoutNotesPlugin()],
   define: { __ATLAS_DOWNLOADS__: JSON.stringify(downloads) },
   // The save reader runs in a module worker (src/saves/saveWorker.ts).
   worker: { format: 'es' },
