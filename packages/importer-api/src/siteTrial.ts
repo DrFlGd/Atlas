@@ -1,6 +1,8 @@
 /**
  * Trying a site rules file on one saved page ("Try on a saved page" under
- * Settings, "Sites"), and what a file widens against the files an importer
+ * Settings, "Sites", and the editor of a rules file, which tries the file
+ * again as it is changed and shows the page as the reader would keep it),
+ * and what a file widens against the files an importer
  * comes with. Both are answered by the importer that reads the file
  * (`ImporterSites.tryPage` and `ImporterSites.widens` of the contract) and
  * checked here before the app shows them: plain data in bounds, nothing
@@ -39,6 +41,40 @@ export interface SiteTrialEntry {
   group?: string;
 }
 
+/**
+ * The game id of the pictures of a trial's page text: a picture there is
+ * `![its words](trial:picture:<n>)`, numbered from 1 in the order of
+ * {@link SiteTrial.pictureList}. It is never an address, so showing the
+ * text loads nothing.
+ */
+export const TRIAL_PICTURES = 'trial';
+
+/** The id a trial's page text gives its picture number `n` (from 1). */
+export const trialPictureId = (n: number): string => `${TRIAL_PICTURES}:picture:${n}`;
+
+/** One picture of a page as the reader would keep it (see {@link SiteTrial.pictureList}). */
+export interface SiteTrialPicture {
+  /** Its id in {@link SiteTrial.page} (see {@link trialPictureId}). */
+  id: string;
+  /** What it shows, in words; empty when the page gives none. */
+  words: string;
+  /** Its address on the site, as text only: the app never loads it. */
+  address?: string;
+  /** The address of its full-size file, when the file's `pictures` finds one. */
+  full?: string;
+  /** The size the page shows it at, in CSS pixels, when the page gives one. */
+  width?: number;
+  height?: number;
+}
+
+/** A selector or data path of the file that matched nothing (see {@link SiteTrial.unmatched}). */
+export interface SiteTrialUnmatched {
+  /** The field that holds it, as `checkSiteRules` names fields, such as `parts[0].article.title`. */
+  field: string;
+  /** The selector or data path, as the file writes it. */
+  value: string;
+}
+
 /** What the reader understood of one saved page. */
 export interface SiteTrial {
   /** The part that read the page (its index in `parts`); null when none did. */
@@ -51,6 +87,24 @@ export interface SiteTrial {
   game?: string;
   /** The first words of the text. */
   text?: string;
+  /**
+   * Optional: the page's text as Atlas would keep it, in the Markdown the
+   * app shows guides in, at most {@link MAX_TRIAL_PAGE} characters. Each
+   * picture is named by its id (see {@link trialPictureId}), never by an
+   * address. A guide split into chapters has each chapter under a heading
+   * of the chapter's title.
+   */
+  page?: string;
+  /** Optional: the pictures of {@link page}, in its order, at most {@link MAX_TRIAL_PICTURES}. */
+  pictureList?: SiteTrialPicture[];
+  /** Optional: the titles of the chapters a one-page guide is split into, in order. */
+  chapterTitles?: string[];
+  /**
+   * Optional: each selector or data path of the file that matched nothing,
+   * by its field, so that the person can go to it. {@link problems} says
+   * the same in words.
+   */
+  unmatched?: SiteTrialUnmatched[];
   headings: number;
   pictures: number;
   /** Pictures that have an address of their full-size file. */
@@ -58,7 +112,10 @@ export interface SiteTrial {
   tables: number;
   /** Chapters a one-page guide is split into; 0 when it is not split. */
   chapters: number;
-  /** The contents the page shows: how many entries, its groups, and the first entries. */
+  /**
+   * The contents the page shows: how many entries, its groups, and the
+   * first entries, at most {@link MAX_TRIAL_ENTRIES}.
+   */
   contents?: { count: number; groups: string[]; first: SiteTrialEntry[] };
   /** The address of the next page, for a guide. */
   next?: string;
@@ -133,9 +190,18 @@ export const MAX_TRIAL_MAPS = 40;
 export const MAX_TRIAL_TYPES = 200;
 
 export const MAX_TRIAL_TEXT = 600;
+/** The longest page text of a trial ({@link SiteTrial.page}), in characters. */
+export const MAX_TRIAL_PAGE = 256 * 1024;
+/** Pictures of a trial's page listed at most. */
+export const MAX_TRIAL_PICTURES = 200;
+/** Entries of a trial's contents, and chapter titles, listed at most. */
+export const MAX_TRIAL_ENTRIES = 200;
 const MAX_WORDS = 300;
 const MAX_LIST = 20;
 const MAX_PROBLEMS = 40;
+
+/** A field's path as `checkSiteRules` names fields: names, `.` and `[n]` only. */
+const FIELD_PATH = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*|\[\d{1,4}\])*$/u;
 
 const words = (value: unknown, max = MAX_WORDS): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined;
@@ -170,15 +236,45 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
           .flatMap((group) => words(group, 200) ?? [])
           .slice(0, MAX_LIST),
         first: list(contentsValue.first)
+          .slice(0, MAX_TRIAL_ENTRIES)
           .flatMap((entry) => {
             const { title, group } = (entry ?? {}) as Record<string, unknown>;
             const name = words(title, 200);
             const under = words(group, 200);
             return name ? [{ title: name, ...(under ? { group: under } : {}) }] : [];
-          })
-          .slice(0, MAX_LIST),
+          }),
       }
     : undefined;
+  const page =
+    typeof answer.page === 'string' && answer.page.trim()
+      ? { page: answer.page.slice(0, MAX_TRIAL_PAGE) }
+      : {};
+  const pictureList = Array.isArray(answer.pictureList)
+    ? { pictureList: list(answer.pictureList).slice(0, MAX_TRIAL_PICTURES).flatMap(trialPictureOf) }
+    : {};
+  const chapterTitles = Array.isArray(answer.chapterTitles)
+    ? {
+        chapterTitles: list(answer.chapterTitles)
+          .slice(0, MAX_TRIAL_ENTRIES)
+          .flatMap((title) => words(title, 200) ?? []),
+      }
+    : {};
+  const unmatched = Array.isArray(answer.unmatched)
+    ? {
+        unmatched: list(answer.unmatched)
+          .slice(0, MAX_PROBLEMS)
+          .flatMap((entry): SiteTrialUnmatched[] => {
+            const { field, value } = (entry ?? {}) as Record<string, unknown>;
+            const said = words(value, 500);
+            return typeof field === 'string' &&
+              field.length <= 200 &&
+              FIELD_PATH.test(field) &&
+              said
+              ? [{ field, value: said }]
+              : [];
+          }),
+      }
+    : {};
   const optional = (key: string, max?: number) => {
     const text = words(answer[key], max);
     return text ? { [key]: text } : {};
@@ -193,6 +289,10 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
     ...optional('title', 200),
     ...optional('game', 200),
     ...optional('text', MAX_TRIAL_TEXT),
+    ...page,
+    ...pictureList,
+    ...chapterTitles,
+    ...unmatched,
     headings: count(answer.headings),
     pictures: count(answer.pictures),
     fullPictures: count(answer.fullPictures),
@@ -207,6 +307,40 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
       .flatMap((problem) => words(problem, 500) ?? [])
       .slice(0, MAX_PROBLEMS),
   };
+}
+
+/** An address given as text, when it is a whole `https` address. */
+const httpsText = (value: unknown): string | undefined =>
+  typeof value === 'string' && /^https:\/\/\S+$/u.test(value) ? value.slice(0, 2048) : undefined;
+
+/** A size in CSS pixels, from 1 to 10,000, else nothing. */
+const shownPixels = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 10_000
+    ? value
+    : undefined;
+
+/** One picture of a trial's page, in bounds; nothing when its id is not a trial picture's. */
+function trialPictureOf(value: unknown): SiteTrialPicture[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+  const given = value as Record<string, unknown>;
+  const id = given.id;
+  if (typeof id !== 'string' || !new RegExp(`^${TRIAL_PICTURES}:picture:\\d{1,4}$`, 'u').test(id)) {
+    return [];
+  }
+  const address = httpsText(given.address);
+  const full = httpsText(given.full);
+  const width = shownPixels(given.width);
+  const height = width === undefined ? undefined : shownPixels(given.height);
+  return [
+    {
+      id,
+      words: words(given.words, 300) ?? '',
+      ...(address ? { address } : {}),
+      ...(full ? { full } : {}),
+      ...(width === undefined ? {} : { width }),
+      ...(height === undefined ? {} : { height }),
+    },
+  ];
 }
 
 /** A whole number in bounds, else 0. */

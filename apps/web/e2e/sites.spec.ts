@@ -398,7 +398,7 @@ test.describe('what a file widens, and trying a file on a saved page', () => {
       'It has 2 headings, 2 pictures and 1 table.',
       'Every picture has the address of its full-size file.',
       'The contents it shows list 3 pages in 2 groups.',
-      'The first: The Harbour, The Old Quay, The Lookout.',
+      'The first: The Harbour (Arrival), The Old Quay (Arrival), The Lookout (The Hills).',
       'The next page is https://guide.example.org/cove/lookout.',
       'The credit line reads “By A. Writer, 3 March 2026”.',
       'Licence: None recorded, as the file says.',
