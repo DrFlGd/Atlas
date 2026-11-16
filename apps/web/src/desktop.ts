@@ -348,6 +348,37 @@ export interface DesktopInfo {
    * them in its own storage.
    */
   gameGroupsFile?: boolean;
+  /**
+   * The Sites folder of the person's site rules files can be used
+   * (`sites`): in a build with downloads, on a desktop. Absent counts as
+   * false.
+   */
+  sites?: boolean;
+}
+
+/** One file of the Sites folder: its text, or why the shell could not read it. */
+export interface ShellSiteFile {
+  name: string;
+  text?: string;
+  problem?: string;
+}
+
+/**
+ * Which site rules files are switched on, as the shell keeps them beside
+ * the files: `on`, the person's files switched on, each with the digest of
+ * the text that was switched on; `off`, the files that come with an
+ * importer and were switched off. The keys are the app's (`siteRules.ts`).
+ */
+export interface SiteSwitches {
+  on: Record<string, string>;
+  off: string[];
+}
+
+/** What the Sites folder holds. */
+export interface SitesListing {
+  folder: string;
+  files: ShellSiteFile[];
+  switches: SiteSwitches;
 }
 
 /** Where a listed pack comes from. */
@@ -1045,6 +1076,23 @@ export interface DesktopBridge {
     delete(gameId: string): Promise<boolean>;
   };
   /**
+   * The Sites folder of the person's site rules files, beside the maps
+   * folder (see `sites`). Only in a build with downloads.
+   */
+  sites: {
+    list(): Promise<SitesListing>;
+    /** Asks for a file and reads it, at most 64 KB. Null when the dialog was closed. */
+    pick(): Promise<{ name: string; text: string } | null>;
+    /** Keeps a checked file in the folder under `name`, in place of one of that name. */
+    add(name: string, text: string): Promise<void>;
+    /** Removes a file, and its switch `key`. Whether it was there. */
+    remove(name: string, key: string): Promise<boolean>;
+    /** Keeps which files are switched on. */
+    switch(switches: SiteSwitches): Promise<SiteSwitches>;
+    /** Asks where to save the guide or the schema, then saves. Null when the dialog was closed. */
+    save(what: 'guide' | 'schema', contents: string): Promise<{ name: string } | null>;
+  };
+  /**
    * The games a person shows under one title, in one file in the maps
    * folder (`game-groups.json`, see `gameGroupsFile`).
    */
@@ -1170,6 +1218,19 @@ function noDownloads(): DesktopBridge['tiles'] {
     photosSnapshot: missing,
     jobs: missing,
     moveJob: missing,
+  };
+}
+
+/** The Sites folder in a build without downloads: none. */
+function noSites(): DesktopBridge['sites'] {
+  const missing = () => Promise.reject(new Error('This app does not read site rules files.'));
+  return {
+    list: missing,
+    pick: missing,
+    add: missing,
+    remove: missing,
+    switch: missing,
+    save: missing,
   };
 }
 
@@ -1310,6 +1371,16 @@ export function createBridge(invoke: Invoke): DesktopBridge {
         call('own_notes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_notes_delete', { gameId }),
     },
+    sites: __ATLAS_DOWNLOADS__
+      ? {
+          list: () => call('sites_list'),
+          pick: () => call('sites_pick'),
+          add: (name, text) => call('sites_add', { name, text }),
+          remove: (name, key) => call('sites_remove', { name, key }),
+          switch: (switches) => call('sites_switch', { switches }),
+          save: (what, contents) => call('sites_save', { what, contents }),
+        }
+      : noSites(),
     gameGroups: {
       read: () => call('game_groups_read'),
       write: (contents, keepCopy) =>

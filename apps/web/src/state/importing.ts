@@ -139,6 +139,7 @@ import {
   type SiteReading,
 } from './readingWays';
 import { SETTINGS, progressStore } from './services';
+import { applySitesTo } from './siteRules';
 import { useAtlas } from './store';
 import {
   forgetSiteNotes,
@@ -355,11 +356,13 @@ function loadImporter(entry: ImporterEntry): Promise<AtlasImporter> {
   let promise = loaded.get(entry.id);
   if (!promise) {
     promise = (import(/* @vite-ignore */ entry.moduleUrl) as Promise<{ default: unknown }>).then(
-      (module) => {
+      async (module) => {
         const importer = asImporter(module.default, `The importer “${entry.title}”`);
         if (importer.id !== entry.id) {
           throw new Error(`The importer “${entry.title}” has a different id than listed.`);
         }
+        // Before it is asked anything: the site rules files switched on.
+        if (__ATLAS_DOWNLOADS__) await applySitesTo(importer);
         return importer;
       },
     );
@@ -370,7 +373,7 @@ function loadImporter(entry: ImporterEntry): Promise<AtlasImporter> {
 }
 
 /** Every importer of this build that loads. */
-async function loadImporters(): Promise<AtlasImporter[]> {
+export async function loadImporters(): Promise<AtlasImporter[]> {
   const entries = useAtlas.getState().config?.importers ?? [];
   const results = await Promise.allSettled(entries.map(loadImporter));
   return results.flatMap((result) => {
@@ -1347,12 +1350,15 @@ async function startRun(
         };
       },
     },
-    // A page read in the window kept from the page before follows after a shorter pause.
+    // A page read in the window kept from the page before follows after a shorter pause;
+    // a site whose rules file sets a longer pause (`SiteInfo.pause`) waits that long.
     (index) => {
       const next = pages[index];
-      return next && keptInWindow(next.importer, next.url, sites[index]?.way)
-        ? pageWindows.pauseBefore(id, next.importer.id, next.url)
-        : RUN_PAUSE_MS;
+      const pause =
+        next && keptInWindow(next.importer, next.url, sites[index]?.way)
+          ? pageWindows.pauseBefore(id, next.importer.id, next.url)
+          : RUN_PAUSE_MS;
+      return Math.max(pause, (sites[index]?.info.pause ?? 0) * 1000);
     },
     firstPauseMs,
   );

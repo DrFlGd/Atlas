@@ -193,6 +193,15 @@ export interface MockShell {
     games?: number;
     update?: boolean;
   }[];
+  /** The Sites folder: its files by name, and which are switched on (`sites.json`). */
+  sites: {
+    files: Record<string, string>;
+    switches: { on: Record<string, string>; off: string[] };
+    /** The file the person chooses at the next "Add a rules file…", or null (they close the dialog). */
+    pick: { name: string; text: string } | null;
+    /** What the person saved with "Save the guide…" and "Save the schema…". */
+    saved: { what: string; contents: string }[];
+  };
 }
 
 /**
@@ -221,6 +230,7 @@ function installFakeShell({
     pictures: {},
     slowSources: 0,
     reports: [],
+    sites: { files: {}, switches: { on: {}, off: [] }, pick: null, saved: [] },
   };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
   const write = (
@@ -403,7 +413,42 @@ function installFakeShell({
   const invoke = async (command: string, args: Record<string, unknown> = {}) => {
     switch (command) {
       case 'desktop_info':
-        return { name: 'Atlas', version: '0.0.0', platform: 'test', downloads };
+        return { name: 'Atlas', version: '0.0.0', platform: 'test', downloads, sites: downloads };
+      case 'sites_list':
+        return {
+          folder: '/maps/Sites',
+          files: Object.keys(shell.sites.files)
+            .sort()
+            .map((name) => ({ name, text: shell.sites.files[name] })),
+          switches: structuredClone(shell.sites.switches),
+        };
+      case 'sites_pick': {
+        const picked = shell.sites.pick;
+        shell.sites.pick = null;
+        return picked;
+      }
+      case 'sites_add':
+        shell.sites.files[args.name as string] = args.text as string;
+        return null;
+      case 'sites_remove': {
+        const name = args.name as string;
+        const had = name in shell.sites.files;
+        /* eslint-disable @typescript-eslint/no-dynamic-delete */
+        delete shell.sites.files[name];
+        delete shell.sites.switches.on[args.key as string];
+        /* eslint-enable @typescript-eslint/no-dynamic-delete */
+        return had;
+      }
+      case 'sites_switch':
+        shell.sites.switches = structuredClone(
+          args.switches as { on: Record<string, string>; off: string[] },
+        );
+        return structuredClone(shell.sites.switches);
+      case 'sites_save': {
+        const what = args.what as string;
+        shell.sites.saved.push({ what, contents: args.contents as string });
+        return { name: what === 'guide' ? 'atlas-site-rules.md' : 'atlas-site-rules.schema.json' };
+      }
       case 'library_list':
         return listing();
       case 'import_open':
@@ -765,6 +810,12 @@ export const browseTo = (page: Page, url: string) =>
   page.evaluate((url) => {
     (window as unknown as { __browseTo: (url: string) => void }).__browseTo(url);
   }, url);
+
+/** The file the person chooses at the next "Add a rules file…". */
+export const pickSiteFile = (page: Page, file: { name: string; text: string }) =>
+  page.evaluate((file) => {
+    (window as unknown as { __mockShell: MockShell }).__mockShell.sites.pick = file;
+  }, file);
 
 export const setMock = (
   page: Page,

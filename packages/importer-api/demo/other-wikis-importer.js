@@ -26,6 +26,13 @@
  *   says where the licence came from: confirmed by the person, filled in by
  *   them (`licenseBasis: 'permission'`, the words as the licence's name),
  *   or none recorded (`licenseBasis: 'none'`).
+ * - What it offers for a site comes from site rules files (`sites`, see
+ *   `../src/siteRules.ts` and the guide in `../site-rules/`): the defaults
+ *   of its one reader, `other-wiki`, and a file for one made-up wiki, the
+ *   Harbour Wiki, which it comes with, and any the person adds for that
+ *   reader. A file can offer fewer ways, a longer pause, its own notice
+ *   and an answer for the wiki's licence; the farm read only as the person
+ *   browses stays so in code, whatever a file says.
  *
  * It is a single plain ES module with no imports, as every importer module
  * must be.
@@ -55,6 +62,137 @@ const NOTICE =
 const BROWSE_ONLY = /\.reading-room\.example$/;
 const BROWSE_NOTICE =
   'The terms of this wiki farm do not allow programs to read its wikis, so this app keeps only the pages you open yourself as you browse; pictures it cannot take from the page stay words.';
+
+/** Its one built-in reader, as site rules files name it. */
+const READER = 'other-wiki';
+/** @typedef {import('../src/index').SiteRules} SiteRules */
+/** @typedef {import('../src/index').SiteRulesLicence} SiteRulesLicence */
+/** @typedef {import('../src/index').SiteRulesProblem} SiteRulesProblem */
+/** @typedef {import('../src/index').AppliedSiteRules} AppliedSiteRules */
+/** @typedef {import('../src/index').ReadingWay} ReadingWay */
+
+/** The site rules files it comes with. */
+const BUILT_IN_SITES = [
+  {
+    name: `${READER}.reader.atlas-site.json`,
+    rules: {
+      format: 'atlas-site-rules',
+      version: 1,
+      readerDefaults: {
+        reader: READER,
+        reading: { ways: ['fetch', 'window', 'browse'] },
+        notice: NOTICE,
+        licence: { ask: true },
+      },
+    },
+  },
+  {
+    name: 'harbour-wiki.atlas-site.json',
+    rules: {
+      format: 'atlas-site-rules',
+      version: 1,
+      site: {
+        id: 'harbour-wiki',
+        name: 'Harbour Wiki',
+        game: 'Harbour',
+        hosts: ['harbour.example.net'],
+        notice: 'The Harbour Wiki asks readers to leave five seconds between pages.',
+      },
+      parts: [{ type: 'wiki', reader: READER, reading: { ways: ['fetch', 'browse'], pause: 5 } }],
+    },
+  },
+];
+
+/** The files it reads by: those the app handed it last, else those it comes with. */
+let applied = /** @type {AppliedSiteRules[]} */ (
+  BUILT_IN_SITES.map((file) => ({
+    ...file,
+    own: false,
+    rules: /** @type {SiteRules} */ (file.rules),
+  }))
+);
+
+/** The problems of one file for this importer, given the files that count before it. */
+function problemsOf(/** @type {SiteRules} */ rules, /** @type {SiteRules[]} */ before) {
+  if ('readerDefaults' in rules) return [];
+  /** @type {SiteRulesProblem[]} */
+  const problems = [];
+  const named = new Set(before.flatMap((other) => ('site' in other ? other.site.hosts : [])));
+  rules.site.hosts.forEach((host, index) => {
+    if (BROWSE_ONLY.test(host)) {
+      problems.push({
+        field: `site.hosts[${index}]`,
+        message:
+          'is a wiki of a farm whose terms allow no programs: it is read only as you browse, whatever a file says',
+      });
+    } else if (named.has(host)) {
+      problems.push({
+        field: `site.hosts[${index}]`,
+        message: 'is named by another file switched on, which counts for it',
+      });
+    }
+  });
+  return problems;
+}
+
+/**
+ * What the files say of a host: the first site file with a part for its
+ * reader that names it, else the reader's defaults; null when none does.
+ */
+function rulesOf(/** @type {string} */ host) {
+  const defaults = applied.find(
+    (file) => 'readerDefaults' in file.rules && file.rules.readerDefaults.reader === READER,
+  );
+  for (const file of applied) {
+    const rules = file.rules;
+    if (!('site' in rules) || !rules.site.hosts.includes(host)) continue;
+    const part = rules.parts.find((p) => p.reader === READER);
+    if (!part) continue;
+    const base =
+      defaults && 'readerDefaults' in defaults.rules ? defaults.rules.readerDefaults : null;
+    const reading = 'reading' in part && part.reading ? part.reading : base?.reading;
+    return {
+      file: file.name,
+      ways: reading?.ways ?? ['fetch', 'window', 'browse'],
+      pause: reading?.pause,
+      notice: rules.site.notice ?? base?.notice,
+      licence: part.licence ?? rules.site.licence ?? base?.licence,
+    };
+  }
+  if (!defaults || !('readerDefaults' in defaults.rules)) return null;
+  const base = defaults.rules.readerDefaults;
+  return {
+    file: defaults.name,
+    ways: base.reading.ways,
+    pause: base.reading.pause,
+    notice: base.notice,
+    licence: base.licence,
+  };
+}
+
+/** The answer for a wiki's licence its file gives: a known licence, words, or none recorded. */
+function answerOfBlock(/** @type {SiteRulesLicence | undefined} */ block) {
+  if (!block) return undefined;
+  if ('known' in block) {
+    const deed = Object.keys(LICENCES).find(
+      (url) => LICENCES[/** @type {keyof typeof LICENCES} */ (url)] === block.known,
+    );
+    return deed ? { name: block.known, url: deed } : undefined;
+  }
+  if ('permission' in block) {
+    return {
+      basis: /** @type {const} */ ('permission'),
+      name: block.permission,
+      ...(block.address ? { url: block.address } : {}),
+      ...(block.from ? { givenBy: block.from } : {}),
+      ...(block.on ? { givenOn: block.on } : {}),
+      ...(block.note ? { note: block.note } : {}),
+    };
+  }
+  if ('blank' in block)
+    return { basis: /** @type {const} */ ('none'), name: 'No licence recorded' };
+  return undefined;
+}
 
 /** The host and slug of a wiki page address, or null. */
 function partsOf(/** @type {string} */ text) {
@@ -178,9 +316,39 @@ const importer = {
   siteInfo(url) {
     const parts = partsOf(url);
     if (!parts) return null;
-    return BROWSE_ONLY.test(parts.host)
-      ? { key: parts.host, ways: ['browse'], notice: BROWSE_NOTICE }
-      : { key: parts.host, ways: ['fetch', 'window', 'browse'], notice: NOTICE };
+    if (BROWSE_ONLY.test(parts.host)) {
+      return { key: parts.host, ways: ['browse'], notice: BROWSE_NOTICE };
+    }
+    const found = rulesOf(parts.host);
+    if (!found) return { key: parts.host, ways: ['fetch', 'window', 'browse'], notice: NOTICE };
+    const answer = answerOfBlock(found.licence);
+    return {
+      key: parts.host,
+      ways: found.ways,
+      ...(found.notice ? { notice: found.notice } : {}),
+      ...(found.pause ? { pause: found.pause } : {}),
+      rulesFile: found.file,
+      ...(answer ? { rulesLicence: answer } : {}),
+    };
+  },
+  sites: {
+    files: BUILT_IN_SITES,
+    readers: [READER],
+    check: (rules) => problemsOf(rules, []),
+    apply(files) {
+      applied = [...files];
+      return files.map((file, index) =>
+        problemsOf(
+          file.rules,
+          files.slice(0, index).map((other) => other.rules),
+        ),
+      );
+    },
+    guide: [
+      '## Readers of the importer “Other wikis”',
+      '',
+      `- \`${READER}\`: a wiki whose pages are at \`https://<host>/wiki/<page>\`, with its contents at \`/wiki/Contents\`. By itself, in a window, as I browse.`,
+    ].join('\n'),
   },
   fetch: { addresses: (url) => (isPage(url) ? [url.trim()] : []) },
   // A window shows the page itself; the tests' shell hands over what the site answers.
@@ -201,8 +369,11 @@ const importer = {
     }
     const stated =
       typeof page.licence === 'string' && page.licence in LICENCES ? page.licence : null;
-    // What the person answered for the wiki, used only for a page that states no licence.
-    const given = stated ? undefined : context.confirmedLicence;
+    // What the person answered for the wiki, else what its site rules file answers,
+    // used only for a page that states no licence.
+    const given = stated
+      ? undefined
+      : (context.confirmedLicence ?? answerOfBlock(rulesOf(parts.host)?.licence));
     const confirmed =
       given && given.basis !== 'permission' && given.basis !== 'none' && given.url in LICENCES
         ? given.url

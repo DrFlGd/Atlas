@@ -1,7 +1,7 @@
 {
   "$schema": "../../gen/schemas/desktop-schema.json",
   "identifier": "main-downloads",
-  "description": "Only in a build with downloads (the `downloads` Cargo feature, ATLAS_ENABLE_DOWNLOADS=1): the main window's commands for downloading map images and their settings, for downloading the location photos a pack lists to be fetched later, for measuring which map images of an imported map exist, for reading pages for an importer that fetches them, and for viewing a map page and saving its images as the person browses. No other window is granted anything.",
+  "description": "Only in a build with downloads (the `downloads` Cargo feature, ATLAS_ENABLE_DOWNLOADS=1): the main window's commands for downloading map images and their settings, for downloading the location photos a pack lists to be fetched later, for measuring which map images of an imported map exist, for reading pages for an importer that fetches them, for viewing a map page and saving its images as the person browses, and for the Sites folder of the person's site rules files (listing, adding a chosen file, removing one, keeping which are switched on, and saving the guide and the schema for writing one). No other window is granted anything.",
   "windows": ["main"],
   "permissions": [
     "allow-tiles-plan",
@@ -28,6 +28,12 @@
     "allow-view-status",
     "allow-view-stop-saving",
     "allow-view-close",
-    "allow-view-open-in-browser"
+    "allow-view-open-in-browser",
+    "allow-sites-list",
+    "allow-sites-pick",
+    "allow-sites-add",
+    "allow-sites-remove",
+    "allow-sites-switch",
+    "allow-sites-save"
   ]
 }
