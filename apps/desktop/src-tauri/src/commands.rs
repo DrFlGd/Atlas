@@ -1262,6 +1262,26 @@ pub async fn library_styles(
     .await
 }
 
+/// The style sheets kept for a game read from a wiki's pages, with their
+/// texts, for the web app to lay its saved pages out as a browser shows
+/// them (see `styles.rs`): none for a game without any. Only in a build
+/// with downloads, which reads pages and builds games again from them.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn library_style_texts(
+    library: LibraryState<'_>,
+    pack_id: String,
+) -> Result<Vec<crate::styles::SheetText>, String> {
+    let library = Arc::clone(&library);
+    blocking(move || {
+        Ok(library
+            .pack_folder(&pack_id)
+            .map(|dir| crate::styles::texts(&dir))
+            .unwrap_or_default())
+    })
+    .await
+}
+
 /// Keeps style sheets of a game read from a wiki's pages, once each, in
 /// its folder (see `styles.rs`), and notes those the web app could not get.
 /// The log says in one line what was kept or why not, when anything was.

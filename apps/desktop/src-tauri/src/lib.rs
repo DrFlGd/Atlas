@@ -196,6 +196,7 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::picture_tiles,
         commands::picture_cancel,
         commands::import_fetch,
+        commands::library_style_texts,
         commands::download_settings_get,
         commands::download_settings_set,
         pageview::view_pages,
