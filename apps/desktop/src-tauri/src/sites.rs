@@ -56,13 +56,16 @@ pub fn sites_folder(shared: &Path) -> PathBuf {
 }
 
 /// Whether `name` is the name of a site rules file as the Sites folder
-/// keeps one: `<id>.atlas-site.json` or `<reader>.reader.atlas-site.json`,
-/// the id of 3 to 40 of `a-z`, `0-9` and `-`.
+/// keeps one: `<id>.atlas-site.json`, `<reader>.reader.atlas-site.json` or
+/// `<id>.refused.atlas-site.json`, the id of 3 to 40 of `a-z`, `0-9` and `-`.
 pub fn is_site_file_name(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(SUFFIX) else {
         return false;
     };
-    let id = stem.strip_suffix(".reader").unwrap_or(stem);
+    let id = stem
+        .strip_suffix(".reader")
+        .or_else(|| stem.strip_suffix(".refused"))
+        .unwrap_or(stem);
     let bytes = id.as_bytes();
     (3..=40).contains(&bytes.len())
         && bytes
@@ -278,6 +281,37 @@ pub fn remove(folder: &Path, name: &str, key: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
+/// The most bytes of a saved page the Sites screen tries a file on.
+pub const MAX_SAVED_PAGE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Reads a saved page the person chose to try a file on: at most
+/// [`MAX_SAVED_PAGE_BYTES`], UTF-8 text (a byte that is not is replaced).
+/// Its size is checked before it is read. Nothing of it is kept.
+pub fn read_saved_page(path: &Path) -> Result<String, String> {
+    let meta = fs::metadata(path).map_err(|error| format!("The page cannot be read: {error}"))?;
+    if !meta.is_file() {
+        return Err("That is not a file.".to_owned());
+    }
+    if meta.len() > MAX_SAVED_PAGE_BYTES {
+        return Err(format!(
+            "The page is {} MB, and a page to try a file on may be at most {} MB.",
+            meta.len().div_ceil(1024 * 1024),
+            MAX_SAVED_PAGE_BYTES / (1024 * 1024)
+        ));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(MAX_SAVED_PAGE_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("The page cannot be read: {error}"))?;
+    if bytes.len() as u64 > MAX_SAVED_PAGE_BYTES {
+        return Err(format!(
+            "The page is larger than {} MB.",
+            MAX_SAVED_PAGE_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Reads a file the person chose to add: at most [`MAX_SITE_FILE_BYTES`],
 /// UTF-8 text. Its size is checked before it is read.
 pub fn read_chosen(path: &Path) -> Result<String, String> {
@@ -299,7 +333,8 @@ pub fn read_chosen(path: &Path) -> Result<String, String> {
 #[cfg(feature = "downloads")]
 pub mod commands {
     use super::{
-        add, list, read_chosen, remove, sites_folder, write_switches, SiteSwitches, SitesListing,
+        add, list, read_chosen, read_saved_page, remove, sites_folder, write_switches,
+        SiteSwitches, SitesListing,
     };
     use crate::commands::{
         blocking, desktop_only, file_name, save_text, LibraryState, SavedFile, TextFileKind,
@@ -341,6 +376,29 @@ pub mod commands {
         };
         blocking(move || {
             let text = read_chosen(&path)?;
+            Ok(Some(ChosenSiteFile {
+                name: file_name(&path),
+                text,
+            }))
+        })
+        .await
+    }
+
+    /// Asks for a page the person saved (`.html`) and reads it, after
+    /// checking its size, to try a site rules file on ("Try on a saved
+    /// page"). Nothing of it is kept. `None` when the dialog was closed.
+    #[tauri::command]
+    pub async fn sites_pick_page<R: Runtime>(
+        window: WebviewWindow<R>,
+    ) -> Result<Option<ChosenSiteFile>, String> {
+        desktop_only()?;
+        let dialog = crate::commands::file_dialog(&window, "Try on a saved page")
+            .add_filter("Saved page", &["html", "htm"]);
+        let Some(path) = crate::commands::chosen_path(|done| dialog.pick_file(done)).await? else {
+            return Ok(None);
+        };
+        blocking(move || {
+            let text = read_saved_page(&path)?;
             Ok(Some(ChosenSiteFile {
                 name: file_name(&path),
                 text,
@@ -454,6 +512,8 @@ mod tests {
     fn knows_the_names_of_site_files() {
         assert!(is_site_file_name("example-wiki.atlas-site.json"));
         assert!(is_site_file_name("example-engine.reader.atlas-site.json"));
+        assert!(is_site_file_name("example-farm.refused.atlas-site.json"));
+        assert!(!is_site_file_name("ab.refused.atlas-site.json"));
         assert!(!is_site_file_name("ab.atlas-site.json"));
         assert!(!is_site_file_name("-ab.atlas-site.json"));
         assert!(!is_site_file_name("Example.atlas-site.json"));
@@ -536,6 +596,23 @@ mod tests {
         assert!(read_chosen(&chosen).unwrap_err().contains("UTF-8"));
         fs::write(&chosen, "{}").unwrap();
         assert_eq!(read_chosen(&chosen).unwrap(), "{}");
+    }
+
+    #[test]
+    fn reads_a_saved_page_within_its_size() {
+        let dir = TempDir::new("sites-page");
+        let page = dir.0.join("page.html");
+        fs::write(&page, b"<p>Saved \xff page</p>").unwrap();
+        assert_eq!(
+            read_saved_page(&page).unwrap(),
+            "<p>Saved \u{fffd} page</p>"
+        );
+        let large = dir.0.join("large.html");
+        fs::write(&large, vec![b' '; (MAX_SAVED_PAGE_BYTES + 1) as usize]).unwrap();
+        assert!(read_saved_page(&large)
+            .unwrap_err()
+            .contains("at most 8 MB"));
+        assert!(read_saved_page(&dir.0).is_err());
     }
 
     #[test]

@@ -205,6 +205,7 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         pageview::view_open_in_browser,
         sites::commands::sites_list,
         sites::commands::sites_pick,
+        sites::commands::sites_pick_page,
         sites::commands::sites_add,
         sites::commands::sites_remove,
         sites::commands::sites_switch,

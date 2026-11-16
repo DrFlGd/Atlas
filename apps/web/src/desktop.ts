@@ -1083,6 +1083,11 @@ export interface DesktopBridge {
     list(): Promise<SitesListing>;
     /** Asks for a file and reads it, at most 64 KB. Null when the dialog was closed. */
     pick(): Promise<{ name: string; text: string } | null>;
+    /**
+     * Asks for one saved page (`.html`) and reads it, at most 8 MB, to try a
+     * file on. Nothing of it is kept. Null when the dialog was closed.
+     */
+    pickPage(): Promise<{ name: string; text: string } | null>;
     /** Keeps a checked file in the folder under `name`, in place of one of that name. */
     add(name: string, text: string): Promise<void>;
     /** Removes a file, and its switch `key`. Whether it was there. */
@@ -1227,6 +1232,7 @@ function noSites(): DesktopBridge['sites'] {
   return {
     list: missing,
     pick: missing,
+    pickPage: missing,
     add: missing,
     remove: missing,
     switch: missing,
@@ -1375,6 +1381,7 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       ? {
           list: () => call('sites_list'),
           pick: () => call('sites_pick'),
+          pickPage: () => call('sites_pick_page'),
           add: (name, text) => call('sites_add', { name, text }),
           remove: (name, key) => call('sites_remove', { name, key }),
           switch: (switches) => call('sites_switch', { switches }),
