@@ -192,6 +192,12 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.15.0
+
+          - **Layout on a page.** A page can set blocks side by side, frame a block as a card with a title, set short items in a row, flow a list in columns and centre a block. On a phone the blocks stand one under another in reading order; a tablet on its side shows them side by side.
+          - **Pictures that move.** An animated GIF kept in a pack is shown moving. When the device asks for less motion it is shown still, with a **Play** button.
+          - **Location photos at full size.** A photo kept at full size opens large when pressed; cards show a smaller copy.
+
           ## New in 0.14.0
 
           - **For personal use.** A game whose pages are kept under words filled in on a computer, or under no licence, is marked **For personal use** in **Games**. Under each page, Guides shows the words the page is kept under, or that no licence was recorded.
