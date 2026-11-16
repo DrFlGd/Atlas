@@ -1991,9 +1991,9 @@ export function siteRulesWideningsOf(
   importer: Pick<AtlasImporter, 'sites'>,
   rules: SiteRules,
 ): SiteRulesWidening[] {
-  const widens = importer.sites?.widens;
-  if (!widens) return [];
-  return problemsFrom(safely(() => widens(rules), []));
+  const sites = importer.sites;
+  if (!sites?.widens) return [];
+  return problemsFrom(safely(() => sites.widens?.(rules), []));
 }
 
 /**
@@ -2005,10 +2005,10 @@ export async function trySitePage(
   importer: Pick<AtlasImporter, 'sites'>,
   request: SiteTrialRequest,
 ): Promise<SiteTrial | null> {
-  const tryPage = importer.sites?.tryPage;
-  if (!tryPage) return null;
+  const sites = importer.sites;
+  if (!sites?.tryPage) return null;
   try {
-    return siteTrialOf(await tryPage(request));
+    return siteTrialOf(await sites.tryPage(request));
   } catch {
     return null;
   }

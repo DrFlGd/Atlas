@@ -918,10 +918,12 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
       return;
     }
     const { contents, pages, article } = part;
-    pages.include.forEach((pattern, n) => onlyStartPieces([...at, 'pages', 'include', n], pattern));
-    (pages.exclude ?? []).forEach((pattern, n) =>
-      onlyStartPieces([...at, 'pages', 'exclude', n], pattern),
-    );
+    pages.include.forEach((pattern, n) => {
+      onlyStartPieces([...at, 'pages', 'include', n], pattern);
+    });
+    (pages.exclude ?? []).forEach((pattern, n) => {
+      onlyStartPieces([...at, 'pages', 'exclude', n], pattern);
+    });
     if (contents.address !== undefined) {
       const found = piecesOf(contents.address);
       add([...at, 'contents', 'address'], found.problem ?? addressProblem(contents.address, hosts));

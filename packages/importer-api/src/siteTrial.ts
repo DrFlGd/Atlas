@@ -79,24 +79,27 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
       : null;
   const type = answer.type === 'wiki' || answer.type === 'guide' ? answer.type : undefined;
   const list = (entries: unknown) => (Array.isArray(entries) ? (entries as unknown[]) : []);
-  const contentsValue = answer.contents as Record<string, unknown> | undefined;
-  const contents =
-    typeof contentsValue === 'object' && contentsValue !== null
-      ? {
-          count: count(contentsValue.count),
-          groups: list(contentsValue.groups)
-            .flatMap((group) => words(group, 200) ?? [])
-            .slice(0, MAX_LIST),
-          first: list(contentsValue.first)
-            .flatMap((entry) => {
-              const { title, group } = (entry ?? {}) as Record<string, unknown>;
-              const name = words(title, 200);
-              const under = words(group, 200);
-              return name ? [{ title: name, ...(under ? { group: under } : {}) }] : [];
-            })
-            .slice(0, MAX_LIST),
-        }
-      : undefined;
+  const given: unknown = answer.contents;
+  const contentsValue =
+    typeof given === 'object' && given !== null && !Array.isArray(given)
+      ? (given as Record<string, unknown>)
+      : null;
+  const contents = contentsValue
+    ? {
+        count: count(contentsValue.count),
+        groups: list(contentsValue.groups)
+          .flatMap((group) => words(group, 200) ?? [])
+          .slice(0, MAX_LIST),
+        first: list(contentsValue.first)
+          .flatMap((entry) => {
+            const { title, group } = (entry ?? {}) as Record<string, unknown>;
+            const name = words(title, 200);
+            const under = words(group, 200);
+            return name ? [{ title: name, ...(under ? { group: under } : {}) }] : [];
+          })
+          .slice(0, MAX_LIST),
+      }
+    : undefined;
   const optional = (key: string, max?: number) => {
     const text = words(answer[key], max);
     return text ? { [key]: text } : {};
