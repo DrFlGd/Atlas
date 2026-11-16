@@ -1,0 +1,1038 @@
+/**
+ * Site rules files: one JSON file per site that tells an importer which
+ * addresses are the site's pages, how they may be read and which licence
+ * to record, so that a site can be added without a new release of the
+ * software. The format and the guide for writing one are public
+ * (`site-rules/atlas-site-rules.md` in this package, with the JSON Schema
+ * `site-rules/atlas-site-rules.schema.json` made from the schemas here);
+ * the readers that read the pages, and every real site's file, belong to
+ * the importers.
+ *
+ * A file is data only: no field holds a script, a sign-in, a cookie, a
+ * token or a request header. It is checked strictly ({@link checkSiteRules}):
+ * a field this format does not name, a value of the wrong form or a version
+ * this app does not know refuses the whole file, with each problem in plain
+ * words naming its field. Nothing is guessed and nothing is half used.
+ *
+ * Two shapes share the format:
+ *
+ * - a site file, `<site id>.atlas-site.json`: `site` and its `parts` (one
+ *   map, wiki or guide each), each read by a built-in reader of an importer
+ *   or by `rules`, the general reader that follows the file;
+ * - a reader's defaults, `<reader>.reader.atlas-site.json`: the ways, the
+ *   pause, the notice, the picture hosts and the licence form of every site
+ *   that reader recognises by its address when no site file says otherwise.
+ *
+ * Whatever a file says, it can make the app more careful and never less:
+ * there is no field for a shorter pause than the app's own, another
+ * identity, reading past `robots.txt` or a refusal, or answering a check
+ * that asks whether the reader is a person.
+ */
+
+import { GAME_ID_PATTERN } from '@atlas/schema';
+import { z } from 'zod';
+import { dataPathProblem, patternProblem, selectorProblem } from './sitePatterns';
+import {
+  CONFIRMABLE_LICENCES,
+  MAX_NOTICE_CHARS,
+  rulesLicenceOf,
+  type RulesLicence,
+} from './sites';
+
+/** The value of `format` in every site rules file. */
+export const SITE_RULES_FORMAT = 'atlas-site-rules';
+/** The one version of the format this app reads. */
+export const SITE_RULES_VERSION = 1;
+/** A site rules file larger than this (as UTF-8) is refused. */
+export const MAX_SITE_RULES_BYTES = 64 * 1024;
+/** The end of every site rules file's name. */
+export const SITE_RULES_SUFFIX = '.atlas-site.json';
+/** The end of the name of a reader's defaults file. */
+export const READER_DEFAULTS_SUFFIX = `.reader${SITE_RULES_SUFFIX}`;
+/** The `reader` of a part read by the general reader, which follows the file. */
+export const RULES_READER = 'rules';
+/** Parts one site file holds at most. */
+export const MAX_SITE_PARTS = 6;
+/** Problems of one file reported at most. */
+export const MAX_SITE_RULES_PROBLEMS = 50;
+/** The longest address a file may hold. */
+export const MAX_SITE_ADDRESS_CHARS = 2048;
+
+/** A site id: 3 to 40 of `a-z`, `0-9` and `-`, starting and ending with a letter or digit. */
+export const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/u;
+/** A reader's name: lowercase letters, digits and inner dashes, at most 40 characters. */
+export const READER_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
+/**
+ * A host name as a file writes it: lowercase labels of letters, digits and
+ * inner hyphens, at least two, the last starting with a letter; no scheme,
+ * path, port, wildcard or leading `www.`.
+ */
+const HOST_PATTERN =
+  /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+
+/** The words of a licence `known` may name: the licences the app offers to confirm. */
+export const KNOWN_LICENCE_NAMES: readonly string[] = CONFIRMABLE_LICENCES.map((l) => l.name);
+
+// ---------------------------------------------------------------------------
+// The forms of single fields
+
+/** Adds the problem a check finds in a text, if any. */
+const checked =
+  (problem: (text: string) => string | null) => (text: string, ctx: z.RefinementCtx) => {
+    const found = problem(text);
+    if (found) ctx.addIssue({ code: 'custom', message: found, input: text });
+  };
+
+const text = (max: number) => z.string().min(1).max(max);
+
+/** Whether `text` is a date such as `2026-11-16` that is in the calendar. */
+export function isCalendarDate(text: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(text)) return false;
+  const time = Date.parse(`${text}T00:00:00Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().startsWith(text);
+}
+
+/** Why `text` cannot be a host name of a file, or null. */
+export function hostProblem(text: string): string | null {
+  if (/^[a-z]+:\/\//iu.test(text)) return 'must be a host name only, without https://';
+  if (/[/:?#@*\s]/u.test(text)) {
+    return 'must be a host name only, without a path, port, wildcard or spaces, such as wiki.example.org';
+  }
+  if (text !== text.toLowerCase()) return 'must be written in lower case';
+  if (text.startsWith('www.'))
+    return 'must be written without www. (the same host with www. is included)';
+  if (!HOST_PATTERN.test(text)) return 'must be a host name such as wiki.example.org';
+  return null;
+}
+
+const date = z
+  .string()
+  .superRefine(
+    checked((value) =>
+      isCalendarDate(value) ? null : 'must be a date written as YYYY-MM-DD, such as 2026-11-16',
+    ),
+  );
+const host = z.string().superRefine(checked(hostProblem));
+const selector = z.string().superRefine(checked(selectorProblem));
+const pattern = z.string().superRefine(checked(patternProblem));
+const dataPath = z.string().superRefine(checked(dataPathProblem));
+/** An address: a full `https://` address on one of the site's hosts, or a path beginning with `/` (checked against the hosts once the whole file is read). */
+const address = z.string().min(1).max(MAX_SITE_ADDRESS_CHARS);
+const termsAddress = z
+  .string()
+  .max(MAX_SITE_ADDRESS_CHARS)
+  .superRefine(
+    checked((value) =>
+      /^https:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/iu.test(value)
+        ? null
+        : 'must be a full https:// address, without spaces',
+    ),
+  );
+
+/** A list in which each entry is there once. */
+function once<T extends z.ZodType>(entry: T, what: string) {
+  return z.array(entry).superRefine((list, ctx) => {
+    list.forEach((item, index) => {
+      if (list.indexOf(item) !== index) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${JSON.stringify(item)} is listed twice; list each ${what} once`,
+          path: [index],
+          input: item,
+        });
+      }
+    });
+  });
+}
+
+const reader = z
+  .string()
+  .max(40)
+  .regex(READER_NAME_PATTERN, 'must be the name of a reader: lowercase letters, digits and dashes');
+
+const builtInReader = reader.refine((name) => name !== RULES_READER, {
+  message: `must be the name of a built-in reader; ${RULES_READER} has no defaults of its own`,
+});
+
+// ---------------------------------------------------------------------------
+// Blocks every part may have
+
+const readingSchema = z.strictObject({
+  ways: once(z.enum(['fetch', 'window', 'browse']), 'way')
+    .min(1)
+    .max(3),
+  pause: z.number().min(1).max(60).optional(),
+});
+
+/** `pictures` of a part with a built-in reader, and of a reader's defaults: its hosts only. */
+const pictureHostsSchema = z.strictObject({
+  hosts: once(host, 'host').max(10).optional(),
+});
+
+/** `pictures` of a part read by `rules`. */
+const rulesPicturesSchema = z.strictObject({
+  hosts: once(host, 'host').max(10).optional(),
+  source: z
+    .array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/u, 'must be an attribute name, such as src'))
+    .min(1)
+    .max(5)
+    .optional(),
+  full: z.enum(['same', 'link', 'srcset']).optional(),
+  skip: z.array(selector).max(20).optional(),
+});
+
+const credit = text(120).optional();
+
+/** The five forms of a licence block, by the field that names each. */
+const licenceForms = {
+  ask: z.strictObject({ ask: z.literal(true), stated: selector.optional(), credit }),
+  stated: z.strictObject({ ask: z.literal(false), credit }),
+  known: z.strictObject({ known: z.enum(KNOWN_LICENCE_NAMES as [string, ...string[]]), credit }),
+  permission: z.strictObject({
+    permission: text(200),
+    from: text(200).optional(),
+    on: date.optional(),
+    address: termsAddress.optional(),
+    note: text(1000).optional(),
+    credit,
+  }),
+  blank: z.strictObject({ blank: z.literal(true), credit }),
+};
+
+const licenceSchema = z.union([
+  licenceForms.ask,
+  licenceForms.stated,
+  licenceForms.known,
+  licenceForms.permission,
+  licenceForms.blank,
+]);
+
+/** The form of a licence block: its key in {@link licenceForms}, or null when it names none or several. */
+function licenceFormOf(value: unknown): keyof typeof licenceForms | 'several' | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const named = (['ask', 'known', 'permission', 'blank'] as const).filter((key) =>
+    Object.hasOwn(value, key),
+  );
+  if (named.length > 1) return 'several';
+  const key = named[0];
+  if (key === 'ask') return (value as { ask: unknown }).ask === false ? 'stated' : 'ask';
+  return key ?? null;
+}
+
+const aboutSchema = z.strictObject({
+  by: text(120).optional(),
+  on: date.optional(),
+  checked: text(200).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Parts
+
+const partType = z.enum(['wiki', 'guide', 'map']);
+
+/** The fields every part has, with the licence block as `licence` checks it. */
+function commonFields<L extends z.ZodType>(licence: L) {
+  return {
+    type: partType,
+    start: address,
+    name: text(80).optional(),
+    licence: licence.optional(),
+    notes: text(2000).optional(),
+  };
+}
+
+function builtInPartSchema<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    ...commonFields(licence),
+    reader: builtInReader,
+    start: address.optional(),
+    reading: readingSchema.optional(),
+    pictures: pictureHostsSchema.optional(),
+    options: z.record(z.string(), z.unknown()).optional(),
+    pack: z
+      .string()
+      .max(64)
+      .regex(GAME_ID_PATTERN, 'must be a game id: lowercase letters, digits and dashes')
+      .optional(),
+  });
+}
+
+const pagesSchema = z.strictObject({
+  include: z.array(pattern).min(1).max(20),
+  exclude: z.array(pattern).max(50).optional(),
+  query: once(
+    z.string().regex(/^[A-Za-z0-9_.-]{1,50}$/u, 'must be the name of a parameter, such as page'),
+    'parameter',
+  )
+    .max(20)
+    .optional(),
+});
+
+const contentsSchema = z.strictObject({
+  from: z.enum(['sitemap', 'menu', 'links']),
+  address: address.optional(),
+  links: selector.optional(),
+  sections: selector.optional(),
+  follow: z.boolean().optional(),
+});
+
+const articleSchema = z.strictObject({
+  content: z.union([selector, z.array(selector).min(1).max(5)]),
+  title: selector.optional(),
+  titleEnd: text(120).optional(),
+  remove: z.array(selector).max(40).optional(),
+  path: selector.optional(),
+  categories: selector.optional(),
+  facts: selector.optional(),
+  missing: selector.optional(),
+});
+
+const orderSchema = z.strictObject({
+  from: z.enum(['menu', 'sitemap', 'next']),
+  next: selector.optional(),
+});
+
+function rulesFields<L extends z.ZodType>(licence: L) {
+  return {
+    ...commonFields(licence),
+    reader: z.literal(RULES_READER),
+    reading: readingSchema,
+    pictures: rulesPicturesSchema.optional(),
+  };
+}
+
+function rulesWikiPartSchema<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    ...rulesFields(licence),
+    type: z.literal('wiki'),
+    pages: pagesSchema,
+    contents: contentsSchema,
+    article: articleSchema,
+  });
+}
+
+function rulesGuidePartSchema<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    ...rulesFields(licence),
+    type: z.literal('guide'),
+    pages: pagesSchema,
+    contents: contentsSchema,
+    article: articleSchema,
+    order: orderSchema,
+  });
+}
+
+const fieldOrValue = z.string().min(1).max(200);
+
+const mapsSchema = z.strictObject({
+  path: dataPath.optional(),
+  id: fieldOrValue,
+  name: fieldOrValue,
+  size: z.union([
+    dataPath,
+    z.tuple([z.int().min(1).max(10_000_000), z.int().min(1).max(10_000_000)]),
+  ]),
+  maxZoom: z.union([dataPath, z.int().min(0).max(30)]),
+  group: dataPath.optional(),
+  floor: dataPath.optional(),
+  picture: z.strictObject({
+    image: address.optional(),
+    images: address.optional(),
+    tile: z.int().min(16).max(4096).optional(),
+  }),
+});
+
+const mapPartFields = {
+  data: z.strictObject({
+    from: z.enum(['file', 'page']),
+    address: address.optional(),
+    element: selector.optional(),
+  }),
+  maps: mapsSchema,
+  types: z.strictObject({
+    from: z.literal('locations').optional(),
+    names: z.record(z.string().min(1).max(200), text(80)).optional(),
+    path: dataPath.optional(),
+    id: dataPath.optional(),
+    name: dataPath.optional(),
+    group: dataPath.optional(),
+  }),
+  locations: z.strictObject({
+    path: dataPath,
+    fields: z.strictObject({
+      map: dataPath.optional(),
+      type: dataPath,
+      name: dataPath.optional(),
+      x: dataPath,
+      y: dataPath,
+      description: dataPath.optional(),
+      picture: dataPath.optional(),
+      page: dataPath.optional(),
+    }),
+  }),
+  position: z.strictObject({
+    units: z.enum(['pixels', 'fraction', 'degrees']),
+    origin: z.enum(['top-left', 'bottom-left']),
+  }),
+};
+
+function rulesMapPartSchema<L extends z.ZodType>(licence: L) {
+  return z.strictObject({ ...rulesFields(licence), type: z.literal('map'), ...mapPartFields });
+}
+
+/** Which of the four forms of a part a value is meant to be: by its reader, and for `rules` its type. */
+function partFormOf(value: unknown): 'builtIn' | 'wiki' | 'guide' | 'map' {
+  const { reader: name, type } = (typeof value === 'object' && value !== null ? value : {}) as {
+    reader?: unknown;
+    type?: unknown;
+  };
+  if (name !== RULES_READER) return 'builtIn';
+  return type === 'guide' ? 'guide' : type === 'map' ? 'map' : 'wiki';
+}
+
+function partSchemas<L extends z.ZodType>(licence: L) {
+  return {
+    builtIn: builtInPartSchema(licence),
+    wiki: rulesWikiPartSchema(licence),
+    guide: rulesGuidePartSchema(licence),
+    map: rulesMapPartSchema(licence),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Files
+
+function siteSchemaWith<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    id: z
+      .string()
+      .regex(
+        SITE_ID_PATTERN,
+        'must be 3 to 40 of a-z, 0-9 and -, starting and ending with a letter or digit',
+      ),
+    name: text(80),
+    game: text(80).optional(),
+    hosts: once(host, 'host').min(1).max(5),
+    notice: text(MAX_NOTICE_CHARS).optional(),
+    licence: licence.optional(),
+    about: aboutSchema.optional(),
+  });
+}
+
+function siteFileSchemaWith<L extends z.ZodType, P extends z.ZodType>(licence: L, part: P) {
+  return z.strictObject({
+    format: z.literal(SITE_RULES_FORMAT),
+    version: z.literal(SITE_RULES_VERSION),
+    site: siteSchemaWith(licence),
+    parts: z.array(part).min(1).max(MAX_SITE_PARTS),
+    notes: text(2000).optional(),
+  });
+}
+
+function readerDefaultsFileSchemaWith<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    format: z.literal(SITE_RULES_FORMAT),
+    version: z.literal(SITE_RULES_VERSION),
+    readerDefaults: z.strictObject({
+      reader: builtInReader,
+      reading: readingSchema,
+      notice: text(MAX_NOTICE_CHARS).optional(),
+      pictures: pictureHostsSchema.optional(),
+      licence: licence.optional(),
+    }),
+    notes: text(2000).optional(),
+  });
+}
+
+const fullParts = partSchemas(licenceSchema);
+const partSchema = z.union([fullParts.builtIn, fullParts.wiki, fullParts.guide, fullParts.map]);
+
+/** A site file, as the JSON Schema describes it. */
+export const siteFileSchema = siteFileSchemaWith(licenceSchema, partSchema);
+/** A reader's defaults file, as the JSON Schema describes it. */
+export const readerDefaultsFileSchema = readerDefaultsFileSchemaWith(licenceSchema);
+/** Either shape of a site rules file: the schema `atlas-site-rules.schema.json` is made from. */
+export const siteRulesSchema = z.union([siteFileSchema, readerDefaultsFileSchema]);
+
+export type SiteRulesLicence = z.infer<typeof licenceSchema>;
+export type SiteReading = z.infer<typeof readingSchema>;
+export type BuiltInPart = z.infer<typeof fullParts.builtIn>;
+export type RulesWikiPart = z.infer<typeof fullParts.wiki>;
+export type RulesGuidePart = z.infer<typeof fullParts.guide>;
+export type RulesMapPart = z.infer<typeof fullParts.map>;
+export type SitePart = z.infer<typeof partSchema>;
+export type SiteFile = z.infer<typeof siteFileSchema>;
+export type ReaderDefaultsFile = z.infer<typeof readerDefaultsFileSchema>;
+export type ReaderDefaults = ReaderDefaultsFile['readerDefaults'];
+/** A site rules file of either shape, checked. */
+export type SiteRules = SiteFile | ReaderDefaultsFile;
+
+/** Whether a checked file is a reader's defaults. */
+export const isReaderDefaults = (rules: SiteRules): rules is ReaderDefaultsFile =>
+  'readerDefaults' in rules;
+
+/** Whether a part is read by `rules`, the general reader. */
+export const readByRules = (
+  part: SitePart,
+): part is RulesWikiPart | RulesGuidePart | RulesMapPart => part.reader === RULES_READER;
+
+/**
+ * The JSON Schema of the format, made from the schemas here: what
+ * `site-rules/atlas-site-rules.schema.json` holds (a test keeps the two the
+ * same). Checks that need the whole file (addresses on the site's hosts,
+ * fields one part form needs) and the wording of problems are the
+ * checker's; the schema tells any other checker the fields and their forms.
+ */
+export function siteRulesJsonSchema(): Record<string, unknown> {
+  const schema = z.toJSONSchema(siteRulesSchema, { target: 'draft-2020-12', io: 'input' });
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $id: 'atlas-site-rules.schema.json',
+    title: 'Atlas site rules file',
+    description:
+      'One site (site and parts) or the defaults of one reader (readerDefaults), format version 1. See atlas-site-rules.md.',
+    ...Object.fromEntries(Object.entries(schema).filter(([key]) => key !== '$schema')),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Checking a file, with problems in plain words
+
+/** One thing wrong with a file: the field, and what is wrong with it. */
+export interface SiteRulesProblem {
+  /** The field, as a path such as `parts[0].reading.ways`; empty for the whole file. */
+  field: string;
+  /** What is wrong, in plain words, without the field's name. */
+  message: string;
+}
+
+export type SiteRulesCheck =
+  { ok: true; rules: SiteRules } | { ok: false; problems: SiteRulesProblem[] };
+
+type Path = readonly PropertyKey[];
+
+/** A field's path as text: `parts[0].reading.ways`. */
+export function fieldPath(path: Path): string {
+  return path
+    .map((key, index) =>
+      typeof key === 'number' ? `[${key}]` : `${index === 0 ? '' : '.'}${String(key)}`,
+    )
+    .join('');
+}
+
+/**
+ * A field's path in words for the person: `Part 1, reading.ways`,
+ * `site.hosts, entry 2`, or "The file" for the whole file.
+ */
+export function fieldInWords(field: string): string {
+  if (field === '') return 'The file';
+  const part = /^parts\[(\d+)\](?:\.(.*))?$/u.exec(field);
+  const words = (rest: string) =>
+    rest.replace(/\[(\d+)\]/gu, (_, n: string) => `, entry ${Number(n) + 1}`);
+  if (part) {
+    const number = Number(part[1]) + 1;
+    return part[2] ? `Part ${number}, ${words(part[2])}` : `Part ${number}`;
+  }
+  return words(field);
+}
+
+/** A problem as one sentence for the person. */
+export function problemText(problem: SiteRulesProblem): string {
+  const sentence = problem.message.charAt(0).toUpperCase() + problem.message.slice(1);
+  const end = /[.!?]$/u.test(sentence) ? '' : '.';
+  if (problem.field === '') return `${sentence}${end}`;
+  return `${fieldInWords(problem.field)}: ${problem.message}${end}`;
+}
+
+/** Fields of other part forms, with the parts they belong to, for a clearer problem. */
+const FIELDS_ELSEWHERE: Record<string, string> = {
+  pages: 'a wiki or guide part read by rules',
+  contents: 'a wiki or guide part read by rules',
+  article: 'a wiki or guide part read by rules',
+  order: 'a guide part read by rules',
+  data: 'a map part read by rules',
+  maps: 'a map part read by rules',
+  types: 'a map part read by rules',
+  locations: 'a map part read by rules',
+  position: 'a map part read by rules',
+  options: 'a part with a built-in reader',
+  pack: 'a part with a built-in reader',
+};
+
+const describeValue = (value: unknown): string =>
+  value === undefined
+    ? 'nothing'
+    : value === null
+      ? 'null'
+      : Array.isArray(value)
+        ? 'a list'
+        : typeof value === 'object'
+          ? 'an object'
+          : typeof value === 'string'
+            ? 'text'
+            : typeof value;
+
+const EXPECTED: Record<string, string> = {
+  string: 'text',
+  number: 'a number',
+  int: 'a whole number',
+  boolean: 'true or false',
+  array: 'a list',
+  tuple: 'a list',
+  object: 'an object',
+  record: 'an object',
+};
+
+/** One zod issue as problems in plain words, with the path it is under. */
+function problemsOf(issue: z.core.$ZodIssue, at: Path, part: boolean): SiteRulesProblem[] {
+  const path = [...at, ...issue.path];
+  const field = fieldPath(path);
+  const problem = (message: string, where = field): SiteRulesProblem => ({
+    field: where,
+    message,
+  });
+  switch (issue.code) {
+    case 'invalid_type': {
+      if (issue.input === undefined) return [problem('is missing, and it is needed')];
+      const expected = EXPECTED[issue.expected] ?? issue.expected;
+      return [problem(`must be ${expected}, not ${describeValue(issue.input)}`)];
+    }
+    case 'unrecognized_keys':
+      return issue.keys.map((key) => {
+        const elsewhere = part ? FIELDS_ELSEWHERE[key] : undefined;
+        return problem(
+          elsewhere
+            ? `is a field of ${elsewhere}, not of this part`
+            : 'is not a field of this format; a file holds only the fields the guide names',
+          fieldPath([...path, key]),
+        );
+      });
+    case 'too_small': {
+      const n = Number(issue.minimum);
+      if (issue.origin === 'string') {
+        return [problem(n <= 1 ? 'must not be empty' : `must be at least ${n} characters`)];
+      }
+      if (issue.origin === 'array' || issue.origin === 'set') {
+        return [problem(`must hold at least ${n} ${n === 1 ? 'entry' : 'entries'}`)];
+      }
+      return [problem(`must be at least ${n}`)];
+    }
+    case 'too_big': {
+      const n = Number(issue.maximum);
+      if (issue.origin === 'string') return [problem(`must be at most ${n} characters`)];
+      if (issue.origin === 'array' || issue.origin === 'set') {
+        return [problem(`must hold at most ${n} ${n === 1 ? 'entry' : 'entries'}`)];
+      }
+      return [problem(`must be at most ${n}`)];
+    }
+    case 'invalid_value': {
+      const values = issue.values.map((value) => JSON.stringify(value));
+      return [
+        problem(
+          values.length === 1
+            ? `must be ${values[0]!}`
+            : `must be one of ${values.slice(0, -1).join(', ')} or ${values.at(-1)!}`,
+        ),
+      ];
+    }
+    case 'invalid_union': {
+      if (issue.input === undefined) return [problem('is missing, and it is needed')];
+      // A value that fits none of the forms: the form of its first branch that fits its type.
+      const branch = issue.errors.find((errors) =>
+        errors.every((error) => error.code !== 'invalid_type' || error.path.length > 0),
+      );
+      return branch
+        ? branch.flatMap((inner) => problemsOf(inner, path, part))
+        : [problem(`is not in a form this field takes (${describeValue(issue.input)})`)];
+    }
+    default:
+      return [problem(issue.message)];
+  }
+}
+
+/** The problems of `value` against `schema`, under `at`; the parsed value when there are none. */
+function checkAgainst<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  at: Path,
+  part = false,
+): { value: T; problems: [] } | { value: null; problems: SiteRulesProblem[] } {
+  const result = schema.safeParse(value, { reportInput: true });
+  if (result.success) return { value: result.data, problems: [] };
+  return { value: null, problems: result.error.issues.flatMap((i) => problemsOf(i, at, part)) };
+}
+
+const looseParts = partSchemas(z.unknown());
+const looseSiteFile = siteFileSchemaWith(z.unknown(), z.unknown());
+const looseReaderDefaults = readerDefaultsFileSchemaWith(z.unknown());
+
+/** The problems of a licence block, by its form. */
+function licenceProblems(value: unknown, at: Path, inRulesPart: boolean): SiteRulesProblem[] {
+  if (value === undefined) return [];
+  const form = licenceFormOf(value);
+  if (form === 'several') {
+    return [
+      {
+        field: fieldPath(at),
+        message:
+          'holds more than one form; a licence block has exactly one of ask, known, permission or blank',
+      },
+    ];
+  }
+  if (form === null) {
+    return [
+      {
+        field: fieldPath(at),
+        message:
+          'must be one of the forms of a licence block: { "ask": true }, { "ask": false }, { "known": "…" }, { "permission": "…" } or { "blank": true }',
+      },
+    ];
+  }
+  const problems: SiteRulesProblem[] = [
+    ...checkAgainst(licenceForms[form] as z.ZodType, value, at).problems,
+  ];
+  if (
+    !inRulesPart &&
+    form === 'ask' &&
+    Object.hasOwn(value as object, 'stated') &&
+    problems.length === 0
+  ) {
+    problems.push({
+      field: fieldPath([...at, 'stated']),
+      message: 'is only for a part read by rules, which looks for the licence a page states',
+    });
+  }
+  return problems;
+}
+
+/** The host of an address, without `www.`, when it is a full `https://` address; null otherwise. */
+function hostOfAddress(text: string): string | null {
+  try {
+    const url = new URL(text);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+    return url.hostname.toLowerCase().replace(/^www\./u, '');
+  } catch {
+    return null;
+  }
+}
+
+/** Why an address of a file is not usable, or null: a path from `/`, or a full address on `hosts`. */
+export function addressProblem(text: string, hosts: readonly string[]): string | null {
+  if (/\s|\\/u.test(text)) return 'must be an address without spaces or backslashes';
+  if (text.startsWith('/')) {
+    return text.startsWith('//') ? 'must begin with a single / or with https://' : null;
+  }
+  if (!text.startsWith('https://')) {
+    return 'must be a full https:// address, or a path that begins with /';
+  }
+  const at = hostOfAddress(text);
+  if (at === null) return 'must be a full https:// address without a name, password or port';
+  return hosts.includes(at)
+    ? null
+    : `is on ${at}, which is not one of the hosts this field may use (${hosts.join(', ')})`;
+}
+
+/** The problems of a whole site file that its fields' forms alone do not show. */
+function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
+  const problems: SiteRulesProblem[] = [];
+  const hosts = file.site.hosts;
+  const add = (path: Path, message: string | null) => {
+    if (message) problems.push({ field: fieldPath(path), message });
+  };
+  const anyRules = file.parts.some(readByRules);
+  if (anyRules && file.site.game === undefined) {
+    add(['site', 'game'], 'is missing; it is needed when a part is read by rules');
+  }
+  file.parts.forEach((part, index) => {
+    const at = ['parts', index] as const;
+    if (part.start !== undefined) add([...at, 'start'], addressProblem(part.start, hosts));
+    if (!readByRules(part)) return;
+    if (part.type === 'map') {
+      const pictureHosts = [...hosts, ...(part.pictures?.hosts ?? [])];
+      const { data, maps, types, locations } = part;
+      if (data.from === 'file') {
+        if (data.address === undefined)
+          add([...at, 'data', 'address'], 'is needed with "from": "file"');
+        else add([...at, 'data', 'address'], addressProblem(data.address, hosts));
+        if (data.element !== undefined)
+          add([...at, 'data', 'element'], 'is only for "from": "page"');
+      } else {
+        if (data.element === undefined)
+          add([...at, 'data', 'element'], 'is needed with "from": "page"');
+        if (data.address !== undefined)
+          add([...at, 'data', 'address'], 'is only for "from": "file"');
+      }
+      const picture = maps.picture;
+      if ((picture.image === undefined) === (picture.images === undefined)) {
+        add(
+          [...at, 'maps', 'picture'],
+          'must hold either image or images, not both and not neither',
+        );
+      }
+      if (picture.image !== undefined) {
+        add([...at, 'maps', 'picture', 'image'], addressProblem(picture.image, pictureHosts));
+      }
+      if (picture.images !== undefined) {
+        add([...at, 'maps', 'picture', 'images'], addressProblem(picture.images, pictureHosts));
+        const named = ['{z}', '{x}'].every((mark) => picture.images!.includes(mark));
+        const rows = picture.images.includes('{y}') || picture.images.includes('{-y}');
+        if (!named || !rows) {
+          add(
+            [...at, 'maps', 'picture', 'images'],
+            'must hold {z}, {x} and {y} (or {-y}), and {map} where the maps differ',
+          );
+        }
+        if (picture.tile === undefined)
+          add([...at, 'maps', 'picture', 'tile'], 'is needed with images');
+      }
+      const oneMap = maps.path === undefined;
+      if (oneMap) {
+        if (typeof maps.size === 'string') {
+          add([...at, 'maps', 'size'], 'must be [width, height] in pixels when maps has no path');
+        }
+        if (typeof maps.maxZoom === 'string') {
+          add([...at, 'maps', 'maxZoom'], 'must be a number when maps has no path');
+        }
+      } else {
+        for (const key of ['id', 'name'] as const) {
+          add([...at, 'maps', key], dataPathProblem(maps[key]));
+        }
+        if (typeof maps.size !== 'string') {
+          add([...at, 'maps', 'size'], 'must be a field name when maps has a path');
+        }
+        if (typeof maps.maxZoom !== 'string') {
+          add([...at, 'maps', 'maxZoom'], 'must be a field name when maps has a path');
+        }
+        if (locations.fields.map === undefined) {
+          add([...at, 'locations', 'fields', 'map'], 'is needed when there are several maps');
+        }
+      }
+      const fromLocations = types.from === 'locations';
+      if (fromLocations === (types.path !== undefined)) {
+        add(
+          [...at, 'types'],
+          'must hold either "from": "locations" or path, not both and not neither',
+        );
+      } else if (fromLocations) {
+        for (const key of ['id', 'name', 'group'] as const) {
+          if (types[key] !== undefined) add([...at, 'types', key], 'is only for types with a path');
+        }
+      } else {
+        if (types.names !== undefined)
+          add([...at, 'types', 'names'], 'is only for "from": "locations"');
+        if (types.id === undefined) add([...at, 'types', 'id'], 'is needed with a path');
+        if (types.name === undefined) add([...at, 'types', 'name'], 'is needed with a path');
+      }
+      return;
+    }
+    const { contents } = part;
+    if (contents.address !== undefined) {
+      add([...at, 'contents', 'address'], addressProblem(contents.address, hosts));
+    }
+    if (contents.from === 'menu' && contents.links === undefined) {
+      add([...at, 'contents', 'links'], 'is needed with "from": "menu"');
+    }
+    if (contents.from !== 'menu' && contents.links !== undefined) {
+      add([...at, 'contents', 'links'], 'is only for "from": "menu"');
+    }
+    if (part.type === 'guide') {
+      if (part.order.from === 'next' && part.order.next === undefined) {
+        add([...at, 'order', 'next'], 'is needed with "from": "next"');
+      }
+      if (part.order.from !== 'next' && part.order.next !== undefined) {
+        add([...at, 'order', 'next'], 'is only for "from": "next"');
+      }
+    }
+  });
+  return problems;
+}
+
+/** The problems of a file whose format and version are not this app's, or null. */
+function formatProblem(value: Record<string, unknown>): SiteRulesProblem | null {
+  if (value.format !== SITE_RULES_FORMAT) {
+    return {
+      field: 'format',
+      message: `must be "${SITE_RULES_FORMAT}": without it this is not an Atlas site rules file`,
+    };
+  }
+  if (value.version !== SITE_RULES_VERSION) {
+    return {
+      field: 'version',
+      message:
+        typeof value.version === 'number'
+          ? `is ${value.version}, and this app reads version ${SITE_RULES_VERSION} of the format only`
+          : `must be the number ${SITE_RULES_VERSION}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Checks a value as a site rules file, strictly: its shape (either a site
+ * file or a reader's defaults), every field's form, the licence block's
+ * form, and what only the whole file shows (addresses on the site's hosts,
+ * the fields one form of a part needs). The checked file, or every problem
+ * found (at most {@link MAX_SITE_RULES_PROBLEMS}), each naming its field in
+ * plain words. Never throws.
+ */
+export function checkSiteRules(value: unknown): SiteRulesCheck {
+  const fail = (problems: SiteRulesProblem[]): SiteRulesCheck => ({
+    ok: false,
+    problems: problems.slice(0, MAX_SITE_RULES_PROBLEMS),
+  });
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return fail([{ field: '', message: 'must be one JSON object, written between { and }' }]);
+  }
+  const record = value as Record<string, unknown>;
+  const wrongFormat = formatProblem(record);
+  if (wrongFormat) return fail([wrongFormat]);
+
+  if (Object.hasOwn(record, 'readerDefaults')) {
+    const shape = checkAgainst(looseReaderDefaults, value, []);
+    const problems = [
+      ...shape.problems,
+      ...licenceProblems(
+        (record.readerDefaults as { licence?: unknown } | null)?.licence,
+        ['readerDefaults', 'licence'],
+        false,
+      ),
+    ];
+    if (problems.length > 0) return fail(problems);
+    const full = checkAgainst(readerDefaultsFileSchema, value, []);
+    return full.value ? { ok: true, rules: full.value } : fail(full.problems);
+  }
+
+  const shape = checkAgainst(looseSiteFile, value, []);
+  const problems: SiteRulesProblem[] = [...shape.problems];
+  const site = record.site as { licence?: unknown } | null | undefined;
+  if (typeof site === 'object' && site !== null) {
+    problems.push(...licenceProblems(site.licence, ['site', 'licence'], false));
+  }
+  if (Array.isArray(record.parts)) {
+    (record.parts as unknown[]).slice(0, MAX_SITE_PARTS).forEach((part, index) => {
+      const form = partFormOf(part);
+      const type = (part as { type?: unknown } | null)?.type;
+      if (form !== 'builtIn' && !partType.safeParse(type).success) {
+        // A part read by rules whose type is none of the three: its fields depend on it.
+        problems.push(...checkAgainst(partType, type, ['parts', index, 'type']).problems);
+        return;
+      }
+      problems.push(...checkAgainst(looseParts[form], part, ['parts', index], true).problems);
+      const licence = (part as { licence?: unknown } | null)?.licence;
+      problems.push(...licenceProblems(licence, ['parts', index, 'licence'], form !== 'builtIn'));
+    });
+  }
+  if (problems.length > 0) return fail(problems);
+  const full = checkAgainst(siteFileSchema, value, []);
+  if (!full.value) return fail(full.problems);
+  const whole = siteFileProblems(full.value);
+  return whole.length > 0 ? fail(whole) : { ok: true, rules: full.value };
+}
+
+/** A position in a text as "line L, column C", for a JSON syntax problem. */
+function lineAndColumn(text: string, index: number): string {
+  const before = text.slice(0, index).split('\n');
+  return `line ${before.length}, column ${before.at(-1)!.length + 1}`;
+}
+
+/**
+ * Reads the text of a site rules file and checks it ({@link checkSiteRules}):
+ * at most {@link MAX_SITE_RULES_BYTES} as UTF-8, plain JSON (a byte order
+ * mark at its start is allowed). A text that is not JSON gets one problem
+ * that says where it stops being JSON, when the parser says.
+ */
+export function parseSiteRules(text: string): SiteRulesCheck {
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes > MAX_SITE_RULES_BYTES) {
+    return {
+      ok: false,
+      problems: [
+        {
+          field: '',
+          message: `is ${Math.ceil(bytes / 1024)} KB, and a site rules file may be at most ${MAX_SITE_RULES_BYTES / 1024} KB`,
+        },
+      ],
+    };
+  }
+  const body = text.replace(/^\uFEFF/u, '');
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch (error) {
+    const at = /position (\d+)/u.exec(error instanceof Error ? error.message : '')?.[1];
+    return {
+      ok: false,
+      problems: [
+        {
+          field: '',
+          message: `is not plain JSON${at ? ` (it stops being JSON at ${lineAndColumn(body, Number(at))})` : ''}: no comments, no commas after the last entry, and every name in double quotation marks`,
+        },
+      ],
+    };
+  }
+  return checkSiteRules(value);
+}
+
+// ---------------------------------------------------------------------------
+// What a checked file names
+
+/**
+ * The key a file is known by: `site:<id>` for a site file, `reader:<name>`
+ * for a reader's defaults. A file of the person's with the key of one that
+ * comes with an importer takes that file's place.
+ */
+export const siteRulesKey = (rules: SiteRules): string =>
+  isReaderDefaults(rules) ? `reader:${rules.readerDefaults.reader}` : `site:${rules.site.id}`;
+
+/** The name a file is kept under: `<site id>.atlas-site.json`, or `<reader>.reader.atlas-site.json`. */
+export const siteRulesFileName = (rules: SiteRules): string =>
+  isReaderDefaults(rules)
+    ? `${rules.readerDefaults.reader}${READER_DEFAULTS_SUFFIX}`
+    : `${rules.site.id}${SITE_RULES_SUFFIX}`;
+
+/** Whether `name` is the name of a site rules file as the app keeps one. */
+export const isSiteRulesFileName = (name: string): boolean =>
+  /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9](?:\.reader)?\.atlas-site\.json$/u.test(name);
+
+/** The licence block that counts for a part: its own, else the site's. */
+export const partLicence = (file: SiteFile, part: SitePart): SiteRulesLicence | undefined =>
+  part.licence ?? file.site.licence;
+
+/**
+ * Every host a file names, each once, in the order it names them: the
+ * site's hosts, then the hosts of pictures. The person sees these before
+ * a file of theirs is switched on.
+ */
+export function siteRulesHosts(rules: SiteRules): string[] {
+  const hosts = isReaderDefaults(rules)
+    ? (rules.readerDefaults.pictures?.hosts ?? [])
+    : [...rules.site.hosts, ...rules.parts.flatMap((part) => part.pictures?.hosts ?? [])];
+  return [...new Set(hosts)];
+}
+
+/**
+ * The licence answer a file's licence block gives, as an importer hands it
+ * to the app (`SiteInfo.rulesLicence`): a known licence with its deed,
+ * words filled in, or none recorded. Null for `ask` (the page's licence,
+ * else the person is asked) and `{ "ask": false }` (the page's licence
+ * only), which answer nothing for the site.
+ */
+export function rulesLicenceOfBlock(block: SiteRulesLicence | undefined): RulesLicence | null {
+  if (!block) return null;
+  if ('known' in block) {
+    const known = CONFIRMABLE_LICENCES.find((licence) => licence.name === block.known);
+    return known ? rulesLicenceOf({ basis: 'confirmed', name: known.name, url: known.url }) : null;
+  }
+  if ('permission' in block) {
+    return rulesLicenceOf({
+      basis: 'permission',
+      name: block.permission,
+      ...(block.address ? { url: block.address } : {}),
+      ...(block.from ? { givenBy: block.from } : {}),
+      ...(block.on ? { givenOn: block.on } : {}),
+      ...(block.note ? { note: block.note } : {}),
+    });
+  }
+  if ('blank' in block) return rulesLicenceOf({ basis: 'none' });
+  return null;
+}

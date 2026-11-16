@@ -40,9 +40,12 @@ import {
 } from '@atlas/schema';
 import { z } from 'zod';
 import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
+import type { SiteRules, SiteRulesProblem } from './siteRules';
 import type { SiteInfo, SiteLicence } from './sites';
 
 export * from './fetching';
+export * from './sitePatterns';
+export * from './siteRules';
 export * from './sites';
 export * from './styles';
 
@@ -1145,7 +1148,88 @@ export interface AtlasImporter {
    * not download ignores it.
    */
   picturesWithPages?: boolean;
+  /**
+   * Optional: the importer reads sites by site rules files (see
+   * `siteRules.ts` and the guide beside the schema in this package): the
+   * files it comes with, and those the person adds and switches on. An app
+   * that does not know it never calls it, and the importer reads by the
+   * files it comes with, as if each were switched on.
+   */
+  sites?: ImporterSites;
 }
+
+/** A site rules file an importer comes with (see {@link ImporterSites.files}). */
+export interface BuiltInSiteRules {
+  /** Its file name, `<site id>.atlas-site.json` or `<reader>.reader.atlas-site.json`. */
+  name: string;
+  /** Its contents, as JSON; the app checks it as it checks the person's ({@link checkSiteRules}). */
+  rules: unknown;
+}
+
+/** A site rules file the app hands to an importer to read by (see {@link ImporterSites.apply}). */
+export interface AppliedSiteRules {
+  /** The file's name. */
+  name: string;
+  /** The person added it; otherwise it came with the importer. */
+  own: boolean;
+  /** The file, checked with {@link checkSiteRules}. */
+  rules: SiteRules;
+}
+
+/**
+ * How an importer reads sites by site rules files. The format is public
+ * and the same for every importer (`siteRules.ts`); which readers there are
+ * and what a reader does with a page are the importer's.
+ *
+ * The app keeps the person's files in its Sites folder, and which files are
+ * switched on. It checks every file's form itself, asks the importer what
+ * it cannot read of each ({@link check}), and hands it the files switched
+ * on ({@link apply}): those it comes with, and the person's, where a
+ * person's file with the key of one it comes with (see `siteRulesKey`)
+ * takes that file's place. Nothing in a file is ever run: a reader only
+ * reads what it says.
+ */
+export interface ImporterSites {
+  /** The files that come with the importer, each switched on until the person switches it off. */
+  files: readonly BuiltInSiteRules[];
+  /**
+   * The names of its built-in readers (see `RULES_READER` for the general
+   * one, which an importer lists once it reads by it). A file of the
+   * person's goes to the importers that have a reader it names; a part
+   * whose reader no importer has is not read, and the app says so.
+   */
+  readers: readonly string[];
+  /**
+   * The problems the importer finds in a file whose form is right, in the
+   * parts whose reader it has: a part it cannot read yet, an option its
+   * reader does not take, a host it never reads. A part whose reader it
+   * does not have is left to the app, which says so when no importer has
+   * it. Each names its field, as `checkSiteRules` does. None means the
+   * importer can read every part it has a reader for. Pure: it changes
+   * nothing. Must not throw.
+   */
+  check(rules: SiteRules): SiteRulesProblem[];
+  /**
+   * The files switched on, in the order they count (the person's first,
+   * then those the importer comes with): from now on the importer reads by
+   * them, and by no other, until the next call. Answers the problems of
+   * each, in the same order, as {@link check} does, with those only the
+   * files together show (such as a host two files name, where the first
+   * counts). A part with a problem is not read by. The app calls it once
+   * the importer is loaded, before asking it anything else, and again
+   * whenever the person changes the files or switches one. Must not throw.
+   */
+  apply(files: readonly AppliedSiteRules[]): SiteRulesProblem[][];
+  /**
+   * Optional: what the guide to writing a file says of this importer's
+   * readers, in Markdown: their names, what each reads and its signs. The
+   * app adds it to the end of the guide it saves for the person.
+   */
+  guide?: string;
+}
+
+/** Built-in site rules files one importer may come with. */
+export const MAX_BUILT_IN_SITE_RULES = 500;
 
 const isFunction = (value: unknown): value is (...args: never[]) => unknown =>
   typeof value === 'function';
@@ -1223,6 +1307,17 @@ export const importerSchema = z
     catalogue: catalogueSchema.optional(),
     refreshesBundledGames: z.boolean().optional(),
     picturesWithPages: z.boolean().optional(),
+    sites: z
+      .object({
+        files: z
+          .array(z.object({ name: z.string().min(1).max(100), rules: z.unknown() }))
+          .max(MAX_BUILT_IN_SITE_RULES),
+        readers: z.array(z.string().max(40)).max(100),
+        check: z.custom<ImporterSites['check']>(isFunction, 'must be a function'),
+        apply: z.custom<ImporterSites['apply']>(isFunction, 'must be a function'),
+        guide: z.string().max(500_000).optional(),
+      })
+      .optional(),
   })
   .refine((importer) => !importer.catalogue || importer.games, {
     message: 'an importer with a catalogue must also read game pages',
@@ -1814,4 +1909,51 @@ export function fetchAddresses(
     if (!addresses.includes(address)) addresses.push(address);
   }
   return { ok: true, addresses };
+}
+
+// ---------------------------------------------------------------------------
+// Site rules files
+
+/** Problems an importer answers for one file, as the app takes them: at most this many. */
+const MAX_IMPORTER_PROBLEMS = 50;
+
+/** An importer's answer of problems as the app takes it: each with a field and words, in bounds. */
+function problemsFrom(value: unknown): SiteRulesProblem[] {
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[]).slice(0, MAX_IMPORTER_PROBLEMS).flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const { field, message } = entry as { field?: unknown; message?: unknown };
+    if (typeof field !== 'string' || typeof message !== 'string' || !message.trim()) return [];
+    return [{ field: field.slice(0, 200), message: message.trim().slice(0, 500) }];
+  });
+}
+
+/**
+ * What the importer cannot read of a checked file ({@link ImporterSites.check}),
+ * as the app takes it; none for an importer without site rules files, or
+ * one that throws or answers in another shape.
+ */
+export function siteRulesProblemsOf(
+  importer: Pick<AtlasImporter, 'sites'>,
+  rules: SiteRules,
+): SiteRulesProblem[] {
+  const sites = importer.sites;
+  return sites ? problemsFrom(safely(() => sites.check(rules), [])) : [];
+}
+
+/**
+ * Hands the files switched on to the importer ({@link ImporterSites.apply})
+ * and takes its answer: the problems of each file, in the order given,
+ * none for a file it said nothing of. An importer without site rules files
+ * is not called.
+ */
+export function applySiteRules(
+  importer: Pick<AtlasImporter, 'sites'>,
+  files: readonly AppliedSiteRules[],
+): SiteRulesProblem[][] {
+  const sites = importer.sites;
+  if (!sites) return files.map(() => []);
+  const answer: unknown = safely(() => sites.apply(files), []);
+  const lists = Array.isArray(answer) ? (answer as unknown[]) : [];
+  return files.map((_, index) => problemsFrom(lists[index]));
 }
