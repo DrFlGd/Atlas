@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   desktop,
+  type ContentCounts,
   type Detail,
   type PackDetails,
   type PackFileExported,
@@ -10,12 +11,15 @@ import {
   type PackFileProgress,
   type PickedPackFile,
 } from '../desktop';
+import { useGameFacts } from '../state/gameFacts';
+import { presentMembers, useSourceFacts, useTitleOf } from '../state/gameGroups';
 import {
   cancelPackFile,
   closePackFileDialog,
   exportPackFile,
   importPackFile,
   loadExportOptions,
+  loadPackDetails,
   packFileProgress,
 } from '../state/packFile';
 import { useAtlas } from '../state/store';
@@ -26,24 +30,44 @@ import {
   compareWithInstalled,
   contentsText,
   DETAIL_LABELS,
+  exportHolds,
   freshnessText,
   imagesDownloadedAt,
   imagesText,
   installedImagesText,
+  mineHint,
+  mineLabel,
+  packKind,
   photosHint,
+  photosLabel,
   PICTURES_IN_FILE_LABELS,
   picturesInFileText,
+  replaceText,
+  savedText,
   sourceText,
+  wikisApartText,
+  type PackKind,
   type PicturesInFile,
 } from './packFileText';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** Counts of a game not read yet. */
+const NO_CONTENTS: ContentCounts = {
+  maps: 0,
+  layers: 0,
+  locations: 0,
+  categories: 0,
+  regions: 0,
+  checklists: 0,
+  guides: 0,
+};
+
 /** Said when exporting a game kept for personal use; the export itself is not held back. */
 export const PERSONAL_USE_EXPORT =
   'This game is kept for personal use. The file is for your own devices.';
 
-/** What each level of detail puts in a map pack file. */
+/** What each level of detail puts in a pack file of a game with a map. */
 const DETAIL_DESCRIPTIONS: Record<Detail, string> = {
   overview: 'The smallest file. Good for finding your way; blurry when zoomed in close.',
   standard: 'Sharp at most zoom levels, at about a quarter of the size of full detail.',
@@ -51,12 +75,14 @@ const DETAIL_DESCRIPTIONS: Record<Detail, string> = {
 };
 
 /**
- * "Export…" and "Import map pack file…", in the desktop app: one game with
- * the map images chosen, in one `.atlaspack` file, to copy to another
- * computer or to Atlas for Android. Shown over the Maps dialog. While a
- * file is being written or read the dialog stays open, with a Cancel button.
- * In the Android app it imports only, after showing the picked file being
- * copied into the app.
+ * "Export…" and "Import pack file…", in the desktop app: one game in one
+ * `.atlaspack` file, to copy to another computer or to Atlas for Android.
+ * A game with a map goes with the map images chosen; a game of pages and
+ * pictures with no map (a wiki) goes with its pages, and the dialog speaks
+ * of pages and pictures and offers no detail. Shown over the Maps dialog.
+ * While a file is being written or read the dialog stays open, with a
+ * Cancel button. In the Android app it imports only, after showing the
+ * picked file being copied into the app.
  */
 export function PackFileDialog() {
   const state = useAtlas((s) => s.packFileDialog);
@@ -91,7 +117,7 @@ export function PackFileDialog() {
         <div className="dialog-body">
           <header className="dialog-head">
             <h2 id={titleId}>
-              {state.kind === 'export' ? `Export ${state.title}` : 'Import map pack file'}
+              {state.kind === 'export' ? `Export ${state.title}` : 'Import pack file'}
             </h2>
             <button
               type="button"
@@ -260,9 +286,32 @@ function ExportView({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PackFileExported | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the game holds: what the Library read already, then what the shell says now.
+  const known = useGameFacts((s) => s.byId[packId]?.details?.contents ?? null);
+  const [contents, setContents] = useState(known);
+  const kind: PackKind | null = contents ? packKind(contents) : null;
+  // The wikis shown with this game under one title: never in its file.
+  const group = useTitleOf(packId);
+  const sourceFacts = useSourceFacts(group);
+  const catalog = useAtlas((s) => s.catalog);
+  const wikis = group
+    ? presentMembers(group, catalog).flatMap((entry) => {
+        const facts = sourceFacts[entry.id];
+        return entry.id !== packId && facts?.maps.length === 0 ? [facts.title] : [];
+      })
+    : [];
 
   useEffect(() => {
     let live = true;
+    loadPackDetails(packId).then(
+      (details) => {
+        if (live) setContents(details.contents);
+      },
+      // Without them the dialog speaks of a game with a map, as it always did.
+      () => {
+        if (live) setContents((before) => before ?? { ...NO_CONTENTS, maps: 1 });
+      },
+    );
     loadExportOptions(packId).then(
       (loaded) => {
         if (!live) return;
@@ -308,14 +357,46 @@ function ExportView({
       });
   };
 
-  if (result) return <ExportResult result={result} />;
+  const pages = kind === 'pages';
+  // For a game of pages it decides whether the pictures of the pages go, so it comes first.
+  const photosBox =
+    options && kind && ownUse > 0 ? (
+      <label className="checkbox-row pack-file-check">
+        <input
+          type="checkbox"
+          data-testid="export-with-photos"
+          aria-labelledby={`${photosId}-name`}
+          aria-describedby={`${photosId}-hint`}
+          checked={withPhotos}
+          disabled={running}
+          onChange={(event) => {
+            setWithPhotos(event.target.checked);
+          }}
+        />
+        <span>
+          <span id={`${photosId}-name`}>{photosLabel(kind)}</span>
+          <span id={`${photosId}-hint`} className="muted small pack-file-hint">
+            {photosHint(ownUse, formatBytes(options.ownUsePictureBytes ?? 0), kind)}
+          </span>
+        </span>
+      </label>
+    ) : null;
+  const apart = kind === 'map' ? wikisApartText(wikis) : null;
+  if (result) return <ExportResult result={result} pictures={carried} />;
   return (
     <div className="download-body">
-      <p className="download-intro">
-        A map pack file holds <strong>{title}</strong> in one file: its maps, locations and
-        checklists, and the map images at the detail you choose. Copy it to another computer or to
-        Atlas for Android and import it there to use the maps offline. It never holds your progress.
-      </p>
+      {kind ? (
+        <p className="download-intro" data-testid="export-intro">
+          A pack file holds <strong>{title}</strong> in one file:{' '}
+          {exportHolds(kind, { shared: options?.pictures ?? 0, ownUse })} It never holds your
+          progress.
+        </p>
+      ) : null}
+      {apart ? (
+        <p className="download-intro" data-testid="export-wikis-apart">
+          {apart}
+        </p>
+      ) : null}
       {personalUse ? (
         <p className="download-intro" data-testid="export-personal-use">
           {PERSONAL_USE_EXPORT}
@@ -326,9 +407,15 @@ function ExportView({
           {error}
         </p>
       ) : null}
-      {!options ? (
+      {!options || !kind ? (
         error ? null : (
-          <p className="muted small">Looking at the map images…</p>
+          <p className="muted small" data-testid="export-looking">
+            {kind === 'pages'
+              ? 'Looking at the pages and pictures…'
+              : kind === 'map'
+                ? 'Looking at the map images…'
+                : 'Looking at what this game holds…'}
+          </p>
         )
       ) : !options.exportable ? (
         <p className="download-error" data-testid="export-refused">
@@ -336,38 +423,40 @@ function ExportView({
         </p>
       ) : (
         <>
-          <fieldset className="detail-options" disabled={running}>
-            <legend className="visually-hidden">How much detail</legend>
-            {options.details.map((option) => (
-              <label
-                key={option.detail}
-                className="detail-option"
-                data-detail={option.detail}
-                data-testid="export-detail"
-                aria-disabled={!option.available}
-              >
-                <input
-                  type="radio"
-                  name={name}
-                  value={option.detail}
-                  disabled={!option.available}
-                  checked={chosen === option.detail}
-                  onChange={() => {
-                    setChosen(option.detail);
-                  }}
-                />
-                <span className="detail-text">
-                  <span className="detail-label">{DETAIL_LABELS[option.detail]}</span>
-                  <span className="detail-description">{DETAIL_DESCRIPTIONS[option.detail]}</span>
-                  <span className="detail-numbers" data-testid={`export-${option.detail}`}>
-                    {option.available
-                      ? `${option.images.toLocaleString('en')} map image${option.images === 1 ? '' : 's'} · about ${formatBytes(option.bytes)}`
-                      : option.reason}
+          {pages ? null : (
+            <fieldset className="detail-options" disabled={running}>
+              <legend className="visually-hidden">How much detail</legend>
+              {options.details.map((option) => (
+                <label
+                  key={option.detail}
+                  className="detail-option"
+                  data-detail={option.detail}
+                  data-testid="export-detail"
+                  aria-disabled={!option.available}
+                >
+                  <input
+                    type="radio"
+                    name={name}
+                    value={option.detail}
+                    disabled={!option.available}
+                    checked={chosen === option.detail}
+                    onChange={() => {
+                      setChosen(option.detail);
+                    }}
+                  />
+                  <span className="detail-text">
+                    <span className="detail-label">{DETAIL_LABELS[option.detail]}</span>
+                    <span className="detail-description">{DETAIL_DESCRIPTIONS[option.detail]}</span>
+                    <span className="detail-numbers" data-testid={`export-${option.detail}`}>
+                      {option.available
+                        ? `${option.images.toLocaleString('en')} map image${option.images === 1 ? '' : 's'} · about ${formatBytes(option.bytes)}`
+                        : option.reason}
+                    </span>
                   </span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
+                </label>
+              ))}
+            </fieldset>
+          )}
           {options.wholeLayers.length > 0 ? (
             <p className="download-note" data-testid="export-whole-layers">
               The map images of {options.wholeLayers.join(', ')} come with the game, so they are
@@ -376,9 +465,11 @@ function ExportView({
           ) : null}
           {options.downloading ? (
             <p className="download-note" role="status">
-              Map images of this game are downloading. Pause or cancel that first, then export.
+              {pages ? 'Pictures' : 'Map images'} of this game are downloading. Pause or cancel that
+              first, then export.
             </p>
           ) : null}
+          {pages ? photosBox : null}
           <label className="checkbox-row pack-file-check">
             <input
               type="checkbox"
@@ -392,9 +483,9 @@ function ExportView({
             <span>
               Also save my progress beside it
               <span className="muted small pack-file-hint">
-                A second file next to the map pack file, ending in <code>.progress.json</code>. It
-                holds the progress of every game and profile, as “Export all profiles” saves it.
-                Import it under Profiles on the other device.
+                A second file next to the pack file, ending in <code>.progress.json</code>. It holds
+                the progress of every game and profile, as “Export all profiles” saves it. Import it
+                under Profiles on the other device.
               </span>
             </span>
           </label>
@@ -411,36 +502,13 @@ function ExportView({
               }}
             />
             <span>
-              <span id={`${mineId}-name`}>Include my lists, locations, types and photos</span>
+              <span id={`${mineId}-name`}>{mineLabel(kind, contents ?? NO_CONTENTS)}</span>
               <span id={`${mineId}-hint`} className="muted small pack-file-hint">
-                Your own lists and guides of this game, the locations, types and areas you added,
-                your photos of them, your links between guide pages and the map, the pages you
-                changed or added, your notes on its locations, and the title it shares with other
-                games, so they come with it on the other device. Found marks are never included.
+                {mineHint(kind, contents ?? NO_CONTENTS)}
               </span>
             </span>
           </label>
-          {ownUse > 0 ? (
-            <label className="checkbox-row pack-file-check">
-              <input
-                type="checkbox"
-                data-testid="export-with-photos"
-                aria-labelledby={`${photosId}-name`}
-                aria-describedby={`${photosId}-hint`}
-                checked={withPhotos}
-                disabled={running}
-                onChange={(event) => {
-                  setWithPhotos(event.target.checked);
-                }}
-              />
-              <span>
-                <span id={`${photosId}-name`}>Include downloaded photos</span>
-                <span id={`${photosId}-hint`} className="muted small pack-file-hint">
-                  {photosHint(ownUse, formatBytes(options.ownUsePictureBytes ?? 0))}
-                </span>
-              </span>
-            </label>
-          ) : null}
+          {pages ? null : photosBox}
           {sizeOffered ? (
             <fieldset
               className="detail-options pack-file-pictures"
@@ -474,7 +542,11 @@ function ExportView({
             </fieldset>
           ) : null}
           {running ? (
-            <JobProgress verb="Saving the map pack file" />
+            <JobProgress
+              verb={
+                pages ? 'Saving the pages and pictures in the pack file' : 'Saving the pack file'
+              }
+            />
           ) : (
             <div className="row-actions">
               <button
@@ -527,12 +599,13 @@ function DatesLine({ header }: { header: PackFileHeader }) {
   );
 }
 
-function ExportResult({ result }: { result: PackFileExported }) {
+/** `pictures`: the pictures that went in the file, said for a game of pages. */
+function ExportResult({ result, pictures }: { result: PackFileExported; pictures: number }) {
   return (
     <div className="download-body">
       <p data-testid="export-result">
         Saved <strong>{result.fileName}</strong> ({formatBytes(result.size)}):{' '}
-        {imagesText(result.header)}
+        {savedText(result.header, pictures)}
       </p>
       <p className="path">{result.path}</p>
       <DatesLine header={result.header} />
@@ -549,7 +622,7 @@ function ExportResult({ result }: { result: PackFileExported }) {
       ) : null}
       {result.progressError ? (
         <p className="download-error" role="alert" data-testid="export-progress-error">
-          The map pack file is saved. {result.progressError}
+          The pack file is saved. {result.progressError}
         </p>
       ) : null}
       <div className="row-actions">
@@ -563,6 +636,7 @@ function ExportResult({ result }: { result: PackFileExported }) {
 
 function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boolean) => void }) {
   const { header, installed } = file;
+  const kind = packKind(header.contents);
   const freshness = installed?.details ? compareWithInstalled(header, installed.details) : null;
   const older = freshness?.verdict === 'installed-newer';
   const [confirmOlder, setConfirmOlder] = useState(false);
@@ -590,7 +664,11 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
         <p data-testid="import-result">
           {result.replaced ? 'Replaced' : 'Imported'} <strong>{result.title}</strong>. It is in the
           maps folder and shown now.
-          {result.replaced ? ' Your found marks are kept.' : ''}
+          {result.replaced
+            ? kind === 'map'
+              ? ' Your found marks are kept.'
+              : ' Your progress is kept.'
+            : ''}
         </p>
         {result.mine ? (
           <p className="download-note" data-testid="import-mine">
@@ -631,7 +709,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
       <p data-testid="import-summary">
         <strong>{header.title}</strong>, version {header.packVersion}
         {header.pack.gamePatch ? ` (game patch ${header.pack.gamePatch})` : ''}:{' '}
-        {contentsText(header.contents)}. {imagesText(header)}
+        {contentsText(header.contents)}.{kind === 'map' ? ` ${imagesText(header)}` : ''}
       </p>
       <p className="download-note">
         {sourceText(header.source)} Made with {header.exportedBy.name} {header.exportedBy.version}{' '}
@@ -646,7 +724,12 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
       ) : null}
       {installed ? (
         <>
-          <Compare header={header} installed={installed.details} title={installed.title} />
+          <Compare
+            header={header}
+            installed={installed.details}
+            title={installed.title}
+            kind={kind}
+          />
           {freshness ? (
             <p
               className={older ? 'download-error' : 'download-note'}
@@ -664,11 +747,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
         </p>
       ) : installed ? (
         <p className="download-note" data-testid="import-replace-note">
-          {file.replaces
-            ? `Importing replaces ${installed.title} in the maps folder. Your found marks are kept; its locations, checklists and map images are replaced by the ones in this file.`
-            : installed.origin === 'bundled'
-              ? `${installed.title} comes with the app. The imported game goes into the maps folder and is shown in its place. Your found marks are kept.`
-              : `The imported game goes into the maps folder and is shown in place of the one in ${installed.folder ?? 'its folder'}, which is left as it is. Your found marks are kept.`}
+          {replaceText(kind, installed, file.replaces)}
         </p>
       ) : null}
       {error ? (
@@ -744,15 +823,17 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
   );
 }
 
-/** The file and the installed game side by side. */
+/** The file and the installed game side by side; for a file of pages, without map images. */
 function Compare({
   header,
   installed,
   title,
+  kind,
 }: {
   header: PackFileHeader;
   installed: PackDetails | null;
   title: string;
+  kind: PackKind;
 }) {
   const date = (iso: string | null | undefined) => (iso ? <When iso={iso} /> : 'Not recorded');
   const fileImages = imagesDownloadedAt(header);
@@ -764,7 +845,9 @@ function Compare({
       installed ? date(installed.source.newestPageAt) : '—',
     ],
     ['Contents', contentsText(header.contents), installed ? contentsText(installed.contents) : '—'],
-    [
+  ];
+  if (kind === 'map') {
+    rows.push([
       'Map images',
       <>
         {imagesText(header)}
@@ -788,24 +871,23 @@ function Compare({
       ) : (
         '—'
       ),
-    ],
-    [
-      'Made',
+    ]);
+  }
+  rows.push([
+    'Made',
+    <>
+      Exported on <When iso={header.exportedAt} />
+    </>,
+    installed?.packFile ? (
       <>
-        Exported on <When iso={header.exportedAt} />
-      </>,
-      installed?.packFile ? (
-        <>
-          Imported from {installed.packFile.fileName} on{' '}
-          <When iso={installed.packFile.importedAt} />
-        </>
-      ) : installed ? (
-        sourceText(installed.source)
-      ) : (
-        '—'
-      ),
-    ],
-  ];
+        Imported from {installed.packFile.fileName} on <When iso={installed.packFile.importedAt} />
+      </>
+    ) : installed ? (
+      sourceText(installed.source)
+    ) : (
+      '—'
+    ),
+  ]);
   return (
     <table className="pack-compare" data-testid="import-compare">
       <thead>

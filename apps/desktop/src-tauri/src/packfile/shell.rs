@@ -1,4 +1,4 @@
-//! Map pack files and the maps library: which packs can be exported, from
+//! Pack files and the maps library: which packs can be exported, from
 //! where, and which files may be imported, and how. The commands in
 //! `commands.rs` call these.
 
@@ -154,14 +154,14 @@ pub struct Installed {
     pub details: Option<PackDetails>,
 }
 
-/// Whether a path names a map pack file: an existing file whose name ends
+/// Whether a path names a pack file: an existing file whose name ends
 /// in `.atlaspack`. Only such files are opened.
 fn checked_path(path: &Path) -> Result<(), String> {
     let named = path
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case(EXTENSION));
     if !named {
-        return Err("Only Atlas map pack files (.atlaspack) can be imported.".to_owned());
+        return Err("Only Atlas pack files (.atlaspack) can be imported.".to_owned());
     }
     match std::fs::metadata(path) {
         Ok(metadata) if metadata.is_file() => Ok(()),
@@ -169,7 +169,7 @@ fn checked_path(path: &Path) -> Result<(), String> {
     }
 }
 
-/// Reads a map pack file's header and says what importing it would do.
+/// Reads a pack file's header and says what importing it would do.
 pub fn inspect(library: &Library, downloads: &Downloads, path: &Path) -> Result<FileInfo, String> {
     checked_path(path)?;
     let header = read_header(path)?;
@@ -256,7 +256,7 @@ pub fn check_import(
     existing_folder(&library.maps_folder(), id)
 }
 
-/// Imports a map pack file into the maps folder; see [`import`]. With
+/// Imports a pack file into the maps folder; see [`import`]. With
 /// `replace` false, a game already in the maps folder is not replaced (the
 /// Import dialog asks first).
 pub fn import_pack_file(

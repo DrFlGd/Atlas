@@ -12,7 +12,7 @@ const DETAIL_WORDS: Record<Detail, string> = {
 
 /**
  * Android: the detail of a game's map images and its size, read when the
- * row is shown. The size is that of the map pack file it was imported
+ * row is shown. The size is that of the pack file it was imported
  * from, unpacked.
  */
 export function PackSummary({ id }: { id: string }) {

@@ -217,7 +217,7 @@ fn remove_link_or_file(ops: &FileOps, path: &Path) -> io::Result<()> {
 /// Finishes deletes that an earlier run could not finish, in the maps folder
 /// `maps`: hidden `.deleting-*` folders, pack folders marked as being
 /// deleted that have no manifest any more, and `.importing-*` folders of a
-/// map pack file import that did not finish. Returns what is still there.
+/// pack file import that did not finish. Returns what is still there.
 pub fn finish_pending_deletes(ops: &FileOps, maps: &Path) -> Vec<PathBuf> {
     let mut left = Vec::new();
     let Ok(entries) = fs::read_dir(maps) else {
@@ -243,7 +243,7 @@ pub fn finish_pending_deletes(ops: &FileOps, maps: &Path) -> Vec<PathBuf> {
             && !link
             && metadata.is_dir()
         {
-            // A map pack file that was being unpacked when its app ended;
+            // A pack file that was being unpacked when its app ended;
             // not while another app is still unpacking into it.
             let Ok(lock) = PackLock::acquire(&path) else {
                 left.push(path);

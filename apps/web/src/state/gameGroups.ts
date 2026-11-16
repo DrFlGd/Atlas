@@ -562,7 +562,7 @@ export async function forgetDeletedGame(gameId: string): Promise<void> {
 }
 
 /**
- * Adds the title a map pack file carried for its game: the game joins the
+ * Adds the title a pack file carried for its game: the game joins the
  * title here one of its games is under, or the file's title is added, its
  * games not on this device included, so it shows once they are. Returns
  * the title the game is under afterwards, or null.

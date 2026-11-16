@@ -104,7 +104,7 @@ export interface DownloadState {
   settings: DownloadSettingsInfo | null;
 }
 
-/** The map pack file dialog: exporting a game, or importing a file already read. */
+/** The pack file dialog: exporting a game, or importing a file already read. */
 export type PackFileDialogState =
   | { kind: 'export'; packId: string; title: string }
   | { kind: 'import'; file: PackFileInfo }
@@ -193,7 +193,7 @@ export interface AtlasState {
   saveDialogOpen: boolean;
   /** The game save linked to the active profile, and what it says. */
   save: SaveState;
-  /** The map pack file dialog; null when closed. */
+  /** The pack file dialog; null when closed. */
   packFileDialog: PackFileDialogState | null;
 }
 

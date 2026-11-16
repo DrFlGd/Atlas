@@ -7,7 +7,7 @@
 //! Nothing reads them yet: they are kept so that a later version may look
 //! up what the site's layout names do. They are data only: never served
 //! (the pack protocol never serves `import/`), never loaded as a style
-//! sheet, never put in a map pack file (only the pack's own files are), and
+//! sheet, never put in a pack file (only the pack's own files are), and
 //! they go with the game's folder when the game is deleted. Building a
 //! game again from its saved pages and deleting its map images leave them
 //! alone.

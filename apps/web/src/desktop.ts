@@ -319,7 +319,7 @@ export interface DesktopInfo {
   /** Web pages can be opened for importers. False in the Android app. Absent counts as true. */
   imports?: boolean;
   /**
-   * Map pack files are picked with the system's picker and copied into
+   * Pack files are picked with the system's picker and copied into
    * the app before they are imported, since the picker gives no path: the
    * Android app. Absent counts as false.
    */
@@ -554,7 +554,7 @@ export type RevealTarget =
   | { kind: 'location'; path: string }
   | { kind: 'log-folder' };
 
-/** The app that wrote a map pack file. */
+/** The app that wrote a pack file. */
 export interface AppFacts {
   name: string;
   version: string;
@@ -593,7 +593,7 @@ export interface ContentCounts {
   guides: number;
 }
 
-/** The map images of one layer in a map pack file. */
+/** The map images of one layer in a pack file. */
 export interface LayerFacts {
   id: string;
   name: string;
@@ -611,7 +611,7 @@ export interface LayerFacts {
   downloadedAt?: string;
 }
 
-/** `atlaspack.json`, the description at the start of a map pack file. */
+/** `atlaspack.json`, the description at the start of a pack file. */
 export interface PackFileHeader {
   format: 'atlas-pack-file';
   version: number;
@@ -646,7 +646,7 @@ export interface PackFileHeader {
   };
 }
 
-/** What is known about an installed pack, as a map pack file would say. */
+/** What is known about an installed pack, as a pack file would say. */
 export interface PackDetails {
   pack: PackFacts;
   source: SourceFacts;
@@ -667,7 +667,7 @@ export interface PackDetails {
   imagesAt: string | null;
   /** Its map images are one archive file, which cannot be exported. */
   archive: boolean;
-  /** The map pack file it was imported from. */
+  /** The pack file it was imported from. */
   packFile: { importedAt: string; fileName: string; header: PackFileHeader } | null;
   /**
    * The style sheets kept from the pages it was read from (`library.keepStyles`),
@@ -757,11 +757,11 @@ export interface PackFileExported {
   header: PackFileHeader;
   /** The progress export saved beside it, when asked for. */
   progressFile: string | null;
-  /** Why the progress export could not be saved; the map pack file is fine. */
+  /** Why the progress export could not be saved; the pack file is fine. */
   progressError: string | null;
 }
 
-/** A map pack file picked for import, before anything is written. */
+/** A pack file picked for import, before anything is written. */
 export interface PackFileInfo {
   path: string;
   fileName: string;
@@ -837,7 +837,7 @@ export interface OwnGameChanged {
   listing: Listing;
 }
 
-/** A map pack file picked with Android's picker, before it is copied into the app. */
+/** A pack file picked with Android's picker, before it is copied into the app. */
 export interface PickedPackFile {
   /** Its name where it is. */
   fileName: string;
@@ -849,7 +849,7 @@ export interface PickedPackFile {
   roomNeeded: number;
 }
 
-/** How far the map pack file being saved, imported or copied into the app is. */
+/** How far the pack file being saved, imported or copied into the app is. */
 export interface PackFileProgress {
   /** `copy`: a picked file copied into the app, counted in bytes only. */
   kind: 'export' | 'import' | 'copy';
@@ -1153,7 +1153,7 @@ export interface DesktopBridge {
     /** Asks for a file and reads it. Null when the dialog was closed. */
     open(): Promise<{ name: string; contents: string } | null>;
   };
-  /** Map pack files (`.atlaspack`): one game in one file, for another device. */
+  /** Pack files (`.atlaspack`): one game in one file, for another device. */
   packFiles: {
     /** What can be exported of a pack, and how large each detail is. */
     options(packId: string): Promise<PackFileOptions>;

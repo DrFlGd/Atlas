@@ -42,7 +42,7 @@ export function mapsOffered(state: Pick<AtlasState, 'app'>): boolean {
 }
 
 /**
- * Whether map pack files are picked with the system's picker and copied
+ * Whether pack files are picked with the system's picker and copied
  * into the app before they are imported: the Android app.
  */
 export function copiesPickedFiles(state: Pick<AtlasState, 'app'>): boolean {

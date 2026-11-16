@@ -1,4 +1,4 @@
-//! Writing a map pack file; see the module above for what goes in.
+//! Writing a pack file; see the module above for what goes in.
 
 use std::{
     fs::{self, File},
@@ -34,7 +34,7 @@ pub struct Exported {
 /// The suffix of the file being written; it is renamed into place when complete.
 pub const PART_SUFFIX: &str = ".part";
 
-/// Exports a pack to a map pack file at `destination`, at `detail`.
+/// Exports a pack to a pack file at `destination`, at `detail`.
 ///
 /// The file is written to `<destination>.part` and renamed when complete;
 /// on failure or cancel the part file is removed and nothing else is left.
@@ -116,7 +116,7 @@ pub fn export_with_mine(
             crate::activity::info(
                 crate::activity::Area::Library,
                 format!(
-                "Made {} pictures smaller for the map pack file of {}: {} bytes in place of {}.",
+                    "Made {} pictures smaller for the pack file of {}: {} bytes in place of {}.",
                     saved.pictures, source.pack_id, saved.after, saved.before
                 ),
             );
@@ -331,7 +331,7 @@ fn write_file(
     Ok(size)
 }
 
-/// The ZIP writer of map pack files: JSON deflated, everything else (map
+/// The ZIP writer of pack files: JSON deflated, everything else (map
 /// images, which are compressed already, and empty markers) stored. ZIP64
 /// records are written where sizes, offsets or the number of entries need
 /// them.

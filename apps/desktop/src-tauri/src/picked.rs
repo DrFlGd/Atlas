@@ -3,7 +3,7 @@
 //! On Android the picker hands over a `content://` address, not a path: the
 //! file may be in the Download folder, on a memory card or in a cloud
 //! drive, and is read through a file descriptor that may not be able to
-//! seek. A map pack file is a ZIP archive, which the import reads by
+//! seek. A pack file is a ZIP archive, which the import reads by
 //! seeking, so it is copied first, in order, into the app's cache, and the
 //! import is given that copy (`commands::packfile_copy_picked`).
 //!
@@ -37,7 +37,7 @@ const CHUNK: usize = 1 << 20;
 /// The suffix of a copy that is not complete yet.
 const PART_SUFFIX: &str = ".part";
 
-/// The name to give the copy of a picked map pack file: the picked file's
+/// The name to give the copy of a picked pack file: the picked file's
 /// own name, kept to characters every file system takes, ending in
 /// `.atlaspack` (the import opens only such files).
 pub fn copy_name(picked: Option<&str>) -> String {
@@ -193,7 +193,7 @@ pub fn discard(copies: &Path, path: &Path) -> Result<bool, String> {
     };
     fs::remove_dir_all(&folder)
         .map(|()| true)
-        .map_err(|error| format!("Could not delete the copy of the map pack file: {error}"))
+        .map_err(|error| format!("Could not delete the copy of the pack file: {error}"))
 }
 
 #[cfg(test)]

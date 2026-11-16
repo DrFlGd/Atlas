@@ -57,7 +57,7 @@ export function GamesScreen() {
                     listed?.madeInApp
                       ? 'Made in this app'
                       : listed && !listed.bundled
-                        ? 'Imported from a map pack file'
+                        ? 'Imported from a pack file'
                         : 'Comes with the app'
                   }
                   ownGame={canMake && listed?.madeInApp === true && listed.origin === 'maps-folder'}
@@ -80,11 +80,11 @@ export function GamesScreen() {
                 onClick={() => void (copies ? importPickedPackFile() : pickPackFile())}
               >
                 <UiIcon name="upload" size={20} />
-                Import map pack file…
+                Import pack file…
               </button>
               <p className="touch-note">
-                Add a game with a map pack file (.atlaspack) exported by Atlas on your computer:
-                copy it to this device, for example into Download, then import it here.
+                Add a game or a wiki with a pack file (.atlaspack) exported by Atlas on your
+                computer: copy it to this device, for example into Download, then import it here.
               </p>
             </>
           ) : null}

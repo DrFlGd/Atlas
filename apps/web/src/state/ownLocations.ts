@@ -603,7 +603,7 @@ export async function hasOwnLocations(gameId: string): Promise<boolean> {
 }
 
 /**
- * Adds the own locations, types and areas a map pack file carried to the
+ * Adds the own locations, types and areas a pack file carried to the
  * person's of that game: a record with the same id is replaced by the
  * file's. Returns how many locations, types and areas the file had.
  */

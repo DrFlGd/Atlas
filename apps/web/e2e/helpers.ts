@@ -171,7 +171,7 @@ export async function categoryCount(page: Page, categoryId: string): Promise<str
   return (await page.getByTestId(`category-${categoryId}`).locator('.count').textContent()) ?? '';
 }
 
-/** One's own files of the demo game, as a map pack file would give them back. */
+/** One's own files of the demo game, as a pack file would give them back. */
 const ownAt = '2026-11-12T09:00:00.000Z';
 export const ownLocationsText = JSON.stringify({
   format: 'atlas-own-locations',

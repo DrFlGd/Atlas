@@ -4,14 +4,22 @@ import {
   compareVersions,
   compareWithInstalled,
   contentsText,
+  exportHolds,
   freshnessText,
   imagesDownloadedAt,
   imagesText,
   installedImagesText,
+  mineHint,
+  mineLabel,
+  packKind,
   photosHint,
+  photosLabel,
   picturesInFileText,
+  replaceText,
+  savedText,
   sourceText,
   stylesText,
+  wikisApartText,
 } from './packFileText';
 
 const contents = {
@@ -118,7 +126,7 @@ function installed(patch: Partial<PackDetails> = {}): PackDetails {
 
 const iso = (date: string) => `[${date}]`;
 
-describe('which is newer, a map pack file or the installed game', () => {
+describe('which is newer, a pack file or the installed game', () => {
   it('goes by when the pages were read first', () => {
     const file = header({ source: { ...header().source, newestPageAt: '2026-11-05T10:00:00Z' } });
     const freshness = compareWithInstalled(file, installed());
@@ -203,7 +211,7 @@ describe('which is newer, a map pack file or the installed game', () => {
   });
 });
 
-describe('map pack file facts in words', () => {
+describe('pack file facts in words', () => {
   it('says where the data came from', () => {
     expect(sourceText(header().source)).toBe('Read from 1 web page with Demo map site.');
     expect(sourceText({ kind: 'app' })).toBe('Comes with the Atlas app.');
@@ -254,6 +262,98 @@ describe('map pack file facts in words', () => {
     expect(stylesText({ sheets: 4, bytes: 1_200_000, leftOut: 0 })).toBe('4, 1.2 MB in all.');
     expect(stylesText({ sheets: 1, bytes: 2_400, leftOut: 1 })).toBe(
       '1, 2.4 KB in all. 1 more was not kept; the activity log says why.',
+    );
+  });
+});
+
+describe('a pack file of a game with no map (a wiki)', () => {
+  const pages = { ...contents, maps: 0, layers: 0, locations: 0, checklists: 0, guides: 24 };
+  const wikiHeader = () =>
+    header({ contents: pages, images: { detail: 'full', files: 0, bytes: 0, layers: [] } });
+  /** Everything said for a wiki, to look for words about maps in it. */
+  const said = () =>
+    [
+      exportHolds('pages', { shared: 3, ownUse: 0 }),
+      exportHolds('pages', { shared: 0, ownUse: 12 }),
+      exportHolds('pages', { shared: 0, ownUse: 0 }),
+      mineLabel('pages', pages),
+      mineHint('pages', pages),
+      photosLabel('pages'),
+      photosHint(12, '3 MB', 'pages'),
+      contentsText(pages),
+      savedText(wikiHeader(), 30),
+      replaceText('pages', { title: 'Isle Wiki', origin: 'maps-folder', folder: null }, true),
+      replaceText('pages', { title: 'Isle Wiki', origin: 'bundled', folder: null }, false),
+    ].join(' ');
+
+  it('is told apart by having no map', () => {
+    expect(packKind(contents)).toBe('map');
+    expect(packKind(pages)).toBe('pages');
+  });
+
+  it('speaks of pages and pictures, never of maps, locations or map images', () => {
+    // "The maps folder" is the name of the folder the app keeps every game in.
+    expect(said().replaceAll('maps folder', 'folder')).not.toMatch(
+      /\bmaps?\b|locations?|map images?|\u2014/i,
+    );
+  });
+
+  it('says what the file holds by the pictures that go with the pages', () => {
+    expect(exportHolds('pages', { shared: 3, ownUse: 0 })).toMatch(
+      /^its pages and their pictures\./,
+    );
+    expect(exportHolds('pages', { shared: 3, ownUse: 12 })).toMatch(
+      /^its pages, and the pictures of its pages as you choose below\./,
+    );
+    expect(exportHolds('pages', { shared: 0, ownUse: 0 })).toMatch(/^its pages\. /);
+    expect(exportHolds('map', { shared: 0, ownUse: 0 })).toContain('the map images at the detail');
+  });
+
+  it('says plainly that the downloaded pictures decide whether the pages keep their pictures', () => {
+    expect(photosLabel('pages')).toBe('Include downloaded pictures');
+    expect(photosLabel('map')).toBe('Include downloaded photos');
+    const hint = photosHint(1, '80 KB', 'pages');
+    expect(hint).toMatch(/^The 1 picture of its pages downloaded for your own use \(80 KB\)\./);
+    expect(hint).toContain('the file holds the pages without these pictures');
+    expect(hint).toContain('Keep a file with them to yourself');
+  });
+
+  it('names one’s own things by what the game has', () => {
+    expect(mineLabel('map', contents)).toBe('Include my lists, locations, types and photos');
+    expect(mineLabel('pages', pages)).toBe('Include my pages');
+    expect(mineLabel('pages', { checklists: 2 })).toBe('Include my pages and lists');
+    expect(mineHint('pages', { checklists: 2 })).toContain('your own lists of it');
+    expect(mineHint('pages', pages)).not.toContain('lists');
+  });
+
+  it('counts pages, and the pictures that went in', () => {
+    expect(contentsText(pages)).toBe('24 pages');
+    expect(contentsText({ ...pages, guides: 1, checklists: 1 })).toBe('1 page, 1 checklist');
+    expect(savedText(wikiHeader(), 30)).toBe('24 pages and 30 pictures.');
+    expect(savedText(wikiHeader(), 0)).toBe('24 pages.');
+    expect(savedText(header(), 30)).toBe('1,234 map images at standard detail.');
+  });
+
+  it('says what importing replaces by what the file holds', () => {
+    const installed = { title: 'Isle Wiki', origin: 'maps-folder', folder: null };
+    expect(replaceText('pages', installed, true)).toBe(
+      'Importing replaces Isle Wiki in the maps folder. Your progress is kept; its pages and pictures are replaced by the ones in this file.',
+    );
+    expect(replaceText('map', { ...installed, title: 'Test Valley' }, true)).toBe(
+      'Importing replaces Test Valley in the maps folder. Your found marks are kept; its locations, checklists and map images are replaced by the ones in this file.',
+    );
+    expect(replaceText('pages', { ...installed, origin: 'location', folder: '/d' }, false)).toBe(
+      'The imported game goes into the maps folder and is shown in place of the one in /d, which is left as it is. Your progress is kept.',
+    );
+  });
+
+  it('says in one sentence that a wiki shown with a map game is exported by itself', () => {
+    expect(wikisApartText([])).toBeNull();
+    expect(wikisApartText(['Isle Wiki'])).toBe(
+      'The wiki Isle Wiki, shown with this game under one title, is not in this file: export it by itself from the Library, under More, Export to a file.',
+    );
+    expect(wikisApartText(['First Wiki', 'Second Wiki'])).toMatch(
+      /^The wikis First Wiki and Second Wiki, .* are not in this file: export each by itself/,
     );
   });
 });

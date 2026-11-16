@@ -9,7 +9,7 @@ import {
 
 /**
  * Facts about a game's pack, shared by the Library's "What this game holds" and the
- * map pack file dialog: dates are shown in local time, with the exact time
+ * pack file dialog: dates are shown in local time, with the exact time
  * in UTC as their tooltip.
  */
 
@@ -69,7 +69,7 @@ export function PackDetailsView({ details }: { details: PackDetails }) {
       ) : null}
       {details.packFile ? (
         <>
-          <dt>Map pack file</dt>
+          <dt>Pack file</dt>
           <dd>
             Imported from {details.packFile.fileName} on <When iso={details.packFile.importedAt} />{' '}
             (made with {details.packFile.header.exportedBy.name}{' '}

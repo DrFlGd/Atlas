@@ -42,7 +42,7 @@ test('opens the touch layout, offers Games without folders and progress files', 
   await page.getByTestId('section-games').click();
   const games = page.getByTestId('games-screen');
   await expect(games.getByRole('heading', { name: 'Games on this device' })).toBeVisible();
-  await expect(games.getByTestId('import-pack-file')).toHaveText('Import map pack file…');
+  await expect(games.getByTestId('import-pack-file')).toHaveText('Import pack file…');
   // No folder choices, no folders to open, nothing to export or download.
   for (const id of [
     'maps-folder-path',
@@ -82,7 +82,7 @@ test('opens the touch layout, offers Games without folders and progress files', 
   expect(errors).toEqual([]);
 });
 
-test('imports a map pack file from the picker, copying it into the app first', async ({ page }) => {
+test('imports a pack file from the picker, copying it into the app first', async ({ page }) => {
   const errors = collectErrors(page);
   await openMap(page);
   await page.getByTestId('section-games').click();
@@ -102,7 +102,7 @@ test('imports a map pack file from the picker, copying it into the app first', a
     hold: true,
   });
   await importButton.click();
-  await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
+  await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
   await expect(dialog.getByTestId('copy-file')).toHaveText(
     'Atlas demo world (standard).atlaspack (2.1 MB)',
   );
@@ -144,7 +144,7 @@ test('imports a map pack file from the picker, copying it into the app first', a
 
   // Listed with its detail and size, and it can be deleted.
   const row = maps.locator('[data-testid="game-row"][data-pack="demo"]');
-  await expect(row).toContainText('Imported from a map pack file');
+  await expect(row).toContainText('Imported from a pack file');
   await expect(row.getByTestId('pack-summary')).toHaveText(
     'Standard detail · 2.1 MB · 2 maps · 5,000 locations',
   );
@@ -172,7 +172,7 @@ test('imports a map pack file from the picker, copying it into the app first', a
   expect(errors).toEqual([]);
 });
 
-test('keeps the own lists, locations and types a map pack file carries', async ({ page }) => {
+test('keeps the own lists, locations and types a pack file carries', async ({ page }) => {
   const errors = collectErrors(page);
   await openMap(page);
   await setShell(page, {
@@ -347,7 +347,7 @@ test.describe('on a phone', () => {
     expect(errors).toEqual([]);
   });
 
-  test('imports a map pack file from the Games screen', async ({ page }) => {
+  test('imports a pack file from the Games screen', async ({ page }) => {
     const errors = collectErrors(page);
     await openMap(page);
     await setShell(page, { pick: { fileName: 'demo.atlaspack', size: null } });

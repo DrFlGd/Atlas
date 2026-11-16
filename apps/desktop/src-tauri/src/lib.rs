@@ -15,7 +15,7 @@
 //! error there, and `desktop_info` tells the web app not to offer them. The
 //! packs that come with the Android app are part of its web build, not
 //! resources (see `bundled_packs`). Its maps folder is one Android never
-//! backs up, and map pack files and progress files come from the system's
+//! backs up, and pack files and progress files come from the system's
 //! picker as `content://` addresses, read and written through the fs plugin
 //! (see `android_storage`, `picked.rs` and the progress file commands).
 

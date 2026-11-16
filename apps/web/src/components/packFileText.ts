@@ -1,13 +1,67 @@
-import type { Detail, PackDetails, PackFileHeader, SourceFacts } from '../desktop';
+import type { ContentCounts, Detail, PackDetails, PackFileHeader, SourceFacts } from '../desktop';
 import { formatBytes } from './downloadFormat';
 
 /**
- * Words for map pack files: which of a file and the installed game is
- * newer, where a pack's data came from, and dates in local time. Kept apart
- * from the dialogs so they can be tested without a page.
+ * Words for pack files: what a file holds (a game with a map, or a wiki of
+ * pages and pictures), which of a file and the installed game is newer,
+ * where a pack's data came from, and dates in local time. Kept apart from
+ * the dialogs so they can be tested without a page.
  */
 
 const numberFormat = new Intl.NumberFormat('en');
+
+const count = (n: number, one: string, many: string) =>
+  `${numberFormat.format(n)} ${n === 1 ? one : many}`;
+
+/**
+ * What a game or a file holds, for the words of the pack file dialog: a
+ * game with a map, or a game of pages and pictures with no map (a wiki).
+ * The file is the same either way; only what is said about it differs.
+ */
+export type PackKind = 'map' | 'pages';
+
+export function packKind(contents: Pick<ContentCounts, 'maps'>): PackKind {
+  return contents.maps === 0 ? 'pages' : 'map';
+}
+
+/**
+ * What a pack file of a game holds, after "A pack file holds <title> in one
+ * file: ". For a game of pages: whether the pictures of its pages go in
+ * always (`shared`, pictures that may be passed on), only when ticked
+ * (`ownUse`, downloaded for the person's own use), or not at all.
+ */
+export function exportHolds(kind: PackKind, pictures: { shared: number; ownUse: number }): string {
+  if (kind === 'map') {
+    return 'its maps, locations and checklists, and the map images at the detail you choose. Copy it to another computer or to Atlas for Android and import it there to use the maps offline.';
+  }
+  const holds =
+    pictures.ownUse > 0
+      ? 'its pages, and the pictures of its pages as you choose below'
+      : pictures.shared > 0
+        ? 'its pages and their pictures'
+        : 'its pages';
+  return `${holds}. Copy it to another computer or to Atlas for Android and import it there to read the pages offline.`;
+}
+
+/** The name of the box that adds one's own things of the game to the file. */
+export function mineLabel(kind: PackKind, contents: Pick<ContentCounts, 'checklists'>): string {
+  if (kind === 'map') return 'Include my lists, locations, types and photos';
+  return contents.checklists > 0 ? 'Include my pages and lists' : 'Include my pages';
+}
+
+/** The hint under that box: what of one's own goes with the game. */
+export function mineHint(kind: PackKind, contents: Pick<ContentCounts, 'checklists'>): string {
+  if (kind === 'map') {
+    return 'Your own lists and guides of this game, the locations, types and areas you added, your photos of them, your links between guide pages and the map, the pages you changed or added, your notes on its locations, and the title it shares with other games, so they come with it on the other device. Found marks are never included.';
+  }
+  const lists = contents.checklists > 0 ? ', your own lists of it,' : '';
+  return `The pages you added or changed in this game${lists} and the title it shares with other games, so they come with it on the other device. Your progress is never included.`;
+}
+
+/** The name of the box that adds the pictures downloaded for one's own use. */
+export function photosLabel(kind: PackKind): string {
+  return kind === 'map' ? 'Include downloaded photos' : 'Include downloaded pictures';
+}
 
 export const DETAIL_LABELS: Record<Detail, string> = {
   overview: 'Overview',
@@ -20,7 +74,11 @@ export const DETAIL_LABELS: Record<Detail, string> = {
  * there are, their size as the caller words it, and that such a file is one
  * to keep.
  */
-export function photosHint(count: number, size: string): string {
+export function photosHint(count: number, size: string, kind: PackKind = 'map'): string {
+  if (kind === 'pages') {
+    const pictures = `${numberFormat.format(count)} picture${count === 1 ? '' : 's'}`;
+    return `The ${pictures} of its pages downloaded for your own use (${size}). Tick this so the pages show their pictures on the other device: without it, the file holds the pages without these pictures. Keep a file with them to yourself: they are not yours to pass on.`;
+  }
   const photos = `${numberFormat.format(count)} photo${count === 1 ? '' : 's'}`;
   return `The ${photos} downloaded for your own use (location photos and the pictures of guide pages, ${size}), so the other device shows them without downloading them again. Keep a file with them to yourself: they are not yours to pass on.`;
 }
@@ -201,7 +259,7 @@ export function imagesDownloadedAt(header: PackFileHeader): string | null {
 
 /** The map images of an installed game, in words, without their date. */
 export function installedImagesText(details: PackDetails): string {
-  if (details.archive) return 'In one archive file, which a map pack file cannot hold.';
+  if (details.archive) return 'In one archive file, which a pack file cannot hold.';
   if (!details.layers.some((layer) => layer.downloadable)) return 'They come with the game’s pack.';
   if (details.detail) return `Downloaded at ${DETAIL_PHRASES[details.detail]}.`;
   return details.layers.some((layer) => layer.levels.length > 0)
@@ -209,17 +267,67 @@ export function installedImagesText(details: PackDetails): string {
     : 'Not downloaded.';
 }
 
-/** The size of a game's contents: "3 maps, 120 locations, 2 checklists". */
+/**
+ * The size of a game's contents: "3 maps, 120 locations, 2 checklists", or
+ * for a game with no map "24 pages, 1 checklist".
+ */
 export function contentsText(contents: PackFileHeader['contents']): string {
-  const part = (count: number, one: string, many: string) =>
-    `${numberFormat.format(count)} ${count === 1 ? one : many}`;
+  if (packKind(contents) === 'pages') {
+    const parts = [count(contents.guides, 'page', 'pages')];
+    if (contents.checklists > 0) parts.push(count(contents.checklists, 'checklist', 'checklists'));
+    return parts.join(', ');
+  }
   const parts = [
-    part(contents.maps, 'map', 'maps'),
-    part(contents.locations, 'location', 'locations'),
+    count(contents.maps, 'map', 'maps'),
+    count(contents.locations, 'location', 'locations'),
   ];
-  if (contents.checklists > 0) parts.push(part(contents.checklists, 'checklist', 'checklists'));
-  if (contents.guides > 0) parts.push(part(contents.guides, 'guide', 'guides'));
+  if (contents.checklists > 0) parts.push(count(contents.checklists, 'checklist', 'checklists'));
+  if (contents.guides > 0) parts.push(count(contents.guides, 'guide', 'guides'));
   return parts.join(', ');
+}
+
+/** What a file just saved holds, after "Saved <file> (<size>): ". */
+export function savedText(header: PackFileHeader, pictures: number): string {
+  if (packKind(header.contents) === 'map') return imagesText(header);
+  const pages = count(header.contents.guides, 'page', 'pages');
+  return pictures > 0 ? `${pages} and ${count(pictures, 'picture', 'pictures')}.` : `${pages}.`;
+}
+
+/**
+ * The note on what importing a file does to the game with the same id shown
+ * now: replaced in the maps folder, or shown in place of one that comes with
+ * the app or sits in another folder. What is replaced is said by what the
+ * file holds.
+ */
+export function replaceText(
+  kind: PackKind,
+  installed: { title: string; origin: string; folder: string | null },
+  replaces: boolean,
+): string {
+  const kept = kind === 'map' ? 'Your found marks are kept.' : 'Your progress is kept.';
+  if (replaces) {
+    return kind === 'map'
+      ? `Importing replaces ${installed.title} in the maps folder. Your found marks are kept; its locations, checklists and map images are replaced by the ones in this file.`
+      : `Importing replaces ${installed.title} in the maps folder. Your progress is kept; its pages and pictures are replaced by the ones in this file.`;
+  }
+  if (installed.origin === 'bundled') {
+    return `${installed.title} comes with the app. The imported game goes into the maps folder and is shown in its place. ${kept}`;
+  }
+  return `The imported game goes into the maps folder and is shown in place of the one in ${installed.folder ?? 'its folder'}, which is left as it is. ${kept}`;
+}
+
+/**
+ * The sentence for a game with a map whose title also shows a wiki: the
+ * wiki is a game of its own and is not in this game's file. Null when
+ * there is none.
+ */
+export function wikisApartText(wikis: readonly string[]): string | null {
+  if (wikis.length === 0) return null;
+  const names =
+    wikis.length === 1 ? wikis[0]! : `${wikis.slice(0, -1).join(', ')} and ${wikis.at(-1)!}`;
+  return wikis.length === 1
+    ? `The wiki ${names}, shown with this game under one title, is not in this file: export it by itself from the Library, under More, Export to a file.`
+    : `The wikis ${names}, shown with this game under one title, are not in this file: export each by itself from the Library, under More, Export to a file.`;
 }
 
 /**

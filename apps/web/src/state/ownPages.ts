@@ -423,7 +423,7 @@ if (typeof window !== 'undefined') {
 }
 
 // ---------------------------------------------------------------------------
-// With the game: deleted, or carried in a map pack file
+// With the game: deleted, or carried in a pack file
 
 /** Deletes a game's own pages, when the person asks for it as they delete the game. */
 export async function deleteOwnPagesOf(gameId: string): Promise<boolean> {
@@ -462,7 +462,7 @@ export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
 }
 
 /**
- * Adds the own pages a map pack file carried to the person's of that game.
+ * Adds the own pages a pack file carried to the person's of that game.
  * Returns how many pages and sections the file had.
  */
 export async function addImportedOwnPages(

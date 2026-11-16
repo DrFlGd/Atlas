@@ -13,7 +13,7 @@
 //! file as it was kept beside it when the web app asks; and carried along
 //! when the maps folder changes.
 //!
-//! A map pack file of a game under a title carries that title and its games
+//! A pack file of a game under a title carries that title and its games
 //! as `mine/game-group.json` ([`carried`], see `packfile`).
 //!
 //! Not on Android, whose web app keeps the titles in its own storage with
@@ -42,11 +42,11 @@ use crate::{
 pub const GAME_GROUPS_FILE: &str = "game-groups.json";
 /// What the file says it is (`format`).
 pub const FORMAT: &str = "atlas-game-groups";
-/// What the title of one game in a map pack file says it is (`format`).
+/// What the title of one game in a pack file says it is (`format`).
 pub const GROUP_FORMAT: &str = "atlas-game-group";
 /// The version of that file this app writes.
 const GROUP_VERSION: u64 = 1;
-/// The title of one game in a map pack file, described as an own file is,
+/// The title of one game in a pack file, described as an own file is,
 /// so the file can carry and check it as it does the others (its `suffix`
 /// names no file in the maps folder).
 pub const CARRIED: OwnFile = OwnFile {
@@ -179,7 +179,7 @@ fn members_of(group: &Value) -> Vec<String> {
     ids
 }
 
-/// The title of one game, as a map pack file carries it
+/// The title of one game, as a pack file carries it
 /// (`mine/game-group.json`): the title and the games of the group the game
 /// is in, from the file of the maps folder; `None` when it is in none. Read
 /// tolerantly, as the web app reads the file: a group it cannot read is

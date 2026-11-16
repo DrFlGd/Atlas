@@ -2762,7 +2762,7 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   cursor: crosshair;
 }
 
-/* Map pack files */
+/* Pack files */
 
 .pack-file-dialog {
   width: min(640px, calc(100% - 24px));
