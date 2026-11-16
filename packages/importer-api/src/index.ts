@@ -41,11 +41,18 @@ import {
 import { z } from 'zod';
 import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
 import type { SiteRules, SiteRulesProblem } from './siteRules';
+import {
+  siteTrialOf,
+  type SiteRulesWidening,
+  type SiteTrial,
+  type SiteTrialRequest,
+} from './siteTrial';
 import type { SiteInfo, SiteLicence } from './sites';
 
 export * from './fetching';
 export * from './sitePatterns';
 export * from './siteRules';
+export * from './siteTrial';
 export * from './sites';
 export * from './styles';
 
@@ -1226,6 +1233,21 @@ export interface ImporterSites {
    * app adds it to the end of the guide it saves for the person.
    */
   guide?: string;
+  /**
+   * Optional: what a file of the person's widens against the files the
+   * importer comes with, for the person to see before they switch it on:
+   * each way of reading it adds for a host, and each refusal it overrides
+   * (with that refusal's notice). None for a file that keeps or narrows
+   * them. Pure: it changes nothing. Must not throw.
+   */
+  widens?(rules: SiteRules): SiteRulesWidening[];
+  /**
+   * Optional: tries a file's parts read by `rules` on one page the person
+   * saved ("Try on a saved page"), and says what the reader understood
+   * (see `siteTrial.ts`). Nothing is kept and nothing is fetched. Must not
+   * throw.
+   */
+  tryPage?(request: SiteTrialRequest): SiteTrial | Promise<SiteTrial>;
 }
 
 /** Built-in site rules files one importer may come with. */
@@ -1316,6 +1338,8 @@ export const importerSchema = z
         check: z.custom<ImporterSites['check']>(isFunction, 'must be a function'),
         apply: z.custom<ImporterSites['apply']>(isFunction, 'must be a function'),
         guide: z.string().max(500_000).optional(),
+        widens: z.custom<NonNullable<ImporterSites['widens']>>(isFunction).optional(),
+        tryPage: z.custom<NonNullable<ImporterSites['tryPage']>>(isFunction).optional(),
       })
       .optional(),
   })
@@ -1956,4 +1980,36 @@ export function applySiteRules(
   const answer: unknown = safely(() => sites.apply(files), []);
   const lists = Array.isArray(answer) ? (answer as unknown[]) : [];
   return files.map((_, index) => problemsFrom(lists[index]));
+}
+
+/**
+ * What a file of the person's widens against the files the importer comes
+ * with ({@link ImporterSites.widens}), as the app takes it: none for an
+ * importer that does not say, throws or answers in another shape.
+ */
+export function siteRulesWideningsOf(
+  importer: Pick<AtlasImporter, 'sites'>,
+  rules: SiteRules,
+): SiteRulesWidening[] {
+  const widens = importer.sites?.widens;
+  if (!widens) return [];
+  return problemsFrom(safely(() => widens(rules), []));
+}
+
+/**
+ * Tries a file on one saved page with the importer's reader
+ * ({@link ImporterSites.tryPage}), its answer checked; null for an importer
+ * that cannot, or whose answer is not usable.
+ */
+export async function trySitePage(
+  importer: Pick<AtlasImporter, 'sites'>,
+  request: SiteTrialRequest,
+): Promise<SiteTrial | null> {
+  const tryPage = importer.sites?.tryPage;
+  if (!tryPage) return null;
+  try {
+    return siteTrialOf(await tryPage(request));
+  } catch {
+    return null;
+  }
 }
