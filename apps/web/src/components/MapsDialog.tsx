@@ -14,7 +14,7 @@ import { PackSummary } from './PackSummary';
 /**
  * "Maps", in the Android app's classic layout, which keeps its maps in its
  * own storage: the games on the device with their detail and size,
- * "Show", "Details" and "Delete…", and "Import map pack file…". The
+ * "Show", "Details" and "Delete…", and "Import pack file…". The
  * desktop app has the Library instead (see `library/`).
  */
 export function MapsDialog() {
@@ -86,10 +86,10 @@ function PackList() {
   const listed = new Set(library.packs.map((p) => p.id));
   const fromApp = bundled.filter((p) => !listed.has(p.id));
   return (
-    <section className="dialog-section" aria-label="Map packs">
+    <section className="dialog-section" aria-label="Games on this device">
       <h3 className="dialog-subhead">Games on this device</h3>
       <p className="muted small">
-        Add a game with a map pack file (<code>.atlaspack</code>) exported by Atlas on your
+        Add a game or a wiki with a pack file (<code>.atlaspack</code>) exported by Atlas on your
         computer: copy it to this device, for example into Download, then import it here.
       </p>
       <div className="row-actions">
@@ -99,7 +99,7 @@ function PackList() {
           data-testid="import-pack-file"
           onClick={() => void (copies ? importPickedPackFile() : pickPackFile())}
         >
-          Import map pack file…
+          Import pack file…
         </button>
       </div>
       <ul className="profile-list pack-list" data-testid="pack-list">

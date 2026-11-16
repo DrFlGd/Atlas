@@ -14,7 +14,7 @@
 //! with the app, so the `atlas-pack` protocol serves it from the pack. Each
 //! is made at most [`PHOTO_WIDTH`] pixels wide before it is written, kept
 //! in the kind its file name says. A picture is never put in an exported
-//! map pack file unless the pack marks it as shareable (see `packfile`).
+//! pack file unless the pack marks it as shareable (see `packfile`).
 //!
 //! A picture kept at full size names the address its page showed it at
 //! (`shownAt`) and a copy for pages (`pageCopy`). Its full file is asked

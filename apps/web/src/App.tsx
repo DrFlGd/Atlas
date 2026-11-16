@@ -40,7 +40,7 @@ const SaveDialog = lazy(() =>
   import('./components/SaveDialog').then((module) => ({ default: module.SaveDialog })),
 );
 
-// Only the desktop app writes and reads map pack files: their dialog is
+// Only the desktop app writes and reads pack files: their dialog is
 // loaded the first time it opens, so the bundle every browser loads stays
 // as it was.
 // The desktop app's Library, over the whole window in this layout.

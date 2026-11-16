@@ -730,7 +730,7 @@ mod tests {
         // The app lists it like any pack.
         let (packs, _) = crate::library::packs_in(&maps);
         assert_eq!(packs.len(), 1);
-        // And it can be exported as a map pack file.
+        // And it can be exported as a pack file.
         let layers = crate::packfile::parse_layers(
             &fs::read_to_string(pack.join("maps.json")).unwrap(),
             &fs::read_to_string(pack.join("layers.json")).unwrap(),

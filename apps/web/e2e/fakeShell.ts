@@ -675,13 +675,13 @@ function installFakeShell({
         };
       }
       case 'packfile_options': {
-        // Export is not offered here: this stand-in writes no map pack files.
+        // Export is not offered here: this stand-in writes no pack files.
         const listed = packs.find((pack) => pack.id === args.id);
         return {
           packId: args.id,
           title: listed?.title ?? '',
           exportable: false,
-          reason: 'This stand-in shell writes no map pack files.',
+          reason: 'This stand-in shell writes no pack files.',
           details: [],
           wholeLayers: [],
           defaultNames: { overview: '', standard: '', full: '' },

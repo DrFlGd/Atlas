@@ -125,6 +125,45 @@ test.describe('on a computer', () => {
     expect(errors).toEqual([]);
   });
 
+  test('in a short window the photo box keeps its height and the details scroll', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await openMap(page, STANDARD);
+    await choosePlace(page, 'Thornwood waystone 1');
+    const sheet = page.getByTestId('place-sheet');
+    const strip = sheet.getByTestId('photo-strip');
+    await expectLoaded(strip.getByTestId('photo'));
+    const height = (locator: Locator) =>
+      locator.evaluate((element) => element.getBoundingClientRect().height);
+    // In a tall window with short details, the photo box shows the whole photo.
+    const full = await height(strip);
+    expect(full).toBeGreaterThan(100);
+
+    // Long details (a note of one's own with many lines) in a short window. Below
+    // 520 pixels the card takes the panel's place and scrolls as a whole, so the
+    // window here stays a little taller than that.
+    const note = sheet.getByTestId('my-note');
+    await note.getByTestId('add-note').click();
+    const lines = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} of a long note.`);
+    await page.getByTestId('note-text').fill(lines.join('\n\n'));
+    await page.getByTestId('save-note').click();
+    await expect(note).not.toHaveAttribute('data-editing');
+    await page.setViewportSize({ width: 1280, height: 600 });
+
+    // The details scroll, and the photo box keeps its full height.
+    const details = sheet.getByTestId('place-details');
+    await expect
+      .poll(() => details.evaluate((element) => element.scrollHeight - element.clientHeight))
+      .toBeGreaterThan(0);
+    expect(await height(strip)).toBeCloseTo(full, 0);
+    expect(await height(strip.getByTestId('photo'))).toBeCloseTo(full, 0);
+    await strip.scrollIntoViewIfNeeded();
+    await expectLoaded(strip.getByTestId('photo'));
+    await page.screenshot({ path: `${SHOTS}/7-short-window.png` });
+    expect(errors).toEqual([]);
+  });
+
   test('in the classic layout, the details show the photo', async ({ page }) => {
     const errors = collectErrors(page);
     await openMap(page, './?ui=classic');

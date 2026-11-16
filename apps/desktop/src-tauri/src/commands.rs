@@ -73,7 +73,7 @@ pub struct DesktopInfo {
     /// Web pages can be opened in the import window, for importers. False on
     /// Android.
     imports: bool,
-    /// Map pack files are picked with the system's picker and copied into
+    /// Pack files are picked with the system's picker and copied into
     /// the app before they are imported (`packfile_pick_copy`,
     /// `packfile_copy_picked`), since the picker gives no path. True on
     /// Android; a desktop uses `packfile_pick`.
@@ -1288,9 +1288,9 @@ pub async fn library_keep_styles(
 }
 
 // ---------------------------------------------------------------------------
-// Map pack files
+// Pack files
 
-/// The map pack file being written or read, if any: one at a time. Cheap
+/// The pack file being written or read, if any: one at a time. Cheap
 /// to clone.
 #[derive(Clone, Default)]
 pub struct PackFileJobs(Arc<std::sync::Mutex<Option<PackFileJob>>>);
@@ -1342,7 +1342,7 @@ impl PackFileJobs {
         let mut job = lock_jobs(self);
         if job.is_some() {
             return Err(
-                "Another map pack file is being saved or imported. Wait until it has finished."
+                "Another pack file is being saved or imported. Wait until it has finished."
                     .to_owned(),
             );
         }
@@ -1440,7 +1440,7 @@ fn progress_file_beside(pack_file: &std::path::Path) -> PathBuf {
     pack_file.with_file_name(format!("{stem}.progress.json"))
 }
 
-/// Asks where to save a map pack file of a pack at `detail` and writes it.
+/// Asks where to save a pack file of a pack at `detail` and writes it.
 /// With `progress` (the text of a progress export, as "Export all
 /// profiles" writes it), that is saved beside it too. With `include_mine`,
 /// the person's own lists, locations and types of the game go in the file
@@ -1476,9 +1476,9 @@ pub async fn packfile_export<R: Runtime>(
                 .to_owned(),
         );
     }
-    let dialog = file_dialog(&window, "Export map pack file")
+    let dialog = file_dialog(&window, "Export pack file")
         .set_file_name(packfile::default_file_name(&id, detail))
-        .add_filter("Atlas map pack", &[packfile::EXTENSION]);
+        .add_filter("Atlas pack file", &[packfile::EXTENSION]);
     let Some(mut destination) = chosen_path(|done| dialog.save_file(done)).await? else {
         return Ok(None);
     };
@@ -1504,7 +1504,7 @@ pub async fn packfile_export<R: Runtime>(
         activity::info(
             Area::Library,
             format!(
-                "Exporting {} at {} detail to the map pack file {}",
+                "Exporting {} at {} detail to the pack file {}",
                 short(&id),
                 packfile::detail_name(detail),
                 destination.display()
@@ -1595,7 +1595,7 @@ pub async fn packfile_export<R: Runtime>(
     .await
 }
 
-/// Asks for a map pack file to import and says what is in it and what
+/// Asks for a pack file to import and says what is in it and what
 /// importing it would do. `None` when the person closes the dialog.
 #[tauri::command]
 pub async fn packfile_pick<R: Runtime>(
@@ -1604,8 +1604,8 @@ pub async fn packfile_pick<R: Runtime>(
     downloads: DownloadsState<'_>,
 ) -> Result<Option<packfile::shell::FileInfo>, String> {
     desktop_only()?;
-    let dialog = file_dialog(&window, "Import map pack file")
-        .add_filter("Atlas map pack", &[packfile::EXTENSION]);
+    let dialog = file_dialog(&window, "Import pack file")
+        .add_filter("Atlas pack file", &[packfile::EXTENSION]);
     let Some(path) = chosen_path(|done| dialog.pick_file(done)).await? else {
         return Ok(None);
     };
@@ -1623,17 +1623,14 @@ async fn inspect_pack_file(
         packfile::shell::inspect(&library, &downloads, &path).inspect_err(|error| {
             activity::warn(
                 Area::Library,
-                format!(
-                    "Could not read the map pack file {}: {error}",
-                    path.display()
-                ),
+                format!("Could not read the pack file {}: {error}", path.display()),
             );
         })
     })
     .await
 }
 
-/// Reads the header of the map pack file at `path` (a `.atlaspack` file)
+/// Reads the header of the pack file at `path` (a `.atlaspack` file)
 /// and says what importing it would do, without unpacking anything. For a
 /// file the app has a path for already, such as one the Android app
 /// copied from the system's picker.
@@ -1652,9 +1649,9 @@ pub async fn packfile_inspect(
 }
 
 // ---------------------------------------------------------------------------
-// Map pack files picked with Android's picker (see `picked.rs`)
+// Pack files picked with Android's picker (see `picked.rs`)
 
-/// The map pack file picked with `packfile_pick_copy`, waiting for
+/// The pack file picked with `packfile_pick_copy`, waiting for
 /// `packfile_copy_picked`.
 #[derive(Default)]
 pub struct PickedPackFiles(std::sync::Mutex<Option<Picked>>);
@@ -1713,7 +1710,7 @@ fn picked_name<R: Runtime>(app: &AppHandle<R>, file: &FilePath) -> Option<String
     }
 }
 
-/// Asks for a map pack file with the system's picker (Android), reads what
+/// Asks for a pack file with the system's picker (Android), reads what
 /// it holds from its start, and checks there is room to copy and import
 /// it. `None` when the person closes the picker. `packfile_copy_picked`
 /// then copies it into the app.
@@ -1724,10 +1721,10 @@ pub async fn packfile_pick_copy<R: Runtime>(
     picked: State<'_, PickedPackFiles>,
 ) -> Result<Option<PickedPackFile>, String> {
     if DESKTOP_ONLY {
-        return Err("On a computer, use Import map pack file… in the Maps dialog.".to_owned());
+        return Err("On a computer, use Import pack file… in the Maps dialog.".to_owned());
     }
     // No filter: Android knows no type for `.atlaspack`, and would grey it out.
-    let dialog = file_dialog(&window, "Import map pack file");
+    let dialog = file_dialog(&window, "Import pack file");
     let Some(file) = chosen_file(|done| dialog.pick_file(done)).await else {
         return Ok(None);
     };
@@ -1756,7 +1753,7 @@ pub async fn packfile_pick_copy<R: Runtime>(
     let (name, size, header) = checked.inspect_err(|error| {
         activity::warn(
             Area::Library,
-            format!("Could not use the picked map pack file: {error}"),
+            format!("Could not use the picked pack file: {error}"),
         );
     })?;
     let info = PickedPackFile {
@@ -1787,7 +1784,7 @@ pub async fn packfile_copy_picked<R: Runtime>(
     picked: State<'_, PickedPackFiles>,
 ) -> Result<String, String> {
     let Some(chosen) = lock_picked(&picked).take() else {
-        return Err("Choose the map pack file again.".to_owned());
+        return Err("Choose the pack file again.".to_owned());
     };
     let copies = picked_copies_dir(&app)?;
     let turn = jobs.begin("copy", &chosen.header.pack_id, &chosen.header.title)?;
@@ -1836,7 +1833,7 @@ pub async fn packfile_copy_picked<R: Runtime>(
                 activity::info(
                     Area::Library,
                     format!(
-                        "Copied the picked map pack file {} ({}) into the app to import it",
+                        "Copied the picked pack file {} ({}) into the app to import it",
                         short(&copy_name),
                         packfile::space::describe(fs::metadata(&copy).map_or(0, |m| m.len()))
                     ),
@@ -1900,14 +1897,14 @@ pub struct PackFileImported {
     own_pictures: Vec<OwnPictureFile>,
 }
 
-/// One of a person's own photos a map pack file carried.
+/// One of a person's own photos a pack file carried.
 #[derive(Debug, Serialize)]
 pub struct OwnPictureFile {
     file: String,
     data: String,
 }
 
-/// Imports the map pack file at `path` (a `.atlaspack` file) into the maps
+/// Imports the pack file at `path` (a `.atlaspack` file) into the maps
 /// folder, replacing the game with the same id there only with `replace`,
 /// and lists the packs again. `packfile_progress` reports how far it is and
 /// `packfile_cancel` stops it.
@@ -1945,7 +1942,7 @@ async fn import_pack_file(
         activity::info(
             Area::Library,
             format!(
-                "Importing the map pack file {}: {} version {}, {} detail, exported {} by {} {}",
+                "Importing the pack file {}: {} version {}, {} detail, exported {} by {} {}",
                 path.display(),
                 short(&header.pack_id),
                 short(&header.pack_version),
@@ -1978,10 +1975,7 @@ async fn import_pack_file(
             Err(Stop::Failed(error)) => {
                 activity::warn(
                     Area::Library,
-                    format!(
-                        "Could not import the map pack file {}: {error}",
-                        path.display()
-                    ),
+                    format!("Could not import the pack file {}: {error}", path.display()),
                 );
                 return Err(error);
             }
@@ -2029,13 +2023,13 @@ async fn import_pack_file(
     .await
 }
 
-/// How far the map pack file being saved or imported is; `None` when none is.
+/// How far the pack file being saved or imported is; `None` when none is.
 #[tauri::command]
 pub fn packfile_progress(jobs: PackFileJobsState<'_>) -> Option<PackFileProgress> {
     lock_jobs(&jobs).as_ref().map(|job| job.progress.clone())
 }
 
-/// Stops the map pack file being saved or imported; it leaves nothing behind.
+/// Stops the pack file being saved or imported; it leaves nothing behind.
 #[tauri::command]
 pub fn packfile_cancel(jobs: PackFileJobsState<'_>) {
     if let Some(job) = lock_jobs(&jobs).as_mut() {
@@ -2045,7 +2039,7 @@ pub fn packfile_cancel(jobs: PackFileJobsState<'_>) {
 }
 
 /// What is known about a listed pack: where its data came from and when,
-/// its version and its map images, as a map pack file would say.
+/// its version and its map images, as a pack file would say.
 #[tauri::command]
 pub async fn library_pack_details(
     library: LibraryState<'_>,

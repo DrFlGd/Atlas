@@ -527,7 +527,7 @@ if (typeof window !== 'undefined') {
 }
 
 // ---------------------------------------------------------------------------
-// With the game: deleted, or carried in a map pack file
+// With the game: deleted, or carried in a pack file
 
 /** Deletes a game's guide links, when the person asks for it as they delete the game. */
 export async function deleteGuideLinksOf(gameId: string): Promise<boolean> {
@@ -550,7 +550,7 @@ function mergeLinks(here: GuideLinks, incoming: GuideLinks): GuideLinks {
 }
 
 /**
- * Adds the guide links a map pack file carried to the person's of that
+ * Adds the guide links a pack file carried to the person's of that
  * game: a page's choice in the file replaces theirs. Returns how many
  * choices the file had.
  */

@@ -1,4 +1,4 @@
-//! Map pack files: export then import at each detail, and every refusal.
+//! Pack files: export then import at each detail, and every refusal.
 
 use std::{
     cell::Cell,
@@ -222,7 +222,7 @@ fn write_pack(dir: &Path, version: &str) {
                              "importedAt": "2026-11-11T09:00:00.000Z", "mapId": format!("{ID}:map:east"), "file": "east-field.json"}]}),
     );
     put(&dir.join("import/east-field.json"), b"{\"page\":1}");
-    // Style sheets kept from the pages it was read from: never in a map pack file.
+    // Style sheets kept from the pages it was read from: never in a pack file.
     put_json(
         &dir.join("import/styles/index.json"),
         &json!({"format": "atlas-styles", "version": 1,
@@ -758,7 +758,7 @@ fn export_holds_the_pack_lock_and_cancel_leaves_nothing() {
     assert!(result.is_ok());
 }
 
-/// Writes a map pack file by hand: the header first, then the entries.
+/// Writes a pack file by hand: the header first, then the entries.
 fn write_file(path: &Path, header: &Value, entries: &[(&str, &[u8])]) {
     let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
     let options = SimpleFileOptions::default();
@@ -811,7 +811,7 @@ fn refuses_files_that_are_not_map_pack_files_or_too_new() {
     let (header, entries) = good_file(&dir.0);
     let mut other = header.clone();
     other["format"] = json!("atlas-progress");
-    assert!(import_error(&dir.0, "format", &other, &entries).contains("not an Atlas map pack file"));
+    assert!(import_error(&dir.0, "format", &other, &entries).contains("not an Atlas pack file"));
     let mut newer = header.clone();
     newer["version"] = json!(VERSION + 1);
     newer["exportedBy"] = json!({"name": "Atlas", "version": "0.9.1", "platform": "windows"});
@@ -889,7 +889,7 @@ fn refuses_entries_that_have_no_place_in_a_pack() {
         spoiled.push(((*bad).to_owned(), b"x".to_vec()));
         let error = import_error(&dir.0, &format!("path-{i}"), &header, &spoiled);
         assert!(
-            error.contains("not part of a map pack") || error.contains("outside the pack"),
+            error.contains("not part of a pack") || error.contains("outside the pack"),
             "{bad}: {error}"
         );
     }
@@ -921,7 +921,7 @@ fn refuses_entries_that_have_no_place_in_a_pack() {
     twice.push(("Maps.json".to_owned(), b"[]".to_vec()));
     let error = import_error(&dir.0, "twice", &header, &twice);
     assert!(
-        error.contains("not part of a map pack") || error.contains("twice"),
+        error.contains("not part of a pack") || error.contains("twice"),
         "{error}"
     );
 }
@@ -1065,7 +1065,7 @@ fn replaces_a_pack_in_its_own_folder() {
     let other_maps = dir.0.join("other-maps");
     put(&other_maps.join(ID).join("readme.txt"), b"mine");
     let error = run_import(&file, &other_maps).unwrap_err().message();
-    assert!(error.contains("not this game's map pack"), "{error}");
+    assert!(error.contains("not this game's pack"), "{error}");
     assert!(other_maps.join(ID).join("readme.txt").exists());
 }
 
@@ -1333,7 +1333,7 @@ fn a_picked_file_is_read_in_order_copied_and_imported_from_the_copy() {
     assert!(
         import::read_header_from(InOrder(fs::File::open(pack.join("manifest.json")).unwrap()))
             .unwrap_err()
-            .contains("not an Atlas map pack file")
+            .contains("not an Atlas pack file")
     );
 
     // The copy keeps the picked file's name, so the import dialog and the
@@ -1523,7 +1523,7 @@ fn refuses_own_files_of_another_game() {
     let (header, mut entries) = good_file(&dir.0);
     entries.push(("mine/notes.json".to_owned(), b"{}".to_vec()));
     let error = import_error(&dir.0, "other-entry", &header, &entries);
-    assert!(error.contains("not part of a map pack"), "{error}");
+    assert!(error.contains("not part of a pack"), "{error}");
 }
 
 #[test]
@@ -1601,7 +1601,7 @@ fn carries_own_photos_and_guide_links_when_asked() {
     let (header, mut entries) = good_file(&dir.0);
     entries.push(("mine/pictures/gate.jpg".to_owned(), jpeg.clone()));
     let error = import_error(&dir.0, "not-own-photo", &header, &entries);
-    assert!(error.contains("not part of a map pack"), "{error}");
+    assert!(error.contains("not part of a pack"), "{error}");
     // A photo is never exported unless it is one.
     let bad = Mine {
         pictures: vec![("own.ab12.png".to_owned(), jpeg)],
@@ -1934,7 +1934,7 @@ fn refuses_pictures_the_pack_does_not_list() {
         let mut spoilt = entries.clone();
         spoilt.push((extra.to_owned(), b"x".to_vec()));
         let error = import_error(&dir.0, name, &header, &spoilt);
-        assert!(error.contains("not part of a map pack"), "{name}: {error}");
+        assert!(error.contains("not part of a pack"), "{name}: {error}");
     }
     // A picture listed with a path outside the folder is not one either.
     let mut spoilt = entries.clone();
@@ -1947,7 +1947,7 @@ fn refuses_pictures_the_pack_does_not_list() {
     spoilt.push(("pictures/../evil.png".to_owned(), b"x".to_vec()));
     let error = import_error(&dir.0, "outside", &header, &spoilt);
     assert!(
-        error.contains("not part of a map pack") || error.contains("outside"),
+        error.contains("not part of a pack") || error.contains("outside"),
         "{error}"
     );
 }
@@ -1976,7 +1976,7 @@ fn tells_picture_paths_from_other_paths() {
     }
 }
 
-/// The bytes of one entry of a map pack file.
+/// The bytes of one entry of a pack file.
 #[cfg(not(target_os = "android"))]
 fn entry_bytes(file: &Path, name: &str) -> Vec<u8> {
     let mut archive = ZipArchive::new(fs::File::open(file).unwrap()).unwrap();

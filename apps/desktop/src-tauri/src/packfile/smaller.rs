@@ -1,7 +1,7 @@
-//! "Pictures in the file: Smaller": the pictures a map pack file carries
+//! "Pictures in the file: Smaller": the pictures a pack file carries
 //! (see [`super::shared_pictures`]) made smaller as they go into the file.
 //! The files on this computer are never changed; only the copies written
-//! into the map pack file are.
+//! into the pack file are.
 //!
 //! The rule, for each picture:
 //!
@@ -14,7 +14,7 @@
 //!   table or a map drawn as one picture) stays readable.
 //! - A picture with no see-through part, at least [`KEEP_TYPE_UNDER`]
 //!   pixels on one side, is saved as a JPEG of quality
-//!   [`SMALLER_JPEG_QUALITY`], and its file in the map pack file is named
+//!   [`SMALLER_JPEG_QUALITY`], and its file in the pack file is named
 //!   `.jpg` (in `pictures.json` too, so the file names each picture's file
 //!   correctly for every app). One that has see-through parts, or a small
 //!   one (an icon, whose edges a JPEG would blur), keeps its type. A JPEG is
@@ -26,7 +26,7 @@
 //! The person's own photos (`mine/pictures/`) are never changed: they are
 //! made at most 1280 pixels wide when they are added already.
 //!
-//! Not on Android, which imports map pack files but makes none.
+//! Not on Android, which imports pack files but makes none.
 
 use std::{
     collections::HashSet,
@@ -185,7 +185,7 @@ pub fn fitted(width: u32, height: u32) -> (u32, u32) {
 /// megabytes while it is read, so no more than this.
 const AT_ONCE: usize = 4;
 
-/// Makes the pictures a map pack file carries smaller (see the module),
+/// Makes the pictures a pack file carries smaller (see the module),
 /// in the file's entries and in its `pictures.json` alike: a picture saved
 /// as a JPEG is named `.jpg` in both, unless another picture of the list
 /// has that name already (it then keeps its type, or stays as it is), and

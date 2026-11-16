@@ -1,4 +1,4 @@
-//! Reading a map pack file: its header alone, or the whole file into the
+//! Reading a pack file: its header alone, or the whole file into the
 //! maps folder.
 //!
 //! The file is untrusted. Before anything is written, every entry is
@@ -50,12 +50,12 @@ pub const IMPORTING_PREFIX: &str = ".importing-";
 const MAX_IMAGE_BYTES: u64 = 16 << 20;
 /// A status file larger than this is not one.
 const MAX_STATUS_BYTES: u64 = 1 << 20;
-/// More entries than this is not a map pack file.
+/// More entries than this is not a pack file.
 const MAX_ENTRIES: usize = 4_000_000;
 /// Room kept free on the disk besides the unpacked files.
 pub(crate) const SPACE_MARGIN: u64 = 64 << 20;
 
-const NOT_A_PACK_FILE: &str = "This file is not an Atlas map pack file.";
+const NOT_A_PACK_FILE: &str = "This file is not an Atlas pack file.";
 
 /// A finished import.
 #[derive(Clone, Debug)]
@@ -73,8 +73,8 @@ pub struct Imported {
     pub mine: Mine,
 }
 
-/// Reads a map pack file's header, its first entry, without reading the
-/// rest of the file. Refuses a file that is not a map pack file, and one
+/// Reads a pack file's header, its first entry, without reading the
+/// rest of the file. Refuses a file that is not a pack file, and one
 /// made in a newer version of the format, with a message that names the
 /// app that made it.
 pub fn read_header(file: &Path) -> Result<Header, String> {
@@ -116,13 +116,13 @@ pub fn existing_folder(maps_folder: &Path, pack_id: &str) -> Result<Option<PathB
     let named = maps_folder.join(pack_id);
     if fs::symlink_metadata(&named).is_ok() {
         return Err(format!(
-            "The maps folder already has a folder called {pack_id} that is not this game's map pack, so nothing was imported. Move or rename that folder first."
+            "The maps folder already has a folder called {pack_id} that is not this game's pack, so nothing was imported. Move or rename that folder first."
         ));
     }
     Ok(None)
 }
 
-/// Imports a map pack file into the maps folder.
+/// Imports a pack file into the maps folder.
 ///
 /// `file` is the path of an `.atlaspack` file (a file that Android's picker
 /// hands over as a `content://` address is to be copied to the app's cache
@@ -166,12 +166,12 @@ pub(crate) fn import_with(
     let header = read_header(file)?;
     if !is_valid_pack_id(&header.pack_id) {
         return Err(Stop::Failed(
-            "This map pack file names a game id that Atlas cannot use.".to_owned(),
+            "This pack file names a game id that Atlas cannot use.".to_owned(),
         ));
     }
     let opened = File::open(file).map_err(|error| format!("Could not open the file: {error}"))?;
     let mut archive = ZipArchive::new(BufReader::new(opened))
-        .map_err(|_| "This map pack file is damaged: its list of contents cannot be read.")
+        .map_err(|_| "This pack file is damaged: its list of contents cannot be read.")
         .map_err(str::to_owned)?;
     let checked = check_entries(&mut archive, &header)?;
 
@@ -232,10 +232,10 @@ pub(crate) fn import_with(
         return Err(Stop::Cancelled);
     }
     let head = read_head(&temp.path)
-        .map_err(|reason| format!("The game in this map pack file cannot be used: {reason}."))?;
+        .map_err(|reason| format!("The game in this pack file cannot be used: {reason}."))?;
     if head.id != header.pack_id {
         return Err(Stop::Failed(
-            "The game inside this map pack file is not the one its description names.".to_owned(),
+            "The game inside this pack file is not the one its description names.".to_owned(),
         ));
     }
     let record = ImportedRecord {
@@ -279,7 +279,7 @@ pub(crate) fn import_with(
 
 fn damaged(name: &str) -> Stop {
     Stop::Failed(format!(
-        "This map pack file is damaged: {} cannot be read in full.",
+        "This pack file is damaged: {} cannot be read in full.",
         crate::activity::clean(name)
     ))
 }
@@ -345,7 +345,7 @@ fn read_entry<R: Read + io::Seek>(
     let entry = archive.by_index(index).map_err(|_| damaged(name))?;
     if entry.size() > cap {
         return Err(refuse(format!(
-            "{} in this map pack file is too large.",
+            "{} in this pack file is too large.",
             crate::activity::clean(name)
         )));
     }
@@ -374,34 +374,34 @@ fn check_entries<R: Read + io::Seek>(
     }
     let index_of = |archive: &ZipArchive<R>, name: &str| archive.index_for_name(name);
     let manifest_index = index_of(archive, MANIFEST_FILE)
-        .ok_or_else(|| refuse("This map pack file has no manifest.json."))?;
+        .ok_or_else(|| refuse("This pack file has no manifest.json."))?;
     let manifest = read_entry(archive, manifest_index, MANIFEST_FILE, MAX_MANIFEST_BYTES)?;
     let manifest: Value = serde_json::from_slice(&manifest)
-        .map_err(|_| refuse("The manifest.json in this map pack file is not valid JSON."))?;
+        .map_err(|_| refuse("The manifest.json in this pack file is not valid JSON."))?;
     if !matches!(
         manifest.get("schemaVersion").and_then(Value::as_u64),
         Some(1 | 2)
     ) {
         return Err(refuse(
-            "The game in this map pack file uses a pack format this app does not read. Install a newer version of Atlas to open it.",
+            "The game in this pack file uses a pack format this app does not read. Install a newer version of Atlas to open it.",
         ));
     }
     let game_id = manifest.get("gameId").and_then(Value::as_str);
     if game_id != Some(header.pack_id.as_str()) {
         return Err(refuse(
-            "The game inside this map pack file is not the one its description names.",
+            "The game inside this pack file is not the one its description names.",
         ));
     }
     let text_of = |archive: &mut ZipArchive<R>, name: &str| -> Result<String, Stop> {
         let index = index_of(archive, name)
-            .ok_or_else(|| refuse(format!("This map pack file has no {name}.")))?;
+            .ok_or_else(|| refuse(format!("This pack file has no {name}.")))?;
         String::from_utf8(read_entry(
             archive,
             index,
             name,
             MAX_PACK_FILE_BYTES as u64,
         )?)
-        .map_err(|_| refuse(format!("The {name} in this map pack file is not text.")))
+        .map_err(|_| refuse(format!("The {name} in this pack file is not text.")))
     };
     // A game with no map has neither file.
     let layers =
@@ -417,7 +417,7 @@ fn check_entries<R: Read + io::Seek>(
         let text = text_of(archive, PICTURES_FILE)?;
         let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
             refuse(format!(
-                "The {PICTURES_FILE} in this map pack file is not a list."
+                "The {PICTURES_FILE} in this pack file is not a list."
             ))
         })?;
         list.iter()
@@ -430,7 +430,7 @@ fn check_entries<R: Read + io::Seek>(
     };
     if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
         return Err(refuse(
-            "The game in this map pack file keeps its map images in one archive file, which a map pack file does not carry.",
+            "The game in this pack file keeps its map images in one archive file, which a pack file does not carry.",
         ));
     }
     let templates: Vec<Template> = layers
@@ -438,7 +438,7 @@ fn check_entries<R: Read + io::Seek>(
         .map(|layer| {
             Template::compile(&layer.url).ok_or_else(|| {
                 refuse(format!(
-                    "The layer {} in this map pack file names its map images in a way Atlas cannot check.",
+                    "The layer {} in this pack file names its map images in a way Atlas cannot check.",
                     crate::activity::clean(&layer.label())
                 ))
             })
@@ -458,12 +458,12 @@ fn check_entries<R: Read + io::Seek>(
                 .map_err(|_| refuse(NOT_A_PACK_FILE))?;
             let name = entry
                 .name()
-                .map_err(|_| refuse("This map pack file holds a file with an unreadable name."))?
+                .map_err(|_| refuse("This pack file holds a file with an unreadable name."))?
                 .into_owned();
             let shown = crate::activity::clean(&name);
             if entry.is_symlink() {
                 return Err(refuse(format!(
-                    "This map pack file holds a link ({shown}), which a map pack never has."
+                    "This pack file holds a link ({shown}), which a pack never has."
                 )));
             }
             if !matches!(
@@ -471,7 +471,7 @@ fn check_entries<R: Read + io::Seek>(
                 zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
             ) {
                 return Err(refuse(format!(
-                    "{shown} in this map pack file is packed in a way Atlas does not read."
+                    "{shown} in this pack file is packed in a way Atlas does not read."
                 )));
             }
             if entry.is_dir() {
@@ -480,21 +480,21 @@ fn check_entries<R: Read + io::Seek>(
                 let trimmed = name.trim_end_matches('/');
                 if relative_path(trimmed).is_none() || name.starts_with('/') {
                     return Err(refuse(format!(
-                        "This map pack file holds a file outside the pack ({shown})."
+                        "This pack file holds a file outside the pack ({shown})."
                     )));
                 }
                 continue;
             }
             let kind = classify(&name, &layers, &templates, &pictures).ok_or_else(|| {
                 refuse(format!(
-                    "This map pack file holds a file that is not part of a map pack ({shown}), so it was not imported."
+                    "This pack file holds a file that is not part of a pack ({shown}), so it was not imported."
                 ))
             })?;
             (name, entry.size(), kind)
         };
         if !seen.insert(name.to_lowercase()) {
             return Err(refuse(format!(
-                "This map pack file holds {} twice.",
+                "This pack file holds {} twice.",
                 crate::activity::clean(&name)
             )));
         }
@@ -503,10 +503,10 @@ fn check_entries<R: Read + io::Seek>(
             let shown = crate::activity::clean(&name);
             let data = read_entry(archive, index, &name, MAX_OWN_LISTS_BYTES as u64)?;
             let text = String::from_utf8(data)
-                .map_err(|_| refuse(format!("{shown} in this map pack file is not text.")))?;
+                .map_err(|_| refuse(format!("{shown} in this pack file is not text.")))?;
             own.check(&header.pack_id, &text).map_err(|_| {
                 refuse(format!(
-                    "{shown} in this map pack file is not this game's {}.",
+                    "{shown} in this pack file is not this game's {}.",
                     own.what
                 ))
             })?;
@@ -517,15 +517,13 @@ fn check_entries<R: Read + io::Seek>(
             let shown = crate::activity::clean(&name);
             let file = name[MINE_PICTURES_DIR.len()..].to_owned();
             if mine.pictures.len() >= ownpictures::MAX_OWN_PICTURES {
-                return Err(refuse("This map pack file holds too many photos."));
+                return Err(refuse("This pack file holds too many photos."));
             }
             mine_picture_bytes = mine_picture_bytes.saturating_add(size);
             if size > ownpictures::MAX_OWN_PICTURE_BYTES as u64
                 || mine_picture_bytes > MAX_MINE_PICTURE_BYTES
             {
-                return Err(refuse(format!(
-                    "{shown} in this map pack file is too large."
-                )));
+                return Err(refuse(format!("{shown} in this pack file is too large.")));
             }
             let data = read_entry(
                 archive,
@@ -535,7 +533,7 @@ fn check_entries<R: Read + io::Seek>(
             )?;
             if !ownpictures::bytes_match_name(&file, &data) {
                 return Err(refuse(format!(
-                    "{shown} in this map pack file is not the picture it says it is."
+                    "{shown} in this pack file is not the picture it says it is."
                 )));
             }
             mine.pictures.push((file, data));
@@ -551,7 +549,7 @@ fn check_entries<R: Read + io::Seek>(
         };
         if too_large {
             return Err(refuse(format!(
-                "{} in this map pack file is too large.",
+                "{} in this pack file is too large.",
                 crate::activity::clean(&name)
             )));
         }
@@ -559,12 +557,12 @@ fn check_entries<R: Read + io::Seek>(
             Kind::PackFile | Kind::Status(_) => {
                 json_bytes += size;
                 if json_bytes > MAX_PACK_BYTES as u64 {
-                    return Err(refuse("The game in this map pack file is too large."));
+                    return Err(refuse("The game in this pack file is too large."));
                 }
                 let data = read_entry(archive, index, &name, size)?;
                 let value: Value = serde_json::from_slice(&data).map_err(|_| {
                     refuse(format!(
-                        "{} in this map pack file is not valid JSON.",
+                        "{} in this pack file is not valid JSON.",
                         crate::activity::clean(&name)
                     ))
                 })?;
@@ -574,7 +572,7 @@ fn check_entries<R: Read + io::Seek>(
                     });
                     if !usable {
                         return Err(refuse(format!(
-                            "{} in this map pack file is not a usable status file.",
+                            "{} in this pack file is not a usable status file.",
                             crate::activity::clean(&name)
                         )));
                     }
@@ -862,7 +860,7 @@ fn retrying(ops: &FileOps, mut task: impl FnMut() -> io::Result<()>) -> io::Resu
     result
 }
 
-/// The entries of a map pack file and what each is, for tests and tools.
+/// The entries of a pack file and what each is, for tests and tools.
 #[cfg(test)]
 pub(crate) fn entry_names(file: &Path) -> std::collections::BTreeMap<String, u64> {
     let mut archive = ZipArchive::new(BufReader::new(File::open(file).unwrap())).unwrap();

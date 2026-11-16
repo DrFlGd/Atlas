@@ -470,7 +470,7 @@ if (typeof window !== 'undefined') {
 }
 
 // ---------------------------------------------------------------------------
-// With the game: deleted, or carried in a map pack file
+// With the game: deleted, or carried in a pack file
 
 /** Deletes a game's own notes, when the person asks for it as they delete the game. */
 export async function deleteOwnNotesOf(gameId: string): Promise<boolean> {
@@ -484,7 +484,7 @@ export async function deleteOwnNotesOf(gameId: string): Promise<boolean> {
 }
 
 /**
- * Adds the notes a map pack file carried to the person's of that game: a
+ * Adds the notes a pack file carried to the person's of that game: a
  * note on the same location is replaced by the file's. Returns how many
  * notes the file had.
  */

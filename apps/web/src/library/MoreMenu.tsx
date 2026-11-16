@@ -105,7 +105,10 @@ export function MoreMenu({
       id: 'export-pack',
       icon: 'download',
       title: 'Export to a file',
-      text: 'Saves this game with its map images in one .atlaspack file, for another computer or Atlas for Android. Your marks are not in it.',
+      text:
+        kind === 'wiki'
+          ? 'Saves this wiki with its pages and pictures in one pack file (.atlaspack), for another computer or Atlas for Android. Your progress is not in it.'
+          : 'Saves this game with its map images in one pack file (.atlaspack), for another computer or Atlas for Android. Your marks are not in it.',
       run: () => {
         openExport(id, title);
       },
@@ -115,8 +118,8 @@ export function MoreMenu({
     rows.push({
       id: 'import-pack-file',
       icon: 'upload',
-      title: 'Import a map pack file',
-      text: 'Adds a game from an .atlaspack file exported by Atlas on another computer. This game is not changed.',
+      title: 'Import a pack file',
+      text: 'Adds a game or a wiki from a pack file (.atlaspack) exported by Atlas on another computer. This game is not changed.',
       run: () => void pickPackFile(),
     });
   }

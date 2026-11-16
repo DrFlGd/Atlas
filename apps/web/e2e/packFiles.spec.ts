@@ -1,4 +1,6 @@
-import type { Page } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import type { Page, Route } from '@playwright/test';
+import { realErrors } from './fakeShell';
 import { expect, test } from './layout';
 import {
   collectErrors,
@@ -11,11 +13,15 @@ import {
 } from './helpers';
 
 /**
- * Map pack files in the desktop app: "Export…" and "Details" on a game in
- * the Maps dialog, and "Import map pack file…". A stand-in shell answers
- * the commands with made-up facts about the demo pack; it writes and reads
- * no files. The real files are covered by the shell's own tests.
+ * Pack files in the desktop app: "Export…" and "Details" on a game in
+ * the Maps dialog, and "Import pack file…". A stand-in shell answers
+ * the commands with made-up facts about the demo pack, and about a wiki
+ * made from the demo's pages ("Isle Wiki", a game with no map); it writes
+ * and reads no files. The real files are covered by the shell's own tests.
  */
+
+/** Screenshots of the dialog for a wiki, for people to look at: only when ATLAS_PACK_SHOTS names a folder. */
+const SHOTS = process.env.ATLAS_PACK_SHOTS;
 
 interface Job {
   kind: 'export' | 'import';
@@ -37,7 +43,7 @@ interface PackShell {
   progressFails: boolean;
   exports: { id: string; detail: string; progress: string | null }[];
   imports: { path: string; replace: boolean }[];
-  /** What the next "Import map pack file…" picks. */
+  /** What the next "Import pack file…" picks. */
   pick: unknown;
   job: Job | null;
   /** The demo pack is in the maps folder (after an import). */
@@ -110,6 +116,30 @@ function installPackShell() {
     checklists: 1,
     guides: 1,
   };
+  /** The wiki: pages and pictures, no map. */
+  const wikiContents = {
+    maps: 0,
+    layers: 0,
+    locations: 0,
+    categories: 0,
+    regions: 0,
+    checklists: 0,
+    guides: 11,
+  };
+  const wikiPack = {
+    id: 'isle-wiki',
+    title: 'Isle Wiki',
+    packVersion: '1.0.0',
+    schemaVersion: 2,
+    attribution: [],
+  };
+  const wikiSource = {
+    kind: 'web-pages',
+    importer: { id: 'demo-wiki', title: 'Demo wiki site' },
+    pages: [{ url: 'https://wiki.example.com/demo-wiki/Isle' }],
+    newestPageAt: '2026-11-01T10:00:00.000Z',
+    oldestPageAt: '2026-11-01T10:00:00.000Z',
+  };
   const header = (detail: string, images: number) => ({
     format: 'atlas-pack-file',
     version: 1,
@@ -157,6 +187,17 @@ function installPackShell() {
     },
     files: images + 8,
     bytes: images * 6000 + 40_000,
+  });
+  const wikiHeader = (detail: string) => ({
+    ...header(detail, 0),
+    packId: 'isle-wiki',
+    title: 'Isle Wiki',
+    pack: wikiPack,
+    source: wikiSource,
+    contents: wikiContents,
+    images: { detail, files: 0, bytes: 0, layers: [] },
+    files: 30,
+    bytes: 900_000,
   });
   /** Runs a job that counts up every 50 ms; it ends when done (and not held) or cancelled. */
   /** With `pictures`, that many pictures are made smaller first, as long as `hold` is set. */
@@ -208,6 +249,36 @@ function installPackShell() {
       case 'library_list':
         return Promise.resolve(listing());
       case 'packfile_options':
+        if (args.id === 'isle-wiki') {
+          // No map: every detail is the same file, with no map images.
+          return Promise.resolve({
+            packId: 'isle-wiki',
+            title: 'Isle Wiki',
+            exportable: true,
+            reason: null,
+            details: ['overview', 'standard', 'full'].map((detail) => ({
+              detail,
+              available: true,
+              reason: null,
+              images: 0,
+              imageBytes: 0,
+              bytes: 900_000,
+            })),
+            wholeLayers: [],
+            defaultNames: {
+              overview: 'isle-wiki.atlaspack',
+              standard: 'isle-wiki.atlaspack',
+              full: 'isle-wiki.atlaspack',
+            },
+            downloading: false,
+            ...(shell.ownUse
+              ? { ownUsePictures: shell.ownUse.pictures, ownUsePictureBytes: shell.ownUse.bytes }
+              : {}),
+            ...(shell.pictures
+              ? { pictures: shell.pictures.pictures, pictureBytes: shell.pictures.bytes }
+              : {}),
+          });
+        }
         return Promise.resolve({
           packId: 'demo',
           title: 'Atlas demo world',
@@ -262,6 +333,17 @@ function installPackShell() {
         shell.exportsPhotos.push(args.includePhotos === true);
         const smaller = args.smallerPictures === true;
         shell.exportsSmaller.push(smaller);
+        if (args.id === 'isle-wiki') {
+          const made = () => ({
+            path: '/home/test/Exports/isle-wiki.atlaspack',
+            fileName: 'isle-wiki.atlaspack',
+            size: 900_000,
+            header: wikiHeader(detail),
+            progressFile: null,
+            progressError: null,
+          });
+          return run('export', 20, made);
+        }
         const images = detail === 'overview' ? 18 : 340;
         const path = `/home/test/Exports/demo-${detail}.atlaspack`;
         const made = () => ({
@@ -287,6 +369,17 @@ function installPackShell() {
       case 'packfile_import': {
         const request = { path: args.path as string, replace: args.replace as boolean };
         shell.imports.push(request);
+        if (
+          (shell.pick as { header?: { packId?: string } } | null)?.header?.packId === 'isle-wiki'
+        ) {
+          return run('import', 20, () => ({
+            packId: 'isle-wiki',
+            title: 'Isle Wiki',
+            replaced: request.replace,
+            header: wikiHeader('full'),
+            listing: listing(),
+          }));
+        }
         return run('import', 20, () => {
           shell.imported = true;
           return {
@@ -305,6 +398,18 @@ function installPackShell() {
         if (shell.job) shell.job.cancelling = true;
         return Promise.resolve(null);
       case 'library_pack_details':
+        if (args.id === 'isle-wiki') {
+          return Promise.resolve({
+            pack: wikiPack,
+            source: wikiSource,
+            contents: wikiContents,
+            layers: [],
+            detail: null,
+            imagesAt: null,
+            archive: false,
+            packFile: null,
+          });
+        }
         return Promise.resolve({
           pack: header('standard', 340).pack,
           source: shell.imported ? header('standard', 340).source : { kind: 'app', pages: [] },
@@ -496,19 +601,19 @@ test('exports a game at a chosen detail, with progress beside it when asked', as
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId('library')).toBeVisible();
 
-  // When the progress cannot be saved, the map pack file still is.
+  // When the progress cannot be saved, the pack file still is.
   await setShell(page, { progressFails: true });
   await libraryMore(page, 'export-pack');
   await dialog.getByTestId('export-with-progress').check();
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
   await expect(dialog.getByTestId('export-progress-error')).toHaveText(
-    'The map pack file is saved. Your progress could not be saved beside it (demo-standard.progress.json): Permission denied',
+    'The pack file is saved. Your progress could not be saved beside it (demo-standard.progress.json): Permission denied',
   );
   expect(errors).toEqual([]);
 });
 
-test('imports a map pack file, saying which is newer and asking before using older data', async ({
+test('imports a pack file, saying which is newer and asking before using older data', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -518,7 +623,7 @@ test('imports a map pack file, saying which is newer and asking before using old
   // Older than the game installed: keeping it is the first choice.
   await setShell(page, { pick: pickedFile('2026-10-20T10:00:00.000Z') });
   await libraryMore(page, 'import-pack-file');
-  await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
+  await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
   await expect(dialog.getByTestId('import-summary')).toHaveText(
     'Atlas demo world, version 1.0.0: 2 maps, 5,000 locations, 1 checklist, 1 guide. 340 map images at standard detail.',
   );
@@ -572,7 +677,7 @@ test('imports a map pack file, saying which is newer and asking before using old
   expect(errors).toEqual([]);
 });
 
-test('offers the photos downloaded for one’s own use in a map pack file, and only when there are any', async ({
+test('offers the photos downloaded for one’s own use in a pack file, and only when there are any', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -607,7 +712,7 @@ test('offers the photos downloaded for one’s own use in a map pack file, and o
   expect(errors).toEqual([]);
 });
 
-test('offers the pictures in a map pack file at full size or smaller, and only when there are any', async ({
+test('offers the pictures in a pack file at full size or smaller, and only when there are any', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -672,7 +777,7 @@ test('offers the pictures in a map pack file at full size or smaller, and only w
   expect(errors).toEqual([]);
 });
 
-test('carries one’s own lists, locations and types in a map pack file only when asked', async ({
+test('carries one’s own lists, locations and types in a pack file only when asked', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -733,7 +838,7 @@ test('carries one’s own lists, locations and types in a map pack file only whe
   expect(errors).toEqual([]);
 });
 
-test('restores the photos of one’s own locations from a map pack file', async ({ page }) => {
+test('restores the photos of one’s own locations from a pack file', async ({ page }) => {
   const errors = collectErrors(page);
   // The shell gives back the own locations file and the photo it names, in base64.
   const png = await page.screenshot({ clip: { x: 0, y: 0, width: 160, height: 100 } });
@@ -789,9 +894,7 @@ test('restores the photos of one’s own locations from a map pack file', async 
   expect(errors).toEqual([]);
 });
 
-test('adds the notes a map pack file carries, with their photos, to one’s own', async ({
-  page,
-}) => {
+test('adds the notes a pack file carries, with their photos, to one’s own', async ({ page }) => {
   const errors = collectErrors(page);
   const png = await page.screenshot({ clip: { x: 0, y: 0, width: 120, height: 80 } });
   const at = '2026-11-14T10:00:00.000Z';
@@ -873,10 +976,10 @@ test.describe('in the standard layout', () => {
     await expect(page.getByTestId('library')).toBeVisible();
     expect((await packShell(page)).exports.map((e) => e.detail)).toEqual(['standard']);
 
-    // Import a map pack file, in the same More.
+    // Import a pack file, in the same More.
     await setShell(page, { pick: pickedFile('2026-11-08T10:00:00.000Z') });
     await libraryMore(page, 'import-pack-file');
-    await expect(dialog.getByRole('heading')).toHaveText('Import map pack file');
+    await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
     await expect(dialog.getByTestId('import-verdict')).toHaveAttribute(
       'data-verdict',
       'file-newer',
@@ -892,5 +995,256 @@ test.describe('in the standard layout', () => {
     ]);
     await expect(page.getByTestId('marker-count')).toHaveText('5,000');
     expect(errors).toEqual([]);
+  });
+});
+
+/** The files of the wiki made from the demo's pages: no map, its pages and their pictures only. */
+const WIKI_FILES = ['manifest.json', 'sections.json', 'pictures.json', 'guides.json'];
+
+/**
+ * Lists "Isle Wiki" beside the demo world and serves it from the demo's
+ * files with its ids changed: its pages only, and an empty list of maps.
+ * Then opens the app again, so it is listed.
+ */
+async function serveWiki(page: Page): Promise<void> {
+  await page.route('**/packs/index.json', (route) =>
+    route.fulfill({
+      json: {
+        packs: [
+          { id: 'demo', url: 'packs/demo/', title: 'Atlas demo world' },
+          { id: 'isle-wiki', url: 'packs/isle-wiki/', title: 'Isle Wiki' },
+        ],
+      },
+    }),
+  );
+  await page.route('**/packs/isle-wiki/**', async (route: Route) => {
+    const name = new URL(route.request().url()).pathname.split('/packs/isle-wiki/')[1] ?? '';
+    if (name === 'maps.json') return route.fulfill({ json: [] });
+    if (!WIKI_FILES.includes(name) && !name.startsWith('pictures/')) {
+      return route.fulfill({ status: 404, body: 'not found' });
+    }
+    const response = await route.fetch({
+      url: route.request().url().replace('/packs/isle-wiki/', '/packs/demo/'),
+    });
+    if (!response.ok() || !name.endsWith('.json')) return route.fulfill({ response });
+    const value = JSON.parse(
+      (await response.text())
+        .replaceAll('"demo:', '"isle-wiki:')
+        .replaceAll('(demo:', '(isle-wiki:'),
+    ) as unknown;
+    if (name === 'manifest.json') {
+      const { contents: _contents, ...manifest } = value as Record<string, unknown>;
+      return route.fulfill({
+        json: { ...manifest, gameId: 'isle-wiki', title: 'Isle Wiki', idMigrations: {} },
+      });
+    }
+    if (name === 'guides.json') {
+      const all = value as { id: string }[];
+      return route.fulfill({ json: all.filter((g) => g.id.startsWith('isle-wiki:guide:wiki-')) });
+    }
+    return route.fulfill({ json: value });
+  });
+  await page.goto('./');
+  await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+}
+
+/** A picked file of the wiki, newer than the wiki in the maps folder, which it replaces. */
+function pickedWikiFile() {
+  const pack = {
+    id: 'isle-wiki',
+    title: 'Isle Wiki',
+    packVersion: '1.0.0',
+    schemaVersion: 2,
+    attribution: [],
+  };
+  const source = (at: string) => ({
+    kind: 'web-pages',
+    importer: { id: 'demo-wiki', title: 'Demo wiki site' },
+    pages: [{ url: 'https://wiki.example.com/demo-wiki/Isle' }],
+    newestPageAt: at,
+    oldestPageAt: at,
+  });
+  const contents = {
+    maps: 0,
+    layers: 0,
+    locations: 0,
+    categories: 0,
+    regions: 0,
+    checklists: 0,
+    guides: 11,
+  };
+  return {
+    path: '/home/test/Downloads/isle-wiki.atlaspack',
+    fileName: 'isle-wiki.atlaspack',
+    size: 900_000,
+    header: {
+      format: 'atlas-pack-file',
+      version: 1,
+      packId: 'isle-wiki',
+      title: 'Isle Wiki',
+      packVersion: '1.0.0',
+      detail: 'full',
+      exportedAt: '2026-11-11T09:30:00Z',
+      exportedBy: { name: 'Atlas', version: '0.0.0', platform: 'windows' },
+      pack,
+      source: source('2026-11-08T10:00:00.000Z'),
+      contents,
+      images: { detail: 'full', files: 0, bytes: 0, layers: [] },
+      files: 30,
+      bytes: 900_000,
+    },
+    installed: {
+      title: 'Isle Wiki',
+      origin: 'maps-folder',
+      folder: null,
+      details: {
+        pack,
+        source: source('2026-11-01T10:00:00.000Z'),
+        contents,
+        layers: [],
+        detail: null,
+        imagesAt: null,
+        archive: false,
+        packFile: null,
+      },
+    },
+    replaces: true,
+    blocked: null,
+  };
+}
+
+test.describe('a wiki, a game with no map', () => {
+  // Sharp screenshots for people to look at.
+  test.use({ deviceScaleFactor: 2 });
+
+  test.beforeAll(async () => {
+    if (SHOTS) await mkdir(SHOTS, { recursive: true });
+  });
+
+  test('is exported and imported as pages and pictures, with no detail to choose', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveWiki(page);
+    await setShell(page, {
+      ownUse: { pictures: 12, bytes: 3_000_000 },
+      pictures: { pictures: 2, bytes: 400_000 },
+    });
+    await openLibraryGame(page, 'isle-wiki');
+    await libraryMore(page, 'export-pack');
+
+    const dialog = page.getByTestId('pack-file-dialog');
+    await expect(dialog.getByRole('heading')).toHaveText('Export Isle Wiki');
+    await expect(dialog.getByTestId('export-intro')).toHaveText(
+      'A pack file holds Isle Wiki in one file: its pages, and the pictures of its pages as you choose below. Copy it to another computer or to Atlas for Android and import it there to read the pages offline. It never holds your progress.',
+    );
+    // No map: no detail to choose, and nothing said of maps, locations or map images.
+    await expect(dialog.getByTestId('export-start')).toBeEnabled();
+    await expect(dialog.getByTestId('export-detail')).toHaveCount(0);
+    await expect(dialog).not.toContainText(/\bmaps?\b|locations?|map images?/i);
+    await expect(dialog.getByTestId('export-wikis-apart')).toHaveCount(0);
+    // The downloaded pictures decide whether the pages keep their pictures: offered first.
+    const withPhotos = dialog.getByTestId('export-with-photos');
+    await expect(withPhotos).toHaveAccessibleName('Include downloaded pictures');
+    await expect(withPhotos).toHaveAccessibleDescription(
+      /^The 12 pictures of its pages downloaded for your own use \(3\.0 MB\)\. Tick this so the pages show their pictures on the other device: without it, the file holds the pages without these pictures\./,
+    );
+    await expect(withPhotos).not.toBeChecked();
+    const boxes = dialog.locator('input[type="checkbox"]');
+    await expect(boxes.first()).toHaveAttribute('data-testid', 'export-with-photos');
+    await expect(dialog.getByTestId('export-with-mine')).toHaveAccessibleName('Include my pages');
+    await expect(dialog.getByTestId('export-with-mine')).toHaveAccessibleDescription(
+      /^The pages you added or changed in this game and the title it shares with other games/,
+    );
+    if (SHOTS) await dialog.screenshot({ path: `${SHOTS}/export-wiki.png` });
+
+    // Exported with the pictures: the progress and the result speak of pages and pictures.
+    await withPhotos.check();
+    await setShell(page, { hold: true });
+    await dialog.getByTestId('export-start').click();
+    await expect(dialog.getByRole('progressbar')).toHaveAccessibleName(
+      'Saving the pages and pictures in the pack file',
+    );
+    await setShell(page, { hold: false });
+    await expect(dialog.getByTestId('export-result')).toHaveText(
+      'Saved isle-wiki.atlaspack (900 KB): 11 pages and 14 pictures.',
+    );
+    await expect(dialog).not.toContainText(/map images?/i);
+    const shell = await packShell(page);
+    expect(shell.exports.map((e) => e.id)).toEqual(['isle-wiki']);
+    expect(shell.exportsPhotos).toEqual([true]);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(dialog).toBeHidden();
+
+    // A wiki file: what it holds and what importing it replaces, in pages and pictures.
+    await setShell(page, { pick: pickedWikiFile() });
+    await libraryMore(page, 'import-pack-file');
+    await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
+    await expect(dialog.getByTestId('import-summary')).toHaveText(
+      'Isle Wiki, version 1.0.0: 11 pages.',
+    );
+    const compare = dialog.getByTestId('import-compare');
+    await expect(compare.locator('tbody th')).toHaveText([
+      'Version',
+      'Pages last read',
+      'Contents',
+      'Made',
+    ]);
+    await expect(compare).toContainText('11 pages');
+    await expect(dialog.getByTestId('import-verdict')).toHaveAttribute(
+      'data-verdict',
+      'file-newer',
+    );
+    await expect(dialog.getByTestId('import-replace-note')).toHaveText(
+      'Importing replaces Isle Wiki in the maps folder. Your progress is kept; its pages and pictures are replaced by the ones in this file.',
+    );
+    await expect(
+      dialog.getByText(/locations|checklists|map images?|\bmaps?\b(?! folder)/i),
+    ).toHaveCount(0);
+    if (SHOTS) await dialog.screenshot({ path: `${SHOTS}/import-wiki.png` });
+    await expect(dialog.getByTestId('import-start')).toHaveText('Import and replace');
+    await dialog.getByTestId('import-start').click();
+    await expect(dialog.getByTestId('import-result')).toHaveText(
+      'Replaced Isle Wiki. It is in the maps folder and shown now. Your progress is kept.',
+    );
+    expect((await packShell(page)).imports).toEqual([
+      { path: '/home/test/Downloads/isle-wiki.atlaspack', replace: true },
+    ]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('a map game’s export says that the wiki shown with it under one title goes apart', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveWiki(page);
+    await openLibraryGame(page, 'demo');
+    await libraryMore(page, 'export-pack');
+    const dialog = page.getByTestId('pack-file-dialog');
+    // Not under one title yet: nothing to say.
+    await expect(dialog.getByTestId('export-detail')).toHaveCount(3);
+    await expect(dialog.getByTestId('export-wikis-apart')).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    // The demo world and the wiki under one title.
+    await libraryMore(page, 'show-with-another');
+    const pane = page.getByTestId('library-game-pane');
+    const form = pane.getByTestId('title-form');
+    await form.getByTestId('title-choice').filter({ hasText: 'Isle Wiki' }).click();
+    await form.getByTestId('title-name').fill('Sundered Isle');
+    await form.getByTestId('title-save').click();
+    await expect(pane.getByTestId('library-title-card')).toContainText('Sundered Isle');
+    await expect(pane).toHaveAttribute('data-pack', 'demo');
+
+    await libraryMore(page, 'export-pack');
+    await expect(dialog.getByTestId('export-intro')).toContainText(
+      'its maps, locations and checklists, and the map images at the detail you choose.',
+    );
+    await expect(dialog.getByTestId('export-wikis-apart')).toHaveText(
+      'The wiki Isle Wiki, shown with this game under one title, is not in this file: export it by itself from the Library, under More, Export to a file.',
+    );
+    await expect(dialog.getByTestId('export-detail')).toHaveCount(3);
+    if (SHOTS) await dialog.screenshot({ path: `${SHOTS}/export-map.png` });
+    expect(realErrors(errors)).toEqual([]);
   });
 });

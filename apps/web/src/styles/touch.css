@@ -927,6 +927,15 @@
   overscroll-behavior: contain;
 }
 
+/*
+ * The photo strip scrolls sideways, so as an item of this column it could
+ * shrink to nothing when the details are long; it keeps its height and the
+ * column scrolls instead.
+ */
+.place-details > .photo-strip {
+  flex-shrink: 0;
+}
+
 .place-detail-actions {
   display: flex;
   flex-wrap: wrap;

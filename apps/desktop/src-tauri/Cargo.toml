@@ -38,7 +38,7 @@ tokio = { version = "1.45", features = ["fs", "macros", "rt-multi-thread", "sync
 flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
 snap = "1.1.1"
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-decode", "safe-encode", "checked-decode"] }
-# Map pack files (`.atlaspack`, see src/packfile.rs): ZIP with deflate only,
+# Pack files (`.atlaspack`, see src/packfile.rs): ZIP with deflate only,
 # through the flate2 already in the build. No encryption, no other methods.
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Map image downloads (the `downloads` feature only). rustls with the ring
@@ -54,13 +54,13 @@ httpdate = { version = "1.0.3", optional = true }
 # drawn with the computer's fonts; pictures inside a drawing are not read.
 resvg = { version = "0.50.0", default-features = false, features = ["text", "system-fonts"], optional = true }
 
-# Android: map pack files and progress files picked or saved with the
+# Android: pack files and progress files picked or saved with the
 # system's dialogs are `content://` addresses, opened through this plugin
 # (already in the build for the dialog plugin). Used from Rust only.
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-plugin-fs = "2.7.1"
 
-# Free disk space before a map pack file is unpacked (src/packfile/space.rs).
+# Free disk space before a pack file is unpacked (src/packfile/space.rs).
 # A map from one picture ("New game", src/tiles/cut.rs): decoding PNG, JPEG
 # and WebP pictures and encoding map tiles, in every desktop build (with
 # downloads too, which uses the same crate). The PNG decoder is used

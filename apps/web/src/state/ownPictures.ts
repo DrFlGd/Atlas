@@ -395,7 +395,7 @@ export const PHOTO_ACCEPT = Object.keys(OWN_PICTURE_TYPES).join(',');
 // ---------------------------------------------------------------------------
 // Carrying them in files
 
-/** The files of own pictures, as a list file or a map pack file carries them. */
+/** The files of own pictures, as a list file or a pack file carries them. */
 export async function pictureFilesOf(
   gameId: string,
   pictures: readonly Picture[],
@@ -412,7 +412,7 @@ export async function pictureFilesOf(
 }
 
 /**
- * Keeps the files a list file or a map pack file carried, under the names
+ * Keeps the files a list file or a pack file carried, under the names
  * given (`renamed`, from a name in the file to the name kept). Returns how
  * many were kept; what is not a picture is left out.
  */

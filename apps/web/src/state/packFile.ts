@@ -20,7 +20,7 @@ import { keepPictureFiles } from './ownPictures';
 import { useAtlas } from './store';
 
 /**
- * Map pack files (`.atlaspack`), in the desktop app: one game with the map
+ * Pack files (`.atlaspack`), in the desktop app: one game with the map
  * images chosen, in one file, to take to another computer or to Atlas for
  * Android. The Android app imports them too, after copying the file the
  * system's picker gave into the app. The shell writes and reads the files; this module opens the
@@ -60,7 +60,7 @@ export function closePackFileDialog(): void {
   discardPickedCopy();
 }
 
-/** Asks for a map pack file and shows what importing it would do. */
+/** Asks for a pack file and shows what importing it would do. */
 export async function pickPackFile(): Promise<void> {
   try {
     const file = await desktop!.packFiles.pick();
@@ -71,7 +71,7 @@ export async function pickPackFile(): Promise<void> {
 }
 
 /**
- * Shows what importing the map pack file at `path` would do: for a file the
+ * Shows what importing the pack file at `path` would do: for a file the
  * app has a path for without asking, such as one the Android app copied
  * from the system's picker.
  */
@@ -84,7 +84,7 @@ export async function openPackFileAt(path: string): Promise<void> {
 }
 
 /**
- * "Import map pack file…" in the Android app: asks for a file with the
+ * "Import pack file…" in the Android app: asks for a file with the
  * system's picker, copies it into the app (the picker gives no path; the
  * dialog shows how far the copy is, with Cancel), then shows what
  * importing it would do. The copy is deleted when the import is over.
@@ -122,7 +122,7 @@ export function loadPackDetails(packId: string): Promise<PackDetails> {
 }
 
 /**
- * Asks where to save and writes the map pack file. With `withProgress`, the
+ * Asks where to save and writes the pack file. With `withProgress`, the
  * progress of every game and profile is saved beside it, exactly as
  * "Export all profiles" saves it: that export cannot be limited to one
  * game. Null when the person closed the save dialog; throws the shell's
@@ -155,7 +155,7 @@ export async function exportPackFile(
   return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos, smallerPictures);
 }
 
-/** What adding the person's own records from a map pack file did. */
+/** What adding the person's own records from a pack file did. */
 export interface MineRestored {
   lists: number;
   locations: number;
@@ -271,7 +271,7 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
 }
 
 /**
- * Imports a map pack file, then lists the packs again and shows the game:
+ * Imports a pack file, then lists the packs again and shows the game:
  * from its new files, when it replaced the game shown.
  */
 export async function importPackFile(

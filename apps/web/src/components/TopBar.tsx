@@ -242,7 +242,7 @@ function LibraryButtons() {
           type="button"
           className="icon-button"
           aria-label="Maps"
-          title="Maps: the games on this device, and importing map pack files"
+          title="Maps: the games on this device, and importing pack files"
           aria-haspopup="dialog"
           data-testid="maps-button"
           onClick={() => {

@@ -3,7 +3,7 @@ import { expect, type Page } from '@playwright/test';
 /**
  * A stand-in for the Android shell, for the page as the Android app runs
  * it. It answers `desktop_info` as the Android shell does (Maps without
- * folders, progress files through the system's screens, map pack files
+ * folders, progress files through the system's screens, pack files
  * copied into the app before they are imported; no import window, no
  * downloads), answers the commands the Android app has with made-up facts,
  * and refuses every desktop-only command, as the Android shell does. It
@@ -25,7 +25,7 @@ interface Job {
 
 export interface AndroidShell {
   calls: { command: string; args: Record<string, unknown> }[];
-  /** What the next "Import map pack file…" picks; null closes the picker. */
+  /** What the next "Import pack file…" picks; null closes the picker. */
   pick: { fileName: string; size: number | null } | null;
   /** The copy waits until this is false or it is cancelled. */
   hold: boolean;
@@ -39,7 +39,7 @@ export interface AndroidShell {
   saved: { suggestedName: string; contents: string }[];
   /** What the next progress import opens; null closes the picker. */
   open: { name: string; contents: string } | null;
-  /** One's own files the next map pack file import gives back. */
+  /** One's own files the next pack file import gives back. */
   importMine: { ownLists?: string; ownLocations?: string } | null;
 }
 

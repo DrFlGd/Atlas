@@ -539,7 +539,7 @@ export async function deleteOwnListsOf(gameId: string): Promise<boolean> {
 }
 
 /**
- * Adds the own lists a map pack file carried to the person's of that game:
+ * Adds the own lists a pack file carried to the person's of that game:
  * a list with the same id is replaced by the file's. Returns how many lists
  * the file had.
  */

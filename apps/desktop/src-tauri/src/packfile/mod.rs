@@ -1,4 +1,4 @@
-//! Map pack files: a game's pack folder in one `.atlaspack` file, with its
+//! Pack files: a game's pack folder in one `.atlaspack` file, with its
 //! map images up to a chosen level of detail, for opening the game in Atlas
 //! on another device (Atlas for Android included). Every build has this,
 //! also one without downloads and the Android app: copying files is not
@@ -114,7 +114,7 @@ pub const VERSION_WITH_PHOTOS: u32 = 3;
 /// only, which an app from before version 3 reads too.
 pub const VERSION_WITH_MINE: u32 = 2;
 /// The version of a file without a person's own lists, locations and types,
-/// which every app with map pack files reads.
+/// which every app with pack files reads.
 pub const VERSION_WITHOUT_MINE: u32 = 1;
 /// The header, the file's first entry.
 pub const HEADER_FILE: &str = "atlaspack.json";
@@ -181,7 +181,7 @@ pub struct AppInfo {
 // ---------------------------------------------------------------------------
 // The header
 
-/// `atlaspack.json`: what a map pack file holds, readable without
+/// `atlaspack.json`: what a pack file holds, readable without
 /// unpacking anything else. Every date is ISO 8601 in UTC.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -370,7 +370,7 @@ impl Mine {
             total += bytes.len() as u64;
             if total > MAX_MINE_PICTURE_BYTES {
                 return Err(
-                    "Your photos of this game are too large to go in a map pack file together."
+                    "Your photos of this game are too large to go in a pack file together."
                         .to_owned(),
                 );
             }
@@ -545,7 +545,7 @@ pub struct ImportedRecord {
 /// Reads a header from its JSON text: refuses another format, and a newer
 /// version with a message naming the app that wrote it.
 pub fn parse_header(text: &str) -> Result<Header, String> {
-    let not_ours = || "This file is not an Atlas map pack file.".to_owned();
+    let not_ours = || "This file is not an Atlas pack file.".to_owned();
     let value: Value =
         serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| not_ours())?;
     if value.get("format").and_then(Value::as_str) != Some(FORMAT) {
@@ -563,7 +563,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
             .and_then(Value::as_str)
             .unwrap_or("a newer version");
         return Err(format!(
-            "This map pack file was made by {} {} in a newer format (version {version}). Install a newer version of Atlas to open it.",
+            "This pack file was made by {} {} in a newer format (version {version}). Install a newer version of Atlas to open it.",
             crate::activity::clean(name),
             crate::activity::clean(app_version)
         ));
@@ -572,7 +572,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
         return Err(not_ours());
     }
     serde_json::from_value(value)
-        .map_err(|error| format!("This map pack file's description is damaged: {error}."))
+        .map_err(|error| format!("This pack file's description is damaged: {error}."))
 }
 
 // ---------------------------------------------------------------------------
@@ -840,7 +840,7 @@ pub fn is_picture_path(path: &str) -> bool {
         && matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "gif")
 }
 
-/// The pictures a map pack file carries: those the pack marks as shareable
+/// The pictures a pack file carries: those the pack marks as shareable
 /// and whose file is there, in the pack folder or (downloaded for a pack
 /// that comes with the app) its overlay `images`; with `own_use`, which the
 /// person asks for, those kept for their own use (`shareable: false`) too,
@@ -973,7 +973,7 @@ pub enum TileKind {
     Xyz,
 }
 
-/// One tile layer of a pack, as far as a map pack file needs it.
+/// One tile layer of a pack, as far as a pack file needs it.
 #[derive(Clone, Debug)]
 pub struct LayerInfo {
     pub id: String,
@@ -1264,7 +1264,7 @@ pub fn refusal(analysis: &Analysis) -> Option<String> {
         None
     } else {
         Some(format!(
-            "This game's map images are kept in one large archive file ({}), which cannot be cut down to a level of detail and which Atlas for Android cannot read, so it cannot be exported as a map pack file. Copy its pack folder instead.",
+            "This game's map images are kept in one large archive file ({}), which cannot be cut down to a level of detail and which Atlas for Android cannot read, so it cannot be exported as a pack file. Copy its pack folder instead.",
             archives.join(", ")
         ))
     }
@@ -1591,7 +1591,7 @@ pub struct InstalledLayer {
     pub downloaded_at: Option<String>,
 }
 
-/// What is known about an installed pack: the same facts a map pack file
+/// What is known about an installed pack: the same facts a pack file
 /// carries.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1607,10 +1607,10 @@ pub struct PackDetails {
     pub images_at: Option<String>,
     /// Its images are in one archive (it cannot be exported).
     pub archive: bool,
-    /// The map pack file it was imported from, if it was.
+    /// The pack file it was imported from, if it was.
     pub pack_file: Option<ImportedRecord>,
     /// The style sheets kept from the pages it was read from (see
-    /// `styles.rs`), when there are any. Never in a map pack file.
+    /// `styles.rs`), when there are any. Never in a pack file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub styles: Option<crate::styles::StylesFacts>,
 }
@@ -1669,7 +1669,7 @@ pub fn pack_details(source: &PackSource) -> Result<PackDetails, String> {
     })
 }
 
-/// The record of the map pack file a pack folder was imported from.
+/// The record of the pack file a pack folder was imported from.
 pub fn read_imported_record(root: &Path) -> Option<ImportedRecord> {
     let path = root.join(META_DIR).join(IMPORTED_RECORD);
     let metadata = fs::symlink_metadata(&path).ok()?;
