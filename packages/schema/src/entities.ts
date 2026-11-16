@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
+import { PAGE_WIDTHS } from './pageWidth';
 
 /**
  * The pack schema version this package writes. Version 2 adds the optional
@@ -217,6 +218,16 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    */
   const homePageSchema = idOf('guide');
 
+  /**
+   * The width the pack's guide pages are shown at on a computer or a tablet
+   * (see `pageWidth.ts`): the default of the site they were read from, as
+   * its rules file gives it. The person's own choice, kept with their own
+   * pages, wins over it. Optional; an app that does not know it shows the
+   * pages as a column of text. Read leniently: a value that cannot be read
+   * is left out.
+   */
+  const pageWidthSchema = z.enum(PAGE_WIDTHS);
+
   const manifestBase = {
     gameId: gameIdSchema,
     /** Display name of the pack. */
@@ -228,6 +239,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     idMigrations: idMigrationsSchema,
     idSections: reading ? descriptive(idSectionsSchema) : idSectionsSchema.optional(),
     homePage: reading ? descriptive(homePageSchema) : homePageSchema.optional(),
+    pageWidth: reading ? descriptive(pageWidthSchema) : pageWidthSchema.optional(),
   };
 
   /** The program that wrote a pack: an app or a command-line tool, and its version. */
@@ -823,6 +835,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     idMigrationsSchema,
     idSectionsSchema,
     homePageSchema,
+    pageWidthSchema,
     writtenBySchema,
     packSourceSchema,
     layerImagesSchema,
@@ -859,6 +872,7 @@ export const {
   idMigrationsSchema,
   idSectionsSchema,
   homePageSchema,
+  pageWidthSchema,
   writtenBySchema,
   packSourceSchema,
   layerImagesSchema,

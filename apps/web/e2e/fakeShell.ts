@@ -54,6 +54,8 @@ export interface WikiSite {
       picture?: string;
       /** The wiki forwards this name to another page, by slug: it answers that page, from its own address. */
       forward?: string;
+      /** The page answers this HTML (`text/html`) in place of its title, text and links in JSON. */
+      html?: string;
     }
   >;
   /** Slugs the site answers with 503 ("busy, try later"), which stops a go. */
@@ -142,6 +144,7 @@ interface ShellEvent {
    * `source`: the app asked for a page kept with a pack (its address).
    * `save`: the app saved a pack, made from the page at that address.
    * `delete`: the app deleted a pack (its id).
+   * `styles`: the app asked for the style sheets kept for a game.
    */
   what:
     | 'open'
@@ -153,7 +156,8 @@ interface ShellEvent {
     | 'browse'
     | 'source'
     | 'save'
-    | 'delete';
+    | 'delete'
+    | 'styles';
   url: string | null;
   at: number;
   purpose?: string;
@@ -183,6 +187,8 @@ export interface MockShell {
   pictures: Record<string, string[]>;
   /** Milliseconds the shell takes to hand over one page kept with a pack (a slow disk). */
   slowSources: number;
+  /** The style sheets kept for each game, by pack id, as `library_style_texts` hands them over. */
+  styleTexts: Record<string, { address?: string; text: string }[]>;
   reports: {
     outcome: string;
     message?: string;
@@ -231,6 +237,7 @@ function installFakeShell({
     extra: {},
     pictures: {},
     slowSources: 0,
+    styleTexts: {},
     reports: [],
     sites: { files: {}, switches: { on: {}, off: [] }, pick: null, page: null, saved: [] },
   };
@@ -351,7 +358,10 @@ function installFakeShell({
     }
     return parts.length === 3 && second ? mapData(world, second) : null;
   };
-  /** What the made-up wiki answers for an address: robots.txt, its contents and its pages, as JSON. */
+  /**
+   * What the made-up wiki answers for an address: robots.txt, its contents
+   * and its pages, as JSON (a page given as HTML, as HTML).
+   */
   const wikiAnswer = (address: string) => {
     const answer = (status: number, body: unknown) => ({
       url: address,
@@ -387,6 +397,7 @@ function installFakeShell({
       const finalUrl = `${at.origin}/wiki/${forward}`;
       return to ? { ...answer(200, to), finalUrl } : { ...answer(404, 'Not found'), finalUrl };
     }
+    if (page?.html !== undefined) return { ...answer(200, page.html), contentType: 'text/html' };
     return page ? answer(200, page) : answer(404, 'Not found');
   };
   /** A wiki page as a window shows it: what its reader would read, in the shape of a fetched page. */
@@ -532,7 +543,7 @@ function installFakeShell({
         };
       }
       case 'import_fetch': {
-        // The made-up wiki: robots.txt, its contents and its pages, as JSON.
+        // The made-up wiki: robots.txt, its contents and its pages.
         const address = args.url as string;
         shell.events.push({ what: 'fetch', url: address, at: Date.now() });
         const answer = wikiAnswer(address);
@@ -549,6 +560,9 @@ function installFakeShell({
       case 'import_report':
         shell.reports.push(args.report as MockShell['reports'][number]);
         return null;
+      case 'library_style_texts':
+        shell.events.push({ what: 'styles', url: null, at: Date.now() });
+        return structuredClone(shell.styleTexts[args.packId as string] ?? []);
       case 'library_import_sources':
         return (sources[args.packId as string] ?? []).map((source) => ({ ...source }));
       case 'library_import_source_list':
@@ -832,7 +846,9 @@ export const pickSavedPage = (page: Page, saved: { name: string; text: string })
 
 export const setMock = (
   page: Page,
-  patch: Partial<Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra' | 'slowSources'>>,
+  patch: Partial<
+    Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra' | 'slowSources' | 'styleTexts'>
+  >,
 ) =>
   page.evaluate((patch) => {
     Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell, patch);

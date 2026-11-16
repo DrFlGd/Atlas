@@ -181,6 +181,34 @@ describe('own pages file', () => {
     expect(read.ok && read.file.skipped).toBe(0);
   });
 
+  it('keeps the width the person shows the pages at, and reads it tolerantly', () => {
+    const chosen: OwnPages = { ...own(), pageWidth: 'full' };
+    const text = writeOwnPagesFile('demo', chosen, NOW);
+    expect(JSON.parse(text)).toMatchObject({ pageWidth: 'full' });
+    const read = readOwnPagesFile(JSON.parse(text));
+    expect(read.ok && read.file.own.pageWidth).toBe('full');
+    expect(read.ok && read.file.skipped).toBe(0);
+    expect(JSON.parse(writeOwnPagesFile('demo', own(), NOW))).not.toHaveProperty('pageWidth');
+    // A width alone is something to keep.
+    expect(noOwnPages({ ...NO_OWN_PAGES, pageWidth: 'reading' })).toBe(false);
+    // Written strictly, read tolerantly: a width that cannot be read is left out.
+    expect(() =>
+      writeOwnPagesFile('demo', { ...own(), pageWidth: 'huge' as never }, NOW),
+    ).toThrow();
+    const odd = readOwnPagesFile({ ...(JSON.parse(text) as object), pageWidth: 1000 });
+    expect(odd.ok && odd.file.own.pageWidth).toBeUndefined();
+    expect(odd.ok && odd.file.own.pages).toEqual(read.ok && read.file.own.pages);
+  });
+
+  it('with a width, is read by an Atlas before it as before', () => {
+    const before = ownPageReadSchemas.ownPagesFileSchema.omit({ pageWidth: true });
+    const value = JSON.parse(
+      writeOwnPagesFile('demo', { ...own(), pageWidth: 'wide' }, NOW),
+    ) as Record<string, unknown>;
+    expect(before.safeParse(value).success).toBe(true);
+    expect(Object.keys(before.parse(value))).not.toContain('pageWidth');
+  });
+
   it('says what is not a pages file', () => {
     expect(readOwnPagesFile({ format: 'atlas-own-lists', version: 1, gameId: 'demo' }).ok).toBe(
       false,

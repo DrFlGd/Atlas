@@ -9,7 +9,7 @@
  * else. Nothing is kept and nothing is fetched.
  */
 
-import type { SiteFile } from './siteRules';
+import type { LayoutRead, SiteFile } from './siteRules';
 
 /**
  * A page saved by the person and the file to try on it, or, for a file
@@ -125,11 +125,71 @@ export interface SiteTrial {
   credit?: string;
   /** For a map part: what the reader found in the data (see {@link SiteMapTrial}). */
   map?: SiteMapTrial;
+  /** Optional: the layout the reader found on the page (see {@link SiteTrialLayout}). */
+  layout?: SiteTrialLayout;
   /**
    * What went wrong, in plain sentences: each selector or data path that
    * matched nothing, why nothing was read.
    */
   problems: string[];
+}
+
+/**
+ * The layout the reader found on a saved page, as the file's `layout`
+ * section and the general rules make it: how many of each layout form the
+ * page as Atlas would keep it holds, and what was made of its lines and
+ * blocks. The entries of the section that matched nothing are among
+ * {@link SiteTrial.unmatched}.
+ */
+export interface SiteTrialLayout {
+  /** How the page's layout was kept (`layout.read`, `seen` when the file does not say). */
+  read: LayoutRead;
+  /**
+   * Whether the page carries the notes of its layout that a page read in
+   * the app's window has. A page saved from a browser has none: layout that
+   * comes only from the site's style sheet shows once the wiki is read in
+   * the app.
+   */
+  notes: boolean;
+  /** Blocks side by side (each set of two to four blocks on a line). */
+  sideBySide: number;
+  /** Cards, and the titles of the first, at most {@link MAX_TRIAL_ENTRIES}. */
+  cards: number;
+  cardTitles: string[];
+  /** Rows (lists set on one line), lists in columns, and centred blocks. */
+  rows: number;
+  columns: number;
+  centred: number;
+  /** Lines set large and bold that became headings. */
+  headings: number;
+  /** Blocks left out because the browser did not show them. */
+  hidden: number;
+  /** Blocks left out because `layout.leaveOut` names them. */
+  leftOut: number;
+}
+
+/** The layout a trial found, in bounds; nothing for none. */
+function layoutTrialOf(value: unknown): { layout?: SiteTrialLayout } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const given = value as Record<string, unknown>;
+  const read: LayoutRead = given.read === 'stated' || given.read === 'off' ? given.read : 'seen';
+  return {
+    layout: {
+      read,
+      notes: given.notes === true,
+      sideBySide: count(given.sideBySide),
+      cards: count(given.cards),
+      cardTitles: (Array.isArray(given.cardTitles) ? (given.cardTitles as unknown[]) : [])
+        .slice(0, MAX_TRIAL_ENTRIES)
+        .flatMap((title) => words(title, 200) ?? []),
+      rows: count(given.rows),
+      columns: count(given.columns),
+      centred: count(given.centred),
+      headings: count(given.headings),
+      hidden: count(given.hidden),
+      leftOut: count(given.leftOut),
+    },
+  };
 }
 
 /** One map of a map part's data, as the reader found it. */
@@ -303,6 +363,7 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
     ...optional('licence'),
     ...optional('credit'),
     ...mapTrialOf(answer.map),
+    ...layoutTrialOf(answer.layout),
     problems: list(answer.problems)
       .flatMap((problem) => words(problem, 500) ?? [])
       .slice(0, MAX_PROBLEMS),

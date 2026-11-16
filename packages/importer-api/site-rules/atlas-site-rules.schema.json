@@ -370,6 +370,115 @@
                     },
                     "additionalProperties": {}
                   },
+                  "layout": {
+                    "type": "object",
+                    "properties": {
+                      "read": {
+                        "type": "string",
+                        "enum": ["seen", "stated", "off"]
+                      },
+                      "cards": {
+                        "type": "object",
+                        "properties": {
+                          "select": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "framed": {
+                            "type": "boolean"
+                          },
+                          "titleSize": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 4
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "sideBySide": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "oneColumn": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "row": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "leaveOut": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "hidden": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": ["leaveOut", "keep"]
+                          },
+                          {
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "headings": {
+                        "type": "object",
+                        "properties": {
+                          "lines": {
+                            "type": "boolean"
+                          },
+                          "size": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 4
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 10,
+                            "maximum": 200
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "longLines": {
+                        "type": "string",
+                        "enum": ["even", "fours"]
+                      },
+                      "pictures": {
+                        "type": "string",
+                        "enum": ["linked", "all", "none"]
+                      },
+                      "pageWidth": {
+                        "type": "string",
+                        "enum": ["reading", "wide", "full"]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
                   "pack": {
                     "type": "string",
                     "maxLength": 64,
@@ -703,6 +812,115 @@
                       }
                     },
                     "required": ["content"],
+                    "additionalProperties": false
+                  },
+                  "layout": {
+                    "type": "object",
+                    "properties": {
+                      "read": {
+                        "type": "string",
+                        "enum": ["seen", "stated", "off"]
+                      },
+                      "cards": {
+                        "type": "object",
+                        "properties": {
+                          "select": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "framed": {
+                            "type": "boolean"
+                          },
+                          "titleSize": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 4
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "sideBySide": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "oneColumn": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "row": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "leaveOut": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "hidden": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": ["leaveOut", "keep"]
+                          },
+                          {
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "headings": {
+                        "type": "object",
+                        "properties": {
+                          "lines": {
+                            "type": "boolean"
+                          },
+                          "size": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 4
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 10,
+                            "maximum": 200
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "longLines": {
+                        "type": "string",
+                        "enum": ["even", "fours"]
+                      },
+                      "pictures": {
+                        "type": "string",
+                        "enum": ["linked", "all", "none"]
+                      },
+                      "pageWidth": {
+                        "type": "string",
+                        "enum": ["reading", "wide", "full"]
+                      }
+                    },
                     "additionalProperties": false
                   }
                 },
@@ -1047,6 +1265,115 @@
                       }
                     },
                     "required": ["from"],
+                    "additionalProperties": false
+                  },
+                  "layout": {
+                    "type": "object",
+                    "properties": {
+                      "read": {
+                        "type": "string",
+                        "enum": ["seen", "stated", "off"]
+                      },
+                      "cards": {
+                        "type": "object",
+                        "properties": {
+                          "select": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "framed": {
+                            "type": "boolean"
+                          },
+                          "titleSize": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 4
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "sideBySide": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "oneColumn": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "row": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "leaveOut": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "hidden": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": ["leaveOut", "keep"]
+                          },
+                          {
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "headings": {
+                        "type": "object",
+                        "properties": {
+                          "lines": {
+                            "type": "boolean"
+                          },
+                          "size": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 4
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 10,
+                            "maximum": 200
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "longLines": {
+                        "type": "string",
+                        "enum": ["even", "fours"]
+                      },
+                      "pictures": {
+                        "type": "string",
+                        "enum": ["linked", "all", "none"]
+                      },
+                      "pageWidth": {
+                        "type": "string",
+                        "enum": ["reading", "wide", "full"]
+                      }
+                    },
                     "additionalProperties": false
                   }
                 },
@@ -1730,6 +2057,115 @@
                   "additionalProperties": false
                 }
               ]
+            },
+            "layout": {
+              "type": "object",
+              "properties": {
+                "read": {
+                  "type": "string",
+                  "enum": ["seen", "stated", "off"]
+                },
+                "cards": {
+                  "type": "object",
+                  "properties": {
+                    "select": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "framed": {
+                      "type": "boolean"
+                    },
+                    "titleSize": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 4
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "sideBySide": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "oneColumn": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "row": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "leaveOut": {
+                  "minItems": 1,
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "hidden": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": ["leaveOut", "keep"]
+                    },
+                    {
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "headings": {
+                  "type": "object",
+                  "properties": {
+                    "lines": {
+                      "type": "boolean"
+                    },
+                    "size": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 4
+                    },
+                    "length": {
+                      "type": "integer",
+                      "minimum": 10,
+                      "maximum": 200
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "longLines": {
+                  "type": "string",
+                  "enum": ["even", "fours"]
+                },
+                "pictures": {
+                  "type": "string",
+                  "enum": ["linked", "all", "none"]
+                },
+                "pageWidth": {
+                  "type": "string",
+                  "enum": ["reading", "wide", "full"]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": ["reader", "reading"],

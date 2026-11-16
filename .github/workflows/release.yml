@@ -139,6 +139,12 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.16.0
+
+          - **Page width.** A game's guide pages can be shown at three widths: **Reading**, a column of text about 760 pixels wide, as before; **Wide**, about 1,000 pixels, for pages laid out wider; and **Full**, as wide as the window. Choose it with the button at the top right of **Guides**. Your choice is kept with your own pages for that game and travels in a pack file exported with them. A pack can also say which width its pages were made for; that is the width you get until you choose another. A phone always shows a page as wide as the phone.
+
+          A game or a file made with 0.16.0 still opens in older versions of Atlas, which show its pages at the reading width.
+
           ## New in 0.15.0
 
           A page can now be laid out as its site lays it out, a picture that moves is shown moving, and a location's photo opens at full size.

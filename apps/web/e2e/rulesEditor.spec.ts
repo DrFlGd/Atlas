@@ -89,6 +89,46 @@ ${canonical ? '<link rel="canonical" href="https://guide.example.org/cove/old-qu
 </main>
 </body></html>`;
 
+/** The made-up guide's file with a layout section. */
+const LAYOUT_TEXT = `${JSON.stringify(
+  {
+    ...COVE,
+    parts: [
+      {
+        ...COVE.parts[0],
+        layout: {
+          cards: { select: 'div.panel', title: '.panel-head' },
+          sideBySide: ['div.two-up'],
+          oneColumn: ['nav.side-menu'],
+          row: ['ul.chapter-links'],
+          leaveOut: ['div.advert'],
+          pageWidth: 'wide',
+        },
+      },
+    ],
+  },
+  null,
+  2,
+)}\n`;
+
+/** A made-up page of the guide with cards, blocks side by side and a row of links. */
+const LAYOUT_PAGE = `<!doctype html>
+<html><head><title>Tide Tables | Cove Guide</title>
+<link rel="canonical" href="https://guide.example.org/cove/tide-tables"></head>
+<body><main><h1>Tide Tables</h1>
+<p class="byline">By A. Writer, 3 March 2026</p>
+<div class="text">
+<ul class="chapter-links"><li><a href="/cove/harbour">The Harbour</a></li><li><a href="/cove/lookout">The Lookout</a></li></ul>
+<div class="two-up">
+<div class="panel"><p class="panel-head">High tide</p><p>The quay floods to the second step.</p></div>
+<div class="panel"><p class="panel-head">Low tide</p><p>The sand bar opens to the far rocks.</p></div>
+</div>
+<div class="advert">Made-up advert to leave out.</div>
+<p>Ring the bell before the water turns.</p>
+</div>
+<a class="next-page" href="/cove/lookout">Next</a>
+</main></body></html>`;
+
 /** Made-up data of a map, for the map template's paths. */
 const MAP_DATA = {
   locations: [
@@ -416,6 +456,43 @@ test.describe('in the standard layout', () => {
     );
     await toResultStart(editor);
     await page.screenshot({ path: `${SHOTS}/editor-map-data.png` });
+    expect(out).toEqual([]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('reports the layout the file finds on a saved page', async ({ page }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const out = requestsOut(page);
+    const sites = await openSites(page);
+    await sites.getByTestId('sites-new').click();
+    const editor = page.getByTestId('rules-editor');
+    await editor.getByTestId('rules-template-guide').click();
+    await setText(editor, LAYOUT_TEXT);
+    await expect(editor.getByTestId('rules-editor-check')).toContainText(
+      'The form of the file is right.',
+    );
+    await pickSavedPage(page, { name: 'tides.html', text: LAYOUT_PAGE });
+    await editor.getByTestId('rules-editor-add-page').click();
+    const result = editor.getByTestId('rules-editor-result');
+    const layout = result.getByTestId('rules-result-layout');
+    await expect(layout.locator('li')).toHaveText([
+      'The layout is read as the browser shows it.',
+      'Layout found: 1 row of blocks side by side, 2 cards and 1 list set in a row.',
+      'The cards are titled: High tide, Low tide.',
+      '1 block named in layout.leaveOut was left out.',
+    ]);
+    await expect(layout.getByTestId('rules-result-layout-note')).toHaveText(
+      'A page saved from a browser has no notes of its layout, so layout that comes only from the wiki’s style sheet is not seen here: it shows once the wiki is read in the app.',
+    );
+    await expect(result.getByTestId('rules-result-page')).not.toContainText('Made-up advert');
+    // The entry of the layout section that matched nothing leads to its field.
+    await expect(result.getByTestId('rules-result-unmatched')).toContainText(
+      'parts[0].layout.oneColumn[0]nav.side-menu',
+    );
+    await layout.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${SHOTS}/editor-layout-report.png` });
     expect(out).toEqual([]);
     expect(realErrors(errors)).toEqual([]);
   });

@@ -43,6 +43,7 @@ import {
   type RunState,
 } from '../state/importRun';
 import { titleFromAddress } from '../state/gameChoice';
+import { layoutText } from '../state/pageLayouts';
 import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
@@ -542,6 +543,7 @@ export function Progress({
             importer={phase.importer}
             total={phase.savedPages}
             done={phase.savedDone}
+            layingOut={phase.layingOut === true}
           />
         ) : phase.pages ? (
           <p role="status" data-testid="add-map-writing-page">
@@ -637,6 +639,12 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
             ? `Its ${numberFormat.format(phase.writtenAgain.length + 1)} saved pages were written again from what is kept on this computer.`
             : 'It was built again from what is kept on this computer.'}{' '}
           Nothing was downloaded.
+          {phase.layout ? (
+            <>
+              {' '}
+              <span data-testid="add-map-layout">{layoutText(phase.layout)}</span>
+            </>
+          ) : null}
           {filed ? (
             <>
               {' '}
@@ -776,10 +784,13 @@ function SavedPagesProgress({
   importer,
   total,
   done,
+  layingOut,
 }: {
   importer: string;
   total: number;
   done: number | undefined;
+  /** Each page is laid out as a browser shows it before it is written. */
+  layingOut: boolean;
 }) {
   const pages = `${numberFormat.format(total)} saved ${total === 1 ? 'page' : 'pages'}`;
   const figure =
@@ -787,13 +798,24 @@ function SavedPagesProgress({
       ? 'Starting…'
       : done >= total
         ? `All ${numberFormat.format(total)} written. Saving the game…`
-        : `${numberFormat.format(done)} of ${numberFormat.format(total)} pages`;
+        : layingOut
+          ? `Laying out page ${numberFormat.format(done + 1)} of ${numberFormat.format(total)}`
+          : `${numberFormat.format(done)} of ${numberFormat.format(total)} pages`;
   return (
     <div data-testid="add-map-saved-pages">
-      <p role="status">
-        <strong>Writing the saved pages again…</strong> {importer} is building this game again from
-        its {pages}. Nothing is downloaded. With many pages this can take a few minutes.
-      </p>
+      {layingOut ? (
+        <p role="status">
+          <strong>Laying out and writing the saved pages again…</strong> {importer} is building this
+          game again from its {pages}, each laid out first as a browser shows it, with the wiki’s
+          style sheets kept on this computer. Nothing is downloaded. With many pages this can take a
+          few minutes.
+        </p>
+      ) : (
+        <p role="status">
+          <strong>Writing the saved pages again…</strong> {importer} is building this game again
+          from its {pages}. Nothing is downloaded. With many pages this can take a few minutes.
+        </p>
+      )}
       <span
         className="meter"
         role="progressbar"

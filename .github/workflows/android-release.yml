@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.16.0
+
+          - **Page width.** On a tablet, a game's guide pages can be shown at three widths, chosen with the button at the top right of **Guides**: **Reading**, **Wide** and **Full**. A pack can say which width its pages were made for. A phone always shows a page as wide as the phone.
+
           ## New in 0.15.0
 
           - **Layout on a page.** A page can set blocks side by side, frame a block as a card with a title, set short items in a row, flow a list in columns and centre a block. On a phone the blocks stand one under another in reading order; a tablet on its side shows them side by side.

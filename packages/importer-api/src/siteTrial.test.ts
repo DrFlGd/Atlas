@@ -178,4 +178,43 @@ describe('an importer’s answer to a trial', () => {
     expect(none).not.toHaveProperty('pictureList');
     expect(none).not.toHaveProperty('unmatched');
   });
+
+  it('takes the layout a reader found, in bounds', () => {
+    const trial = siteTrialOf({
+      part: 0,
+      type: 'wiki',
+      layout: {
+        read: 'stated',
+        notes: true,
+        sideBySide: 2,
+        cards: 3,
+        cardTitles: ['Find your way', 7, ' ', 'x'.repeat(300)],
+        rows: 1,
+        columns: -2,
+        centred: 1.5,
+        headings: 4,
+        hidden: 'many',
+        leftOut: 5,
+      },
+    });
+    expect(trial?.layout).toEqual({
+      read: 'stated',
+      notes: true,
+      sideBySide: 2,
+      cards: 3,
+      cardTitles: ['Find your way', 'x'.repeat(200)],
+      rows: 1,
+      columns: 0,
+      centred: 0,
+      headings: 4,
+      hidden: 0,
+      leftOut: 5,
+    });
+    expect(siteTrialOf({ part: 0, layout: { read: 'never' } })?.layout).toMatchObject({
+      read: 'seen',
+      notes: false,
+      cards: 0,
+    });
+    expect(siteTrialOf({ part: 0, layout: 'no' })?.layout).toBeUndefined();
+  });
 });

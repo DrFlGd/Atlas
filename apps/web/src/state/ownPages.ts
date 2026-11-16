@@ -7,11 +7,13 @@ import {
   type ShownContents,
 } from '@atlas/core';
 import {
+  DEFAULT_PAGE_WIDTH,
   NO_OWN_PAGES,
   OWN_PAGES_VERSION,
   readOwnPagesFile,
   writeOwnPagesFile,
   type OwnPages,
+  type PageWidth,
   type PagesLayout,
   type Picture,
 } from '@atlas/schema';
@@ -458,7 +460,34 @@ export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
   // The says on list pages: the file's for the pages it names.
   const listPages = { ...here.listPages, ...incoming.listPages };
   if (Object.keys(listPages).length > 0) merged.listPages = listPages;
+  // The width the file's pages were shown at, when it says one.
+  const pageWidth = incoming.pageWidth ?? here.pageWidth;
+  if (pageWidth) merged.pageWidth = pageWidth;
   return merged;
+}
+
+/**
+ * The width a game's guide pages are shown at on a computer or a tablet:
+ * the person's own choice, kept with their own pages; else the pack's,
+ * as the site's rules file gave it; else a column of text. `site` is the
+ * pack's, for the person to see which is the site's.
+ */
+export function pageWidthOf(
+  game: LoadedGame,
+  state: OwnPagesState = get(),
+): { width: PageWidth; chosen: boolean; site: PageWidth } {
+  const own = ownPagesOf(game.pack.manifest.gameId, state).pageWidth;
+  const site = game.pack.manifest.pageWidth ?? DEFAULT_PAGE_WIDTH;
+  return { width: own ?? site, chosen: own !== undefined, site };
+}
+
+/**
+ * Shows the game's pages at a width, kept with the person's own pages so
+ * that building the game again or updating its pack keeps it; false when
+ * the own pages cannot be changed here.
+ */
+export function choosePageWidth(width: PageWidth): boolean {
+  return changeOwnPages((own) => (own.pageWidth === width ? own : { ...own, pageWidth: width }));
 }
 
 /**

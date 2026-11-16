@@ -222,6 +222,94 @@ button.guides-crumb:hover {
   margin: 0 auto;
 }
 
+/* The width the person (or the site's rules file) chose for the game's pages, on a computer or a tablet. */
+.guides-column[data-width='wide'] {
+  max-width: 1000px;
+}
+
+.guides-column[data-width='full'] {
+  max-width: none;
+  padding: 0 8px;
+}
+
+/* The menu of page widths in the head of Guides. */
+.guides-width {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.guides-width-menu {
+  position: absolute;
+  z-index: 40;
+  top: 100%;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  padding: 4px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  box-shadow: var(--touch-float-shadow, 0 4px 16px rgb(0 0 0 / 20%));
+}
+
+.guides-width-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.guides-width-item:hover,
+.guides-width-item:focus-visible {
+  background: var(--atlas-surface-hover);
+}
+
+.guides-width-check {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  padding-top: 2px;
+  color: var(--atlas-accent);
+}
+
+.guides-width-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guides-width-name {
+  font-weight: 600;
+}
+
+.guides-width-site,
+.guides-width-says,
+.guides-width-note {
+  color: var(--atlas-muted);
+  font-weight: 400;
+}
+
+.guides-width-says {
+  font-size: 13px;
+}
+
+.guides-width-note {
+  margin: 4px 10px 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .guides-title {
   margin: 20px 0 6px;
   font-size: 26px;
