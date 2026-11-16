@@ -5,13 +5,15 @@
  *
  * - how its pages are read, among the ways the importer offers for it
  *   ({@link ReadingWay}); the importer's first way until the person chooses;
- * - for a site whose pages may state no licence, the Creative Commons
- *   licence the person confirmed for it ({@link ConfirmedLicence}).
+ * - for a site whose pages may state no licence, what the person answered
+ *   for it ({@link SiteLicence}): a known licence they confirmed, what they
+ *   filled in (such as permission from the site's owner), or no licence.
  *
  * Nothing here reads a page: an importer answers from the address alone,
  * and the app asks it only to show the choices, never to fetch.
  */
 
+import { NO_LICENCE_RECORDED } from '@atlas/schema';
 import { isReadingWay, readsInWindow, type ReadingWay } from './fetching';
 import type { AtlasImporter } from './index';
 
@@ -57,8 +59,13 @@ const SITE_KEY = /^[a-z0-9][a-z0-9.:/_-]*$/;
 const HOST_NAME =
   /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
-/** A Creative Commons licence the person confirmed for a site whose pages state none. */
+/**
+ * A licence the person confirmed for a site whose pages state none: one of
+ * {@link CONFIRMABLE_LICENCES}. Apps 0.12.0 and 0.13.0 kept it without
+ * `basis`, and an answer without one is still this.
+ */
 export interface ConfirmedLicence {
+  basis?: 'confirmed';
   /** As {@link CONFIRMABLE_LICENCES} names it, such as `CC BY-SA 4.0`. */
   name: string;
   /** The address of its deed. */
@@ -66,6 +73,57 @@ export interface ConfirmedLicence {
   /** When the person confirmed it (ISO time). */
   confirmedAt: string;
 }
+
+/**
+ * What the person filled in for a site whose pages state no licence, such
+ * as permission they were given by the site's owner. Pages read under it
+ * are kept for the person's own use.
+ */
+export interface FilledInLicence {
+  basis: 'permission';
+  /**
+   * The words to show under each page: a licence's name or a sentence, such
+   * as "Permission from the site's owner for personal use". 1 to
+   * {@link MAX_LICENCE_WORDS} characters.
+   */
+  name: string;
+  /** Optional: the address where its terms can be read, `https` only. */
+  url?: string;
+  /** Optional: who gave it, at most {@link MAX_GIVEN_BY} characters. */
+  givenBy?: string;
+  /** Optional: when it was given, a date such as `2026-11-16`. */
+  givenOn?: string;
+  /** Optional: the person's own note, at most {@link MAX_LICENCE_NOTE} characters. */
+  note?: string;
+  /** When the person answered (ISO time). */
+  confirmedAt: string;
+}
+
+/**
+ * No licence recorded for a site whose pages state none: nothing is said
+ * about permission, and its pages are kept for the person's own use. Its
+ * name is always {@link NO_LICENCE_RECORDED}.
+ */
+export interface NoLicence {
+  basis: 'none';
+  name: string;
+  /** When the person answered (ISO time). */
+  confirmedAt: string;
+}
+
+/**
+ * What the person answered for a site whose pages state no licence, kept
+ * per site (see `ImportFailure.askLicence` of the contract). A page that states a
+ * licence is read under it whatever the answer.
+ */
+export type SiteLicence = ConfirmedLicence | FilledInLicence | NoLicence;
+
+export { NO_LICENCE_RECORDED };
+
+export const MAX_LICENCE_WORDS = 200;
+export const MAX_GIVEN_BY = 200;
+export const MAX_LICENCE_NOTE = 1000;
+const MAX_TERMS_ADDRESS = 2048;
 
 /**
  * The licences the app offers the person to confirm for a site, in the
@@ -82,17 +140,88 @@ export const CONFIRMABLE_LICENCES: readonly { name: string; url: string }[] = [
   { name: 'CC0 1.0', url: 'https://creativecommons.org/publicdomain/zero/1.0/' },
 ];
 
+const isTime = (value: unknown): value is string =>
+  typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value));
+
 /** Whether `value` is a licence the person may have confirmed: one of {@link CONFIRMABLE_LICENCES}, with a time. */
 export function isConfirmedLicence(value: unknown): value is ConfirmedLicence {
   if (typeof value !== 'object' || value === null) return false;
-  const { name, url, confirmedAt } = value as Record<string, unknown>;
+  const { basis, name, url, confirmedAt } = value as Record<string, unknown>;
   return (
-    typeof confirmedAt === 'string' &&
-    confirmedAt.length <= 40 &&
-    !Number.isNaN(Date.parse(confirmedAt)) &&
+    (basis === undefined || basis === 'confirmed') &&
+    isTime(confirmedAt) &&
     CONFIRMABLE_LICENCES.some((licence) => licence.name === name && licence.url === url)
   );
 }
+
+/** Whether `text` is an `https` address with no spaces and no name or password in it. */
+export function isTermsAddress(text: string): boolean {
+  if (text.length > MAX_TERMS_ADDRESS || !/^https:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/i.test(text)) {
+    return false;
+  }
+  try {
+    return new URL(text).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `text` is a date such as `2026-11-16` that is in the calendar. */
+function isDate(text: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const time = Date.parse(`${text}T00:00:00Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().startsWith(text);
+}
+
+/** Text trimmed, when it is text of 1 to `max` characters; null for none; undefined when it is not usable. */
+function trimmed(value: unknown, max: number): string | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (text === '') return null;
+  return text.length <= max ? text : undefined;
+}
+
+/**
+ * What the person answered for a site, checked, with only its own fields:
+ * a confirmed licence of {@link CONFIRMABLE_LICENCES} (with or without
+ * `basis`, as older apps kept it), a filled in licence with its words and
+ * the optional parts that are usable (an optional part that is not, such
+ * as an address that is not `https`, makes the whole answer unusable), or
+ * no licence. Null for anything else.
+ */
+export function siteLicenceOf(value: unknown): SiteLicence | null {
+  if (isConfirmedLicence(value)) {
+    return { name: value.name, url: value.url, confirmedAt: value.confirmedAt };
+  }
+  if (typeof value !== 'object' || value === null) return null;
+  const answer = value as Record<string, unknown>;
+  if (!isTime(answer.confirmedAt)) return null;
+  const confirmedAt = answer.confirmedAt;
+  if (answer.basis === 'none') return { basis: 'none', name: NO_LICENCE_RECORDED, confirmedAt };
+  if (answer.basis !== 'permission') return null;
+  const name = trimmed(answer.name, MAX_LICENCE_WORDS);
+  const url = trimmed(answer.url, MAX_TERMS_ADDRESS);
+  const givenBy = trimmed(answer.givenBy, MAX_GIVEN_BY);
+  const givenOn = trimmed(answer.givenOn, 10);
+  const note = trimmed(answer.note, MAX_LICENCE_NOTE);
+  if (!name || url === undefined || givenBy === undefined || note === undefined) return null;
+  if (givenOn === undefined || (givenOn !== null && !isDate(givenOn))) return null;
+  if (url !== null && !isTermsAddress(url)) return null;
+  return {
+    basis: 'permission',
+    name,
+    ...(url ? { url } : {}),
+    ...(givenBy ? { givenBy } : {}),
+    ...(givenOn ? { givenOn } : {}),
+    ...(note ? { note } : {}),
+    confirmedAt,
+  };
+}
+
+/** Whether pages read under an answer are kept for the person's own use: filled in, or none. */
+export const forPersonalUse = (licence: SiteLicence): boolean =>
+  licence.basis === 'permission' || licence.basis === 'none';
 
 /** The site of an address as the app keys it when the importer says nothing: its host, without `www.`. */
 function hostKey(url: string): string {

@@ -76,6 +76,27 @@ const remotePictureUrl = z
  */
 const descriptive = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
 
+/**
+ * Where the licence of a guide's text comes from (its source's
+ * `licenseBasis`):
+ *
+ * - `stated`: the page states it.
+ * - `confirmed`: the page states none, and the person confirmed a known
+ *   licence for its site.
+ * - `permission`: the page states none, and the person filled in what they
+ *   have instead, such as permission from the site's owner: the words, and
+ *   optionally who gave it, when, the address of its terms and a note.
+ * - `none`: the page states none, and the person recorded nothing; the
+ *   page is kept for their own use (see {@link NO_LICENCE_RECORDED}).
+ *
+ * A game with a page of `permission` or `none` is kept for personal use
+ * (the manifest's `personalUse`, see {@link isForPersonalUse}).
+ */
+export const licenseBasisSchema = z.enum(['stated', 'confirmed', 'permission', 'none']);
+
+/** The licence name of a page read with `none` as its licence basis, as it is shown. */
+export const NO_LICENCE_RECORDED = 'No licence recorded. Kept for personal use.';
+
 /** What a list of items is to its reader, for grouping lists in the app (older packs). */
 export const checklistKindSchema = z.enum(['checklist', 'guide']);
 
@@ -301,6 +322,15 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * beside it (see `ownLocations.ts`). Absent for packs made any other way.
      */
     madeInApp: descriptive(z.literal(true)),
+    /**
+     * A page of the game was read under a licence the person filled in, or
+     * with none recorded (a guide source's `licenseBasis` of `permission`
+     * or `none`): the game is kept for their own use. Worked out from the
+     * guides whenever the manifest is described (`describePack`), so it
+     * goes where the pack goes. Absent for any other pack. Added without a
+     * schema version change; apps before it drop it when reading.
+     */
+    personalUse: descriptive(z.literal(true)),
   });
 
   const manifestSchema = z.discriminatedUnion('schemaVersion', [
@@ -629,6 +659,20 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * `license` as the licence of its site. Shown with the credit.
      */
     licenseConfirmed: z.boolean().optional(),
+    /**
+     * Where `license` comes from (see {@link licenseBasisSchema}). Absent:
+     * `confirmed` with `licenseConfirmed`, else `stated`. Added without a
+     * schema version change; apps before it drop it when reading and show
+     * `license` as any licence, which is why `license.name` is always
+     * filled: the words the person filled in, or {@link NO_LICENCE_RECORDED}.
+     */
+    licenseBasis: optionalEnum(licenseBasisSchema),
+    /** With `permission`, optional: who gave it, as the person wrote it. */
+    licenseGivenBy: nonEmpty.max(200).optional(),
+    /** With `permission`, optional: when it was given (`2026-11-16`). */
+    licenseGivenOn: z.iso.date().optional(),
+    /** With `permission`, optional: the person's own note on it. */
+    licenseNote: nonEmpty.max(1000).optional(),
   });
 
   /**
@@ -907,6 +951,7 @@ export type Preset = z.infer<typeof presetSchema>;
 export type Point = z.infer<typeof pointSchema>;
 export type License = z.infer<typeof licenseSchema>;
 export type GuideSource = z.infer<typeof guideSourceSchema>;
+export type LicenseBasis = z.infer<typeof licenseBasisSchema>;
 export type Section = z.infer<typeof sectionSchema>;
 export type Picture = z.infer<typeof pictureSchema>;
 export type Photo = z.infer<typeof photoSchema>;

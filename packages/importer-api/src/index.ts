@@ -40,7 +40,7 @@ import {
 } from '@atlas/schema';
 import { z } from 'zod';
 import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
-import type { ConfirmedLicence, SiteInfo } from './sites';
+import type { SiteInfo, SiteLicence } from './sites';
 
 export * from './fetching';
 export * from './sites';
@@ -184,13 +184,18 @@ export interface ImportContext {
    */
   reading?: ReadingWay;
   /**
-   * Optional: the Creative Commons licence the person confirmed for the
-   * site of the page (see {@link ImportFailure.askLicence}), kept by the
-   * app per site. An importer uses it only for a page that states no
-   * licence it can read, says in what it writes that the person confirmed
-   * it, and never in place of a licence the page states.
+   * Optional: what the person answered for the site of the page (see
+   * {@link ImportFailure.askLicence}), kept by the app per site: a known
+   * licence they confirmed (no `basis`, or `confirmed`), what they filled
+   * in (`permission`) or no licence (`none`). An importer uses it only for
+   * a page that states no licence it can read, never in place of a licence
+   * the page states, and says in what it writes where the licence came
+   * from: `licenseConfirmed` for a confirmed one, and the guide source's
+   * `licenseBasis` with the words as `license.name` (and the address of the
+   * terms as `license.url`, who gave it, when and the note) for the others.
+   * An importer that cannot use an answer fails as without one.
    */
-  confirmedLicence?: ConfirmedLicence;
+  confirmedLicence?: SiteLicence;
   /**
    * Optional: true when the app keeps the manifest's `idSections`, the
    * section of its page another name of a page leads to. An app that does
@@ -901,11 +906,12 @@ export interface ImportFailure {
   stop?: boolean;
   /**
    * The page states no licence the importer can read, and the importer
-   * would read it under a licence the person confirms for its site: an app
-   * that can ask does so (one of {@link CONFIRMABLE_LICENCES}), keeps the
-   * answer for the site and hands the same page data to `convert` again
-   * with {@link ImportContext.confirmedLicence}, fetching nothing again.
-   * Without an answer nothing is kept. Other apps show the message.
+   * would read it under what the person answers for its site: an app that
+   * can ask does so (a licence of {@link CONFIRMABLE_LICENCES}, words they
+   * fill in, or no licence), keeps the answer for the site and hands the
+   * same page data to `convert` again with
+   * {@link ImportContext.confirmedLicence}, fetching nothing again. Without
+   * an answer nothing is kept. Other apps show the message.
    */
   askLicence?: boolean;
 }

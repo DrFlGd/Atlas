@@ -8,10 +8,14 @@ import {
   findGameImporter,
   findImporter,
   findReader,
+  NO_LICENCE_RECORDED,
+  forPersonalUse,
   isConfirmedLicence,
+  isTermsAddress,
   pictureFilesOf,
   readingWayOf,
   siteInfoOf,
+  siteLicenceOf,
   type AtlasImporter,
 } from './index';
 
@@ -242,6 +246,82 @@ describe('licences the person confirms', () => {
     expect(
       (checkOutcome({ ok: false, message: 'x', askLicence: 'yes' }) as { message: string }).message,
     ).toMatch(/unexpected/);
+  });
+});
+
+describe('what the person answers for a site that states no licence', () => {
+  const at = '2026-11-16T09:00:00.000Z';
+  const known = { ...CONFIRMABLE_LICENCES[0]!, confirmedAt: at };
+
+  it('keeps a licence confirmed by 0.12.0 or 0.13.0, without a type, as it was', () => {
+    expect(siteLicenceOf(known)).toEqual(known);
+    expect(siteLicenceOf({ ...known, basis: 'confirmed' })).toEqual(known);
+    expect(forPersonalUse(siteLicenceOf(known)!)).toBe(false);
+    // A known licence is only one of those offered.
+    expect(siteLicenceOf({ ...known, name: 'All rights reserved' })).toBeNull();
+  });
+
+  it('keeps what was filled in: the words, and the optional parts given, trimmed', () => {
+    const filled = {
+      basis: 'permission',
+      name: '  Permission from the site’s owner for personal use ',
+      url: 'https://wiki.example.org/wiki/Terms',
+      givenBy: 'The owner',
+      givenOn: '2026-11-16',
+      note: 'Asked by mail.',
+      confirmedAt: at,
+      extra: 'dropped',
+    };
+    const kept = siteLicenceOf(filled);
+    expect(kept).toEqual({
+      basis: 'permission',
+      name: 'Permission from the site’s owner for personal use',
+      url: 'https://wiki.example.org/wiki/Terms',
+      givenBy: 'The owner',
+      givenOn: '2026-11-16',
+      note: 'Asked by mail.',
+      confirmedAt: at,
+    });
+    expect(forPersonalUse(kept!)).toBe(true);
+    expect(
+      siteLicenceOf({ basis: 'permission', name: 'Mine', givenBy: ' ', confirmedAt: at }),
+    ).toEqual({ basis: 'permission', name: 'Mine', confirmedAt: at });
+    for (const bad of [
+      { ...filled, name: '' },
+      { ...filled, name: '   ' },
+      { ...filled, name: 'x'.repeat(201) },
+      { ...filled, url: 'http://wiki.example.org/wiki/Terms' },
+      { ...filled, url: 'javascript:alert(1)' },
+      { ...filled, url: 'https://user@wiki.example.org/' },
+      { ...filled, givenOn: '2026-02-30' },
+      { ...filled, givenOn: '16 November' },
+      { ...filled, givenBy: 'x'.repeat(201) },
+      { ...filled, note: 'x'.repeat(1001) },
+      { ...filled, confirmedAt: 'yesterday' },
+    ]) {
+      expect(siteLicenceOf(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('keeps no licence with its fixed words, whatever else it holds', () => {
+    const none = siteLicenceOf({
+      basis: 'none',
+      name: 'Anything',
+      url: 'https://x.example/',
+      confirmedAt: at,
+    });
+    expect(none).toEqual({ basis: 'none', name: NO_LICENCE_RECORDED, confirmedAt: at });
+    expect(forPersonalUse(none!)).toBe(true);
+    expect(siteLicenceOf({ basis: 'none' })).toBeNull();
+    expect(siteLicenceOf({ basis: 'shared', name: 'x', confirmedAt: at })).toBeNull();
+    expect(siteLicenceOf(null)).toBeNull();
+  });
+
+  it('takes terms only at an https address', () => {
+    expect(isTermsAddress('https://wiki.example.org/wiki/Terms')).toBe(true);
+    expect(isTermsAddress('http://wiki.example.org/')).toBe(false);
+    expect(isTermsAddress('https://wiki.example.org/a b')).toBe(false);
+    expect(isTermsAddress(`https://wiki.example.org/${'a'.repeat(2048)}`)).toBe(false);
   });
 });
 

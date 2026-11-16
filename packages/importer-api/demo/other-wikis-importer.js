@@ -21,9 +21,11 @@
  * - A page answers `{ "title", "body", "links", "licence" }` as the Example
  *   Wiki's do (`example-wiki-importer.js`), with `licence` the address of a
  *   Creative Commons deed when the page states one. A page that states none
- *   asks the person to confirm the wiki's licence (`askLicence`); with the
- *   licence they confirmed (`ImportContext.confirmedLicence`) it is read,
- *   and its guide says the licence was confirmed by the person.
+ *   asks the person for the wiki's licence (`askLicence`); with what they
+ *   answered (`ImportContext.confirmedLicence`) it is read, and its guide
+ *   says where the licence came from: confirmed by the person, filled in by
+ *   them (`licenseBasis: 'permission'`, the words as the licence's name),
+ *   or none recorded (`licenseBasis: 'none'`).
  *
  * It is a single plain ES module with no imports, as every importer module
  * must be.
@@ -47,7 +49,7 @@ const LICENCES = {
 };
 
 const NOTICE =
-  'This app does not know this wiki: it reads its pages as it reads the wikis it knows, and asks you to confirm the wiki’s licence when its pages do not state one.';
+  'This app does not know this wiki: it reads its pages as it reads the wikis it knows, and asks you for the wiki’s licence when its pages do not state one.';
 
 /** The made-up wiki farm whose terms allow no programs: read only as the person browses. */
 const BROWSE_ONLY = /\.reading-room\.example$/;
@@ -199,20 +201,29 @@ const importer = {
     }
     const stated =
       typeof page.licence === 'string' && page.licence in LICENCES ? page.licence : null;
+    // What the person answered for the wiki, used only for a page that states no licence.
+    const given = stated ? undefined : context.confirmedLicence;
     const confirmed =
-      !stated && context.confirmedLicence && context.confirmedLicence.url in LICENCES
-        ? context.confirmedLicence.url
+      given && given.basis !== 'permission' && given.basis !== 'none' && given.url in LICENCES
+        ? given.url
         : null;
+    const filledIn = given && given.basis === 'permission' ? given : null;
+    const none = given && given.basis === 'none' ? given : null;
     const deed = stated ?? confirmed;
-    if (!deed) {
+    if (!deed && !filledIn && !none) {
       return {
         ok: false,
         message:
-          'This page does not say which licence its wiki is under, so nothing was added until you confirm one.',
+          'This page does not say which licence its wiki is under, so nothing was added until you answer for it.',
         askLicence: true,
       };
     }
-    const licence = { name: LICENCES[/** @type {keyof typeof LICENCES} */ (deed)], url: deed };
+    /** @type {{ name: string, url?: string }} */
+    const licence = deed
+      ? { name: LICENCES[/** @type {keyof typeof LICENCES} */ (deed)], url: deed }
+      : filledIn
+        ? { name: filledIn.name, ...(filledIn.url ? { url: filledIn.url } : {}) }
+        : { name: /** @type {NonNullable<typeof none>} */ (none).name };
     const packId = packOf(parts.host);
     const guide = {
       id: `${packId}:guide:${local(parts.slug)}`,
@@ -226,6 +237,15 @@ const importer = {
         readAt: context.importedAt,
         adapted: true,
         ...(confirmed ? { licenseConfirmed: true } : {}),
+        ...(filledIn
+          ? {
+              licenseBasis: /** @type {const} */ ('permission'),
+              ...(filledIn.givenBy ? { licenseGivenBy: filledIn.givenBy } : {}),
+              ...(filledIn.givenOn ? { licenseGivenOn: filledIn.givenOn } : {}),
+              ...(filledIn.note ? { licenseNote: filledIn.note } : {}),
+            }
+          : {}),
+        ...(none ? { licenseBasis: /** @type {const} */ ('none') } : {}),
       },
     };
     // The pictures the page showed as the person browsed it, with their files.
