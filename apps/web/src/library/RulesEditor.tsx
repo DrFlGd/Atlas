@@ -5,13 +5,18 @@ import {
   type SiteTrialLayout,
   type SiteTrialUnmatched,
 } from '@atlas/importer-api';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { DEFAULT_PAGE_WIDTH, PAGE_WIDTH_PIXELS, type PageWidth } from '@atlas/schema';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { renderGuideMarkdown, revealHiddenText, type GuidePicture } from '../markdown';
 import { formatJson } from '../state/jsonText';
 import {
   checkEditorText,
   closeRulesEditor,
+  copyIdNote,
+  copyNameOf,
+  copySources,
+  copyTextFor,
   fieldSpot,
   useRulesEditor,
   type EditorCheck,
@@ -19,7 +24,8 @@ import {
   type ExamplePage,
   type RulesEditorStart,
 } from '../state/rulesEditor';
-import { RULES_TEMPLATES, rulesTemplate, type RulesTemplateType } from '../state/rulesTemplates';
+import { hostOf, idFromName, idProblem } from '../state/rulesCopy';
+import { RULES_TEMPLATES, rulesTemplate } from '../state/rulesTemplates';
 import {
   canonicalAddressOf,
   httpsAddress,
@@ -30,9 +36,12 @@ import {
   layoutInWords,
   SAVED_PAGE_LAYOUT_NOTE,
   trialInWords,
+  trialRead,
   tryRulesOn,
   useSites,
+  type SiteEntry,
 } from '../state/siteRules';
+import type { TrialLayoutOutcome } from '../state/trialLayout';
 import { AddedFile } from './SiteSwitchOn';
 
 /**
@@ -108,12 +117,24 @@ function titleOf(start: RulesEditorStart, name: string | null): string {
   return 'New rules file';
 }
 
+/** What a new file was started from: a template, or a copy of a file listed (its name). */
+type Started = { from: 'template' } | { from: 'copy'; name: string };
+
 /** What the right side shows for one example page: the last trial of it. */
 interface PageTrial {
   /** The text of the file it was tried with. */
   text: string;
   result: SiteTrial | null;
+  /** How the app laid the page out for the importer, when it asked. */
+  layout: TrialLayoutOutcome | null;
   problem: string | null;
+}
+
+/** The example pages the editor opens with: the page of "Try on a saved page…", if any. */
+function startPages(start: RulesEditorStart): ExamplePage[] {
+  if (start.kind === 'new' || !start.page) return [];
+  const { name, text, data, address } = start.page;
+  return [{ id: 1, name, text, data, address }];
 }
 
 function EditorBody({
@@ -130,11 +151,17 @@ function EditorBody({
   /** The text as last saved, or as opened; a change from it is not kept until saved. */
   const [baseline, setBaseline] = useState(initial ?? '');
   const [choosing, setChoosing] = useState(start.kind === 'new');
+  /** What the editor is on: `start`, until the person starts again from another template. */
+  const [origin, setOrigin] = useState<RulesEditorStart>(start);
+  /** What a new file was started from, once it was. */
+  const [started, setStarted] = useState<Started | null>(null);
+  /** The person asked to start again from another template, and has typed text to lose. */
+  const [restarting, setRestarting] = useState(false);
   /** The file of the person's being edited, by its name in the Sites folder. */
   const [editing, setEditing] = useState<string | null>(start.kind === 'own' ? start.name : null);
   const [check, setCheck] = useState<EditorCheck>(() => checkEditorText(initial ?? ''));
-  const [pages, setPages] = useState<ExamplePage[]>([]);
-  const [pageId, setPageId] = useState<number | null>(null);
+  const [pages, setPages] = useState<ExamplePage[]>(() => startPages(start));
+  const [pageId, setPageId] = useState<number | null>(() => startPages(start)[0]?.id ?? null);
   const [trials, setTrials] = useState<Record<number, PageTrial>>({});
   const [pickProblem, setPickProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -142,7 +169,7 @@ function EditorBody({
   const [leaving, setLeaving] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const keepEditingRef = useRef<HTMLButtonElement>(null);
-  const nextPage = useRef(1);
+  const nextPage = useRef(startPages(start).length + 1);
   const entries = useSites((s) => s.entries);
   const confirm = useSites((s) => s.confirm);
 
@@ -186,6 +213,7 @@ function EditorBody({
         [page.id]: {
           text: tried,
           result: 'result' in outcome ? outcome.result : null,
+          layout: 'result' in outcome ? outcome.layout : null,
           problem: 'problem' in outcome ? outcome.problem : null,
         },
       }));
@@ -261,7 +289,24 @@ function EditorBody({
     setBaseline(text);
   };
 
-  const title = titleOf(start, editing);
+  const title = titleOf(origin, editing);
+
+  /** Starts the file again from a template or a copy: the example pages stay. */
+  const startFrom = (fresh: string, from: Started) => {
+    setText(fresh);
+    // A template is all examples, to be changed before it is saved; a copy is ready to save.
+    setBaseline(from.from === 'template' ? fresh : '');
+    setCheck(checkEditorText(fresh));
+    setStarted(from);
+    setChoosing(false);
+  };
+  const startAgain = () => {
+    setRestarting(false);
+    setOrigin({ kind: 'new' });
+    setEditing(null);
+    setSaveProblem(null);
+    setChoosing(true);
+  };
   const problemLines = new Set(check.problems.map((p) => p.line));
   const noteLines = new Set(check.notes.map((p) => p.line));
   const trial = page ? (trials[page.id] ?? null) : null;
@@ -324,14 +369,48 @@ function EditorBody({
         </div>
       ) : null}
 
+      {restarting ? (
+        <div
+          className="download-confirm rules-editor-leave"
+          role="alertdialog"
+          aria-label="Start again from another template?"
+          data-testid="rules-editor-restart-ask"
+        >
+          <p>
+            <strong>Start again from another template?</strong> The text of this file as it stands
+            is not kept. The example pages stay.
+          </p>
+          <div className="row-actions wrap">
+            <button
+              type="button"
+              className="button"
+              data-testid="rules-editor-restart-yes"
+              onClick={startAgain}
+            >
+              Start again
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              data-testid="rules-editor-restart-no"
+              onClick={() => {
+                setRestarting(false);
+              }}
+            >
+              Keep editing
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {choosing ? (
         <TemplateChoice
-          onChoose={(type) => {
-            const fresh = rulesTemplate(type);
-            setText(fresh);
-            setBaseline(fresh);
-            setCheck(checkEditorText(fresh));
-            setChoosing(false);
+          entries={entries}
+          onTemplate={(fresh) => {
+            startFrom(fresh, { from: 'template' });
+          }}
+          onCopy={(fresh, name) => {
+            startFrom(fresh, { from: 'copy', name });
           }}
         />
       ) : (
@@ -355,6 +434,18 @@ function EditorBody({
                 >
                   Format
                 </button>
+                <button
+                  type="button"
+                  className="button button-small"
+                  data-testid="rules-editor-restart"
+                  onClick={() => {
+                    // Typed text is asked about first; a file as opened or saved is not lost.
+                    if (text !== baseline && text.trim() !== '') setRestarting(true);
+                    else startAgain();
+                  }}
+                >
+                  Start again from another template…
+                </button>
               </div>
               <JsonText
                 text={text}
@@ -373,10 +464,17 @@ function EditorBody({
                   goTo(problem.at, problem.end);
                 }}
               />
-              {start.kind === 'copy' && !editing ? (
+              {started?.from === 'copy' && !editing ? (
+                <p className="muted small" data-testid="rules-editor-copied">
+                  This file started from a copy of {started.name}, made for the site you named.
+                  Saving keeps it as a new file of yours: {started.name} does not change. Try it on
+                  pages saved from the new site, and change what that site does differently.
+                </p>
+              ) : null}
+              {origin.kind === 'copy' && !editing ? (
                 <p className="muted small" data-testid="rules-editor-copy">
-                  This is a copy of the shipped file {start.name} that comes with {start.importer}.
-                  Saving keeps it as a file of yours: the shipped file does not change. While your
+                  This is a copy of the shipped file {origin.name} that comes with {origin.importer}
+                  . Saving keeps it as a file of yours: the shipped file does not change. While your
                   copy is switched on, it is used in place of the shipped file.
                 </p>
               ) : null}
@@ -417,7 +515,12 @@ function EditorBody({
           </div>
 
           <footer className="rules-editor-foot">
-            <SaveNotes start={start} saving={saving_} editing={editing} dirty={dirty} />
+            <SaveNotes
+              fromTemplate={origin.kind === 'new' && started?.from !== 'copy'}
+              saving={saving_}
+              editing={editing}
+              dirty={dirty}
+            />
             {saveProblem ? (
               <p className="download-error" role="alert">
                 {saveProblem}
@@ -452,10 +555,39 @@ function EditorBody({
   );
 }
 
-/** "New rules file…": the type of site the file is for, each from its template. */
-function TemplateChoice({ onChoose }: { onChoose: (type: RulesTemplateType) => void }) {
+/**
+ * "New rules file…", and "Start again from another template…": an example
+ * for each type of site, or a copy of any file listed (a shipped file or
+ * one of the person's), made for the site the person names.
+ */
+function TemplateChoice({
+  entries,
+  onTemplate,
+  onCopy,
+}: {
+  entries: readonly SiteEntry[];
+  onTemplate: (text: string) => void;
+  onCopy: (text: string, from: string) => void;
+}) {
+  const [source, setSource] = useState<SiteEntry | null>(null);
+  const sources = copySources(entries);
+  if (source) {
+    return (
+      <CopyForm
+        source={source}
+        entries={entries}
+        onBack={() => {
+          setSource(null);
+        }}
+        onMade={(text) => {
+          onCopy(text, source.name);
+        }}
+      />
+    );
+  }
   return (
     <div className="rules-editor-templates" data-testid="rules-editor-templates">
+      <h3>An example for a type of site</h3>
       <p>
         What does the site hold? The new file starts from an example for it, with every value one
         you write the site’s own in place of. Nothing is saved until you press Save.
@@ -468,7 +600,7 @@ function TemplateChoice({ onChoose }: { onChoose: (type: RulesTemplateType) => v
               className="button rules-template"
               data-testid={`rules-template-${template.type}`}
               onClick={() => {
-                onChoose(template.type);
+                onTemplate(rulesTemplate(template.type));
               }}
             >
               <strong>{template.name}</strong>
@@ -477,7 +609,197 @@ function TemplateChoice({ onChoose }: { onChoose: (type: RulesTemplateType) => v
           </li>
         ))}
       </ul>
+      {sources.length > 0 ? (
+        <>
+          <h3>A copy of a file</h3>
+          <p>
+            Is the site like one a file already reads? Start from a copy of that file, made for the
+            new site: you give its name and address, and the copy keeps the rest. The file you copy
+            does not change.
+          </p>
+          <ul className="rules-template-list" data-testid="rules-copy-sources">
+            {sources.map((entry) => (
+              <li key={entry.key}>
+                <button
+                  type="button"
+                  className="button rules-template"
+                  data-testid="rules-copy-source"
+                  data-key={entry.key}
+                  onClick={() => {
+                    setSource(entry);
+                  }}
+                >
+                  <strong>Start from a copy of {entry.title}</strong>
+                  <span className="muted small">{entry.reads}</span>
+                  <span className="muted small">
+                    {entry.name}
+                    {entry.own
+                      ? ' · A file of yours'
+                      : ` · Comes with ${entry.importer ?? 'an importer'}`}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </div>
+  );
+}
+
+/** The new site a copy is made for: its name, address, game and the file's id. */
+function CopyForm({
+  source,
+  entries,
+  onBack,
+  onMade,
+}: {
+  source: SiteEntry;
+  entries: readonly SiteEntry[];
+  onBack: () => void;
+  onMade: (text: string) => void;
+}) {
+  const formId = useId();
+  const [name, setName] = useState('');
+  const [address, setAddress] = useState('');
+  const [game, setGame] = useState('');
+  /** The id as the person typed it; null while it follows the name. */
+  const [typedId, setTypedId] = useState<string | null>(null);
+  const [problems, setProblems] = useState<string[]>([]);
+  const [making, setMaking] = useState(false);
+  const id = typedId ?? idFromName(name);
+  const idNote = id && idProblem(id) === null ? copyIdNote(source, id, entries) : null;
+  const refusal = source.refusal !== null;
+
+  const make = async () => {
+    const wrong: string[] = [];
+    const siteName = name.trim();
+    if (!siteName) wrong.push('Give the site’s name, as Atlas is to show it.');
+    else if (siteName.length > 80) wrong.push('The site’s name must be at most 80 characters.');
+    const host = hostOf(address);
+    if ('problem' in host) wrong.push(host.problem);
+    const idWhy = idProblem(id);
+    if (idWhy) wrong.push(idWhy);
+    if (game.trim().length > 80) wrong.push('The game’s name must be at most 80 characters.');
+    setProblems(wrong);
+    if (wrong.length > 0 || 'problem' in host) return;
+    setMaking(true);
+    const made = await copyTextFor(source, {
+      name: siteName,
+      host: host.host,
+      id,
+      ...(game.trim() && !refusal ? { game: game.trim() } : {}),
+    });
+    setMaking(false);
+    if ('problems' in made) setProblems(made.problems);
+    else onMade(made.text);
+  };
+
+  return (
+    <form
+      className="rules-editor-templates rules-copy-form"
+      data-testid="rules-copy-form"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        void make();
+      }}
+    >
+      <h3>A copy of {source.title}, for another site</h3>
+      <p className="muted small">{source.reads}</p>
+      <p className="small" data-testid="rules-copy-what">
+        {source.defaults
+          ? `The copy is a file for the one site you name here, read by the same reader with the settings of these defaults. The defaults themselves do not change, and still count for every other site.`
+          : refusal
+            ? `The copy names the site you give here as one that is not read at all, with the same notice.`
+            : `The copy keeps the parts of ${source.name}, with its addresses and hosts moved to the site you name here. What the file says of its own site (its notice, and who checked it) is left out.`}
+      </p>
+      <div className="rules-copy-fields">
+        <label htmlFor={`${formId}-name`}>The site’s name</label>
+        <input
+          id={`${formId}-name`}
+          className="text-input"
+          data-testid="rules-copy-name"
+          value={name}
+          maxLength={80}
+          onChange={(event) => {
+            setName(event.target.value);
+            setProblems([]);
+          }}
+        />
+        <label htmlFor={`${formId}-host`}>Its address or host</label>
+        <input
+          id={`${formId}-host`}
+          className="text-input"
+          data-testid="rules-copy-host"
+          inputMode="url"
+          placeholder="wiki.example.org"
+          value={address}
+          onChange={(event) => {
+            setAddress(event.target.value);
+            setProblems([]);
+          }}
+        />
+        {refusal ? null : (
+          <>
+            <label htmlFor={`${formId}-game`}>The game’s name, if the site is for one game</label>
+            <input
+              id={`${formId}-game`}
+              className="text-input"
+              data-testid="rules-copy-game"
+              value={game}
+              maxLength={80}
+              onChange={(event) => {
+                setGame(event.target.value);
+                setProblems([]);
+              }}
+            />
+          </>
+        )}
+        <label htmlFor={`${formId}-id`}>The file’s id</label>
+        <input
+          id={`${formId}-id`}
+          className="text-input"
+          data-testid="rules-copy-id"
+          value={id}
+          spellCheck={false}
+          onChange={(event) => {
+            setTypedId(event.target.value.trim().toLowerCase());
+            setProblems([]);
+          }}
+        />
+      </div>
+      <p className="muted small" data-testid="rules-copy-name-note">
+        {id
+          ? `The id comes from the site’s name unless you change it. The copy is saved as ${copyNameOf(source, id)}.`
+          : 'The id comes from the site’s name unless you change it.'}
+      </p>
+      {idNote ? (
+        <p className="small rules-save-warn" data-testid="rules-copy-id-note">
+          {idNote}
+        </p>
+      ) : null}
+      {problems.length > 0 ? (
+        <ul className="sites-problems" role="alert" data-testid="rules-copy-problems">
+          {problems.map((problem) => (
+            <li key={problem}>{problem}</li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="row-actions wrap">
+        <button
+          type="submit"
+          className="button button-primary"
+          data-testid="rules-copy-make"
+          disabled={making}
+        >
+          {making ? 'Making the copy…' : 'Make the copy'}
+        </button>
+        <button type="button" className="button" data-testid="rules-copy-back" onClick={onBack}>
+          Back
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -834,7 +1156,12 @@ function TrialPane({
       ) : null}
       {trial?.result ? (
         <div className={stale ? 'rules-trial-result is-stale' : 'rules-trial-result'}>
-          <TrialResult result={trial.result} page={page} onGoToField={onGoToField} />
+          <TrialResult
+            result={trial.result}
+            layout={trial.layout}
+            page={page}
+            onGoToField={onGoToField}
+          />
         </div>
       ) : null}
     </div>
@@ -847,14 +1174,16 @@ const count = (n: number, one: string, many = `${one}s`) =>
 /** One trial's result, shown as a view: the page as Atlas would keep it, or a map's data. */
 function TrialResult({
   result,
+  layout,
   page,
   onGoToField,
 }: {
   result: SiteTrial;
+  layout: TrialLayoutOutcome | null;
   page: ExamplePage;
   onGoToField: (field: string) => void;
 }) {
-  const lead = trialInWords(result)[0];
+  const lead = trialInWords(result, layout)[0];
   const unmatched = result.unmatched ?? [];
   // The problems the list of what matched nothing does not already say.
   const others = result.problems.filter(
@@ -864,7 +1193,7 @@ function TrialResult({
   return (
     <div className="rules-result" data-testid="rules-editor-result">
       {lead ? <p data-testid="rules-result-lead">{lead}</p> : null}
-      {result.part === null ? (
+      {!trialRead(result) ? (
         <p>
           {result.type === 'map' || page.data
             ? 'The file did not read the data.'
@@ -873,7 +1202,7 @@ function TrialResult({
       ) : result.map ? (
         <MapResult result={result} map={result.map} />
       ) : (
-        <PageResult result={result} />
+        <PageResult result={result} layout={layout} />
       )}
       <Unmatched unmatched={unmatched} onGoToField={onGoToField} />
       {others.length > 0 ? (
@@ -885,7 +1214,7 @@ function TrialResult({
             ))}
           </ul>
         </div>
-      ) : unmatched.length === 0 && result.part !== null ? (
+      ) : unmatched.length === 0 && trialRead(result) ? (
         <p className="muted small">
           {result.map
             ? 'Every data path of the file matched in this data.'
@@ -930,7 +1259,7 @@ function Unmatched({
 }
 
 /** A page of a wiki or guide, as the reader would keep it. */
-function PageResult({ result }: { result: SiteTrial }) {
+function PageResult({ result, layout }: { result: SiteTrial; layout: TrialLayoutOutcome | null }) {
   const pictures = result.pictureList ?? [];
   const facts: [string, string][] = [
     ['Title', result.title ?? 'None found'],
@@ -952,10 +1281,23 @@ function PageResult({ result }: { result: SiteTrial }) {
           </div>
         ))}
       </dl>
+      {result.notes && result.notes.length > 0 ? (
+        <ul className="rules-result-list" data-testid="rules-result-notes">
+          {result.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
       <div className="rules-result-block">
         <h4>The page as Atlas would show it</h4>
         {result.page ? (
-          <TrialPageText source={result.page} pictures={pictures} title={result.title} />
+          <TrialPageText
+            source={result.page}
+            pictures={pictures}
+            title={result.title}
+            width={result.layout?.pageWidth ?? DEFAULT_PAGE_WIDTH}
+            widthGiven={result.layout?.pageWidth !== undefined}
+          />
         ) : result.text ? (
           <blockquote className="sites-trial-text" data-testid="rules-result-text">
             {result.text}
@@ -964,7 +1306,7 @@ function PageResult({ result }: { result: SiteTrial }) {
           <p className="muted small">The reader kept no text of this page.</p>
         )}
       </div>
-      {result.layout ? <LayoutFound layout={result.layout} /> : null}
+      {result.layout ? <LayoutFound layout={result.layout} laidOut={layout} /> : null}
       {pictures.length > 0 ? <PictureList pictures={pictures} /> : null}
       {result.contents ? <ContentsList contents={result.contents} /> : null}
       <div className="rules-result-block" data-testid="rules-result-order">
@@ -996,8 +1338,14 @@ function PageResult({ result }: { result: SiteTrial }) {
 }
 
 /** The layout the reader found on the page, and what a saved page cannot show of it. */
-function LayoutFound({ layout }: { layout: SiteTrialLayout }) {
-  const lines = layoutInWords(layout);
+function LayoutFound({
+  layout,
+  laidOut,
+}: {
+  layout: SiteTrialLayout;
+  laidOut: TrialLayoutOutcome | null;
+}) {
+  const lines = layoutInWords(layout, laidOut);
   const said = lines.filter((line) => line !== SAVED_PAGE_LAYOUT_NOTE);
   return (
     <div className="rules-result-block" data-testid="rules-result-layout">
@@ -1250,20 +1598,53 @@ function placeholderOf(picture: SiteTrialPicture | undefined, n: number): GuideP
   return { url: `data:image/svg+xml,${encodeURIComponent(svg)}`, width, height };
 }
 
+/** The frame's padding and border around the page's text column, in pixels. */
+const SHEET_EDGES = 30;
+
+/** The share of its size the page is drawn at, to fit `room` pixels, in steps of a hundredth. */
+const fitScale = (room: number | null, pixels: number): number =>
+  room && room > 0 && room < pixels ? Math.max(0.3, Math.floor((room / pixels) * 100) / 100) : 1;
+
 /**
  * The page text as Atlas would show it, rendered as any guide is
- * (`renderGuideMarkdown`, which treats it as untrusted). Its pictures are
- * boxes with their words; its links lead nowhere from here.
+ * (`renderGuideMarkdown`, which treats it as untrusted) with the styles of
+ * a page of Guides, at the width the game's pages are shown at (`width`):
+ * its layout forms (blocks side by side, cards, rows, columns) stand as
+ * Guides sets them at that width, and the whole is drawn smaller to fit
+ * the pane. Its pictures are boxes with their words; its links lead
+ * nowhere from here.
  */
 function TrialPageText({
   source,
   pictures,
   title,
+  width,
+  widthGiven,
 }: {
   source: string;
   pictures: readonly SiteTrialPicture[];
   title: string | undefined;
+  width: PageWidth;
+  widthGiven: boolean;
 }) {
+  const roomRef = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const box = roomRef.current;
+    if (!box) return;
+    const measure = () => {
+      setRoom(box.clientWidth);
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    watch.observe(box);
+    return () => {
+      watch.disconnect();
+    };
+  }, []);
+  const pixels = PAGE_WIDTH_PIXELS[width];
+  // The text column at the page's width, in its frame of the guide's colours.
+  const scale = fitScale(room, pixels + SHEET_EDGES);
   const html = useMemo(() => {
     const byId = new Map(pictures.map((picture, n) => [picture.id, { picture, n: n + 1 }]));
     return renderGuideMarkdown(source, {
@@ -1277,31 +1658,47 @@ function TrialPageText({
     if ((event.target as Element).closest('a')) event.preventDefault();
   };
   return (
-    <div className="rules-trial-page">
-      {title ? <p className="rules-trial-page-title">{title}</p> : null}
-      <div
-        className="guide-body"
-        data-testid="rules-result-page"
-        onClickCapture={(event) => {
-          inert(event);
-          if (revealHiddenText(event.target, event.currentTarget)) event.preventDefault();
-        }}
-        onAuxClickCapture={inert}
-        // markdown-it runs with raw HTML disabled, so this holds only renderer-made tags.
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-    </div>
+    <>
+      <p className="muted small" data-testid="rules-result-width">
+        {widthGiven
+          ? `Drawn as Guides draws it at the width of the game’s pages, ${PAGE_WIDTH_PIXELS[width].toLocaleString('en')} pixels`
+          : `The file gives no width for the game’s pages, so this is drawn as Guides draws it at reading width, ${PAGE_WIDTH_PIXELS[width].toLocaleString('en')} pixels`}
+        {scale < 1 ? `, at ${Math.round(scale * 100)}% of its size to fit here.` : '.'}
+      </p>
+      <div ref={roomRef} className="rules-trial-room">
+        <div
+          className="rules-trial-page"
+          data-testid="rules-result-sheet"
+          data-width={width}
+          style={{ width: pixels, zoom: scale }}
+        >
+          {title ? <p className="rules-trial-page-title">{title}</p> : null}
+          <div
+            className="guide-body guides-page-body"
+            data-testid="rules-result-page"
+            onClickCapture={(event) => {
+              inert(event);
+              if (revealHiddenText(event.target, event.currentTarget)) event.preventDefault();
+            }}
+            onAuxClickCapture={inert}
+            // markdown-it runs with raw HTML disabled, so this holds only renderer-made tags.
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
+      </div>
+    </>
   );
 }
 
 /** What saving does, said before the person saves. */
 function SaveNotes({
-  start,
+  fromTemplate,
   saving,
   editing,
   dirty,
 }: {
-  start: RulesEditorStart;
+  /** A new file started from a template, whose values are all examples. */
+  fromTemplate: boolean;
   saving: ReturnType<typeof savingOf> | null;
   editing: string | null;
   dirty: boolean;
@@ -1333,7 +1730,7 @@ function SaveNotes({
   if (saving.on && dirty) {
     notes.push('This file is switched on. Saving switches it off until you switch it on again.');
   }
-  if (start.kind === 'new' && !editing && !dirty) {
+  if (fromTemplate && !editing && !dirty) {
     notes.push('Change the example values to the site’s own before you save.');
   }
   return (

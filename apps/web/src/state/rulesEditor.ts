@@ -1,4 +1,7 @@
 import {
+  REFUSAL_SUFFIX,
+  SITE_RULES_SUFFIX,
+  checkSiteRules,
   fieldInWords,
   parseSiteRules,
   problemText,
@@ -7,7 +10,16 @@ import {
 } from '@atlas/importer-api';
 import { create } from 'zustand';
 import { lineAndColumnOf, scanJson, spotOfField, type JsonSpot } from './jsonText';
-import { importerNotesOf, rulesTextOf, type SiteEntry } from './siteRules';
+import { copyForSite, type NewSite } from './rulesCopy';
+import {
+  canonicalAddressOf,
+  closeTrial,
+  importerNotesOf,
+  partTypeOfReader,
+  rulesTextOf,
+  trialPageNow,
+  type SiteEntry,
+} from './siteRules';
 
 /**
  * The rules file editor, opened from Settings, "Sites": a site rules file
@@ -15,22 +27,40 @@ import { importerNotesOf, rulesTextOf, type SiteEntry } from './siteRules';
  * the reader makes of an example page with the file as it stands (see
  * `library/RulesEditor.tsx`). It is opened on a file of the person's
  * ("Edit…"), on a copy of a shipped file ("Edit a copy…", which never
- * changes the shipped file) or on a new file from a template ("New rules
- * file…"). Saving keeps the file in the Sites folder as "Add a rules file…"
- * does (`saveRulesText` in `siteRules.ts`).
+ * changes the shipped file) or on a new file from a template or from a copy
+ * of any file listed, made for another site ("New rules file…", and "Start
+ * again from another template…" in the editor). Saving keeps the file in
+ * the Sites folder as "Add a rules file…" does (`saveRulesText` in
+ * `siteRules.ts`).
  *
  * The example pages the person picks are kept in memory, for the time the
  * editor is open on that file only: nothing of them is written anywhere or
  * sent anywhere, and a page is only ever handed to the reader as text.
  */
 
+/** A saved page the editor opens with, as an example page (from "Try on a saved page…"). */
+export interface StartPage {
+  name: string;
+  /** The page's HTML, or the text of a map's saved data file. */
+  text: string;
+  data: boolean;
+  address: string | null;
+}
+
 /** What the editor is opened on. */
 export type RulesEditorStart =
   | { kind: 'new' }
   /** A file of the person's, by its name in the Sites folder. */
-  | { kind: 'own'; name: string; title: string; text: string }
+  | { kind: 'own'; name: string; title: string; text: string; page?: StartPage }
   /** A copy of a shipped file: its name, and the title of the importer it comes with. */
-  | { kind: 'copy'; name: string; title: string; importer: string; text: string };
+  | {
+      kind: 'copy';
+      name: string;
+      title: string;
+      importer: string;
+      text: string;
+      page?: StartPage;
+    };
 
 export const useRulesEditor = create<{
   start: RulesEditorStart | null;
@@ -49,9 +79,10 @@ export function newRulesFile(): void {
   open({ kind: 'new' });
 }
 
-/** "Edit…" on a file of the person's, and "Edit a copy…" on a shipped file. */
+/** "Edit…" on a file of the person's, and "Edit a copy…" on a shipped file, with an example page to start with. */
 export async function editRulesFile(
   entry: Pick<SiteEntry, 'key' | 'name' | 'title' | 'own' | 'importer'>,
+  page?: StartPage,
 ): Promise<void> {
   let text: string | null;
   try {
@@ -66,17 +97,101 @@ export async function editRulesFile(
     }));
     return;
   }
+  const withPage = page ? { page } : {};
   open(
     entry.own
-      ? { kind: 'own', name: entry.name, title: entry.title, text }
+      ? { kind: 'own', name: entry.name, title: entry.title, text, ...withPage }
       : {
           kind: 'copy',
           name: entry.name,
           title: entry.title,
           importer: entry.importer ?? 'an importer',
           text,
+          ...withPage,
         },
   );
+}
+
+/**
+ * "Open in the editor" on the card of "Try on a saved page…": the editor on
+ * the file (a copy, for a shipped file), with the page tried as its first
+ * example page, and the card closed.
+ */
+export async function openTrialInEditor(
+  entry: Pick<SiteEntry, 'key' | 'name' | 'title' | 'own' | 'importer'>,
+): Promise<void> {
+  const tried = trialPageNow(entry.key);
+  const page: StartPage | undefined = tried
+    ? {
+        name: tried.name,
+        text: tried.data ?? tried.html,
+        data: tried.data !== undefined,
+        address:
+          tried.data !== undefined ? null : (tried.address ?? canonicalAddressOf(tried.html)),
+      }
+    : undefined;
+  await editRulesFile(entry, page);
+  if (useRulesEditor.getState().start) closeTrial();
+}
+
+// ---------------------------------------------------------------------------
+// Starting from a copy of another file
+
+/** The files a new file can start from a copy of: every file listed whose form is right. */
+export const copySources = (entries: readonly SiteEntry[]): SiteEntry[] =>
+  entries.filter((entry) => entry.readable && entry.editable && entry.reads !== '');
+
+/** The name a copy of `entry` with the id `id` is saved under. */
+export const copyNameOf = (entry: Pick<SiteEntry, 'refusal'>, id: string): string =>
+  `${id}${entry.refusal !== null ? REFUSAL_SUFFIX : SITE_RULES_SUFFIX}`;
+
+/**
+ * What the person is told of the id of a copy before it is made, in a
+ * sentence: when a file listed already has the name the copy would be saved
+ * under. Null when none has.
+ */
+export function copyIdNote(
+  entry: Pick<SiteEntry, 'refusal'>,
+  id: string,
+  entries: readonly SiteEntry[],
+): string | null {
+  const name = copyNameOf(entry, id);
+  const there = entries.filter((other) => other.name === name);
+  const shipped = there.find((other) => !other.own);
+  if (shipped) {
+    return `The file ${name} comes with ${shipped.importer ?? 'an importer'}: a copy saved with this id takes its place while your copy is switched on. To keep both, give another id.`;
+  }
+  if (there.length > 0) {
+    return `A file of yours is named ${name}: saving the copy puts it in that file’s place. To keep both, give another id.`;
+  }
+  return null;
+}
+
+/**
+ * The text of a new file copied from `entry` for another site (see
+ * `copyForSite`), laid out with two spaces; or why it cannot be made, in
+ * sentences: what the copy lacks for the new site among them.
+ */
+export async function copyTextFor(
+  entry: Pick<SiteEntry, 'key' | 'name'>,
+  site: NewSite,
+): Promise<{ text: string } | { problems: string[] }> {
+  const text = await rulesTextOf(entry.key).catch(() => null);
+  if (text === null)
+    return { problems: [`${entry.name} could not be read, so it cannot be copied.`] };
+  const parsed = parseSiteRules(text);
+  if (!parsed.ok) {
+    return {
+      problems: [
+        `${entry.name} has problems, so it cannot be copied. Open it with Edit… and put them right first.`,
+      ],
+    };
+  }
+  const copy = copyForSite(parsed.rules, site, entry.name, partTypeOfReader);
+  // What the copy lacks for the new site, such as the game's name a part read by rules needs.
+  const checked = checkSiteRules(copy);
+  if (!checked.ok) return { problems: checked.problems.map(problemText) };
+  return { text: `${JSON.stringify(copy, null, 2)}\n` };
 }
 
 export function closeRulesEditor(): void {

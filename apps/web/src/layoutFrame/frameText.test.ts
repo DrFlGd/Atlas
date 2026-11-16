@@ -7,6 +7,7 @@ import {
   elementFate,
   isAtlasAttribute,
   keptAttribute,
+  ownSheetsFor,
   pictureBox,
   sheetsFor,
   type PageSheet,
@@ -200,5 +201,25 @@ describe('the sheets a page is laid out with', () => {
     expect(
       sheetsFor([{ address: 'https://wiki.example.org/skin.css' }, { text: '.skin {}' }], kept),
     ).toEqual([{ text: '.skin {}' }]);
+  });
+});
+
+describe('the sheets a saved page is laid out with, for a trial of a rules file', () => {
+  it('are its own blocks only, in its order, each once, with their media', () => {
+    expect(
+      ownSheetsFor([
+        { text: '.reed {}' },
+        { text: '.tide {}', media: 'screen' },
+        { text: '.reed {}' },
+      ]),
+    ).toEqual([{ text: '.reed {}' }, { text: '.tide {}', media: 'screen' }]);
+  });
+
+  it('are none when it links to a sheet it does not hold, or holds no rules', () => {
+    expect(
+      ownSheetsFor([{ text: '.reed {}' }, { address: 'https://wiki.example.org/site.css' }]),
+    ).toBe('linked');
+    expect(ownSheetsFor([])).toBe('none');
+    expect(ownSheetsFor([{ text: '   ' }])).toBe('none');
   });
 });

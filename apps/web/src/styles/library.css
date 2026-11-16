@@ -1286,8 +1286,15 @@
   font-weight: 600;
 }
 
+/* The page as Atlas would show it, at the width of the game's pages, drawn smaller to fit the pane. */
+.rules-trial-room {
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* The page as Atlas would show it: the guide's own styles, in a frame of its own. */
 .rules-trial-page {
+  box-sizing: content-box;
   padding: 10px 14px;
   border: 1px solid var(--atlas-border);
   border-radius: var(--atlas-radius-small);
@@ -1343,6 +1350,31 @@
   margin: 10px 0 0;
   padding: 0;
   list-style: none;
+}
+
+.rules-editor-templates h3 {
+  margin: 18px 0 4px;
+  font-size: 1rem;
+}
+
+.rules-editor-templates h3:first-child {
+  margin-top: 0;
+}
+
+.rules-copy-form {
+  max-width: 640px;
+}
+
+.rules-copy-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 12px 0 6px;
+}
+
+.rules-copy-fields label {
+  margin-top: 8px;
+  font-weight: 600;
 }
 
 .rules-template {

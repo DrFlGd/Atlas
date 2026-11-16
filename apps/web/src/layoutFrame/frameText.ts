@@ -355,3 +355,23 @@ export function sheetsFor(
   for (const sheet of page) if ('text' in sheet) give(sheet.text, sheet.media);
   return out.length > 0 ? out : null;
 }
+
+/**
+ * The sheets of a page saved as one file with its style sheets inside it,
+ * for trying a site rules file on it (`SiteTrialRequest.layOut` in the
+ * importer contract): its own blocks, in its order, with their media.
+ * `linked` when the page links to a style sheet (kept beside it or on the
+ * site, which the frame never has), `none` when it holds no rules of its
+ * own: either way it is not laid out, as it would say less than its HTML.
+ */
+export function ownSheetsFor(page: readonly PageSheet[]): FrameSheet[] | 'linked' | 'none' {
+  if (page.some((sheet) => 'address' in sheet)) return 'linked';
+  const out: FrameSheet[] = [];
+  const given = new Set<string>();
+  for (const sheet of page) {
+    if (!('text' in sheet) || !sheet.text.trim() || given.has(sheet.text)) continue;
+    given.add(sheet.text);
+    out.push({ text: sheet.text, ...(sheet.media ? { media: sheet.media } : {}) });
+  }
+  return out.length > 0 ? out : 'none';
+}

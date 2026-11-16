@@ -7,9 +7,14 @@
  * (`ImporterSites.tryPage` and `ImporterSites.widens` of the contract) and
  * checked here before the app shows them: plain data in bounds, nothing
  * else. Nothing is kept and nothing is fetched.
+ *
+ * Any file can be offered: which files an importer can try, and with which
+ * of its readers, is the importer's to say (`ImporterSites.cannotTry`).
  */
 
-import type { LayoutRead, SiteFile } from './siteRules';
+import { isPageWidth, type PageWidth } from '@atlas/schema';
+import type { PageLayoutRequest } from './layoutNotes';
+import { READER_NAME_PATTERN, type LayoutRead, type SiteRules } from './siteRules';
 
 /**
  * A page saved by the person and the file to try on it, or, for a file
@@ -17,8 +22,13 @@ import type { LayoutRead, SiteFile } from './siteRules';
  * data as the site serves it (`data.from: "file"`).
  */
 export interface SiteTrialRequest {
-  /** The file, checked (a site file with a part read by `rules`). */
-  rules: SiteFile;
+  /**
+   * The file, checked: a site file, a reader's defaults or a refusal, as
+   * the person has it (in the editor, as it stands). The importer tries it
+   * as if it took the place of the file of the same key (`siteRulesKey`)
+   * among those switched on, and changes nothing.
+   */
+  rules: SiteRules;
   /**
    * The page's address: its canonical link, or the one the person gave.
    * For a saved data file, the start of the file's first map part that
@@ -33,6 +43,19 @@ export interface SiteTrialRequest {
    * know it answers as for an empty page.
    */
   data?: string;
+  /**
+   * Optional: lays the saved page out as a browser shows it, so that the
+   * importer reads it by position as it reads a page read in the app's
+   * window. The app lays it out as for `ImportContext.layOut` (a closed
+   * frame: no script runs and nothing is fetched, every address in its
+   * sheets made empty, its pictures boxes of their size), with the style
+   * sheets the saved page holds in its own `<style>` blocks, and answers
+   * its HTML with the notes of the measuring step. Null when the page links
+   * to style sheets it does not hold, holds none, or could not be laid out
+   * in time. It never rejects and makes no request. An importer that does
+   * not use it reads the page as its HTML states its layout.
+   */
+  layOut?(page: PageLayoutRequest): Promise<string | null>;
 }
 
 /** One entry of the contents a page shows. */
@@ -77,8 +100,18 @@ export interface SiteTrialUnmatched {
 
 /** What the reader understood of one saved page. */
 export interface SiteTrial {
-  /** The part that read the page (its index in `parts`); null when none did. */
+  /**
+   * The part that read the page (its index in `parts`); null when none
+   * did, or for a file without parts (a reader's defaults) that one of the
+   * importer's readers read it by (see {@link reader}).
+   */
   part: number | null;
+  /**
+   * Optional: the reader that read the page, by its name as files give it
+   * (`rules` for the general reader). A page is read when {@link part} is
+   * a number or this is given.
+   */
+  reader?: string;
   /** That part's type. */
   type?: 'wiki' | 'guide' | 'map';
   /** The page's title. */
@@ -105,6 +138,12 @@ export interface SiteTrial {
    * the same in words.
    */
   unmatched?: SiteTrialUnmatched[];
+  /**
+   * Optional: what to know of how the page was read that is no problem, in
+   * plain sentences (such as a name the reader took from the page's
+   * heading because the page did not say it).
+   */
+  notes?: string[];
   headings: number;
   pictures: number;
   /** Pictures that have an address of their full-size file. */
@@ -166,6 +205,12 @@ export interface SiteTrialLayout {
   hidden: number;
   /** Blocks left out because `layout.leaveOut` names them. */
   leftOut: number;
+  /**
+   * Optional: the width the game's pages are shown at, as the file (or the
+   * defaults of its reader) gives it (`layout.pageWidth`); none when they
+   * give none.
+   */
+  pageWidth?: PageWidth;
 }
 
 /** The layout a trial found, in bounds; nothing for none. */
@@ -188,6 +233,7 @@ function layoutTrialOf(value: unknown): { layout?: SiteTrialLayout } {
       headings: count(given.headings),
       hidden: count(given.hidden),
       leftOut: count(given.leftOut),
+      ...(isPageWidth(given.pageWidth) ? { pageWidth: given.pageWidth } : {}),
     },
   };
 }
@@ -335,6 +381,19 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
           }),
       }
     : {};
+  const notes = Array.isArray(answer.notes)
+    ? {
+        notes: list(answer.notes)
+          .flatMap((note) => words(note, 500) ?? [])
+          .slice(0, MAX_PROBLEMS),
+      }
+    : {};
+  const reader =
+    typeof answer.reader === 'string' &&
+    READER_NAME_PATTERN.test(answer.reader) &&
+    answer.reader.length <= 60
+      ? { reader: answer.reader }
+      : {};
   const optional = (key: string, max?: number) => {
     const text = words(answer[key], max);
     return text ? { [key]: text } : {};
@@ -345,6 +404,7 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
       : {};
   return {
     part,
+    ...reader,
     ...(type ? { type } : {}),
     ...optional('title', 200),
     ...optional('game', 200),
@@ -353,6 +413,7 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
     ...pictureList,
     ...chapterTitles,
     ...unmatched,
+    ...notes,
     headings: count(answer.headings),
     pictures: count(answer.pictures),
     fullPictures: count(answer.fullPictures),

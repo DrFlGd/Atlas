@@ -7,6 +7,8 @@ import {
   siteTrialOf,
   trialPictureId,
 } from './siteTrial';
+import { cannotTryOf } from './index';
+import { checkSiteRules, type SiteRules } from './siteRules';
 
 describe('an importer’s answer to a trial', () => {
   it('keeps what it found in a map part’s data, in bounds', () => {
@@ -216,5 +218,103 @@ describe('an importer’s answer to a trial', () => {
       cards: 0,
     });
     expect(siteTrialOf({ part: 0, layout: 'no' })?.layout).toBeUndefined();
+  });
+});
+
+describe('a trial read by one of the importer’s own readers', () => {
+  it('keeps the reader’s name, the notes and the width of the game’s pages, in bounds', () => {
+    const trial = siteTrialOf({
+      part: null,
+      reader: 'lantern-pages',
+      headings: 1,
+      notes: [
+        'The page was read under the name “Lanterns”, from its heading.',
+        7,
+        '',
+        'y'.repeat(900),
+      ],
+      layout: { read: 'seen', notes: true, pageWidth: 'wide' },
+    });
+    expect(trial).toMatchObject({ part: null, reader: 'lantern-pages', headings: 1 });
+    expect(trial?.notes).toEqual([
+      'The page was read under the name “Lanterns”, from its heading.',
+      'y'.repeat(500),
+    ]);
+    expect(trial?.layout?.pageWidth).toBe('wide');
+    // A name that is no reader's, or a width the format does not have, is left out.
+    const odd = siteTrialOf({
+      part: 0,
+      reader: 'Not a name!',
+      layout: { read: 'seen', pageWidth: 'giant' },
+    });
+    expect(odd?.reader).toBeUndefined();
+    expect(odd?.layout && 'pageWidth' in odd.layout).toBe(false);
+    expect(siteTrialOf({ part: 0, reader: 'x'.repeat(61) })?.reader).toBeUndefined();
+  });
+});
+
+describe('whether an importer can try a file', () => {
+  const file = (reader: string): SiteRules => {
+    const checked = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'reed-wiki', name: 'Reed Wiki', game: 'Reeds', hosts: ['wiki.reed.example'] },
+      parts: [
+        reader === 'rules'
+          ? {
+              type: 'wiki',
+              reader,
+              start: '/',
+              pages: { include: ['/**'] },
+              contents: { from: 'sitemap' },
+              article: { content: 'main article' },
+              reading: { ways: ['fetch'] },
+            }
+          : { type: 'wiki', reader, start: '/' },
+      ],
+    });
+    if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
+    return checked.rules;
+  };
+  const tryPage = () => Promise.resolve({});
+
+  it('is the importer’s to say, in its own sentence', () => {
+    const own = file('lantern-pages');
+    expect(
+      cannotTryOf(
+        { sites: { readers: [], files: [], tryPage, cannotTry: () => null } } as never,
+        own,
+      ),
+    ).toBeNull();
+    expect(
+      cannotTryOf(
+        {
+          sites: { readers: [], files: [], tryPage, cannotTry: () => '  It reads no pages.  ' },
+        } as never,
+        own,
+      ),
+    ).toBe('It reads no pages.');
+    for (const odd of [
+      () => 7,
+      () => '',
+      () => {
+        throw new Error('no');
+      },
+    ]) {
+      expect(
+        cannotTryOf({ sites: { readers: [], files: [], tryPage, cannotTry: odd } } as never, own),
+      ).toBe('This importer could not say whether it can try this file.');
+    }
+    expect(cannotTryOf({ sites: { readers: [], files: [] } } as never, own)).toBe(
+      'This importer cannot try a file on a saved page.',
+    );
+  });
+
+  it('is a part read by rules only, for an importer that does not say', () => {
+    const sites = { readers: ['rules', 'lantern-pages'], files: [], tryPage };
+    expect(cannotTryOf({ sites } as never, file('rules'))).toBeNull();
+    expect(cannotTryOf({ sites } as never, file('lantern-pages'))).toBe(
+      'This importer can try only a part read by rules on a saved page.',
+    );
   });
 });

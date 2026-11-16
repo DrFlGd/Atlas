@@ -1,5 +1,6 @@
 import {
   applySiteRules,
+  cannotTryOf,
   checkSiteRules,
   isReaderDefaults,
   isRefusal,
@@ -16,6 +17,7 @@ import {
   trySitePage,
   type AppliedSiteRules,
   type AtlasImporter,
+  type PageLayoutRequest,
   type ReadingWay,
   type SiteRules,
   type SiteFile,
@@ -29,9 +31,13 @@ import guideText from '@atlas/importer-api/site-rules/atlas-site-rules.md?raw';
 import schemaText from '@atlas/importer-api/site-rules/atlas-site-rules.schema.json?raw';
 import { create } from 'zustand';
 import { desktop, type SiteSwitches, type SitesListing } from '../desktop';
+import { openLayoutFrame } from '../layoutFrame/frame';
 import { sitesOffered } from '../features';
 import { notify } from './actions';
+import { DEFAULT_PAGE_WIDTH, type PageWidth } from '@atlas/schema';
 import { useAtlas } from './store';
+import { trialLayouts, trialLayoutSentence, type TrialLayoutOutcome } from './trialLayout';
+import { readsInWords } from './rulesCopy';
 
 /**
  * The site rules files the importers read sites by (the format and its
@@ -115,10 +121,12 @@ export interface SiteEntry {
   problems: string[];
   /** What a file of the person's widens against the files the importers come with, in plain words. */
   widens: string[];
-  /** It can be tried on a saved page: it has a wiki or guide part read by `rules`, and an importer tries it. */
+  /** It can be tried on a saved page: an importer of this app says it can try it (see {@link trierFor}). */
   tryable: boolean;
   /** Its text can be opened in the rules file editor: a file of the person's that could be read, or a shipped file. */
   editable: boolean;
+  /** What it reads and how, in one sentence (see `readsInWords`); empty when its form is wrong. */
+  reads: string;
 }
 
 /** A file of the person's that was just checked and kept, waiting to be switched on. */
@@ -140,17 +148,20 @@ export interface SiteTrying {
   /** The file's key and title. */
   key: string;
   title: string;
-  /** The saved page's file name. */
+  /** The saved page's file name; empty when none was picked (`untried`). */
   page: string;
   /**
-   * `address`: the page has no canonical link, and the person is asked for
-   * its address; `trying`; `done` with {@link result}; `failed` with
-   * {@link error}.
+   * `untried`: no importer can try the file, so no page was asked for, and
+   * {@link error} says why; `address`: the page has no canonical link, and
+   * the person is asked for its address; `trying`; `done` with
+   * {@link result}; `failed` with {@link error}.
    */
-  phase: 'address' | 'trying' | 'done' | 'failed';
+  phase: 'untried' | 'address' | 'trying' | 'done' | 'failed';
   /** The page's address, once known. */
   address: string | null;
   result: SiteTrial | null;
+  /** How the page's layout was read, when the importer asked the app to lay it out. */
+  layout?: TrialLayoutOutcome | null;
   error: string | null;
 }
 
@@ -345,7 +356,13 @@ export async function applySitesTo(importer: AtlasImporter): Promise<void> {
 const RULES_NOT_YET = 'no importer of this app reads parts by rules yet, so this part is not read.';
 
 function describe(rules: SiteRules | null, name: string) {
-  const none = { defaults: false, refusal: null, types: [] as string[], ways: [] as ReadingWay[] };
+  const none = {
+    defaults: false,
+    refusal: null,
+    types: [] as string[],
+    ways: [] as ReadingWay[],
+    reads: rules ? readsInWords(rules) : '',
+  };
   if (!rules) return { ...none, title: name, hosts: [] };
   if (isReaderDefaults(rules)) {
     return {
@@ -373,10 +390,7 @@ function describe(rules: SiteRules | null, name: string) {
   };
 }
 
-/**
- * Whether a file has a part read by `rules`, which can be tried on a saved
- * page, or for a map part on a saved data file.
- */
+/** Whether a file has a part read by `rules`: a map part of one can be tried on a saved data file. */
 const hasRulesPage = (rules: SiteRules | null): rules is SiteFile =>
   rules !== null && isSiteFile(rules) && rules.parts.some((part) => readByRules(part));
 
@@ -397,11 +411,50 @@ function mapStartOf(rules: SiteFile): string | null {
 /** Whether a picked file is a saved data file (`.json`), not a saved page. */
 const isDataFile = (name: string) => /\.json$/iu.test(name);
 
-/** The importer that tries a file on a saved page: one that reads by `rules` and tries pages. */
-const trierOf = (importers: readonly AtlasImporter[]) =>
-  importers.find(
-    (importer) => importer.sites?.tryPage && importer.sites.readers.includes(RULES_READER),
+/** Why no page is tried for a refusal file. */
+const REFUSAL_UNTRIED =
+  'A refusal file names sites that are not read at all, so there is no page to try it on. To see how a page is read, try the file that reads its site.';
+
+/**
+ * The importer that tries a file on a saved page, or why none can, in full
+ * sentences that say what the person can do: the first importer that says
+ * it can (`cannotTryOf`), else what an importer that reads the file says.
+ * Which files can be tried, and with which readers, is each importer's to
+ * say: the app only asks.
+ */
+export function trierFor(
+  rules: SiteRules | null,
+  importers: readonly AtlasImporter[],
+): { importer: AtlasImporter } | { problem: string } {
+  const triers = importers.filter((importer) => importer.sites?.tryPage !== undefined);
+  if (triers.length === 0) {
+    return { problem: 'No importer of this app can try a file on a saved page.' };
+  }
+  if (!rules) {
+    return {
+      problem: 'The file has problems, so it cannot be tried. Once its form is right, it can be.',
+    };
+  }
+  const whys: string[] = [];
+  for (const importer of triers) {
+    const why = cannotTryOf(importer, rules);
+    if (why === null) return { importer };
+    if (readsFile(importer, rules)) whys.push(why);
+  }
+  if (whys[0]) return { problem: whys[0] };
+  if (isRefusal(rules)) return { problem: REFUSAL_UNTRIED };
+  const missing = readersOf(rules).find(
+    (reader) => !importers.some((importer) => importer.sites?.readers.includes(reader)),
   );
+  return {
+    problem: missing
+      ? `No importer of this app has the reader “${missing}”, so this file cannot be tried. Check the name of the reader in the file against the guide to writing a file.`
+      : 'No importer of this app can try this file on a saved page.',
+  };
+}
+
+const tryableBy = (rules: SiteRules | null, importers: readonly AtlasImporter[]) =>
+  'importer' in trierFor(rules, importers);
 
 /** What a file of the person's widens, in plain words, by each importer that reads it. */
 function wideningsOf(rules: SiteRules, importers: readonly AtlasImporter[]): string[] {
@@ -498,7 +551,7 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
       replaces: on && replacing ? replacing.title : null,
       problems: [...new Set(problems)],
       widens: rules ? wideningsOf(rules, importers) : [],
-      tryable: hasRulesPage(rules) && trierOf(importers) !== undefined,
+      tryable: tryableBy(rules, importers),
       editable: file.text !== null,
     };
   });
@@ -526,7 +579,7 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
               ]),
             ],
         widens: [],
-        tryable: hasRulesPage(file.rules) && trierOf(importers) !== undefined,
+        tryable: tryableBy(file.rules, importers),
         editable: true,
       };
     }),
@@ -713,14 +766,31 @@ let trialPage: { key: string; html: string; data?: string } | null = null;
 /**
  * "Try on a saved page…" on a file's row: the person picks one page they
  * saved from the site, the app takes its address from its canonical link
- * (or asks for it), and the importer that reads by `rules` tries the file
- * on it and says what it understood. A saved data file (`.json`) is tried
- * on the file's map part, at the map part's start. Nothing is kept and
- * nothing is fetched.
+ * (or asks for it), and the importer that can try the file (`trierFor`)
+ * tries it on the page and says what it understood. A saved data file
+ * (`.json`) is tried on the file's map part, at the map part's start. A
+ * file no importer can try says why at once. Nothing is kept and nothing
+ * is fetched.
  */
 export async function trySavedPage(entry: Pick<SiteEntry, 'key' | 'title'>): Promise<void> {
   trialPage = null;
   useSites.setState({ trying: null });
+  // A file no importer can try says why at once: no page is asked for.
+  const trier = trierFor(await rulesOfKey(entry.key).catch(() => null), screenImporters);
+  if ('problem' in trier) {
+    useSites.setState({
+      trying: {
+        key: entry.key,
+        title: entry.title,
+        page: '',
+        phase: 'untried',
+        address: null,
+        result: null,
+        error: trier.problem,
+      },
+    });
+    return;
+  }
   let picked: { name: string; text: string } | null;
   try {
     picked = await shellSites().pickPage();
@@ -803,25 +873,34 @@ async function runTrial(address: string): Promise<void> {
   });
   try {
     const rules = await rulesOfKey(trying.key);
-    const importer = trierOf(screenImporters);
-    if (!hasRulesPage(rules) || !importer) {
-      settle({
-        phase: 'failed',
-        error: 'This file has no part read by rules that an importer of this app can try.',
-      });
+    if (!rules) {
+      settle({ phase: 'failed', error: 'The file could not be read, so it cannot be tried.' });
       return;
     }
-    const result = await trySitePage(importer, {
-      rules,
-      url: address,
+    const tried = await tryRulesOn(rules, {
       html: page.html,
       ...(page.data === undefined ? {} : { data: page.data }),
+      address,
     });
-    if (result) settle({ phase: 'done', result });
-    else settle({ phase: 'failed', error: 'The importer could not try the file on this page.' });
+    if ('result' in tried) settle({ phase: 'done', result: tried.result, layout: tried.layout });
+    else settle({ phase: 'failed', error: tried.problem });
   } catch (error) {
     settle({ phase: 'failed', error: errorText(error) });
   }
+}
+
+/** The page "Try on a saved page…" has on the screen for file `key`, with its name and address; null for none. */
+export function trialPageNow(
+  key: string,
+): { name: string; html: string; data?: string; address: string | null } | null {
+  const trying = useSites.getState().trying;
+  if (trialPage?.key !== key || trying?.key !== key) return null;
+  return {
+    name: trying.page,
+    html: trialPage.html,
+    ...(trialPage.data === undefined ? {} : { data: trialPage.data }),
+    address: trying.address,
+  };
 }
 
 export function closeTrial(): void {
@@ -832,13 +911,38 @@ export function closeTrial(): void {
 const plural = (n: number, one: string, many = `${one}s`) =>
   `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
 
-/** What the reader understood of a saved page, in plain sentences, in the order the screen shows them. */
-export function trialInWords(trial: SiteTrial): string[] {
-  if (trial.part === null) return [];
-  if (trial.map) return mapTrialInWords(trial.part, trial.game, trial.map);
-  const lines: string[] = [];
+/** Whether a trial read the page: a part of the file did, or one of the importer's readers by the file. */
+export const trialRead = (trial: SiteTrial): boolean =>
+  trial.part !== null || trial.reader !== undefined;
+
+/** Which part or reader read the page, in one sentence; null when none did. */
+export function readByInWords(trial: SiteTrial): string | null {
   const type = trial.type === 'guide' ? 'a guide' : 'a wiki';
-  lines.push(`Part ${trial.part + 1} of the file read it, as a page of ${type}.`);
+  const reader = trial.reader && trial.reader !== RULES_READER ? trial.reader : null;
+  if (trial.part !== null) {
+    return reader
+      ? `Part ${trial.part + 1} of the file read it with the reader “${reader}”, as a page of ${type}.`
+      : `Part ${trial.part + 1} of the file read it, as a page of ${type}.`;
+  }
+  return trial.reader
+    ? `The reader “${trial.reader}” read it with this file’s settings, as a page of ${type}.`
+    : null;
+}
+
+/**
+ * What the reader understood of a saved page, in plain sentences, in the
+ * order the screen shows them; `laidOut` says how the app laid the page out
+ * for the importer, when it asked.
+ */
+export function trialInWords(
+  trial: SiteTrial,
+  laidOut: TrialLayoutOutcome | null = null,
+): string[] {
+  if (!trialRead(trial)) return [];
+  if (trial.map && trial.part !== null) return mapTrialInWords(trial.part, trial.game, trial.map);
+  const lines: string[] = [];
+  lines.push(readByInWords(trial)!);
+  lines.push(...(trial.notes ?? []));
   if (trial.title) lines.push(`Its title is “${trial.title}”.`);
   if (trial.game) lines.push(`The game is “${trial.game}”.`);
   lines.push(
@@ -871,7 +975,7 @@ export function trialInWords(trial: SiteTrial): string[] {
   else if (trial.type === 'guide') lines.push('No next page was found.');
   if (trial.credit) lines.push(`The credit line reads “${trial.credit}”.`);
   if (trial.licence) lines.push(`Licence: ${trial.licence}`);
-  if (trial.layout) lines.push(...layoutInWords(trial.layout));
+  if (trial.layout) lines.push(...layoutInWords(trial.layout, laidOut));
   return lines;
 }
 
@@ -886,16 +990,38 @@ const listOf = (items: string[]) =>
 export const SAVED_PAGE_LAYOUT_NOTE =
   'A page saved from a browser has no notes of its layout, so layout that comes only from the wiki’s style sheet is not seen here: it shows once the wiki is read in the app.';
 
-/** The layout a trial found on a saved page, in plain sentences, the note on a saved page last. */
-export function layoutInWords(layout: SiteTrialLayout): string[] {
+/** The width of a game's pages, in words. */
+const WIDTH_WORDS: Record<PageWidth, string> = {
+  reading: 'at reading width, about 760 pixels',
+  wide: 'wide, about 1,000 pixels',
+  full: 'as wide as the window',
+};
+
+/** The width a trial's page is shown at, in one sentence. */
+export const pageWidthInWords = (width: PageWidth | undefined): string =>
+  width
+    ? `The game’s pages are shown ${WIDTH_WORDS[width]}, as the file says (layout.pageWidth).`
+    : `The file does not say how wide the game’s pages are shown, so they are shown ${WIDTH_WORDS[DEFAULT_PAGE_WIDTH]} unless the person chooses another width.`;
+
+/**
+ * The layout a trial found on a saved page, in plain sentences: how the
+ * page's layout was read first (`laidOut`, when the importer asked the app
+ * to lay the page out), the note on a page saved without notes last.
+ */
+export function layoutInWords(
+  layout: SiteTrialLayout,
+  laidOut: TrialLayoutOutcome | null = null,
+): string[] {
   const lines: string[] = [];
+  const how = layout.read === 'seen' ? trialLayoutSentence(laidOut) : null;
   if (layout.read === 'off') {
     lines.push('The layout is not read: the page is kept in one column, in reading order.');
   } else {
     lines.push(
-      layout.read === 'stated'
-        ? 'The layout is read only as the page’s HTML states it.'
-        : 'The layout is read as the browser shows it.',
+      how ??
+        (layout.read === 'stated'
+          ? 'The layout is read only as the page’s HTML states it.'
+          : 'The layout is read as the browser shows it.'),
     );
     const found = [
       layout.sideBySide > 0 ? plural(layout.sideBySide, 'row') + ' of blocks side by side' : '',
@@ -924,7 +1050,8 @@ export function layoutInWords(layout: SiteTrialLayout): string[] {
       `${plural(layout.leftOut, 'block')} named in layout.leaveOut ${layout.leftOut === 1 ? 'was' : 'were'} left out.`,
     );
   }
-  if (!layout.notes && layout.read === 'seen') {
+  if (layout.pageWidth) lines.push(pageWidthInWords(layout.pageWidth));
+  if (!layout.notes && layout.read === 'seen' && !how) {
     lines.push(SAVED_PAGE_LAYOUT_NOTE);
   }
   return lines;
@@ -1011,6 +1138,22 @@ export async function rulesTextOf(key: string): Promise<string | null> {
     if (file) return `${JSON.stringify(file.rules, null, 2)}\n`;
   }
   return null;
+}
+
+/**
+ * The type of part a reader's pages are, as the files the importers come
+ * with use it: a wiki when none says.
+ */
+export function partTypeOfReader(reader: string): 'wiki' | 'guide' | 'map' {
+  for (const importer of screenImporters) {
+    for (const file of importer.sites?.files ?? []) {
+      const checked = checkSiteRules(file.rules);
+      if (!checked.ok || !isSiteFile(checked.rules)) continue;
+      const part = checked.rules.parts.find((p) => p.reader === reader);
+      if (part) return part.type;
+    }
+  }
+  return 'wiki';
 }
 
 /**
@@ -1121,15 +1264,15 @@ export interface TrialPage {
 export async function tryRulesOn(
   rules: SiteRules,
   page: TrialPage,
-): Promise<{ result: SiteTrial } | { problem: string }> {
-  const importer = trierOf(screenImporters);
-  if (!importer) return { problem: 'No importer of this app can try a file on a saved page.' };
-  if (!hasRulesPage(rules)) {
-    return { problem: 'Only a part read by rules can be tried on a page, and this file has none.' };
-  }
+  importers: readonly AtlasImporter[] = screenImporters,
+  openFrame: () => ReturnType<typeof openLayoutFrame> = () => openLayoutFrame(),
+): Promise<{ result: SiteTrial; layout: TrialLayoutOutcome | null } | { problem: string }> {
+  const trier = trierFor(rules, importers);
+  if ('problem' in trier) return trier;
+  const { importer } = trier;
   let url = page.address;
   if (page.data !== undefined) {
-    url = mapStartOf(rules);
+    url = hasRulesPage(rules) ? mapStartOf(rules) : null;
     if (!url) {
       return {
         problem:
@@ -1138,16 +1281,23 @@ export async function tryRulesOn(
     }
   }
   if (!url) return { problem: 'Give the address the page was saved from first.' };
+  // A saved page is laid out by the app, with the sheets it holds, when the importer asks.
+  const layouts = page.data === undefined ? trialLayouts(openFrame) : null;
   try {
     const result = await trySitePage(importer, {
       rules,
       url,
       html: page.html,
       ...(page.data === undefined ? {} : { data: page.data }),
+      ...(layouts ? { layOut: (asked: PageLayoutRequest) => layouts.layOut(asked) } : {}),
     });
-    return result ? { result } : { problem: 'The importer could not try the file on this page.' };
+    return result
+      ? { result, layout: layouts?.outcome() ?? null }
+      : { problem: 'The importer could not try the file on this page.' };
   } catch (error) {
     return { problem: errorText(error) };
+  } finally {
+    layouts?.close();
   }
 }
 
