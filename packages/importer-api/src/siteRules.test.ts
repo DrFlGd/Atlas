@@ -1106,7 +1106,7 @@ describe('the layout section of a wiki or guide part', () => {
     };
     for (const value of [
       file(layout),
-      file(layout, SMALLEST.parts[0]!),
+      file(layout, SMALLEST.parts[0]),
       file(
         { hidden: 'keep', read: 'stated' },
         { ...RULES_WIKI, type: 'guide', order: { from: 'menu' } },

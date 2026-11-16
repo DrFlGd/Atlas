@@ -358,7 +358,7 @@ export function siteInfoOf(
     ...(file ? { rulesFile: file } : {}),
     ...(answer ? { rulesLicence: answer } : {}),
     ...(layoutRead === 'seen' || layoutRead === 'stated' || layoutRead === 'off'
-      ? { layoutRead: layoutRead as LayoutRead }
+      ? { layoutRead }
       : {}),
     ...(isPageWidth(pageWidth) ? { pageWidth } : {}),
   };

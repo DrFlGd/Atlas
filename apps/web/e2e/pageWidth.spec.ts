@@ -192,5 +192,5 @@ test.describe('on a phone', () => {
 
 /** Errors of the page, but those of pictures the demo pack has no file for. */
 function realErrors(errors: string[]): string[] {
-  return errors.filter((error) => !/Failed to load resource/u.test(error));
+  return errors.filter((error) => !error.includes('Failed to load resource'));
 }
