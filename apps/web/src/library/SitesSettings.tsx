@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { sitesOffered } from '../features';
 import { loadImporters } from '../state/importing';
-import { editRulesFile, newRulesFile, useRulesEditor } from '../state/rulesEditor';
+import {
+  editRulesFile,
+  newRulesFile,
+  openTrialInEditor,
+  useRulesEditor,
+} from '../state/rulesEditor';
 import {
   WAY_NAMES,
   addSiteFile,
@@ -12,6 +17,7 @@ import {
   saveSiteRulesFile,
   switchSite,
   trialInWords,
+  trialRead,
   trySavedPage,
   tryWithAddress,
   useSites,
@@ -28,11 +34,12 @@ import { AddedFile } from './SiteSwitchOn';
  * the types of its parts, the hosts it names and the ways of reading it
  * offers, a switch, and what is wrong with it; "Add a rules file…" for a
  * file of the person's, which is off until they have seen its hosts and
- * what it widens and switched it on; "Try on a saved page…" for a file with
- * a part read by rules; the rules file editor (`RulesEditor.tsx`), on a
- * file of the person's ("Edit…"), a copy of a shipped file ("Edit a
- * copy…") or a new file ("New rules file…"); and the guide and the schema
- * to save for writing one.
+ * what it widens and switched it on; "Try on a saved page…" on every file,
+ * which says at once why a file no importer can try cannot be; the rules
+ * file editor (`RulesEditor.tsx`), on a file of the person's ("Edit…"), a
+ * copy of a shipped file ("Edit a copy…") or a new file from a template or
+ * a copy of any file listed ("New rules file…"); and the guide and the
+ * schema to save for writing one.
  */
 export function SitesSettings() {
   const offered = useAtlas(sitesOffered);
@@ -229,16 +236,15 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
             <span className="switch-track" aria-hidden="true" />
             {entry.on ? 'On' : 'Off'}
           </label>
-          {entry.tryable ? (
-            <button
-              type="button"
-              className="button button-small"
-              data-testid="site-try"
-              onClick={() => void trySavedPage(entry)}
-            >
-              Try on a saved page…
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="button button-small"
+            data-testid="site-try"
+            data-tryable={entry.tryable}
+            onClick={() => void trySavedPage(entry)}
+          >
+            Try on a saved page…
+          </button>
           {entry.editable ? (
             <button
               type="button"
@@ -260,34 +266,45 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
             </button>
           ) : null}
         </div>
-        {trying ? <SiteTrialCard trying={trying} /> : null}
+        {trying ? <SiteTrialCard trying={trying} entry={entry} /> : null}
       </div>
     </li>
   );
 }
 
 /** "Try on a saved page": the page's address when it gives none, then what the reader understood. */
-function SiteTrialCard({ trying }: { trying: SiteTrying }) {
+function SiteTrialCard({ trying, entry }: { trying: SiteTrying; entry: SiteEntry }) {
   const [address, setAddress] = useState('');
   const [wrong, setWrong] = useState(false);
   const result = trying.result;
-  const lines = result ? trialInWords(result) : [];
+  const lines = result ? trialInWords(result, trying.layout ?? null) : [];
   return (
     <div
       className="download-confirm sites-trial"
       role="group"
-      aria-label={`${trying.title} tried on ${trying.page}`}
+      aria-label={
+        trying.phase === 'untried'
+          ? `${trying.title}: not tried`
+          : `${trying.title} tried on ${trying.page}`
+      }
       data-testid="site-trial"
     >
-      <p>
-        <strong>{trying.title}</strong> tried on <span className="path-inline">{trying.page}</span>
-        {trying.address ? (
-          <>
-            , the page at <span className="path-inline">{trying.address}</span>
-          </>
-        ) : null}
-        . Nothing was kept, and nothing was downloaded.
-      </p>
+      {trying.phase === 'untried' ? (
+        <p>
+          <strong>{trying.title}</strong> cannot be tried on a saved page, so no page was asked for.
+        </p>
+      ) : (
+        <p>
+          <strong>{trying.title}</strong> tried on{' '}
+          <span className="path-inline">{trying.page}</span>
+          {trying.address ? (
+            <>
+              , the page at <span className="path-inline">{trying.address}</span>
+            </>
+          ) : null}
+          . Nothing was kept, and nothing was downloaded.
+        </p>
+      )}
       {trying.phase === 'address' ? (
         <form
           className="sites-trial-address"
@@ -331,7 +348,7 @@ function SiteTrialCard({ trying }: { trying: SiteTrying }) {
           {trying.address ? 'Trying the file on the page…' : 'Trying the file on the data…'}
         </p>
       ) : null}
-      {trying.phase === 'failed' ? (
+      {trying.phase === 'failed' || trying.phase === 'untried' ? (
         <p className="download-error" role="alert">
           {trying.error}
         </p>
@@ -351,7 +368,7 @@ function SiteTrialCard({ trying }: { trying: SiteTrying }) {
       {result && result.problems.length > 0 ? (
         <>
           <p>
-            {result.part === null
+            {!trialRead(result)
               ? result.type === 'map' || !trying.address
                 ? 'The file did not read the data:'
                 : 'The file did not read the page:'
@@ -368,7 +385,23 @@ function SiteTrialCard({ trying }: { trying: SiteTrying }) {
       ) : result ? (
         <p className="muted small">Every selector of the file matched on this page.</p>
       ) : null}
+      {result?.page && entry.editable ? (
+        <p className="muted small">
+          The editor shows the page as Atlas would show it, laid out as Guides lays it out, and
+          tries the file again as you change it.
+        </p>
+      ) : null}
       <div className="row-actions wrap">
+        {entry.editable && trying.phase !== 'address' && trying.phase !== 'untried' ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="site-trial-editor"
+            onClick={() => void openTrialInEditor(entry)}
+          >
+            Open in the editor
+          </button>
+        ) : null}
         <button
           type="button"
           className="button"

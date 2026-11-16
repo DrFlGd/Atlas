@@ -41,7 +41,13 @@ import {
 import { z } from 'zod';
 import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
 import type { PageLayoutRequest } from './layoutNotes';
-import type { SiteRules, SiteRulesProblem } from './siteRules';
+import {
+  RULES_READER,
+  isSiteFile,
+  readByRules,
+  type SiteRules,
+  type SiteRulesProblem,
+} from './siteRules';
 import {
   siteTrialOf,
   type SiteRulesWidening,
@@ -1310,13 +1316,24 @@ export interface ImporterSites {
    */
   widens?(rules: SiteRules): SiteRulesWidening[];
   /**
-   * Optional: tries a file's parts read by `rules` on one page the person
-   * saved ("Try on a saved page"), or its map part on a data file the
-   * person saved (`SiteTrialRequest.data`), and says what the reader
-   * understood (see `siteTrial.ts`). Nothing is kept and nothing is
-   * fetched. Must not throw.
+   * Optional: tries a file on one page the person saved ("Try on a saved
+   * page"), or its map part on a data file the person saved
+   * (`SiteTrialRequest.data`), and says what the reader understood (see
+   * `siteTrial.ts`): a part read by `rules`, or a page of a site the file
+   * has one of the importer's own readers read, read as the importer reads
+   * a page kept from its window or as the person browses, by the file as
+   * it is given. It may lay the page out first (`SiteTrialRequest.layOut`).
+   * Nothing is kept and nothing is fetched. Must not throw.
    */
   tryPage?(request: SiteTrialRequest): SiteTrial | Promise<SiteTrial>;
+  /**
+   * Optional: why the importer cannot try a file on a saved page
+   * ({@link tryPage}), in full sentences that say what the person can do;
+   * null when it can try it. Pure. An importer that does not say is taken
+   * to try only a file with a part read by `rules`, and only when it lists
+   * that reader. Must not throw.
+   */
+  cannotTry?(rules: SiteRules): string | null;
 }
 
 /** Built-in site rules files one importer may come with. */
@@ -1409,6 +1426,7 @@ export const importerSchema = z
         guide: z.string().max(500_000).optional(),
         widens: z.custom<NonNullable<ImporterSites['widens']>>(isFunction).optional(),
         tryPage: z.custom<NonNullable<ImporterSites['tryPage']>>(isFunction).optional(),
+        cannotTry: z.custom<NonNullable<ImporterSites['cannotTry']>>(isFunction).optional(),
       })
       .optional(),
   })
@@ -2063,6 +2081,36 @@ export function siteRulesWideningsOf(
   const sites = importer.sites;
   if (!sites?.widens) return [];
   return problemsFrom(safely(() => sites.widens?.(rules), []));
+}
+
+/**
+ * Whether an importer can try a file on a saved page ({@link ImporterSites.tryPage}):
+ * null when it can, else why not, in full sentences. An importer that does
+ * not say ({@link ImporterSites.cannotTry}) tries a file with a part read by
+ * `rules` when it lists that reader; a fixed sentence says why not for any
+ * other. An importer that throws or answers in another shape cannot.
+ */
+export function cannotTryOf(
+  importer: Pick<AtlasImporter, 'sites'>,
+  rules: SiteRules,
+): string | null {
+  const sites = importer.sites;
+  if (!sites?.tryPage) return 'This importer cannot try a file on a saved page.';
+  if (sites.cannotTry) {
+    const said = safely(
+      () => sites.cannotTry?.(rules),
+      'This importer could not say whether it can try this file.',
+    );
+    if (said === null) return null;
+    return typeof said === 'string' && said.trim()
+      ? said.trim().slice(0, 1000)
+      : 'This importer could not say whether it can try this file.';
+  }
+  const byRules =
+    sites.readers.includes(RULES_READER) &&
+    isSiteFile(rules) &&
+    rules.parts.some((part) => readByRules(part));
+  return byRules ? null : 'This importer can try only a part read by rules on a saved page.';
 }
 
 /**
