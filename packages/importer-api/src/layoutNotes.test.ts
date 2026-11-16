@@ -311,6 +311,28 @@ describe('the measuring step', () => {
     expect(hidden!.children[0]!.attrs).toEqual({});
   });
 
+  it('notes a flex row that sets its children in the middle as centred, and a column not', () => {
+    const shape = (style: Record<string, string>): Shape => ({
+      ...ARTICLE,
+      children: [
+        {
+          name: 'div',
+          style: { display: 'flex', ...style },
+          rect: [100, 50, 900, 40],
+          children: [{ name: 'span', rect: [400, 50, 300, 40], text: 'Heron ferry' }],
+        },
+        { name: 'p', text: 'Words of the page, more of them than of any other size.' },
+      ],
+    });
+    const look = (style: Record<string, string>) =>
+      measure(shape(style)).copy!.children[0]!.attrs['data-atlas-look'];
+    expect(look({ justifyContent: 'center' })).toBe('centred');
+    expect(look({ justifyContent: 'safe center' })).toBe('centred');
+    expect(look({ justifyContent: 'center', flexDirection: 'column' })).toBeUndefined();
+    expect(look({ justifyContent: 'space-between' })).toBeUndefined();
+    expect(look({})).toBeUndefined();
+  });
+
   it('measures the outer elements first and says when its bounds ran out', () => {
     const { copy } = measure(ARTICLE, { elements: 2 });
     expect(copy!.attrs['data-atlas-layout']).toBe('1 16 cut');

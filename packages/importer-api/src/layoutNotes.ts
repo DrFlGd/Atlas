@@ -45,7 +45,8 @@
  *   more children floated).
  * - `data-atlas-look`, words for what the element shows: `centred` (its
  *   text set in the middle, where that starts or where it holds text of
- *   its own), `framed` (a border all round, or a background unlike what is
+ *   its own, or a flex box in a row that sets its children in the middle,
+ *   `justify-content: center`), `framed` (a border all round, or a background unlike what is
  *   behind it), and for an element that holds text of its own (its words,
  *   and those of the elements of its lines): `bold` and `italic` when all
  *   of that text is, and `x1.5` for its size against the article's text
@@ -402,6 +403,7 @@ export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
           if (text && text.chars > 0) note.text = text;
           const parent = el.parentElement;
           if (centred(style) && (el === article || !parent || !centred(styleOf(parent)) || (text && text.chars > 0))) note.look.push('centred');
+          else if (/flex$/.test(display) && String(style.flexDirection).indexOf('column') !== 0 && /^(?:safe )?center$/.test(String(style.justifyContent))) note.look.push('centred');
           const large = rect.width >= 48 && rect.height >= 24;
           if (
             ['Top', 'Right', 'Bottom', 'Left'].every((side) => edge(style, side)) ||
