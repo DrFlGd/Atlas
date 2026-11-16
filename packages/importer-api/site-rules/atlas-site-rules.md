@@ -15,7 +15,7 @@ A site rules file is one JSON file that describes one site to the Atlas Importer
 
 **Words used here.** A _part_ is one map, wiki or guide of a site. A _reader_ is the piece of the Importer that reads a part. A _location_ is a point on a map, and each location has a _type_ (item, enemy, boss and so on). A _session_ is one run of reading pages.
 
-**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
+**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
 
 **Who decides.** The owner checks every file by hand before switching it on. A file states the site's limits: which pages, which ways of reading, which pause, which licence, or that the site is not read at all. The files that come with the Importer state the limits the owner has accepted so far, and a file of the owner's that is switched on wins over them for its site. Some things are no site's to decide and no file can change them: the app's honest name `Atlas/<version>`, `robots.txt` when the app reads by itself, the app's own shortest pause, stopping at the first refusal, never answering a check that asks whether the reader is a person, and never using a window's cookies.
 
@@ -410,7 +410,38 @@ A wiki or guide part, whichever reader reads it, may hold a `layout` section for
 
 Selectors here are the same as everywhere in a file (see "Selectors"), and are tried on the content of each page. Each selector should match on at least one saved page: "Try on a saved page" lists every entry of `layout` that matched nothing, with the other selectors that matched nothing. Some fields need others: `cards.title` needs `cards.select`, `headings.size` and `headings.length` are not used with `"lines": false`, and with `"read": "off"` the entries that place blocks (`cards`, `sideBySide`, `oneColumn`, `row` and `longLines`) are not used. The Importer names such a field as a problem.
 
-**What to look at on a saved page.** "Try on a saved page" says which layout the reader found: how many sets of blocks side by side, cards and their titles, rows, lists in columns and centred blocks, lines made headings, and blocks left out as hidden or by `leaveOut`. A page saved from a browser carries no notes of its layout, so the trial shows the layout the page's HTML states; layout that comes only from the site's style sheet shows once the owner reads the wiki in the app. Write an entry for what the trial gets wrong, and say in your report which page shows it.
+**What to look at on a saved page.** "Try on a saved page" says which layout the reader found: how many sets of blocks side by side, cards and their titles, rows, lists in columns and centred blocks, lines made headings, and blocks left out as hidden or by `leaveOut`. A page saved from a browser carries no notes of its layout, so the trial shows the layout the page's HTML states; layout that comes only from the site's style sheet shows once the owner reads the wiki in the app. Write an entry for what the trial gets wrong, and say in your report which page shows it. How to check an entry against the pages as the site shows them is in "Checking the layout" below.
+
+## Checking the layout
+
+Read this before you write or change a file's `layout` section. An entry of `layout` is right when a reader of a page in Atlas sees what a reader of the site sees: the same blocks side by side, the same cards with their titles, the same rows, columns and centred lines. Check that on pages saved with their style sheets, never by reading the HTML alone.
+
+**Pages saved with their style sheets.** Most of a page's layout comes from the site's style sheets, so a page saved as its HTML alone shows little of it. Ask the owner to save each page you need in one of two forms:
+
+- a browser's "Webpage, complete" save, which writes the page and, beside it, a folder of its files with its style sheets;
+- one HTML file with the rules of every style sheet the page uses written into `<style>` elements.
+
+Such pages are private: they hold the site's own words and pictures. Never commit one, never make a test fixture of one, and never quote its words in a file, a test, a commit message or a report. Name a page by its address or its title only.
+
+**Two ways to check.**
+
+1. **In the Importer, by the owner.** Under Settings, "Sites", the rules file editor (see "Check the file") tries the file on the example page the owner picks. Its right side shows the page as Atlas would import it, with no picture loaded, and the owner compares it with the saved page open in a browser. This check needs nothing but the Importer, and it comes last for every file. A page saved from a browser carries no notes of how the browser laid it out: where the editor says a page has none, its right side shows the layout the page's HTML states, and layout that comes only from the style sheets shows when the owner reads a page of the site in the app's window. Tell the owner which pages to try and what they should see.
+2. **With a comparison tool, by an agent that has one.** A tool that lays each saved page out twice, as the site shows it and as Atlas shows it, and compares where the blocks stand, checks many pages at once and says in words what differs. When the last section of the guide your Importer saves names such a tool, use it as that section says. It helps you find and explain a difference; the owner's check in the editor still comes after it.
+
+**The working loop.**
+
+1. Make a baseline: check every saved page with the file as it is, and keep the result.
+2. Pick the difference a reader of the page would notice most, and find its cause.
+3. Change one thing in `layout` for it. When the cause is not this site's own (the reader would get the same structure wrong on any site), change nothing in the file: report the cause as one for the reader, with the page and what differs.
+4. Check again, against the baseline, and look at the pages on both sides, not only at a number. A change that fixes one page must not break another.
+5. Keep the change only when the pages read better. Then go back to step 2.
+
+**Its rules.**
+
+- Fix what a reader of the page would see: blocks that stand apart, a card that lost its title, a row read as a long list. Never change a file, or the way a tool measures, only to raise its number.
+- No page is ever fetched to check a layout, by you or by a tool. Work on the pages the owner saved.
+- Layout work changes the `layout` section only. A file's limits (its ways of reading, its pause, its pages, its licence answers, a refusal) are never widened as part of it. When the layout seems to need that, stop and ask the owner.
+- Say in your report which pages you checked, in which way, what you changed and what still differs.
 
 ## A site that is not read
 
