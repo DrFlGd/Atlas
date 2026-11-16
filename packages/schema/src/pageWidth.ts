@@ -24,8 +24,11 @@ export const DEFAULT_PAGE_WIDTH: PageWidth = 'reading';
 /**
  * The widest the text column of a page is at each width, in CSS pixels.
  * `full` has no bound in the app (it is the window's width); the number
- * here is the width a page is laid out at where one number is needed, such
- * as a frame that lays a saved page out to see where its blocks stand.
+ * here is the width a page is laid out at where one number is needed: the
+ * closed frame the app lays a page out in, to see where its blocks stand,
+ * is as wide (`LAYOUT_FRAME_WIDTH` of `@atlas/importer-api`). That frame
+ * stands for a computer's window on the site, whatever width the page is
+ * then shown at in Guides.
  */
 export const PAGE_WIDTH_PIXELS: Readonly<Record<PageWidth, number>> = {
   reading: 760,

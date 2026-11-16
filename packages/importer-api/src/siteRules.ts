@@ -230,8 +230,10 @@ function licenceFormOf(value: unknown): keyof typeof licenceForms | 'several' | 
 /**
  * How a page's layout is kept (`layout.read`): as the browser shows it,
  * style sheets included (`seen`, from the notes of a page read in the
- * app's window); only as its HTML states it (`stated`); or not at all, one
- * column in reading order (`off`).
+ * app's window or laid out by the app, see `ImportContext.layOut`); only as
+ * its HTML states it (`stated`); or not at all, one column in reading order
+ * (`off`). With `stated` and `off`, an importer asks the app to lay out no
+ * page of the site and reads no notes on its pages.
  */
 export const LAYOUT_READS = ['seen', 'stated', 'off'] as const;
 export type LayoutRead = (typeof LAYOUT_READS)[number];
