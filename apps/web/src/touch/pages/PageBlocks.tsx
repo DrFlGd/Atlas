@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../../components/icons';
 import type { BlockModel, ListModel, TableModel } from '../../markdownEdit/blocks';
 import {
@@ -11,7 +11,21 @@ import {
   withSource,
   type EditBlock,
 } from '../../markdownEdit/draft';
+import {
+  addSideBlock,
+  clampColumns,
+  FORM_NAMES,
+  formTree,
+  moveForm,
+  removeSideBlock,
+  setFormMarker,
+  SHARE_PRESETS,
+  sharesOfForm,
+  takeApart,
+  type FormNode,
+} from '../../markdownEdit/forms';
 import { inlineLength, insertInline, splitInline, type Inline } from '../../markdownEdit/inline';
+import { notify } from '../../state/actions';
 import {
   addRow,
   cellAt,
@@ -46,20 +60,16 @@ import {
  * (a paragraph's or heading's text, a list's items, a table's cells, a
  * quote, code), and a menu to move it, edit it as Markdown or delete it.
  * What has no tools of its own is edited as Markdown, kept as written.
+ * The layout forms of the page (see `markdownEdit/forms.ts`) are frames
+ * around the blocks they hold, with tools of their own.
  */
 
 export function PageBlocks() {
   const page = usePageEditor((s) => s.page);
+  const tree = useMemo(() => formTree(page.blocks), [page.blocks]);
   return (
     <div className="pe-blocks" data-testid="page-blocks">
-      {page.blocks.map((block, index) => (
-        <BlockFrame
-          key={block.key}
-          block={block}
-          first={index === 0}
-          last={index === page.blocks.length - 1}
-        />
-      ))}
+      <Nodes nodes={tree} count={page.blocks.length} index={blockIndex(page.blocks)} />
       <button
         type="button"
         className="pe-add-paragraph"
@@ -83,11 +93,246 @@ export function PageBlocks() {
   );
 }
 
+const blockIndex = (blocks: readonly EditBlock[]) =>
+  new Map(blocks.map((block, i) => [block.key, i]));
+
+/** Blocks and forms, in order. */
+function Nodes({
+  nodes,
+  count,
+  index,
+}: {
+  nodes: readonly FormNode[];
+  count: number;
+  index: ReadonlyMap<number, number>;
+}) {
+  return (
+    <>
+      {nodes.map((node) =>
+        node.type === 'block' ? (
+          <BlockFrame
+            key={node.block.key}
+            block={node.block}
+            first={index.get(node.block.key) === 0}
+            last={index.get(node.block.key) === count - 1}
+          />
+        ) : (
+          <FormFrame key={node.open.key} node={node} count={count} index={index} />
+        ),
+      )}
+    </>
+  );
+}
+
+const sharesText = (shares: readonly number[]) => shares.join(':');
+
+/**
+ * A layout form around the blocks it holds: its name, its tools (the
+ * widths of blocks side by side and a block added or taken away, the
+ * number of columns, moving it, taking it apart), and its blocks, side by
+ * side as the page shows them where there is room.
+ */
+function FormFrame({
+  node,
+  count,
+  index,
+}: {
+  node: Extract<FormNode, { type: 'form' }>;
+  count: number;
+  index: ReadonlyMap<number, number>;
+}) {
+  const { pair, parts } = node;
+  const form = pair.marker.form;
+  const name = FORM_NAMES[form];
+  const sharesId = useId();
+  const columnsId = useId();
+  const shares = sharesOfForm(pair);
+  const presets = SHARE_PRESETS[shares.length] ?? [];
+  const current = sharesText(shares);
+  const choices = presets.map(sharesText);
+  if (!choices.includes(current)) choices.unshift(current);
+  const columns = pair.marker.form === 'columns' ? pair.marker.columns : 2;
+  const open = pair.open;
+  return (
+    <section
+      className={`pe-form pe-form-${form}`}
+      aria-label={name}
+      data-testid="page-form"
+      data-form={form}
+      data-depth={pair.depth}
+    >
+      <div className="pe-form-bar" role="toolbar" aria-label={`${name}: layout tools`}>
+        <span className="pe-form-name" aria-hidden="true">
+          <UiIcon name="layout" size={14} />
+          {name}
+        </span>
+        {form === 'side' ? (
+          <>
+            <label className="pe-form-field" htmlFor={sharesId}>
+              <span>Widths</span>
+              <select
+                id={sharesId}
+                className="own-input"
+                value={current}
+                data-testid="form-shares"
+                onChange={(event) => {
+                  const chosen = event.target.value.split(':').map(Number);
+                  changePage((page) =>
+                    setFormMarker(page, open, {
+                      role: 'open',
+                      form: 'side',
+                      shares: chosen.every((share) => share === chosen[0]) ? null : chosen,
+                    }),
+                  );
+                }}
+              >
+                {choices.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {choice}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="pe-form-button"
+              data-testid="form-add-block"
+              disabled={shares.length >= 4}
+              onClick={() => {
+                changePage((page) => {
+                  const added = addSideBlock(page, open);
+                  if (!added) return page;
+                  focusField(`${added.focus.key}`, 0);
+                  return added.page;
+                });
+              }}
+            >
+              Add a block
+            </button>
+          </>
+        ) : null}
+        {form === 'columns' ? (
+          <label className="pe-form-field" htmlFor={columnsId}>
+            <span>Columns</span>
+            <select
+              id={columnsId}
+              className="own-input"
+              value={columns}
+              data-testid="form-columns"
+              onChange={(event) => {
+                changePage((page) =>
+                  setFormMarker(page, open, {
+                    role: 'open',
+                    form: 'columns',
+                    columns: clampColumns(Number(event.target.value)),
+                  }),
+                );
+              }}
+            >
+              {[2, 3, 4, 5, 6].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <span className="pe-form-gap" />
+        <button
+          type="button"
+          className="pe-form-button pe-form-icon"
+          aria-label={`Move the ${name.toLowerCase()} layout up`}
+          title="Move up"
+          data-testid="form-up"
+          disabled={index.get(open) === 0}
+          onClick={() => {
+            changePage((page) => moveForm(page, open, -1));
+          }}
+        >
+          <UiIcon name="arrowUp" size={16} />
+        </button>
+        <button
+          type="button"
+          className="pe-form-button pe-form-icon"
+          aria-label={`Move the ${name.toLowerCase()} layout down`}
+          title="Move down"
+          data-testid="form-down"
+          disabled={index.get(pair.end) === count - 1}
+          onClick={() => {
+            changePage((page) => moveForm(page, open, 1));
+          }}
+        >
+          <UiIcon name="arrowDown" size={16} />
+        </button>
+        <button
+          type="button"
+          className="pe-form-button"
+          data-testid="form-take-apart"
+          aria-label={`Take the ${name.toLowerCase()} layout apart, keeping its text`}
+          onClick={() => {
+            changePage((page) => takeApart(page, open));
+            notify(`The ${name.toLowerCase()} layout was taken apart. Its text stays on the page.`);
+          }}
+        >
+          Take apart
+        </button>
+      </div>
+      <div className={`pe-form-parts pe-form-parts-${form}`}>
+        {parts.map((part, i) => (
+          <div
+            key={i}
+            className={`pe-form-part${form === 'side' ? ` pe-share-${shares[i] ?? 1}` : ''}`}
+            role={form === 'side' ? 'group' : undefined}
+            aria-label={form === 'side' ? `Block ${i + 1} of ${parts.length}` : undefined}
+            data-testid="form-part"
+          >
+            <Nodes nodes={part} count={count} index={index} />
+            {part.length === 0 ? (
+              <button
+                type="button"
+                className="pe-add-paragraph pe-form-write"
+                data-testid="form-write"
+                onClick={() => {
+                  changePage((page) => {
+                    // After the marker before this part: its opening or a separator.
+                    const before = i === 0 ? open : pair.next[i - 1]!;
+                    const block = newBlock(page);
+                    focusField(`${block.key}`, 0);
+                    return insertBlockAfter(page, before, block);
+                  });
+                }}
+              >
+                Write here
+              </button>
+            ) : null}
+            {form === 'side' && parts.length > 2 ? (
+              <button
+                type="button"
+                className="pe-form-button pe-form-remove"
+                data-testid="form-remove-block"
+                onClick={() => {
+                  changePage((page) => removeSideBlock(page, open, i) ?? page);
+                  notify(
+                    `Block ${i + 1} was taken away. Its text is now in block ${i === 0 ? 1 : i}.`,
+                  );
+                }}
+              >
+                Remove block {i + 1}
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function BlockFrame({ block, first, last }: { block: EditBlock; first: boolean; last: boolean }) {
   const [menu, setMenu] = useState(false);
   const menuId = useId();
   const focused = usePageEditor((s) => s.focused?.block === block.key);
-  const raw = block.model.kind === 'raw' || block.asText;
+  // A marker line of a form that pairs with nothing is the text it is.
+  const raw = block.model.kind === 'raw' || block.model.kind === 'form' || block.asText;
   return (
     <div
       className={`pe-block pe-block-${block.asText ? 'text' : block.model.kind}${focused ? ' pe-block-focused' : ''}`}
@@ -147,7 +392,7 @@ function BlockFrame({ block, first, last }: { block: EditBlock; first: boolean; 
             >
               Move down
             </MenuItem>
-            {block.model.kind !== 'raw' ? (
+            {block.model.kind !== 'raw' && block.model.kind !== 'form' ? (
               <MenuItem
                 testId="block-as-markdown"
                 onClick={() => {
@@ -240,6 +485,7 @@ function BlockBody({ block }: { block: EditBlock }) {
           }}
         />
       );
+    case 'form':
     case 'raw':
       return null;
   }
@@ -674,7 +920,9 @@ function MarkdownBlock({ block }: { block: EditBlock }) {
       ? block.model.why === 'hidden'
         ? 'Hidden text that runs across parts of the page is edited as Markdown.'
         : 'This part has no text tools of its own, so it is edited as Markdown.'
-      : 'Edited as Markdown. Choose “Edit with the text tools” in its menu to go back.';
+      : block.model.kind === 'form'
+        ? 'This line marks a layout, but no other line pairs with it, so the page shows it as text.'
+        : 'Edited as Markdown. Choose “Edit with the text tools” in its menu to go back.';
   const noteId = useId();
   return (
     <div className="pe-markdown-block">

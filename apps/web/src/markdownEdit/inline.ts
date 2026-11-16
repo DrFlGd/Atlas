@@ -1,3 +1,4 @@
+import { isLayoutMarkerLine } from '@atlas/schema';
 import MarkdownIt, { type Token } from 'markdown-it';
 import { CELL_BREAK, colourOf, markdownMarks } from '../markdownMarks';
 
@@ -321,6 +322,8 @@ function escapeLineStart(line: string): string {
   // Spaces at the start of a line are not shown, and four would make code.
   const rest = line.replace(/^[ \t]+/, '');
   if (/^(?:#{1,6}(?:[ \t]|$)|>|[-+=](?:[ \t]|$)|[-=]+[ \t]*$)/.test(rest)) return `\\${rest}`;
+  // Words that would read as a marker line of a layout form are words.
+  if (isLayoutMarkerLine(rest)) return `\\${rest}`;
   const ordered = /^(\d{1,9})([.)])/.exec(rest);
   if (ordered) return `${ordered[1]}\\${rest.slice(ordered[1]!.length)}`;
   return rest;

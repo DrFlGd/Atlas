@@ -10,7 +10,9 @@ import {
   type EditPage,
 } from '../../markdownEdit/draft';
 import { inlineLength, toggleMark, type Inline, type ToggleMark } from '../../markdownEdit/inline';
+import { addForm, depthAt } from '../../markdownEdit/forms';
 import { indentItem, outdentItem, type ItemPath } from '../../markdownEdit/structure';
+import { MAX_DEPTH, type LayoutFormName } from '@atlas/schema';
 import { notify } from '../../state/actions';
 import { guidesOf } from '../../state/guides';
 import { layoutOf, useOwnPages } from '../../state/ownPages';
@@ -127,6 +129,39 @@ export function insertBlock(model: BlockModel, focus?: (key: number) => string):
       };
     }
     return insertBlockAfter(page, block?.key ?? null, added);
+  });
+}
+
+/** The first field of a block, to put the cursor in. */
+function firstField(block: EditBlock): string {
+  if (block.model.kind === 'list') return fieldOfList(block.key, [0]);
+  if (block.model.kind === 'table') return fieldOfCell(block.key, 0, 0);
+  if (block.model.kind === 'quote') return fieldOfQuote(block.key, 0);
+  return `${block.key}`;
+}
+
+/** Whether a layout form can be made where the cursor is: forms go so deep at most. */
+export function canAddLayout(): boolean {
+  const { page } = usePageEditor.getState();
+  const block = focusedBlock();
+  return !block || depthAt(page.blocks, block.key) < MAX_DEPTH;
+}
+
+/**
+ * The Layout menu: a layout form made around the part being edited, or
+ * added empty after it (at the end when no part is being edited).
+ */
+export function addLayout(form: LayoutFormName, around: boolean): void {
+  const block = focusedBlock();
+  if (!canAddLayout() || (around && !block)) return;
+  changePage((page) => {
+    const made = addForm(
+      page,
+      form,
+      around && block ? { around: block.key } : { after: block?.key ?? null },
+    );
+    if (made.focus) focusField(firstField(made.focus), around ? 'end' : 0);
+    return made.page;
   });
 }
 

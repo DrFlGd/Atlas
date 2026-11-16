@@ -1067,3 +1067,197 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/*
+ * Layout forms in the formatted view (see `PageBlocks.tsx`): a frame with
+ * the form's name and tools, around the blocks it holds. Blocks side by
+ * side keep their shares of the width where there is room, and stand one
+ * under another where the editor is narrow, as on the page.
+ */
+.pe-form {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+  background: color-mix(in srgb, var(--atlas-surface) 60%, transparent);
+}
+
+.pe-form-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius) var(--atlas-radius) 0 0;
+  background: var(--atlas-surface-raised);
+  font-size: 13px;
+}
+
+.pe-form-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--atlas-muted);
+  font-weight: 600;
+}
+
+.pe-form-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--atlas-muted);
+}
+
+.pe-form-field .own-input {
+  min-height: 30px;
+  padding: 2px 6px;
+  font-size: 13px;
+}
+
+.pe-form-gap {
+  flex: 1;
+}
+
+.pe-form-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pe-form-icon {
+  width: 30px;
+  padding: 0;
+}
+
+.pe-form-button:hover:not(:disabled) {
+  background: var(--atlas-surface-hover);
+}
+
+.pe-form-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pe-form-button:focus-visible,
+.pe-form-field .own-input:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 1px;
+}
+
+.pe-form-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 6px 8px 0;
+}
+
+.pe-form-parts-side {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  padding-left: 6px;
+  container-type: inline-size;
+}
+
+.pe-form-part {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pe-form-parts-side > .pe-form-part {
+  flex: 1 1 0;
+  padding: 4px 0;
+  border: 1px dashed var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+.pe-form-parts-side > .pe-share-2 {
+  flex-grow: 2;
+}
+
+.pe-form-parts-side > .pe-share-3 {
+  flex-grow: 3;
+}
+
+.pe-form-parts-side > .pe-share-4 {
+  flex-grow: 4;
+}
+
+.pe-form-parts-side > .pe-share-5 {
+  flex-grow: 5;
+}
+
+.pe-form-parts-side > .pe-share-6 {
+  flex-grow: 6;
+}
+
+.pe-form-parts-side > .pe-share-7 {
+  flex-grow: 7;
+}
+
+.pe-form-parts-side > .pe-share-8 {
+  flex-grow: 8;
+}
+
+.pe-form-parts-side > .pe-share-9 {
+  flex-grow: 9;
+}
+
+@container (max-width: 34rem) {
+  .pe-form-parts-side > .pe-form-part {
+    flex-basis: 100%;
+  }
+}
+
+.pe-form-write {
+  margin: 4px 0 4px 32px;
+}
+
+.pe-form-remove {
+  align-self: flex-start;
+  margin: 4px 0 0 32px;
+}
+
+/* A card's title, edited where it stands, in its title bar. */
+.pe-form-card > .pe-form-parts > .pe-form-part > .pe-block-heading:first-child {
+  margin: -6px -6px 4px 0;
+  padding: 4px 6px 4px 0;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-surface-hover);
+}
+
+.pe-form-centred .pe-field {
+  text-align: center;
+}
+
+.pe-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.pe-menu-group + .pe-menu-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.pe-menu-heading {
+  margin: 4px 10px 2px;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
