@@ -2148,8 +2148,10 @@ fn move_file(source: &Path, target: &Path) -> io::Result<()> {
 
 /// Removes the files in an imported pack's `pictures/` folder that its
 /// list of pictures (`pictures.json`, as just written) names neither as a
-/// picture's file nor as its copy for pages, with the marks kept beside
-/// them (`.404` for one not on the server, `.part` for one half written).
+/// picture's file nor as its copy for pages (or, for a picture to be
+/// fetched later with no copy of either sort, its copy for cards, see
+/// `packfile::card_copy_path`), with the marks kept beside them (`.404`
+/// for one not on the server, `.part` for one half written).
 /// Only an import's pictures are there: a person's own photos are kept
 /// outside the pack folder (see `ownpictures`). Nothing is removed when the
 /// list cannot be read. Returns how many files were removed.
@@ -2162,14 +2164,23 @@ pub(crate) fn remove_unlisted_pictures(dir: &Path, list: &str) -> usize {
     let listed: HashSet<String> = pictures
         .iter()
         .flat_map(|picture| {
+            let file = picture.get("file").and_then(serde_json::Value::as_str);
+            // A photo's copy for cards, which no entry names.
+            let card_copy = file
+                .filter(|_| crate::packfile::has_card_copy(picture))
+                .and_then(crate::packfile::card_copy_path);
             [
-                picture.get("file"),
-                picture.get("pageCopy").and_then(|copy| copy.get("file")),
+                file.map(str::to_owned),
+                picture
+                    .get("pageCopy")
+                    .and_then(|copy| copy.get("file"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                card_copy,
             ]
         })
         .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .map(str::to_lowercase)
+        .map(|name| name.to_lowercase())
         .collect();
     let Ok(entries) = fs::read_dir(dir.join("pictures")) else {
         return 0;
@@ -2546,6 +2557,7 @@ mod tests {
             "a.png",
             "a.page.png",
             "b.jpg",
+            "b.page.jpg",
             "old-1x2.png",
             "old-1x2.page.png",
             "gone.jpg.404",
@@ -2562,11 +2574,19 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         left.sort();
-        // What it lists stays (also by another case); a file that is no
+        // What it lists stays (also by another case), with the copy for
+        // cards of a picture that names no copy; a file that is no
         // picture's, and a folder, are not touched.
         assert_eq!(
             left,
-            ["a.page.png", "a.png", "b.jpg", "folder.png", "notes.txt"]
+            [
+                "a.page.png",
+                "a.png",
+                "b.jpg",
+                "b.page.jpg",
+                "folder.png",
+                "notes.txt"
+            ]
         );
         // A list that cannot be read removes nothing; neither does an import without one.
         fs::write(pictures.join("old.png"), b"x").unwrap();

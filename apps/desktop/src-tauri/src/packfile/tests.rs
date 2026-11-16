@@ -2251,6 +2251,46 @@ fn makes_the_pictures_kept_for_own_use_smaller_too_when_they_go_in() {
     run_import(&file, &dir.0.join("maps")).unwrap();
 }
 
+/// A location photo kept at full size, with its copy for cards beside it,
+/// goes into a smaller file at most 1,280 pixels wide, and its copy for
+/// cards never goes in.
+#[cfg(not(target_os = "android"))]
+#[test]
+fn a_location_photo_kept_at_full_size_goes_in_smaller() {
+    use super::smaller::tests::{encoded, photo, read};
+    use image::ImageFormat;
+    let dir = TempDir::new("packfile-smaller-photo");
+    let pack = dir.0.join("pages");
+    write_pages_pack(&pack);
+    // `far` is a location's photo, downloaded at full size with its copy.
+    put(
+        &pack.join("pictures/far.jpg"),
+        &encoded(&photo(4096, 2048, false), ImageFormat::Jpeg),
+    );
+    put(
+        &pack.join("pictures/far.page.jpg"),
+        &encoded(&photo(1280, 640, false), ImageFormat::Jpeg),
+    );
+    put_json(
+        &pack.join("locations.json"),
+        &json!([{"id": format!("{ID}:loc:a"), "photos": [{"picture": format!("{ID}:picture:far")}]}]),
+    );
+    let file = dir.0.join("pages.atlaspack");
+    for smaller in [false, true] {
+        let source = PackSource {
+            own_use_pictures: true,
+            smaller_pictures: smaller,
+            ..folder_source(&pack)
+        };
+        run_export(&source, Detail::Overview, &file).unwrap();
+        let width = read(&entry_bytes(&file, "pictures/far.jpg")).1;
+        assert_eq!(width, if smaller { 1280 } else { 4096 });
+        assert!(!entry_names(&file)
+            .keys()
+            .any(|name| name.contains(".page.")));
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 #[test]
 fn cancelling_while_pictures_are_made_smaller_leaves_nothing() {

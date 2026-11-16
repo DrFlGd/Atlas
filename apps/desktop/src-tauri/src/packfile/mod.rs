@@ -840,6 +840,29 @@ pub fn is_picture_path(path: &str) -> bool {
         && matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "gif")
 }
 
+/// Where a photo's copy for cards goes, relative to the pack, when the
+/// photo names no copy for pages of its own: beside its file, named as a
+/// copy for pages is (`pictures/m1.jpg` has `pictures/m1.page.jpg`). The
+/// web app shows a photo from the same name (`components/Photos.tsx`), the
+/// desktop app makes it when it downloads the photo (`tiles::manager::photos`),
+/// and building a game again keeps it (`library::remove_unlisted_pictures`).
+pub fn card_copy_path(file: &str) -> Option<String> {
+    let (stem, extension) = file.rsplit_once('.')?;
+    let copy = format!("{stem}.page.{extension}");
+    is_picture_path(&copy).then_some(copy)
+}
+
+/// Whether a picture of a pack gets a copy for cards: one with an address
+/// to be fetched from and neither a copy shown nor a copy for pages.
+pub fn has_card_copy(picture: &serde_json::Value) -> bool {
+    picture
+        .get("remote")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+        && picture.get("shownAt").is_none()
+        && picture.get("pageCopy").is_none()
+}
+
 /// The pictures a pack file carries: those the pack marks as shareable
 /// and whose file is there, in the pack folder or (downloaded for a pack
 /// that comes with the app) its overlay `images`; with `own_use`, which the

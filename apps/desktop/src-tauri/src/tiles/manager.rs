@@ -68,7 +68,7 @@ use crate::{
     library::{PackLock, JOB_FILE, META_DIR},
     manifest::{read_head, update_images, ImagesUpdate},
     packs::{PackKind, PackRegistry},
-    settings::DownloadSettings,
+    settings::{DownloadSettings, PhotoSize},
 };
 
 // Stopping a pack's downloads for good, before its images or the pack are deleted.
@@ -440,6 +440,9 @@ pub struct DownloadManager {
     /// kept since the app started: their photo jobs ask only for the copy
     /// their page showed (see `photos`).
     full_not_kept: Mutex<HashSet<String>>,
+    /// The size location photos are kept at (the person's download
+    /// settings), read when a photo job starts.
+    photo_size: Mutex<PhotoSize>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -475,6 +478,7 @@ impl DownloadManager {
             lock_retry: LOCK_RETRY,
             log: ActivityLog::global(),
             full_not_kept: Mutex::new(HashSet::new()),
+            photo_size: Mutex::new(PhotoSize::default()),
         }
     }
 
@@ -503,6 +507,7 @@ impl DownloadManager {
     pub fn set_download_settings(&self, settings: &DownloadSettings) {
         let pace = Pace::from_settings(settings);
         *lock(&self.pace) = pace;
+        *lock(&self.photo_size) = settings.photos;
         self.log.info(
             Area::Download,
             format!("Download settings are now: {}", pace.describe()),
@@ -1622,6 +1627,7 @@ async fn run_job(
                         .parent_of(level, tile.x, tile.y)
                         .map(|parent| layer.tile_path(parent.z, parent.x, parent.y)),
                     fallback: None,
+                    replace: false,
                 }
             }));
         }
@@ -2145,6 +2151,7 @@ mod tests {
             pause_ms: 5000,
             requests_per_minute: None,
             kilobytes_per_second: None,
+            photos: PhotoSize::Full,
         });
         let slow = manager.plan_info("test").unwrap().options[1].estimated_seconds;
         assert!(slow > fast * 5.0, "{fast} -> {slow}");

@@ -16,7 +16,7 @@ import { desktop, type Detail, type DownloadSnapshot, type ListedPack } from '..
 import { downloadsOffered, importsOffered } from '../features';
 import { notify } from '../state/actions';
 import { numberFormat } from '../state/derived';
-import { loadDownloads } from '../state/downloads';
+import { loadDownloads, loadDownloadSettings } from '../state/downloads';
 import { loadJobs } from '../state/downloadsView';
 import {
   DETAIL_NAME,
@@ -799,8 +799,14 @@ function DetailChooser({
 function PhotosCard({ id, facts, kind }: { id: string; facts: GameFacts; kind: GameKind }) {
   const [pending, setPending] = useState(false);
   const shown = useAtlas((s) => s.game?.entry.id === id);
+  // The size location photos are kept at, from the download settings.
+  const loaded = useAtlas((s) => s.downloads.settings !== null);
+  const photoSize = useAtlas((s) => s.downloads.settings?.settings.photos ?? 'full');
   const photos = facts.photos;
   const bridge = desktop;
+  useEffect(() => {
+    if (photos && !loaded) void loadDownloadSettings();
+  }, [photos, loaded]);
   if (!photos || !bridge) return null;
   const noun = kind === 'wiki' ? 'pictures' : 'photos';
   const run = (step: () => Promise<unknown>) => {
@@ -812,6 +818,8 @@ function PhotosCard({ id, facts, kind }: { id: string; facts: GameFacts; kind: G
   const job = photos.job;
   const going = isGoing(job);
   const here = photos.total - photos.remaining;
+  // Photos kept smaller before, offered again at full size.
+  const again = kind === 'wiki' || going ? 0 : (photos.keptSmaller ?? 0);
   const state =
     job && (going || job.state === 'stopped')
       ? jobText(job, noun)
@@ -901,10 +909,34 @@ function PhotosCard({ id, facts, kind }: { id: string; facts: GameFacts; kind: G
             Cancel
           </button>
         ) : null}
+        {again > 0 && job?.state !== 'paused' ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="library-photos-again"
+            disabled={pending}
+            onClick={() => {
+              run(() => bridge.tiles.photosStartAgain(id));
+            }}
+          >
+            <UiIcon name="download" size={16} />
+            Download again at full size
+          </button>
+        ) : null}
       </div>
+      {again > 0 && job?.state !== 'paused' ? (
+        <p className="library-card-note" data-testid="library-photos-again-note">
+          {again === 1
+            ? '1 photo on this computer was made at most 1,280 pixels wide when it was downloaded. Download again at full size asks the site once for it, with the pause set for downloads, and keeps it at the size of its file.'
+            : `${numberFormat.format(again)} photos on this computer were made at most 1,280 pixels wide when they were downloaded. Download again at full size asks the site once for each of them, one at a time with the pause set for downloads, and keeps them at the size of their files.`}
+        </p>
+      ) : null}
       <p className="library-card-note">
         {photos.hosts.length > 0 ? `From ${photos.hosts.join(', ')}, ` : ''}one at a time with the
-        pause set for downloads; each is made at most 1280 pixels wide.{' '}
+        pause set for downloads;{' '}
+        {kind === 'wiki' || photoSize === 'smaller'
+          ? 'each is made at most 1,280 pixels wide.'
+          : 'each is kept at full size, up to 4,096 pixels wide, with a smaller copy for the cards.'}{' '}
         {going ? 'Cancel ends the download and keeps the ones that came. ' : ''}
         For your own use. An exported file leaves them out unless you tick that box.
       </p>

@@ -12,6 +12,7 @@
     "allow-tiles-snapshot",
     "allow-photos-plan",
     "allow-photos-start",
+    "allow-photos-start-again",
     "allow-photos-pause",
     "allow-photos-resume",
     "allow-photos-cancel",

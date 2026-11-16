@@ -134,6 +134,21 @@ pub struct Location {
     pub kind: LocationKind,
 }
 
+/// The size downloaded location photos are kept at (`photos` of the
+/// download settings).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PhotoSize {
+    /// At most 1,280 pixels wide, as before photos were kept at full size.
+    Smaller,
+    /// Up to 4,096 pixels wide, as a wiki's pictures kept at full size, with
+    /// a smaller copy for cards made from the file kept. A value this app
+    /// does not know counts as this.
+    #[default]
+    #[serde(other)]
+    Full,
+}
+
 /// How map images are downloaded. Kept within bounds that stay considerate
 /// to the image servers; there is no "unlimited".
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -147,6 +162,9 @@ pub struct DownloadSettings {
     pub requests_per_minute: Option<u32>,
     /// Optional cap on download speed, in kilobytes (1000 bytes) per second.
     pub kilobytes_per_second: Option<u32>,
+    /// The size location photos are kept at. A file written by an app that
+    /// does not know it has none: full size then.
+    pub photos: PhotoSize,
 }
 
 impl DownloadSettings {
@@ -168,6 +186,7 @@ impl DownloadSettings {
             kilobytes_per_second: self
                 .kilobytes_per_second
                 .map(|n| clamp(n, Self::KILOBYTES_PER_SECOND)),
+            ..self
         }
     }
 
@@ -188,6 +207,7 @@ impl Default for DownloadSettings {
             pause_ms: 250,
             requests_per_minute: None,
             kilobytes_per_second: None,
+            photos: PhotoSize::Full,
         }
     }
 }
@@ -359,6 +379,22 @@ mod tests {
         assert_eq!(downloads.pause_ms, 100);
         assert_eq!(downloads.requests_per_minute, Some(600));
         assert_eq!(downloads.kilobytes_per_second, None);
+        // Location photos at full size unless the file says smaller.
+        assert_eq!(downloads.photos, PhotoSize::Full);
+        fs::write(
+            file.path(),
+            br#"{"format":"atlas-settings","version":1,"downloads":{"photos":"smaller"}}"#,
+        )
+        .unwrap();
+        assert_eq!(file.read().downloads.photos, PhotoSize::Smaller);
+        assert_eq!(file.read().downloads.pause_ms, 250);
+        fs::write(
+            file.path(),
+            br#"{"format":"atlas-settings","version":1,"downloads":{"photos":"tiny","pauseMs":500}}"#,
+        )
+        .unwrap();
+        assert_eq!(file.read().downloads.photos, PhotoSize::Full);
+        assert_eq!(file.read().downloads.pause_ms, 500);
     }
 
     #[test]
@@ -429,6 +465,7 @@ mod tests {
             pause_ms: 5000,
             requests_per_minute: Some(10),
             kilobytes_per_second: Some(50),
+            photos: PhotoSize::Smaller,
         };
         assert_eq!(slow.validate(), Ok(slow));
         let unlimited = DownloadSettings {

@@ -686,6 +686,18 @@ pub async fn photos_start(manager: Manager<'_>, pack_id: String) -> Result<Snaps
     manager.start_photos(&pack_id)
 }
 
+/// "Download again at full size": the photos kept smaller before, asked
+/// for once more each, with those not here yet.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_start_again(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    let manager = Arc::clone(&manager);
+    // Looks at every photo's file.
+    tokio::task::spawn_blocking(move || manager.start_photos_again(&pack_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn photos_pause(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {

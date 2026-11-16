@@ -8,14 +8,16 @@ import { useOwnPictureUrl } from '../state/ownPictures';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { UiIcon } from './icons';
 import { openPicture } from '../state/pictureViewer';
+import { cardCopyFile } from '../state/photoCopy';
 
 /**
  * Photos of locations and of list entries: pictures of the pack, or a
  * person's own. A pack's picture is shown from the pack's own files only,
  * never from the address it may be fetched from later, so one not
- * downloaded shows a quiet mark instead. A spoiler photo stays blurred
- * until it is tapped or clicked; then a tap opens it large (see
- * `PictureViewer.tsx`).
+ * downloaded shows a quiet mark instead. A photo with a smaller copy (see
+ * `photoCopy.ts`) shows the copy, or its file when the copy is not there,
+ * and opens its file large. A spoiler photo stays blurred until it is
+ * tapped or clicked; then a tap opens it large (see `PictureViewer.tsx`).
  */
 
 const packPictures = new WeakMap<LoadedPack, Map<string, Picture>>();
@@ -53,17 +55,26 @@ function useOwnPicture(id: string, own: boolean): Picture | undefined {
   return inLists ?? inLocations ?? inNotes;
 }
 
-/** Where a photo is shown from: a URL, null while it is read, or `missing`. */
+/**
+ * Where a photo is shown from: a URL, null while it is read, or `missing`;
+ * and for a pack's photo with a smaller copy, the copy's URL.
+ */
 function usePhotoSource(
   game: LoadedGame,
   id: string,
-): { picture: Picture | undefined; url: string | null } {
+): { picture: Picture | undefined; url: string | null; copyUrl?: string } {
   const own = isOwnId(id);
   const ownPicture = useOwnPicture(id, own);
   const ownUrl = useOwnPictureUrl(game.pack.manifest.gameId, own ? ownPicture : undefined);
   if (own) return { picture: ownPicture, url: ownUrl };
   const picture = packPicture(game.pack, id);
-  return { picture, url: picture ? game.pack.resolveUrl(picture.file) : 'missing' };
+  if (!picture) return { picture, url: 'missing' };
+  const copy = cardCopyFile(picture);
+  return {
+    picture,
+    url: game.pack.resolveUrl(picture.file),
+    ...(copy ? { copyUrl: game.pack.resolveUrl(copy) } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -83,12 +94,15 @@ export function PhotoTile({
   /** What it is a photo of, for its description. */
   name?: string;
 }) {
-  const { picture, url } = usePhotoSource(game, photo.picture);
+  const { picture, url, copyUrl } = usePhotoSource(game, photo.picture);
   const [revealed, setRevealed] = useState(false);
   // A photo downloaded later is tried again when new images are saved.
   const revision = useAtlas((s) => s.tileRevision);
   const [failedAt, setFailedAt] = useState<number | null>(null);
+  // Its copy could not be loaded: the file is shown instead.
+  const [copyFailedAt, setCopyFailedAt] = useState<number | null>(null);
   const failed = failedAt === revision;
+  const shownUrl = copyUrl !== undefined && copyFailedAt !== revision ? copyUrl : url;
   const hidden = photo.spoiler === true && !revealed;
   const description = picture?.caption ?? (name ? `Photo of ${name}` : 'Photo');
   const ratio =
@@ -127,6 +141,7 @@ export function PhotoTile({
           else {
             openPicture({
               url,
+              ...(shownUrl && shownUrl !== url ? { fallbackUrl: shownUrl } : {}),
               description,
               ...(picture?.credit ? { credit: picture.credit } : {}),
               opener: event.currentTarget,
@@ -135,8 +150,8 @@ export function PhotoTile({
         }}
       >
         <img
-          key={failedAt === null ? 'shown' : revision}
-          src={url}
+          key={`${shownUrl === url ? 'file' : 'copy'}-${failedAt === null && copyFailedAt === null ? 'shown' : revision}`}
+          src={shownUrl ?? url}
           alt={hidden ? '' : description}
           loading="lazy"
           decoding="async"
@@ -144,7 +159,8 @@ export function PhotoTile({
           width={picture?.width}
           height={picture?.height}
           onError={() => {
-            setFailedAt(revision);
+            if (shownUrl !== url) setCopyFailedAt(revision);
+            else setFailedAt(revision);
           }}
           onLoad={() => {
             if (failedAt !== null) setFailedAt(null);
