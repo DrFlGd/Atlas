@@ -91,6 +91,9 @@ pub struct DesktopInfo {
     /// a picture chosen with the system's dialog (`map_picture_pick`,
     /// `own_game_create`). False on Android.
     own_games: bool,
+    /// The Sites folder of the person's site rules files can be used
+    /// (`sites_list`, `sites_add`): in a build with downloads, on a desktop.
+    sites: bool,
     /// The games shown under one title are kept in one file in the maps
     /// folder (`game_groups_read`, `game_groups_write`), shared by every
     /// Atlas app on the computer. False on Android, whose web app keeps
@@ -130,6 +133,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         own_list_files: DESKTOP_ONLY,
         own_location_files: DESKTOP_ONLY,
         own_games: DESKTOP_ONLY,
+        sites: DESKTOP_ONLY && Downloads::in_build(),
         game_groups_file: DESKTOP_ONLY,
     }
 }
@@ -286,15 +290,15 @@ pub struct SavedFile {
 /// What a text file the person saves or opens through the system's dialogs
 /// is: the dialog's title, the file type and its extensions, and what to
 /// call it in messages.
-struct TextFileKind {
-    save_title: &'static str,
-    open_title: &'static str,
-    filter: &'static str,
-    extensions: &'static [&'static str],
+pub(crate) struct TextFileKind {
+    pub(crate) save_title: &'static str,
+    pub(crate) open_title: &'static str,
+    pub(crate) filter: &'static str,
+    pub(crate) extensions: &'static [&'static str],
     /// "an Atlas progress file", in "… is too large to be an Atlas progress file."
-    what: &'static str,
+    pub(crate) what: &'static str,
     /// The name to suggest when the web app's is unusable.
-    fallback_name: &'static str,
+    pub(crate) fallback_name: &'static str,
 }
 
 const PROGRESS_FILE: TextFileKind = TextFileKind {
@@ -344,7 +348,7 @@ pub async fn list_file_save<R: Runtime>(
     save_text(app, window, &LIST_FILE, suggested_name, contents).await
 }
 
-async fn save_text<R: Runtime>(
+pub(crate) async fn save_text<R: Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
     kind: &TextFileKind,

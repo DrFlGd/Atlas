@@ -93,7 +93,8 @@ const COMMANDS: &[&str] = &[
 
 /// The commands of a build with the `downloads` feature: "Download map
 /// images", measuring an imported map's picture, "View map page and save
-/// images as I browse", and reading pages for importers that fetch them.
+/// images as I browse", reading pages for importers that fetch them, and the
+/// Sites folder of the person's site rules files.
 const DOWNLOAD_COMMANDS: &[&str] = &[
     "tiles_plan",
     "tiles_start",
@@ -120,6 +121,12 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "view_stop_saving",
     "view_close",
     "view_open_in_browser",
+    "sites_list",
+    "sites_pick",
+    "sites_add",
+    "sites_remove",
+    "sites_switch",
+    "sites_save",
 ];
 
 /// Where tauri-build writes a permission file per command.
