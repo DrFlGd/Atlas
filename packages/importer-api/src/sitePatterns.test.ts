@@ -5,6 +5,7 @@ import {
   piecesIn,
   piecesOf,
   patternMatches,
+  patternPieces,
   patternProblem,
   readDataPath,
   selectorProblem,
@@ -101,5 +102,16 @@ describe('named pieces', () => {
     expect(patternMatches('/{game}/*', '/lantern/Chapter_One')).toBe(true);
     expect(patternMatches('/{game}/*', '/lantern')).toBe(false);
     expect(patternProblem('/x{game}')).not.toBeNull();
+  });
+
+  it('give their values in the path a pattern matches', () => {
+    expect(patternPieces('/{game}/notes/{guide}', '/lantern/notes/42-tide.html')).toEqual({
+      game: 'lantern',
+      guide: '42-tide.html',
+    });
+    expect(patternPieces('/{game}/*', '/lantern/Chapter_One/')).toEqual({ game: 'lantern' });
+    expect(patternPieces('/wiki/**', '/wiki/A/B')).toEqual({});
+    expect(patternPieces('/{game}/*', '/lantern')).toBeNull();
+    expect(patternPieces('/a.b', '/aXb')).toBeNull();
   });
 });

@@ -165,20 +165,37 @@ export function patternProblem(text: string): string | null {
  * A pattern with a problem ({@link patternProblem}) matches nothing.
  */
 export function patternMatches(pattern: string, path: string): boolean {
-  if (patternProblem(pattern) !== null) return false;
+  return patternPieces(pattern, path) !== null;
+}
+
+/**
+ * The values of the named pieces a pattern holds in the path it matches
+ * (`{game}` and `{guide}`, each one whole segment), or null when the path
+ * does not match. A pattern without pieces gives no values.
+ */
+export function patternPieces(pattern: string, path: string): PieceValues | null {
+  if (patternProblem(pattern) !== null) return null;
+  const names: PieceName[] = [];
   const source = withoutEndSlash(pattern)
-    .split(/(\*\*|\*)/u)
-    .map((part) =>
-      part === '**'
-        ? '.*'
-        : part === '*'
-          ? '[^/]*'
-          : part
-              .replace(/[.+?^${}()|[\]\\]/gu, '\\$&')
-              .replace(/\\\{(?:game|guide)\\\}/gu, '[^/]+'),
-    )
+    .split(/(\*\*|\*|\{(?:game|guide)\})/u)
+    .map((part) => {
+      if (part === '**') return '.*';
+      if (part === '*') return '[^/]*';
+      const named = /^\{(game|guide)\}$/u.exec(part)?.[1] as PieceName | undefined;
+      if (named) {
+        names.push(named);
+        return '([^/]+)';
+      }
+      return part.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    })
     .join('');
-  return new RegExp(`^${source}$`, 'u').test(withoutEndSlash(path));
+  const match = new RegExp(`^${source}$`, 'u').exec(withoutEndSlash(path));
+  if (!match) return null;
+  const values: PieceValues = {};
+  names.forEach((name, index) => {
+    values[name] = match[index + 1]!;
+  });
+  return values;
 }
 
 // ---------------------------------------------------------------------------
