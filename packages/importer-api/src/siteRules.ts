@@ -14,7 +14,7 @@
  * this app does not know refuses the whole file, with each problem in plain
  * words naming its field. Nothing is guessed and nothing is half used.
  *
- * Two shapes share the format:
+ * Three shapes share the format:
  *
  * - a site file, `<site id>.atlas-site.json`: `site` and its `parts` (one
  *   map, wiki or guide each), each read by a built-in reader of an importer
@@ -23,15 +23,21 @@
  *   pause, the notice, the picture hosts and the licence form of every site
  *   that reader recognises by its address when no site file says otherwise.
  *
- * Whatever a file says, it can make the app more careful and never less:
- * there is no field for a shorter pause than the app's own, another
+ * - a refusal, `<id>.refused.atlas-site.json`: a site that is not read at
+ *   all, by a domain and every host under it.
+ *
+ * A file states a site's limits, and the person checks every file by hand
+ * before switching it on: a file of theirs may widen what a file an
+ * importer comes with says of the same site, and the importer says what it
+ * widens (`ImporterSites.widens`). What is no site's to decide has no
+ * field: there is none for a shorter pause than the app's own, another
  * identity, reading past `robots.txt` or a refusal, or answering a check
  * that asks whether the reader is a person.
  */
 
 import { GAME_ID_PATTERN } from '@atlas/schema';
 import { z } from 'zod';
-import { dataPathProblem, patternProblem, selectorProblem } from './sitePatterns';
+import { dataPathProblem, patternProblem, piecesOf, selectorProblem } from './sitePatterns';
 import { CONFIRMABLE_LICENCES, MAX_NOTICE_CHARS, rulesLicenceOf, type RulesLicence } from './sites';
 
 /** The value of `format` in every site rules file. */
@@ -44,6 +50,9 @@ export const MAX_SITE_RULES_BYTES = 64 * 1024;
 export const SITE_RULES_SUFFIX = '.atlas-site.json';
 /** The end of the name of a reader's defaults file. */
 export const READER_DEFAULTS_SUFFIX = `.reader${SITE_RULES_SUFFIX}`;
+/** The end of the name of a refusal file. */
+export const REFUSAL_SUFFIX = `.refused${SITE_RULES_SUFFIX}`;
+
 /** The `reader` of a part read by the general reader, which follows the file. */
 export const RULES_READER = 'rules';
 /** Parts one site file holds at most. */
@@ -164,15 +173,16 @@ const pictureHostsSchema = z.strictObject({
   hosts: once(host, 'host').max(10).optional(),
 });
 
+const attributeName = z
+  .string()
+  .regex(/^[a-z][a-z0-9_-]{0,40}$/u, 'must be an attribute name, such as src');
+
 /** `pictures` of a part read by `rules`. */
 const rulesPicturesSchema = z.strictObject({
   hosts: once(host, 'host').max(10).optional(),
-  source: z
-    .array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/u, 'must be an attribute name, such as src'))
-    .min(1)
-    .max(5)
-    .optional(),
-  full: z.enum(['same', 'link', 'srcset']).optional(),
+  source: z.array(attributeName).min(1).max(5).optional(),
+  full: z.enum(['same', 'link', 'srcset', 'attribute']).optional(),
+  fullAttribute: attributeName.optional(),
   skip: z.array(selector).max(20).optional(),
 });
 
@@ -267,6 +277,7 @@ const contentsSchema = z.strictObject({
   from: z.enum(['sitemap', 'menu', 'links']),
   address: address.optional(),
   links: selector.optional(),
+  groups: selector.optional(),
   sections: selector.optional(),
   follow: z.boolean().optional(),
 });
@@ -280,6 +291,14 @@ const articleSchema = z.strictObject({
   categories: selector.optional(),
   facts: selector.optional(),
   missing: selector.optional(),
+  credit: selector.optional(),
+  chapters: selector.optional(),
+});
+
+/** How the name of the game is read from a page, for a part whose `start` holds `{game}`. */
+const gameNameSchema = z.strictObject({
+  name: selector,
+  nameEnd: text(120).optional(),
 });
 
 const orderSchema = z.strictObject({
@@ -293,6 +312,7 @@ function rulesFields<L extends z.ZodType>(licence: L) {
     reader: z.literal(RULES_READER),
     reading: readingSchema,
     pictures: rulesPicturesSchema.optional(),
+    game: gameNameSchema.optional(),
   };
 }
 
@@ -439,6 +459,24 @@ function readerDefaultsFileSchemaWith<L extends z.ZodType>(licence: L) {
   });
 }
 
+/** A refusal: a site that is not read at all, by a domain and every host under it. */
+const refusalFileSchema = z.strictObject({
+  format: z.literal(SITE_RULES_FORMAT),
+  version: z.literal(SITE_RULES_VERSION),
+  refusal: z.strictObject({
+    id: z
+      .string()
+      .regex(
+        SITE_ID_PATTERN,
+        'must be 3 to 40 of a-z, 0-9 and -, starting and ending with a letter or digit',
+      ),
+    name: text(80),
+    domains: once(host, 'domain').min(1).max(10),
+    notice: text(MAX_NOTICE_CHARS),
+  }),
+  notes: text(2000).optional(),
+});
+
 const fullParts = partSchemas(licenceSchema);
 const partSchema = z.union([fullParts.builtIn, fullParts.wiki, fullParts.guide, fullParts.map]);
 
@@ -446,8 +484,14 @@ const partSchema = z.union([fullParts.builtIn, fullParts.wiki, fullParts.guide, 
 export const siteFileSchema = siteFileSchemaWith(licenceSchema, partSchema);
 /** A reader's defaults file, as the JSON Schema describes it. */
 export const readerDefaultsFileSchema = readerDefaultsFileSchemaWith(licenceSchema);
-/** Either shape of a site rules file: the schema `atlas-site-rules.schema.json` is made from. */
-export const siteRulesSchema = z.union([siteFileSchema, readerDefaultsFileSchema]);
+/** A refusal file, as the JSON Schema describes it. */
+export { refusalFileSchema };
+/** Any shape of a site rules file: the schema `atlas-site-rules.schema.json` is made from. */
+export const siteRulesSchema = z.union([
+  siteFileSchema,
+  readerDefaultsFileSchema,
+  refusalFileSchema,
+]);
 
 export type SiteRulesLicence = z.infer<typeof licenceSchema>;
 export type SiteReading = z.infer<typeof readingSchema>;
@@ -459,12 +503,30 @@ export type SitePart = z.infer<typeof partSchema>;
 export type SiteFile = z.infer<typeof siteFileSchema>;
 export type ReaderDefaultsFile = z.infer<typeof readerDefaultsFileSchema>;
 export type ReaderDefaults = ReaderDefaultsFile['readerDefaults'];
-/** A site rules file of either shape, checked. */
-export type SiteRules = SiteFile | ReaderDefaultsFile;
+export type RefusalFile = z.infer<typeof refusalFileSchema>;
+export type SiteRefusal = RefusalFile['refusal'];
+/** A site rules file of any shape, checked. */
+export type SiteRules = SiteFile | ReaderDefaultsFile | RefusalFile;
 
 /** Whether a checked file is a reader's defaults. */
 export const isReaderDefaults = (rules: SiteRules): rules is ReaderDefaultsFile =>
   'readerDefaults' in rules;
+
+/** Whether a checked file is a refusal. */
+export const isRefusal = (rules: SiteRules): rules is RefusalFile => 'refusal' in rules;
+
+/** Whether a checked file describes a site (`site` and `parts`). */
+export const isSiteFile = (rules: SiteRules): rules is SiteFile => 'site' in rules;
+
+/**
+ * Whether a refusal's domain covers `host` (lower case, with or without
+ * `www.`): the domain itself and every host under it. The one place where
+ * a whole domain is matched; reading always names exact hosts.
+ */
+export function refusalCovers(refusal: SiteRefusal, host: string): boolean {
+  const name = host.toLowerCase().replace(/^www\./u, '');
+  return refusal.domains.some((domain) => name === domain || name.endsWith(`.${domain}`));
+}
 
 /** Whether a part is read by `rules`, the general reader. */
 export const readByRules = (
@@ -485,7 +547,7 @@ export function siteRulesJsonSchema(): Record<string, unknown> {
     $id: 'atlas-site-rules.schema.json',
     title: 'Atlas site rules file',
     description:
-      'One site (site and parts) or the defaults of one reader (readerDefaults), format version 1. See atlas-site-rules.md.',
+      'One site (site and parts), the defaults of one reader (readerDefaults) or a site that is not read (refusal), format version 1. See atlas-site-rules.md.',
     ...Object.fromEntries(Object.entries(schema).filter(([key]) => key !== '$schema')),
   };
 }
@@ -734,14 +796,49 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
   const add = (path: Path, message: string | null) => {
     if (message) problems.push({ field: fieldPath(path), message });
   };
-  const anyRules = file.parts.some(readByRules);
-  if (anyRules && file.site.game === undefined) {
+  const startPieces = (part: SitePart) =>
+    part.start === undefined ? [] : piecesOf(part.start).pieces;
+  const rulesParts = file.parts.filter(readByRules);
+  if (rulesParts.some((part) => !startPieces(part).includes('game')) && !file.site.game) {
     add(['site', 'game'], 'is missing; it is needed when a part is read by rules');
+  }
+  if (rulesParts.some((part) => startPieces(part).includes('game')) && file.site.game) {
+    add(
+      ['site', 'game'],
+      'must be left out when the start of a part holds {game}: the game is then found from each address',
+    );
   }
   file.parts.forEach((part, index) => {
     const at = ['parts', index] as const;
-    if (part.start !== undefined) add([...at, 'start'], addressProblem(part.start, hosts));
+    if (part.start !== undefined) {
+      const pieces = piecesOf(part.start);
+      add([...at, 'start'], pieces.problem ?? addressProblem(part.start, hosts));
+      if (pieces.pieces.length > 0 && !(readByRules(part) && part.type !== 'map')) {
+        add(
+          [...at, 'start'],
+          'may hold {game} and {guide} only in a wiki or guide part read by rules',
+        );
+      }
+    }
     if (!readByRules(part)) return;
+    const pieces = startPieces(part);
+    const onlyStartPieces = (path: Path, text: string) => {
+      for (const piece of piecesOf(text).pieces) {
+        if (!pieces.includes(piece)) {
+          add(path, `holds {${piece}}, which the part's start does not hold`);
+        }
+      }
+    };
+    if (part.game !== undefined && !pieces.includes('game')) {
+      add([...at, 'game'], 'is only for a part whose start holds {game}');
+    }
+    const pictures = part.pictures;
+    if (pictures?.full === 'attribute' && pictures.fullAttribute === undefined) {
+      add([...at, 'pictures', 'fullAttribute'], 'is needed with "full": "attribute"');
+    }
+    if (pictures?.full !== 'attribute' && pictures?.fullAttribute !== undefined) {
+      add([...at, 'pictures', 'fullAttribute'], 'is only for "full": "attribute"');
+    }
     if (part.type === 'map') {
       const pictureHosts = [...hosts, ...(part.pictures?.hosts ?? [])];
       const { data, maps, types, locations } = part;
@@ -820,9 +917,23 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
       }
       return;
     }
-    const { contents } = part;
+    const { contents, pages, article } = part;
+    pages.include.forEach((pattern, n) => {
+      onlyStartPieces([...at, 'pages', 'include', n], pattern);
+    });
+    (pages.exclude ?? []).forEach((pattern, n) => {
+      onlyStartPieces([...at, 'pages', 'exclude', n], pattern);
+    });
     if (contents.address !== undefined) {
-      add([...at, 'contents', 'address'], addressProblem(contents.address, hosts));
+      const found = piecesOf(contents.address);
+      add([...at, 'contents', 'address'], found.problem ?? addressProblem(contents.address, hosts));
+      onlyStartPieces([...at, 'contents', 'address'], contents.address);
+    }
+    if (contents.from !== 'menu' && contents.groups !== undefined) {
+      add([...at, 'contents', 'groups'], 'is only for "from": "menu"');
+    }
+    if (part.type !== 'guide' && article.chapters !== undefined) {
+      add([...at, 'article', 'chapters'], 'is only for a guide part');
     }
     if (contents.from === 'menu' && contents.links === undefined) {
       add([...at, 'contents', 'links'], 'is needed with "from": "menu"');
@@ -881,6 +992,11 @@ export function checkSiteRules(value: unknown): SiteRulesCheck {
   const record = value as Record<string, unknown>;
   const wrongFormat = formatProblem(record);
   if (wrongFormat) return fail([wrongFormat]);
+
+  if (Object.hasOwn(record, 'refusal')) {
+    const full = checkAgainst(refusalFileSchema, value, []);
+    return full.value ? { ok: true, rules: full.value } : fail(full.problems);
+  }
 
   if (Object.hasOwn(record, 'readerDefaults')) {
     const shape = checkAgainst(looseReaderDefaults, value, []);
@@ -979,17 +1095,26 @@ export function parseSiteRules(text: string): SiteRulesCheck {
  * comes with an importer takes that file's place.
  */
 export const siteRulesKey = (rules: SiteRules): string =>
-  isReaderDefaults(rules) ? `reader:${rules.readerDefaults.reader}` : `site:${rules.site.id}`;
+  isReaderDefaults(rules)
+    ? `reader:${rules.readerDefaults.reader}`
+    : isRefusal(rules)
+      ? `refused:${rules.refusal.id}`
+      : `site:${rules.site.id}`;
 
-/** The name a file is kept under: `<site id>.atlas-site.json`, or `<reader>.reader.atlas-site.json`. */
+/**
+ * The name a file is kept under: `<site id>.atlas-site.json`,
+ * `<reader>.reader.atlas-site.json` or `<id>.refused.atlas-site.json`.
+ */
 export const siteRulesFileName = (rules: SiteRules): string =>
   isReaderDefaults(rules)
     ? `${rules.readerDefaults.reader}${READER_DEFAULTS_SUFFIX}`
-    : `${rules.site.id}${SITE_RULES_SUFFIX}`;
+    : isRefusal(rules)
+      ? `${rules.refusal.id}${REFUSAL_SUFFIX}`
+      : `${rules.site.id}${SITE_RULES_SUFFIX}`;
 
 /** Whether `name` is the name of a site rules file as the app keeps one. */
 export const isSiteRulesFileName = (name: string): boolean =>
-  /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9](?:\.reader)?\.atlas-site\.json$/u.test(name);
+  /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9](?:\.reader|\.refused)?\.atlas-site\.json$/u.test(name);
 
 /** The licence block that counts for a part: its own, else the site's. */
 export const partLicence = (file: SiteFile, part: SitePart): SiteRulesLicence | undefined =>
@@ -1003,7 +1128,9 @@ export const partLicence = (file: SiteFile, part: SitePart): SiteRulesLicence | 
 export function siteRulesHosts(rules: SiteRules): string[] {
   const hosts = isReaderDefaults(rules)
     ? (rules.readerDefaults.pictures?.hosts ?? [])
-    : [...rules.site.hosts, ...rules.parts.flatMap((part) => part.pictures?.hosts ?? [])];
+    : isRefusal(rules)
+      ? rules.refusal.domains
+      : [...rules.site.hosts, ...rules.parts.flatMap((part) => part.pictures?.hosts ?? [])];
   return [...new Set(hosts)];
 }
 

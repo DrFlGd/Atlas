@@ -9,9 +9,11 @@ import {
   asImporter,
   checkSiteRules,
   fieldInWords,
+  isRefusal,
   isSiteRulesFileName,
   parseSiteRules,
   problemText,
+  refusalCovers,
   rulesLicenceOfBlock,
   siteInfoOf,
   siteRulesFileName,
@@ -19,6 +21,7 @@ import {
   siteRulesJsonSchema,
   siteRulesKey,
   siteRulesProblemsOf,
+  siteRulesWideningsOf,
   type AtlasImporter,
   type SiteRulesProblem,
 } from './index';
@@ -66,7 +69,8 @@ describe('the guide', () => {
 
   it('holds the examples it promises', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
-    expect(blocks.length).toBe(5);
+    // And one file for every game of a site, and a refusal.
+    expect(blocks.length).toBe(7);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -631,5 +635,224 @@ describe('the demo importer that reads wikis by site rules files', () => {
       ways: ['fetch', 'browse'],
       pause: 5,
     });
+  });
+
+  const builtIn = () =>
+    importer.sites!.files.map((file) => {
+      const checked = checkSiteRules(file.rules);
+      if (!checked.ok) throw new Error(file.name);
+      return { name: file.name, own: false, rules: checked.rules };
+    });
+
+  it('says what a file of the person’s widens: a way for a host, or a refusal it overrides', () => {
+    const own = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: {
+        id: 'harbour-wiki',
+        name: 'Harbour Wiki',
+        hosts: ['harbour.example.net', 'north.quiet-archive.example'],
+      },
+      parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['window', 'browse'] } }],
+    });
+    if (!own.ok) throw new Error('The file has problems.');
+    expect(siteRulesWideningsOf(importer, own.rules)).toEqual([
+      { field: 'parts[0].reading.ways', message: 'adds In a window for harbour.example.net' },
+      {
+        field: 'site.hosts[1]',
+        message:
+          'reads north.quiet-archive.example, which the file “quiet-archive.refused.atlas-site.json” of the importer refuses: This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
+      },
+    ]);
+    // Fewer ways, or a refusal of the person's, widen nothing.
+    const narrower = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'harbour-wiki', name: 'Harbour Wiki', hosts: ['harbour.example.net'] },
+      parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['browse'] } }],
+    });
+    if (!narrower.ok) throw new Error('The file has problems.');
+    expect(siteRulesWideningsOf(importer, narrower.rules)).toEqual([]);
+  });
+
+  it('refuses the hosts of its refusal file until a file of the person’s names one', () => {
+    applySiteRules(importer, builtIn());
+    const refused = 'https://north.quiet-archive.example/wiki/Welcome';
+    expect(importer.refuses?.(refused)).toBe(
+      'This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
+    );
+    expect(importer.refuses?.('https://harbour.example.net/wiki/Welcome')).toBeNull();
+    const own = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'north-archive', name: 'North Archive', hosts: ['north.quiet-archive.example'] },
+      parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['browse'] } }],
+    });
+    if (!own.ok) throw new Error('The file has problems.');
+    applySiteRules(importer, [
+      { name: 'north-archive.atlas-site.json', own: true, rules: own.rules },
+      ...builtIn(),
+    ]);
+    expect(importer.refuses?.(refused)).toBeNull();
+    expect(siteInfoOf(importer, refused)).toMatchObject({ ways: ['browse'] });
+    expect(importer.refuses?.('https://south.quiet-archive.example/wiki/Welcome')).not.toBeNull();
+    applySiteRules(importer, builtIn());
+  });
+
+  it('says that it only tries a part read by rules, and cannot read a map part by rules', () => {
+    const file = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'cove-guide', name: 'Cove Guide', game: 'Cove', hosts: ['guide.example.org'] },
+      parts: [
+        {
+          type: 'guide',
+          reader: 'rules',
+          start: '/guide',
+          reading: { ways: ['browse'] },
+          pages: { include: ['/guide/*'] },
+          contents: { from: 'links' },
+          article: { content: 'main' },
+          order: { from: 'next', next: 'a.next' },
+        },
+      ],
+    });
+    if (!file.ok) throw new Error(JSON.stringify(file.problems));
+    expect(siteRulesProblemsOf(importer, file.rules)).toEqual([
+      {
+        field: 'parts[0]',
+        message:
+          'is read by rules, which this importer only tries on a saved page: it does not read the site by it',
+      },
+    ]);
+  });
+});
+
+describe('the additions of the general reader', () => {
+  const file = (part: Record<string, unknown>, site: Record<string, unknown> = {}) => ({
+    ...SMALLEST,
+    site: { ...SMALLEST.site, ...site },
+    parts: [{ ...RULES_WIKI, ...part }],
+  });
+  const ok = (value: unknown) => {
+    const checked = checkSiteRules(value);
+    if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
+    return checked.rules;
+  };
+
+  it('takes the full-size picture from an attribute, which it then needs', () => {
+    ok(file({ pictures: { full: 'attribute', fullAttribute: 'data-large' } }));
+    expect(problems(file({ pictures: { full: 'attribute' } }))).toEqual([
+      { field: 'parts[0].pictures.fullAttribute', message: 'is needed with "full": "attribute"' },
+    ]);
+    expect(fields(file({ pictures: { full: 'link', fullAttribute: 'data-large' } }))).toEqual([
+      'parts[0].pictures.fullAttribute',
+    ]);
+    expect(fields(file({ pictures: { full: 'attribute', fullAttribute: 'on click' } }))).toEqual([
+      'parts[0].pictures.fullAttribute',
+    ]);
+  });
+
+  it('takes one file for every game of a site, with the game left out of site', () => {
+    const everyGame = {
+      ...SMALLEST,
+      site: { id: 'example-guides', name: 'Example Guides', hosts: ['guides.example.org'] },
+      parts: [
+        {
+          ...RULES_WIKI,
+          type: 'guide',
+          start: '/{game}/walkthrough',
+          pages: { include: ['/{game}/*'], exclude: ['/{game}/news'] },
+          contents: { from: 'menu', links: 'nav.menu a', groups: 'nav.menu li.group' },
+          order: { from: 'menu' },
+          game: { name: '.game-name', nameEnd: ' Walkthrough' },
+        },
+        {
+          ...RULES_WIKI,
+          type: 'guide',
+          start: 'https://guides.example.org/{game}/notes/{guide}',
+          pages: { include: ['/{game}/notes/{guide}'] },
+          contents: { from: 'links', follow: false },
+          order: { from: 'menu' },
+          article: { content: '#text', chapters: 'h2', credit: '.byline' },
+        },
+      ],
+    };
+    ok(everyGame);
+    expect(problems({ ...everyGame, site: { ...everyGame.site, game: 'Example' } })).toEqual([
+      {
+        field: 'site.game',
+        message:
+          'must be left out when the start of a part holds {game}: the game is then found from each address',
+      },
+    ]);
+    // A piece the start does not hold, a piece that is not a whole segment, a piece twice, a piece it does not know.
+    expect(
+      problems(
+        file({
+          start: '/{game}',
+          pages: { include: ['/{guide}/*', '/x{game}'] },
+          contents: { from: 'sitemap', address: '/{game}/{game}.xml' },
+        }),
+      ).map((p) => p.field),
+    ).toEqual(expect.arrayContaining(['parts[0].pages.include[1]']));
+    expect(problems(file({ start: '/{level}/' }))[0]).toMatchObject({ field: 'parts[0].start' });
+    expect(
+      problems({
+        ...file({ start: '/{game}/a', pages: { include: ['/{guide}'] } }),
+        site: { ...SMALLEST.site, game: undefined },
+      }),
+    ).toEqual([
+      {
+        field: 'parts[0].pages.include[0]',
+        message: "holds {guide}, which the part's start does not hold",
+      },
+    ]);
+    // The game's name from the page, only with {game}; pieces only for a wiki or guide part read by rules.
+    expect(fields(file({ game: { name: 'h1' } }))).toEqual(['parts[0].game']);
+    expect(
+      fields(
+        changed((f) => (f.parts = [{ type: 'wiki', reader: 'example-engine', start: '/{game}' }])),
+      ),
+    ).toEqual(['parts[0].start']);
+  });
+
+  it('splits a guide into chapters, names the groups of a menu and the credit of a page', () => {
+    expect(fields(file({ article: { content: 'main', chapters: 'h2' } }))).toEqual([
+      'parts[0].article.chapters',
+    ]);
+    expect(fields(file({ contents: { from: 'sitemap', groups: 'li.group' } }))).toEqual([
+      'parts[0].contents.groups',
+    ]);
+    ok(file({ article: { content: 'main', credit: '.byline' } }));
+  });
+
+  it('reads a refusal, its third shape, which covers a domain and every host under it', () => {
+    const refusal = {
+      format: 'atlas-site-rules',
+      version: 1,
+      refusal: {
+        id: 'example-farm',
+        name: 'Example Farm',
+        domains: ['farm.example.org'],
+        notice: 'This app does not read Example Farm wikis, so nothing was opened or added.',
+      },
+    };
+    const rules = ok(refusal);
+    expect(siteRulesKey(rules)).toBe('refused:example-farm');
+    expect(siteRulesFileName(rules)).toBe('example-farm.refused.atlas-site.json');
+    expect(isSiteRulesFileName('example-farm.refused.atlas-site.json')).toBe(true);
+    expect(siteRulesHosts(rules)).toEqual(['farm.example.org']);
+    if (!isRefusal(rules)) throw new Error('a refusal');
+    expect(refusalCovers(rules.refusal, 'farm.example.org')).toBe(true);
+    expect(refusalCovers(rules.refusal, 'www.sheep.farm.example.org')).toBe(true);
+    expect(refusalCovers(rules.refusal, 'otherfarm.example.org')).toBe(false);
+    expect(fields({ ...refusal, refusal: { ...refusal.refusal, notice: undefined } })).toEqual([
+      'refusal.notice',
+    ]);
+    expect(
+      fields({ ...refusal, refusal: { ...refusal.refusal, domains: ['*.example.org'] } }),
+    ).toEqual(['refusal.domains[0]']);
+    expect(fields({ ...refusal, site: SMALLEST.site })).toEqual(['site']);
   });
 });

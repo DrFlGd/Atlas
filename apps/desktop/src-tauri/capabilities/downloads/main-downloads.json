@@ -31,6 +31,7 @@
     "allow-view-open-in-browser",
     "allow-sites-list",
     "allow-sites-pick",
+    "allow-sites-pick-page",
     "allow-sites-add",
     "allow-sites-remove",
     "allow-sites-switch",

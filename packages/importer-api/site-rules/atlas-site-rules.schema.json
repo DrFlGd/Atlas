@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "atlas-site-rules.schema.json",
   "title": "Atlas site rules file",
-  "description": "One site (site and parts) or the defaults of one reader (readerDefaults), format version 1. See atlas-site-rules.md.",
+  "description": "One site (site and parts), the defaults of one reader (readerDefaults) or a site that is not read (refusal), format version 1. See atlas-site-rules.md.",
   "anyOf": [
     {
       "type": "object",
@@ -556,12 +556,16 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "pattern": "^[a-z][a-z0-9-]{0,40}$"
+                          "pattern": "^[a-z][a-z0-9_-]{0,40}$"
                         }
                       },
                       "full": {
                         "type": "string",
-                        "enum": ["same", "link", "srcset"]
+                        "enum": ["same", "link", "srcset", "attribute"]
+                      },
+                      "fullAttribute": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,40}$"
                       },
                       "skip": {
                         "maxItems": 20,
@@ -571,6 +575,21 @@
                         }
                       }
                     },
+                    "additionalProperties": false
+                  },
+                  "game": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "nameEnd": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      }
+                    },
+                    "required": ["name"],
                     "additionalProperties": false
                   },
                   "pages": {
@@ -616,6 +635,9 @@
                         "maxLength": 2048
                       },
                       "links": {
+                        "type": "string"
+                      },
+                      "groups": {
                         "type": "string"
                       },
                       "sections": {
@@ -671,6 +693,12 @@
                         "type": "string"
                       },
                       "missing": {
+                        "type": "string"
+                      },
+                      "credit": {
+                        "type": "string"
+                      },
+                      "chapters": {
                         "type": "string"
                       }
                     },
@@ -858,12 +886,16 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "pattern": "^[a-z][a-z0-9-]{0,40}$"
+                          "pattern": "^[a-z][a-z0-9_-]{0,40}$"
                         }
                       },
                       "full": {
                         "type": "string",
-                        "enum": ["same", "link", "srcset"]
+                        "enum": ["same", "link", "srcset", "attribute"]
+                      },
+                      "fullAttribute": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,40}$"
                       },
                       "skip": {
                         "maxItems": 20,
@@ -873,6 +905,21 @@
                         }
                       }
                     },
+                    "additionalProperties": false
+                  },
+                  "game": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "nameEnd": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      }
+                    },
+                    "required": ["name"],
                     "additionalProperties": false
                   },
                   "pages": {
@@ -918,6 +965,9 @@
                         "maxLength": 2048
                       },
                       "links": {
+                        "type": "string"
+                      },
+                      "groups": {
                         "type": "string"
                       },
                       "sections": {
@@ -973,6 +1023,12 @@
                         "type": "string"
                       },
                       "missing": {
+                        "type": "string"
+                      },
+                      "credit": {
+                        "type": "string"
+                      },
+                      "chapters": {
                         "type": "string"
                       }
                     },
@@ -1183,12 +1239,16 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "pattern": "^[a-z][a-z0-9-]{0,40}$"
+                          "pattern": "^[a-z][a-z0-9_-]{0,40}$"
                         }
                       },
                       "full": {
                         "type": "string",
-                        "enum": ["same", "link", "srcset"]
+                        "enum": ["same", "link", "srcset", "attribute"]
+                      },
+                      "fullAttribute": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,40}$"
                       },
                       "skip": {
                         "maxItems": 20,
@@ -1198,6 +1258,21 @@
                         }
                       }
                     },
+                    "additionalProperties": false
+                  },
+                  "game": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "nameEnd": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      }
+                    },
+                    "required": ["name"],
                     "additionalProperties": false
                   },
                   "data": {
@@ -1603,6 +1678,55 @@
         }
       },
       "required": ["format", "version", "readerDefaults"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "atlas-site-rules"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "refusal": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "domains": {
+              "minItems": 1,
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "notice": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "required": ["id", "name", "domains", "notice"],
+          "additionalProperties": false
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["format", "version", "refusal"],
       "additionalProperties": false
     }
   ]
