@@ -116,6 +116,7 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
       ? { idSections: previous.idSections }
       : {}),
     ...(previous.homePage ? { homePage: previous.homePage } : {}),
+    ...(previous.pageWidth ? { pageWidth: previous.pageWidth } : {}),
     created,
     updated: info.updated,
     writtenBy: info.writtenBy,

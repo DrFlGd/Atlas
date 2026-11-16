@@ -81,6 +81,18 @@ describe('pack descriptions (manifest version 2)', () => {
     ).toBe(false);
   });
 
+  it('keeps the width of the pages', () => {
+    const pack = makeFixturePack();
+    pack.manifest.pageWidth = 'wide';
+    const manifest = describePack(pack, { updated: '2026-11-10T12:00:00Z', writtenBy });
+    expect(manifest.pageWidth).toBe('wide');
+    expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
+    expect(
+      'pageWidth' in
+        describePack(makeFixturePack(), { updated: '2026-11-10T12:00:00Z', writtenBy }),
+    ).toBe(false);
+  });
+
   it('still reads version 1 manifests, without descriptive fields', () => {
     const { manifest } = makeFixturePack();
     expect(manifest.schemaVersion).toBe(1);
