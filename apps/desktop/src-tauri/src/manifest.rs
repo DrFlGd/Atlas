@@ -35,6 +35,9 @@ pub struct ManifestHead {
     /// The game was made in the app from pictures (`madeInApp`, see
     /// `owngame.rs`).
     pub made_in_app: bool,
+    /// The game is kept for personal use (`personalUse`): a page of it was
+    /// read under a licence the person filled in, or with none recorded.
+    pub personal_use: bool,
 }
 
 /// A page an imported pack was made from.
@@ -61,6 +64,9 @@ struct RawHead {
     /// Read loosely: anything but `true` is false.
     #[serde(default)]
     made_in_app: Option<Value>,
+    /// Read loosely: anything but `true` is false.
+    #[serde(default)]
+    personal_use: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +145,7 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
             .map(|importer| (importer.id, importer.title)),
         pages,
         made_in_app: raw.made_in_app == Some(Value::Bool(true)),
+        personal_use: raw.personal_use == Some(Value::Bool(true)),
     })
 }
 
@@ -372,6 +379,18 @@ mod tests {
         assert_eq!(head.title, "Test Valley");
         assert_eq!(head.importer, Some(("demo-maps".into(), "Demo".into())));
         assert!(head.pages.is_empty());
+        assert!(!head.personal_use);
+        // Kept for personal use: only `true` says so.
+        for (mark, kept) in [("true", true), ("\"yes\"", false), ("1", false)] {
+            fs::write(
+                dir.0.join(MANIFEST_FILE),
+                format!(
+                    r#"{{"schemaVersion":2,"gameId":"t","title":"T","packVersion":"1.0.0","personalUse":{mark}}}"#
+                ),
+            )
+            .unwrap();
+            assert_eq!(read_head(&dir.0).unwrap().personal_use, kept, "{mark}");
+        }
         // Recorded pages: web addresses only; an odd entry does not spoil the rest.
         fs::write(
             dir.0.join(MANIFEST_FILE),

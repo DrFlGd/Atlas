@@ -369,6 +369,12 @@ export interface ListedPack {
   pages?: { url: string; mapId: string | null }[];
   /** The game was made in the app (its manifest's `madeInApp`); absent counts as false. */
   madeInApp?: boolean;
+  /**
+   * The game is kept for personal use (its manifest's `personalUse`): a
+   * page of it was read under a licence the person filled in, or with
+   * none recorded. Absent (an older shell) counts as false.
+   */
+  personalUse?: boolean;
 }
 
 /** A pack that is not shown because another with the same id is. */

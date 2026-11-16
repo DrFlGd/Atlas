@@ -39,6 +39,10 @@ import {
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** Said when exporting a game kept for personal use; the export itself is not held back. */
+export const PERSONAL_USE_EXPORT =
+  'This game is kept for personal use. The file is for your own devices.';
+
 /** What each level of detail puts in a map pack file. */
 const DETAIL_DESCRIPTIONS: Record<Detail, string> = {
   overview: 'The smallest file. Good for finding your way; blurry when zoomed in close.',
@@ -243,6 +247,9 @@ function ExportView({
     (s) => s.library?.packs.find((pack) => pack.id === packId)?.madeInApp === true,
   );
   const [withMine, setWithMine] = useState(madeInApp);
+  const personalUse = useAtlas(
+    (s) => s.library?.packs.find((pack) => pack.id === packId)?.personalUse === true,
+  );
   const mineId = useId();
   // Off until asked for: a file with them is one to keep, not to pass on.
   const [withPhotos, setWithPhotos] = useState(false);
@@ -309,6 +316,11 @@ function ExportView({
         checklists, and the map images at the detail you choose. Copy it to another computer or to
         Atlas for Android and import it there to use the maps offline. It never holds your progress.
       </p>
+      {personalUse ? (
+        <p className="download-intro" data-testid="export-personal-use">
+          {PERSONAL_USE_EXPORT}
+        </p>
+      ) : null}
       {error ? (
         <p className="download-error" role="alert" data-testid="pack-file-error">
           {error}
