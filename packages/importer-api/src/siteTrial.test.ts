@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_TRIAL_MAPS, MAX_TRIAL_TYPES, siteTrialOf } from './siteTrial';
+import {
+  MAX_TRIAL_ENTRIES,
+  MAX_TRIAL_MAPS,
+  MAX_TRIAL_PAGE,
+  MAX_TRIAL_TYPES,
+  siteTrialOf,
+  trialPictureId,
+} from './siteTrial';
 
 describe('an importer’s answer to a trial', () => {
   it('keeps what it found in a map part’s data, in bounds', () => {
@@ -116,5 +123,59 @@ describe('an importer’s answer to a trial', () => {
     expect(typesOf({ can: many, cannot: many })?.found?.can).toHaveLength(MAX_TRIAL_TYPES);
     expect(typesOf(undefined)).toEqual({ count: 3, first: [] });
     expect(typesOf(['Treasure'])).toEqual({ count: 3, first: [] });
+  });
+
+  it('keeps the page as the reader would keep it, its pictures by id and what matched nothing', () => {
+    const trial = siteTrialOf({
+      part: 0,
+      type: 'guide',
+      page: '## Getting there\n\nWalk on. ![The quay](trial:picture:1 "=200x100")',
+      pictureList: [
+        {
+          id: trialPictureId(1),
+          words: 'The quay',
+          address: 'https://guide.example.org/img/quay-small.png',
+          full: 'https://guide.example.org/img/quay.png',
+          width: 200,
+          height: 100,
+        },
+        { id: trialPictureId(2), words: '', address: 'javascript:alert(1)', width: 0, height: 5 },
+        { id: 'https://guide.example.org/img/x.png', words: 'Not a trial picture' },
+        'not a picture',
+      ],
+      chapterTitles: ['Arrival', '', 3, 'The Hills'],
+      unmatched: [
+        { field: 'parts[0].article.remove[1]', value: '.promo' },
+        { field: 'parts[0].article title', value: 'h1' },
+        { field: 'site.licence.stated', value: '' },
+      ],
+      contents: {
+        count: 300,
+        groups: [],
+        first: Array.from({ length: MAX_TRIAL_ENTRIES + 5 }, (_, n) => ({ title: `Page ${n}` })),
+      },
+    });
+    expect(trial?.page).toContain('![The quay](trial:picture:1 "=200x100")');
+    expect(trial?.pictureList).toEqual([
+      {
+        id: 'trial:picture:1',
+        words: 'The quay',
+        address: 'https://guide.example.org/img/quay-small.png',
+        full: 'https://guide.example.org/img/quay.png',
+        width: 200,
+        height: 100,
+      },
+      { id: 'trial:picture:2', words: '' },
+    ]);
+    expect(trial?.chapterTitles).toEqual(['Arrival', 'The Hills']);
+    expect(trial?.unmatched).toEqual([{ field: 'parts[0].article.remove[1]', value: '.promo' }]);
+    expect(trial?.contents?.first).toHaveLength(MAX_TRIAL_ENTRIES);
+    expect(siteTrialOf({ part: 0, page: 'x'.repeat(MAX_TRIAL_PAGE + 10) })?.page).toHaveLength(
+      MAX_TRIAL_PAGE,
+    );
+    const none = siteTrialOf({ part: 0, page: '  ', pictureList: 'no', unmatched: {} });
+    expect(none).not.toHaveProperty('page');
+    expect(none).not.toHaveProperty('pictureList');
+    expect(none).not.toHaveProperty('unmatched');
   });
 });

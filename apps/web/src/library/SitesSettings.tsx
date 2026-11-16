@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { sitesOffered } from '../features';
 import { loadImporters } from '../state/importing';
+import { editRulesFile, newRulesFile, useRulesEditor } from '../state/rulesEditor';
 import {
   WAY_NAMES,
   addSiteFile,
   askSwitchOn,
-  closeSwitchOn,
   closeTrial,
   loadSites,
   removeSiteFile,
@@ -19,6 +19,8 @@ import {
   type SiteTrying,
 } from '../state/siteRules';
 import { useAtlas } from '../state/store';
+import { RulesEditor } from './RulesEditor';
+import { AddedFile } from './SiteSwitchOn';
 
 /**
  * Settings, "Sites", in Atlas Importer: the site rules files the importers
@@ -27,8 +29,10 @@ import { useAtlas } from '../state/store';
  * offers, a switch, and what is wrong with it; "Add a rules file…" for a
  * file of the person's, which is off until they have seen its hosts and
  * what it widens and switched it on; "Try on a saved page…" for a file with
- * a part read by rules; and the guide and the schema to save for writing
- * one.
+ * a part read by rules; the rules file editor (`RulesEditor.tsx`), on a
+ * file of the person's ("Edit…"), a copy of a shipped file ("Edit a
+ * copy…") or a new file ("New rules file…"); and the guide and the schema
+ * to save for writing one.
  */
 export function SitesSettings() {
   const offered = useAtlas(sitesOffered);
@@ -36,6 +40,7 @@ export function SitesSettings() {
   const entries = useSites((s) => s.entries);
   const error = useSites((s) => s.error);
   const folder = useSites((s) => s.folder);
+  const editorError = useRulesEditor((s) => s.error);
   useEffect(() => {
     if (__ATLAS_DOWNLOADS__ && offered) void loadImporters().then(loadSites);
   }, [offered]);
@@ -43,158 +48,97 @@ export function SitesSettings() {
   const own = entries.filter((entry) => entry.own);
   const builtIn = entries.filter((entry) => !entry.own);
   return (
-    <section className="settings-group" aria-label="Sites" data-testid="settings-sites">
-      <h2 className="settings-group-title">Sites</h2>
-      <p className="muted small">
-        The sites the importers read, each described by a site rules file: its name, its addresses,
-        the ways its pages can be read and its licence. Files come with the importers, and you can
-        add your own. A file only describes a site: it holds no program. The limits of reading a
-        site are held in its file, so that they can change when the site or a guide’s author gives
-        permission, and you check each file before you switch it on. A file of yours that reads more
-        than a file of the importers, or reads a site they refuse, says so before it is on. Some
-        things no file changes: the app always says who it is, follows a site’s robots.txt when it
-        reads by itself, pauses between pages, stops at the first refusal and never answers a check
-        that you are a person.
-      </p>
-      {folder ? (
+    <>
+      <section className="settings-group" aria-label="Sites" data-testid="settings-sites">
+        <h2 className="settings-group-title">Sites</h2>
         <p className="muted small">
-          Your files are kept in <span className="path-inline">{folder}</span>.
+          The sites the importers read, each described by a site rules file: its name, its
+          addresses, the ways its pages can be read and its licence. Files come with the importers,
+          and you can add your own. A file only describes a site: it holds no program. The limits of
+          reading a site are held in its file, so that they can change when the site or a guide’s
+          author gives permission, and you check each file before you switch it on. A file of yours
+          that reads more than a file of the importers, or reads a site they refuse, says so before
+          it is on. Some things no file changes: the app always says who it is, follows a site’s
+          robots.txt when it reads by itself, pauses between pages, stops at the first refusal and
+          never answers a check that you are a person.
         </p>
-      ) : null}
-      <AddedFile />
-      {phase === 'failed' ? (
-        <p className="small" role="alert">
-          Could not read the Sites folder: {error}
-        </p>
-      ) : null}
-      {own.length > 0 ? (
-        <>
-          <h3 className="settings-subtitle">Your files</h3>
-          <SiteList entries={own} />
-        </>
-      ) : null}
-      {builtIn.length > 0 ? (
-        <>
-          <h3 className="settings-subtitle">Files that come with the importers</h3>
-          <SiteList entries={builtIn} />
-        </>
-      ) : phase === 'ready' && own.length === 0 ? (
-        <p className="muted small">No importer of this app reads sites by site rules files.</p>
-      ) : null}
-      <div className="row-actions wrap">
-        <button
-          type="button"
-          className="button"
-          data-testid="sites-add"
-          onClick={() => void addSiteFile()}
-        >
-          Add a rules file…
-        </button>
-        <button
-          type="button"
-          className="button"
-          data-testid="sites-save-guide"
-          onClick={() => void saveSiteRulesFile('guide')}
-        >
-          Save the guide…
-        </button>
-        <button
-          type="button"
-          className="button"
-          data-testid="sites-save-schema"
-          onClick={() => void saveSiteRulesFile('schema')}
-        >
-          Save the schema…
-        </button>
-      </div>
-      <p className="muted small">
-        The guide tells you, or anyone helping you, how to write a site rules file, and the schema
-        describes its fields for a program that checks one. A file you add is checked first and
-        stays switched off until you have seen the sites it names and switched it on. A file of
-        yours for a site a file of the importers also describes takes that file’s place while it is
-        on.
-      </p>
-    </section>
-  );
-}
-
-/** A file just added, or one switched on: the hosts it names, to see before it is on. */
-function AddedFile() {
-  const confirm = useSites((s) => s.confirm);
-  const refused = useSites((s) => s.refused);
-  if (refused) {
-    return (
-      <div className="download-note" role="alert" data-testid="sites-refused">
-        <p>
-          <strong>{refused.name} was not added.</strong> It has{' '}
-          {refused.problems.length === 1 ? 'this problem' : 'these problems'}:
-        </p>
-        <ul>
-          {refused.problems.map((problem) => (
-            <li key={problem}>{problem}</li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
-  if (!confirm) return null;
-  return (
-    <div
-      className="download-confirm"
-      role="group"
-      aria-label={`Switch on ${confirm.name}?`}
-      data-testid="sites-confirm"
-    >
-      <p>
-        {confirm.added ? (
+        {folder ? (
+          <p className="muted small">
+            Your files are kept in <span className="path-inline">{folder}</span>.
+          </p>
+        ) : null}
+        <AddedFile />
+        {editorError ? (
+          <p className="small" role="alert" data-testid="sites-editor-error">
+            {editorError}
+          </p>
+        ) : null}
+        {phase === 'failed' ? (
+          <p className="small" role="alert">
+            Could not read the Sites folder: {error}
+          </p>
+        ) : null}
+        {own.length > 0 ? (
           <>
-            Added <strong>{confirm.name}</strong> ({confirm.title}). It is switched off.{' '}
+            <h3 className="settings-subtitle">Your files</h3>
+            <SiteList entries={own} />
           </>
         ) : null}
-        Switch on {confirm.added ? 'this file' : <strong>{confirm.name}</strong>}? The importers
-        then read {confirm.hosts.length === 1 ? 'this site' : 'these sites'} by it:
-      </p>
-      <ul className="sites-hosts" data-testid="sites-confirm-hosts">
-        {confirm.hosts.map((host) => (
-          <li key={host} className="path-inline">
-            {host}
-          </li>
-        ))}
-      </ul>
-      {confirm.widens.length > 0 ? (
-        <>
-          <p>
-            <strong>It widens the limits of the importers’ files.</strong> Switch it on only if the
-            site or the guide’s author gave permission:
-          </p>
-          <ul className="sites-widens" data-testid="sites-confirm-widens">
-            {confirm.widens.map((widening) => (
-              <li key={widening}>{widening}</li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-      <div className="row-actions wrap">
-        <button
-          type="button"
-          className="button button-primary"
-          data-testid="sites-confirm-on"
-          onClick={() => void switchSite(confirm.key, true)}
-        >
-          Switch it on
-        </button>
-        <button
-          type="button"
-          className="button"
-          data-testid="sites-confirm-off"
-          onClick={() => {
-            closeSwitchOn();
-          }}
-        >
-          Leave it off
-        </button>
-      </div>
-    </div>
+        {builtIn.length > 0 ? (
+          <>
+            <h3 className="settings-subtitle">Files that come with the importers</h3>
+            <SiteList entries={builtIn} />
+          </>
+        ) : phase === 'ready' && own.length === 0 ? (
+          <p className="muted small">No importer of this app reads sites by site rules files.</p>
+        ) : null}
+        <div className="row-actions wrap">
+          <button
+            type="button"
+            className="button"
+            data-testid="sites-add"
+            onClick={() => void addSiteFile()}
+          >
+            Add a rules file…
+          </button>
+          <button
+            type="button"
+            className="button"
+            data-testid="sites-new"
+            onClick={() => {
+              newRulesFile();
+            }}
+          >
+            New rules file…
+          </button>
+          <button
+            type="button"
+            className="button"
+            data-testid="sites-save-guide"
+            onClick={() => void saveSiteRulesFile('guide')}
+          >
+            Save the guide…
+          </button>
+          <button
+            type="button"
+            className="button"
+            data-testid="sites-save-schema"
+            onClick={() => void saveSiteRulesFile('schema')}
+          >
+            Save the schema…
+          </button>
+        </div>
+        <p className="muted small">
+          The guide tells you, or anyone helping you, how to write a site rules file, and the schema
+          describes its fields for a program that checks one. A file you add is checked first and
+          stays switched off until you have seen the sites it names and switched it on. A file of
+          yours for a site a file of the importers also describes takes that file’s place while it
+          is on. “New rules file…” and “Edit…” open the file beside what the importer reads from a
+          page you saved, so that you see each change at work.
+        </p>
+      </section>
+      <RulesEditor />
+    </>
   );
 }
 
@@ -293,6 +237,16 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
               onClick={() => void trySavedPage(entry)}
             >
               Try on a saved page…
+            </button>
+          ) : null}
+          {entry.editable ? (
+            <button
+              type="button"
+              className="button button-small"
+              data-testid="site-edit"
+              onClick={() => void editRulesFile(entry)}
+            >
+              {entry.own ? 'Edit…' : 'Edit a copy…'}
             </button>
           ) : null}
           {entry.own ? (

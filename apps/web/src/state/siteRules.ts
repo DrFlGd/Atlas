@@ -116,6 +116,8 @@ export interface SiteEntry {
   widens: string[];
   /** It can be tried on a saved page: it has a wiki or guide part read by `rules`, and an importer tries it. */
   tryable: boolean;
+  /** Its text can be opened in the rules file editor: a file of the person's that could be read, or a shipped file. */
+  editable: boolean;
 }
 
 /** A file of the person's that was just checked and kept, waiting to be switched on. */
@@ -128,6 +130,8 @@ export interface SiteToSwitchOn {
   widens: string[];
   /** It was just added (rather than switched on from the list). */
   added: boolean;
+  /** It was just saved from the rules file editor (with {@link added}). */
+  saved?: boolean;
 }
 
 /** "Try on a saved page": one file, one page, and what the reader understood of it. */
@@ -183,6 +187,8 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 interface OwnFile {
   name: string;
   key: string;
+  /** Its text, for the rules file editor; null when it could not be read. */
+  text: string | null;
   /** Checked: its rules, or its problems. */
   rules: SiteRules | null;
   problems: string[];
@@ -213,6 +219,7 @@ async function stateOf(listing: SitesListing): Promise<SitesState> {
         return {
           name: file.name,
           key,
+          text: null,
           rules: null,
           problems: [file.problem ?? 'Could not be read.'],
           digest: null,
@@ -224,6 +231,7 @@ async function stateOf(listing: SitesListing): Promise<SitesState> {
         return {
           name: file.name,
           key,
+          text: file.text,
           rules: null,
           problems: checked.problems.map(problemText),
           digest,
@@ -239,6 +247,7 @@ async function stateOf(listing: SitesListing): Promise<SitesState> {
       return {
         name: file.name,
         key,
+        text: file.text,
         rules: problems.length ? null : checked.rules,
         problems,
         digest,
@@ -404,28 +413,38 @@ function wideningsOf(rules: SiteRules, importers: readonly AtlasImporter[]): str
   ];
 }
 
-/** The problems a file has that no importer would say: parts no importer has a reader for. */
-function readerProblems(rules: SiteRules, importers: readonly AtlasImporter[]): string[] {
+/** The problems a file has that no importer would say, by field: parts no importer has a reader for. */
+function readerProblemsByField(
+  rules: SiteRules,
+  importers: readonly AtlasImporter[],
+): SiteRulesProblem[] {
   const has = (reader: string) => importers.some((i) => i.sites?.readers.includes(reader));
+  const whole = (message: string) => [{ field: '', message }];
   if (isRefusal(rules)) {
     return importers.some((importer) => importer.sites)
       ? []
-      : ['No importer of this app reads sites by site rules files, so nothing reads by this file.'];
+      : whole(
+          'No importer of this app reads sites by site rules files, so nothing reads by this file.',
+        );
   }
   if (isReaderDefaults(rules)) {
     const reader = rules.readerDefaults.reader;
     return has(reader)
       ? []
-      : [`No importer of this app has the reader “${reader}”, so nothing reads by this file.`];
+      : whole(`No importer of this app has the reader “${reader}”, so nothing reads by this file.`);
   }
   return rules.parts.flatMap((part, index) => {
     if (has(part.reader)) return [];
     const words = readByRules(part)
       ? RULES_NOT_YET
       : `no importer of this app has the reader “${part.reader}”, so this part is not read.`;
-    return [problemText({ field: `parts[${index}]`, message: words })];
+    return [{ field: `parts[${index}]`, message: words }];
   });
 }
+
+/** The problems a file has that no importer would say, in plain words. */
+const readerProblems = (rules: SiteRules, importers: readonly AtlasImporter[]): string[] =>
+  readerProblemsByField(rules, importers).map(problemText);
 
 /** Problems an importer answered, in plain words, each once. */
 const inWords = (problems: readonly SiteRulesProblem[]) => problems.map(problemText);
@@ -479,6 +498,7 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
       problems: [...new Set(problems)],
       widens: rules ? wideningsOf(rules, importers) : [],
       tryable: hasRulesPage(rules) && trierOf(importers) !== undefined,
+      editable: file.text !== null,
     };
   });
   const builtIn = importers.flatMap((importer) =>
@@ -506,6 +526,7 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
             ],
         widens: [],
         tryable: hasRulesPage(file.rules) && trierOf(importers) !== undefined,
+        editable: true,
       };
     }),
   );
@@ -838,7 +859,10 @@ export function trialInWords(trial: SiteTrial): string[] {
     lines.push(`The contents it shows list ${plural(count, 'page')}${inGroups}.`);
     if (first.length > 0) {
       lines.push(
-        `The first: ${first.map((entry) => (entry.group ? `${entry.title} (${entry.group})` : entry.title)).join(', ')}.`,
+        `The first: ${first
+          .slice(0, 5)
+          .map((entry) => (entry.group ? `${entry.title} (${entry.group})` : entry.title))
+          .join(', ')}.`,
       );
     }
   }
@@ -912,6 +936,170 @@ function mapTrialInWords(part: number, game: string | undefined, map: SiteMapTri
   );
   return lines;
 }
+
+// ---------------------------------------------------------------------------
+// The rules file editor (`rulesEditor.ts`)
+
+/**
+ * The text of a file to open in the editor, by its key: a file of the
+ * person's as it is kept, or a shipped file laid out with two spaces. Null
+ * when there is none, or it could not be read.
+ */
+export async function rulesTextOf(key: string): Promise<string | null> {
+  const state = await sitesState();
+  const own = state.own.find((file) => file.key === key);
+  if (own) return own.text;
+  for (const importer of screenImporters) {
+    const file = (importer.sites?.files ?? []).find((b) => builtInKey(importer.id, b.name) === key);
+    if (file) return `${JSON.stringify(file.rules, null, 2)}\n`;
+  }
+  return null;
+}
+
+/**
+ * What the importers say of a file whose form is right, by field, for the
+ * editor: a part no importer has a reader for, and what each importer that
+ * reads it finds in it. Pure: no importer is changed.
+ */
+export function importerNotesOf(rules: SiteRules): SiteRulesProblem[] {
+  const importers = screenImporters;
+  return [
+    ...readerProblemsByField(rules, importers),
+    ...importers
+      .filter((importer) => readsFile(importer, rules))
+      .flatMap((importer) => siteRulesProblemsOf(importer, rules)),
+  ];
+}
+
+/** What saving a checked file from the editor would do, for the editor to say first. */
+export interface RulesSaving {
+  /** The name it is saved under, which its contents give it. */
+  name: string;
+  /** The file it is saved over, or the file being edited, is switched on: saving switches it off. */
+  on: boolean;
+  /** Another file of the person's has that name: saving puts this one in its place. */
+  replaces: boolean;
+  /** The file being edited, when the new name is another: it is removed. */
+  renamed: string | null;
+}
+
+/**
+ * What saving `rules` would do, for the file of the person's named
+ * `editing` (null for a new file), with the files of the Sites screen.
+ */
+export function savingOf(
+  rules: SiteRules,
+  editing: string | null,
+  listed: readonly SiteEntry[] = useSites.getState().entries,
+): RulesSaving {
+  const name = siteRulesFileName(rules);
+  const entries = listed.filter((entry) => entry.own);
+  const there = entries.find((entry) => entry.name === name);
+  const edited = editing ? entries.find((entry) => entry.name === editing) : undefined;
+  return {
+    name,
+    on: Boolean(there?.on) || Boolean(edited?.on),
+    replaces: there !== undefined && name !== editing,
+    renamed: editing && editing !== name && edited ? editing : null,
+  };
+}
+
+/**
+ * Saves a file from the editor as "Add a rules file…" keeps one: checked,
+ * under the name its contents give it, switched off (a file that was on is
+ * off again), and the person asked to switch it on once they have seen its
+ * hosts and what it widens. For a file of the person's saved under another
+ * name (`editing`), the old file is removed. The name saved, or why not.
+ */
+export async function saveRulesText(
+  text: string,
+  editing: string | null,
+): Promise<{ name: string } | { problem: string }> {
+  useSites.setState({ refused: null, confirm: null });
+  const checked = parseSiteRules(text);
+  if (!checked.ok) return { problem: 'The file has problems, so it was not saved.' };
+  const name = siteRulesFileName(checked.rules);
+  const renamed = editing && editing !== name ? editing : null;
+  try {
+    const state = await sitesState();
+    const off = [ownKey(name), ...(renamed ? [ownKey(renamed)] : [])];
+    if (off.some((key) => state.switches.on[key])) {
+      await shellSites().switch({
+        on: Object.fromEntries(
+          Object.entries(state.switches.on).filter(([key]) => !off.includes(key)),
+        ),
+        off: state.switches.off,
+      });
+    }
+    await shellSites().add(name, text);
+    if (renamed) await shellSites().remove(renamed, ownKey(renamed));
+  } catch (error) {
+    await reload();
+    return { problem: `Could not save ${name}: ${errorText(error)}` };
+  }
+  await reload();
+  const { title, hosts } = describe(checked.rules, name);
+  const widens = wideningsOf(checked.rules, screenImporters);
+  askSwitchOn({ key: ownKey(name), name, title, hosts, widens }, true);
+  useSites.setState((s) => (s.confirm ? { confirm: { ...s.confirm, saved: true } } : {}));
+  return { name };
+}
+
+/** A saved page or data file the editor tries a file on, as the person picked it. */
+export interface TrialPage {
+  /** The page's HTML; empty for a data file. */
+  html: string;
+  /** The text of a saved data file (`.json`). */
+  data?: string;
+  /** The address it was saved from, for a page. */
+  address: string | null;
+}
+
+/**
+ * Tries a checked file on one saved page or data file with the importer
+ * that tries pages, as "Try on a saved page…" does: what the reader
+ * understood, or why it was not tried, in plain words. Nothing is kept and
+ * nothing is fetched.
+ */
+export async function tryRulesOn(
+  rules: SiteRules,
+  page: TrialPage,
+): Promise<{ result: SiteTrial } | { problem: string }> {
+  const importer = trierOf(screenImporters);
+  if (!importer) return { problem: 'No importer of this app can try a file on a saved page.' };
+  if (!hasRulesPage(rules)) {
+    return { problem: 'Only a part read by rules can be tried on a page, and this file has none.' };
+  }
+  let url = page.address;
+  if (page.data !== undefined) {
+    url = mapStartOf(rules);
+    if (!url) {
+      return {
+        problem:
+          'This file has no map part read by rules, so a data file cannot be tried on it. Choose a page saved from the site instead.',
+      };
+    }
+  }
+  if (!url) return { problem: 'Give the address the page was saved from first.' };
+  try {
+    const result = await trySitePage(importer, {
+      rules,
+      url,
+      html: page.html,
+      ...(page.data === undefined ? {} : { data: page.data }),
+    });
+    return result ? { result } : { problem: 'The importer could not try the file on this page.' };
+  } catch (error) {
+    return { problem: errorText(error) };
+  }
+}
+
+/** Whether a picked file is a saved data file rather than a page. */
+export const isSavedDataFile = isDataFile;
+
+/** Asks for a saved page or data file, as "Try on a saved page…" does. Null when the dialog was closed. */
+export const pickTrialPage = (): Promise<{ name: string; text: string } | null> =>
+  shellSites().pickPage();
 
 /**
  * The guide to writing a site rules file, as the person saves it: the

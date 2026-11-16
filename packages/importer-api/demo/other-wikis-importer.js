@@ -328,8 +328,17 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
     return trial;
   }
   const doc = new globalThis.DOMParser().parseFromString(html, 'text/html');
-  const missing = (/** @type {string} */ field, /** @type {string} */ selector) =>
+  /** @type {NonNullable<SiteTrial['unmatched']>} */
+  const unmatched = [];
+  trial.unmatched = unmatched;
+  const missing = (
+    /** @type {string} */ field,
+    /** @type {string} */ selector,
+    /** @type {string} */ at = `parts[${index}].${field}`,
+  ) => {
     trial.problems.push(`“${field}” (${selector}) matched nothing on this page.`);
+    unmatched.push({ field: at, value: selector });
+  };
   const selectors = Array.isArray(part.article.content)
     ? part.article.content
     : [part.article.content];
@@ -337,14 +346,19 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
   trial.part = index;
   trial.type = part.type === 'guide' ? 'guide' : 'wiki';
   if (!content) {
-    missing('article.content', selectors.join(', '));
+    missing(
+      'article.content',
+      selectors.join(', '),
+      `parts[${index}].article.content${Array.isArray(part.article.content) ? '[0]' : ''}`,
+    );
     return trial;
   }
-  for (const selector of part.article.remove ?? []) {
+  (part.article.remove ?? []).forEach((selector, n) => {
     const found = content.querySelectorAll(selector);
-    if (found.length === 0) missing('article.remove', selector);
+    if (found.length === 0)
+      missing('article.remove', selector, `parts[${index}].article.remove[${n}]`);
     found.forEach((element) => element.remove());
-  }
+  });
   const title = part.article.title ? doc.querySelector(part.article.title) : null;
   if (part.article.title && !title) missing('article.title', part.article.title);
   let titleText = title ? wordsOf(title) : wordsOf(doc.querySelector('title'));
@@ -367,8 +381,10 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
     : 0;
   trial.tables = content.querySelectorAll('table').length;
   if (part.article.chapters) {
-    trial.chapters = content.querySelectorAll(part.article.chapters).length;
-    if (trial.chapters === 0) missing('article.chapters', part.article.chapters);
+    const heads = [...content.querySelectorAll(part.article.chapters)];
+    trial.chapters = heads.length;
+    if (heads.length > 0) trial.chapterTitles = heads.map(wordsOf);
+    else missing('article.chapters', part.article.chapters);
   }
   if (part.article.credit) {
     const credit = doc.querySelector(part.article.credit);
@@ -378,17 +394,31 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
   if (part.contents.links) {
     const links = [...doc.querySelectorAll(part.contents.links)];
     if (links.length === 0) missing('contents.links', part.contents.links);
-    const groups = part.contents.groups
-      ? [...doc.querySelectorAll(part.contents.groups)].map(wordsOf).filter(Boolean)
+    const groupOf = new Map();
+    const groupElements = part.contents.groups
+      ? [...doc.querySelectorAll(part.contents.groups)]
       : [];
+    const groups = groupElements.map(wordsOf).filter(Boolean);
     if (part.contents.groups && groups.length === 0) {
       missing('contents.groups', part.contents.groups);
+    }
+    // Each link is in the last group before it, in the order of the page.
+    for (const link of links) {
+      const before = groupElements.filter(
+        (group) =>
+          group.compareDocumentPosition(link) & globalThis.Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      const group = before.length > 0 ? wordsOf(before[before.length - 1] ?? null) : '';
+      if (group) groupOf.set(link, group);
     }
     if (links.length > 0) {
       trial.contents = {
         count: links.length,
         groups,
-        first: links.slice(0, 5).map((link) => ({ title: wordsOf(link) })),
+        first: links.slice(0, 200).map((link) => ({
+          title: wordsOf(link),
+          ...(groupOf.has(link) ? { group: groupOf.get(link) } : {}),
+        })),
       };
     }
   }
@@ -412,8 +442,136 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
           ? 'None recorded, as the file says.'
           : 'The page states none, so you would be asked for one.';
   trial.text = wordsOf(content).slice(0, 600);
+  const pictureList = pictures.map((img, n) => {
+    const address = absolute(img.getAttribute('src'), url);
+    const full = fullAttribute ? absolute(img.getAttribute(fullAttribute), url) : null;
+    const width = Number(img.getAttribute('width'));
+    const height = Number(img.getAttribute('height'));
+    return {
+      id: `trial:picture:${n + 1}`,
+      words: (img.getAttribute('alt') ?? '').trim(),
+      ...(address ? { address } : {}),
+      ...(full ? { full } : {}),
+      ...(Number.isInteger(width) && width > 0 ? { width } : {}),
+      ...(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
+        ? { height }
+        : {}),
+    };
+  });
+  trial.pictureList = pictureList;
+  trial.page = markdownOf(content, url, pictures).trim();
   return trial;
 }
+
+/** A link or picture address of a page as a whole https address, or null. */
+function absolute(/** @type {string | null} */ given, /** @type {string} */ base) {
+  if (!given) return null;
+  try {
+    const at = new URL(given, base);
+    return at.protocol === 'https:' ? at.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The content as Markdown, as a short example of what a reader keeps:
+ * headings, paragraphs, lists, tables of plain cells, links to https
+ * addresses and each picture by its trial id (`pictures` in their order).
+ */
+function markdownOf(
+  /** @type {Element} */ content,
+  /** @type {string} */ base,
+  /** @type {Element[]} */ pictures,
+) {
+  const escape = (/** @type {string} */ text) => text.replace(/([\\`*_[\]<|])/g, '\\$1');
+  /** @type {(node: Node) => string} */
+  const inline = (node) => {
+    if (node.nodeType === 3) return escape((node.textContent ?? '').replace(/\s+/g, ' '));
+    if (node.nodeType !== 1) return '';
+    const element = /** @type {Element} */ (node);
+    /** @type {() => string} */
+    const inner = () => [...element.childNodes].map(inline).join('');
+    switch (element.tagName.toLowerCase()) {
+      case 'img': {
+        const n = pictures.indexOf(element) + 1;
+        const width = Number(element.getAttribute('width'));
+        const height = Number(element.getAttribute('height'));
+        const size = width > 0 ? ` "=${width}${height > 0 ? `x${height}` : ''}"` : '';
+        return `![${escape(element.getAttribute('alt') ?? '')}](trial:picture:${n}${size})`;
+      }
+      case 'a': {
+        const to = absolute(element.getAttribute('href'), base);
+        return to ? `[${inner()}](${to})` : inner();
+      }
+      case 'b':
+      case 'strong':
+        return `**${inner()}**`;
+      case 'i':
+      case 'em':
+        return `*${inner()}*`;
+      case 'br':
+        return '\n';
+      default:
+        return inner();
+    }
+  };
+  /** @type {string[]} */
+  const blocks = [];
+  const block = (/** @type {Element} */ element) => {
+    const name = element.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(name)) {
+      blocks.push(`${'#'.repeat(Number(name[1]))} ${inline(element).trim()}`);
+    } else if (name === 'p') {
+      const text = inline(element).trim();
+      if (text) blocks.push(text);
+    } else if (name === 'ul' || name === 'ol') {
+      const items = [...element.children].filter((child) => child.tagName.toLowerCase() === 'li');
+      blocks.push(
+        items
+          .map((item, n) => `${name === 'ol' ? `${n + 1}.` : '-'} ${inline(item).trim()}`)
+          .join('\n'),
+      );
+    } else if (name === 'table') {
+      const rows = [...element.querySelectorAll('tr')].map((row) =>
+        [...row.children].map((cell) => inline(cell).trim().replaceAll('|', '\\|')),
+      );
+      const width = Math.max(0, ...rows.map((row) => row.length));
+      if (width > 0) {
+        const line = (/** @type {string[]} */ cells) =>
+          `| ${Array.from({ length: width }, (_, n) => cells[n] ?? '').join(' | ')} |`;
+        blocks.push(
+          [line(rows[0] ?? []), line(Array(width).fill('---')), ...rows.slice(1).map(line)].join(
+            '\n',
+          ),
+        );
+      }
+    } else if (name === 'img') {
+      blocks.push(inline(element));
+    } else {
+      // A box of other blocks, or words outside any block.
+      let words = '';
+      for (const child of element.childNodes) {
+        if (child.nodeType === 1 && !isInline(/** @type {Element} */ (child))) {
+          if (words.trim()) blocks.push(words.trim());
+          words = '';
+          block(/** @type {Element} */ (child));
+        } else {
+          words += inline(child);
+        }
+      }
+      if (words.trim()) blocks.push(words.trim());
+    }
+  };
+  block(content);
+  return blocks.join('\n\n');
+}
+
+/** Whether an element stands in the line of text. */
+const isInline = (/** @type {Element} */ element) =>
+  ['a', 'b', 'strong', 'i', 'em', 'span', 'img', 'br', 'code', 'small'].includes(
+    element.tagName.toLowerCase(),
+  );
 
 /**
  * Every value a data path (`markers[*].at[0]`) names in `data`: a short
@@ -617,6 +775,7 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
   for (const [field, path] of paths) {
     if (typeof path === 'string' && !used.has(field)) {
       trial.problems.push(`“${field}” (${path}) matched nothing in the data.`);
+      (trial.unmatched ??= []).push({ field: `parts[${index}].${field}`, value: path });
     }
   }
   return trial;

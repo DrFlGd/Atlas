@@ -958,3 +958,422 @@
 .wiki-licence-change > .row-actions {
   margin-top: 8px;
 }
+
+/* ------------------------------------------------------------------ */
+/* The rules file editor: the file as JSON beside what the reader makes of an example page. */
+
+.rules-editor-dialog {
+  width: calc(100% - 24px);
+  max-width: 1680px;
+  height: calc(100% - 24px - var(--atlas-inset-top) - var(--atlas-inset-bottom));
+  max-height: calc(100% - 24px - var(--atlas-inset-top) - var(--atlas-inset-bottom));
+  overflow: hidden;
+}
+
+.rules-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 12px 16px 14px;
+}
+
+.rules-editor-head {
+  gap: 12px;
+}
+
+.rules-editor-head h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rules-editor-state {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.rules-editor-leave {
+  margin: 0;
+}
+
+.rules-editor-panes {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+}
+
+.rules-editor-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rules-editor-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.rules-editor-pane-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.rules-editor-result {
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.rules-json {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rules-json-box {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.rules-json-box:focus-within {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 1px;
+}
+
+.rules-json-gutter,
+.rules-json-text {
+  font-family: var(--atlas-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.rules-json-gutter {
+  flex: none;
+  min-width: 3.2em;
+  overflow: hidden;
+  padding: 8px 6px 8px 4px;
+  border-right: 1px solid var(--atlas-border);
+  color: var(--atlas-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.rules-json-line[data-mark='problem'] {
+  background: var(--atlas-danger-soft);
+  color: var(--atlas-danger);
+  font-weight: 700;
+}
+
+.rules-json-line[data-mark='problem']::before {
+  content: '● ';
+}
+
+.rules-json-line[data-mark='note']::before {
+  content: '○ ';
+  color: var(--atlas-focus);
+}
+
+.rules-json-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--atlas-text);
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.rules-json-hint {
+  margin: 4px 0 0;
+}
+
+.rules-check {
+  flex: none;
+  max-height: 32%;
+  overflow: auto;
+}
+
+.rules-check-summary {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.rules-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-check-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--atlas-border);
+  border-left: 3px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rules-check-item:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.rules-check-item:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 1px;
+}
+
+.rules-check-problem .rules-check-item {
+  border-left-color: var(--atlas-danger);
+}
+
+.rules-check-note .rules-check-item {
+  border-left-color: var(--atlas-focus);
+}
+
+.rules-check-line {
+  flex: none;
+  color: var(--atlas-muted);
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+}
+
+.rules-check-item code {
+  overflow-wrap: anywhere;
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+}
+
+.rules-pages-label {
+  font-weight: 600;
+}
+
+.rules-pages .select {
+  min-width: 0;
+}
+
+.rules-pages p,
+.rules-page-address {
+  margin: 6px 0 0;
+}
+
+/* What the right side shows stays in view as it scrolls: trying, or from before the last change. */
+.rules-trial > p:first-child {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 8px 0 4px;
+  padding: 2px 0;
+  background: var(--atlas-surface);
+}
+
+.rules-trial > p:first-child:empty {
+  padding: 0;
+}
+
+.rules-trial-result.is-stale {
+  opacity: 0.55;
+}
+
+.rules-result > p {
+  margin: 4px 0;
+}
+
+.rules-result-facts {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0;
+}
+
+.rules-result-facts > div {
+  display: grid;
+  grid-template-columns: minmax(8em, 11em) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.rules-result-facts dt {
+  color: var(--atlas-muted);
+}
+
+.rules-result-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.rules-result-block {
+  margin-top: 12px;
+}
+
+.rules-result-block h4 {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+}
+
+.rules-result-block > p {
+  margin: 2px 0;
+}
+
+.rules-result-list {
+  margin: 4px 0;
+  padding-left: 1.4em;
+}
+
+.rules-result-pictures li + li {
+  margin-top: 4px;
+}
+
+.rules-result-address {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.rules-result-group-name {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+
+.rules-result-table-wrap {
+  overflow-x: auto;
+}
+
+.rules-result-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rules-result-table th,
+.rules-result-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--atlas-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.rules-result-table thead th {
+  color: var(--atlas-muted);
+  font-weight: 600;
+}
+
+/* The page as Atlas would show it: the guide's own styles, in a frame of its own. */
+.rules-trial-page {
+  padding: 10px 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-bg);
+  overflow-wrap: anywhere;
+}
+
+.rules-trial-page-title {
+  margin: 0 0 6px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.rules-trial-page .guide-picture img {
+  max-width: 100%;
+  height: auto;
+}
+
+.rules-trial-page a {
+  cursor: default;
+}
+
+.rules-editor-foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.rules-editor-foot p {
+  margin: 0;
+}
+
+.rules-editor-foot .download-confirm {
+  margin: 0;
+}
+
+.rules-save-warn {
+  color: var(--atlas-text);
+  font-weight: 600;
+}
+
+.rules-editor-templates {
+  overflow: auto;
+}
+
+.rules-template-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-template {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  white-space: normal;
+}
+
+/* One above the other where two panes do not fit: the whole window scrolls. */
+@media (max-width: 899px) {
+  .rules-editor-dialog {
+    overflow: auto;
+  }
+
+  .rules-editor {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .rules-editor-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rules-json-box {
+    height: 55vh;
+    flex: none;
+  }
+
+  .rules-check,
+  .rules-editor-result {
+    max-height: none;
+    overflow: visible;
+  }
+}
