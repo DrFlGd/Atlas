@@ -150,6 +150,45 @@ const A_BOX = `| Ember blade | {box} |
 The text beside it.
 `;
 
+/** Layout forms, nested, with marks inside and markers that are text. */
+const LAYOUT_FORMS = `::: side 01:3
+
+::: card
+
+### Menu
+
+- [Bells](demo:guide:walk)
+- ||Gates||
+
+::: end
+
+::: next
+
+${A_BOX}
+::: row
+
+- ![a gate](demo:picture:gate "=24") Gates
+- ![a gate](demo:picture:gate "=24") Wells
+
+::: end
+
+::: end
+
+::: columns 3   
+
+1. one
+2. two
+
+::: end
+
+::: centred
+Not a marker: joined to text.
+
+::: end
+
+\\::: card
+`;
+
 const fixtures = (): [string, string][] => {
   const pages: [string, string][] = [
     ['everything', EVERYTHING],
@@ -164,6 +203,8 @@ const fixtures = (): [string, string][] => {
     ['a last bar alone', 'Open || never closed\n\nNext paragraph'],
     ['a page from a wiki', FROM_A_WIKI],
     ['a box of facts', A_BOX],
+    ['layout forms', LAYOUT_FORMS],
+    ['layout forms with Windows line ends', LAYOUT_FORMS.replace(/\n/g, '\r\n')],
   ];
   const guides: GuideEntry[] = [...makeGuidesFixturePack().guides, ...makeFixturePack().guides];
   for (const guide of guides) pages.push([guide.id, guide.body]);
@@ -216,6 +257,11 @@ function checkPage(text: string): void {
     // Not changed, a block keeps its own text.
     expect(writeBlock(model, block.source)).toBe(block.source);
     if (model.kind === 'raw') continue;
+    if (model.kind === 'form') {
+      // A marker line written anew says the same: `01:3` is `1:3`.
+      expect(readBlock(writeBlock(model))).toEqual(model);
+      continue;
+    }
     // Written anew from what it holds, it shows the same and holds the same.
     const fresh = writeBlock(model);
     expect(render(fresh)).toBe(render(block.source));

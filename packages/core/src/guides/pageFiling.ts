@@ -1,4 +1,4 @@
-import type { GuideEntry } from '@atlas/schema';
+import { layoutFormsIn, type GuideEntry } from '@atlas/schema';
 import { guideLinks, guideLinksIn } from './pageTree';
 import { headingNames } from './sections';
 
@@ -505,6 +505,10 @@ export function pageFilingIn(
     units.push(text);
   };
   const lines = body.split('\n');
+  // The blocks of layout forms are read in order, as blocks of the page; a
+  // heading in a form (a card's title) holds what follows it in that block only.
+  const forms = layoutFormsIn(body);
+  const headingsAtOpen = new Map<number, number>();
   /** Inside `||…||` that runs over lines. */
   let hidden = false;
   const passBars = (text: string) => {
@@ -517,6 +521,15 @@ export function pageFilingIn(
   let afterPicture = false;
   for (let i = 0; i < lines.length;) {
     const line = lines[i]!;
+    const form = forms.markers.get(i);
+    if (form !== undefined) {
+      const opened = forms.forms[form]!.open;
+      if (opened === i) headingsAtOpen.set(form, openHeadings.length);
+      else openHeadings.length = Math.min(openHeadings.length, headingsAtOpen.get(form) ?? 0);
+      afterPicture = false;
+      i++;
+      continue;
+    }
     if (fence !== null) {
       if (line.trimStart().startsWith(fence)) fence = null;
       i++;

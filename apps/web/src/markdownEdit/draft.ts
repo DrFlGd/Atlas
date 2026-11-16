@@ -6,6 +6,7 @@ import {
   writeBlock,
   type BlockModel,
 } from './blocks';
+import { layoutFormsIn } from '@atlas/schema';
 import { inlineLength } from './inline';
 
 /**
@@ -42,13 +43,26 @@ export interface EditPage {
 let lastKey = 0;
 export const nextKey = () => ++lastKey;
 
-/** A page read into blocks. */
+const lineCount = (text: string) => text.match(/\r\n|\r|\n/g)?.length ?? 0;
+
+/**
+ * A page read into blocks. A block that reads as a marker line of a layout
+ * form is one only where the page reads it so (see `layoutForms.ts` in
+ * `@atlas/schema`): paired, between blank lines, not too deep.
+ */
 export function readPage(text: string): EditPage {
   const split = splitBlocks(text);
   const keys = split.blocks.map(() => nextKey());
+  const { markers } = layoutFormsIn(text);
+  let line = lineCount(split.lead);
+  const starts = split.blocks.map((block) => {
+    const start = line;
+    line += lineCount(block.source) + lineCount(block.after);
+    return start;
+  });
   const blocks = split.blocks.map((block, i): EditBlock => ({
     key: keys[i]!,
-    model: readBlock(block.source),
+    model: readBlock(block.source, markers.has(starts[i]!)),
     source: block.source,
     original: block.source,
     after: block.after,

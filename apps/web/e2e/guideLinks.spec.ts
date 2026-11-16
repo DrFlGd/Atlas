@@ -57,6 +57,7 @@ test.describe('on a computer', () => {
     expect(await titles('links-none')).toEqual([
       'Welcome to the Sundered Isle',
       'Getting around',
+      'Isle portal',
       'Regions',
       'Blades',
       'Ember blade',
