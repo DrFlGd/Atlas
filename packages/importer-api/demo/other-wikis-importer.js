@@ -114,7 +114,7 @@ let applied = /** @type {AppliedSiteRules[]} */ (
 
 /** The problems of one file for this importer, given the files that count before it. */
 function problemsOf(/** @type {SiteRules} */ rules, /** @type {SiteRules[]} */ before) {
-  if ('readerDefaults' in rules) return [];
+  if (!('site' in rules)) return [];
   /** @type {SiteRulesProblem[]} */
   const problems = [];
   const named = new Set(before.flatMap((other) => ('site' in other ? other.site.hosts : [])));

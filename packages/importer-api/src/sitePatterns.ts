@@ -70,6 +70,78 @@ export function selectorProblem(text: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Named pieces
+
+/** Without a `/` at the end, but for `/` itself. */
+const withoutEndSlash = (path: string) => (path.length > 1 ? path.replace(/\/+$/u, '') : path);
+
+/** The named pieces an address or pattern of a part read by rules may hold. */
+const PIECE_NAMES = ['game', 'guide'] as const;
+export type PieceName = (typeof PIECE_NAMES)[number];
+/** The values of named pieces, as they stand in an address's path. */
+export type PieceValues = Partial<Record<PieceName, string>>;
+
+/**
+ * The named pieces an address or pattern holds (`{game}`, `{guide}`), in
+ * order, or why it cannot hold them: every `{` and `}` must be one of these
+ * two pieces, each piece a whole segment of the path (between two `/`, or
+ * at its end) and there once.
+ */
+export function piecesOf(text: string): { pieces: PieceName[]; problem: string | null } {
+  const pieces: PieceName[] = [];
+  const path = text.replace(/^https:\/\/[^/]*/u, '');
+  if (!/[{}]/u.test(path)) return { pieces, problem: /[{}]/u.test(text) ? BRACES : null };
+  for (const segment of path.split(/[/?#]/u)) {
+    if (!/[{}]/u.test(segment)) continue;
+    const named = /^\{([a-z]+)\}$/u.exec(segment)?.[1];
+    if (!named || !(PIECE_NAMES as readonly string[]).includes(named)) {
+      return { pieces, problem: BRACES };
+    }
+    if (pieces.includes(named as PieceName)) {
+      return { pieces, problem: `holds {${named}} twice; a piece stands once in an address` };
+    }
+    pieces.push(named as PieceName);
+  }
+  return { pieces, problem: null };
+}
+
+const BRACES =
+  'may hold { and } only as the named pieces {game} and {guide}, each a whole part of the path between two /';
+
+/** An address or pattern with its named pieces filled in; a piece with no value is left as it is. */
+export function fillPieces(text: string, values: PieceValues): string {
+  return text.replace(/\{(game|guide)\}/gu, (whole, name: PieceName) => values[name] ?? whole);
+}
+
+/**
+ * The values of the named pieces of `start` (a path, with pieces, already
+ * without its host) in `path`: each piece one whole segment, everything
+ * else the same, a `/` at the end of either ignored. Null when the path is
+ * not one `start` describes.
+ */
+export function piecesIn(start: string, path: string): PieceValues | null {
+  const names: PieceName[] = [];
+  const source = withoutEndSlash(start)
+    .split(/(\{(?:game|guide)\})/u)
+    .map((part) => {
+      const named = /^\{(game|guide)\}$/u.exec(part)?.[1] as PieceName | undefined;
+      if (named) {
+        names.push(named);
+        return '([^/]+)';
+      }
+      return part.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    })
+    .join('');
+  const match = new RegExp(`^${source}$`, 'u').exec(withoutEndSlash(path));
+  if (!match) return null;
+  const values: PieceValues = {};
+  names.forEach((name, index) => {
+    values[name] = match[index + 1]!;
+  });
+  return values;
+}
+
+// ---------------------------------------------------------------------------
 // Address patterns
 
 /**
@@ -82,11 +154,8 @@ export function patternProblem(text: string): string | null {
   if (text.length > MAX_PATTERN_CHARS) return `must be at most ${MAX_PATTERN_CHARS} characters`;
   if (/[?#\s\\]/u.test(text)) return 'must be a path only, without ?, #, spaces or backslashes';
   if (text.includes('***')) return 'may hold * or **, but not three * in a row';
-  return null;
+  return piecesOf(text).problem;
 }
-
-/** Without a `/` at the end, but for `/` itself. */
-const withoutEndSlash = (path: string) => (path.length > 1 ? path.replace(/\/+$/u, '') : path);
 
 /**
  * Whether the path of an address matches an address pattern: the whole
@@ -100,7 +169,13 @@ export function patternMatches(pattern: string, path: string): boolean {
   const source = withoutEndSlash(pattern)
     .split(/(\*\*|\*)/u)
     .map((part) =>
-      part === '**' ? '.*' : part === '*' ? '[^/]*' : part.replace(/[.+?^${}()|[\]\\]/gu, '\\$&'),
+      part === '**'
+        ? '.*'
+        : part === '*'
+          ? '[^/]*'
+          : part
+              .replace(/[.+?^${}()|[\]\\]/gu, '\\$&')
+              .replace(/\\\{(?:game|guide)\\\}/gu, '[^/]+'),
     )
     .join('');
   return new RegExp(`^${source}$`, 'u').test(withoutEndSlash(path));

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   dataPathProblem,
+  fillPieces,
+  piecesIn,
+  piecesOf,
   patternMatches,
   patternProblem,
   readDataPath,
@@ -80,5 +83,23 @@ describe('selectors', () => {
     expect(selectorProblem('a { color: red }')).toMatch(/braces/u);
     expect(selectorProblem('')).toMatch(/empty/u);
     expect(selectorProblem('a'.repeat(201))).toMatch(/200/u);
+  });
+});
+
+describe('named pieces', () => {
+  it('stand for one whole part of a path, and fill the other patterns', () => {
+    expect(piecesOf('/{game}/notes/{guide}')).toEqual({ pieces: ['game', 'guide'], problem: null });
+    expect(piecesOf('https://guides.example.org/{game}/a').pieces).toEqual(['game']);
+    for (const bad of ['/x{game}', '/{game}/{game}', '/{level}', '/{game', '/a}']) {
+      expect(piecesOf(bad).problem, bad).not.toBeNull();
+    }
+    expect(piecesIn('/{game}/walkthrough', '/lantern-quest/walkthrough/')).toEqual({
+      game: 'lantern-quest',
+    });
+    expect(piecesIn('/{game}/walkthrough', '/a/b/walkthrough')).toBeNull();
+    expect(fillPieces('/{game}/notes/{guide}', { game: 'lantern' })).toBe('/lantern/notes/{guide}');
+    expect(patternMatches('/{game}/*', '/lantern/Chapter_One')).toBe(true);
+    expect(patternMatches('/{game}/*', '/lantern')).toBe(false);
+    expect(patternProblem('/x{game}')).not.toBeNull();
   });
 });
