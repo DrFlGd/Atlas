@@ -2251,6 +2251,57 @@ fn makes_the_pictures_kept_for_own_use_smaller_too_when_they_go_in() {
     run_import(&file, &dir.0.join("maps")).unwrap();
 }
 
+/// A GIF of two pictures, 1 × 1 pixel each: one that moves.
+#[cfg(not(target_os = "android"))]
+const MOVING_GIF: &[u8] = &[
+    b'G', b'I', b'F', b'8', b'9', b'a', 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff,
+    // The first picture, shown a tenth of a second.
+    0x21, 0xf9, 4, 0, 10, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0,
+    // The second.
+    0x21, 0xf9, 4, 0, 10, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 1, 0, 0x3b,
+];
+
+/// A picture kept as a GIF that moves goes into a pack file as it is, at
+/// full size and smaller alike, and comes out of it as it went in.
+#[cfg(not(target_os = "android"))]
+#[test]
+fn carries_a_gif_that_moves_as_it_is() {
+    let dir = TempDir::new("packfile-gif");
+    let pack = dir.0.join("pages");
+    write_pages_pack(&pack);
+    put(&pack.join("pictures/moving.gif"), MOVING_GIF);
+    let mut list =
+        serde_json::from_slice::<Vec<Value>>(&fs::read(pack.join("pictures.json")).unwrap())
+            .unwrap();
+    list.push(json!({"id": format!("{ID}:picture:moving"), "file": "pictures/moving.gif", "shareable": true}));
+    put_json(&pack.join("pictures.json"), &Value::Array(list));
+    let file = dir.0.join("pages.atlaspack");
+    for smaller in [false, true] {
+        let source = PackSource {
+            smaller_pictures: smaller,
+            ..folder_source(&pack)
+        };
+        run_export(&source, Detail::Overview, &file).unwrap();
+        assert_eq!(entry_bytes(&file, "pictures/moving.gif"), MOVING_GIF);
+        let listed = json_entry(&file, "pictures.json");
+        assert!(listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["file"] == "pictures/moving.gif"));
+    }
+    let maps = dir.0.join("maps");
+    run_import(&file, &maps).unwrap();
+    let imported = files_under(&maps);
+    assert!(
+        imported
+            .iter()
+            .any(|(name, bytes)| name.ends_with("pictures/moving.gif") && bytes == MOVING_GIF),
+        "{:?}",
+        imported.keys().collect::<Vec<_>>()
+    );
+}
+
 /// A location photo kept at full size, with its copy for cards beside it,
 /// goes into a smaller file at most 1,280 pixels wide, and its copy for
 /// cards never goes in.

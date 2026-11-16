@@ -48,7 +48,7 @@ use crate::{
     packfile::{card_copy_path, has_card_copy, is_picture_path},
     tiles::{
         download::{Task, Transform},
-        downscale::looks_like_svg,
+        downscale::{looks_like_gif, looks_like_svg},
     },
 };
 
@@ -373,12 +373,67 @@ fn on_white(image: &DynamicImage) -> DynamicImage {
     DynamicImage::ImageRgba8(image)
 }
 
+/// How many pictures (frames) a GIF holds, counting no further than two:
+/// 2 for one that moves. None for bytes that are no GIF, or that end
+/// before its first picture. Only the GIF's blocks are walked; nothing is
+/// decoded.
+pub fn gif_frames(bytes: &[u8]) -> Option<usize> {
+    if !looks_like_gif(bytes) || bytes.len() < 13 {
+        return None;
+    }
+    // A table of colours of 3 × 2^(n + 1) bytes, when the flags say so.
+    let table = |flags: u8| {
+        if flags & 0x80 == 0 {
+            0
+        } else {
+            3usize << ((flags & 0x07) + 1)
+        }
+    };
+    // Blocks of data, each its length first, until one of length 0.
+    let skip_blocks = |mut at: usize| -> Option<usize> {
+        loop {
+            let length = usize::from(*bytes.get(at)?);
+            at += 1;
+            if length == 0 {
+                return Some(at);
+            }
+            at += length;
+        }
+    };
+    let mut at = 13 + table(bytes[10]);
+    let mut frames = 0;
+    while frames < 2 {
+        match bytes.get(at) {
+            // An extension: its label, then its blocks.
+            Some(0x21) => at = skip_blocks(at + 2)?,
+            // A picture: where it goes (9 bytes), its own colours, the size
+            // of its codes, then its blocks.
+            Some(0x2c) => {
+                let flags = *bytes.get(at + 9)?;
+                at = skip_blocks(at + 10 + table(flags) + 1)?;
+                frames += 1;
+            }
+            // The end, or bytes that are no block.
+            _ => break,
+        }
+    }
+    (frames > 0).then_some(frames)
+}
+
+/// Whether bytes are a GIF that moves (more than one picture) and that is
+/// kept as it came: no larger than the largest answer taken as a picture.
+pub fn is_moving_gif(bytes: &[u8]) -> bool {
+    bytes.len() <= MAX_PHOTO_BYTES && gif_frames(bytes).is_some_and(|frames| frames > 1)
+}
+
 /// A downloaded picture made ready to keep: at most [`PHOTO_WIDTH`] pixels
-/// wide, its shape kept, never made larger, in the kind its file name says
-/// (JPEG, PNG, or lossless WebP). One that is narrow enough and already of
-/// that kind is kept as it came. An SVG drawing is drawn as a picture of
-/// that kind ([`draw_svg`]), on white where the kind has no see-through
-/// parts.
+/// wide, its shape kept, never made larger, in the type its file name says
+/// (JPEG, PNG, lossless WebP or GIF). One that is narrow enough and already
+/// of that type is kept as it came. An SVG drawing is drawn as a picture of
+/// that type ([`draw_svg`]), on white where the type has no see-through
+/// parts. A GIF that moves, for a file named `.gif`, is kept as it came,
+/// however wide ([`is_moving_gif`]); for a file of another type, and when it
+/// is larger than [`MAX_PHOTO_BYTES`], it is kept as its first picture.
 pub fn shrink_photo(bytes: Vec<u8>, file: &Path) -> Result<Vec<u8>, String> {
     fit_picture(bytes, file, PHOTO_WIDTH, None)
 }
@@ -402,8 +457,13 @@ pub fn fit_picture(
         Some("jpg" | "jpeg") => ImageFormat::Jpeg,
         Some("png") => ImageFormat::Png,
         Some("webp") => ImageFormat::WebP,
-        _ => return Err("its file is not a JPEG, PNG or WebP picture".to_owned()),
+        Some("gif") => ImageFormat::Gif,
+        _ => return Err("its file is not a JPEG, PNG, WebP or GIF picture".to_owned()),
     };
+    // A picture that moves stays the file it is: not drawn again, not shrunk.
+    if wanted == ImageFormat::Gif && is_moving_gif(&bytes) {
+        return Ok(bytes);
+    }
     if looks_like_svg(&bytes) {
         let drawn = draw_svg(&bytes)?;
         return if wanted == ImageFormat::Jpeg {
@@ -424,7 +484,9 @@ pub fn fit_picture(
     let (width, height) = reader
         .into_dimensions()
         .map_err(|error| format!("it could not be read: {error}"))?;
-    if width <= max_width && height <= max_height && format == Some(wanted) {
+    // One that moves gets here only when too large to keep moving: its first picture.
+    let moving = format == Some(ImageFormat::Gif) && gif_frames(&bytes).is_some_and(|n| n > 1);
+    if width <= max_width && height <= max_height && format == Some(wanted) && !moving {
         return Ok(bytes);
     }
     let mut reader = ImageReader::new(Cursor::new(&bytes))
@@ -505,8 +567,11 @@ fn photo_transform(tasks: &[PhotoTask], store: TileStore, photo_size: PhotoSize)
                 .cloned()
                 .unwrap_or((PHOTO_WIDTH, None, false));
         let kept = fit_picture(bytes, &task.path, width, None)?;
+        // A GIF kept as it moves has no copy: pages show it at their size.
+        let moving = is_moving_gif(&kept);
         if let Some(copy) = copy.filter(|copy| {
-            !card || picture_width(&kept).is_some_and(|w| w > copy.width * PAGE_COPY_SCALE)
+            !moving
+                && (!card || picture_width(&kept).is_some_and(|w| w > copy.width * PAGE_COPY_SCALE))
         }) {
             let made = fit_picture(
                 kept.clone(),
@@ -578,6 +643,8 @@ fn encode(image: &DynamicImage, format: ImageFormat) -> Result<Vec<u8>, String> 
                 image::ExtendedColorType::Rgba8,
             )
         }
+        // A GIF that does not move, made smaller: its colours chosen again.
+        ImageFormat::Gif => image.to_rgba8().write_to(&mut out, ImageFormat::Gif),
         _ => {
             let rgba = image.to_rgba8();
             WebPEncoder::new_lossless(&mut out).write_image(
@@ -949,7 +1016,7 @@ mod tests {
         assert_eq!(&webp[8..12], b"WEBP");
         assert_eq!(size_of(&webp), (1280, 256));
         assert!(shrink_photo(b"not a picture".to_vec(), Path::new("p/d.jpg")).is_err());
-        assert!(shrink_photo(picture(10, 10, ImageFormat::Png), Path::new("p/e.gif")).is_err());
+        assert!(shrink_photo(picture(10, 10, ImageFormat::Png), Path::new("p/e.bmp")).is_err());
     }
 
     #[test]
@@ -1138,6 +1205,127 @@ mod tests {
   <image href="https://pictures.example.com/inside.png" width="5" height="5"/>
   <image href="/etc/hostname" width="5" height="5"/>
 </svg>"##;
+
+    /// A GIF of `frames` pictures, `width` × `height`, each another colour.
+    fn moving_gif(width: u32, height: u32, frames: u8) -> Vec<u8> {
+        use image::{codecs::gif::GifEncoder, Delay, Frame};
+        let mut out = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut out);
+            for n in 0..frames {
+                let picture = RgbaImage::from_pixel(width, height, Rgba([n * 60, 90, 200, 255]));
+                encoder
+                    .encode_frame(Frame::from_parts(
+                        picture,
+                        0,
+                        0,
+                        Delay::from_numer_denom_ms(100, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn counts_the_pictures_of_a_gif() {
+        assert_eq!(gif_frames(&gif_picture(30, 20)), Some(1));
+        assert_eq!(gif_frames(&moving_gif(30, 20, 1)), Some(1));
+        assert_eq!(gif_frames(&moving_gif(30, 20, 3)), Some(2));
+        assert_eq!(gif_frames(&picture(30, 20, ImageFormat::Png)), None);
+        assert_eq!(gif_frames(b"GIF89a"), None);
+        let moving = moving_gif(30, 20, 3);
+        assert_eq!(gif_frames(&moving[..40]), None);
+        assert!(is_moving_gif(&moving));
+        assert!(!is_moving_gif(&gif_picture(30, 20)));
+    }
+
+    #[test]
+    fn keeps_a_gif_that_moves_as_it_came() {
+        // However wide, as a GIF it stays the file it is.
+        let moving = moving_gif(PHOTO_WIDTH + 20, 10, 3);
+        let kept = shrink_photo(moving.clone(), Path::new("pictures/m.gif")).unwrap();
+        assert_eq!(kept, moving);
+        // For a file named as another type, its first picture, as before.
+        let png = shrink_photo(moving.clone(), Path::new("pictures/m.png")).unwrap();
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert_eq!(size_of(&png), (PHOTO_WIDTH, 10));
+        // A GIF that does not move: as it came when narrow enough, else a
+        // narrower GIF.
+        let still = gif_picture(30, 20);
+        assert_eq!(
+            shrink_photo(still.clone(), Path::new("pictures/s.gif")).unwrap(),
+            still
+        );
+        let wide = shrink_photo(gif_picture(2560, 20), Path::new("pictures/w.gif")).unwrap();
+        assert!(looks_like_gif(&wide));
+        assert_eq!(size_of(&wide), (PHOTO_WIDTH, 10));
+        assert_eq!(gif_frames(&wide), Some(1));
+        // One larger than the largest answer kept: its first picture only.
+        let mut huge = moving_gif(40, 20, 2);
+        huge.resize(MAX_PHOTO_BYTES + 1, 0);
+        assert!(!is_moving_gif(&huge));
+        let first = shrink_photo(huge, Path::new("pictures/h.gif")).unwrap();
+        assert_eq!(gif_frames(&first), Some(1));
+        assert_eq!(size_of(&first), (40, 20));
+    }
+
+    #[tokio::test]
+    async fn keeps_a_moving_gif_of_a_page_with_no_copy_for_pages() {
+        ensure_crypto();
+        let moving = moving_gif(300, 200, 4);
+        let still = gif_picture(300, 200);
+        let (moving_body, still_body) = (moving.clone(), still.clone());
+        let server = MockServer::start(Arc::new(move |path: &str, _| {
+            let body = if path.starts_with("/files/Moving.gif") {
+                moving_body.clone()
+            } else {
+                still_body.clone()
+            };
+            Reply {
+                headers: vec![("Content-Type", "image/gif".to_owned())],
+                body,
+                ..Reply::status(200)
+            }
+        }))
+        .await;
+        let dir = TempDir::new("photo-moving-gif");
+        let pack_dir = dir.0.join("pack");
+        fs::create_dir_all(&pack_dir).unwrap();
+        fs::write(
+            pack_dir.join("manifest.json"),
+            r#"{"schemaVersion":2,"gameId":"t","title":"Test Isle","packVersion":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(
+            pack_dir.join("pictures.json"),
+            format!(
+                r#"[{{"id":"t:picture:m","file":"pictures/m.gif","shareable":false,"remote":"{}",
+                     "shownAt":"{}","pageCopy":{{"file":"pictures/m.page.gif","width":100}}}},
+                    {{"id":"t:picture:s","file":"pictures/s.gif","shareable":false,"remote":"{}",
+                     "shownAt":"{}","pageCopy":{{"file":"pictures/s.page.gif","width":50}}}}]"#,
+                server.url("/files/Moving.gif"),
+                server.url("/files/small/100/Moving.gif"),
+                server.url("/files/Still.gif"),
+                server.url("/files/small/50/Still.gif"),
+            ),
+        )
+        .unwrap();
+        let manager = manager(&dir, &pack_dir);
+        manager.start_photos("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        // The one that moves, as it came, and no still copy for pages.
+        assert_eq!(fs::read(pack_dir.join("pictures/m.gif")).unwrap(), moving);
+        assert!(!pack_dir.join("pictures/m.page.gif").exists());
+        // The one that does not move, with its copy for pages, a GIF too.
+        assert_eq!(fs::read(pack_dir.join("pictures/s.gif")).unwrap(), still);
+        let copy = fs::read(pack_dir.join("pictures/s.page.gif")).unwrap();
+        assert!(looks_like_gif(&copy));
+        assert_eq!(size_of(&copy), (100, 67));
+        // One request a picture.
+        assert_eq!(server.seen().len(), 2);
+    }
 
     #[test]
     fn draws_a_drawing_as_a_picture() {

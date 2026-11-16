@@ -598,6 +598,76 @@ button.guides-crumb:hover {
   image-rendering: pixelated;
 }
 
+/*
+ * A picture that moves, shown still when the system asks for less motion
+ * (movingPictures.ts): its first picture drawn over it at the same size,
+ * and a small Play button on it.
+ */
+.moving-picture {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.moving-picture[data-still] > img {
+  visibility: hidden;
+}
+
+.moving-picture-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--atlas-radius-small);
+}
+
+.moving-picture-play {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  min-height: 28px;
+  padding: 2px 10px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 999px;
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.moving-picture-play::before {
+  content: '▶';
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+.moving-picture-play:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.moving-picture-play:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+/* A small picture in a line of text: the whole picture is its Play button. */
+.guide-picture.inline .moving-picture-play {
+  inset: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0;
+}
+
+.guide-picture.inline .moving-picture-play::before {
+  margin: 0;
+}
+
 /* A picture whose file is larger than the page shows it opens in the larger view when pressed. */
 img[data-opens-large] {
   cursor: zoom-in;

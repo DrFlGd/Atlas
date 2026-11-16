@@ -427,6 +427,8 @@ fn content_type(path: &Path) -> &'static str {
         Some("webp") => "image/webp",
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
+        // A picture of a page kept as it moves (see `tiles::manager::photos`).
+        Some("gif") => "image/gif",
         Some("avif") => "image/avif",
         Some("svg") => "image/svg+xml",
         Some("md") => "text/markdown; charset=utf-8",
@@ -699,6 +701,8 @@ mod tests {
         let overlay = data.0.join("packs").join("test");
         fs::create_dir_all(overlay.join("tiles/a/0/0")).unwrap();
         fs::write(overlay.join("tiles/a/0/0/0.jpg"), b"downloaded").unwrap();
+        fs::create_dir_all(overlay.join("pictures")).unwrap();
+        fs::write(overlay.join("pictures/moving.gif"), b"GIF89a").unwrap();
         fs::write(overlay.join("manifest.json"), br#"{"title":"Overlay"}"#).unwrap();
         fs::write(overlay.join(".hidden"), b"secret").unwrap();
         let registry = registry(&pack);
@@ -717,6 +721,14 @@ mod tests {
                 "bytes 2-5/10"
             );
         }
+        // A picture that moves is served as what it is.
+        let gif = get(
+            &registry,
+            "atlas-pack://localhost/test/pictures/moving.gif",
+            None,
+        );
+        assert_eq!(gif.status(), StatusCode::OK);
+        assert_eq!(header_value(&gif, header::CONTENT_TYPE), "image/gif");
         // The overlay wins over the pack folder; other files come from the pack.
         let status = |uri: &str| get(&registry, uri, None);
         assert_eq!(
