@@ -90,3 +90,12 @@ export function touchUiOffered(state: Pick<AtlasState, 'app'>): boolean {
 export function layoutChoiceOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.platform !== 'android';
 }
+
+/**
+ * Whether Settings has "Sites", the person's site rules files for the
+ * importers: in a build with downloads (Atlas Importer) whose shell keeps
+ * them. Guard code with `__ATLAS_DOWNLOADS__ && sitesOffered(state)`.
+ */
+export function sitesOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return __ATLAS_DOWNLOADS__ && state.app?.sites === true;
+}

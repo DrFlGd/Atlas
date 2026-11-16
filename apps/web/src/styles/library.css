@@ -361,6 +361,22 @@
   font-size: 1rem;
 }
 
+/* Settings, Sites: the two lists of site rules files, and what a file names or lacks. */
+.settings-subtitle {
+  margin: 12px 0 0;
+  font-size: 0.9rem;
+}
+
+.sites-hosts,
+.sites-problems {
+  margin: 4px 0;
+  padding-left: 1.2em;
+}
+
+.sites-problems {
+  color: var(--atlas-danger);
+}
+
 .library-card-icon {
   display: inline-flex;
   color: var(--atlas-accent);
