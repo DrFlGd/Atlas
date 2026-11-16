@@ -32,12 +32,7 @@
 import { GAME_ID_PATTERN } from '@atlas/schema';
 import { z } from 'zod';
 import { dataPathProblem, patternProblem, selectorProblem } from './sitePatterns';
-import {
-  CONFIRMABLE_LICENCES,
-  MAX_NOTICE_CHARS,
-  rulesLicenceOf,
-  type RulesLicence,
-} from './sites';
+import { CONFIRMABLE_LICENCES, MAX_NOTICE_CHARS, rulesLicenceOf, type RulesLicence } from './sites';
 
 /** The value of `format` in every site rules file. */
 export const SITE_RULES_FORMAT = 'atlas-site-rules';
@@ -917,7 +912,9 @@ export function checkSiteRules(value: unknown): SiteRulesCheck {
         problems.push(...checkAgainst(partType, type, ['parts', index, 'type']).problems);
         return;
       }
-      problems.push(...checkAgainst(looseParts[form], part, ['parts', index], true).problems);
+      problems.push(
+        ...checkAgainst(looseParts[form] as z.ZodType, part, ['parts', index], true).problems,
+      );
       const licence = (part as { licence?: unknown } | null)?.licence;
       problems.push(...licenceProblems(licence, ['parts', index, 'licence'], form !== 'builtIn'));
     });
