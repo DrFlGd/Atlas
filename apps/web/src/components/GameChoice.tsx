@@ -2,6 +2,7 @@ import { useId, type ReactNode } from 'react';
 import { HOME_PAGE_KIND, MAP_KIND } from '@atlas/importer-api';
 import { numberFormat } from '../state/derived';
 import {
+  choicePageKeys,
   chosenPages,
   filterGames,
   overCap,
@@ -19,8 +20,11 @@ import {
   resetImport,
   setCatalogueQuery,
   stopRun,
-  toggleCatalogueGame,
+  tickCatalogueGames,
   tickChoiceFrom,
+  tickChoicePages,
+  tickUpdateGames,
+  toggleCatalogueGame,
   toggleChoice,
   toggleChoiceGroup,
   toggleUpdateGame,
@@ -29,9 +33,11 @@ import {
   type ListingPurpose,
 } from '../state/importing';
 import { MAX_RUN_ADDRESSES, stopReasonText, type RunState } from '../state/importRun';
+import { selectShown, shownCount } from '../state/selectShown';
 import { FollowLinksChoice } from './FollowLinks';
 import { MeasureFromPage } from './MeasureFromPage';
 import { localDate } from './packFileText';
+import { SelectShown } from './SelectShown';
 
 /**
  * The steps of Add a map that come before pages are added: reading game
@@ -124,6 +130,12 @@ export function Listing({
 export function CataloguePick({ pick }: { pick: GamePick }) {
   const searchId = useId();
   const shown = filterGames(pick.games, pick.query);
+  // "Select all" and "Select none": the games the search shows.
+  const selection = selectShown(
+    shown.map((game) => game.id),
+    pick.ticked,
+  );
+  const searching = pick.query.trim() !== '';
   const plan = planPick(pick);
   const ticked = pick.ticked.length;
   const reading = plan.games.filter((game) => !game.direct).length;
@@ -172,6 +184,15 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
           No game matches “{pick.query}”.
         </p>
       ) : (
+        <SelectShown
+          selection={selection}
+          label={searching ? 'Select the games this search shows' : 'Select the games listed'}
+          testId="add-map-catalogue-select"
+          text={`${searching ? 'This search shows' : 'The list has'} ${shownCount(selection, 'game', 'games')}.`}
+          onTick={tickCatalogueGames}
+        />
+      )}
+      {shown.length === 0 ? null : (
         <ul className="add-map-pick-list" data-testid="add-map-catalogue-list">
           {shown.map((game) => {
             const id = `${searchId}-${game.id}`;
@@ -237,6 +258,10 @@ export function UpdateGames({ phase }: { phase: Extract<ImportPhase, { kind: 'up
   const baseId = useId();
   const ticked = phase.games.filter((game) => phase.ticked.includes(game.packId));
   const reading = ticked.filter((game) => game.address !== null).length;
+  const selection = selectShown(
+    phase.games.map((game) => game.packId),
+    phase.ticked,
+  );
   if (phase.games.length === 0) {
     return (
       <section className="dialog-section" data-testid="add-map-update-games">
@@ -265,6 +290,13 @@ export function UpdateGames({ phase }: { phase: Extract<ImportPhase, { kind: 'up
         game, one at a time, and then lists its maps, new ones included, for you to choose which to
         refresh or add. Nothing is changed until you have chosen.
       </p>
+      <SelectShown
+        selection={selection}
+        label="Select the games to update"
+        testId="add-map-update-select"
+        text={`The list has ${shownCount(selection, 'game', 'games')}.`}
+        onTick={tickUpdateGames}
+      />
       <ul className="add-map-pick-list">
         {phase.games.map((game) => {
           const id = `${baseId}-${game.packId}`;
@@ -356,6 +388,10 @@ export function ChoosePages({ choice }: { choice: Choice }) {
   const followFor = choice.games.find((game) => game.queues)?.importerId ?? null;
   const windowed = choice.games.some((game) => game.inWindow);
   const left = goRoom(choice);
+  // "Select all" and "Select none": every page of every game listed that this app can add.
+  const keys = choicePageKeys(choice);
+  const selection = selectShown(keys.shown, keys.ticked);
+  const unsupported = choice.games.some((game) => game.pages.some((page) => !page.supported));
   return (
     <section className="dialog-section" data-testid="add-map-choose" data-mode={choice.mode}>
       <p>
@@ -405,6 +441,21 @@ export function ChoosePages({ choice }: { choice: Choice }) {
           These games did not fit in this session, so their game pages were not read:{' '}
           {choice.leftOut.join(', ')}. Add them afterwards.
         </p>
+      ) : null}
+      {selection.shown > 0 ? (
+        <SelectShown
+          selection={selection}
+          label="Select the pages listed"
+          testId="add-map-choose-select"
+          text={`${
+            choice.games.length > 1
+              ? `The ${numberFormat.format(choice.games.length)} games listed have`
+              : 'The list has'
+          } ${shownCount(selection, 'page', 'pages')}.${
+            unsupported ? ' Pages this app cannot add yet are never ticked.' : ''
+          }`}
+          onTick={tickChoicePages}
+        />
       ) : null}
       {choice.games.map((game) => (
         <fieldset

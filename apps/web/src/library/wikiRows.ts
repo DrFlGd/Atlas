@@ -1,5 +1,6 @@
 import { pageKey } from '@atlas/importer-api';
 import { titleFromAddress } from '../state/gameChoice';
+import { shownCount, type ShownSelection } from '../state/selectShown';
 import type { WikiContents, WikiFailure, WikiNotes } from '../state/wikiNotes';
 
 /**
@@ -186,6 +187,59 @@ export function allRows(groups: readonly WikiGroup[]): WikiRow[] {
 
 export function matchesFilter(row: WikiRow, filter: WikiFilter): boolean {
   return filter === 'all' || row.state === filter;
+}
+
+/** A heading as the list shows it with `filter`: its pages and those found on them that the filter shows. */
+export function shownGroup(group: WikiGroup, filter: WikiFilter): WikiGroup {
+  return {
+    ...group,
+    rows: group.rows.filter((row) => matchesFilter(row, filter)),
+    found: group.found
+      .map((found) => ({ ...found, pages: found.pages.filter((p) => matchesFilter(p, filter)) }))
+      .filter((found) => found.pages.length > 0),
+  };
+}
+
+/** The headings the list shows with `filter`: those with a page it shows. */
+export function shownGroups(groups: readonly WikiGroup[], filter: WikiFilter): WikiGroup[] {
+  return groups
+    .map((group) => shownGroup(group, filter))
+    .filter((group) => group.rows.length > 0 || group.found.length > 0);
+}
+
+/**
+ * The pages "Select all" and "Select none" act on: every page the list
+ * shows with its filter, under every heading, open or closed, and however
+ * many rows a heading shows yet; each once, never one left out. Those are
+ * the pages the headings' own boxes tick, all together.
+ */
+export function shownPages(groups: readonly WikiGroup[], filter: WikiFilter): WikiRow[] {
+  const seen = new Set<string>();
+  return shownGroups(groups, filter)
+    .flatMap(headingPages)
+    .filter((row) => {
+      if (seen.has(row.key)) return false;
+      seen.add(row.key);
+      return true;
+    });
+}
+
+/**
+ * The sentence beside "Select all" and "Select none": what they act on, and
+ * how many of those pages are ticked. "This filter shows 12 pages to tick,
+ * 3 of them ticked."
+ */
+export function selectText(
+  selection: Pick<ShownSelection, 'shown' | 'ticked'>,
+  filter: WikiFilter,
+): string {
+  if (selection.shown === 0) {
+    return filter === 'all'
+      ? 'The list has no page to tick: every page in it is left out.'
+      : 'This filter shows no page to tick: every page it shows is left out.';
+  }
+  const pages = shownCount(selection, 'page', 'pages');
+  return filter === 'all' ? `The list has ${pages}.` : `This filter shows ${pages}.`;
 }
 
 /** Pages that a go can read now: not left out. */

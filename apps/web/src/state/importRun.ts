@@ -182,6 +182,8 @@ export type RunPageState =
       guide?: boolean;
       /** Its pictures are fetched when the run is over (see `pagePictures.ts`). */
       pictures?: boolean;
+      /** Its location photos are fetched when the run is over (see `mapPhotos.ts`). */
+      photos?: boolean;
     }
   /** A page that lists pages (a game page) or games was read. */
   | { kind: 'listed'; game: string; count: number; other: number }
@@ -239,6 +241,8 @@ export type PageOutcome =
       guide?: boolean;
       /** Its pictures are fetched when the run is over (see `pagePictures.ts`). */
       pictures?: boolean;
+      /** Its location photos are fetched when the run is over (see `mapPhotos.ts`). */
+      photos?: boolean;
     }
   /** A list was read: `count` pages (or games) the app can add, `other` it cannot yet. */
   | { kind: 'listed'; game: string; count: number; other: number }

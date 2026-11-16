@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import type { DownloadSettings, DownloadSettingsInfo } from '../desktop';
+import type { DownloadSettings, DownloadSettingsInfo, PhotoSize } from '../desktop';
 import { saveDownloadSettings } from '../state/downloads';
 import { useAtlas } from '../state/store';
 
@@ -38,6 +38,25 @@ export function DownloadSettingsSection({
 
 const PAUSES = [100, 250, 500, 1000, 2000, 5000];
 
+/** The sizes location photos can be kept at, in the order shown. */
+const PHOTO_SIZES: readonly PhotoSize[] = ['full', 'smaller'];
+
+/** The sizes location photos can be kept at, as the app shows them. */
+const PHOTO_SIZE_LABELS: Record<PhotoSize, string> = {
+  full: 'Full size',
+  smaller: 'Smaller (1,280 pixels wide)',
+};
+
+/** What each size does, in a sentence. */
+const PHOTO_SIZE_TEXTS: Record<PhotoSize, string> = {
+  full: 'Each photo is kept at the size of its file, up to 4,096 pixels wide, so pressing it shows it large. A smaller copy for the cards is made on this computer. This takes more disk space.',
+  smaller: 'Each photo is made at most 1,280 pixels wide. This takes the least space.',
+};
+
+/** What the choice changes for photos downloaded before, in a sentence. */
+const PHOTO_SIZE_NOTE =
+  'Either way it is one request for each photo. A change counts for photos downloaded from now on; photos already downloaded stay as they are, and a game’s Location photos card in the Library can download them again at full size.';
+
 function SettingsForm({
   info,
   pending,
@@ -52,7 +71,14 @@ function SettingsForm({
   onSaved: (saved: boolean) => void;
 }) {
   const [draft, setDraft] = useState<DownloadSettings>(info.settings);
-  const ids = { parallel: useId(), pause: useId(), rpm: useId(), speed: useId() };
+  const ids = {
+    parallel: useId(),
+    pause: useId(),
+    rpm: useId(),
+    speed: useId(),
+    photos: useId(),
+    withMap: useId(),
+  };
   const { bounds } = info;
   const changed = JSON.stringify(draft) !== JSON.stringify(info.settings);
   const inRange = (value: number | null, [low, high]: [number, number]) =>
@@ -143,6 +169,60 @@ function SettingsForm({
           }}
         />
       </div>
+      {info.settings.photos ? (
+        <fieldset
+          className="follow-links download-photo-size"
+          data-testid="setting-photos"
+          data-size={draft.photos}
+        >
+          <legend>Location photos</legend>
+          <div className="follow-links-options">
+            {PHOTO_SIZES.map((option) => (
+              <label
+                key={option}
+                className="follow-links-option"
+                data-testid={`setting-photos-${option}`}
+              >
+                <input
+                  type="radio"
+                  name={ids.photos}
+                  value={option}
+                  checked={draft.photos === option}
+                  onChange={() => {
+                    change({ photos: option });
+                  }}
+                />
+                <span>
+                  <strong>{PHOTO_SIZE_LABELS[option]}</strong>
+                  <span className="muted small">{PHOTO_SIZE_TEXTS[option]}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="muted small">{PHOTO_SIZE_NOTE}</p>
+        </fieldset>
+      ) : null}
+      {info.settings.photosWithMap !== undefined ? (
+        <div className="download-photos-with-map">
+          <label className="checkbox-row" htmlFor={ids.withMap}>
+            <input
+              id={ids.withMap}
+              type="checkbox"
+              checked={draft.photosWithMap !== false}
+              data-testid="setting-photos-with-map"
+              onChange={(event) => {
+                change({ photosWithMap: event.target.checked });
+              }}
+            />{' '}
+            Download location photos with a map
+          </label>
+          <p className="muted small">
+            After a map is added, its location photos are downloaded too: once its map images are
+            downloaded, or at once when it has none to download. One request for each photo, one at
+            a time with the pause above, and nothing more after a refusal or after you stop it.
+          </p>
+        </div>
+      ) : null}
       <p className="muted small">
         Parallel downloads is how many images are fetched at the same time. Pause after each image
         is how long each one waits before the next request. A ticked At most limits the images a

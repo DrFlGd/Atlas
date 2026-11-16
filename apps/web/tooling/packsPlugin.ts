@@ -86,6 +86,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
   '.pmtiles': 'application/vnd.pmtiles',
 };
 

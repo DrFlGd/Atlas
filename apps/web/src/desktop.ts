@@ -123,6 +123,13 @@ export interface PhotoPlan {
   job: DownloadSnapshot | null;
   /** The title of another download that runs now; a new one waits for it. */
   busyWith: string | null;
+  /**
+   * Photos of locations and entries here that were kept at most 1,280
+   * pixels wide and may be larger on the site: what "Download again at full
+   * size" asks for. None while the download settings keep photos smaller,
+   * and from a shell before it.
+   */
+  keptSmaller?: number;
 }
 
 export interface DownloadPlan {
@@ -514,12 +521,30 @@ export interface DownloadSettings {
   requestsPerMinute: number | null;
   /** In kilobytes (1000 bytes) per second. */
   kilobytesPerSecond: number | null;
+  /**
+   * The size location photos are kept at: `full`, up to 4,096 pixels wide
+   * with a smaller copy for cards made on this computer, or `smaller`, at
+   * most 1,280 pixels wide. A shell before it leaves it out (full size).
+   */
+  photos?: PhotoSize;
+  /**
+   * Whether a map's location photos are downloaded after it is added, once
+   * its map images are downloaded or need no download (see `mapPhotos.ts`).
+   * A shell before it leaves it out (on).
+   */
+  photosWithMap?: boolean;
 }
+
+/** The sizes downloaded location photos can be kept at (see {@link DownloadSettings.photos}). */
+export type PhotoSize = 'full' | 'smaller';
+
+/** The download settings that are numbers. */
+export type DownloadNumbers = Exclude<keyof DownloadSettings, 'photos' | 'photosWithMap'>;
 
 export interface DownloadSettingsInfo {
   settings: DownloadSettings;
-  /** Lowest and highest allowed value of each setting. */
-  bounds: Record<keyof DownloadSettings, [number, number]>;
+  /** Lowest and highest allowed value of each setting that is a number. */
+  bounds: Record<DownloadNumbers, [number, number]>;
 }
 
 /** Map images downloaded for a pack, to say what a delete would remove. */
@@ -910,6 +935,8 @@ export interface DesktopBridge {
     /** "Download location photos": the pictures a pack lists to be fetched later. */
     photosPlan(packId: string): Promise<PhotoPlan>;
     photosStart(packId: string): Promise<DownloadSnapshot>;
+    /** "Download again at full size": the photos kept smaller, asked for once more each. */
+    photosStartAgain(packId: string): Promise<DownloadSnapshot>;
     photosPause(packId: string): Promise<DownloadSnapshot>;
     photosResume(packId: string): Promise<DownloadSnapshot>;
     photosCancel(packId: string): Promise<void>;
@@ -1218,6 +1245,7 @@ function noDownloads(): DesktopBridge['tiles'] {
     fetchPage: missing,
     photosPlan: missing,
     photosStart: missing,
+    photosStartAgain: missing,
     photosPause: missing,
     photosResume: missing,
     photosCancel: missing,
@@ -1268,6 +1296,7 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           fetchPage: (url) => call('import_fetch', { url }),
           photosPlan: (packId) => call('photos_plan', { packId }),
           photosStart: (packId) => call('photos_start', { packId }),
+          photosStartAgain: (packId) => call('photos_start_again', { packId }),
           photosPause: (packId) => call('photos_pause', { packId }),
           photosResume: (packId) => call('photos_resume', { packId }),
           photosCancel: (packId) => call('photos_cancel', { packId }),

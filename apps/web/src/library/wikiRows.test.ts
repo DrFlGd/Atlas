@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { selectShown } from '../state/selectShown';
 import { NO_WIKI_NOTES, type WikiNotes } from '../state/wikiNotes';
 import {
   allRows,
   headingPages,
   headingTick,
-  matchesFilter,
   readWhen,
   readingTime,
+  selectText,
+  shownGroup,
+  shownPages,
   wikiGroups,
   type WikiFilter,
   type WikiGroup,
@@ -118,13 +121,7 @@ describe('the box of a heading', () => {
       },
     });
   /** The heading as the wiki screen shows it with `filter`. */
-  const shown = (group: WikiGroup, filter: WikiFilter): WikiGroup => ({
-    ...group,
-    rows: group.rows.filter((row) => matchesFilter(row, filter)),
-    found: group.found
-      .map((found) => ({ ...found, pages: found.pages.filter((p) => matchesFilter(p, filter)) }))
-      .filter((found) => found.pages.length > 0),
-  });
+  const shown = (group: WikiGroup, filter: WikiFilter): WikiGroup => shownGroup(group, filter);
 
   it('ticks the pages listed and those found on them, read or not, never one left out', () => {
     const basics = groups()[0]!;
@@ -167,6 +164,65 @@ describe('the box of a heading', () => {
       indeterminate: false,
       disabled: false,
     });
+  });
+  it('Select all and Select none act on every page the filter shows, under every heading, never one left out', () => {
+    const titles = (filter: WikiFilter) => shownPages(groups(), filter).map((row) => row.title);
+    expect(titles('all')).toEqual(['Welcome', 'Bells', 'Old bell', 'Harbour']);
+    expect(titles('not-read')).toEqual(['Old bell', 'Harbour']);
+    expect(titles('read')).toEqual(['Welcome', 'Bells']);
+    expect(titles('left-out')).toEqual([]);
+    // The same as every heading's box, all together.
+    expect(shownPages(groups(), 'all')).toEqual(
+      groups().flatMap((group) => headingPages(shown(group, 'all'))),
+    );
+  });
+});
+
+describe('Select all and Select none on the wiki screen', () => {
+  it('act on every page of a heading, not only the 200 it shows at first', () => {
+    const pages = Array.from({ length: 450 }, (_, i) => ({
+      url: `${WIKI}/Item_${i}`,
+      title: `Item ${i}`,
+      group: 'Items',
+    }));
+    const groups = wikiGroups({
+      contents: { ...contents, pages },
+      read: [],
+      guides: [],
+      notes: NO_WIKI_NOTES,
+    });
+    const keys = shownPages(groups, 'all').map((row) => row.key);
+    expect(keys).toHaveLength(450);
+    const some = new Set(keys.slice(0, 10));
+    const selection = selectShown(keys, some);
+    expect(selection).toMatchObject({ shown: 450, ticked: 10 });
+    expect(selection.toTick).toHaveLength(440);
+    expect(selection.toUntick).toHaveLength(10);
+    expect(selectText(selection, 'all')).toBe('The list has 450 pages to tick, 10 of them ticked.');
+    expect(selectText(selection, 'not-read')).toBe(
+      'This filter shows 450 pages to tick, 10 of them ticked.',
+    );
+  });
+
+  it('say what they act on, in words', () => {
+    expect(selectText({ shown: 0, ticked: 0 }, 'left-out')).toBe(
+      'This filter shows no page to tick: every page it shows is left out.',
+    );
+    expect(selectText({ shown: 0, ticked: 0 }, 'all')).toBe(
+      'The list has no page to tick: every page in it is left out.',
+    );
+    expect(selectText({ shown: 1, ticked: 1 }, 'all')).toBe(
+      'The list has 1 page to tick, and it is ticked.',
+    );
+    expect(selectText({ shown: 1, ticked: 0 }, 'read')).toBe(
+      'This filter shows 1 page to tick, not ticked yet.',
+    );
+    expect(selectText({ shown: 1200, ticked: 1200 }, 'all')).toBe(
+      'The list has 1,200 pages to tick, all of them ticked.',
+    );
+    expect(selectText({ shown: 3, ticked: 0 }, 'failed')).toBe(
+      'This filter shows 3 pages to tick, none of them ticked.',
+    );
   });
 });
 

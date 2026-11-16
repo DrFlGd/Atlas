@@ -610,6 +610,20 @@ kbd {
   gap: 8px;
 }
 
+/* "Select all" and "Select none" above a list to tick (SelectShown.tsx). */
+.select-shown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.select-shown-text {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -3197,4 +3211,14 @@ th[aria-sort='descending'] .table-sort-arrow::after {
 .title-rename .download-error {
   flex-basis: 100%;
   margin: 0;
+}
+
+/* A photo not downloaded, on a location's card: the offer to download the game's photos. */
+.photo-strip > .photo-missing {
+  flex-wrap: wrap;
+}
+
+.photo-missing-note {
+  flex-basis: 100%;
+  text-align: center;
 }

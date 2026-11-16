@@ -45,10 +45,10 @@ use serde_json::Value;
 use super::*;
 use crate::{
     library::MAX_PACK_FILE_BYTES,
-    packfile::is_picture_path,
+    packfile::{card_copy_path, has_card_copy, is_picture_path},
     tiles::{
         download::{Task, Transform},
-        downscale::looks_like_svg,
+        downscale::{looks_like_gif, looks_like_svg},
     },
 };
 
@@ -90,6 +90,10 @@ const DRAWING_MIN_SIDE: f32 = 64.0;
 const DRAWING_MAX_SIDE: f32 = 1024.0;
 /// The line the photos of a job are counted under.
 const PHOTOS_NAME: &str = "Location photos";
+/// A photo's copy for cards is made for this many CSS pixels wide, so at
+/// most [`PHOTO_WIDTH`] pixels: what cards showed before photos were kept
+/// at full size.
+pub const CARD_COPY_WIDTH: u32 = PHOTO_WIDTH / PAGE_COPY_SCALE;
 
 /// What the web app needs to offer "Download location photos".
 #[derive(Clone, Debug, Serialize)]
@@ -106,6 +110,11 @@ pub struct PhotoPlan {
     pub job: Option<Snapshot>,
     /// The title of another job that downloads now; a new job waits for it.
     pub busy_with: Option<String>,
+    /// Photos of locations and entries on this device that were kept at
+    /// most [`PHOTO_WIDTH`] pixels wide and may be larger on the site: those
+    /// "Download again at full size" asks for. None while the download
+    /// settings say "Smaller".
+    pub kept_smaller: u64,
 }
 
 /// Whether an address may be asked for a picture: https, or plain http to
@@ -128,6 +137,8 @@ pub struct PageCopy {
     pub path: PathBuf,
     pub width: u32,
     pub height: Option<u32>,
+    /// A photo's copy for cards ([`card_copy_path`]), not one the pack names.
+    pub for_cards: bool,
 }
 
 /// One picture a pack lists to be fetched later.
@@ -139,8 +150,12 @@ pub struct PhotoTask {
     /// The copy its page showed, asked for only when the full file at
     /// `url` is not kept: on the same host only.
     pub shown_at: Option<String>,
-    /// The copy for pages made from the file kept.
+    /// The copy for pages made from the file kept: the picture's own
+    /// `pageCopy`, or for a photo with none its copy for cards.
     pub page_copy: Option<PageCopy>,
+    /// A photo of a location or a list entry: kept at the size the download
+    /// settings say ([`PhotoSize`]).
+    pub photo: bool,
 }
 
 impl PhotoTask {
@@ -151,8 +166,41 @@ impl PhotoTask {
             path: PathBuf::from(path),
             shown_at: None,
             page_copy: None,
+            photo: false,
         }
     }
+}
+
+/// The ids of the pictures a pack's locations and list entries name as
+/// their photos. A file that cannot be read names none.
+fn photo_ids(root: &Path) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    for name in ["locations.json", "checklistItems.json"] {
+        let path = root.join(name);
+        if fs::metadata(&path).map_or(true, |metadata| metadata.len() > MAX_PACK_FILE_BYTES as u64)
+        {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(Value::Array(entries)) = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        else {
+            continue;
+        };
+        for entry in &entries {
+            let Some(Value::Array(photos)) = entry.get("photos") else {
+                continue;
+            };
+            ids.extend(
+                photos
+                    .iter()
+                    .filter_map(|photo| photo.get("picture").and_then(Value::as_str))
+                    .map(str::to_owned),
+            );
+        }
+    }
+    ids
 }
 
 /// A size of a copy for pages, when it is one.
@@ -175,14 +223,17 @@ fn page_copy_of(picture: &Value, file: &str) -> Option<PageCopy> {
         path: relative_path(name)?,
         width: copy_side(copy.get("width"))?,
         height: copy_side(copy.get("height")),
+        for_cards: false,
     })
 }
 
 /// The pictures a pack lists to be fetched later: each address and where
 /// its file goes, relative to the pack, with the copy its page showed and
-/// its copy for pages where it names them. Pictures with an address Atlas
-/// does not ask, or a file name no picture has, are left out; so is a copy
-/// shown on another host than the full file's.
+/// its copy for pages where it names them, and whether it is a photo of a
+/// location or an entry (with its copy for cards when it names no copy for
+/// pages). Pictures with an address Atlas does not ask, or a file name no
+/// picture has, are left out; so is a copy shown on another host than the
+/// full file's.
 pub fn photo_tasks(root: &Path) -> Result<Vec<PhotoTask>, String> {
     let path = root.join(crate::packfile::PICTURES_FILE);
     let metadata = match fs::metadata(&path) {
@@ -198,6 +249,12 @@ pub fn photo_tasks(root: &Path) -> Result<Vec<PhotoTask>, String> {
     else {
         return Err("The pack's list of pictures cannot be read.".to_owned());
     };
+    let photos = photo_ids(root);
+    let files: HashSet<String> = pictures
+        .iter()
+        .filter_map(|picture| picture.get("file").and_then(Value::as_str))
+        .map(str::to_ascii_lowercase)
+        .collect();
     let mut tasks = Vec::new();
     for picture in &pictures {
         let (Some(remote), Some(file)) = (
@@ -222,11 +279,28 @@ pub fn photo_tasks(root: &Path) -> Result<Vec<PhotoTask>, String> {
                 usable_address(shown) && *shown != remote && host_text(shown) == host_text(remote)
             })
             .map(str::to_owned);
+        let photo = picture
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| photos.contains(id));
+        // A photo's copy for cards, unless another picture has that file.
+        let card_copy = (photo && has_card_copy(picture))
+            .then(|| card_copy_path(file))
+            .flatten()
+            .filter(|copy| !files.contains(&copy.to_ascii_lowercase()))
+            .and_then(|copy| relative_path(&copy))
+            .map(|path| PageCopy {
+                path,
+                width: CARD_COPY_WIDTH,
+                height: None,
+                for_cards: true,
+            });
         tasks.push(PhotoTask {
             url: remote.to_owned(),
             path: relative,
-            page_copy: page_copy_of(picture, file),
+            page_copy: page_copy_of(picture, file).or(card_copy),
             shown_at,
+            photo,
         });
     }
     Ok(tasks)
@@ -299,12 +373,67 @@ fn on_white(image: &DynamicImage) -> DynamicImage {
     DynamicImage::ImageRgba8(image)
 }
 
+/// How many pictures (frames) a GIF holds, counting no further than two:
+/// 2 for one that moves. None for bytes that are no GIF, or that end
+/// before its first picture. Only the GIF's blocks are walked; nothing is
+/// decoded.
+pub fn gif_frames(bytes: &[u8]) -> Option<usize> {
+    if !looks_like_gif(bytes) || bytes.len() < 13 {
+        return None;
+    }
+    // A table of colours of 3 × 2^(n + 1) bytes, when the flags say so.
+    let table = |flags: u8| {
+        if flags & 0x80 == 0 {
+            0
+        } else {
+            3usize << ((flags & 0x07) + 1)
+        }
+    };
+    // Blocks of data, each its length first, until one of length 0.
+    let skip_blocks = |mut at: usize| -> Option<usize> {
+        loop {
+            let length = usize::from(*bytes.get(at)?);
+            at += 1;
+            if length == 0 {
+                return Some(at);
+            }
+            at += length;
+        }
+    };
+    let mut at = 13 + table(bytes[10]);
+    let mut frames = 0;
+    while frames < 2 {
+        match bytes.get(at) {
+            // An extension: its label, then its blocks.
+            Some(0x21) => at = skip_blocks(at + 2)?,
+            // A picture: where it goes (9 bytes), its own colours, the size
+            // of its codes, then its blocks.
+            Some(0x2c) => {
+                let flags = *bytes.get(at + 9)?;
+                at = skip_blocks(at + 10 + table(flags) + 1)?;
+                frames += 1;
+            }
+            // The end, or bytes that are no block.
+            _ => break,
+        }
+    }
+    (frames > 0).then_some(frames)
+}
+
+/// Whether bytes are a GIF that moves (more than one picture) and that is
+/// kept as it came: no larger than the largest answer taken as a picture.
+pub fn is_moving_gif(bytes: &[u8]) -> bool {
+    bytes.len() <= MAX_PHOTO_BYTES && gif_frames(bytes).is_some_and(|frames| frames > 1)
+}
+
 /// A downloaded picture made ready to keep: at most [`PHOTO_WIDTH`] pixels
-/// wide, its shape kept, never made larger, in the kind its file name says
-/// (JPEG, PNG, or lossless WebP). One that is narrow enough and already of
-/// that kind is kept as it came. An SVG drawing is drawn as a picture of
-/// that kind ([`draw_svg`]), on white where the kind has no see-through
-/// parts.
+/// wide, its shape kept, never made larger, in the type its file name says
+/// (JPEG, PNG, lossless WebP or GIF). One that is narrow enough and already
+/// of that type is kept as it came. An SVG drawing is drawn as a picture of
+/// that type ([`draw_svg`]), on white where the type has no see-through
+/// parts. A GIF that moves, for a file named `.gif`, is kept as it came,
+/// however wide ([`is_moving_gif`]); for a file of another type, and when it
+/// is larger than [`MAX_PHOTO_BYTES`], it is kept as its first picture.
 pub fn shrink_photo(bytes: Vec<u8>, file: &Path) -> Result<Vec<u8>, String> {
     fit_picture(bytes, file, PHOTO_WIDTH, None)
 }
@@ -328,8 +457,13 @@ pub fn fit_picture(
         Some("jpg" | "jpeg") => ImageFormat::Jpeg,
         Some("png") => ImageFormat::Png,
         Some("webp") => ImageFormat::WebP,
-        _ => return Err("its file is not a JPEG, PNG or WebP picture".to_owned()),
+        Some("gif") => ImageFormat::Gif,
+        _ => return Err("its file is not a JPEG, PNG, WebP or GIF picture".to_owned()),
     };
+    // A picture that moves stays the file it is: not drawn again, not shrunk.
+    if wanted == ImageFormat::Gif && is_moving_gif(&bytes) {
+        return Ok(bytes);
+    }
     if looks_like_svg(&bytes) {
         let drawn = draw_svg(&bytes)?;
         return if wanted == ImageFormat::Jpeg {
@@ -350,7 +484,9 @@ pub fn fit_picture(
     let (width, height) = reader
         .into_dimensions()
         .map_err(|error| format!("it could not be read: {error}"))?;
-    if width <= max_width && height <= max_height && format == Some(wanted) {
+    // One that moves gets here only when too large to keep moving: its first picture.
+    let moving = format == Some(ImageFormat::Gif) && gif_frames(&bytes).is_some_and(|n| n > 1);
+    if width <= max_width && height <= max_height && format == Some(wanted) && !moving {
         return Ok(bytes);
     }
     let mut reader = ImageReader::new(Cursor::new(&bytes))
@@ -394,27 +530,49 @@ pub fn fitted(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32,
     }
 }
 
+/// The widest a downloaded picture is kept, in pixels: [`FULL_WIDTH`] for
+/// one kept at full size and for a photo of a location or an entry while
+/// the download settings say "Full size", else [`PHOTO_WIDTH`].
+fn kept_width(task: &PhotoTask, photo_size: PhotoSize) -> u32 {
+    if task.shown_at.is_some() || (task.photo && photo_size == PhotoSize::Full) {
+        FULL_WIDTH
+    } else {
+        PHOTO_WIDTH
+    }
+}
+
 /// What a photo job does with each picture it downloads: the file kept at
-/// most [`PHOTO_WIDTH`] pixels wide, or [`FULL_WIDTH`] for one kept at full
-/// size; and for a picture with a copy for pages, that copy, made from the
-/// file kept at most [`PAGE_COPY_SCALE`] times the size pages show it at
-/// and written beside it. A copy that cannot be made is left out: pages
-/// then show the file.
-fn photo_transform(tasks: &[PhotoTask], store: TileStore) -> Transform {
-    let extras: HashMap<PathBuf, (bool, Option<PageCopy>)> = tasks
+/// most as wide as [`kept_width`] says; and for a picture with a copy for
+/// pages (or a photo's copy for cards), that copy, made from the file kept
+/// at most [`PAGE_COPY_SCALE`] times the size pages show it at and written
+/// beside it. A copy that cannot be made is left out: pages then show the
+/// file. A photo's copy for cards is made only when the file kept is wider
+/// than the copy would be; a copy left from an earlier download is removed
+/// otherwise, so cards show the file.
+fn photo_transform(tasks: &[PhotoTask], store: TileStore, photo_size: PhotoSize) -> Transform {
+    let extras: HashMap<PathBuf, (u32, Option<PageCopy>, bool)> = tasks
         .iter()
         .map(|task| {
+            let card = task.page_copy.as_ref().is_some_and(|copy| copy.for_cards);
             (
                 task.path.clone(),
-                (task.shown_at.is_some(), task.page_copy.clone()),
+                (kept_width(task, photo_size), task.page_copy.clone(), card),
             )
         })
         .collect();
     Arc::new(move |task: &Task, bytes: Vec<u8>| {
-        let (full, copy) = extras.get(&task.path).cloned().unwrap_or((false, None));
-        let width = if full { FULL_WIDTH } else { PHOTO_WIDTH };
+        let (width, copy, card) =
+            extras
+                .get(&task.path)
+                .cloned()
+                .unwrap_or((PHOTO_WIDTH, None, false));
         let kept = fit_picture(bytes, &task.path, width, None)?;
-        if let Some(copy) = copy {
+        // A GIF kept as it moves has no copy: pages show it at their size.
+        let moving = is_moving_gif(&kept);
+        if let Some(copy) = copy.filter(|copy| {
+            !moving
+                && (!card || picture_width(&kept).is_some_and(|w| w > copy.width * PAGE_COPY_SCALE))
+        }) {
             let made = fit_picture(
                 kept.clone(),
                 &copy.path,
@@ -425,9 +583,43 @@ fn photo_transform(tasks: &[PhotoTask], store: TileStore) -> Transform {
             if let Ok(made) = made {
                 let _ = store.write(&copy.path, &made);
             }
+        } else if card {
+            if let Some((_, Some(copy), _)) = extras.get(&task.path) {
+                let _ = fs::remove_file(store.overlay.join(&copy.path));
+            }
         }
         Ok(kept)
     })
+}
+
+/// The width of a picture, from its first bytes.
+fn picture_width(bytes: &[u8]) -> Option<u32> {
+    ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+        .map(|(width, _)| width)
+}
+
+/// Whether a photo on this device was kept at most [`PHOTO_WIDTH`] pixels
+/// wide and may be larger on the site: exactly that wide, as a wider photo
+/// was made; one narrower was kept at its own size. One the site does not
+/// have is not.
+fn kept_smaller(store: &TileStore, task: &PhotoTask) -> bool {
+    if !task.photo || task.shown_at.is_some() || store.is_missing(&task.path) {
+        return false;
+    }
+    let file = store.overlay.join(&task.path);
+    let file = if file.is_file() {
+        file
+    } else {
+        match &store.bundled {
+            Some(root) if root.join(&task.path).is_file() => root.join(&task.path),
+            _ => return false,
+        }
+    };
+    image::image_dimensions(&file).is_ok_and(|(width, _)| width == PHOTO_WIDTH)
 }
 
 fn encode(image: &DynamicImage, format: ImageFormat) -> Result<Vec<u8>, String> {
@@ -451,6 +643,8 @@ fn encode(image: &DynamicImage, format: ImageFormat) -> Result<Vec<u8>, String> 
                 image::ExtendedColorType::Rgba8,
             )
         }
+        // A GIF that does not move, made smaller: its colours chosen again.
+        ImageFormat::Gif => image.to_rgba8().write_to(&mut out, ImageFormat::Gif),
         _ => {
             let rgba = image.to_rgba8();
             WebPEncoder::new_lossless(&mut out).write_image(
@@ -498,6 +692,15 @@ impl DownloadManager {
             .filter(|id| **id != key)
             .and_then(|id| schedule.jobs.get(id))
             .map(|job| job.title.clone());
+        drop(schedule);
+        let kept_smaller = if *lock(&self.photo_size) == PhotoSize::Full {
+            tasks
+                .iter()
+                .filter(|task| kept_smaller(&store, task))
+                .count() as u64
+        } else {
+            0
+        };
         Ok(PhotoPlan {
             pack_id: pack_id.to_owned(),
             total: tasks.len() as u64,
@@ -505,6 +708,7 @@ impl DownloadManager {
             hosts,
             job,
             busy_with,
+            kept_smaller,
         })
     }
 
@@ -517,12 +721,40 @@ impl DownloadManager {
     /// that are not here yet. When another job is downloading, it queues
     /// behind it.
     pub fn start_photos(self: &Arc<Self>, pack_id: &str) -> Result<Snapshot, String> {
+        self.start_photos_with(pack_id, false)
+    }
+
+    /// "Download again at full size": [`Self::start_photos`], and the photos
+    /// of locations and entries kept smaller before ([`PhotoPlan::kept_smaller`])
+    /// asked for once more each, their files replaced by what comes. Only
+    /// while the download settings keep photos at full size.
+    pub fn start_photos_again(self: &Arc<Self>, pack_id: &str) -> Result<Snapshot, String> {
+        if *lock(&self.photo_size) != PhotoSize::Full {
+            return Err(
+                "The download settings keep location photos smaller. Choose Full size there first."
+                    .to_owned(),
+            );
+        }
+        self.start_photos_with(pack_id, true)
+    }
+
+    fn start_photos_with(self: &Arc<Self>, pack_id: &str, again: bool) -> Result<Snapshot, String> {
         let store = self.store(pack_id)?;
         let root = store.bundled.clone().expect("set by store()");
         let all = photo_tasks(&root)?;
         if all.is_empty() {
             return Err("This pack lists no photos to download.".to_owned());
         }
+        // Which to ask for again: looked at before the job is listed.
+        let replace: HashSet<PathBuf> = if again {
+            all.iter()
+                .filter(|task| kept_smaller(&store, task))
+                .map(|task| task.path.clone())
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let photo_size = *lock(&self.photo_size);
         let client =
             http_client().map_err(|error| format!("Could not start downloading: {error}"))?;
         let folder = self.pack_folder(pack_id);
@@ -601,7 +833,7 @@ impl DownloadManager {
             max_tile_bytes: MAX_PHOTO_BYTES,
             ..self.settings.clone()
         };
-        let transform = photo_transform(&all, store.clone());
+        let transform = photo_transform(&all, store.clone(), photo_size);
         let (control, receiver) = watch::channel(Control::Pause);
         let downloader = Arc::new(
             Downloader::new(client, settings, store, receiver)
@@ -644,12 +876,14 @@ impl DownloadManager {
                 Task {
                     label: Some(Arc::clone(&label)),
                     fallback,
+                    replace: replace.contains(&task.path),
                     ..Task::new(0, url, task.path)
                 }
             })
             .collect();
         let job_key = key.clone();
         let job_title = title.clone();
+        let again_count = replace.len();
         tokio::spawn(async move {
             let title = job_title;
             let present = {
@@ -657,6 +891,7 @@ impl DownloadManager {
                     downloader.store().clone(),
                     tasks
                         .iter()
+                        .filter(|task| !task.replace)
                         .map(|task| task.path.clone())
                         .collect::<Vec<_>>(),
                 );
@@ -669,9 +904,18 @@ impl DownloadManager {
             this.log.info(
                 Area::Download,
                 format!(
-                    "Download started: {PHOTOS_NAME} of {title} ({}), {total} pictures listed, {present} already there, {} to fetch, one at a time | from {} | settings: {}",
+                    "Download started: {PHOTOS_NAME} of {title} ({}), {total} pictures listed, {present} already there, {} to fetch{}, one at a time, location photos kept {} | from {} | settings: {}",
                     pack_of_key(&job_key),
                     total.saturating_sub(present),
+                    if again_count > 0 {
+                        format!(" ({again_count} of them kept smaller before, asked for again at full size)")
+                    } else {
+                        String::new()
+                    },
+                    match photo_size {
+                        PhotoSize::Full => "at full size",
+                        PhotoSize::Smaller => "smaller",
+                    },
                     hosts.join(", "),
                     this.current_pace().describe(),
                 ),
@@ -772,7 +1016,7 @@ mod tests {
         assert_eq!(&webp[8..12], b"WEBP");
         assert_eq!(size_of(&webp), (1280, 256));
         assert!(shrink_photo(b"not a picture".to_vec(), Path::new("p/d.jpg")).is_err());
-        assert!(shrink_photo(picture(10, 10, ImageFormat::Png), Path::new("p/e.gif")).is_err());
+        assert!(shrink_photo(picture(10, 10, ImageFormat::Png), Path::new("p/e.bmp")).is_err());
     }
 
     #[test]
@@ -827,7 +1071,9 @@ mod tests {
                     path: PathBuf::from("pictures/a.page.png"),
                     width: 40,
                     height: Some(30),
+                    for_cards: false,
                 }),
+                photo: false,
             }
         );
         // A copy shown on another host is never asked for; a copy for pages
@@ -959,6 +1205,127 @@ mod tests {
   <image href="https://pictures.example.com/inside.png" width="5" height="5"/>
   <image href="/etc/hostname" width="5" height="5"/>
 </svg>"##;
+
+    /// A GIF of `frames` pictures, `width` × `height`, each another colour.
+    fn moving_gif(width: u32, height: u32, frames: u8) -> Vec<u8> {
+        use image::{codecs::gif::GifEncoder, Delay, Frame};
+        let mut out = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut out);
+            for n in 0..frames {
+                let picture = RgbaImage::from_pixel(width, height, Rgba([n * 60, 90, 200, 255]));
+                encoder
+                    .encode_frame(Frame::from_parts(
+                        picture,
+                        0,
+                        0,
+                        Delay::from_numer_denom_ms(100, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn counts_the_pictures_of_a_gif() {
+        assert_eq!(gif_frames(&gif_picture(30, 20)), Some(1));
+        assert_eq!(gif_frames(&moving_gif(30, 20, 1)), Some(1));
+        assert_eq!(gif_frames(&moving_gif(30, 20, 3)), Some(2));
+        assert_eq!(gif_frames(&picture(30, 20, ImageFormat::Png)), None);
+        assert_eq!(gif_frames(b"GIF89a"), None);
+        let moving = moving_gif(30, 20, 3);
+        assert_eq!(gif_frames(&moving[..40]), None);
+        assert!(is_moving_gif(&moving));
+        assert!(!is_moving_gif(&gif_picture(30, 20)));
+    }
+
+    #[test]
+    fn keeps_a_gif_that_moves_as_it_came() {
+        // However wide, as a GIF it stays the file it is.
+        let moving = moving_gif(PHOTO_WIDTH + 20, 10, 3);
+        let kept = shrink_photo(moving.clone(), Path::new("pictures/m.gif")).unwrap();
+        assert_eq!(kept, moving);
+        // For a file named as another type, its first picture, as before.
+        let png = shrink_photo(moving.clone(), Path::new("pictures/m.png")).unwrap();
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert_eq!(size_of(&png), (PHOTO_WIDTH, 10));
+        // A GIF that does not move: as it came when narrow enough, else a
+        // narrower GIF.
+        let still = gif_picture(30, 20);
+        assert_eq!(
+            shrink_photo(still.clone(), Path::new("pictures/s.gif")).unwrap(),
+            still
+        );
+        let wide = shrink_photo(gif_picture(2560, 20), Path::new("pictures/w.gif")).unwrap();
+        assert!(looks_like_gif(&wide));
+        assert_eq!(size_of(&wide), (PHOTO_WIDTH, 10));
+        assert_eq!(gif_frames(&wide), Some(1));
+        // One larger than the largest answer kept: its first picture only.
+        let mut huge = moving_gif(40, 20, 2);
+        huge.resize(MAX_PHOTO_BYTES + 1, 0);
+        assert!(!is_moving_gif(&huge));
+        let first = shrink_photo(huge, Path::new("pictures/h.gif")).unwrap();
+        assert_eq!(gif_frames(&first), Some(1));
+        assert_eq!(size_of(&first), (40, 20));
+    }
+
+    #[tokio::test]
+    async fn keeps_a_moving_gif_of_a_page_with_no_copy_for_pages() {
+        ensure_crypto();
+        let moving = moving_gif(300, 200, 4);
+        let still = gif_picture(300, 200);
+        let (moving_body, still_body) = (moving.clone(), still.clone());
+        let server = MockServer::start(Arc::new(move |path: &str, _| {
+            let body = if path.starts_with("/files/Moving.gif") {
+                moving_body.clone()
+            } else {
+                still_body.clone()
+            };
+            Reply {
+                headers: vec![("Content-Type", "image/gif".to_owned())],
+                body,
+                ..Reply::status(200)
+            }
+        }))
+        .await;
+        let dir = TempDir::new("photo-moving-gif");
+        let pack_dir = dir.0.join("pack");
+        fs::create_dir_all(&pack_dir).unwrap();
+        fs::write(
+            pack_dir.join("manifest.json"),
+            r#"{"schemaVersion":2,"gameId":"t","title":"Test Isle","packVersion":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(
+            pack_dir.join("pictures.json"),
+            format!(
+                r#"[{{"id":"t:picture:m","file":"pictures/m.gif","shareable":false,"remote":"{}",
+                     "shownAt":"{}","pageCopy":{{"file":"pictures/m.page.gif","width":100}}}},
+                    {{"id":"t:picture:s","file":"pictures/s.gif","shareable":false,"remote":"{}",
+                     "shownAt":"{}","pageCopy":{{"file":"pictures/s.page.gif","width":50}}}}]"#,
+                server.url("/files/Moving.gif"),
+                server.url("/files/small/100/Moving.gif"),
+                server.url("/files/Still.gif"),
+                server.url("/files/small/50/Still.gif"),
+            ),
+        )
+        .unwrap();
+        let manager = manager(&dir, &pack_dir);
+        manager.start_photos("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        // The one that moves, as it came, and no still copy for pages.
+        assert_eq!(fs::read(pack_dir.join("pictures/m.gif")).unwrap(), moving);
+        assert!(!pack_dir.join("pictures/m.page.gif").exists());
+        // The one that does not move, with its copy for pages, a GIF too.
+        assert_eq!(fs::read(pack_dir.join("pictures/s.gif")).unwrap(), still);
+        let copy = fs::read(pack_dir.join("pictures/s.page.gif")).unwrap();
+        assert!(looks_like_gif(&copy));
+        assert_eq!(size_of(&copy), (100, 67));
+        // One request a picture.
+        assert_eq!(server.seen().len(), 2);
+    }
 
     #[test]
     fn draws_a_drawing_as_a_picture() {
@@ -1112,6 +1479,7 @@ mod tests {
         let transform = photo_transform(
             std::slice::from_ref(&task),
             TileStore::new(dir.0.clone(), None),
+            PhotoSize::Smaller,
         );
         let kept = transform(
             &Task::new(0, task.url.clone(), task.path.clone()),
@@ -1120,9 +1488,201 @@ mod tests {
         .unwrap();
         assert_eq!(size_of(&kept).0, FULL_WIDTH);
         // A picture not kept at full size is a photo, as before.
-        let plain = photo_transform(&[], TileStore::new(dir.0.clone(), None));
+        let plain = photo_transform(&[], TileStore::new(dir.0.clone(), None), PhotoSize::Full);
         let kept = plain(&Task::new(0, task.url, task.path), wide).unwrap();
         assert_eq!(size_of(&kept).0, PHOTO_WIDTH);
+    }
+
+    /// A pack whose two locations name pictures `a` and `b` as photos (and
+    /// an entry names `b` again); picture `c` is only a picture of a page.
+    fn photo_pack(dir: &Path, server: &MockServer) {
+        pack(dir, server);
+        fs::write(
+            dir.join("locations.json"),
+            r#"[{"id":"t:loc:1","photos":[{"picture":"t:picture:a"}]},
+                {"id":"t:loc:2","photos":[{"picture":"t:picture:b","spoiler":true}]},
+                {"id":"t:loc:3"}]"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("checklistItems.json"),
+            r#"[{"id":"t:item:1","photos":[{"picture":"t:picture:b"}]}]"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_photo_of_a_location_gets_a_copy_for_cards() {
+        let dir = TempDir::new("photo-card-tasks");
+        fs::write(
+            dir.0.join("locations.json"),
+            r#"[{"id":"t:loc:1","photos":[{"picture":"t:picture:a"},{"picture":"t:picture:b"},{"picture":"t:picture:c"},{"picture":"t:picture:d"}]}]"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.0.join("pictures.json"),
+            r#"[
+              {"id":"t:picture:a","file":"pictures/a.jpg","shareable":false,"remote":"https://pictures.example.com/a.jpg"},
+              {"id":"t:picture:b","file":"pictures/b.png","shareable":false,"remote":"https://pictures.example.com/b.png",
+               "pageCopy":{"file":"pictures/b.small.png","width":100}},
+              {"id":"t:picture:c","file":"pictures/c.jpg","shareable":false,"remote":"https://pictures.example.com/c.jpg"},
+              {"id":"t:picture:x","file":"pictures/c.page.jpg","shareable":false,"remote":"https://pictures.example.com/x.jpg"},
+              {"id":"t:picture:e","file":"pictures/e.jpg","shareable":false,"remote":"https://pictures.example.com/e.jpg"}
+            ]"#,
+        )
+        .unwrap();
+        let tasks = photo_tasks(&dir.0).unwrap();
+        // A photo: its copy for cards, at most 1,280 pixels wide.
+        assert_eq!(
+            tasks[0],
+            PhotoTask {
+                page_copy: Some(PageCopy {
+                    path: PathBuf::from("pictures/a.page.jpg"),
+                    width: CARD_COPY_WIDTH,
+                    height: None,
+                    for_cards: true,
+                }),
+                photo: true,
+                ..PhotoTask::plain("https://pictures.example.com/a.jpg", "pictures/a.jpg")
+            }
+        );
+        assert_eq!(CARD_COPY_WIDTH * PAGE_COPY_SCALE, PHOTO_WIDTH);
+        // One that names its own copy keeps it.
+        assert!(tasks[1].photo);
+        assert_eq!(
+            tasks[1]
+                .page_copy
+                .as_ref()
+                .map(|copy| (copy.for_cards, copy.width)),
+            Some((false, 100))
+        );
+        // No copy under the name of another picture's file.
+        assert!(tasks[2].photo && tasks[2].page_copy.is_none());
+        // A picture no location names is no photo, and gets no copy.
+        assert!(!tasks[3].photo && tasks[3].page_copy.is_none());
+        assert!(!tasks[4].photo && tasks[4].page_copy.is_none());
+        assert_eq!(
+            card_copy_path("pictures/m1.jpg").as_deref(),
+            Some("pictures/m1.page.jpg")
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_location_photos_at_full_size_with_a_copy_for_cards() {
+        ensure_crypto();
+        let wide = picture(1600, 800, ImageFormat::Png);
+        let narrow = picture(1000, 500, ImageFormat::Png);
+        let server = MockServer::start(Arc::new(move |path: &str, _| match path {
+            "/media/b.png" => Reply::image(narrow.clone()),
+            _ => Reply::image(wide.clone()),
+        }))
+        .await;
+        let dir = TempDir::new("photo-full-size");
+        let pack_dir = dir.0.join("pack");
+        photo_pack(&pack_dir, &server);
+        let manager = manager(&dir, &pack_dir);
+        manager.start_photos("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let read = |name: &str| size_of(&fs::read(pack_dir.join(name)).unwrap());
+        // The photos at full size, up to the limit, each with its copy for
+        // cards; the picture of a page as before, with none.
+        assert_eq!(read("pictures/a.jpg"), (1600, 800));
+        assert_eq!(read("pictures/a.page.jpg"), (1280, 640));
+        assert_eq!(read("pictures/c.png"), (1280, 640));
+        // One no wider than the copy would be needs none: cards show it.
+        assert_eq!(read("pictures/b.jpg"), (1000, 500));
+        assert!(!pack_dir.join("pictures/b.page.jpg").exists());
+        assert!(!pack_dir.join("pictures/c.page.png").exists());
+        // One request a picture, the copies made here.
+        assert_eq!(server.seen().len(), 3);
+        // Nothing to download again.
+        assert_eq!(manager.photos_plan("t").unwrap().kept_smaller, 0);
+    }
+
+    #[tokio::test]
+    async fn keeps_location_photos_smaller_when_the_settings_say_so() {
+        ensure_crypto();
+        let wide = picture(1600, 800, ImageFormat::Png);
+        let server =
+            MockServer::start(Arc::new(move |_: &str, _| Reply::image(wide.clone()))).await;
+        let dir = TempDir::new("photo-smaller");
+        let pack_dir = dir.0.join("pack");
+        photo_pack(&pack_dir, &server);
+        let manager = manager(&dir, &pack_dir);
+        manager.set_download_settings(&DownloadSettings {
+            pause_ms: 100,
+            photos: PhotoSize::Smaller,
+            ..DownloadSettings::default()
+        });
+        manager.start_photos("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        assert_eq!(
+            size_of(&fs::read(pack_dir.join("pictures/a.jpg")).unwrap()),
+            (1280, 640)
+        );
+        assert!(!pack_dir.join("pictures/a.page.jpg").exists());
+        assert_eq!(server.seen().len(), 3);
+        // While the settings keep photos smaller, none is offered again.
+        assert_eq!(manager.photos_plan("t").unwrap().kept_smaller, 0);
+        assert!(manager.start_photos_again("t").is_err());
+    }
+
+    #[tokio::test]
+    async fn downloads_the_photos_kept_smaller_again_at_full_size_when_asked() {
+        ensure_crypto();
+        let wide = picture(1600, 800, ImageFormat::Png);
+        let server =
+            MockServer::start(Arc::new(move |_: &str, _| Reply::image(wide.clone()))).await;
+        let dir = TempDir::new("photo-again");
+        let pack_dir = dir.0.join("pack");
+        photo_pack(&pack_dir, &server);
+        // Downloaded before: `a` made 1,280 wide, `b` narrower (its own
+        // size), `c` (no photo) 1,280 wide.
+        fs::create_dir_all(pack_dir.join("pictures")).unwrap();
+        fs::write(
+            pack_dir.join("pictures/a.jpg"),
+            picture(1280, 640, ImageFormat::Jpeg),
+        )
+        .unwrap();
+        fs::write(
+            pack_dir.join("pictures/b.jpg"),
+            picture(900, 600, ImageFormat::Jpeg),
+        )
+        .unwrap();
+        fs::write(
+            pack_dir.join("pictures/c.png"),
+            picture(1280, 640, ImageFormat::Png),
+        )
+        .unwrap();
+        let manager = manager(&dir, &pack_dir);
+        let plan = manager.photos_plan("t").unwrap();
+        assert_eq!((plan.remaining, plan.kept_smaller), (0, 1));
+        // Started as usual, nothing is asked for: they stay as they are.
+        manager.start_photos("t").unwrap();
+        assert_eq!(wait_done(&manager, "t").await.state, JobState::Done);
+        assert!(server.seen().is_empty());
+        // Again at full size: only `a`, once.
+        manager.start_photos_again("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let seen = server.seen();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].path.starts_with("/media/a.png"), "{}", seen[0].path);
+        assert_eq!(
+            size_of(&fs::read(pack_dir.join("pictures/a.jpg")).unwrap()),
+            (1600, 800)
+        );
+        assert_eq!(
+            size_of(&fs::read(pack_dir.join("pictures/a.page.jpg")).unwrap()),
+            (1280, 640)
+        );
+        assert_eq!(
+            size_of(&fs::read(pack_dir.join("pictures/b.jpg")).unwrap()),
+            (900, 600)
+        );
+        assert_eq!(manager.photos_plan("t").unwrap().kept_smaller, 0);
     }
 
     #[tokio::test]

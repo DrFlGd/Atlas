@@ -355,6 +355,18 @@ describe('a picture kept at full size', () => {
     }
   });
 
+  it('may be a GIF that moves, with a copy for pages of the same type', () => {
+    const gif = {
+      ...full(),
+      file: 'pictures/torch-9k2.gif',
+      remote: 'https://wiki.example.org/files/Torch.gif',
+      shownAt: 'https://wiki.example.org/files/small/48/Torch.gif',
+      pageCopy: { file: 'pictures/torch-9k2.page.gif', width: 48, height: 48 },
+    };
+    expect(pictureSchema.parse(gif)).toEqual(gif);
+    expect(packReadSchemas.pictureSchema.parse(gif)).toEqual(gif);
+  });
+
   it('keeps its copy for pages apart from every picture file', () => {
     const pack = makeGuidesFixturePack();
     pack.pictures!.push(full());
