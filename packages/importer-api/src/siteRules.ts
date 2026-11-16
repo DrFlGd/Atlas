@@ -337,23 +337,28 @@ function rulesGuidePartSchema<L extends z.ZodType>(licence: L) {
   });
 }
 
-const fieldOrValue = z.string().min(1).max(200);
+/** A map's own id, as a file gives it for a site with one map: it stands for `{map}` in an address. */
+export const MAP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/u;
+/** The marks an address of a map's images may hold, in its path only. */
+export const MAP_IMAGE_MARKS = ['{map}', '{z}', '{x}', '{y}', '{-y}'] as const;
+
+/** A number of a map, as a data path in each entry or as a plain number for a site with one map. */
+const pathOrInt = (max: number) => z.union([dataPath, z.int().min(0).max(max)]);
+const pixels = z.int().min(1).max(10_000_000);
 
 const mapsSchema = z.strictObject({
   path: dataPath.optional(),
-  id: fieldOrValue,
-  name: fieldOrValue,
-  size: z.union([
-    dataPath,
-    z.tuple([z.int().min(1).max(10_000_000), z.int().min(1).max(10_000_000)]),
-  ]),
-  maxZoom: z.union([dataPath, z.int().min(0).max(30)]),
+  id: text(200),
+  name: text(200),
+  size: z.union([dataPath, z.tuple([pixels, pixels]), z.tuple([dataPath, dataPath])]),
+  maxZoom: pathOrInt(24),
+  minZoom: pathOrInt(24).optional(),
   group: dataPath.optional(),
   floor: dataPath.optional(),
   picture: z.strictObject({
     image: address.optional(),
     images: address.optional(),
-    tile: z.int().min(16).max(4096).optional(),
+    tile: z.int().min(64).max(1024).optional(),
   }),
 });
 
@@ -371,10 +376,12 @@ const mapPartFields = {
     id: dataPath.optional(),
     name: dataPath.optional(),
     group: dataPath.optional(),
+    icon: dataPath.optional(),
   }),
   locations: z.strictObject({
     path: dataPath,
     fields: z.strictObject({
+      id: dataPath.optional(),
       map: dataPath.optional(),
       type: dataPath,
       name: dataPath.optional(),
@@ -383,11 +390,15 @@ const mapPartFields = {
       description: dataPath.optional(),
       picture: dataPath.optional(),
       page: dataPath.optional(),
+      count: dataPath.optional(),
+      hidden: dataPath.optional(),
+      icon: dataPath.optional(),
     }),
   }),
   position: z.strictObject({
     units: z.enum(['pixels', 'fraction', 'degrees']),
-    origin: z.enum(['top-left', 'bottom-left']),
+    origin: z.enum(['top-left', 'bottom-left']).optional(),
+    zoom: z.int().min(0).max(24).optional(),
   }),
 };
 
@@ -789,6 +800,141 @@ export function addressProblem(text: string, hosts: readonly string[]): string |
     : `is on ${at}, which is not one of the hosts this field may use (${hosts.join(', ')})`;
 }
 
+/**
+ * Why the address of a map's images is not one, or null: on `hosts`, with
+ * `{z}`, `{x}` and one of `{y}` and `{-y}` in its path, `{map}` there when
+ * it is needed, no other mark, and nothing marked in its query.
+ */
+export function mapImagesProblem(text: string, hosts: readonly string[]): string | null {
+  const wrong = addressProblem(text, hosts);
+  if (wrong) return wrong;
+  const cut = text.search(/[?#]/u);
+  const path = cut < 0 ? text : text.slice(0, cut);
+  const rest = cut < 0 ? '' : text.slice(cut);
+  if (/[{}]/u.test(rest)) {
+    return 'may hold its marks in its path only: what follows ? is sent as it is written';
+  }
+  const marks: string[] = path.match(/\{[^{}]*\}/gu) ?? [];
+  const other = marks.find((mark) => !(MAP_IMAGE_MARKS as readonly string[]).includes(mark));
+  if (other || /[{}]/u.test(path.replace(/\{[^{}]*\}/gu, ''))) {
+    return `may hold only the marks ${MAP_IMAGE_MARKS.join(', ')}${other ? `, not ${other}` : ''}`;
+  }
+  const rows = marks.filter((mark) => mark === '{y}' || mark === '{-y}').length;
+  if (!marks.includes('{z}') || !marks.includes('{x}') || rows !== 1) {
+    return 'must hold {z}, {x} and either {y} or {-y} (rows counted from the bottom)';
+  }
+  return null;
+}
+
+/** The problems of a map part read by `rules` that its fields' forms alone do not show. */
+function mapPartProblems(
+  part: RulesMapPart,
+  at: Path,
+  hosts: readonly string[],
+): SiteRulesProblem[] {
+  const problems: SiteRulesProblem[] = [];
+  const add = (path: Path, message: string | null) => {
+    if (message) problems.push({ field: fieldPath([...at, ...path]), message });
+  };
+  const pictureHosts = [...hosts, ...(part.pictures?.hosts ?? [])];
+  const { data, maps, types, locations, position } = part;
+  if (data.from === 'file') {
+    if (data.address === undefined) add(['data', 'address'], 'is needed with "from": "file"');
+    else {
+      add(
+        ['data', 'address'],
+        addressProblem(data.address, hosts) ??
+          (/[{}]/u.test(data.address) ? 'must be one address, without { or }' : null),
+      );
+    }
+    if (data.element !== undefined) add(['data', 'element'], 'is only for "from": "page"');
+  } else {
+    if (data.element === undefined) add(['data', 'element'], 'is needed with "from": "page"');
+    if (data.address !== undefined) add(['data', 'address'], 'is only for "from": "file"');
+  }
+  const picture = maps.picture;
+  if ((picture.image === undefined) === (picture.images === undefined)) {
+    add(['maps', 'picture'], 'must hold either image or images, not both and not neither');
+  }
+  if (picture.image !== undefined) {
+    add(
+      ['maps', 'picture', 'image'],
+      addressProblem(picture.image, pictureHosts) ??
+        (/[{}]/u.test(picture.image) ? 'must be one address, without { or }' : null),
+    );
+    if (picture.tile !== undefined && picture.images === undefined) {
+      add(['maps', 'picture', 'tile'], 'is only for images');
+    }
+  }
+  if (picture.images !== undefined) {
+    add(['maps', 'picture', 'images'], mapImagesProblem(picture.images, pictureHosts));
+    if (picture.tile === undefined) add(['maps', 'picture', 'tile'], 'is needed with images');
+    else if ((picture.tile & (picture.tile - 1)) !== 0) {
+      add(['maps', 'picture', 'tile'], 'must be a power of two, such as 256 or 512');
+    }
+  }
+  const oneMap = maps.path === undefined;
+  if (oneMap) {
+    add(
+      ['maps', 'id'],
+      MAP_ID_PATTERN.test(maps.id)
+        ? null
+        : "must be the map's id when maps has no path: letters, digits, _, . and -",
+    );
+    if (typeof maps.size[0] !== 'number') {
+      add(['maps', 'size'], 'must be [width, height] in pixels when maps has no path');
+    }
+    if (typeof maps.maxZoom === 'string') {
+      add(['maps', 'maxZoom'], 'must be a number when maps has no path');
+    }
+    if (typeof maps.minZoom === 'string') {
+      add(['maps', 'minZoom'], 'must be a number when maps has no path');
+    }
+    for (const key of ['group', 'floor'] as const) {
+      if (maps[key] !== undefined) add(['maps', key], 'is only for maps with a path');
+    }
+  } else {
+    for (const key of ['id', 'name'] as const) {
+      add(['maps', key], dataPathProblem(maps[key]));
+    }
+    if (locations.fields.map === undefined) {
+      add(['locations', 'fields', 'map'], 'is needed when there are several maps');
+    }
+    if (maps.floor !== undefined && maps.group === undefined) {
+      add(['maps', 'floor'], 'is only for maps with a group');
+    }
+  }
+  if (
+    typeof maps.minZoom === 'number' &&
+    typeof maps.maxZoom === 'number' &&
+    maps.minZoom > maps.maxZoom
+  ) {
+    add(['maps', 'minZoom'], 'must not be above maxZoom');
+  }
+  const fromLocations = types.from === 'locations';
+  if (fromLocations === (types.path !== undefined)) {
+    add(['types'], 'must hold either "from": "locations" or path, not both and not neither');
+  } else if (fromLocations) {
+    for (const key of ['id', 'name', 'group', 'icon'] as const) {
+      if (types[key] !== undefined) add(['types', key], 'is only for types with a path');
+    }
+  } else {
+    if (types.names !== undefined) add(['types', 'names'], 'is only for "from": "locations"');
+    if (types.id === undefined) add(['types', 'id'], 'is needed with a path');
+    if (types.name === undefined) add(['types', 'name'], 'is needed with a path');
+  }
+  if (position.units === 'degrees' && position.origin !== undefined) {
+    add(
+      ['position', 'origin'],
+      'is only for pixels and fraction: degrees are longitude and latitude',
+    );
+  }
+  if (position.units !== 'pixels' && position.zoom !== undefined) {
+    add(['position', 'zoom'], 'is only for "units": "pixels"');
+  }
+  return problems;
+}
+
 /** The problems of a whole site file that its fields' forms alone do not show. */
 function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
   const problems: SiteRulesProblem[] = [];
@@ -840,81 +986,7 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
       add([...at, 'pictures', 'fullAttribute'], 'is only for "full": "attribute"');
     }
     if (part.type === 'map') {
-      const pictureHosts = [...hosts, ...(part.pictures?.hosts ?? [])];
-      const { data, maps, types, locations } = part;
-      if (data.from === 'file') {
-        if (data.address === undefined)
-          add([...at, 'data', 'address'], 'is needed with "from": "file"');
-        else add([...at, 'data', 'address'], addressProblem(data.address, hosts));
-        if (data.element !== undefined)
-          add([...at, 'data', 'element'], 'is only for "from": "page"');
-      } else {
-        if (data.element === undefined)
-          add([...at, 'data', 'element'], 'is needed with "from": "page"');
-        if (data.address !== undefined)
-          add([...at, 'data', 'address'], 'is only for "from": "file"');
-      }
-      const picture = maps.picture;
-      if ((picture.image === undefined) === (picture.images === undefined)) {
-        add(
-          [...at, 'maps', 'picture'],
-          'must hold either image or images, not both and not neither',
-        );
-      }
-      if (picture.image !== undefined) {
-        add([...at, 'maps', 'picture', 'image'], addressProblem(picture.image, pictureHosts));
-      }
-      if (picture.images !== undefined) {
-        add([...at, 'maps', 'picture', 'images'], addressProblem(picture.images, pictureHosts));
-        const named = ['{z}', '{x}'].every((mark) => picture.images!.includes(mark));
-        const rows = picture.images.includes('{y}') || picture.images.includes('{-y}');
-        if (!named || !rows) {
-          add(
-            [...at, 'maps', 'picture', 'images'],
-            'must hold {z}, {x} and {y} (or {-y}), and {map} where the maps differ',
-          );
-        }
-        if (picture.tile === undefined)
-          add([...at, 'maps', 'picture', 'tile'], 'is needed with images');
-      }
-      const oneMap = maps.path === undefined;
-      if (oneMap) {
-        if (typeof maps.size === 'string') {
-          add([...at, 'maps', 'size'], 'must be [width, height] in pixels when maps has no path');
-        }
-        if (typeof maps.maxZoom === 'string') {
-          add([...at, 'maps', 'maxZoom'], 'must be a number when maps has no path');
-        }
-      } else {
-        for (const key of ['id', 'name'] as const) {
-          add([...at, 'maps', key], dataPathProblem(maps[key]));
-        }
-        if (typeof maps.size !== 'string') {
-          add([...at, 'maps', 'size'], 'must be a field name when maps has a path');
-        }
-        if (typeof maps.maxZoom !== 'string') {
-          add([...at, 'maps', 'maxZoom'], 'must be a field name when maps has a path');
-        }
-        if (locations.fields.map === undefined) {
-          add([...at, 'locations', 'fields', 'map'], 'is needed when there are several maps');
-        }
-      }
-      const fromLocations = types.from === 'locations';
-      if (fromLocations === (types.path !== undefined)) {
-        add(
-          [...at, 'types'],
-          'must hold either "from": "locations" or path, not both and not neither',
-        );
-      } else if (fromLocations) {
-        for (const key of ['id', 'name', 'group'] as const) {
-          if (types[key] !== undefined) add([...at, 'types', key], 'is only for types with a path');
-        }
-      } else {
-        if (types.names !== undefined)
-          add([...at, 'types', 'names'], 'is only for "from": "locations"');
-        if (types.id === undefined) add([...at, 'types', 'id'], 'is needed with a path');
-        if (types.name === undefined) add([...at, 'types', 'name'], 'is needed with a path');
-      }
+      problems.push(...mapPartProblems(part, at, hosts));
       return;
     }
     const { contents, pages, article } = part;

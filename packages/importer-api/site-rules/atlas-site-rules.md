@@ -15,7 +15,7 @@ A site rules file is one JSON file that describes one site to the Atlas Importer
 
 **Words used here.** A _part_ is one map, wiki or guide of a site. A _reader_ is the piece of the Importer that reads a part. A _location_ is a point on a map, and each location has a _type_ (item, enemy, boss and so on). A _session_ is one run of reading pages.
 
-**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved. A map part read by `rules` is checked in form only: the Importer says plainly that it cannot read it yet, as the map part is a sketch that will change. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
+**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
 
 **Who decides.** The owner checks every file by hand before switching it on. A file states the site's limits: which pages, which ways of reading, which pause, which licence, or that the site is not read at all. The files that come with the Importer state the limits the owner has accepted so far, and a file of the owner's that is switched on wins over them for its site. Some things are no site's to decide and no file can change them: the app's honest name `Atlas/<version>`, `robots.txt` when the app reads by itself, the app's own shortest pause, stopping at the first refusal, never answering a check that asks whether the reader is a person, and never using a window's cookies.
 
@@ -384,15 +384,13 @@ The third shape of the format says that a site is not read at all, by any reader
 
 A site file of the owner's that names an exact host under a refused domain, switched on, reads that host. The Importer shows the refusal it overrides, with its notice, before the owner switches the file on. Write such a file only when the owner tells you that the site gave permission, and record it in the licence block.
 
-## The general reader for a map (a sketch)
+## The general reader for a map
 
-This section is a sketch. It will change when the first map is built with it. Map sites differ far more than wikis: how the picture is cut into images, how positions are counted, and where the list of locations is kept.
+A part with `"reader": "rules"` and the type `map` describes a map whose data the site keeps as JSON: its maps, the types of its locations, and its locations with their positions. The general reader reads that data in one piece, finds each thing in it by a data path (see "Data paths"), and makes one game of maps from it. It reads a map of this form:
 
-The general reader is meant for a map of this form:
-
-- Its locations are one list, each entry with a name, a type and a position.
-- That list is JSON, either inside the map page or in one file the page loads.
-- Its picture is one image, or a set of images with a regular address by zoom, column and row.
+- Its locations are one list, each entry with a type and a position, and usually a name.
+- That list is JSON, either in one file the map page loads or inside one element of the map page.
+- Its picture is a set of images with a regular address by zoom, column and row, all of one size.
 
 ```json
 {
@@ -401,50 +399,128 @@ The general reader is meant for a map of this form:
   "start": "/map",
   "data": { "from": "file", "address": "/map/data.json" },
   "maps": {
-    "path": "maps[*]",
-    "id": "id",
+    "path": "areas[*]",
+    "id": "key",
     "name": "title",
-    "size": "size",
-    "maxZoom": "maxZoom",
-    "group": "building",
-    "floor": "floorName",
-    "picture": { "images": "/map/{map}/{z}/{x}/{y}.webp", "tile": 256 }
+    "size": "pixels",
+    "maxZoom": "zoom",
+    "group": "tower",
+    "floor": "level",
+    "picture": { "images": "/tiles/{map}/{z}/{x}/{y}.png?v=7", "tile": 256 }
   },
   "types": { "from": "locations", "names": { "key-items": "Key items" } },
   "locations": {
-    "path": "markers[*]",
+    "path": "spots[*]",
     "fields": {
-      "map": "map",
-      "type": "category",
-      "name": "title",
+      "id": "uid",
+      "map": "area",
+      "type": "kind",
+      "name": "label",
       "x": "at[0]",
       "y": "at[1]",
-      "description": "note",
-      "page": "link"
+      "description": "text",
+      "picture": "photo",
+      "page": "link",
+      "count": "amount",
+      "hidden": "secret",
+      "icon": "symbol"
     }
   },
   "position": { "units": "pixels", "origin": "top-left" },
-  "reading": { "ways": ["fetch", "window"], "pause": 2 }
+  "reading": { "ways": ["fetch"], "pause": 2 }
 }
 ```
 
-| Field                      | Meaning                                                                                                                                                                                                                                                                    |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `data`                     | Where the map's data is. `"from": "file"` with `address`: one JSON file on a listed host that the map page itself loads. `"from": "page"` with `element`: the JSON text of one element of the map page                                                                     |
-| `maps`                     | The maps of the game (areas, regions, floors). `path` is a data path to the list. `id`, `name`, `size` (width and height in pixels at the highest zoom) and `maxZoom` are field names in each entry. A site with one map leaves `path` out and gives these as plain values |
-| `maps.group`, `maps.floor` | For a building with several floors: the field that is the same for all its floors, and the field that names the floor. Each floor becomes a map of its own, and the floors of one building stand together                                                                  |
-| `maps.picture`             | `image`: the address of one image. Or `images`: an address with `{map}`, `{z}`, `{x}` and `{y}` (or `{-y}` when rows are counted from the bottom), and `tile` as the width of one image in pixels                                                                          |
-| `types`                    | The types of location. `"from": "locations"` takes them from the locations' own `type` values, with `names` for those whose shown name differs. Or `path` to a list, with the field names of `id`, `name` and, if there is one, `group`                                    |
-| `locations`                | `path` to the list, and under `fields` the data path of each fact inside one entry. `map`, `type`, `x` and `y` are needed (a site with one map needs no `map`). `name`, `description`, `picture` and `page` (the address of its wiki page) are used when present           |
-| `position`                 | How `x` and `y` are counted. `units`: `pixels` of the picture at its highest zoom, `fraction` from 0 to 1, or `degrees`. `origin`: `top-left` or `bottom-left`                                                                                                             |
+The data this part reads would look like this (made up, shortened):
 
-**Until this section is settled,** write the map part as far as you can see it, expect that the Importer does not load it yet, and put these facts in your report so the format can be finished from them:
+```text
+{ "areas": [ { "key": "harbour", "title": "Harbour", "pixels": [4096, 3072], "zoom": 4 },
+             { "key": "tower-1", "title": "Old Tower", "pixels": [1024, 1024], "zoom": 2,
+               "tower": "old-tower", "level": "Ground floor" } ],
+  "spots": [ { "uid": 17, "area": "harbour", "kind": "key-items", "label": "Rusty key",
+               "at": [1200, 2210], "text": "<p>Under the <b>third</b> crate.</p>",
+               "link": "/items/rusty-key", "amount": 1, "symbol": "key" } ] }
+```
 
-- Where the data is: in the page, or in a file the page loads, and at which address pattern.
-- The names of the fields of one location and of one type. Names only, never the content.
-- How the picture is cut: one image or many, the address pattern, the zoom levels, the size of one image.
-- How a position is counted, and how you know (for example, one location you could find on the picture).
-- Anything that does not fit the form above: positions that need a formula for each map, data put together by a script from many requests, data that is not JSON, or addresses that carry a key which runs out.
+### `data`
+
+| Field     | Needed           | Form             | Meaning                                                                                                    |
+| --------- | ---------------- | ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| `from`    | yes              | `file` or `page` | Where the data is: one JSON file the map page loads, or the JSON text of one element of the map page       |
+| `address` | with `file`: yes | address          | The data file, on one of `site.hosts`. A query it needs, such as `?v=3`, is part of the address as written |
+| `element` | with `page`: yes | selector         | The element of the page at `start` whose text is the JSON, such as `script#map-data`                       |
+
+The data is read the ways `reading.ways` offers. The general reader reads it by itself only (`fetch`): the data file, or the page at `start` for `page`, is asked for once, after `robots.txt`, under the app's own name. A map part offers `["fetch"]`, and a site whose data cannot be read that way is not read by `rules` (see "When a file is not enough").
+
+### `maps`
+
+The maps of the game: areas, regions, floors. With `path`, each entry of that list is a map, and the other fields are data paths inside one entry; a plain number for `size`, `maxZoom` or `minZoom` is then the same for every map. A site with one map leaves `path` out and gives the facts as plain values: `"id": "world"`, `"name": "The World"`, `"size": [4096, 4096]`, `"maxZoom": 4`.
+
+| Field     | Needed | Form                                            | Meaning                                                                                                                                                        |
+| --------- | ------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`    | no     | data path                                       | The list of maps. Without it the site has one map                                                                                                              |
+| `id`      | yes    | data path, or the id                            | The map's id. It names the map in Atlas and stands for `{map}` in the address of its images, so it is letters, digits, `_`, `.` and `-`                        |
+| `name`    | yes    | data path, or the name                          | The map's name as the site shows it                                                                                                                            |
+| `size`    | yes    | data path, two data paths, or `[width, height]` | The size of the map's picture in pixels at its highest zoom. One data path names `[width, height]`, or a single number for a square; two name width and height |
+| `maxZoom` | yes    | data path, or a number from 0 to 24             | The highest zoom of the map's images. At that zoom one pixel of an image is one pixel of the picture                                                           |
+| `minZoom` | no     | data path, or a number, default 0               | The lowest zoom the site has images for                                                                                                                        |
+| `group`   | no     | data path                                       | For a building with several floors: the value that is the same for all of its floors                                                                           |
+| `floor`   | no     | data path                                       | With `group`: the floor's name or number                                                                                                                       |
+| `picture` | yes    | object                                          | Where the map's images are (next table)                                                                                                                        |
+
+**Floors.** Atlas has no floors yet. Each floor becomes a map of its own, named with its floor ("Old Tower, Ground floor" when the floor's name is not in the map's name already), and the floors of one group stand together in the list of maps, where the first of them stands in the data.
+
+**`maps.picture`**
+
+| Field    | Form                      | Meaning                                                                                                                                                                                                                                                  |
+| -------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `images` | address with marks        | The address of one image, on `site.hosts` or `pictures.hosts`, with `{z}` for its zoom, `{x}` for its column and `{y}` for its row counted from the top, or `{-y}` for a row counted from the bottom, and `{map}` for the map's id where the maps differ |
+| `tile`   | 64, 128, 256, 512 or 1024 | With `images`: the width of one image in pixels                                                                                                                                                                                                          |
+| `image`  | address                   | The picture as one image. The format takes it, and the Importer says plainly when it cannot read such a map yet                                                                                                                                          |
+
+The marks stand in the path of the address only. What follows `?` is fixed: a query the site's own map asks with, such as a version (`?v=7`), is written as it is, and the images are asked for with it.
+
+### `types`
+
+The types of location. Either `"from": "locations"`: the types are the values of the locations' `type` field, each named by `names` (the value and its shown name) or else made from the value (`key-items` becomes "Key Items"). Or `path` to a list of types in the data, with these data paths in each entry: `id` (the value a location's `type` has), `name`, and if there is one, `group` (the name of a group of types) and `icon`.
+
+**Icons.** Atlas draws its own icons. A type's icon is chosen from the words of its name and of the name the site gives its icon (`types.icon`, or `locations.fields.icon`), never from the site's icon picture, which is not fetched or kept. A name that says nothing gets a plain pin.
+
+### `locations`
+
+`path` is the list of locations, and `fields` holds a data path inside one entry for each fact.
+
+| Field         | Needed            | Meaning                                                                                                                                                                                                                                                                   |
+| ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`        | yes               | The location's type                                                                                                                                                                                                                                                       |
+| `x`, `y`      | yes               | Its position (see `position`)                                                                                                                                                                                                                                             |
+| `map`         | with several maps | The id of the map it is on, as `maps.id` gives it                                                                                                                                                                                                                         |
+| `id`          | no                | The site's own id of the location. Give it when there is one: it keeps a location the same location in Atlas, with what the owner ticked, when the data changes. Without it a location is known by its map, type, name and position                                       |
+| `name`        | no                | Its name. A location without one is named after its type and numbered                                                                                                                                                                                                     |
+| `description` | no                | Its description. Markup in it is turned into text with headings, lists and links, and anything else is dropped                                                                                                                                                            |
+| `picture`     | no                | The address of a picture of the location, on `site.hosts` or `pictures.hosts`. It is kept for the owner's own use                                                                                                                                                         |
+| `page`        | no                | The address of its page on the site (a full address, or a path from `/`). Its description ends with a link to that page. When the same file has a wiki part that reads that page, the link leads to the page in Atlas once the map and the wiki are shown under one title |
+| `count`       | no                | How many of the thing are there. A count above 1 is added to the name: "Gold coin (×3)"                                                                                                                                                                                   |
+| `hidden`      | no                | Whether the site keeps the location hidden until the reader asks, as a secret. `true`, `1`, `"true"` or `"yes"` count as hidden: the location is kept, and its description and picture are hidden until the reader asks for them                                          |
+| `icon`        | no                | The name of the location's icon on the site: its words help choose the icon of its type                                                                                                                                                                                   |
+
+A value of the wrong kind (a name that is a list, a position that is not a number) leaves that fact out, or, for `type`, `x`, `y` and `map`, the location; the Importer counts what it left out and says so.
+
+### `position`
+
+| Field    | Form                                  | Meaning                                                                                                                                                                              |
+| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `units`  | `pixels`, `fraction` or `degrees`     | `pixels` of the picture; `fraction` of the picture's width and height, from 0 to 1; `degrees` of longitude (`x`) and latitude (`y`) on a map cut as the web's usual square of images |
+| `origin` | `top-left` (default) or `bottom-left` | With `pixels` and `fraction`: where `x` and `y` are counted from. With `bottom-left`, `y` grows upwards                                                                              |
+| `zoom`   | a number from 0 to 24                 | With `pixels`: the zoom the pixels are counted at, when it is not the map's `maxZoom`. A position at zoom 0 of a map whose `maxZoom` is 4 is 16 times smaller                        |
+
+Nothing else is worked out: no formula, no condition, no sum of fields. Check the positions on a data file the owner saved (see "Check the file"): the Importer says whether every location falls inside its map. Positions that fall outside usually mean that `x` and `y` are the other way round, or that the pixels are counted at another zoom.
+
+### `licence` and `pictures` of a map part
+
+The licence block of a map part is recorded with the game as the source of its data: a known licence or the words filled in are written under the map's credit, and `ask` records none and asks nothing, as for the maps of the Importer's other readers. `pictures.hosts` names the hosts of the images and of the locations' pictures; the other fields of `pictures` are for pages and are not used.
+
+**One file for a site with a wiki and a map.** Write both parts in one file. They become two games of the same name: the wiki's pages and the map. The Importer offers to show them under one title, and the links of locations to the wiki's pages then lead to those pages in Atlas.
 
 ## Selectors, address patterns and data paths
 
@@ -512,26 +588,31 @@ A file is checked three times: its form, its selectors against saved pages, and 
 
 **3. One page in the Importer.** After "Add a rules file…", the owner presses "Try on a saved page…" on the file's row and picks one page saved from the site as an `.html` file. The Importer takes the page's address from its canonical link, or asks for it, reads the page with the file and shows what it understood, in plain words: which part read it, the title, the game's name, the first words of the text, the numbers of headings, pictures (and how many have a full-size file), tables and chapters, the contents the page shows with their groups, the next page, the licence it would record, and every selector that matched nothing. Nothing is kept and nothing is downloaded. Tell the owner in your report which page to try and what they should see.
 
+**A map part** is tried on its data instead: the owner presses "Try on a saved page…" and picks the data file saved from the site as a `.json` file (for `"from": "page"`, the saved map page). The Importer shows the maps it found (how many, their names and sizes, and which are floors of one group), the types (how many, and the first few), the locations of each map (how many, and how many have a description, a link to a page and a picture), the first few locations with their positions, whether every position falls inside its map, the address of one image of each map as the template makes it, and every data path that matched nothing. Nothing is kept and nothing is downloaded. Tell the owner in your report what they should see.
+
 **Not there yet.** A checker that tries a file on a whole folder of saved pages, and trying a live page from that screen, are not part of this version. Until then, try the pages one at a time, and say in your report how they were checked.
 
 ## When a file is not enough
 
 Some sites need a change to the software, and a few must not be read at all. Do not bend a file to get around either. Write the file for what does fit, and report the rest.
 
-| What you see                                                                                      | What it means                                                    | What you do                                                                  |
-| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Pages need a sign-in or a payment                                                                 | The Importer does not read them, in any way                      | Write no file for those pages. Report it                                     |
-| The terms forbid automated reading                                                                | The owner decides, not you                                       | Offer `browse` only, put a sentence in `site.notice`, report it              |
-| The site asks whether the reader is a person, again and again                                     | Reading in a window does not get through, and must not be forced | Offer `browse` only. Report it                                               |
-| Content appears only after scrolling, or after pressing a tab or "Show more"                      | The general reader keeps what is on the page after loading       | Report which pages and what must be pressed. Needs a change to the software  |
-| The text is drawn as a picture or on a canvas                                                     | There is no text to keep                                         | Report it                                                                    |
-| The pages read well but lose their layout (cards side by side, tabs, columns)                     | A known limit of every reader today                              | Write the file. Name two example pages in the report                         |
-| A built-in reader fits the engine but reads the site wrongly                                      | The site changed the engine's look                               | Try `rules` for the part. Report what the built-in reader got wrong          |
-| A map with a formula for each map, data that is not JSON, or data put together from many requests | Outside the general map reader                                   | Report the facts listed in the map section. Needs a reader in code           |
-| Addresses of data or pictures carry a key that runs out                                           | The site gives access for one visit only                         | Do not copy the key into a file. Report it                                   |
-| Pages change with a setting the site keeps for the visitor, such as a language or a game version  | A file cannot choose the setting                                 | Report which setting the owner needs                                         |
-| The site covers several games                                                                     | One file can describe them all                                   | Use `{game}` in `start` (see "One file for every game of a site")            |
-| The Importer refuses to read the site at all                                                      | A refusal file of the Importer covers it                         | Write no file unless the owner tells you the site gave permission. Report it |
+| What you see                                                                                      | What it means                                                    | What you do                                                                                |
+| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Pages need a sign-in or a payment                                                                 | The Importer does not read them, in any way                      | Write no file for those pages. Report it                                                   |
+| The terms forbid automated reading                                                                | The owner decides, not you                                       | Offer `browse` only, put a sentence in `site.notice`, report it                            |
+| The site asks whether the reader is a person, again and again                                     | Reading in a window does not get through, and must not be forced | Offer `browse` only. Report it                                                             |
+| Content appears only after scrolling, or after pressing a tab or "Show more"                      | The general reader keeps what is on the page after loading       | Report which pages and what must be pressed. Needs a change to the software                |
+| The text is drawn as a picture or on a canvas                                                     | There is no text to keep                                         | Report it                                                                                  |
+| The pages read well but lose their layout (cards side by side, tabs, columns)                     | A known limit of every reader today                              | Write the file. Name two example pages in the report                                       |
+| A built-in reader fits the engine but reads the site wrongly                                      | The site changed the engine's look                               | Try `rules` for the part. Report what the built-in reader got wrong                        |
+| A map with a formula for each map, data that is not JSON, or data put together from many requests | Outside the general map reader                                   | Report where the data is, its fields and how a position is counted. Needs a reader in code |
+| A map whose data is read only in a window, or as the owner browses                                | The general map reader reads its data by itself only             | Report it. Needs a change to the software                                                  |
+| A map whose picture is one image, not images by zoom, column and row                              | The format takes it, and the Importer does not read it yet       | Write the part with `image`. Report it                                                     |
+| Positions written as negative numbers counted from the top, as some map scripts keep them         | No arithmetic beyond what `position` describes                   | Report it. Needs a change to the software                                                  |
+| Addresses of data or pictures carry a key that runs out                                           | The site gives access for one visit only                         | Do not copy the key into a file. Report it                                                 |
+| Pages change with a setting the site keeps for the visitor, such as a language or a game version  | A file cannot choose the setting                                 | Report which setting the owner needs                                                       |
+| The site covers several games                                                                     | One file can describe them all                                   | Use `{game}` in `start` (see "One file for every game of a site")                          |
+| The Importer refuses to read the site at all                                                      | A refusal file of the Importer covers it                         | Write no file unless the owner tells you the site gave permission. Report it               |
 
 **The report.** Hand this over with the file, filled in. It is what the owner reads, so write it in plain words.
 
@@ -556,7 +637,7 @@ You do not change the software yourself unless the owner asks you to. What the s
 
 ## A complete example
 
-This file adds a made-up site with two parts read by the general reader: a walkthrough, which is a guide, and the wiki around it. Start from it and take out what your site does not need.
+This file adds a made-up site with three parts read by the general reader: a walkthrough, which is a guide, the wiki around it, and the map. Start from it and take out what your site does not need.
 
 ```json
 {
@@ -597,7 +678,7 @@ This file adds a made-up site with two parts read by the general reader: a walkt
       "start": "/",
       "pages": {
         "include": ["/**"],
-        "exclude": ["/map", "/map/**", "/search/**", "/account/**", "/tools/**"]
+        "exclude": ["/world-map", "/world-map/**", "/search/**", "/account/**", "/tools/**"]
       },
       "contents": { "from": "sitemap", "address": "/sitemap.xml", "sections": "header nav a" },
       "article": {
@@ -617,9 +698,40 @@ This file adds a made-up site with two parts read by the general reader: a walkt
         "skip": ["img.avatar"]
       },
       "reading": { "ways": ["fetch", "window", "browse"], "pause": 2 }
+    },
+    {
+      "type": "map",
+      "reader": "rules",
+      "name": "Example Wiki map",
+      "start": "/world-map",
+      "data": { "from": "file", "address": "/world-map/data.json" },
+      "maps": {
+        "path": "regions[*]",
+        "id": "id",
+        "name": "name",
+        "size": "size",
+        "maxZoom": "maxZoom",
+        "picture": { "images": "/tiles/{map}/{z}/{x}/{y}.png", "tile": 256 }
+      },
+      "types": { "from": "locations" },
+      "locations": {
+        "path": "pins[*]",
+        "fields": {
+          "id": "id",
+          "map": "map",
+          "type": "type",
+          "name": "name",
+          "x": "x",
+          "y": "y",
+          "description": "text",
+          "page": "page"
+        }
+      },
+      "position": { "units": "pixels" },
+      "reading": { "ways": ["fetch"], "pause": 2 }
     }
   ],
-  "notes": "The guide stands first, so that its pages are not taken by the wiki part."
+  "notes": "The guide stands first, so that its pages are not taken by the wiki part. The map's data is one file, read by itself."
 }
 ```
 

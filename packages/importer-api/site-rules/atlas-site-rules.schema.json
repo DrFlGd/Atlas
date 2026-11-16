@@ -1332,6 +1332,20 @@
                             "items": false,
                             "minItems": 2,
                             "maxItems": 2
+                          },
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
                           }
                         ]
                       },
@@ -1343,7 +1357,19 @@
                           {
                             "type": "integer",
                             "minimum": 0,
-                            "maximum": 30
+                            "maximum": 24
+                          }
+                        ]
+                      },
+                      "minZoom": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 24
                           }
                         ]
                       },
@@ -1368,8 +1394,8 @@
                           },
                           "tile": {
                             "type": "integer",
-                            "minimum": 16,
-                            "maximum": 4096
+                            "minimum": 64,
+                            "maximum": 1024
                           }
                         },
                         "additionalProperties": false
@@ -1409,6 +1435,9 @@
                       },
                       "group": {
                         "type": "string"
+                      },
+                      "icon": {
+                        "type": "string"
                       }
                     },
                     "additionalProperties": false
@@ -1422,6 +1451,9 @@
                       "fields": {
                         "type": "object",
                         "properties": {
+                          "id": {
+                            "type": "string"
+                          },
                           "map": {
                             "type": "string"
                           },
@@ -1445,6 +1477,15 @@
                           },
                           "page": {
                             "type": "string"
+                          },
+                          "count": {
+                            "type": "string"
+                          },
+                          "hidden": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string"
                           }
                         },
                         "required": ["type", "x", "y"],
@@ -1464,9 +1505,14 @@
                       "origin": {
                         "type": "string",
                         "enum": ["top-left", "bottom-left"]
+                      },
+                      "zoom": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 24
                       }
                     },
-                    "required": ["units", "origin"],
+                    "required": ["units"],
                     "additionalProperties": false
                   }
                 },
