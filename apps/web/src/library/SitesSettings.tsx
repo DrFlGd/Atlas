@@ -372,7 +372,11 @@ function SiteTrialCard({ trying }: { trying: SiteTrying }) {
           ) : null}
         </form>
       ) : null}
-      {trying.phase === 'trying' ? <p className="muted">Trying the file on the page…</p> : null}
+      {trying.phase === 'trying' ? (
+        <p className="muted">
+          {trying.address ? 'Trying the file on the page…' : 'Trying the file on the data…'}
+        </p>
+      ) : null}
       {trying.phase === 'failed' ? (
         <p className="download-error" role="alert">
           {trying.error}
@@ -394,7 +398,9 @@ function SiteTrialCard({ trying }: { trying: SiteTrying }) {
         <>
           <p>
             {result.part === null
-              ? 'The file did not read the page:'
+              ? result.type === 'map' || !trying.address
+                ? 'The file did not read the data:'
+                : 'The file did not read the page:'
               : result.problems.length === 1
                 ? 'One thing went wrong:'
                 : 'These things went wrong:'}

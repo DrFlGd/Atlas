@@ -39,8 +39,9 @@
  *   person's widens (`sites.widens`): a way it adds for a host, or a refusal
  *   it overrides.
  * - It lists the general reader, `rules`, only to try a file on a page the
- *   person saved (`sites.tryPage`), with the browser's own HTML parser; it
- *   does not read a site by such a file, and says so of each part.
+ *   person saved (`sites.tryPage`), with the browser's own HTML parser, or
+ *   a map part on a data file the person saved (`request.data`); it does
+ *   not read a site by such a file, and says so of each part.
  *
  * It is a single plain ES module with no imports, as every importer module
  * must be.
@@ -153,7 +154,7 @@ function problemsOf(/** @type {SiteRules} */ rules, /** @type {SiteRules[]} */ b
       field: `parts[${index}]`,
       message:
         part.type === 'map'
-          ? 'is a map part read by rules, which this importer cannot read'
+          ? 'is a map part read by rules, which this importer only tries on a saved data file: it does not read the map by it'
           : 'is read by rules, which this importer only tries on a saved page: it does not read the site by it',
     });
   });
@@ -299,6 +300,7 @@ const wordsOf = (/** @type {Element | null} */ element) =>
  */
 function tryPage(/** @type {SiteTrialRequest} */ request) {
   const { rules, url, html } = request;
+  if (typeof request.data === 'string') return tryMapData(rules, request.data);
   /** @type {SiteTrial} */
   const trial = {
     part: null,
@@ -410,6 +412,182 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
           ? 'None recorded, as the file says.'
           : 'The page states none, so you would be asked for one.';
   trial.text = wordsOf(content).slice(0, 600);
+  return trial;
+}
+
+/**
+ * Every value a data path (`markers[*].at[0]`) names in `data`: a short
+ * reader of the format's data paths, as this module may import nothing.
+ */
+function valuesAt(/** @type {unknown} */ data, /** @type {string} */ path) {
+  /** @type {unknown[]} */
+  let values = [data];
+  for (const step of path.match(/[^.[\]]+|\[(?:\*|\d+)\]/g) ?? []) {
+    values = values.flatMap((value) => {
+      if (step === '[*]') return Array.isArray(value) ? value : [];
+      if (step.startsWith('[')) {
+        const at = Number(step.slice(1, -1));
+        return Array.isArray(value) && at < value.length ? [value[at]] : [];
+      }
+      return value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        Object.hasOwn(value, step)
+        ? [/** @type {Record<string, unknown>} */ (value)[step]]
+        : [];
+    });
+  }
+  return values;
+}
+
+/**
+ * A map part tried on a saved data file: its maps, types and locations, in
+ * pixels from the top left only (this demo reads no other units), and each
+ * data path that matched nothing. Nothing is fetched.
+ */
+function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) {
+  /** @type {SiteTrial} */
+  const trial = {
+    part: null,
+    headings: 0,
+    pictures: 0,
+    fullPictures: 0,
+    tables: 0,
+    chapters: 0,
+    problems: [],
+  };
+  if (!('site' in rules)) return trial;
+  const index = rules.parts.findIndex((p) => p.reader === RULES && p.type === 'map');
+  const part = rules.parts[index];
+  if (!part || !('maps' in part)) {
+    trial.problems.push('The file has no map part read by rules to try on a data file.');
+    return trial;
+  }
+  /** @type {unknown} */
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    trial.problems.push('The file chosen is not JSON, so it is not a data file of the map.');
+    return trial;
+  }
+  trial.part = index;
+  trial.type = 'map';
+  if (rules.site.game) trial.game = rules.site.game;
+  const used = new Set();
+  const read = (
+    /** @type {string} */ field,
+    /** @type {string} */ path,
+    /** @type {unknown} */ at,
+  ) => {
+    const found = valuesAt(at, path);
+    if (found.length > 0) used.add(field);
+    return found;
+  };
+  const one = (
+    /** @type {string} */ field,
+    /** @type {unknown} */ given,
+    /** @type {unknown} */ entry,
+  ) => (part.maps.path && typeof given === 'string' ? read(field, given, entry)[0] : given);
+  const entries = part.maps.path ? read('maps.path', part.maps.path, data) : [{}];
+  const origin = `https://${rules.site.hosts[0]}`;
+  const maps = entries.map((entry) => {
+    const id = String(one('maps.id', part.maps.id, entry) ?? '');
+    const size = one('maps.size', part.maps.size, entry);
+    const width = Number(Array.isArray(size) ? size[0] : size);
+    const height = Number(Array.isArray(size) ? size[1] : size);
+    const group = part.maps.group ? read('maps.group', part.maps.group, entry)[0] : undefined;
+    const floor = part.maps.floor ? read('maps.floor', part.maps.floor, entry)[0] : undefined;
+    const name = String(one('maps.name', part.maps.name, entry) ?? id);
+    const images = part.maps.picture.images;
+    return {
+      id,
+      name: floor && !name.includes(String(floor)) ? `${name}, ${floor}` : name,
+      width,
+      height,
+      ...(group ? { group: String(group), ...(floor ? { floor: String(floor) } : {}) } : {}),
+      locations: 0,
+      described: 0,
+      linked: 0,
+      pictured: 0,
+      outside: 0,
+      ...(images
+        ? {
+            image: new URL(
+              images
+                .replaceAll('{map}', id)
+                .replace('{z}', '0')
+                .replace('{x}', '0')
+                .replace(/\{-?y\}/, '0'),
+              origin,
+            ).href,
+          }
+        : {}),
+    };
+  });
+  const fields = part.locations.fields;
+  /** @type {string[]} */
+  const types = [];
+  /** @type {{ name: string, map: string, type: string, x: number, y: number }[]} */
+  const first = [];
+  let count = 0;
+  for (const entry of read('locations.path', part.locations.path, data)) {
+    const value = (/** @type {string} */ key) => {
+      const path = /** @type {Record<string, string | undefined>} */ (fields)[key];
+      return path ? read(`locations.fields.${key}`, path, entry)[0] : undefined;
+    };
+    const map = fields.map ? maps.find((m) => m.id === String(value('map'))) : maps[0];
+    const type = value('type');
+    const x = Number(value('x'));
+    const y = Number(value('y'));
+    if (!map || type === undefined || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const typeName = String(('names' in part.types && part.types.names?.[String(type)]) || type);
+    if (!types.includes(typeName)) types.push(typeName);
+    if (x < 0 || y < 0 || x > map.width || y > map.height) {
+      map.outside += 1;
+      continue;
+    }
+    count += 1;
+    map.locations += 1;
+    if (value('description')) map.described += 1;
+    if (value('page')) map.linked += 1;
+    if (value('picture')) map.pictured += 1;
+    if (first.length < 5)
+      first.push({ name: String(value('name') ?? typeName), map: map.name, type: typeName, x, y });
+  }
+  trial.map = {
+    maps: { count: maps.length, listed: maps },
+    types: { count: types.length, first: types.slice(0, 8) },
+    locations: { count, first },
+  };
+  const outside = maps.reduce((sum, map) => sum + map.outside, 0);
+  if (outside > 0) {
+    trial.problems.push(
+      `${outside} ${outside === 1 ? 'location falls outside its map' : 'locations fall outside their map'}, so ${outside === 1 ? 'it would be' : 'they would be'} left out: x and y may be the other way round, or counted at another zoom.`,
+    );
+  }
+  /** @type {[string, unknown][]} */
+  const paths = [
+    ['maps.path', part.maps.path],
+    ...(part.maps.path
+      ? /** @type {[string, unknown][]} */ ([
+          ['maps.id', part.maps.id],
+          ['maps.name', part.maps.name],
+          ['maps.size', part.maps.size],
+          ['maps.group', part.maps.group],
+          ['maps.floor', part.maps.floor],
+        ])
+      : []),
+    ['locations.path', part.locations.path],
+    ...Object.entries(fields).map(
+      ([key, path]) => /** @type {[string, unknown]} */ ([`locations.fields.${key}`, path]),
+    ),
+  ];
+  for (const [field, path] of paths) {
+    if (typeof path === 'string' && !used.has(field)) {
+      trial.problems.push(`“${field}” (${path}) matched nothing in the data.`);
+    }
+  }
   return trial;
 }
 

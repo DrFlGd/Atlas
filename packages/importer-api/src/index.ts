@@ -1243,9 +1243,10 @@ export interface ImporterSites {
   widens?(rules: SiteRules): SiteRulesWidening[];
   /**
    * Optional: tries a file's parts read by `rules` on one page the person
-   * saved ("Try on a saved page"), and says what the reader understood
-   * (see `siteTrial.ts`). Nothing is kept and nothing is fetched. Must not
-   * throw.
+   * saved ("Try on a saved page"), or its map part on a data file the
+   * person saved (`SiteTrialRequest.data`), and says what the reader
+   * understood (see `siteTrial.ts`). Nothing is kept and nothing is
+   * fetched. Must not throw.
    */
   tryPage?(request: SiteTrialRequest): SiteTrial | Promise<SiteTrial>;
 }

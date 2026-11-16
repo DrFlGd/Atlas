@@ -353,8 +353,8 @@ describe('checking a file', () => {
     expect(checkSiteRules(licenced({ ask: true, stated: 'footer' }, 'part')).ok).toBe(true);
   });
 
-  it('checks a map part as the sketch says', () => {
-    const map = {
+  describe('a map part read by rules', () => {
+    const oneMap = {
       type: 'map',
       reader: 'rules',
       start: '/map',
@@ -364,39 +364,154 @@ describe('checking a file', () => {
         name: 'World',
         size: [4096, 4096],
         maxZoom: 4,
-        picture: { image: '/m.png' },
+        picture: { images: '/tiles/{z}/{x}/{y}.png', tile: 256 },
       },
       types: { from: 'locations' },
       locations: { path: 'markers[*]', fields: { type: 'kind', x: 'x', y: 'y' } },
       position: { units: 'pixels', origin: 'top-left' },
-      reading: { ways: ['window'] },
+      reading: { ways: ['fetch'] },
     };
-    expect(checkSiteRules(changed((f) => (f.parts = [map]))).ok).toBe(true);
-    expect(
-      fields(
-        changed((f) => {
-          f.parts = [
-            {
-              ...map,
-              maps: {
-                ...map.maps,
-                path: 'maps[*]',
-                picture: { images: 'https://tiles.example.net/{z}/{x}.png' },
-              },
-              types: { from: 'locations', path: 'types[*]' },
-            },
-          ];
+    const several = {
+      ...oneMap,
+      data: { from: 'file', address: '/map/data.json?v=3' },
+      maps: {
+        path: 'regions[*]',
+        id: 'code',
+        name: 'caption',
+        size: 'dims',
+        maxZoom: 'deepest',
+        minZoom: 'shallowest',
+        group: 'building',
+        floor: 'storey',
+        picture: { images: 'https://tiles.example.net/{map}/{z}/{x}/{-y}.jpg?v=7', tile: 512 },
+      },
+      types: { path: 'kinds[*]', id: 'key', name: 'label', group: 'set', icon: 'symbol' },
+      locations: {
+        path: 'pins[*]',
+        fields: {
+          id: 'uid',
+          map: 'area',
+          type: 'sort',
+          name: 'label',
+          x: 'at[0]',
+          y: 'at[1]',
+          description: 'about',
+          picture: 'photo',
+          page: 'href',
+          count: 'qty',
+          hidden: 'secret',
+          icon: 'glyph',
+        },
+      },
+      position: { units: 'pixels', zoom: 0 },
+      pictures: { hosts: ['tiles.example.net'] },
+    };
+    const withPart = (part: unknown) => changed((f) => (f.parts = [part]));
+    const mapFields = (part: unknown) => {
+      const result = checkSiteRules(withPart(part));
+      return result.ok ? [] : result.problems.map((problem) => problem.field).sort();
+    };
+
+    it('takes a site with one map and a site with several, with floors', () => {
+      expect(checkSiteRules(withPart(oneMap)).ok).toBe(true);
+      expect(checkSiteRules(withPart(several)).ok).toBe(true);
+      expect(
+        checkSiteRules(withPart({ ...several, maps: { ...several.maps, size: ['w', 'h'] } })).ok,
+      ).toBe(true);
+      expect(
+        checkSiteRules(
+          withPart({ ...oneMap, position: { units: 'fraction', origin: 'bottom-left' } }),
+        ).ok,
+      ).toBe(true);
+    });
+
+    it('names what a map part needs and what is only for another form', () => {
+      expect(
+        mapFields({
+          ...oneMap,
+          maps: { ...oneMap.maps, path: 'regions[*]', picture: { images: '/{z}/{x}.png' } },
+          types: { from: 'locations', path: 'types[*]' },
         }),
-      ).sort(),
-    ).toEqual([
-      'parts[0].locations.fields.map',
-      'parts[0].maps.maxZoom',
-      'parts[0].maps.picture.images',
-      'parts[0].maps.picture.images',
-      'parts[0].maps.picture.tile',
-      'parts[0].maps.size',
-      'parts[0].types',
-    ]);
+      ).toEqual([
+        'parts[0].locations.fields.map',
+        'parts[0].maps.picture.images',
+        'parts[0].maps.picture.tile',
+        'parts[0].types',
+      ]);
+      expect(
+        mapFields({
+          ...oneMap,
+          maps: {
+            ...oneMap.maps,
+            id: 'the world',
+            size: 'size',
+            maxZoom: 'zoom',
+            group: 'g',
+            floor: 'f',
+          },
+        }),
+      ).toEqual([
+        'parts[0].maps.floor',
+        'parts[0].maps.group',
+        'parts[0].maps.id',
+        'parts[0].maps.maxZoom',
+        'parts[0].maps.size',
+      ]);
+      expect(
+        mapFields({
+          ...several,
+          maps: { ...several.maps, size: [100, 100], group: undefined, minZoom: 5, maxZoom: 4 },
+          data: { from: 'file', element: 'script' },
+          types: { from: 'locations', icon: 'symbol', names: { a: 'A' } },
+          position: { units: 'degrees', origin: 'bottom-left', zoom: 2 },
+        }),
+      ).toEqual([
+        'parts[0].data.address',
+        'parts[0].data.element',
+        'parts[0].maps.floor',
+        'parts[0].maps.minZoom',
+        'parts[0].position.origin',
+        'parts[0].position.zoom',
+        'parts[0].types.icon',
+      ]);
+    });
+
+    it('takes the marks of an image address in its path only, and a fixed query', () => {
+      const images = (address: string, tile = 256) =>
+        mapFields({ ...oneMap, maps: { ...oneMap.maps, picture: { images: address, tile } } });
+      expect(images('/t/{map}/{z}/{x}/{y}.png?v=1&size=256')).toEqual([]);
+      expect(images('/t/{z}/{y}/{x}.png')).toEqual([]);
+      expect(images('/t/{z}/{x}/{-y}.png')).toEqual([]);
+      expect(images('/t/{z}/{x}/{y}.png?zoom={z}')).toEqual(['parts[0].maps.picture.images']);
+      expect(images('/t/{z}/{x}/{y}/{-y}.png')).toEqual(['parts[0].maps.picture.images']);
+      expect(images('/t/{level}/{x}/{y}.png')).toEqual(['parts[0].maps.picture.images']);
+      expect(images('/t/{z}/{x}/{y.png')).toEqual(['parts[0].maps.picture.images']);
+      expect(images('https://elsewhere.example.org/{z}/{x}/{y}.png')).toEqual([
+        'parts[0].maps.picture.images',
+      ]);
+      expect(images('/t/{z}/{x}/{y}.png', 300)).toEqual(['parts[0].maps.picture.tile']);
+      expect(
+        problems(withPart({ ...oneMap, maps: { ...oneMap.maps, picture: { images: '/{z}/{x}' } } }))
+          .map(problemText)
+          .find((text) => text.includes('images')),
+      ).toBe(
+        'Part 1, maps.picture.images: must hold {z}, {x} and either {y} or {-y} (rows counted from the bottom).',
+      );
+    });
+
+    it('takes a picture of one image, on the site or a picture host', () => {
+      const image = (address: string, extra = {}) =>
+        mapFields({
+          ...oneMap,
+          maps: { ...oneMap.maps, picture: { image: address, ...extra } },
+        });
+      expect(image('/map/world.png')).toEqual([]);
+      expect(image('/map/{map}.png')).toEqual(['parts[0].maps.picture.image']);
+      expect(image('/map/world.png', { tile: 256 })).toEqual(['parts[0].maps.picture.tile']);
+      expect(image('/map/world.png', { images: '/{z}/{x}/{y}.png', tile: 256 })).toEqual([
+        'parts[0].maps.picture',
+      ]);
+    });
   });
 
   it('reads a reader’s defaults, its second shape', () => {

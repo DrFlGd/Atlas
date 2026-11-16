@@ -72,6 +72,64 @@ describe('what the reader understood of a saved page, in words', () => {
     ]);
   });
 
+  it('says what a map part found in a saved data file, map by map', () => {
+    expect(
+      trialInWords(
+        trial({
+          part: 1,
+          type: 'map',
+          game: 'Reed Isle',
+          map: {
+            maps: {
+              count: 3,
+              listed: [
+                {
+                  name: 'Harbour',
+                  width: 4096,
+                  height: 3072,
+                  locations: 12,
+                  described: 4,
+                  linked: 1,
+                  pictured: 0,
+                  outside: 0,
+                  image: 'https://maps.example.org/tiles/harbour/0/0/0.png',
+                },
+                {
+                  name: 'Old Tower, Ground floor',
+                  width: 1024,
+                  height: 1024,
+                  group: 'old-tower',
+                  floor: 'Ground floor',
+                  locations: 1,
+                  described: 0,
+                  linked: 0,
+                  pictured: 1,
+                  outside: 2,
+                },
+              ],
+            },
+            types: { count: 2, first: ['Key items', 'Chests'] },
+            locations: {
+              count: 13,
+              first: [{ name: 'Rusty key', map: 'Harbour', type: 'Key items', x: 1200.5, y: 2210 }],
+            },
+          },
+        }),
+      ),
+    ).toEqual([
+      'Part 2 of the file read it, as the data of a map.',
+      'The game is “Reed Isle”.',
+      'It has 3 maps, 2 types of location and 13 locations.',
+      '“Harbour”, 4,096 × 3,072 pixels: 12 locations, with 4 descriptions, 1 link, 0 pictures.',
+      'One image of “Harbour”: https://maps.example.org/tiles/harbour/0/0/0.png',
+      '“Old Tower, Ground floor”, 1,024 × 1,024 pixels: 1 location, with 0 descriptions, 0 links, 1 picture. It is a floor of “old-tower”. 2 locations fall outside it.',
+      '1 other map is not listed here.',
+      'The first types: Key items, Chests.',
+      'The first locations: Rusty key (Key items) on “Harbour” at 1,200.5, 2,210.',
+      'Not every position falls inside its map: the maps above say how many fall outside.',
+    ]);
+  });
+
   it('says nothing when no part read the page: its problems say why', () => {
     expect(trialInWords(trial({ part: null, problems: ['Not a page of the file.'] }))).toEqual([]);
   });

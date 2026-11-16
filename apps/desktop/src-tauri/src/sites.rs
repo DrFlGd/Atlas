@@ -384,16 +384,17 @@ pub mod commands {
         .await
     }
 
-    /// Asks for a page the person saved (`.html`) and reads it, after
-    /// checking its size, to try a site rules file on ("Try on a saved
-    /// page"). Nothing of it is kept. `None` when the dialog was closed.
+    /// Asks for a page the person saved (`.html`), or a map's data file
+    /// (`.json`), and reads it, after checking its size, to try a site
+    /// rules file on ("Try on a saved page"). Nothing of it is kept. `None`
+    /// when the dialog was closed.
     #[tauri::command]
     pub async fn sites_pick_page<R: Runtime>(
         window: WebviewWindow<R>,
     ) -> Result<Option<ChosenSiteFile>, String> {
         desktop_only()?;
         let dialog = crate::commands::file_dialog(&window, "Try on a saved page")
-            .add_filter("Saved page", &["html", "htm"]);
+            .add_filter("Saved page or data file", &["html", "htm", "json"]);
         let Some(path) = crate::commands::chosen_path(|done| dialog.pick_file(done)).await? else {
             return Ok(None);
         };
