@@ -18,9 +18,10 @@ import type {
 /**
  * Keeping the style sheets a wiki's pages use, once per game, in the game's
  * folder (`import/styles/`, see `styles.rs` in the shell and `styles.ts` in
- * the importer contract). Nothing uses them yet, and nothing here changes
- * how a page is read, converted or shown: a sheet that cannot be kept never
- * fails or holds up a session, and the activity log says why.
+ * the importer contract). The app lays fetched pages out with them
+ * (`pageLayouts.ts`), and uses them for nothing else; nothing here changes
+ * how a page is read or shown: a sheet that cannot be kept never fails or
+ * holds up a session, and the activity log says why.
  *
  * - A page read in the app's window (the ways `window` and `browse`) hands
  *   its sheets over itself: once its data has been read, the importer's
