@@ -14,8 +14,10 @@ import {
 /**
  * Pages of the made-up Example Wiki read while the wiki is shown: the game
  * shown takes them in, a page the wiki forwards to another address is one
- * page under both names, a page found that could not be read says why, and
- * a page read while the game is built again from its saved pages is kept.
+ * page under both names, a page found that could not be read says why, a
+ * page read while the game is built again from its saved pages is kept, and
+ * pages in HTML are laid out with the wiki's kept style sheets, when built
+ * again and when read, with nothing asked of the wiki.
  */
 
 test.use({ layout: 'standard' });
@@ -242,4 +244,112 @@ test('building a wiki again says what it does and how far it is', async ({ page 
   await expect(done).toContainText('Nothing was downloaded');
   await expect(page.getByTestId('add-map-locations')).toHaveCount(0);
   expect(realErrors(errors)).toEqual([]);
+});
+
+/** A made-up wiki page in HTML, with a block its sheet hides and one the page claims is hidden. */
+const htmlPage = (title: string, said: string, folded: string) =>
+  `<!doctype html><html><head><title>${title}</title><link rel="stylesheet" href="/skin.css">` +
+  `<script>document.title = 'changed'</script></head><body><div id="content"><h1>${title}</h1>` +
+  `<p>${said}</p><div class="folded"><p>${folded}</p></div>` +
+  `<p data-atlas-hidden="display">Words the page claims are hidden.</p>` +
+  `<p><img src="https://pictures.example.org/heron.png"> A heron waits.</p>` +
+  `<p style="background: url(https://pictures.example.org/reeds.png)">Reeds sway.</p></div></body></html>`;
+
+const SHEET = `@import url("https://wiki.example.org/more.css");
+#content { width: 640px; background: url(https://pictures.example.org/paper.png); }
+.folded { display: none; }`;
+
+test('pages in HTML are laid out with the wiki’s kept style sheets, and nothing is asked of the wiki for it', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const errors = collectErrors(page);
+  const asked: string[] = [];
+  page.on('request', (request) => {
+    if (/example\.(?:org|com)/u.test(new URL(request.url()).hostname)) asked.push(request.url());
+  });
+  await setUp(page, true, {
+    wiki: {
+      headings: [{ title: 'Basics', pages: ['Welcome', 'Marsh', 'Fen'] }],
+      pages: {
+        Welcome: { title: 'Welcome', body: 'The isle is wet.' },
+        Marsh: {
+          title: 'Marsh',
+          body: '',
+          html: htmlPage('Marsh', 'Rushes grow by the water.', 'Words folded away.'),
+        },
+        Fen: {
+          title: 'Fen',
+          body: '',
+          html: htmlPage('Fen', 'Peat lies deep.', 'More folded words.'),
+        },
+      },
+    },
+  });
+  await addWiki(page);
+  // The wiki is the game shown, so its pages' text shows.
+  await page.getByTestId('wiki-show-game').click();
+  await expect(page.getByTestId('wiki-show-game')).toHaveCount(0);
+  const preview = async (title: string) => {
+    await row(page, title).getByTestId('wiki-row-open').click();
+    return page.getByTestId('wiki-preview-text');
+  };
+
+  // No sheet is kept yet: the page is written from its HTML alone, its own claims of layout unread.
+  await row(page, 'Marsh').getByTestId('wiki-row-tick').check();
+  await readTicked(page, 'Marsh');
+  await expect(row(page, 'Marsh')).toHaveAttribute('data-state', 'read');
+  let text = await preview('Marsh');
+  await expect(text).toContainText('Rushes grow by the water.');
+  await expect(text).toContainText('Words folded away.');
+  await expect(text).toContainText('Words the page claims are hidden.');
+
+  // The wiki's sheet is kept now. Built again, slowly, each page is laid out with it first.
+  const fetchedBefore = await fetched(page);
+  await setMock(page, {
+    styleTexts: { 'example-wiki': [{ address: 'https://wiki.example.org/skin.css', text: SHEET }] },
+    slowSources: 1500,
+  });
+  await libraryMore(page, 'rebuild-pack');
+  const building = page.getByTestId('add-map-saved-pages');
+  await expect(building).toContainText('Laying out and writing the saved pages again', {
+    timeout: 30_000,
+  });
+  await expect(building).toContainText('Nothing is downloaded');
+  await expect(page.getByTestId('add-map-saved-pages-figure')).toHaveText(
+    /^Laying out page [12] of 2$/u,
+  );
+  await setMock(page, { slowSources: 0 });
+  // Said once, in full sentences, where Build again reports.
+  await expect(page.getByTestId('add-map-layout')).toHaveText(
+    '1 page was laid out as a browser shows it, with the wiki’s style sheets kept on this computer.',
+    { timeout: 30_000 },
+  );
+  await expect(page.getByTestId('add-map-layout')).toHaveCount(1);
+  expect(await fetched(page)).toEqual(fetchedBefore);
+  await page.getByTestId('library-flow').getByTestId('library-flow-close').click();
+
+  // What the sheet hides is left out; the page's own claim was never the app's, so it stays.
+  await wikiScreen(page);
+  text = await preview('Marsh');
+  await expect(text).toContainText('Rushes grow by the water.');
+  await expect(text).not.toContainText('Words folded away.');
+  await expect(text).toContainText('Words the page claims are hidden.');
+  await expect(text).toContainText('A heron waits.');
+
+  // A page read now is laid out as soon as it is fetched, before it is written.
+  await row(page, 'Fen').getByTestId('wiki-row-tick').check();
+  await readTicked(page, 'Fen');
+  text = await preview('Fen');
+  await expect(text).toContainText('Peat lies deep.');
+  await expect(text).not.toContainText('More folded words.');
+
+  // Nothing was asked of the wiki for the layout: no sheet, no picture, nothing its page names.
+  expect(asked).toEqual([]);
+  expect(await page.title()).not.toBe('changed');
+  // The test's own scripts (the fake shell's, the clock's) go into every frame, and the closed
+  // frame refuses them; that the frame refuses nothing of the page's is `layoutFrame.spec.ts`'s.
+  expect(
+    realErrors(errors).filter((e) => !e.includes("Blocked script execution in 'about:srcdoc'")),
+  ).toEqual([]);
 });
