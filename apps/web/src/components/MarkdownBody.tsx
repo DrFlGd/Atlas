@@ -7,6 +7,7 @@ import {
   openLargePicture,
   showFileInstead,
 } from '../pictureLarge';
+import { holdMovingPicture } from '../movingPictures';
 import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
@@ -31,7 +32,9 @@ export const UNREAD_PAGE = 'This page has not been read yet';
  * `onAddRow`, a row of a page's table that names something has a button to
  * add it to a build (see `buildRows.ts`). A picture whose file is larger
  * than the page shows it opens in the larger view when pressed, or with
- * Enter or Space (see `pictureLarge.ts`).
+ * Enter or Space (see `pictureLarge.ts`). A picture that moves is shown
+ * still, with a Play button, when the system asks for less motion (see
+ * `movingPictures.ts`).
  */
 export function MarkdownBody({
   source,
@@ -107,11 +110,13 @@ export function MarkdownBody({
       if (!(event.target instanceof HTMLImageElement)) return;
       markUpscaled(event.target);
       markLargePicture(event.target);
+      void holdMovingPicture(event.target);
     };
     for (const img of root.querySelectorAll('.guide-picture img')) {
       if (img instanceof HTMLImageElement && img.complete) {
         markUpscaled(img);
         markLargePicture(img);
+        void holdMovingPicture(img);
       }
     }
     // An image's error and load do not bubble; they are seen on the way down.

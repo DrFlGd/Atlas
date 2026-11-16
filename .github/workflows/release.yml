@@ -139,6 +139,17 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.15.0
+
+          A page can now be laid out as its site lays it out, a picture that moves is shown moving, and a location's photo opens at full size.
+
+          - **Layout on a page.** A page's text can set blocks side by side with their shares of the width, frame a block as a card with a title, set short items in a row, flow a list in columns and centre a block. On a narrow window the blocks stand one under another in reading order. Pages made with a newer importer use these forms; pages you already have are unchanged.
+          - **Layout in the page editor.** Each laid-out part shows as a frame around its blocks, with tools for its widths, blocks and columns, to move it and to take it apart. **Layout** in the text tools makes one around the part being edited.
+          - **Pictures that move.** An animated GIF kept in a pack is shown moving. When your system asks for less motion it is shown still, with a **Play** button.
+          - **Location photos at full size.** A photo kept at full size opens large when pressed; cards show a smaller copy made for them.
+
+          A game or a file made with 0.15.0 still opens in older versions of Atlas, which show a laid-out page as one column with its marker lines as text.
+
           ## New in 0.14.0
 
           A game kept for your own use says so, exporting and importing speak for a wiki as well as a map, and a location's photo keeps its place.

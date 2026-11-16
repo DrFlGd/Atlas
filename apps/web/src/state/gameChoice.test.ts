@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { HOME_PAGE_KIND, type CatalogueGame, type ListedPage } from '@atlas/importer-api';
 import {
   choiceGame,
+  choicePageKey,
+  choicePageKeys,
   chosenPages,
   filterGames,
   keptCatalogue,
@@ -9,6 +11,8 @@ import {
   newPick,
   overCap,
   planPick,
+  tickGames,
+  tickPages,
   titleFromAddress,
   toggleGame,
   togglePage,
@@ -165,6 +169,52 @@ describe('the choice', () => {
   });
 });
 
+describe('Select all and Select none among the pages to choose', () => {
+  const choice = () =>
+    newChoice(
+      'add',
+      [game('test-valley', valley), game('test-coast', [map('test-coast', 'coast')])],
+      1,
+    );
+
+  it('act on every page of every game that this app can add, never on one it cannot', () => {
+    const start = choice();
+    const keys = choicePageKeys(start);
+    // Where to start is a guide, which this importer cannot add: never listed to tick.
+    expect(keys.shown).toEqual([
+      choicePageKey('test-valley', valley[1]!.url),
+      choicePageKey('test-valley', valley[3]!.url),
+      choicePageKey('test-valley', valley[2]!.url),
+      choicePageKey('test-coast', `${SITE}/test-coast/maps/coast`),
+    ]);
+    expect(keys.ticked).toEqual(keys.shown);
+
+    const none = tickPages(start, keys.shown, false);
+    expect(chosenPages(none)).toEqual([]);
+    expect(choicePageKeys(none).ticked).toEqual([]);
+    const all = tickPages(
+      none,
+      [...keys.shown, choicePageKey('test-valley', valley[0]!.url)],
+      true,
+    );
+    expect(choicePageKeys(all).ticked).toEqual(keys.shown);
+    expect(all.games[0]!.pages.find((page) => page.url === valley[0]!.url)?.checked).toBe(false);
+  });
+
+  it('change only the pages named, in the game named', () => {
+    const start = tickPages(choice(), choicePageKeys(choice()).shown, false);
+    const one = tickPages(
+      start,
+      [choicePageKey('test-coast', `${SITE}/test-coast/maps/coast`)],
+      true,
+    );
+    expect(chosenPages(one).map((page) => page.game)).toEqual(['test-coast']);
+    // The same address under another game's key is another page.
+    const other = tickPages(start, [choicePageKey('test-coast', valley[1]!.url)], true);
+    expect(chosenPages(other)).toEqual([]);
+  });
+});
+
 describe('a list of games', () => {
   const games: CatalogueGame[] = [
     { id: 'test-valley', name: 'Test Valley', address: `${SITE}/test-valley` },
@@ -209,6 +259,24 @@ describe('a list of games', () => {
     expect(plan.leftOut.map((game) => game.id)).toEqual(['game-12', 'game-13']);
     pick = toggleGame(pick, 'game-13');
     expect(pick.ticked).not.toContain('game-13');
+  });
+
+  it('ticks and unticks the games a search shows, keeping the others as they were', () => {
+    let pick = toggleGame(newPick(importer, `${SITE}/`, games, new Set()), 'test-hills');
+    const shown = filterGames(pick.games, 'test c').map((game) => game.id);
+    expect(shown).toEqual(['test-coast']);
+    pick = tickGames(pick, [...shown, 'test-gone'], true);
+    expect(pick.ticked).toEqual(['test-hills', 'test-coast']);
+    // Ticking again changes nothing; a game not in the list is never ticked.
+    expect(tickGames(pick, shown, true).ticked).toEqual(['test-hills', 'test-coast']);
+    pick = tickGames(
+      pick,
+      filterGames(pick.games, '').map((game) => game.id),
+      true,
+    );
+    expect(pick.ticked).toEqual(['test-hills', 'test-coast', 'test-valley']);
+    pick = tickGames(pick, shown, false);
+    expect(pick.ticked).toEqual(['test-hills', 'test-valley']);
   });
 
   it('opens no page for a kept list, so one more ticked game fits', () => {

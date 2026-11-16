@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { FollowLinksChoice } from '../components/FollowLinks';
 import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
+import { SelectShown } from '../components/SelectShown';
 import { LicenceQuestion, WikiReading } from '../components/SiteReading';
 import type { ListedPack, PackDetails } from '../desktop';
 import { notify, switchGame } from '../state/actions';
@@ -23,6 +24,7 @@ import {
 import { foundText, waitingForPerson } from '../state/importRun';
 import { hasLibraryHost, openPageForEditing } from '../state/libraryView';
 import { canChangeOwnPages, changeOwnPages, useOwnPages } from '../state/ownPages';
+import { selectShown } from '../state/selectShown';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { loadWikiNotes, NO_WIKI_NOTES, setWikiLeftOut, useWikiNotes } from '../state/wikiNotes';
 import {
@@ -34,6 +36,9 @@ import {
   matchesFilter,
   readWhen,
   readingTime,
+  selectText,
+  shownGroups,
+  shownPages,
   unread,
   wikiGroups,
   type FoundRows,
@@ -152,7 +157,7 @@ export function WikiScreen({
     WIKI_FILTERS.map((f) => [f.id, rows.filter((row) => matchesFilter(row, f.id)).length]),
   ) as Record<WikiFilter, number>;
   const selected = chosen ? (byKey.get(chosen) ?? null) : null;
-  const shown = game !== null;
+  const gameShown = game !== null;
 
   const tick = (keys: readonly string[], on: boolean) => {
     setTicked((before) => {
@@ -205,15 +210,12 @@ export function WikiScreen({
     );
   };
 
-  const shownGroups = groups
-    .map((group) => ({
-      ...group,
-      rows: group.rows.filter((row) => matchesFilter(row, filter)),
-      found: group.found
-        .map((found) => ({ ...found, pages: found.pages.filter((p) => matchesFilter(p, filter)) }))
-        .filter((found) => found.pages.length > 0),
-    }))
-    .filter((group) => group.rows.length > 0 || group.found.length > 0);
+  const shown = shownGroups(groups, filter);
+  // "Select all" and "Select none": every page this filter shows, under every heading.
+  const selection = selectShown(
+    shownPages(groups, filter).map((row) => row.key),
+    ticked,
+  );
   // A short list, or a filter, shows every heading open.
   const allOpen = filter !== 'all' || rows.length <= 30 || groups.length <= 1;
 
@@ -255,33 +257,42 @@ export function WikiScreen({
               </p>
             </div>
           )}
-          {shownGroups.length === 0 ? (
+          {shown.length === 0 ? (
             <p className="muted wiki-empty" data-testid="wiki-empty">
               {filter === 'all' ? 'No pages yet.' : 'No page is in this state.'}
             </p>
           ) : (
-            shownGroups.map((group) => (
-              <Group
-                key={group.title}
-                group={group}
-                whole={groups.find((g) => g.title === group.title)!}
-                open={allOpen || open.has(group.title)}
-                onOpen={(on) => {
-                  setOpen((before) => {
-                    const next = new Set(before);
-                    if (on) next.add(group.title);
-                    else next.delete(group.title);
-                    return next;
-                  });
-                }}
-                ticked={ticked}
-                chosen={chosen}
-                inRun={inRun}
-                onTick={tick}
-                onChoose={setChosen}
-              />
-            ))
+            <SelectShown
+              selection={selection}
+              label={
+                filter === 'all' ? 'Select the pages listed' : 'Select the pages this filter shows'
+              }
+              testId="wiki-select"
+              text={selectText(selection, filter)}
+              onTick={tick}
+            />
           )}
+          {shown.map((group) => (
+            <Group
+              key={group.title}
+              group={group}
+              whole={groups.find((g) => g.title === group.title)!}
+              open={allOpen || open.has(group.title)}
+              onOpen={(on) => {
+                setOpen((before) => {
+                  const next = new Set(before);
+                  if (on) next.add(group.title);
+                  else next.delete(group.title);
+                  return next;
+                });
+              }}
+              ticked={ticked}
+              chosen={chosen}
+              inRun={inRun}
+              onTick={tick}
+              onChoose={setChosen}
+            />
+          ))}
           {source.address && !browsing ? (
             <div className="wiki-contents-again">
               <button
@@ -328,9 +339,9 @@ export function WikiScreen({
             <div className="wiki-preview-empty">
               <p className="muted">
                 Choose a page on the left to see where it stands
-                {shown ? ', and its text when it was read' : ''}.
+                {gameShown ? ', and its text when it was read' : ''}.
               </p>
-              {shown ? null : (
+              {gameShown ? null : (
                 <>
                   <p className="muted small">
                     Show this wiki to see the text of the pages read here, edit them or leave them

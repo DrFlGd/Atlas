@@ -181,6 +181,10 @@ function installFakeShell(downloads: boolean) {
     view: { open: false, revision: 0 },
     /** The "Download location photos" job: one photo a poll. */
     photos: null as Job | null,
+    /** Photos here kept at most 1,280 pixels wide, offered again at full size. */
+    keptSmaller: 0,
+    /** The size the download settings keep location photos at. */
+    photoSize: 'full' as 'full' | 'smaller',
   };
   (window as unknown as { __mockShell: typeof shell }).__mockShell = shell;
   // Set by a test before this script: the pack is also listed as one added from a web page.
@@ -326,9 +330,12 @@ function installFakeShell(downloads: boolean) {
           hosts: ['photos.example.com'],
           job: job ? structuredClone(job) : null,
           busyWith: null,
+          keptSmaller: shell.photoSize === 'full' ? shell.keptSmaller : 0,
         });
       }
       case 'photos_start':
+      case 'photos_start_again':
+        if (command === 'photos_start_again') shell.keptSmaller = 0;
         shell.photos = {
           packId: 'remote#photos',
           title: 'Location photos of Remote test pack',
@@ -430,12 +437,18 @@ function installFakeShell(downloads: boolean) {
           busy: [],
         });
       case 'download_settings_get':
+      case 'download_settings_set':
+        if (command === 'download_settings_set') {
+          const { settings } = args as { settings: { photos: 'full' | 'smaller' } };
+          shell.photoSize = settings.photos;
+        }
         return Promise.resolve({
           settings: {
             parallel: 2,
             pauseMs: 250,
             requestsPerMinute: null,
             kilobytesPerSecond: null,
+            photos: shell.photoSize,
           },
           bounds: {
             parallel: [1, 4],
@@ -755,7 +768,7 @@ test.describe('location photos', () => {
     // Before: the location card says its photo is not downloaded, and nothing was asked for.
     await selectByName(page, 'Beacon 1');
     const missing = page.getByTestId('photo-missing');
-    await expect(missing).toHaveText('Photo not downloaded');
+    await expect(missing).toContainText('Photo not downloaded');
     expect((await shellCalls(page)).filter((call) => call.startsWith('photos_'))).toEqual([]);
 
     // The game's Location photos card offers them; nothing is fetched until asked.
@@ -804,6 +817,128 @@ test.describe('location photos', () => {
       .toBeGreaterThan(0);
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
+
+  test('a location card offers the photos of a game added before, and shows them as they come', async ({
+    page,
+  }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads photos');
+    const errors = collectErrors(page);
+    let photosThere = false;
+    await page.addInitScript(installFakeShell, true);
+    await servePack(
+      page,
+      () => null,
+      () => false,
+      () => photosThere,
+    );
+    await page.goto('./');
+    await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
+    await selectByName(page, 'Beacon 1');
+    const missing = page.getByTestId('photo-missing');
+    await expect(missing).toContainText('Photo not downloaded');
+    const offer = missing.getByRole('button', { name: 'Download the photos of this game' });
+    await expect(offer).toBeVisible();
+    // Nothing is asked for until it is pressed.
+    expect((await shellCalls(page)).filter((call) => call.startsWith('photos_'))).toEqual([]);
+    await page.screenshot({ path: `${PHOTO_SHOTS}/11-photo-not-downloaded-offer.png` });
+    photosThere = true;
+    await offer.focus();
+    await page.keyboard.press('Enter');
+    // After the map images (none here), one download of the game's photos.
+    await expect(page.getByTestId('photo').locator('img')).toHaveAttribute(
+      'alt',
+      'Beacon 1 at noon',
+    );
+    const calls = await shellCalls(page);
+    expect(calls.filter((call) => call === 'photos_start')).toHaveLength(1);
+    expect(calls.indexOf('tiles_snapshot')).toBeLessThan(calls.indexOf('photos_start'));
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+
+  test('keeps location photos at full size, shows a copy on cards and downloads older ones again', async ({
+    page,
+  }) => {
+    test.skip(!DOWNLOADS_BUILD, 'only a build with ATLAS_ENABLE_DOWNLOADS=1 downloads photos');
+    await mkdir(PHOTO_SHOTS, { recursive: true });
+    const errors = collectErrors(page);
+    await page.addInitScript(() => {
+      (window as unknown as { __listRemote: boolean }).__listRemote = true;
+    });
+    await page.addInitScript(installFakeShell, true);
+    // Downloaded before, smaller: only the files, no copies for cards.
+    await page.addInitScript(() => {
+      (window as unknown as { __mockShell: { keptSmaller: number } }).__mockShell.keptSmaller = 2;
+    });
+    let copies = false;
+    await servePack(
+      page,
+      () => null,
+      () => false,
+      () => true,
+    );
+    await page.route(`${PACK_URL}pictures/*.page.jpg`, (route) =>
+      copies ? route.fallback() : route.fulfill({ status: 404, body: 'not found' }),
+    );
+    await page.goto('./');
+    await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
+
+    // The card falls back to the photo's file while it has no copy.
+    await selectByName(page, 'Beacon 1');
+    const img = page.getByTestId('photo').locator('img');
+    await expect(img).toHaveAttribute('src', /pictures\/beacon-1\.jpg$/);
+
+    // The Library offers the photos kept smaller again at full size.
+    await openLibraryGame(page, 'remote');
+    const photos = page.getByTestId('library-photos-card');
+    await expect(photos).toContainText(
+      'each is kept at full size, up to 4,096 pixels wide, with a smaller copy for the cards.',
+    );
+    const note = photos.getByTestId('library-photos-again-note');
+    await expect(note).toHaveText(
+      '2 photos on this computer were made at most 1,280 pixels wide when they were downloaded. Download again at full size asks the site once for each of them, one at a time with the pause set for downloads, and keeps them at the size of their files.',
+    );
+    const again = photos.getByTestId('library-photos-again');
+    await expect(again).toHaveText('Download again at full size');
+    await expect(again).toBeEnabled();
+    await page.screenshot({ path: `${PHOTO_SHOTS}/9-download-again-full-size.png` });
+    expect(await shellCalls(page)).not.toContain('photos_start_again');
+    copies = true;
+    await again.click();
+    await expect(photos).toHaveAttribute('data-state', 'done');
+    expect(await shellCalls(page)).toContain('photos_start_again');
+    await expect(note).toHaveCount(0);
+    await expect(again).toHaveCount(0);
+
+    // With the copies made, the card shows the copy and the larger view the file.
+    await page.getByTestId('library-close').click();
+    await expect(img).toHaveAttribute('src', /pictures\/beacon-1\.page\.jpg$/);
+    await img.click();
+    await expect(page.getByTestId('photo-viewer-picture')).toHaveAttribute(
+      'src',
+      /pictures\/beacon-1\.jpg$/,
+    );
+    await page.keyboard.press('Escape');
+
+    // The download settings choose the size; with Smaller nothing is offered again.
+    await page.evaluate(() => {
+      (window as unknown as { __mockShell: { keptSmaller: number } }).__mockShell.keptSmaller = 2;
+    });
+    await openLibraryGame(page, 'remote');
+    await expect(photos.getByTestId('library-photos-again')).toBeVisible();
+    await page.getByTestId('library-settings').click();
+    const choice = page.getByTestId('setting-photos');
+    await expect(choice).toHaveAttribute('data-size', 'full');
+    await expect(page.getByTestId('setting-photos-full')).toContainText('Full size');
+    await page.getByTestId('setting-photos-smaller').click();
+    await expect(page.getByTestId('setting-photos-smaller')).toContainText(
+      'Smaller (1,280 pixels wide)',
+    );
+    await page.getByTestId('save-download-settings').click();
+    await expect(choice).toHaveAttribute('data-size', 'smaller');
+    expect(await shellCalls(page)).toContain('download_settings_set');
+    await page.screenshot({ path: `${PHOTO_SHOTS}/10-location-photos-setting.png` });
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
 });
 
 test('the plain web app offers no download', async ({ page }) => {
@@ -837,6 +972,10 @@ test('a build without downloads offers none, even in a shell that has them', asy
   await servePack(page, () => null);
   await page.goto('./');
   await expectNoDownloads(page);
+  // A location's card says its photo is not downloaded, and offers nothing.
+  await selectByName(page, 'Beacon 1');
+  await expect(page.getByTestId('photo-missing')).toHaveText('Photo not downloaded');
+  await expect(page.getByTestId('photo-download')).toHaveCount(0);
   // No "Download location photos" either.
   await openLibraryGame(page, 'remote');
   await expect(page.getByTestId('library-contents-card')).toBeVisible();

@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { collectErrors } from './helpers';
 import { expect, test } from './layout';
 import { DOWNLOADS_BUILD, EXAMPLE_WIKI, WIKI, mock, realErrors, setMock, setUp } from './fakeShell';
@@ -27,15 +27,22 @@ async function fetched(page: Page): Promise<string[]> {
   return (await mock(page)).events.filter((e) => e.what === 'fetch').map((e) => e.url!);
 }
 
-/** Adds the wiki with its first page, Welcome, from its contents. */
-async function addWiki(page: Page) {
+/**
+ * Adds the wiki with its first page, Welcome, from its contents. `choosing`
+ * runs on the step of choosing pages first, with the flow.
+ */
+async function addWiki(page: Page, choosing?: (flow: Locator) => Promise<void>) {
   if (!(await page.getByTestId('library').isVisible())) {
-    await page.getByTestId('section-library').click();
+    // The Library section in the standard layout, the folder button in the classic one.
+    const section = page.getByTestId('section-library');
+    if ((await section.count()) > 0) await section.click();
+    else await page.getByTestId('maps-button').click();
   }
   await page.getByTestId('add-map-url').fill(`${WIKI}/Contents`);
   await page.getByTestId('add-map-url').press('Enter');
   const flow = page.getByTestId('library-flow');
   await expect(flow).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
+  if (choosing) await choosing(flow);
   await page
     .getByTestId('add-map-choose-page')
     .filter({ hasText: 'Welcome' })
@@ -502,4 +509,160 @@ test('the box of a heading ticks every page shown under it, never one left out',
   await expect(row(page, 'Gates').getByTestId('wiki-row-tick')).not.toBeChecked();
   await expect(box).toHaveJSProperty('indeterminate', true);
   expect(realErrors(errors)).toEqual([]);
+});
+
+test.describe('Select all and Select none', () => {
+  /** The Example Wiki with a heading of 250 more pages, none of them read: more than a heading shows at first. */
+  const BIG_WIKI = {
+    ...EXAMPLE_WIKI,
+    headings: [
+      { title: 'Basics', pages: ['Welcome', 'Gates'] },
+      { title: 'Sights', pages: ['Harbour', 'Lighthouse'] },
+      { title: 'Items', pages: Array.from({ length: 250 }, (_, i) => `Item_${i}`) },
+    ],
+  };
+
+  test('act on every page the filter shows, under every heading and beyond the rows shown', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const errors = collectErrors(page);
+    await setUp(page, true, { wiki: BIG_WIKI });
+    await addWiki(page, async (flow) => {
+      // When adding: every page of the contents.
+      const select = flow.getByTestId('add-map-choose-select');
+      const all = select.getByRole('button', { name: 'Select all' });
+      const none = select.getByRole('button', { name: 'Select none' });
+      await expect(select).toHaveAccessibleName('Select the pages listed');
+      await expect(select.getByTestId('add-map-choose-select-text')).toHaveText(
+        'The list has 254 pages to tick, none of them ticked.',
+      );
+      await expect(none).toBeDisabled();
+      await all.click();
+      await expect(select.getByTestId('add-map-choose-select-text')).toHaveText(
+        'The list has 254 pages to tick, all of them ticked.',
+      );
+      await expect(all).toBeDisabled();
+      await expect(flow.getByTestId('add-map-choose-page').getByRole('checkbox')).toHaveCount(254);
+      await expect(
+        flow.getByTestId('add-map-choose-page').getByRole('checkbox').and(page.locator(':checked')),
+      ).toHaveCount(254);
+      await expect(flow.getByTestId('add-map-choose-confirm')).toHaveText('Add 254 pages');
+      await none.click();
+      await expect(flow.getByTestId('add-map-choose-confirm')).toHaveText('Tick the maps to add');
+      await expect(none).toBeDisabled();
+      await expect(all).toBeEnabled();
+    });
+    const before = await fetched(page);
+    const screen = page.getByTestId('wiki-screen');
+    const select = screen.getByTestId('wiki-select');
+    const all = select.getByRole('button', { name: 'Select all' });
+    const none = select.getByRole('button', { name: 'Select none' });
+    const text = select.getByTestId('wiki-select-text');
+    const ticked = page.getByTestId('wiki-ticked');
+
+    // Every heading is closed, as for any long list: they act on the pages under them all the same.
+    await expect(screen.getByTestId('wiki-row')).toHaveCount(0);
+    await expect(text).toHaveText('The list has 257 pages to tick, none of them ticked.');
+    // Leave out Gates: never ticked.
+    await page
+      .locator('[data-testid="wiki-group"][data-group="Basics"]')
+      .getByTestId('wiki-group-open')
+      .click();
+    await row(page, 'Gates').getByTestId('wiki-row-open').click();
+    await page.getByTestId('wiki-preview').getByTestId('wiki-leave-out').click();
+    await expect(row(page, 'Gates')).toHaveAttribute('data-state', 'left-out');
+
+    // Welcome, the three pages found on it, Harbour, Lighthouse and the 250 items.
+    await expect(select).toHaveAccessibleName('Select the pages listed');
+    await expect(text).toHaveText('The list has 256 pages to tick, none of them ticked.');
+    await expect(none).toBeDisabled();
+    await all.click();
+    await expect(ticked).toHaveText('256 pages ticked');
+    await expect(text).toHaveText('The list has 256 pages to tick, all of them ticked.');
+    await expect(all).toBeDisabled();
+    await expect(page.getByTestId('wiki-read')).toHaveText('Read 256 pages');
+    const items = page.locator('[data-testid="wiki-group"][data-group="Items"]');
+    await items.getByTestId('wiki-group-open').click();
+    await expect(items.getByTestId('wiki-row')).toHaveCount(200);
+    await expect(items.getByTestId('wiki-group-tick')).toBeChecked();
+    await expect(items).toContainText('250 ticked');
+    await expect(row(page, 'Gates').getByTestId('wiki-row-tick')).not.toBeChecked();
+
+    // With a filter: only what it shows. Welcome is the one page read.
+    await screen.getByTestId('wiki-filter-read').click();
+    await expect(select).toHaveAccessibleName('Select the pages this filter shows');
+    await expect(text).toHaveText('This filter shows 1 page to tick, and it is ticked.');
+    await none.click();
+    await expect(ticked).toHaveText('255 pages ticked');
+    await expect(none).toBeDisabled();
+    await screen.getByTestId('wiki-filter-left-out').click();
+    await expect(text).toHaveText(
+      'This filter shows no page to tick: every page it shows is left out.',
+    );
+    await expect(all).toBeDisabled();
+    await expect(none).toBeDisabled();
+    await screen.getByTestId('wiki-filter-not-read').click();
+    await expect(text).toHaveText('This filter shows 255 pages to tick, all of them ticked.');
+    await none.click();
+    await expect(ticked).toHaveText('No page ticked');
+    await screen.getByTestId('wiki-filter-all').click();
+    await expect(text).toHaveText('The list has 256 pages to tick, none of them ticked.');
+    // Items 200 to 249 are not shown yet, and were ticked and unticked all the same.
+    await all.click();
+    await items.getByTestId('wiki-rows-more').click();
+    await expect(row(page, 'Item 249').getByTestId('wiki-row-tick')).toBeChecked();
+
+    // Choosing pages fetched nothing.
+    expect(await fetched(page)).toEqual(before);
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test.describe('in the classic layout', () => {
+    test.use({ layout: 'classic' });
+
+    test('work by keyboard in the classic layout at phone width', async ({ page }) => {
+      test.setTimeout(120_000);
+      await page.setViewportSize({ width: 390, height: 844 });
+      const errors = collectErrors(page);
+      await setUp(page, true, { wiki: EXAMPLE_WIKI });
+      await addWiki(page, async (flow) => {
+        const select = flow.getByTestId('add-map-choose-select');
+        // Nothing ticked at first: Select none has nothing to do.
+        await expect(select.getByRole('button', { name: 'Select none' })).toBeDisabled();
+        // Enter on Select all ticks them all and hands the focus to Select none.
+        await select.getByRole('button', { name: 'Select all' }).focus();
+        await page.keyboard.press('Enter');
+        await expect(select.getByRole('button', { name: 'Select none' })).toBeFocused();
+        await expect(select.getByRole('button', { name: 'Select all' })).toBeDisabled();
+        await page.keyboard.press('Space');
+        await expect(select.getByRole('button', { name: 'Select all' })).toBeFocused();
+        await expect(flow.getByTestId('add-map-choose-confirm')).toHaveText('Tick the maps to add');
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        ).toBe(true);
+      });
+      const select = page.getByTestId('wiki-select');
+      await expect(select).toBeVisible();
+      await select.getByRole('button', { name: 'Select all' }).focus();
+      await page.keyboard.press('Enter');
+      // Every page of the contents not left out, and the pages found on Welcome.
+      await expect(page.getByTestId('wiki-ticked')).toHaveText('8 pages ticked');
+      await expect(select.getByRole('button', { name: 'Select none' })).toBeFocused();
+      await expect(select.getByTestId('wiki-select-text')).toHaveText(
+        'The list has 8 pages to tick, all of them ticked.',
+      );
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('wiki-ticked')).toHaveText('No page ticked');
+      await expect(select.getByRole('button', { name: 'Select all' })).toBeFocused();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      const box = await select.boundingBox();
+      expect(box && box.x >= 0 && box.x + box.width <= 390).toBe(true);
+      await mkdir(SHOTS, { recursive: true });
+      await page.screenshot({ path: `${SHOTS}/wiki-select-phone.png` });
+      expect(realErrors(errors)).toEqual([]);
+    });
+  });
 });

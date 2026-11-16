@@ -189,6 +189,92 @@ test.describe('on a desktop', () => {
   });
 });
 
+/** A GIF of `frames` pictures of 1 × 1 pixel, black then white: one that moves when more than one. */
+function gif(frames: number): Buffer {
+  const picture = (colour: number) => [
+    ...[0x21, 0xf9, 4, 0, 50, 0, 0, 0],
+    ...[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, colour, 1, 0],
+  ];
+  return Buffer.from([
+    ...Array.from('GIF89a', (c) => c.charCodeAt(0)),
+    ...[1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff],
+    ...Array.from({ length: frames }, (_, i) => picture(i % 2 ? 0x4c : 0x44)).flat(),
+    0x3b,
+  ]);
+}
+
+test.describe('a picture that moves', () => {
+  /** The Regions page with a GIF that moves, kept at full size, and one that does not. */
+  async function serveMoving(page: Page) {
+    await serveRegions(
+      page,
+      'A torch: ![a torch that flickers](demo:picture:torch "=96").\n\nA lamp: ![a lamp](demo:picture:lamp "=96").',
+      (list) => [
+        ...list,
+        {
+          id: 'demo:picture:torch',
+          file: 'pictures/torch.gif',
+          shareable: true,
+          pageCopy: { file: 'pictures/torch.page.gif', width: 96 },
+        },
+        { id: 'demo:picture:lamp', file: 'pictures/lamp.gif', shareable: true },
+      ],
+    );
+    const fulfil = (body: Buffer) => ({ headers: { 'content-type': 'image/gif' }, body });
+    await page.route('**/packs/demo/pictures/torch.gif', (route) => route.fulfill(fulfil(gif(3))));
+    await page.route('**/packs/demo/pictures/lamp.gif', (route) => route.fulfill(fulfil(gif(1))));
+    // A GIF that moves has no copy for pages: the page shows its file at its size.
+    await page.route('**/packs/demo/pictures/torch.page.gif', (route) =>
+      route.fulfill({ status: 404, body: 'not found' }),
+    );
+  }
+
+  test('moves on the page at the size the page gives it', async ({ page }) => {
+    const errors = collectErrors(page);
+    await serveMoving(page);
+    await openRegions(page);
+    const torch = shownPage(page).getByRole('img', { name: 'a torch that flickers' });
+    await expect(torch).toHaveAttribute('src', /pictures\/torch\.gif$/);
+    await expect(torch).toHaveAttribute('width', '96');
+    await expect
+      .poll(() => torch.evaluate((img: HTMLImageElement) => img.naturalWidth))
+      .toBeGreaterThan(0);
+    await expect(torch).toBeVisible();
+    // Without the system's setting, nothing holds it still.
+    await expect(shownPage(page).getByRole('button', { name: /^Play/ })).toHaveCount(0);
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+
+  test('is shown still with a Play button when the system asks for less motion', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await serveMoving(page);
+    await openRegions(page);
+    const play = shownPage(page).getByRole('button', {
+      name: 'Play the moving picture: a torch that flickers',
+    });
+    await expect(play).toBeVisible();
+    await expect(play).toHaveText('Play');
+    const frame = shownPage(page).locator('.moving-picture');
+    await expect(frame).toHaveAttribute('data-still', '');
+    await expect(frame.locator('canvas')).toHaveCount(1);
+    await expect(frame.locator('img')).toBeHidden();
+    // The lamp does not move: no button on it.
+    await expect(shownPage(page).getByRole('button', { name: /^Play/ })).toHaveCount(1);
+    await expect(shownPage(page).getByRole('img', { name: 'a lamp' })).toBeVisible();
+    // By keyboard: it plays, and the button goes.
+    await play.focus();
+    await page.keyboard.press('Enter');
+    await expect(play).toHaveCount(0);
+    await expect(frame).not.toHaveAttribute('data-still');
+    await expect(frame.locator('canvas')).toHaveCount(0);
+    await expect(shownPage(page).getByRole('img', { name: 'a torch that flickers' })).toBeVisible();
+    expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+});
+
 test.describe('on a phone', () => {
   test.use({ ...pixel });
 

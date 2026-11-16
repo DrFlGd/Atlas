@@ -292,6 +292,11 @@ pub struct Task {
     /// full file is refused, not on the server or cannot be kept (see
     /// [`Downloader::fell_back`]). No other request is made for it.
     pub fallback: Option<String>,
+    /// A picture already kept that the person asked to download again (a
+    /// photo kept smaller before, now asked for at full size): asked for
+    /// although its file is there, which an answer replaces. Never a map
+    /// tile.
+    pub replace: bool,
 }
 
 impl Task {
@@ -304,6 +309,7 @@ impl Task {
             place: None,
             parent: None,
             fallback: None,
+            replace: false,
         }
     }
 }
@@ -1023,7 +1029,7 @@ impl Downloader {
             let Some(task) = tasks.get(next.fetch_add(1, Ordering::SeqCst)) else {
                 return Ok(());
             };
-            if self.store.is_done(&task.path) {
+            if !task.replace && self.store.is_done(&task.path) {
                 on_outcome(task, &Outcome::Skipped);
                 continue;
             }

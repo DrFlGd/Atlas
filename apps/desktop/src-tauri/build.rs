@@ -104,6 +104,7 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "tiles_snapshot",
     "photos_plan",
     "photos_start",
+    "photos_start_again",
     "photos_pause",
     "photos_resume",
     "photos_cancel",
