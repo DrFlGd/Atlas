@@ -1084,8 +1084,9 @@ export interface DesktopBridge {
     /** Asks for a file and reads it, at most 64 KB. Null when the dialog was closed. */
     pick(): Promise<{ name: string; text: string } | null>;
     /**
-     * Asks for one saved page (`.html`) and reads it, at most 8 MB, to try a
-     * file on. Nothing of it is kept. Null when the dialog was closed.
+     * Asks for one saved page (`.html`), or a map's saved data file
+     * (`.json`), and reads it, at most 8 MB, to try a file on. Nothing of
+     * it is kept. Null when the dialog was closed.
      */
     pickPage(): Promise<{ name: string; text: string } | null>;
     /** Keeps a checked file in the folder under `name`, in place of one of that name. */
