@@ -1,4 +1,4 @@
-import { parseId, type ChecklistItem, type OwnList } from '@atlas/schema';
+import { layoutFormsIn, parseId, type ChecklistItem, type OwnList } from '@atlas/schema';
 import type { LoadedPack } from '../pack/loadedPack';
 import { nameKey } from '../guides/linking';
 import type { LocationNameIndex } from '../guides/locationNames';
@@ -203,7 +203,9 @@ const LABEL = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?([^:*_|]{2,40}?)(?:\*\*|__)?\s*:(?:\
  * in a table, the cells of a column of that title and the rest of a row of
  * that first cell (a box of facts); and the rest of a line that starts
  * with them and a colon. Hidden text is left out, so nothing found gives
- * an answer away. Read line by line, without a Markdown parser.
+ * an answer away. Read line by line, without a Markdown parser; the blocks
+ * of layout forms are read in order, as blocks of the page, and a part
+ * under a heading in a form (a card's title) ends with its block.
  */
 export function locationParts(body: string): LocationParts {
   const links: string[] = [];
@@ -224,11 +226,20 @@ export function locationParts(body: string): LocationParts {
 
   const hidden = { open: false };
   const lines = body.split(/\r?\n/u);
+  const forms = layoutFormsIn(body);
+  /** For each form open, whether a part was open when it opened. */
+  const partAtOpen = new Map<number, number>();
   /** The level of the heading whose part this is, or 0 outside one. */
   let part = 0;
   let fence = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;
+    const form = forms.markers.get(i);
+    if (form !== undefined) {
+      if (forms.forms[form]!.open === i) partAtOpen.set(form, part);
+      else if (part > 0 && partAtOpen.get(form) !== part) part = partAtOpen.get(form) ?? 0;
+      continue;
+    }
     if (/^ {0,3}(`{3,}|~{3,})/u.test(raw)) {
       fence = !fence;
       continue;

@@ -11,3 +11,4 @@ export * from './ownPictures';
 export * from './ownPages';
 export * from './ownNotes';
 export * from './gameGroups';
+export * from './layoutForms';

@@ -646,6 +646,193 @@ img[data-opens-large]:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/*
+ * Layout forms of a page (see `markdownForms.ts`): blocks side by side, a
+ * card, a row, columns and a centred block. Each folds to one column, in
+ * reading order, where the form itself is narrow: a phone, a narrow pane,
+ * a block beside another. Widths are classes, never a style attribute.
+ */
+.guide-form {
+  display: flow-root;
+  margin: 0 0 14px;
+}
+
+.guide-form > :last-child,
+.guide-side-block > :last-child {
+  margin-bottom: 0;
+}
+
+.guide-form > :first-child,
+.guide-side-block > :first-child {
+  margin-top: 0;
+}
+
+/* Side by side: each block's share of the width, a narrow block kept narrow. */
+.guide-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 24px;
+  container-type: inline-size;
+}
+
+.guide-side-block {
+  flex: 1 1 0;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.guide-share-2 {
+  flex-grow: 2;
+}
+
+.guide-share-3 {
+  flex-grow: 3;
+}
+
+.guide-share-4 {
+  flex-grow: 4;
+}
+
+.guide-share-5 {
+  flex-grow: 5;
+}
+
+.guide-share-6 {
+  flex-grow: 6;
+}
+
+.guide-share-7 {
+  flex-grow: 7;
+}
+
+.guide-share-8 {
+  flex-grow: 8;
+}
+
+.guide-share-9 {
+  flex-grow: 9;
+}
+
+/* Narrow: one block under another. Three or four blocks fold sooner. */
+@container (max-width: 34rem) {
+  .guide-side > .guide-side-block {
+    flex-basis: 100%;
+  }
+}
+
+@container (max-width: 46rem) {
+  .guide-side-3 > .guide-side-block,
+  .guide-side-4 > .guide-side-block {
+    flex-basis: 100%;
+  }
+}
+
+/* A card: a frame, its first heading a title bar, in the app's own colours. */
+.guide-card {
+  padding: 12px 14px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+}
+
+.guide-body .guide-card > .guide-card-title {
+  display: block;
+  margin: -12px -14px 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius) var(--atlas-radius) 0 0;
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-text);
+  font-size: 15.5px;
+  line-height: 1.35;
+}
+
+/* A row: a list's items on one line, a dot between them, wrapping where narrow. */
+.guide-body .guide-row > :is(ul, ol):not(.guide-tiles) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-body .guide-row > :is(ul, ol):not(.guide-tiles) > li {
+  margin: 0;
+}
+
+.guide-row > :is(ul, ol):not(.guide-tiles, .guide-row-pictures) > li + li::before {
+  margin: 0 0.6em;
+  color: var(--atlas-muted);
+  content: '·';
+}
+
+/* Each item with a small picture beside it: room between them, no dots. */
+.guide-body .guide-row > .guide-row-pictures {
+  gap: 6px 20px;
+}
+
+.guide-row-pictures .guide-picture.inline {
+  margin-right: 6px;
+}
+
+/* Columns: a list flowed down and across, never narrower than a short line. */
+.guide-columns {
+  column-gap: 28px;
+}
+
+.guide-columns-2 {
+  columns: 2 13rem;
+}
+
+.guide-columns-3 {
+  columns: 3 11rem;
+}
+
+.guide-columns-4 {
+  columns: 4 10rem;
+}
+
+.guide-columns-5 {
+  columns: 5 9rem;
+}
+
+.guide-columns-6 {
+  columns: 6 8rem;
+}
+
+.guide-columns li,
+.guide-columns p {
+  break-inside: avoid;
+}
+
+/* Centred: its lines, lists, tables, pictures and rows in the middle. */
+.guide-centred {
+  text-align: center;
+}
+
+.guide-body .guide-centred > :is(ul, ol):not(.guide-tiles) {
+  padding-left: 0;
+  list-style-position: inside;
+}
+
+.guide-centred table {
+  width: fit-content;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.guide-centred .guide-picture {
+  align-items: center;
+}
+
+.guide-body .guide-centred .guide-row > :is(ul, ol),
+.guide-body .guide-centred ul.guide-tiles {
+  justify-content: center;
+}
+
 .picture-alt {
   color: var(--atlas-muted);
   font-style: italic;

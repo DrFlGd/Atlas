@@ -29,6 +29,19 @@ import { parseColour, TEXT_COLOUR_ATTRIBUTE } from './textColour';
  *   a caption), which is a sub-heading of the box when its words are all
  *   bold. The view shows it as a box beside the text (`markdown.ts`); the
  *   page editor edits it as the table it is.
+ * - Layout forms: whole marker lines around ordinary blocks, each line
+ *   alone between blank lines, at the start of the line. `::: side 1:3`
+ *   (blocks side by side with their shares of the width, two to four
+ *   numbers; without them, equal) and `::: next` between its blocks (two to
+ *   four); `::: card` (a frame whose first block, a heading, is its title
+ *   bar and a heading of the page); `::: row` (a list on one line);
+ *   `::: columns 3` (a list in 2 to 6 columns); `::: centred`; each closed
+ *   by `::: end`. They nest as brackets do, four deep at most. A marker
+ *   without a partner, unknown, with other values, indented, in a list, a
+ *   quote or code, joined to text or escaped stays text. The exact rules
+ *   and the limits are in `layoutForms.ts` in `@atlas/schema`, which every
+ *   reader of page text uses; the view shows them (`markdownForms.ts`);
+ *   the page editor reads each marker line as a part of its own.
  */
 
 const CARET = 0x5e;
