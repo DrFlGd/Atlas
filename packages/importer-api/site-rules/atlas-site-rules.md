@@ -255,14 +255,14 @@ An address is a page of the part when it is on one of `site.hosts`, matches an `
 
 ### `contents`
 
-| Field      | Needed           | Form                              | Meaning                                                                                                                                                                          |
-| ---------- | ---------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `from`     | yes              | `sitemap`, `menu` or `links`      | Where the list of pages comes from                                                                                                                                               |
-| `address`  | no               | address                           | With `sitemap`: the sitemap, by default `/sitemap.xml`. A sitemap that lists other sitemaps is followed one level. With `menu`: the page that holds the menu, by default `start` |
-| `links`    | with `menu`: yes | selector                          | The links of the menu. Lists inside lists become levels of the page tree                                                                                                         |
-| `groups`   | no               | selector                          | With `menu`: the elements that name a group of the menu, such as a heading line of a list that is no link. Each link after one, up to the next, is in that group                 |
-| `sections` | no               | selector                          | The links that name the site's top sections, which become the first level of the page tree                                                                                       |
-| `follow`   | no               | `true` or `false`, default `true` | Whether a page linked from the text of a page is read too, when it is a page of this part                                                                                        |
+| Field      | Needed           | Form                              | Meaning                                                                                                                                                                                           |
+| ---------- | ---------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`     | yes              | `sitemap`, `menu` or `links`      | Where the list of pages comes from                                                                                                                                                                |
+| `address`  | no               | address                           | With `sitemap`: the sitemap, by default `/sitemap.xml`. A sitemap that lists other sitemaps is not followed: name one of them here. With `menu`: the page that holds the menu, by default `start` |
+| `links`    | with `menu`: yes | selector                          | The links of the menu. Lists inside lists become levels of the page tree                                                                                                                          |
+| `groups`   | no               | selector                          | With `menu`: the elements that name a group of the menu, such as a heading line of a list that is no link. Each link after one, up to the next, is in that group                                  |
+| `sections` | no               | selector                          | The links that name the site's top sections, which become the first level of the page tree                                                                                                        |
+| `follow`   | no               | `true` or `false`, default `true` | Whether a page linked from the text of a page is read too, when it is a page of this part                                                                                                         |
 
 - Prefer `sitemap` when `robots.txt` names one: it is the site's own list.
 - Use `menu` when one page lists every page, as guides often do.
