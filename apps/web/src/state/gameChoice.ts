@@ -248,6 +248,44 @@ export function tickFrom(choice: Choice, gameKey: string, url: string): Choice {
   };
 }
 
+/** The key of a page in "Select all" and "Select none": its game's key and its address. */
+export const choicePageKey = (gameKey: string, url: string) => `${gameKey}\n${url}`;
+
+/** The pages "Select all" and "Select none" act on: every page of every game this app can add. */
+export function choicePageKeys(choice: Choice): { shown: string[]; ticked: string[] } {
+  const shown: string[] = [];
+  const ticked: string[] = [];
+  for (const game of choice.games) {
+    for (const page of game.pages) {
+      if (!page.supported) continue;
+      const key = choicePageKey(game.key, page.url);
+      shown.push(key);
+      if (page.checked) ticked.push(key);
+    }
+  }
+  return { shown, ticked };
+}
+
+/** Ticks the pages named by {@link choicePageKey}, or unticks them; never a page this app cannot add. */
+export function tickPages(choice: Choice, keys: readonly string[], on: boolean): Choice {
+  const named = new Set(keys);
+  return {
+    ...choice,
+    games: choice.games.map((game) =>
+      game.pages.some((page) => named.has(choicePageKey(game.key, page.url)))
+        ? {
+            ...game,
+            pages: game.pages.map((page) =>
+              page.supported && named.has(choicePageKey(game.key, page.url))
+                ? { ...page, checked: on }
+                : page,
+            ),
+          }
+        : game,
+    ),
+  };
+}
+
 /** A ticked page, as it is opened. */
 export interface ChosenPage {
   url: string;
@@ -425,6 +463,18 @@ export function toggleGame(pick: GamePick, id: string): GamePick {
     ticked: pick.ticked.includes(id)
       ? pick.ticked.filter((ticked) => ticked !== id)
       : [...pick.ticked, id],
+  };
+}
+
+/** Ticks the games named, or unticks them, keeping the order they were ticked in. */
+export function tickGames(pick: GamePick, ids: readonly string[], on: boolean): GamePick {
+  const named = new Set(ids);
+  const known = new Set(pick.games.map((game) => game.id));
+  return {
+    ...pick,
+    ticked: on
+      ? [...pick.ticked, ...[...named].filter((id) => known.has(id) && !pick.ticked.includes(id))]
+      : pick.ticked.filter((id) => !named.has(id)),
   };
 }
 

@@ -115,6 +115,8 @@ import {
   planPick,
   splitChosen,
   tickFrom,
+  tickGames,
+  tickPages,
   toggleGame,
   toggleGroup,
   togglePage,
@@ -2624,6 +2626,12 @@ export function toggleCatalogueGame(id: string): void {
   if (phase.kind === 'catalogue') setPhase({ ...phase, pick: toggleGame(phase.pick, id) });
 }
 
+/** "Select all" and "Select none" in a site's list of games: the games its search shows. */
+export function tickCatalogueGames(ids: readonly string[], on: boolean): void {
+  const { phase } = useImport.getState();
+  if (phase.kind === 'catalogue') setPhase({ ...phase, pick: tickGames(phase.pick, ids, on) });
+}
+
 /**
  * Reads the game page of each game ticked in the list of games (a game
  * with one map needs none), then lists their pages to choose from. Games
@@ -2956,6 +2964,24 @@ export function toggleUpdateGame(packId: string): void {
   });
 }
 
+/** "Select all" and "Select none" among the games to update. */
+export function tickUpdateGames(packIds: readonly string[], on: boolean): void {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'update-games') return;
+  const named = new Set(packIds);
+  setPhase({
+    ...phase,
+    ticked: on
+      ? [
+          ...phase.ticked,
+          ...phase.games
+            .map((game) => game.packId)
+            .filter((id) => named.has(id) && !phase.ticked.includes(id)),
+        ]
+      : phase.ticked.filter((id) => !named.has(id)),
+  });
+}
+
 /** After "Update all…": reads the game pages of the ticked games. */
 export async function confirmUpdateGames(): Promise<void> {
   const { phase } = useImport.getState();
@@ -3058,6 +3084,13 @@ export function toggleChoice(gameKey: string, url: string): void {
   const { phase } = useImport.getState();
   if (phase.kind === 'choose')
     setPhase({ kind: 'choose', choice: togglePage(phase.choice, gameKey, url) });
+}
+
+/** "Select all" and "Select none" among the pages to choose: the pages named by `choicePageKey`. */
+export function tickChoicePages(keys: readonly string[], on: boolean): void {
+  const { phase } = useImport.getState();
+  if (phase.kind === 'choose')
+    setPhase({ kind: 'choose', choice: tickPages(phase.choice, keys, on) });
 }
 
 /** Ticks every page under one heading, or unticks them all. */

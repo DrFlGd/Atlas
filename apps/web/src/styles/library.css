@@ -485,10 +485,15 @@
 }
 
 @media (max-width: 760px) {
+  /* One column that scrolls as a whole: the game below the list as tall as it needs, so a wiki's pages are never squeezed out of sight. */
   .library-columns {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: max-content 1fr;
     overflow-y: auto;
+  }
+
+  .library-main {
+    min-height: auto;
   }
 
   .library-side {

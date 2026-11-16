@@ -610,6 +610,20 @@ kbd {
   gap: 8px;
 }
 
+/* "Select all" and "Select none" above a list to tick (SelectShown.tsx). */
+.select-shown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.select-shown-text {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
