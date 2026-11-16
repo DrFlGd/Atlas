@@ -92,6 +92,16 @@ import {
   type Reading,
 } from './pageWindow';
 import { fetchMapPhotos, listsLocationPhotos, photosWithMapOn } from './mapPhotos';
+import { openLayoutFrame } from '../layoutFrame/frame';
+import type { KeptSheetText } from '../layoutFrame/frameText';
+import {
+  layoutReport,
+  layoutText,
+  pageLayouts,
+  type LayoutReport,
+  type LayoutTally,
+  type PageLayouts,
+} from './pageLayouts';
 import { fetchPagePictures } from './pagePictures';
 import {
   fetchSessionStyles,
@@ -209,6 +219,8 @@ export type ImportPhase =
       savedPages?: number;
       /** How many of them are written again so far, once the importer says. */
       savedDone?: number;
+      /** The saved pages are laid out as a browser shows them before they are written. */
+      layingOut?: boolean;
     }
   | {
       kind: 'done';
@@ -232,6 +244,8 @@ export type ImportPhase =
       photos?: boolean;
       /** A game of pages built again: how its pages are filed in its contents (see {@link pagesFiling}). */
       filing?: PagesFiling;
+      /** A game of pages built again: whether its pages were laid out as a browser shows them. */
+      layout?: LayoutReport;
     }
   /**
    * `refused`: the site refused or asked to confirm the reader is a person;
@@ -766,6 +780,64 @@ function afterSessionStyles(
   queueStyles(() =>
     fetchSessionStyles(shell.library, id, stopped, (address) => fetchSheet(shell, address, id)),
   );
+  queueStyles(() => layOutOnceSheetsCame(shell, id));
+}
+
+// ---------------------------------------------------------------------------
+// Laying pages out as a browser shows them (see `pageLayouts.ts` and `layoutFrame/`)
+
+/**
+ * Laying out the pages one convert call asks for (`ImportContext.layOut`),
+ * with the style sheets kept for game `packId` (none when it is not known
+ * yet): in a build with downloads only. `onPage` is called as each page is
+ * about to be laid out.
+ */
+function layoutsFor(
+  packId: string | null,
+  onPage?: () => void,
+  sheets?: Promise<readonly KeptSheetText[]>,
+): PageLayouts | null {
+  const shell = desktop;
+  if (!__ATLAS_DOWNLOADS__ || !shell || !downloadsOffered(useAtlas.getState())) return null;
+  return pageLayouts({
+    sheets: () =>
+      sheets ??
+      (packId ? shell.library.styleTexts(packId) : Promise.resolve([] as KeptSheetText[])),
+    open: () => openLayoutFrame(),
+    ...(onPage ? { onPage } : {}),
+  });
+}
+
+/** By session: the games some of whose pages were written without being laid out, for want of their sheets. */
+const unlaid = new Map<number, Set<string>>();
+
+/**
+ * Notes that some pages of session `id` went into game `packId` without
+ * being laid out because its sheets were not kept yet (a wiki's first
+ * session: the sheets its pages link to are fetched after its pages).
+ */
+function noteUnlaid(id: number, packId: string, tally: LayoutTally | null): void {
+  if (!tally || tally.noSheets === 0) return;
+  const games = unlaid.get(id) ?? new Set<string>();
+  games.add(packId);
+  unlaid.set(id, games);
+}
+
+/**
+ * Once the style sheets of session `id` are kept: a game some of whose
+ * pages were written without being laid out, for want of its sheets, is
+ * built again from its saved pages if it keeps sheets now, so those pages
+ * are laid out too. Nothing is fetched for it.
+ */
+async function layOutOnceSheetsCame(shell: NonNullable<typeof desktop>, id: number): Promise<void> {
+  const games = unlaid.get(id);
+  unlaid.delete(id);
+  if (!__ATLAS_DOWNLOADS__ || !games) return;
+  for (const packId of games) {
+    const kept = await shell.library.styleTexts(packId).catch((): KeptSheetText[] => []);
+    if (kept.some((sheet) => sheet.address !== undefined))
+      void rebuildPack(packId, { quiet: true });
+  }
 }
 
 /**
@@ -875,6 +947,7 @@ export async function startImport(text: string): Promise<void> {
   }
   const pages = importer.fetch ? { pages: true } : {};
   setPhase({ kind: 'converting', url, importer: importer.title, ...pages });
+  const layouts = layoutsFor(gameOfSite(importer, url, useAtlas.getState().library?.packs ?? []));
   const outcome = await convertAndSave(
     importer,
     {
@@ -897,10 +970,13 @@ export async function startImport(text: string): Promise<void> {
           setPhase({ kind: 'converting', url, importer: importer.title, waiting: true, ...pages });
         }
       },
+      layouts,
     },
   );
+  layouts?.close();
   reportPhase(importer.id, outcome);
   if (outcome.kind === 'done') {
+    noteUnlaid(id, outcome.packId, layouts?.tally() ?? null);
     keepStylesOf(
       shell,
       importer,
@@ -1006,8 +1082,11 @@ let currentRun: ImportRun | null = null;
 /** While a game is built again, how far it is is shown at most this often. */
 const REBUILD_PROGRESS_MS = 200;
 
-/** Games asked to be built again while a go was under way, built when it ends. */
-const rebuildAfterGo = new Set<string>();
+/**
+ * Games asked to be built again while a go was under way, built when it
+ * ends: quietly, unless the person asked for one of the builds.
+ */
+const rebuildAfterGo = new Map<string, boolean>();
 
 /** Keeps what the person typed, so it is still there after going back. */
 export function setDraft(draft: string): void {
@@ -1282,6 +1361,10 @@ async function startRun(
         // A page of a wiki is written into a game of pages: no map is built.
         const of = importer.fetch ? ({ of: 'pages' } as const) : {};
         update({ kind: 'converting', ...of });
+        // The pages it asks to lay out, with the sheets kept for its site's game, if known yet.
+        const layouts = layoutsFor(
+          gameOfSite(importer, url, useAtlas.getState().library?.packs ?? []),
+        );
         const outcome = await convertAndSave(
           importer,
           {
@@ -1301,8 +1384,11 @@ async function startRun(
             onWaiting: () => {
               update({ kind: 'converting', waiting: true, ...of });
             },
+            layouts,
           },
         );
+        layouts?.close();
+        if (outcome.kind === 'done') noteUnlaid(id, outcome.packId, layouts?.tally() ?? null);
         // The person did not confirm the site's licence: nothing more is read.
         if (outcome.kind === 'failed' && outcome.declined) run.stop();
         reportPhase(importer.id, outcome);
@@ -1450,9 +1536,9 @@ async function startRun(
   );
   if (shownId && addedToShown) packWritten(shownId);
   // A game asked to be built again during the go is built now.
-  for (const packId of rebuildAfterGo) {
+  for (const [packId, quiet] of rebuildAfterGo) {
     rebuildAfterGo.delete(packId);
-    void rebuildPack(packId);
+    void rebuildPack(packId, { quiet });
   }
   const counts = runCounts(final);
   if (final.stopReason) {
@@ -1692,6 +1778,8 @@ async function convertAndSave(
     onWaiting?: () => void;
     /** Called as the importer says how far a long step is (see `ImportContext.progress`). */
     onProgress?: (step: { done: number; total: number }) => void;
+    /** Lays out the pages the importer asks to (see `ImportContext.layOut`); the caller closes it. */
+    layouts?: PageLayouts | null;
   } = {},
 ): Promise<ImportPhase> {
   const shell = desktop;
@@ -1743,6 +1831,7 @@ async function convertAndSave(
           },
         }
       : {}),
+    ...(turn.layouts ? { layOut: turn.layouts.layOut.bind(turn.layouts) } : {}),
   });
   let context = noting(contextWith(site?.licence));
   const convert = async () => {
@@ -2192,9 +2281,16 @@ async function showMap(entry: PackEntry, mapId: string): Promise<boolean> {
 
 /**
  * Builds an imported pack again from the page data kept with it, without
- * visiting the page: for example after the importer was updated.
+ * visiting the page: for example after the importer was updated. The pages
+ * the importer asks to lay out are laid out as a browser shows them, with
+ * the style sheets kept for the game (see `layoutFrame/`). `quiet`: after a
+ * session whose pages were written before their sheets came, without
+ * showing it in the steps of adding; a line says when it starts and ends.
  */
-export async function rebuildPack(packId: string): Promise<void> {
+export async function rebuildPack(
+  packId: string,
+  { quiet = false }: { quiet?: boolean } = {},
+): Promise<void> {
   const shell = desktop;
   const state = useAtlas.getState();
   const listed = state.library?.packs.find((p) => p.id === packId);
@@ -2209,18 +2305,28 @@ export async function rebuildPack(packId: string): Promise<void> {
   }
   // During a go, the game is built again when the go ends.
   if (currentRun) {
-    rebuildAfterGo.add(packId);
-    notify(
-      `${listed.title} is built again from its saved pages when the pages being read now are done.`,
-      'info',
-    );
+    rebuildAfterGo.set(packId, quiet && (rebuildAfterGo.get(packId) ?? true));
+    if (!quiet) {
+      notify(
+        `${listed.title} is built again from its saved pages when the pages being read now are done.`,
+        'info',
+      );
+    }
     return;
   }
-  const id = ++session;
+  const id = quiet ? session : ++session;
+  // Shown only by a build the person asked for, while no other step took the screen.
+  const shows = () => !quiet && id === session;
   // One change to the game at a time: a page being saved to it is saved first.
   const turn = packTurn(packId);
+  // The sheets kept for the game, read once for the pages to be laid out with.
+  const sheets =
+    __ATLAS_DOWNLOADS__ && downloadsOffered(state)
+      ? shell.library.styleTexts(packId).catch((): KeptSheetText[] => [])
+      : Promise.resolve([] as KeptSheetText[]);
+  let layouts: PageLayouts | null = null;
   try {
-    if (turn.waits) {
+    if (turn.waits && shows()) {
       setPhase({ kind: 'converting', url: listed.url, importer: entry.title, waiting: true });
       showLibraryAdd();
     }
@@ -2236,8 +2342,14 @@ export async function rebuildPack(packId: string): Promise<void> {
       notify(`No page data is kept with ${listed.title}, so it cannot be rebuilt.`, 'error');
       return;
     }
+    if (quiet) {
+      notify(
+        `${listed.title} is built again from its saved pages, so that the pages read before its style sheets were kept are laid out as a browser shows them. Nothing is downloaded.`,
+        'info',
+      );
+    }
     // A go started meanwhile keeps the screen.
-    if (id === session) {
+    if (shows()) {
       setPhase({
         kind: 'converting',
         url: last.url,
@@ -2248,29 +2360,51 @@ export async function rebuildPack(packId: string): Promise<void> {
       showLibraryAdd();
     }
     let shownAt = 0;
+    let step: { done: number; total: number } | null = null;
+    let layingOut = false;
+    // How far the saved pages are, shown a few times a second at most.
+    const show = (now: boolean) => {
+      if (!step || !shows()) return;
+      const at = Date.now();
+      if (!now && step.done < step.total && at - shownAt < REBUILD_PROGRESS_MS) return;
+      shownAt = at;
+      setPhase({
+        kind: 'converting',
+        url: last.url,
+        importer: importer.title,
+        savedPages: step.total,
+        savedDone: step.done,
+        ...(layingOut ? { layingOut: true } : {}),
+      });
+    };
+    layouts = layoutsFor(
+      packId,
+      () => {
+        // The first page laid out says so at once; then as often as the figures.
+        const first = !layingOut;
+        layingOut = true;
+        show(first);
+      },
+      sheets,
+    );
     const outcome = await convertAndSave(
       importer,
       { url: last.url, pageData: last.data, importedAt: last.importedAt },
       true,
-      true,
+      !quiet,
       undefined,
       {
         held: packId,
-        // How far the saved pages are, shown a few times a second at most.
-        onProgress: ({ done, total }) => {
-          const now = Date.now();
-          if (id !== session || (done < total && now - shownAt < REBUILD_PROGRESS_MS)) return;
-          shownAt = now;
-          setPhase({
-            kind: 'converting',
-            url: last.url,
-            importer: importer.title,
-            savedPages: total,
-            savedDone: done,
-          });
+        onProgress: (progress) => {
+          step = progress;
+          show(false);
         },
+        layouts,
       },
     );
+    layouts?.close();
+    const layout = layoutReport(layouts?.tally() ?? null, (await sheets).length > 0);
+    const phase: ImportPhase = outcome.kind === 'done' && layout ? { ...outcome, layout } : outcome;
     reportPhase(importer.id, outcome);
     // The links of the pages written again, this one too, are kept; nothing else about them changes.
     if (importer.fetch && outcome.kind === 'done') {
@@ -2281,11 +2415,21 @@ export async function rebuildPack(packId: string): Promise<void> {
         .then(flushWikiNotes)
         .catch(() => undefined);
     }
-    if (id === session) setPhase(outcome);
+    if (quiet) {
+      if (outcome.kind === 'done') packWritten(packId);
+      notify(
+        outcome.kind === 'done'
+          ? `${listed.title} was built again: ${layoutText(layout) ?? 'its pages were written again.'}`
+          : `${listed.title} could not be built again: ${outcome.kind === 'failed' ? outcome.message : 'nothing was changed.'}`,
+        outcome.kind === 'done' ? 'info' : 'error',
+      );
+    }
+    if (shows()) setPhase(phase);
   } catch (error) {
     report({ importerId: entry.id, outcome: 'failed', message: errorText(error) });
-    if (id === session) setPhase({ kind: 'failed', message: errorText(error) });
+    if (shows()) setPhase({ kind: 'failed', message: errorText(error) });
   } finally {
+    layouts?.close();
     turn.done();
   }
 }

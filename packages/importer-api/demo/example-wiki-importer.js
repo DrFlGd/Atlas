@@ -1,4 +1,5 @@
 // @ts-check
+/* global DOMParser */
 /**
  * A made-up importer of a made-up wiki, "Example Wiki"
  * (`https://wiki.example.org/wiki/<page>`), for tests and as an example of
@@ -18,6 +19,12 @@
  *   answered as: its guide is kept under that name, the address is given
  *   back as `pageAddress`, and the name asked is kept as another name of it
  *   (the manifest's `idMigrations`), so a link to that name opens it.
+ * - A page may instead answer HTML (`text/html`): its title is its `h1`,
+ *   its text the paragraphs and list items of its article (`#content`),
+ *   its links those to other pages of the wiki. Where the app lays pages
+ *   out (`context.layOut`), it is laid out first, and what that shows hidden
+ *   is left out; notes of layout the page came with are not the app's and
+ *   are not read.
  * - Built again from its saved pages (`rebuild`), every page kept is
  *   written again from its data, and one the pack lacks is added back.
  *
@@ -77,6 +84,54 @@ function json(/** @type {string} */ text) {
   }
 }
 
+/** @typedef {{ title?: unknown, body?: unknown, links?: unknown }} WikiPage */
+
+/**
+ * A page the wiki answered as HTML, read as a page in JSON is: laid out by
+ * the app first when it can, so that a block it shows hidden is left out.
+ * @returns {Promise<WikiPage>}
+ */
+async function htmlPageOf(/** @type {FetchedPage} */ answer, /** @type {ImportContext} */ context) {
+  if (typeof DOMParser !== 'function') return {};
+  const url = answer.finalUrl || answer.url;
+  // Only notes the app wrote count: the page's own say nothing.
+  const laidOut = context.layOut
+    ? await context.layOut({ html: answer.text, url, article: ['#content'] })
+    : null;
+  const doc = new DOMParser().parseFromString(laidOut ?? answer.text, 'text/html');
+  const article = doc.querySelector('#content');
+  if (!article) return {};
+  const shown = (/** @type {Element} */ el) => !laidOut || !el.closest('[data-atlas-hidden]');
+  const words = (/** @type {Element} */ el) => (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const links = Array.from(article.querySelectorAll('a[href]')).flatMap((a) => {
+    let to;
+    try {
+      to = new URL(a.getAttribute('href') ?? '', url).href;
+    } catch {
+      return [];
+    }
+    const slug = slugOf(to);
+    return slug && slug !== 'Contents' ? [slug] : [];
+  });
+  return {
+    title: words(article.querySelector('h1') ?? doc.createElement('h1')) || undefined,
+    body: Array.from(article.querySelectorAll('p, li'))
+      .filter(shown)
+      .map(words)
+      .filter(Boolean)
+      .join('\n\n'),
+    links,
+  };
+}
+
+/** What a page of the wiki answered: in JSON, or in HTML. */
+async function pageOf(/** @type {FetchedPage} */ answer, /** @type {ImportContext} */ context) {
+  if (answer.status !== 200) return {};
+  return answer.contentType === 'text/html'
+    ? htmlPageOf(answer, context)
+    : /** @type {WikiPage} */ (json(answer.text) ?? {});
+}
+
 /**
  * The guide a page's answer becomes, with the pages it links to, and its
  * other name when it was asked for under another address than it came from.
@@ -84,13 +139,11 @@ function json(/** @type {string} */ text) {
  */
 function guideOf(
   /** @type {FetchedPage} */ answer,
+  /** @type {WikiPage} */ page,
   /** @type {string} */ asked,
   /** @type {string} */ importedAt,
 ) {
   if (answer.status === 404) return { problem: 'The wiki has no such page.' };
-  const page = /** @type {{ title?: unknown, body?: unknown, links?: unknown }} */ (
-    json(answer.text) ?? {}
-  );
   const askedSlug = slugOf(asked);
   const slug = slugOf(answer.finalUrl || asked);
   if (!askedSlug || !slug || slug === 'Contents') {
@@ -194,7 +247,7 @@ const importer = {
   async convert(pageData, context) {
     const answer = answerOf(pageData);
     if (!answer) return { ok: false, message: 'The page provided no data.' };
-    const read = guideOf(answer, context.url, context.importedAt);
+    const read = guideOf(answer, await pageOf(answer, context), context.url, context.importedAt);
     if ('problem' in read) return { ok: false, message: read.problem };
     const { guide, links, other } = read;
     const sourceKey = local(slugOf(context.url) ?? guide.id);
@@ -212,7 +265,12 @@ const importer = {
         const source = await context.savedSource(PACK, kept.key);
         const keptAnswer = source ? answerOf(source.data) : null;
         if (!source || !keptAnswer) continue;
-        const again = guideOf(keptAnswer, source.url, source.importedAt);
+        const again = guideOf(
+          keptAnswer,
+          await pageOf(keptAnswer, context),
+          source.url,
+          source.importedAt,
+        );
         if ('problem' in again) continue;
         existing = withOtherName(
           withPage(existing, again.guide, undefined).pack,

@@ -1,12 +1,12 @@
 /**
  * Keeping the style sheets of a site's pages (optional). An app may keep
  * the style sheets the pages of a wiki use, as plain text, once per game,
- * in the game's folder: never in a file the game is exported to, and never
- * used for anything yet. A later version may look up in them what the
- * site's layout names do (columns, floated to a side, hidden, colours).
- * Nothing inside a sheet is followed (no `@import`, no fonts, no pictures),
- * and a sheet is never loaded as a style sheet anywhere: it is text, kept
- * as data.
+ * in the game's folder: never in a file the game is exported to. An app
+ * that lays pages out uses them for that alone (`ImportContext.layOut`):
+ * it puts them as text into a closed frame of its own, with `@import`
+ * left out and every `url()` made empty. Nothing inside a sheet is
+ * followed (no `@import`, no fonts, no pictures), and a sheet is never
+ * loaded as a style sheet of the app: it is text, kept as data.
  *
  * - For a page read in the app's window (the ways `window` and `browse`),
  *   an importer that has a {@link AtlasImporter.styleReader} hands the

@@ -40,6 +40,7 @@ import {
 } from '@atlas/schema';
 import { z } from 'zod';
 import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
+import type { PageLayoutRequest } from './layoutNotes';
 import type { SiteRules, SiteRulesProblem } from './siteRules';
 import {
   siteTrialOf,
@@ -279,6 +280,39 @@ export interface ImportContext {
    * writes them only when this is there, and lists pictures as `shown`.
    */
   pictureSize?: PictureSize;
+  /**
+   * Optional: lays a page out as a browser shows it, for a page that has
+   * no notes of its layout of its own (one the app fetched by itself, or
+   * one saved without them), and gives back its HTML with the notes of the
+   * measuring step (`LAYOUT_NOTES_SCRIPT`, see `layoutNotes.ts`). Only an
+   * app that downloads offers it, only for a game whose site's style
+   * sheets it keeps (see `styles.ts`), and only when the person left it on.
+   *
+   * The app parses the HTML without running or loading anything, removes
+   * every `data-atlas-*` attribute it has (any notes in a page handed over
+   * are the site's, not the app's), and lays a copy out in a closed frame
+   * of its own, `LAYOUT_FRAME_WIDTH` pixels wide: no script runs and
+   * nothing is fetched, with the sheets kept for the game that the page
+   * links to (all of them for a page that links to none), its own
+   * `<style>` blocks and its elements' own `style`, every address in them
+   * made empty. It measures the copy from outside with the measuring step,
+   * from the first element one of `article` finds, else from the `body`,
+   * which carries the mark, and writes the notes on the page's own
+   * elements. The answer is the page's HTML as parsed and written out again
+   * (the same elements and attributes, scripts kept as text), with the
+   * notes; null when it was not laid out: the game keeps no sheets the page
+   * uses, the HTML is too long (`MAX_LAYOUT_PAGE_CHARS`), the page took
+   * longer than `LAYOUT_PAGE_MS`, or anything went wrong. One page at
+   * a time; it never rejects, and makes no request.
+   *
+   * The notes come back in memory and are the app's: an importer reads a
+   * page by them as it reads one its readers measured in the window. The
+   * HTML of a page the app fetched may carry `data-atlas-*` attributes of
+   * the site's own, which are no notes: an importer that is not handed
+   * notes this way reads such a page without them. An app that does not
+   * offer it, or a page it does not lay out, is read as before.
+   */
+  layOut?(page: PageLayoutRequest): Promise<string | null>;
 }
 
 /** The sizes the pictures of a site's pages can be kept at (see {@link ImportContext.pictureSize}). */

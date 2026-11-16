@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   LAYOUT_NOTE_ATTRIBUTES,
   LAYOUT_NOTES_SCRIPT,
+  MAX_ARTICLE_SELECTORS,
+  MAX_LAYOUT_PAGE_CHARS,
   MAX_READER_CHARS,
+  pageLayoutRequestOf,
   layoutNoteAttributes,
   layoutNotesMark,
   readLayoutNote,
@@ -334,5 +337,39 @@ describe('the measuring step', () => {
     // No copy can be made: nothing.
     const run = script() as (article: unknown) => unknown;
     expect(run({})).toBeNull();
+  });
+});
+
+describe('a page an importer asks the app to lay out', () => {
+  const page = { html: '<!doctype html><p>Moss</p>', url: 'https://wiki.example.org/wiki/Moss' };
+
+  it('is taken with its HTML, its address and the selectors of its article', () => {
+    expect(pageLayoutRequestOf(page)).toEqual(page);
+    expect(pageLayoutRequestOf({ ...page, article: ['#content', '.text'] })).toEqual({
+      ...page,
+      article: ['#content', '.text'],
+    });
+  });
+
+  it('leaves out selectors past the limits, and refuses anything else', () => {
+    const many = Array.from({ length: MAX_ARTICLE_SELECTORS + 3 }, (_, i) => `.part-${i}`);
+    expect(pageLayoutRequestOf({ ...page, article: many })!.article).toHaveLength(
+      MAX_ARTICLE_SELECTORS,
+    );
+    expect(
+      pageLayoutRequestOf({ ...page, article: [3, '', 'x'.repeat(201), '#ok'] })!.article,
+    ).toEqual(['#ok']);
+    expect(pageLayoutRequestOf({ ...page, article: [] })).toEqual(page);
+    for (const bad of [
+      null,
+      'html',
+      { ...page, html: '' },
+      { ...page, html: 'x'.repeat(MAX_LAYOUT_PAGE_CHARS + 1) },
+      { ...page, url: 'file:///home/page.html' },
+      { ...page, url: 'javascript:alert(1)' },
+      { html: page.html },
+    ]) {
+      expect(pageLayoutRequestOf(bad)).toBeNull();
+    }
   });
 });

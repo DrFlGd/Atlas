@@ -332,7 +332,7 @@ export function wikisApartText(wikis: readonly string[]): string | null {
 
 /**
  * The style sheets kept from a wiki's pages, in words: "4, 1.2 MB in all."
- * (they are kept for later and not used yet); null when there are none.
+ * (pages are laid out with them); null when there are none.
  */
 export function stylesText(styles: PackDetails['styles']): string | null {
   if (!styles || styles.sheets === 0) return null;
