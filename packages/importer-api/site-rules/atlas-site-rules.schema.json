@@ -1438,6 +1438,24 @@
                       },
                       "icon": {
                         "type": "string"
+                      },
+                      "found": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 200,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["all", "none"]
+                          }
+                        ]
                       }
                     },
                     "additionalProperties": false

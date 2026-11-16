@@ -528,6 +528,8 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
   const fields = part.locations.fields;
   /** @type {string[]} */
   const types = [];
+  /** The value of each type in the data, with its name. @type {Map<string, string>} */
+  const typeValues = new Map();
   /** @type {{ name: string, map: string, type: string, x: number, y: number }[]} */
   const first = [];
   let count = 0;
@@ -543,6 +545,7 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
     if (!map || type === undefined || !Number.isFinite(x) || !Number.isFinite(y)) continue;
     const typeName = String(('names' in part.types && part.types.names?.[String(type)]) || type);
     if (!types.includes(typeName)) types.push(typeName);
+    if (!typeValues.has(String(type))) typeValues.set(String(type), typeName);
     if (x < 0 || y < 0 || x > map.width || y > map.height) {
       map.outside += 1;
       continue;
@@ -555,11 +558,39 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
     if (first.length < 5)
       first.push({ name: String(value('name') ?? typeName), map: map.name, type: typeName, x, y });
   }
+  // Which types can be ticked as found, as types.found says. Without it this
+  // demo says nothing: it has no words to choose by.
+  const found = part.types.found;
+  /** @param {string} value */
+  const tickable = (value) =>
+    found === 'all' ? true : found === 'none' ? false : (found ?? []).includes(value);
+  const values = [...typeValues.keys()];
   trial.map = {
     maps: { count: maps.length, listed: maps },
-    types: { count: types.length, first: types.slice(0, 8) },
+    types: {
+      count: types.length,
+      first: types.slice(0, 8),
+      ...(found === undefined
+        ? {}
+        : {
+            found: {
+              can: values.filter(tickable).map((value) => typeValues.get(value) ?? value),
+              cannot: values
+                .filter((value) => !tickable(value))
+                .map((value) => typeValues.get(value) ?? value),
+              byName: false,
+            },
+          }),
+    },
     locations: { count, first },
   };
+  if (Array.isArray(found)) {
+    for (const value of found) {
+      if (!typeValues.has(value)) {
+        trial.problems.push(`“types.found” (${value}) matched no type in the data.`);
+      }
+    }
+  }
   const outside = maps.reduce((sum, map) => sum + map.outside, 0);
   if (outside > 0) {
     trial.problems.push(

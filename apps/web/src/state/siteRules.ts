@@ -21,6 +21,7 @@ import {
   type SiteFile,
   type SiteRulesProblem,
   type SiteMapTrial,
+  type SiteMapTrialFound,
   type SiteTrial,
 } from '@atlas/importer-api';
 import guideText from '@atlas/importer-api/site-rules/atlas-site-rules.md?raw';
@@ -848,6 +849,20 @@ export function trialInWords(trial: SiteTrial): string[] {
   return lines;
 }
 
+/** Which types can be ticked as found, in one line; null when there are no types. */
+function foundInWords({ can, cannot, byName }: SiteMapTrialFound): string | null {
+  if (can.length === 0 && cannot.length === 0) return null;
+  const which =
+    cannot.length === 0
+      ? `Every type can be ticked as found: ${can.join(', ')}.`
+      : can.length === 0
+        ? `None of the types can be ticked as found: ${cannot.join(', ')}.`
+        : `Can be ticked as found: ${can.join(', ')}. Cannot: ${cannot.join(', ')}.`;
+  return byName
+    ? `${which} The file does not say which (types.found), so the reader chose from each type’s name.`
+    : which;
+}
+
 /** What the reader found in a saved data file, in plain sentences. */
 function mapTrialInWords(part: number, game: string | undefined, map: SiteMapTrial): string[] {
   const lines = [`Part ${part + 1} of the file read it, as the data of a map.`];
@@ -879,6 +894,10 @@ function mapTrialInWords(part: number, game: string | undefined, map: SiteMapTri
   }
   if (types.first.length > 0) {
     lines.push(`The first types: ${types.first.join(', ')}.`);
+  }
+  if (types.found) {
+    const line = foundInWords(types.found);
+    if (line) lines.push(line);
   }
   if (locations.first.length > 0) {
     lines.push(

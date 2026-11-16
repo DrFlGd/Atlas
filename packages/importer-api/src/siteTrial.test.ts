@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_TRIAL_MAPS, siteTrialOf } from './siteTrial';
+import { MAX_TRIAL_MAPS, MAX_TRIAL_TYPES, siteTrialOf } from './siteTrial';
 
 describe('an importer’s answer to a trial', () => {
   it('keeps what it found in a map part’s data, in bounds', () => {
@@ -95,5 +95,26 @@ describe('an importer’s answer to a trial', () => {
     expect(trial?.map?.maps.listed).toHaveLength(MAX_TRIAL_MAPS);
     expect(siteTrialOf({ part: 0, type: 'wiki', map: 'no' })?.map).toBeUndefined();
     expect(siteTrialOf({ part: 0, type: 'atlas' })?.type).toBeUndefined();
+  });
+
+  it('keeps which types can be ticked as found, by name and in bounds, when the answer says', () => {
+    const typesOf = (found: unknown) =>
+      siteTrialOf({ part: 0, type: 'map', map: { types: { count: 3, first: [], found } } })?.map
+        ?.types;
+    expect(typesOf({ can: ['Treasure', 4, ''], cannot: ['Enemies'], byName: false })).toEqual({
+      count: 3,
+      first: [],
+      found: { can: ['Treasure'], cannot: ['Enemies'], byName: false },
+    });
+    expect(typesOf({ can: 'Treasure', byName: 'yes' })?.found).toEqual({
+      can: [],
+      cannot: [],
+      byName: false,
+    });
+    expect(typesOf({ cannot: [], can: [], byName: true })?.found?.byName).toBe(true);
+    const many = Array.from({ length: MAX_TRIAL_TYPES + 5 }, (_, n) => `Type ${n}`);
+    expect(typesOf({ can: many, cannot: many })?.found?.can).toHaveLength(MAX_TRIAL_TYPES);
+    expect(typesOf(undefined)).toEqual({ count: 3, first: [] });
+    expect(typesOf(['Treasure'])).toEqual({ count: 3, first: [] });
   });
 });

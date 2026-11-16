@@ -476,6 +476,50 @@ describe('checking a file', () => {
       ]);
     });
 
+    it('takes which types can be ticked as found: all, none, or a list of type values', () => {
+      const found = (value: unknown, types: object = oneMap.types) =>
+        checkSiteRules(withPart({ ...oneMap, types: { ...types, found: value } }));
+      expect(found('all').ok).toBe(true);
+      expect(found('none').ok).toBe(true);
+      expect(found(['chests', 'key-items']).ok).toBe(true);
+      expect(found(['3']).ok).toBe(true);
+      expect(found(Array.from({ length: 200 }, (_, n) => `type-${n}`)).ok).toBe(true);
+      // With a list of types in the data too, by the ids types.id gives.
+      expect(found(['k1', 'k2'], several.types).ok).toBe(true);
+      expect(found('none', several.types).ok).toBe(true);
+    });
+
+    it('names each wrong form of found in plain words', () => {
+      const said = (value: unknown) =>
+        problems(withPart({ ...oneMap, types: { ...oneMap.types, found: value } })).map(
+          problemText,
+        );
+      expect(said('some')).toEqual([
+        'Part 1, types.found: must be "all", "none" or a list of type values, not "some".',
+      ]);
+      expect(said('All')).toEqual([
+        'Part 1, types.found: must be "all", "none" or a list of type values, not "All".',
+      ]);
+      expect(said(true)).toEqual([
+        'Part 1, types.found: must be "all", "none" or a list of type values, not boolean.',
+      ]);
+      expect(said({ chests: true })).toEqual([
+        'Part 1, types.found: must be "all", "none" or a list of type values, not an object.',
+      ]);
+      expect(said([])).toEqual(['Part 1, types.found: must hold at least 1 entry.']);
+      expect(said(Array.from({ length: 201 }, (_, n) => `type-${n}`))).toEqual([
+        'Part 1, types.found: must hold at most 200 entries.',
+      ]);
+      expect(said(['chests', ''])).toEqual(['Part 1, types.found, entry 2: must not be empty.']);
+      expect(said(['x'.repeat(201)])).toEqual([
+        'Part 1, types.found, entry 1: must be at most 200 characters.',
+      ]);
+      expect(said([3])).toEqual(['Part 1, types.found, entry 1: must be text, not number.']);
+      expect(said(['chests', 'bosses', 'chests'])).toEqual([
+        'Part 1, types.found, entry 3: "chests" is listed twice; list each type once.',
+      ]);
+    });
+
     it('takes the marks of an image address in its path only, and a fixed query', () => {
       const images = (address: string, tile = 256) =>
         mapFields({ ...oneMap, maps: { ...oneMap.maps, picture: { images: address, tile } } });
@@ -840,6 +884,73 @@ describe('the demo importer that reads wikis by site rules files', () => {
           'is read by rules, which this importer only tries on a saved page: it does not read the site by it',
       },
     ]);
+  });
+
+  it('says on a saved data file which types can be ticked as found, as types.found says', async () => {
+    const mapFile = (found?: unknown) => {
+      const checked = checkSiteRules({
+        format: 'atlas-site-rules',
+        version: 1,
+        site: {
+          id: 'reed-isle',
+          name: 'Reed Isle',
+          game: 'Reed Isle',
+          hosts: ['reed.example.org'],
+        },
+        parts: [
+          {
+            type: 'map',
+            reader: 'rules',
+            start: '/map',
+            data: { from: 'file', address: '/map/data.json' },
+            maps: {
+              id: 'isle',
+              name: 'The Isle',
+              size: [1024, 1024],
+              maxZoom: 2,
+              picture: { images: '/tiles/{z}/{x}/{y}.png', tile: 256 },
+            },
+            types: {
+              from: 'locations',
+              names: { 'key-items': 'Key items' },
+              ...(found === undefined ? {} : { found }),
+            },
+            locations: {
+              path: 'spots[*]',
+              fields: { type: 'kind', name: 'label', x: 'x', y: 'y' },
+            },
+            position: { units: 'pixels' },
+            reading: { ways: ['fetch'] },
+          },
+        ],
+      });
+      if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
+      return checked.rules as never;
+    };
+    const data = JSON.stringify({
+      spots: [
+        { kind: 'key-items', label: 'Rusty key', x: 10, y: 20 },
+        { kind: 'chests', label: 'Net chest', x: 30, y: 40 },
+        { kind: 'crabs', label: 'Big crab', x: 50, y: 60 },
+      ],
+    });
+    const tryWith = (found?: unknown) =>
+      importer.sites!.tryPage!({
+        rules: mapFile(found),
+        url: 'https://reed.example.org/map',
+        html: '',
+        data,
+      });
+    const listed = await tryWith(['key-items', 'chests', 'ghosts']);
+    expect(listed.map?.types.found).toEqual({
+      can: ['Key items', 'chests'],
+      cannot: ['crabs'],
+      byName: false,
+    });
+    expect(listed.problems).toEqual(['“types.found” (ghosts) matched no type in the data.']);
+    expect((await tryWith('all')).map?.types.found).toMatchObject({ cannot: [] });
+    expect((await tryWith('none')).map?.types.found).toMatchObject({ can: [] });
+    expect((await tryWith()).map?.types.found).toBeUndefined();
   });
 });
 

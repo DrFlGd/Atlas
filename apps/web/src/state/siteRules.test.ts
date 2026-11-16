@@ -108,7 +108,11 @@ describe('what the reader understood of a saved page, in words', () => {
                 },
               ],
             },
-            types: { count: 2, first: ['Key items', 'Chests'] },
+            types: {
+              count: 2,
+              first: ['Key items', 'Chests'],
+              found: { can: ['Key items'], cannot: ['Chests'], byName: false },
+            },
             locations: {
               count: 13,
               first: [{ name: 'Rusty key', map: 'Harbour', type: 'Key items', x: 1200.5, y: 2210 }],
@@ -125,9 +129,39 @@ describe('what the reader understood of a saved page, in words', () => {
       '“Old Tower, Ground floor”, 1,024 × 1,024 pixels: 1 location, with 0 descriptions, 0 links, 1 picture. It is a floor of “old-tower”. 2 locations fall outside it.',
       '1 other map is not listed here.',
       'The first types: Key items, Chests.',
+      'Can be ticked as found: Key items. Cannot: Chests.',
       'The first locations: Rusty key (Key items) on “Harbour” at 1,200.5, 2,210.',
       'Not every position falls inside its map: the maps above say how many fall outside.',
     ]);
+  });
+
+  it('says in one line which types can be ticked as found, and when the reader chose by name', () => {
+    const foundLine = (found: { can: string[]; cannot: string[]; byName: boolean } | undefined) =>
+      trialInWords(
+        trial({
+          part: 0,
+          type: 'map',
+          map: {
+            maps: { count: 0, listed: [] },
+            types: { count: 3, first: [], ...(found ? { found } : {}) },
+            locations: { count: 0, first: [] },
+          },
+        }),
+      ).find((line) => line.includes('ticked'));
+    expect(foundLine({ can: ['Treasure', 'Chests'], cannot: ['Enemies'], byName: false })).toBe(
+      'Can be ticked as found: Treasure, Chests. Cannot: Enemies.',
+    );
+    expect(foundLine({ can: ['Treasure', 'Chests'], cannot: [], byName: false })).toBe(
+      'Every type can be ticked as found: Treasure, Chests.',
+    );
+    expect(foundLine({ can: [], cannot: ['Enemies'], byName: false })).toBe(
+      'None of the types can be ticked as found: Enemies.',
+    );
+    expect(foundLine({ can: ['Bosses'], cannot: ['Treasure'], byName: true })).toBe(
+      'Can be ticked as found: Bosses. Cannot: Treasure. The file does not say which (types.found), so the reader chose from each type’s name.',
+    );
+    expect(foundLine({ can: [], cannot: [], byName: true })).toBeUndefined();
+    expect(foundLine(undefined)).toBeUndefined();
   });
 
   it('says nothing when no part read the page: its problems say why', () => {

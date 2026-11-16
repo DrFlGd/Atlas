@@ -362,6 +362,19 @@ const mapsSchema = z.strictObject({
   }),
 });
 
+/** Type values one `types.found` list names at most. */
+export const MAX_FOUND_TYPES = 200;
+
+/**
+ * Which types of location can be ticked as found: every type (`all`), none
+ * (`none`), or exactly the types whose values are listed. Without it the
+ * reader chooses from each type's name.
+ */
+const foundSchema = z.union([
+  once(text(200), 'type').min(1).max(MAX_FOUND_TYPES),
+  z.enum(['all', 'none']),
+]);
+
 const mapPartFields = {
   data: z.strictObject({
     from: z.enum(['file', 'page']),
@@ -377,6 +390,7 @@ const mapPartFields = {
     name: dataPath.optional(),
     group: dataPath.optional(),
     icon: dataPath.optional(),
+    found: foundSchema.optional(),
   }),
   locations: z.strictObject({
     path: dataPath,
@@ -651,6 +665,15 @@ const EXPECTED: Record<string, string> = {
   record: 'an object',
 };
 
+/**
+ * Fields of several forms, by the end of their path, with those forms in
+ * words: said whole for a value that is not a list. A list is checked
+ * entry by entry, as any list is.
+ */
+const FORMS_IN_WORDS: Record<string, string> = {
+  'types.found': '"all", "none" or a list of type values',
+};
+
 /** One zod issue as problems in plain words, with the path it is under. */
 function problemsOf(issue: z.core.$ZodIssue, at: Path, part: boolean): SiteRulesProblem[] {
   const path = [...at, ...issue.path];
@@ -705,6 +728,14 @@ function problemsOf(issue: z.core.$ZodIssue, at: Path, part: boolean): SiteRules
     }
     case 'invalid_union': {
       if (issue.input === undefined) return [problem('is missing, and it is needed')];
+      const forms = Object.entries(FORMS_IN_WORDS).find(([end]) => field.endsWith(end))?.[1];
+      if (forms && !Array.isArray(issue.input)) {
+        const given =
+          typeof issue.input === 'string'
+            ? JSON.stringify(issue.input.slice(0, 40))
+            : describeValue(issue.input);
+        return [problem(`must be ${forms}, not ${given}`)];
+      }
       // A value that fits none of the forms: the form of its first branch that fits its type.
       const branch = issue.errors.find((errors) =>
         errors.every((error) => error.code !== 'invalid_type' || error.path.length > 0),

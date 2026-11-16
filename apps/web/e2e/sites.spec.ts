@@ -265,7 +265,7 @@ const MAP_RULES = {
         floor: 'level',
         picture: { images: '/tiles/{map}/{z}/{x}/{y}.png?v=7', tile: 256 },
       },
-      types: { from: 'locations', names: { 'key-items': 'Key items' } },
+      types: { from: 'locations', names: { 'key-items': 'Key items' }, found: ['key-items'] },
       locations: {
         path: 'spots[*]',
         fields: {
@@ -471,6 +471,7 @@ test.describe('what a file widens, and trying a file on a saved page', () => {
       '“Old Tower, Top floor”, 1,024 × 1,024 pixels: 1 location, with 0 descriptions, 1 link, 0 pictures. It is a floor of “old-tower”.',
       'One image of “Old Tower, Top floor”: https://reed.example.org/tiles/tower-2/0/0/0.png?v=7',
       'The first types: Key items, chests.',
+      'Can be ticked as found: Key items. Cannot: chests.',
       'The first locations: Rusty key (Key items) on “Harbour” at 1,200, 2,210; Net chest (chests) on “Harbour” at 300, 410; Stair chest (chests) on “Old Tower, Ground floor” at 512, 512; Bell key (Key items) on “Old Tower, Top floor” at 100, 900.',
       'Not every position falls inside its map: the maps above say how many fall outside.',
     ]);
