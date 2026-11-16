@@ -359,6 +359,8 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
       missing('article.remove', selector, `parts[${index}].article.remove[${n}]`);
     found.forEach((element) => element.remove());
   });
+  const layout = layoutOf(part.layout ?? {}, content, index, unmatched);
+  if (layout) trial.layout = layout;
   const title = part.article.title ? doc.querySelector(part.article.title) : null;
   if (part.article.title && !title) missing('article.title', part.article.title);
   let titleText = title ? wordsOf(title) : wordsOf(doc.querySelector('title'));
@@ -461,6 +463,76 @@ function tryPage(/** @type {SiteTrialRequest} */ request) {
   trial.pictureList = pictureList;
   trial.page = markdownOf(content, url, pictures).trim();
   return trial;
+}
+
+/**
+ * The layout of a page, as the part's `layout` section names it: blocks
+ * left out, cards with their titles, blocks side by side and lists set in a
+ * row. This importer reads no other layout, and its pages carry the notes
+ * of their layout only when read in the app's window. Each selector that
+ * matched nothing is listed in `unmatched`. Null when the layout is not read.
+ */
+function layoutOf(
+  /** @type {NonNullable<import('../src/index').SiteLayout>} */ layout,
+  /** @type {Element} */ content,
+  /** @type {number} */ index,
+  /** @type {NonNullable<SiteTrial['unmatched']>} */ unmatched,
+) {
+  const read = layout.read ?? 'seen';
+  const at = `parts[${index}].layout`;
+  /** The elements a list of selectors matches, each that matched nothing listed. */
+  const matched = (/** @type {string[] | undefined} */ selectors, /** @type {string} */ field) =>
+    (selectors ?? []).flatMap((selector, n) => {
+      const found = [...content.querySelectorAll(selector)];
+      if (found.length === 0) unmatched.push({ field: `${at}.${field}[${n}]`, value: selector });
+      return found;
+    });
+  const leftOut = matched(layout.leaveOut, 'leaveOut');
+  leftOut.forEach((element) => element.remove());
+  const notes = content.hasAttribute('data-atlas-layout');
+  const hidden = notes ? [...content.querySelectorAll('[data-atlas-hidden]')] : [];
+  hidden.forEach((element) => element.remove());
+  if (read === 'off') {
+    return {
+      read,
+      notes,
+      sideBySide: 0,
+      cards: 0,
+      cardTitles: [],
+      rows: 0,
+      columns: 0,
+      centred: 0,
+      headings: 0,
+      hidden: hidden.length,
+      leftOut: leftOut.length,
+    };
+  }
+  const cards = layout.cards?.select ? [...content.querySelectorAll(layout.cards.select)] : [];
+  if (layout.cards?.select && cards.length === 0) {
+    unmatched.push({ field: `${at}.cards.select`, value: layout.cards.select });
+  }
+  const titleOf = layout.cards?.title;
+  const cardTitles = cards.flatMap((card) => {
+    const title = titleOf ? card.querySelector(titleOf) : null;
+    return title ? [wordsOf(title)] : [];
+  });
+  if (titleOf && cards.length > 0 && cardTitles.length === 0) {
+    unmatched.push({ field: `${at}.cards.title`, value: titleOf });
+  }
+  matched(layout.oneColumn, 'oneColumn');
+  return {
+    read,
+    notes,
+    sideBySide: matched(layout.sideBySide, 'sideBySide').length,
+    cards: cards.length,
+    cardTitles: cardTitles.slice(0, 200),
+    rows: matched(layout.row, 'row').length,
+    columns: 0,
+    centred: 0,
+    headings: 0,
+    hidden: hidden.length,
+    leftOut: leftOut.length,
+  };
 }
 
 /** A link or picture address of a page as a whole https address, or null. */
