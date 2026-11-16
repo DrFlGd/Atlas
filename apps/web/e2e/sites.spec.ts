@@ -402,6 +402,9 @@ test.describe('what a file widens, and trying a file on a saved page', () => {
       'The next page is https://guide.example.org/cove/lookout.',
       'The credit line reads “By A. Writer, 3 March 2026”.',
       'Licence: None recorded, as the file says.',
+      'The layout is read as the browser shows it.',
+      'No layout was found: the page is kept in one column.',
+      'A page saved from a browser has no notes of its layout, so layout that comes only from the wiki’s style sheet is not seen here: it shows once the wiki is read in the app.',
     ]);
     await expect(trial.getByTestId('site-trial-text')).toContainText(
       'Getting there Walk past the nets',
