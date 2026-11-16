@@ -4,13 +4,16 @@
 //! the text (`<32 hex digits>.css`), never by the site. See `styles.ts` in
 //! `@atlas/importer-api` for how the web app gets them.
 //!
-//! Nothing reads them yet: they are kept so that a later version may look
-//! up what the site's layout names do. They are data only: never served
-//! (the pack protocol never serves `import/`), never loaded as a style
-//! sheet, never put in a pack file (only the pack's own files are), and
-//! they go with the game's folder when the game is deleted. Building a
-//! game again from its saved pages and deleting its map images leave them
-//! alone.
+//! In a build with downloads the web app reads them back
+//! (`library_style_texts`, `texts`) to lay the game's saved pages out as a
+//! browser shows them, in a closed frame of its own that runs nothing and
+//! fetches nothing, every address in a sheet made empty first (see
+//! `src/layoutFrame/` in the web app). Otherwise they are data only: never
+//! served (the pack protocol never serves `import/`), never loaded as a
+//! style sheet of the app, never put in a pack file (only the pack's own
+//! files are), and they go with the game's folder when the game is
+//! deleted. Building a game again from its saved pages and deleting its map
+//! images leave them alone.
 //!
 //! The same sheet is kept once: a sheet with an address replaces the text
 //! kept for that address when its text changed, and a text kept already is
@@ -257,6 +260,17 @@ pub struct StylesFacts {
     pub left_out: u64,
 }
 
+/// A sheet kept for a game with its text, for laying its pages out.
+#[cfg(feature = "downloads")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetText {
+    /// Its address; none for a `<style>` block of a page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    pub text: String,
+}
+
 /// What one keep did, for the log.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Kept {
@@ -437,6 +451,55 @@ pub fn facts(pack_dir: &Path) -> Option<StylesFacts> {
         bytes: index.total_bytes(),
         left_out: index.left_out.len() as u64,
     })
+}
+
+/// The text of a sheet's file, if it is a plain file within [`MAX_SHEET_BYTES`] and is text.
+#[cfg(feature = "downloads")]
+fn sheet_text(path: &Path) -> Option<String> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_SHEET_BYTES as u64 {
+        return None;
+    }
+    fs::read_to_string(path).ok()
+}
+
+/// The sheets kept for a game with their texts, in the order the index
+/// lists them, for the web app to lay the game's saved pages out with:
+/// only files named as this app names them, each read once, at most
+/// [`MAX_SHEET_BYTES`] each and [`MAX_STYLES_BYTES`] in all; a file that
+/// cannot be read is left out. None for a game without sheets.
+#[cfg(feature = "downloads")]
+pub fn texts(pack_dir: &Path) -> Vec<SheetText> {
+    let Some(index) = read_index(pack_dir) else {
+        return Vec::new();
+    };
+    let dir = styles_dir(pack_dir);
+    let mut read: Vec<(String, Option<String>)> = Vec::new();
+    let mut total: u64 = 0;
+    let mut out = Vec::new();
+    for sheet in &index.sheets {
+        if !is_file_name(&sheet.file) {
+            continue;
+        }
+        let at = match read.iter().position(|(file, _)| *file == sheet.file) {
+            Some(at) => at,
+            None => {
+                let text = sheet_text(&dir.join(&sheet.file)).filter(|text| {
+                    total += text.len() as u64;
+                    total <= MAX_STYLES_BYTES as u64
+                });
+                read.push((sheet.file.clone(), text));
+                read.len() - 1
+            }
+        };
+        if let Some(text) = &read[at].1 {
+            out.push(SheetText {
+                address: sheet.address.clone(),
+                text: text.clone(),
+            });
+        }
+    }
+    out
 }
 
 /// Whether `file` in `dir` holds exactly `text`.
@@ -851,6 +914,62 @@ mod tests {
         assert!(!empty.0.join(IMPORT_DIR).exists());
         assert!(facts(&empty.0).is_none());
         assert_eq!(list(&empty.0), StylesList::default());
+    }
+
+    #[cfg(feature = "downloads")]
+    #[test]
+    fn gives_the_texts_back_in_order_each_file_read_once() {
+        let dir = game("styles-texts");
+        assert!(texts(&dir.0).is_empty());
+        keep(
+            &dir.0,
+            &request(
+                Way::Fetch,
+                vec![
+                    sheet(Some(SHEET), ".cards { display: flex; }"),
+                    sheet(None, ".cols { column-count: 3; }"),
+                    sheet(
+                        Some("https://wiki.example.org/same.css"),
+                        ".cards { display: flex; }",
+                    ),
+                ],
+            ),
+            NOW,
+        )
+        .unwrap();
+        let given = texts(&dir.0);
+        assert_eq!(
+            given,
+            vec![
+                SheetText {
+                    address: Some(SHEET.to_owned()),
+                    text: ".cards { display: flex; }".to_owned()
+                },
+                SheetText {
+                    address: None,
+                    text: ".cols { column-count: 3; }".to_owned()
+                },
+                SheetText {
+                    address: Some("https://wiki.example.org/same.css".to_owned()),
+                    text: ".cards { display: flex; }".to_owned()
+                },
+            ]
+        );
+        // A file gone, or one not named as this app names them, is left out.
+        fs::remove_file(styles_dir(&dir.0).join(file_name(".cols { column-count: 3; }"))).unwrap();
+        let mut index = read_index(&dir.0).unwrap();
+        index.sheets[0].file = "../index.json".to_owned();
+        fs::write(
+            styles_dir(&dir.0).join(STYLES_INDEX),
+            serde_json::to_string(&index).unwrap(),
+        )
+        .unwrap();
+        let given = texts(&dir.0);
+        assert_eq!(given.len(), 1);
+        assert_eq!(
+            given[0].address.as_deref(),
+            Some("https://wiki.example.org/same.css")
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import type { PictureSummary, PictureTilesRequest } from '@atlas/importer-api';
 import type { PinTableStats, TableFit } from '@atlas/saves';
+import type { KeptSheetText } from './layoutFrame/frameText';
 
 /**
  * The bridge to the desktop shell (`apps/desktop`). The web app has no
@@ -977,6 +978,12 @@ export interface DesktopBridge {
     styles(packId: string): Promise<KeptStyles>;
     /** Keeps style sheets with a game, once each, and notes those not got; what is kept after. */
     keepStyles(packId: string, request: KeepStylesRequest): Promise<KeptStyles>;
+    /**
+     * The sheets kept with a game, with their texts, in the order they were
+     * kept, to lay its saved pages out (see `layoutFrame/`). Only in a build
+     * with downloads; none for a game without any.
+     */
+    styleTexts(packId: string): Promise<KeptSheetText[]>;
   };
   importWindow: {
     open(
@@ -1324,6 +1331,9 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       saveImport: (request) => call('library_save_import', { request }),
       styles: (packId) => call('library_styles', { packId }),
       keepStyles: (packId, request) => call('library_keep_styles', { packId, request }),
+      styleTexts: __ATLAS_DOWNLOADS__
+        ? (packId) => call('library_style_texts', { packId })
+        : () => Promise.reject(new Error('This app does not lay pages out.')),
     },
     importWindow: {
       open: (url, reader, importer, purpose, measure, keep, browse) =>

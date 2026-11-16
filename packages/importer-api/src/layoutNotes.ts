@@ -468,3 +468,70 @@ export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
   }
   return copy;
 }`;
+
+// ---------------------------------------------------------------------------
+// Laying a page out in the app (optional)
+//
+// A page the app fetched by itself, and a page saved without notes, was
+// never shown in a browser. An app that keeps a wiki's style sheets (see
+// `styles.ts`) can lay such a page out itself, in a closed frame of its own
+// that runs nothing and fetches nothing, with those sheets, and measure it
+// with the measuring step above: `ImportContext.layOut` in the contract.
+// The importer asks for it page by page, as it converts; the notes come
+// back with the page's HTML, in memory, and are never saved.
+
+/** The width the app lays a page out at, in CSS pixels: a computer's window. */
+export const LAYOUT_FRAME_WIDTH = 1280;
+/** The height of the frame a page is laid out in, in CSS pixels. */
+export const LAYOUT_FRAME_HEIGHT = 800;
+/** How long the app lays out one page at most, in milliseconds; past it the page has no notes. */
+export const LAYOUT_PAGE_MS = 2000;
+/** A page's HTML longer than this, in characters, is not laid out. */
+export const MAX_LAYOUT_PAGE_CHARS = 8 * 1024 * 1024;
+/** The selectors of a page's article the app tries at most, and their length at most. */
+export const MAX_ARTICLE_SELECTORS = 8;
+export const MAX_ARTICLE_SELECTOR_CHARS = 200;
+
+/**
+ * A page an importer asks the app to lay out (`ImportContext.layOut`).
+ */
+export interface PageLayoutRequest {
+  /** The page's HTML, a whole document, as the site sent it or a reader handed it over. */
+  html: string;
+  /** The page's address: the style sheets it links to are known by it. */
+  url: string;
+  /**
+   * Optional: CSS selectors of the page's article, best first. The first
+   * that finds an element in the page's body is measured, and carries the
+   * mark; without one, the page's `body` is measured and carries it. Only
+   * selectors: nothing of the importer runs in the app.
+   */
+  article?: string[];
+}
+
+/**
+ * What an importer asked to lay out, as the app takes it: HTML within
+ * {@link MAX_LAYOUT_PAGE_CHARS}, an `http(s)` address, and at most
+ * {@link MAX_ARTICLE_SELECTORS} selectors of at most
+ * {@link MAX_ARTICLE_SELECTOR_CHARS} characters (others left out). Null for
+ * anything else. Never throws.
+ */
+export function pageLayoutRequestOf(value: unknown): PageLayoutRequest | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { html, url, article } = value as Record<string, unknown>;
+  if (typeof html !== 'string' || html.length === 0 || html.length > MAX_LAYOUT_PAGE_CHARS) {
+    return null;
+  }
+  if (typeof url !== 'string' || !/^https?:\/\//iu.test(url) || url.length > 2048) return null;
+  const selectors = Array.isArray(article)
+    ? (article as unknown[])
+        .filter(
+          (selector): selector is string =>
+            typeof selector === 'string' &&
+            selector.trim().length > 0 &&
+            selector.length <= MAX_ARTICLE_SELECTOR_CHARS,
+        )
+        .slice(0, MAX_ARTICLE_SELECTORS)
+    : [];
+  return { html, url, ...(selectors.length > 0 ? { article: selectors } : {}) };
+}
