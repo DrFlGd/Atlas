@@ -770,7 +770,7 @@ img[data-opens-large]:focus-visible {
 }
 
 /* Each item with a small picture beside it: room between them, no dots. */
-.guide-body .guide-row > .guide-row-pictures {
+.guide-body .guide-row > :is(ul, ol).guide-row-pictures {
   gap: 6px 20px;
 }
 
@@ -780,32 +780,39 @@ img[data-opens-large]:focus-visible {
 
 /* Columns: a list flowed down and across, never narrower than a short line. */
 .guide-columns {
-  column-gap: 28px;
+  column-gap: 24px;
 }
 
 .guide-columns-2 {
-  columns: 2 13rem;
+  columns: 2 12rem;
 }
 
 .guide-columns-3 {
-  columns: 3 11rem;
+  columns: 3 9rem;
 }
 
 .guide-columns-4 {
-  columns: 4 10rem;
+  columns: 4 8rem;
 }
 
 .guide-columns-5 {
-  columns: 5 9rem;
+  columns: 5 7rem;
 }
 
 .guide-columns-6 {
-  columns: 6 8rem;
+  columns: 6 6rem;
 }
 
 .guide-columns li,
 .guide-columns p {
   break-inside: avoid;
+}
+
+/* A phone or a narrow pane or block: one column. */
+@container (max-width: 30rem) {
+  .guide-columns {
+    columns: auto;
+  }
 }
 
 /* Centred: its lines, lists, tables, pictures and rows in the middle. */
