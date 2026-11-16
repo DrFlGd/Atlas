@@ -21,6 +21,7 @@ import {
   siteRulesJsonSchema,
   siteRulesKey,
   siteRulesProblemsOf,
+  siteRulesWideningsOf,
   type AtlasImporter,
   type SiteRulesProblem,
 } from './index';
@@ -634,6 +635,96 @@ describe('the demo importer that reads wikis by site rules files', () => {
       ways: ['fetch', 'browse'],
       pause: 5,
     });
+  });
+
+  const builtIn = () =>
+    importer.sites!.files.map((file) => {
+      const checked = checkSiteRules(file.rules);
+      if (!checked.ok) throw new Error(file.name);
+      return { name: file.name, own: false, rules: checked.rules };
+    });
+
+  it('says what a file of the person’s widens: a way for a host, or a refusal it overrides', () => {
+    const own = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: {
+        id: 'harbour-wiki',
+        name: 'Harbour Wiki',
+        hosts: ['harbour.example.net', 'north.quiet-archive.example'],
+      },
+      parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['window', 'browse'] } }],
+    });
+    if (!own.ok) throw new Error('The file has problems.');
+    expect(siteRulesWideningsOf(importer, own.rules)).toEqual([
+      { field: 'parts[0].reading.ways', message: 'adds In a window for harbour.example.net' },
+      {
+        field: 'site.hosts[1]',
+        message:
+          'reads north.quiet-archive.example, which the file “quiet-archive.refused.atlas-site.json” of the importer refuses: This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
+      },
+    ]);
+    // Fewer ways, or a refusal of the person's, widen nothing.
+    const narrower = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'harbour-wiki', name: 'Harbour Wiki', hosts: ['harbour.example.net'] },
+      parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['browse'] } }],
+    });
+    if (!narrower.ok) throw new Error('The file has problems.');
+    expect(siteRulesWideningsOf(importer, narrower.rules)).toEqual([]);
+  });
+
+  it('refuses the hosts of its refusal file until a file of the person’s names one', () => {
+    applySiteRules(importer, builtIn());
+    const refused = 'https://north.quiet-archive.example/wiki/Welcome';
+    expect(importer.refuses?.(refused)).toBe(
+      'This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
+    );
+    expect(importer.refuses?.('https://harbour.example.net/wiki/Welcome')).toBeNull();
+    const own = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'north-archive', name: 'North Archive', hosts: ['north.quiet-archive.example'] },
+      parts: [{ type: 'wiki', reader: 'other-wiki', reading: { ways: ['browse'] } }],
+    });
+    if (!own.ok) throw new Error('The file has problems.');
+    applySiteRules(importer, [
+      { name: 'north-archive.atlas-site.json', own: true, rules: own.rules },
+      ...builtIn(),
+    ]);
+    expect(importer.refuses?.(refused)).toBeNull();
+    expect(siteInfoOf(importer, refused)).toMatchObject({ ways: ['browse'] });
+    expect(importer.refuses?.('https://south.quiet-archive.example/wiki/Welcome')).not.toBeNull();
+    applySiteRules(importer, builtIn());
+  });
+
+  it('says that it only tries a part read by rules, and cannot read a map part by rules', () => {
+    const file = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'cove-guide', name: 'Cove Guide', game: 'Cove', hosts: ['guide.example.org'] },
+      parts: [
+        {
+          type: 'guide',
+          reader: 'rules',
+          start: '/guide',
+          reading: { ways: ['browse'] },
+          pages: { include: ['/guide/*'] },
+          contents: { from: 'links' },
+          article: { content: 'main' },
+          order: { from: 'next', next: 'a.next' },
+        },
+      ],
+    });
+    if (!file.ok) throw new Error(JSON.stringify(file.problems));
+    expect(siteRulesProblemsOf(importer, file.rules)).toEqual([
+      {
+        field: 'parts[0]',
+        message:
+          'is read by rules, which this importer only tries on a saved page: it does not read the site by it',
+      },
+    ]);
   });
 });
 

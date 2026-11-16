@@ -32,7 +32,15 @@
  *   Harbour Wiki, which it comes with, and any the person adds for that
  *   reader. A file can offer fewer ways, a longer pause, its own notice
  *   and an answer for the wiki's licence; the farm read only as the person
- *   browses stays so in code, whatever a file says.
+ *   browses stays so in code, whatever a file says. It also comes with a
+ *   refusal file for a made-up wiki farm it never reads
+ *   (`<name>.quiet-archive.example`), which a file of the person's that
+ *   names one of its hosts overrides, and it says what a file of the
+ *   person's widens (`sites.widens`): a way it adds for a host, or a refusal
+ *   it overrides.
+ * - It lists the general reader, `rules`, only to try a file on a page the
+ *   person saved (`sites.tryPage`), with the browser's own HTML parser; it
+ *   does not read a site by such a file, and says so of each part.
  *
  * It is a single plain ES module with no imports, as every importer module
  * must be.
@@ -70,6 +78,15 @@ const READER = 'other-wiki';
 /** @typedef {import('../src/index').SiteRulesProblem} SiteRulesProblem */
 /** @typedef {import('../src/index').AppliedSiteRules} AppliedSiteRules */
 /** @typedef {import('../src/index').ReadingWay} ReadingWay */
+/** @typedef {import('../src/index').SiteRulesWidening} SiteRulesWidening */
+/** @typedef {import('../src/index').SiteTrial} SiteTrial */
+/** @typedef {import('../src/index').SiteTrialRequest} SiteTrialRequest */
+
+/** The general reader, as site rules files name it. */
+const RULES = 'rules';
+
+/** The ways of reading, as the Sites screen names them. */
+const WAY_NAMES = { fetch: 'By itself', window: 'In a window', browse: 'As I browse' };
 
 /** The site rules files it comes with. */
 const BUILT_IN_SITES = [
@@ -101,6 +118,19 @@ const BUILT_IN_SITES = [
       parts: [{ type: 'wiki', reader: READER, reading: { ways: ['fetch', 'browse'], pause: 5 } }],
     },
   },
+  {
+    name: 'quiet-archive.refused.atlas-site.json',
+    rules: {
+      format: 'atlas-site-rules',
+      version: 1,
+      refusal: {
+        id: 'quiet-archive',
+        name: 'Quiet Archive wikis',
+        domains: ['quiet-archive.example'],
+        notice: 'This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
+      },
+    },
+  },
 ];
 
 /** The files it reads by: those the app handed it last, else those it comes with. */
@@ -117,6 +147,16 @@ function problemsOf(/** @type {SiteRules} */ rules, /** @type {SiteRules[]} */ b
   if (!('site' in rules)) return [];
   /** @type {SiteRulesProblem[]} */
   const problems = [];
+  rules.parts.forEach((part, index) => {
+    if (part.reader !== RULES) return;
+    problems.push({
+      field: `parts[${index}]`,
+      message:
+        part.type === 'map'
+          ? 'is a map part read by rules, which this importer cannot read'
+          : 'is read by rules, which this importer only tries on a saved page: it does not read the site by it',
+    });
+  });
   const named = new Set(before.flatMap((other) => ('site' in other ? other.site.hosts : [])));
   rules.site.hosts.forEach((host, index) => {
     if (BROWSE_ONLY.test(host)) {
@@ -168,6 +208,209 @@ function rulesOf(/** @type {string} */ host) {
     notice: base.notice,
     licence: base.licence,
   };
+}
+
+/** A site file's hosts, with whether the file is the person's. */
+const siteFiles = () =>
+  applied.flatMap((file) => ('site' in file.rules ? [{ ...file, rules: file.rules }] : []));
+
+/** Whether a refusal covers a host: the host is one of its domains, or under one. */
+const covers = (/** @type {{ domains: string[] }} */ refusal, /** @type {string} */ host) =>
+  refusal.domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+
+/**
+ * The refusal a host stays under, from the files it reads by: none when a
+ * file of the person's names the host itself and no refusal of theirs
+ * covers it.
+ */
+function refusalOf(/** @type {string} */ host) {
+  const refusals = applied.flatMap((file) =>
+    'refusal' in file.rules ? [{ own: file.own, ...file.rules.refusal }] : [],
+  );
+  const refusal = refusals.find((r) => covers(r, host));
+  if (!refusal) return null;
+  const overridden =
+    !refusal.own && siteFiles().some((file) => file.own && file.rules.site.hosts.includes(host));
+  return overridden ? null : refusal;
+}
+
+/** The ways a file offers for a host of its site, for this importer's reader. */
+function waysOf(/** @type {SiteRules} */ rules) {
+  if ('readerDefaults' in rules) return rules.readerDefaults.reading.ways;
+  if (!('site' in rules)) return [];
+  const part = rules.parts.find((p) => p.reader === READER);
+  return part?.reading?.ways ?? null;
+}
+
+/** What a file of the person's widens against the files this importer comes with. */
+function wideningsOf(/** @type {SiteRules} */ rules) {
+  /** @type {SiteRulesWidening[]} */
+  const widens = [];
+  const builtIn = /** @type {SiteRules[]} */ (BUILT_IN_SITES.map((file) => file.rules));
+  const defaults = builtIn.find((r) => 'readerDefaults' in r);
+  const defaultWays = defaults ? (waysOf(defaults) ?? []) : [];
+  if ('readerDefaults' in rules) {
+    if (rules.readerDefaults.reader !== READER) return [];
+    for (const way of rules.readerDefaults.reading.ways) {
+      if (!defaultWays.includes(way)) {
+        widens.push({
+          field: 'readerDefaults.reading.ways',
+          message: `adds ${WAY_NAMES[way]} for every site the reader “${READER}” reads`,
+        });
+      }
+    }
+    return widens;
+  }
+  if (!('site' in rules)) return [];
+  const partIndex = rules.parts.findIndex((p) => p.reader === READER);
+  rules.site.hosts.forEach((host, index) => {
+    for (const file of BUILT_IN_SITES) {
+      const refusal = 'refusal' in file.rules ? file.rules.refusal : null;
+      if (refusal && covers(refusal, host)) {
+        widens.push({
+          field: `site.hosts[${index}]`,
+          message: `reads ${host}, which the file “${file.name}” of the importer refuses: ${refusal.notice}`,
+        });
+      }
+    }
+    if (partIndex < 0) return;
+    const shipped = builtIn.find((r) => 'site' in r && r.site.hosts.includes(host));
+    const before = (shipped && waysOf(shipped)) ?? defaultWays;
+    const after = waysOf(rules) ?? defaultWays;
+    for (const way of after) {
+      if (!before.includes(way)) {
+        widens.push({
+          field: `parts[${partIndex}].reading.ways`,
+          message: `adds ${WAY_NAMES[way]} for ${host}`,
+        });
+      }
+    }
+  });
+  return widens;
+}
+
+/** The words of an element, spaces folded. */
+const wordsOf = (/** @type {Element | null} */ element) =>
+  (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+/**
+ * Tries a file's first wiki or guide part read by rules on one saved page,
+ * with the browser's HTML parser: nothing of the page is run or fetched.
+ */
+function tryPage(/** @type {SiteTrialRequest} */ request) {
+  const { rules, url, html } = request;
+  /** @type {SiteTrial} */
+  const trial = {
+    part: null,
+    headings: 0,
+    pictures: 0,
+    fullPictures: 0,
+    tables: 0,
+    chapters: 0,
+    problems: [],
+  };
+  let host = '';
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    // An address that is not one is answered below.
+  }
+  const index = rules.parts.findIndex((p) => p.reader === RULES && p.type !== 'map');
+  const part = rules.parts[index];
+  if (!part || !('article' in part)) {
+    trial.problems.push('The file has no wiki or guide part read by rules to try.');
+    return trial;
+  }
+  if (!rules.site.hosts.includes(host)) {
+    trial.problems.push(`The address ${url} is not on a host the file names.`);
+    return trial;
+  }
+  const doc = new globalThis.DOMParser().parseFromString(html, 'text/html');
+  const missing = (/** @type {string} */ field, /** @type {string} */ selector) =>
+    trial.problems.push(`“${field}” (${selector}) matched nothing on this page.`);
+  const selectors = Array.isArray(part.article.content)
+    ? part.article.content
+    : [part.article.content];
+  const content = selectors.map((s) => doc.querySelector(s)).find((e) => e) ?? null;
+  trial.part = index;
+  trial.type = part.type === 'guide' ? 'guide' : 'wiki';
+  if (!content) {
+    missing('article.content', selectors.join(', '));
+    return trial;
+  }
+  for (const selector of part.article.remove ?? []) {
+    const found = content.querySelectorAll(selector);
+    if (found.length === 0) missing('article.remove', selector);
+    found.forEach((element) => element.remove());
+  }
+  const title = part.article.title ? doc.querySelector(part.article.title) : null;
+  if (part.article.title && !title) missing('article.title', part.article.title);
+  let titleText = title ? wordsOf(title) : wordsOf(doc.querySelector('title'));
+  const end = part.article.titleEnd;
+  if (end && titleText.endsWith(end)) titleText = titleText.slice(0, -end.length).trim();
+  if (titleText) trial.title = titleText;
+  if (part.game) {
+    const name = doc.querySelector(part.game.name);
+    if (name) trial.game = wordsOf(name);
+    else missing('game.name', part.game.name);
+  } else if (rules.site.game) {
+    trial.game = rules.site.game;
+  }
+  trial.headings = content.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
+  const pictures = [...content.querySelectorAll('img')];
+  trial.pictures = pictures.length;
+  const fullAttribute = part.pictures?.full === 'attribute' ? part.pictures.fullAttribute : null;
+  trial.fullPictures = fullAttribute
+    ? pictures.filter((img) => img.getAttribute(fullAttribute)).length
+    : 0;
+  trial.tables = content.querySelectorAll('table').length;
+  if (part.article.chapters) {
+    trial.chapters = content.querySelectorAll(part.article.chapters).length;
+    if (trial.chapters === 0) missing('article.chapters', part.article.chapters);
+  }
+  if (part.article.credit) {
+    const credit = doc.querySelector(part.article.credit);
+    if (credit) trial.credit = wordsOf(credit);
+    else missing('article.credit', part.article.credit);
+  }
+  if (part.contents.links) {
+    const links = [...doc.querySelectorAll(part.contents.links)];
+    if (links.length === 0) missing('contents.links', part.contents.links);
+    const groups = part.contents.groups
+      ? [...doc.querySelectorAll(part.contents.groups)].map(wordsOf).filter(Boolean)
+      : [];
+    if (part.contents.groups && groups.length === 0) {
+      missing('contents.groups', part.contents.groups);
+    }
+    if (links.length > 0) {
+      trial.contents = {
+        count: links.length,
+        groups,
+        first: links.slice(0, 5).map((link) => ({ title: wordsOf(link) })),
+      };
+    }
+  }
+  if ('order' in part && part.order.next) {
+    const next = doc.querySelector(part.order.next)?.getAttribute('href');
+    if (next) {
+      try {
+        trial.next = new URL(next, url).href;
+      } catch {
+        // A link that is not an address is no next page.
+      }
+    } else missing('order.next', part.order.next);
+  }
+  const block = part.licence ?? rules.site.licence;
+  trial.licence =
+    block && 'known' in block
+      ? `${block.known}, as the file says.`
+      : block && 'permission' in block
+        ? `“${block.permission}”, as the file says.`
+        : block && 'blank' in block
+          ? 'None recorded, as the file says.'
+          : 'The page states none, so you would be asked for one.';
+  trial.text = wordsOf(content).slice(0, 600);
+  return trial;
 }
 
 /** The answer for a wiki's licence its file gives: a known licence, words, or none recorded. */
@@ -313,9 +556,17 @@ const importer = {
   matches: isPage,
   // Every address it reads is one it does not know: other importers come first.
   general: () => true,
+  refuses(url) {
+    try {
+      const host = new URL(url.trim()).hostname.toLowerCase().replace(/^www\./, '');
+      return refusalOf(host)?.notice ?? null;
+    } catch {
+      return null;
+    }
+  },
   siteInfo(url) {
     const parts = partsOf(url);
-    if (!parts) return null;
+    if (!parts || refusalOf(parts.host)) return null;
     if (BROWSE_ONLY.test(parts.host)) {
       return { key: parts.host, ways: ['browse'], notice: BROWSE_NOTICE };
     }
@@ -333,7 +584,7 @@ const importer = {
   },
   sites: {
     files: BUILT_IN_SITES,
-    readers: [READER],
+    readers: [READER, RULES],
     check: (rules) => problemsOf(rules, []),
     apply(files) {
       applied = [...files];
@@ -348,7 +599,10 @@ const importer = {
       '## Readers of the importer “Other wikis”',
       '',
       `- \`${READER}\`: a wiki whose pages are at \`https://<host>/wiki/<page>\`, with its contents at \`/wiki/Contents\`. By itself, in a window, as I browse.`,
+      `- \`${RULES}\`: tried on a saved page only.`,
     ].join('\n'),
+    widens: wideningsOf,
+    tryPage,
   },
   fetch: { addresses: (url) => (isPage(url) ? [url.trim()] : []) },
   // A window shows the page itself; the tests' shell hands over what the site answers.
