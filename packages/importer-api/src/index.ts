@@ -50,6 +50,7 @@ import {
 import type { SiteInfo, SiteLicence } from './sites';
 
 export * from './fetching';
+export * from './layoutNotes';
 export * from './sitePatterns';
 export * from './siteRules';
 export * from './siteTrial';
