@@ -26,8 +26,8 @@ import {
   rulesFromAnswer,
   sameSite,
   siteInfoOf,
+  siteLicenceOf,
   type AtlasImporter,
-  type ConfirmedLicence,
   type FetchedPage,
   type PageFetch,
   type RobotsRules,
@@ -46,6 +46,7 @@ import {
   type ReadingWay,
   type SavedSource,
   type SiteInfo,
+  type SiteLicence,
   type WrittenAgain,
 } from '@atlas/importer-api';
 import {
@@ -1538,7 +1539,7 @@ export function importContext(
    */
   site: {
     reading?: ReadingWay;
-    confirmedLicence?: ConfirmedLicence;
+    confirmedLicence?: SiteLicence;
     pictureSize?: PictureSize;
   } = {},
 ): ImportContext {
@@ -1683,7 +1684,7 @@ async function convertAndSave(
   }
   // The licence the person confirmed for the site, as kept now: a page before may just have asked.
   const site = await readingOf(importer, page.url);
-  const contextWith = (confirmedLicence: ConfirmedLicence | undefined) =>
+  const contextWith = (confirmedLicence: SiteLicence | undefined) =>
     importContext(
       page.url,
       page.importedAt,
@@ -2114,28 +2115,39 @@ export const LICENCE_NOT_CONFIRMED =
   'The wiki’s licence was not confirmed, so nothing was added from this page and no more pages were read.';
 
 /** The answer to the licence question now asked, when it is answered. */
-let licenceAnswer: ((licence: ConfirmedLicence | null) => void) | null = null;
+let licenceAnswer: ((licence: SiteLicence | null) => void) | null = null;
 
 /**
- * Asks the person to confirm the licence of a page's site, and waits for
- * the answer: a licence of `CONFIRMABLE_LICENCES`, or null for none. One
- * question at a time; a run waits on its page meanwhile.
+ * Asks the person what the licence of a page's site is, and waits for the
+ * answer: a licence of `CONFIRMABLE_LICENCES`, words they filled in, no
+ * licence, or null when they do not answer now. One question at a time; a
+ * run waits on its page meanwhile.
  */
-function askLicence(ask: LicenceAsk): Promise<ConfirmedLicence | null> {
+function askLicence(ask: LicenceAsk): Promise<SiteLicence | null> {
   answerLicence(null);
   useImport.setState({ licenceAsk: ask });
-  notify(`${ask.importer}: confirm the wiki’s licence in the Library to read this page.`, 'info');
+  notify(`${ask.importer}: choose the wiki’s licence in the Library to read this page.`, 'info');
   return new Promise((resolve) => {
     licenceAnswer = resolve;
   });
 }
 
-/** The person's answer to the licence question: the licence they confirmed, or null (not now). */
-export function answerLicence(licence: { name: string; url: string } | null): void {
+/** Each type of answer without its time. */
+type WithoutTime<T> = T extends unknown ? Omit<T, 'confirmedAt'> : never;
+
+/** An answer to the licence question, before the app adds when it was given. */
+export type LicenceAnswer = WithoutTime<SiteLicence>;
+
+/**
+ * The person's answer to the licence question: a licence they confirmed,
+ * words they filled in or no licence, checked (see `siteLicenceOf`), or
+ * null (not now).
+ */
+export function answerLicence(licence: LicenceAnswer | null): void {
   const answer = licenceAnswer;
   licenceAnswer = null;
   if (useImport.getState().licenceAsk) useImport.setState({ licenceAsk: null });
-  answer?.(licence ? { ...licence, confirmedAt: new Date().toISOString() } : null);
+  answer?.(licence ? siteLicenceOf({ ...licence, confirmedAt: new Date().toISOString() }) : null);
 }
 
 /** Loads a game and shows one of its maps. */

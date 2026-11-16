@@ -1,4 +1,5 @@
 import type { TargetInfo } from '@atlas/core';
+import { NO_LICENCE_RECORDED, licenseBasisOf } from '@atlas/schema';
 import type { GuideEntry, GuideSource, Location } from '@atlas/schema';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
@@ -207,9 +208,15 @@ function about(page: LocationPage): string {
 
 /** "From “Waystones” on Example Wiki · CC BY-SA 4.0 · By the contributors of …" */
 function creditLine(title: string, source: GuideSource): string {
-  const licence = source.licenseConfirmed
-    ? `${source.license.name} (confirmed by you)`
-    : source.license.name;
+  const basis = licenseBasisOf(source);
+  const licence =
+    basis === 'none'
+      ? NO_LICENCE_RECORDED
+      : basis === 'confirmed'
+        ? `${source.license.name} (confirmed by you)`
+        : basis === 'permission'
+          ? `${source.license.name} (filled in by you)`
+          : source.license.name;
   return [`From “${title}” on ${source.site}`, licence, source.credit].filter(Boolean).join(' · ');
 }
 

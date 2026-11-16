@@ -8,7 +8,7 @@ import type {
   LandingTile,
 } from '@atlas/core';
 import type { GuideEntry, GuideSource } from '@atlas/schema';
-import { parseId } from '@atlas/schema';
+import { NO_LICENCE_RECORDED, licenseBasisOf, parseId } from '@atlas/schema';
 import {
   entryIdOf,
   entryTitleOf,
@@ -1521,8 +1521,14 @@ function readDate(text: string): string {
   return Number.isNaN(time) ? text : dateFormat.format(time);
 }
 
-/** The credit under a page: the site, its licence, the original page, when it was read. */
+/**
+ * The credit under a page: the site, its licence, the original page, when
+ * it was read. A licence the person filled in shows their words, linked to
+ * its terms when they gave the address, with who gave it, when and their
+ * note; a page with no licence recorded says so.
+ */
 function Credit({ source, title }: { source: GuideSource; title: string }) {
+  const basis = licenseBasisOf(source);
   return (
     <footer className="guides-credit" data-testid="guides-credit">
       <p>
@@ -1533,18 +1539,30 @@ function Credit({ source, title }: { source: GuideSource; title: string }) {
         , read {readDate(source.readAt)}
         {source.adapted ? ', adapted' : ''}.
       </p>
-      <p>
-        Licence:{' '}
-        {source.license.url ? (
-          <a href={source.license.url} target="_blank" rel="noopener noreferrer">
-            {source.license.name}
-          </a>
+      <p data-testid="guides-licence" data-basis={basis}>
+        {basis === 'none' ? (
+          NO_LICENCE_RECORDED
         ) : (
-          source.license.name
+          <>
+            Licence:{' '}
+            {source.license.url ? (
+              <a href={source.license.url} target="_blank" rel="noopener noreferrer">
+                {source.license.name}
+              </a>
+            ) : (
+              source.license.name
+            )}
+            {basis === 'confirmed' ? ' (confirmed by you: the page states no licence)' : ''}
+            {basis === 'permission' ? ' (filled in by you: the page states no licence)' : ''}
+            {source.licenseGivenBy ? `, given by ${source.licenseGivenBy}` : ''}
+            {source.licenseGivenOn ? ` on ${readDate(source.licenseGivenOn)}` : ''}
+          </>
         )}
-        {source.licenseConfirmed ? ' (confirmed by you: the page states no licence)' : ''}
         {source.credit ? <> · {source.credit}</> : null}
       </p>
+      {source.licenseNote ? (
+        <p data-testid="guides-licence-note">Note: {source.licenseNote}</p>
+      ) : null}
     </footer>
   );
 }

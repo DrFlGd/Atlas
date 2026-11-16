@@ -880,3 +880,36 @@
   gap: 8px;
   align-items: center;
 }
+
+/* The answer to the licence question: its type, then the list or the words filled in. */
+.licence-answer .licence-question-row,
+.licence-fields {
+  margin-top: 10px;
+}
+
+.licence-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 34rem;
+}
+
+.licence-fields .field-label {
+  margin-top: 6px;
+}
+
+.licence-fields .text-input {
+  flex: none;
+  width: 100%;
+}
+
+.licence-fields textarea.text-input {
+  height: auto;
+  padding: 6px 10px;
+  font: inherit;
+}
+
+.licence-question > .row-actions + p,
+.wiki-licence-change > .row-actions {
+  margin-top: 8px;
+}

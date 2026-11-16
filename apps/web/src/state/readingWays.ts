@@ -2,18 +2,18 @@ import {
   readingWayOf,
   siteInfoOf,
   type AtlasImporter,
-  type ConfirmedLicence,
   type PictureSize,
   type ReadingWay,
   type SiteInfo,
+  type SiteLicence,
 } from '@atlas/importer-api';
 import type { ListedPack } from '../desktop';
 import { loadWikiNotes, NO_WIKI_NOTES } from './wikiNotes';
 
 /**
  * How the pages of a site are read, as the person chose among the ways its
- * importer offers (`siteInfo` of the contract), and the licence they
- * confirmed for it. The choices are kept with the importer's wiki notes
+ * importer offers (`siteInfo` of the contract), and what they answered
+ * for its licence. The choices are kept with the importer's wiki notes
  * (`wikiNotes.ts`, by the site's key); the app never changes them by itself.
  * Nothing here reads a page: an importer answers from the address alone.
  */
@@ -25,8 +25,8 @@ export interface SiteReading {
   way: ReadingWay;
   /** The person chose that way (it is not only the importer's first). */
   chosen: boolean;
-  /** The licence the person confirmed for the site, if any. */
-  licence?: ConfirmedLicence;
+  /** What the person answered for the site's licence, if anything. */
+  licence?: SiteLicence;
   /** The size its pictures are kept at: the one chosen, else {@link DEFAULT_PICTURE_SIZE}. */
   pictures: PictureSize;
 }

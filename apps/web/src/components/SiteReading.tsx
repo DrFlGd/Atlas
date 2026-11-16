@@ -1,11 +1,18 @@
 import {
   CONFIRMABLE_LICENCES,
+  MAX_GIVEN_BY,
+  MAX_LICENCE_NOTE,
+  MAX_LICENCE_WORDS,
+  NO_LICENCE_RECORDED,
+  isTermsAddress,
   readingWayOf,
+  siteLicenceOf,
   type PictureSize,
   type ReadingWay,
   type SiteInfo,
+  type SiteLicence,
 } from '@atlas/importer-api';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
   answerLicence,
   chooseHow,
@@ -17,6 +24,7 @@ import {
   stopBrowse,
   useImport,
   type ImportPhase,
+  type LicenceAnswer,
   type LicenceAsk,
   type SiteMemory,
 } from '../state/importing';
@@ -41,8 +49,8 @@ import { memoryParts } from './removalText';
 
 /**
  * How a site's pages are read, as the person chooses among the ways its
- * importer offers (`siteInfo` of the contract), and the licence they
- * confirm for a site whose pages state none. Both are kept per site with
+ * importer offers (`siteInfo` of the contract), and what they answer for
+ * the licence of a site whose pages state none. Both are kept per site with
  * the importer's wiki notes (`wikiNotes.ts`); the app never changes them by
  * itself. Nothing here reads a page.
  */
@@ -338,9 +346,9 @@ export function ChooseHowOffer({ page }: { page: string }) {
 export const CHOOSE_HOW = 'Choose how its pages are read';
 
 /**
- * The question a page read waits on: which Creative Commons licence the
- * site's pages are under, when they state none. Nothing of the page is
- * kept until the person confirms one; "Not now" stops reading.
+ * The question a page read waits on: which licence the site's pages are
+ * under, when they state none. Nothing of the page is kept until the
+ * person answers; "Not now" stops reading.
  */
 export function LicenceQuestion() {
   const ask = useImport((s) => s.licenceAsk);
@@ -348,56 +356,23 @@ export function LicenceQuestion() {
 }
 
 function LicenceAskCard({ ask }: { ask: LicenceAsk }) {
-  const [chosen, setChosen] = useState<string>('');
-  const selectId = useId();
-  const licence = CONFIRMABLE_LICENCES.find((l) => l.url === chosen) ?? null;
   return (
     <div
       className="download-confirm licence-question"
       role="group"
-      aria-label="Confirm the wiki’s licence"
+      aria-label="Choose the wiki’s licence"
       data-testid="licence-question"
     >
       <p>
         <strong>Which licence is {ask.siteKey} under?</strong>
       </p>
       <p>{ask.message}</p>
-      <p className="muted small">
-        Confirm a licence only if the wiki says so itself, on a page about its copyright or in its
-        terms. The guide this page becomes says the licence was confirmed by you. It is kept for
-        this site, so its other pages are read without asking again.
-      </p>
-      <label htmlFor={selectId} className="licence-question-row">
-        Licence{' '}
-        <select
-          id={selectId}
-          className="select"
-          data-testid="licence-choice"
-          value={chosen}
-          onChange={(event) => {
-            setChosen(event.target.value);
-          }}
-        >
-          <option value="">Choose one…</option>
-          {CONFIRMABLE_LICENCES.map((option) => (
-            <option key={option.url} value={option.url}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="row-actions">
-        <button
-          type="button"
-          className="button button-primary"
-          data-testid="licence-confirm"
-          disabled={!licence}
-          onClick={() => {
-            if (licence) answerLicence(licence);
-          }}
-        >
-          Confirm and read
-        </button>
+      <LicenceForm
+        submit="Confirm and read"
+        onAnswer={(answer) => {
+          answerLicence(answer);
+        }}
+      >
         <button
           type="button"
           className="button"
@@ -408,8 +383,327 @@ function LicenceAskCard({ ask }: { ask: LicenceAsk }) {
         >
           Not now
         </button>
-      </div>
+      </LicenceForm>
+      <p className="muted small">
+        Your answer is kept for this site, so its other pages are read without asking again. You can
+        change it on the wiki’s screen in the Library.
+      </p>
     </div>
+  );
+}
+
+/** The types of answer to the licence question, in the order shown. */
+type LicenceType = 'known' | 'permission' | 'none';
+
+const LICENCE_TYPES: readonly LicenceType[] = ['known', 'permission', 'none'];
+
+const LICENCE_TYPE_LABELS: Record<LicenceType, string> = {
+  known: 'A known licence',
+  permission: 'Fill in',
+  none: 'Blank',
+};
+
+const LICENCE_TYPE_TEXTS: Record<LicenceType, string> = {
+  known:
+    'A Creative Commons licence. Choose one only if the wiki says so itself, on a page about its copyright or in its terms.',
+  permission:
+    'What you have instead, such as permission from the site’s owner. The pages are kept for your own use.',
+  none: 'Nothing is recorded about permission, and the pages are kept for your own use.',
+};
+
+const typeOf = (licence: SiteLicence | undefined): LicenceType =>
+  licence?.basis === 'permission' ? 'permission' : licence?.basis === 'none' ? 'none' : 'known';
+
+/**
+ * The answers to the licence question: a known licence (one of
+ * `CONFIRMABLE_LICENCES`), words the person fills in with what they have
+ * instead (who gave it, when, the address of its terms and a note are
+ * optional), or blank. `initial` is the answer kept, to change it; the
+ * main button answers, and `children` are the buttons beside it.
+ */
+function LicenceForm({
+  initial,
+  submit,
+  disabled = false,
+  onAnswer,
+  children,
+}: {
+  initial?: SiteLicence;
+  submit: string;
+  disabled?: boolean;
+  onAnswer: (answer: LicenceAnswer) => void;
+  children?: ReactNode;
+}) {
+  const filled = initial?.basis === 'permission' ? initial : null;
+  const [type, setType] = useState<LicenceType>(typeOf(initial));
+  const [deed, setDeed] = useState(
+    initial && initial.basis !== 'permission' && initial.basis !== 'none' ? initial.url : '',
+  );
+  const [words, setWords] = useState(filled?.name ?? '');
+  const [givenBy, setGivenBy] = useState(filled?.givenBy ?? '');
+  const [givenOn, setGivenOn] = useState(filled?.givenOn ?? '');
+  const [terms, setTerms] = useState(filled?.url ?? '');
+  const [note, setNote] = useState(filled?.note ?? '');
+  const name = useId();
+  const ids = useId();
+  const known = CONFIRMABLE_LICENCES.find((l) => l.url === deed) ?? null;
+  const termsUsable = terms.trim() === '' || isTermsAddress(terms.trim());
+  const answer: LicenceAnswer | null =
+    type === 'known'
+      ? known
+        ? { name: known.name, url: known.url }
+        : null
+      : type === 'none'
+        ? { basis: 'none', name: NO_LICENCE_RECORDED }
+        : words.trim() !== '' && termsUsable
+          ? {
+              basis: 'permission',
+              name: words.trim(),
+              ...(terms.trim() ? { url: terms.trim() } : {}),
+              ...(givenBy.trim() ? { givenBy: givenBy.trim() } : {}),
+              ...(givenOn ? { givenOn } : {}),
+              ...(note.trim() ? { note: note.trim() } : {}),
+            }
+          : null;
+  return (
+    <>
+      <fieldset
+        className="follow-links licence-answer"
+        data-testid="licence-answer"
+        data-type={type}
+        disabled={disabled}
+      >
+        <legend>The licence</legend>
+        <div className="follow-links-options">
+          {LICENCE_TYPES.map((option) => (
+            <label
+              key={option}
+              className="follow-links-option"
+              data-testid={`licence-type-${option}`}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={option}
+                checked={type === option}
+                onChange={() => {
+                  setType(option);
+                }}
+              />
+              <span>
+                <strong>{LICENCE_TYPE_LABELS[option]}</strong>
+                <span className="muted small">{LICENCE_TYPE_TEXTS[option]}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {type === 'known' ? (
+          <label htmlFor={`${ids}-deed`} className="licence-question-row">
+            Licence{' '}
+            <select
+              id={`${ids}-deed`}
+              className="select"
+              data-testid="licence-choice"
+              value={deed}
+              onChange={(event) => {
+                setDeed(event.target.value);
+              }}
+            >
+              <option value="">Choose one…</option>
+              {CONFIRMABLE_LICENCES.map((option) => (
+                <option key={option.url} value={option.url}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {type === 'permission' ? (
+          <div className="licence-fields" data-testid="licence-fields">
+            <label className="field-label" htmlFor={`${ids}-words`}>
+              What to show under each page
+            </label>
+            <input
+              id={`${ids}-words`}
+              className="text-input"
+              data-testid="licence-words"
+              maxLength={MAX_LICENCE_WORDS}
+              placeholder="For example: Permission from the site’s owner for personal use"
+              value={words}
+              onChange={(event) => {
+                setWords(event.target.value);
+              }}
+            />
+            <span className="muted small">A licence’s name or a sentence. This is required.</span>
+            <label className="field-label" htmlFor={`${ids}-by`}>
+              Who gave it (optional)
+            </label>
+            <input
+              id={`${ids}-by`}
+              className="text-input"
+              data-testid="licence-given-by"
+              maxLength={MAX_GIVEN_BY}
+              value={givenBy}
+              onChange={(event) => {
+                setGivenBy(event.target.value);
+              }}
+            />
+            <label className="field-label" htmlFor={`${ids}-on`}>
+              Date (optional)
+            </label>
+            <input
+              id={`${ids}-on`}
+              type="date"
+              className="text-input"
+              data-testid="licence-given-on"
+              value={givenOn}
+              onChange={(event) => {
+                setGivenOn(event.target.value);
+              }}
+            />
+            <label className="field-label" htmlFor={`${ids}-terms`}>
+              Address where the terms can be read (optional)
+            </label>
+            <input
+              id={`${ids}-terms`}
+              type="url"
+              className="text-input"
+              data-testid="licence-terms"
+              placeholder="https://"
+              value={terms}
+              aria-invalid={termsUsable ? undefined : true}
+              onChange={(event) => {
+                setTerms(event.target.value);
+              }}
+            />
+            {termsUsable ? null : (
+              <span className="download-error small" role="alert" data-testid="licence-terms-error">
+                The address must start with https://.
+              </span>
+            )}
+            <label className="field-label" htmlFor={`${ids}-note`}>
+              Note (optional)
+            </label>
+            <textarea
+              id={`${ids}-note`}
+              className="text-input"
+              data-testid="licence-note"
+              maxLength={MAX_LICENCE_NOTE}
+              rows={2}
+              value={note}
+              onChange={(event) => {
+                setNote(event.target.value);
+              }}
+            />
+          </div>
+        ) : null}
+      </fieldset>
+      <div className="row-actions">
+        <button
+          type="button"
+          className="button button-primary"
+          data-testid="licence-confirm"
+          disabled={disabled || !answer}
+          onClick={() => {
+            if (answer) onAnswer(answer);
+          }}
+        >
+          {submit}
+        </button>
+        {children}
+      </div>
+    </>
+  );
+}
+
+/** What the person answered for a site's licence, in a sentence, for its screen. */
+function licenceAnswerText(licence: SiteLicence): string {
+  const on = new Date(licence.confirmedAt).toLocaleDateString('en');
+  switch (licence.basis) {
+    case 'permission':
+      return `You filled in this wiki’s licence: “${licence.name}”, on ${on}. Its pages that state no licence are read under it and kept for your own use.`;
+    case 'none':
+      return `You chose to record no licence for this wiki, on ${on}. Its pages that state no licence are kept for your own use.`;
+    default:
+      return `You confirmed this wiki’s licence: ${licence.name}, on ${on}. Its pages that state no licence are read under it.`;
+  }
+}
+
+/**
+ * On a wiki's screen, what the person answered for its licence: changed
+ * there ("Change it", the same answers as the question) or forgotten, so
+ * the next page that states none asks again. Pages read before keep the
+ * licence they were read under until they are read again.
+ */
+function WikiLicence({
+  importerId,
+  siteKey,
+  licence,
+  disabled,
+}: {
+  importerId: string;
+  siteKey: string;
+  licence: SiteLicence;
+  disabled: boolean;
+}) {
+  const [changing, setChanging] = useState(false);
+  if (changing) {
+    return (
+      <div className="wiki-licence-change" data-testid="wiki-licence-change">
+        <p className="muted small">
+          A new answer counts for pages read from now on. Pages already read keep theirs until they
+          are read again.
+        </p>
+        <LicenceForm
+          initial={licence}
+          submit="Keep this answer"
+          disabled={disabled}
+          onAnswer={(answer) => {
+            const kept = siteLicenceOf({ ...answer, confirmedAt: new Date().toISOString() });
+            if (!kept) return;
+            void setSiteLicence(importerId, siteKey, kept).then(() => {
+              setChanging(false);
+            });
+          }}
+        >
+          <button
+            type="button"
+            className="button"
+            data-testid="wiki-licence-cancel"
+            onClick={() => {
+              setChanging(false);
+            }}
+          >
+            Cancel
+          </button>
+        </LicenceForm>
+      </div>
+    );
+  }
+  return (
+    <p className="muted small" data-testid="wiki-licence" data-type={typeOf(licence)}>
+      {licenceAnswerText(licence)}{' '}
+      <button
+        type="button"
+        className="link-button"
+        data-testid="wiki-licence-edit"
+        disabled={disabled}
+        onClick={() => {
+          setChanging(true);
+        }}
+      >
+        Change it
+      </button>{' '}
+      <button
+        type="button"
+        className="link-button"
+        data-testid="wiki-licence-forget"
+        disabled={disabled}
+        onClick={() => void setSiteLicence(importerId, siteKey, null)}
+      >
+        Forget it
+      </button>
+    </p>
   );
 }
 
@@ -417,8 +711,8 @@ function LicenceAskCard({ ask }: { ask: LicenceAsk }) {
  * On a wiki's screen: what its importer says about it, how its pages are
  * read (changed at once, never during a go), the size its pictures are
  * kept at in an app that downloads them (`pictures`: its importer's pages
- * come with their pictures), and the licence the person confirmed for it,
- * which they can forget.
+ * come with their pictures), and what the person answered for its
+ * licence, which they can change or forget.
  */
 export function WikiReading({
   importerId,
@@ -458,20 +752,12 @@ export function WikiReading({
         />
       ) : null}
       {licence ? (
-        <p className="muted small" data-testid="wiki-licence">
-          You confirmed this wiki’s licence: {licence.name}, on{' '}
-          {new Date(licence.confirmedAt).toLocaleDateString('en')}. Its pages that state no licence
-          are read under it.{' '}
-          <button
-            type="button"
-            className="link-button"
-            data-testid="wiki-licence-forget"
-            disabled={disabled}
-            onClick={() => void setSiteLicence(importerId, site.key, null)}
-          >
-            Forget it
-          </button>
-        </p>
+        <WikiLicence
+          importerId={importerId}
+          siteKey={site.key}
+          licence={licence}
+          disabled={disabled}
+        />
       ) : null}
     </div>
   );
