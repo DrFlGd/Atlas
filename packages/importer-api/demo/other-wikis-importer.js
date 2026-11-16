@@ -494,7 +494,8 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
   const maps = entries.map((entry) => {
     const id = String(one('maps.id', part.maps.id, entry) ?? '');
     const size = one('maps.size', part.maps.size, entry);
-    const [width, height] = Array.isArray(size) ? size.map(Number) : [Number(size), Number(size)];
+    const width = Number(Array.isArray(size) ? size[0] : size);
+    const height = Number(Array.isArray(size) ? size[1] : size);
     const group = part.maps.group ? read('maps.group', part.maps.group, entry)[0] : undefined;
     const floor = part.maps.floor ? read('maps.floor', part.maps.floor, entry)[0] : undefined;
     const name = String(one('maps.name', part.maps.name, entry) ?? id);
