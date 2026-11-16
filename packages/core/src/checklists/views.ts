@@ -1,4 +1,4 @@
-import type { Location } from '@atlas/schema';
+import { withoutLayoutMarkers, type Location } from '@atlas/schema';
 import { pointInPolygon } from '../geometry/coords';
 import type { LoadedPack } from '../pack/loadedPack';
 import type { ChecklistEntry, ItemState } from './checklists';
@@ -563,11 +563,11 @@ export function withoutHiddenText(markdown: string, replacement = HIDDEN_TEXT): 
 /**
  * A note in Markdown as one line of plain text: links and coloured words
  * keep their text, marks and markup go, hidden parts read "(Hidden)", and only the first
- * paragraph is kept.
+ * paragraph is kept. The marker lines of layout forms are no paragraph.
  */
 export function plainNote(markdown: string): string {
   const first =
-    withoutHiddenText(markdown)
+    withoutHiddenText(withoutLayoutMarkers(markdown))
       .trim()
       .split(/\n\s*\n/)[0] ?? '';
   const coloured = /\[([^\]]*)\]\{color=#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\}/g;

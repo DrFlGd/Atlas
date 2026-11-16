@@ -26,7 +26,10 @@ import { DEMO_GAME_ID } from './content';
  * regions link to that name. Its home page (`WIKI_HOME`, the manifest's
  * `homePage`) is a wiki's main page: a welcome line, a picture that leads
  * to a page, and groups of links to the main areas; it is in no section,
- * as Guides shows it on its own.
+ * as Guides shows it on its own. "Isle portal" is laid out as a wiki's
+ * portal is, with every layout form a page can hold: a narrow menu beside a
+ * wide text, a row of tiles, two cards side by side, a list in a row, a
+ * list in three columns and a centred line.
  */
 
 const id = (kind: Parameters<typeof makeId>[1], local: string) => makeId(DEMO_GAME_ID, kind, local);
@@ -50,6 +53,7 @@ export const WIKI_PAGES = {
   emberBlade: id('guide', 'wiki-ember-blade'),
   maul: id('guide', 'wiki-stonebreaker-maul'),
   charm: id('guide', 'wiki-tidecaller-charm'),
+  portal: id('guide', 'wiki-portal'),
 } as const;
 
 /** The wiki's home page, its main page: in no section of the contents. */
@@ -111,7 +115,7 @@ export function wikiHomePage(): GuideEntry {
     title: 'Main Page',
     body: `
 Welcome to the **Example Wiki**, the made-up wiki of the Sundered Isle that anyone can edit.
-Pick an area below, or start with ${to('welcome', 'the welcome page')}.
+Pick an area below, start with ${to('welcome', 'the welcome page')}, or see them all on ${to('portal', 'the isle portal')}.
 
 [![Waystones](${WIKI_PICTURE} "=320x200")](${WIKI_PAGES.waystones})
 
@@ -363,13 +367,106 @@ Bought from a travelling merchant, who turns up at random.
   ];
 }
 
+/**
+ * A portal laid out in layout forms (see `layoutForms.ts` in
+ * `@atlas/schema`): a narrow menu beside a wide text that holds a centred
+ * welcome, tiles, two cards side by side, a row and three columns.
+ */
+function portalPage(regions: readonly string[]): GuideEntry {
+  const locations = [...regions, 'The landing', 'Old mill', 'Flooded hall', 'Cliff path'].slice(
+    0,
+    9,
+  );
+  return page(
+    'portal',
+    'Isle portal',
+    'Portal:Isle',
+    `
+::: side 1:3
+
+::: card
+
+### Find your way
+
+- ${to('welcome', 'Welcome')}
+- ${to('travel', 'Getting around')}
+- ${to('regions', 'Regions')}
+- ${to('waystones', 'Waystones')}
+- ${to('wardens', 'Stone wardens')}
+- ${to('blades', 'Blades')}
+
+::: end
+
+::: next
+
+::: centred
+
+**Welcome to the portal of the Sundered Isle**, a made-up island where every page is invented.
+
+::: end
+
+- [![A waystone on a hill at dusk](${WIKI_PICTURE} "=224x140")](${WIKI_PAGES.waystones}) Waystones
+- [![A stone maul](${WIKI_MAUL_PICTURE} "=140x140")](${WIKI_PAGES.maul}) Stone maul
+
+::: side
+
+::: card
+
+### Latest finds
+
+The boat to the northern shore runs again. Read ${toSection('travel', 'by-boat', 'how to cross')} before you set out.
+
+::: end
+
+::: next
+
+::: card
+
+### Tip of the day
+
+Wake every waystone you pass. ||A warden turns slowly: keep moving.||
+
+::: end
+
+::: end
+
+### Foes and gear
+
+::: row
+
+- ![A stone maul](${WIKI_MAUL_PICTURE} "=22") ${to('wardens', 'Stone wardens')}
+- ![A waystone](${WIKI_PICTURE} "=34x22") ${to('wolves', 'Wolves')}
+- ![A stone maul](${WIKI_MAUL_PICTURE} "=22") ${to('emberBlade', 'Ember blade')}
+- ![A stone maul](${WIKI_MAUL_PICTURE} "=22") ${to('charm', 'Tidecaller charm')}
+
+::: end
+
+### Locations to visit
+
+::: columns 3
+
+${locations.map((location) => `- ${location}`).join('\n')}
+
+::: end
+
+::: end
+
+::: centred
+
+*Nothing in this wiki is about a real game.*
+
+::: end
+`,
+  );
+}
+
 /** The contents: three sections at the top, the second holding a fourth. */
 export function wikiSections(): Section[] {
   return [
     {
       id: WIKI_SECTIONS.basics,
       title: 'Basics',
-      items: [WIKI_PAGES.welcome, WIKI_PAGES.travel],
+      items: [WIKI_PAGES.welcome, WIKI_PAGES.travel, WIKI_PAGES.portal],
     },
     {
       id: WIKI_SECTIONS.isle,
@@ -436,7 +533,12 @@ export function addWiki(data: PackData): PackData {
       // The page Guides opens on.
       homePage: WIKI_HOME,
     },
-    guides: [...data.guides, ...wikiGuides(regionNames.slice(0, 5), shrine), wikiHomePage()],
+    guides: [
+      ...data.guides,
+      ...wikiGuides(regionNames.slice(0, 5), shrine),
+      portalPage(regionNames.slice(0, 5)),
+      wikiHomePage(),
+    ],
     sections: [...(data.sections ?? []), ...wikiSections()],
     pictures: [...(data.pictures ?? []), ...wikiPictures()],
   };

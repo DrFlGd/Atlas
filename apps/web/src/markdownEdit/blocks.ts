@@ -1,3 +1,10 @@
+import {
+  layoutOpenLine,
+  LAYOUT_END_LINE,
+  LAYOUT_NEXT_LINE,
+  parseLayoutMarker,
+} from '@atlas/schema';
+import type { LayoutMarker } from '@atlas/schema';
 import type { Token } from 'markdown-it';
 import { editParser, inlineFromTokens, sameInline, writeInline, type Inline } from './inline';
 
@@ -17,6 +24,13 @@ import { editParser, inlineFromTokens, sameInline, writeInline, type Inline } fr
  * holding more than text and a list, a quote holding more than paragraphs,
  * hidden text that spans blocks) is a block of its own kept as it is,
  * edited as Markdown.
+ *
+ * Each marker line of a layout form (`::: side 1:3`, `::: next`,
+ * `::: end`, see `layoutForms.ts` in `@atlas/schema`) is a block of its
+ * own, of the type `form`, between the blocks the form holds: the page
+ * stays a list of blocks, and the formatted view shows the forms around
+ * them (see `forms.ts`). A line that only looks like a marker, as the page
+ * reads it, is the paragraph it is.
  */
 
 export type Align = 'left' | 'center' | 'right' | null;
@@ -55,6 +69,8 @@ export type BlockModel =
   | { kind: 'quote'; paragraphs: Inline[][] }
   | { kind: 'code'; fence: string | null; info: string; text: string }
   | { kind: 'rule' }
+  /** A marker line of a layout form. */
+  | { kind: 'form'; marker: LayoutMarker }
   /** Kept as it is: `hidden`, hidden text that spans blocks or parts of a block. */
   | { kind: 'raw'; why: 'hidden' | 'other' };
 
@@ -286,8 +302,23 @@ function readTable(tokens: readonly Token[]): TableModel | null {
   return table;
 }
 
-/** What a block holds, read from its text; `raw` when the editor has no tool for it. */
-export function readBlock(source: string): BlockModel {
+/** The marker line of a layout form as written. */
+export function markerLine(marker: LayoutMarker): string {
+  if (marker.role === 'next') return LAYOUT_NEXT_LINE;
+  if (marker.role === 'end') return LAYOUT_END_LINE;
+  if (marker.form === 'side') return layoutOpenLine('side', { shares: marker.shares ?? [] });
+  if (marker.form === 'columns') return layoutOpenLine('columns', { columns: marker.columns });
+  return layoutOpenLine(marker.form);
+}
+
+/**
+ * What a block holds, read from its text; `raw` when the editor has no tool
+ * for it. A block of one line that reads as a marker line of a layout form
+ * is one, unless `markers` is false (the page reads it as text).
+ */
+export function readBlock(source: string, markers = true): BlockModel {
+  const marker = markers && !/[\r\n]/.test(source) ? parseLayoutMarker(source) : null;
+  if (marker) return { kind: 'form', marker };
   const tokens = editParser.parse(source, {});
   const top = tokens.filter((token) => token.level === 0 && token.nesting !== -1);
   if (top.length !== 1) return { kind: 'raw', why: 'other' };
@@ -389,6 +420,8 @@ export function sameBlock(a: BlockModel, b: BlockModel): boolean {
     }
     case 'rule':
       return true;
+    case 'form':
+      return markerLine(a.marker) === markerLine((b as typeof a).marker);
     case 'raw':
       return false;
   }
@@ -554,6 +587,8 @@ export function writeBlock(model: BlockModel, original?: string): string {
       return writeCode(model.fence, model.info, model.text);
     case 'rule':
       return original ?? '---';
+    case 'form':
+      return markerLine(model.marker);
     case 'raw':
       return original ?? '';
   }

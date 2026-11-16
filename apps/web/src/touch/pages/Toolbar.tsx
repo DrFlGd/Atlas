@@ -9,9 +9,12 @@ import {
   type Inline,
   type ToggleMark,
 } from '../../markdownEdit/inline';
+import { FORM_NAMES, FORM_ORDER } from '../../markdownEdit/forms';
 import { listTexts, setOrdered } from '../../markdownEdit/structure';
 import { useAtlas } from '../../state/store';
 import {
+  addLayout,
+  canAddLayout,
   changeBlock,
   fieldOfCell,
   fieldOfList,
@@ -283,6 +286,42 @@ export function Toolbar({ openDialog }: { openDialog: (dialog: ToolDialog) => vo
           openDialog('picture');
         }}
       />
+      <Menu label="Layout" icon="layout" text="Layout" testId="tool-layout">
+        {(close) => (
+          <>
+            {[true, false].map((around) => (
+              <div
+                key={String(around)}
+                role="group"
+                aria-label={around ? 'Around the part being edited' : 'New and empty'}
+                className="pe-menu-group"
+              >
+                <p className="pe-menu-heading" aria-hidden="true">
+                  {around ? 'Around the part being edited' : 'New and empty'}
+                </p>
+                {FORM_ORDER.map((form) => (
+                  <MenuItem
+                    key={form}
+                    testId={`layout-${around ? 'around' : 'new'}-${form}`}
+                    disabled={!canAddLayout() || (around && !block)}
+                    onClick={() => {
+                      close();
+                      addLayout(form, around);
+                    }}
+                  >
+                    {FORM_NAMES[form]}
+                  </MenuItem>
+                ))}
+              </div>
+            ))}
+            {!canAddLayout() ? (
+              <p className="pe-menu-note">
+                This part is in four layouts already, the most one page can nest.
+              </p>
+            ) : null}
+          </>
+        )}
+      </Menu>
       <span className="pe-tool-gap" />
       <ToolButton
         label="Link to a page"

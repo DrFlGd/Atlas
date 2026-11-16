@@ -1,6 +1,7 @@
 import { headingNames, sectionOfTitle } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import MarkdownIt, { type StateCore, type Token } from 'markdown-it';
+import { markdownForms } from './markdownForms';
 import { isBoxMark, markdownMarks } from './markdownMarks';
 
 /**
@@ -60,6 +61,15 @@ import { isBoxMark, markdownMarks } from './markdownMarks';
  *   is a picture shown on its own and at most a name, as a wiki's gallery
  *   or a home page's grid of linked pictures, is shown as a grid of
  *   tiles, each name under its picture. Its Markdown is a list as any.
+ * - Layout forms (see `markdownForms.ts`, and `layoutForms.ts` in
+ *   `@atlas/schema` for their syntax): blocks side by side with their
+ *   shares of the width (`::: side 1:3`, `::: next` between blocks), a
+ *   card whose first heading is its title bar (`::: card`), a row of short
+ *   items (`::: row`), a list in columns (`::: columns 3`) and a centred
+ *   block (`::: centred`), each closed by `::: end`, around ordinary
+ *   blocks. Each is a `div` with classes only, its widths among them; the
+ *   page folds them to one column where it is narrow. A marker line that is
+ *   no marker of a form stays text.
  */
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: true });
 markdown.use(markdownMarks);
@@ -580,6 +590,12 @@ function tiles(state: StateCore): void {
 }
 
 markdown.core.ruler.push('atlas_tiles', tiles);
+
+markdown.use(markdownForms, {
+  pictures: 'atlas_pictures',
+  small: (token: Token) =>
+    token.type === 'atlas_picture' && isInlinePicture((token.meta as unknown as PictureMeta).shown),
+});
 
 // ---------------------------------------------------------------------------
 // Hidden text: ||like this||

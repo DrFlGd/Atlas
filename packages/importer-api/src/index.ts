@@ -56,6 +56,31 @@ export * from './siteTrial';
 export * from './sites';
 export * from './styles';
 
+/**
+ * Writing the layout forms of a page's Markdown (blocks side by side, a
+ * card, a row, columns, a centred block), as the app reads them: see
+ * `layoutForms.ts` in `@atlas/schema` and "Layout forms" in the README.
+ */
+export {
+  cardMarkdown,
+  centredMarkdown,
+  columnsMarkdown,
+  escapeLayoutMarkers,
+  isLayoutMarkerLine,
+  layoutOpenLine,
+  LAYOUT_END_LINE,
+  LAYOUT_NEXT_LINE,
+  MAX_COLUMNS,
+  MAX_DEPTH,
+  MAX_FORMS,
+  MAX_SHARE,
+  MAX_SIDE_BLOCKS,
+  rowMarkdown,
+  sharesOf,
+  sideBySideMarkdown,
+  type LayoutFormName,
+} from '@atlas/schema';
+
 /** The contract version described here. */
 export const IMPORTER_API_VERSION = 1;
 

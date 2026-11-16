@@ -1,4 +1,4 @@
-import type { GuideEntry } from '@atlas/schema';
+import { withoutLayoutMarkers, type GuideEntry } from '@atlas/schema';
 import { normalizeText } from '../search/searchIndex';
 
 /**
@@ -6,7 +6,8 @@ import { normalizeText } from '../search/searchIndex';
  * Markdown marks taken out, link and picture targets left out (their words
  * kept), the mark of a box of facts (`{box}`) left out, and hidden text
  * (`||like this||`) removed, so it can be searched and quoted without
- * giving anything away.
+ * giving anything away. The marker lines of layout forms (`::: card`, see
+ * `layoutForms.ts` in `@atlas/schema`) are no words of the page.
  *
  * This reads Markdown roughly, without a Markdown parser. Bars pair up left
  * to right, as the renderer pairs them; escaped bars and bars in inline code
@@ -18,7 +19,8 @@ import { normalizeText } from '../search/searchIndex';
 /** Stands for a bar that is not a mark while marks are paired. */
 const BAR = '\u0001';
 
-export function guidePlainText(markdown: string): string {
+export function guidePlainText(source: string): string {
+  const markdown = withoutLayoutMarkers(source);
   const codeBlock = /^(?: {4}|\t| {0,3}(?:`{3,}|~{3,}))/m;
   if (markdown.includes('||') && codeBlock.test(markdown)) {
     return guidePlainText(markdown.slice(0, markdown.indexOf('||')));
