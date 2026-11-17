@@ -38,6 +38,11 @@ import { PAGE_WIDTHS, type PageWidth } from './pageWidth';
  *   `pageWidth.ts`), which wins over the pack's. Absent where they never
  *   chose. Apps before it ignore the field, and drop it when they write
  *   the file again.
+ * - `pagesInOrder`: whether the game's pages are a guide, read in order
+ *   (each page ends with Previous and Next, and the guide offers to
+ *   continue where it was left), or a wiki read as a collection. It wins
+ *   over the pack's say. Absent where the person never chose. Apps before
+ *   it ignore the field, and drop it when they write the file again.
  *
  * In the desktop app it is a file beside the game's folder in the maps
  * folder (`<game id>.my-pages.json`); elsewhere it is kept where progress
@@ -167,6 +172,7 @@ function ownPageSchemas(mode: SchemaMode) {
     pageWidth: reading
       ? z.enum(PAGE_WIDTHS).optional().catch(undefined)
       : z.enum(PAGE_WIDTHS).optional(),
+    pagesInOrder: reading ? z.boolean().optional().catch(undefined) : z.boolean().optional(),
   });
 
   return { ownPageSchema, ownSectionSchema, contentsSchema, ownPictureSchema, ownPagesFileSchema };
@@ -220,6 +226,12 @@ export interface OwnPages {
   listPages?: Record<string, boolean>;
   /** The width the person shows the game's pages at; absent when they never chose. */
   pageWidth?: PageWidth;
+  /**
+   * Whether the game's pages are read in order, as a guide (`true`), or as
+   * a collection, as a wiki (`false`), whatever the pack says; absent when
+   * the person never chose.
+   */
+  pagesInOrder?: boolean;
 }
 
 /** No changes. */
@@ -315,6 +327,7 @@ export function readOwnPagesFile(
   }
   if (Object.keys(listPages).length > 0) own.listPages = listPages;
   if (parsed.data.pageWidth) own.pageWidth = parsed.data.pageWidth;
+  if (parsed.data.pagesInOrder !== undefined) own.pagesInOrder = parsed.data.pagesInOrder;
   return { ok: true, file: { gameId, version: parsed.data.version, own, skipped } };
 }
 
@@ -366,11 +379,15 @@ export function writeOwnPagesFile(gameId: string, own: OwnPages, now: Date): str
     ...(own.pictures && own.pictures.length > 0 ? { pictures: own.pictures } : {}),
     ...(own.listPages && Object.keys(own.listPages).length > 0 ? { listPages: own.listPages } : {}),
     ...(own.pageWidth ? { pageWidth: own.pageWidth } : {}),
+    ...(own.pagesInOrder !== undefined ? { pagesInOrder: own.pagesInOrder } : {}),
   });
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
-/** Whether there is nothing in them: no page, section, contents, picture, say on a list page or width. */
+/**
+ * Whether there is nothing in them: no page, section, contents, picture,
+ * say on a list page, width or say on reading in order.
+ */
 export function noOwnPages(own: OwnPages): boolean {
   return (
     own.pages.length === 0 &&
@@ -378,6 +395,7 @@ export function noOwnPages(own: OwnPages): boolean {
     own.contents === undefined &&
     (own.pictures ?? []).length === 0 &&
     Object.keys(own.listPages ?? {}).length === 0 &&
-    own.pageWidth === undefined
+    own.pageWidth === undefined &&
+    own.pagesInOrder === undefined
   );
 }

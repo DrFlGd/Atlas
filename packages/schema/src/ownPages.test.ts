@@ -209,6 +209,39 @@ describe('own pages file', () => {
     expect(Object.keys(before.parse(value))).not.toContain('pageWidth');
   });
 
+  it('keeps whether the pages are read in order, both ways, and reads it tolerantly', () => {
+    for (const say of [true, false]) {
+      const text = writeOwnPagesFile('demo', { ...own(), pagesInOrder: say }, NOW);
+      expect(JSON.parse(text)).toMatchObject({ pagesInOrder: say });
+      const read = readOwnPagesFile(JSON.parse(text));
+      expect(read.ok && read.file.own.pagesInOrder).toBe(say);
+      expect(read.ok && read.file.skipped).toBe(0);
+      // A say alone is something to keep.
+      expect(noOwnPages({ ...NO_OWN_PAGES, pagesInOrder: say })).toBe(false);
+    }
+    // Absent where the person never chose.
+    expect(JSON.parse(writeOwnPagesFile('demo', own(), NOW))).not.toHaveProperty('pagesInOrder');
+    const plain = readOwnPagesFile(JSON.parse(writeOwnPagesFile('demo', own(), NOW)));
+    expect(plain.ok && 'pagesInOrder' in plain.file.own).toBe(false);
+    // Written strictly, read tolerantly: a say that cannot be read is left out.
+    expect(() =>
+      writeOwnPagesFile('demo', { ...own(), pagesInOrder: 'yes' as never }, NOW),
+    ).toThrow();
+    const text = writeOwnPagesFile('demo', own(), NOW);
+    const odd = readOwnPagesFile({ ...(JSON.parse(text) as object), pagesInOrder: 'yes' });
+    expect(odd.ok && odd.file.own.pagesInOrder).toBeUndefined();
+    expect(odd.ok && odd.file.own.pages).toEqual(plain.ok && plain.file.own.pages);
+  });
+
+  it('with a say on reading in order, is read by an Atlas before it as before', () => {
+    const before = ownPageReadSchemas.ownPagesFileSchema.omit({ pagesInOrder: true });
+    const value = JSON.parse(
+      writeOwnPagesFile('demo', { ...own(), pagesInOrder: true }, NOW),
+    ) as Record<string, unknown>;
+    expect(before.safeParse(value).success).toBe(true);
+    expect(Object.keys(before.parse(value))).not.toContain('pagesInOrder');
+  });
+
   it('says what is not a pages file', () => {
     expect(readOwnPagesFile({ format: 'atlas-own-lists', version: 1, gameId: 'demo' }).ok).toBe(
       false,

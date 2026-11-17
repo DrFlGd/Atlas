@@ -935,3 +935,24 @@ export function setListPageSay(own: OwnPages, id: string, say: boolean | null): 
   if (Object.keys(listPages).length === 0) delete next.listPages;
   return next;
 }
+
+/**
+ * The person's say on whether the game's pages are read in order, as a
+ * guide (`true`), or as a collection, as a wiki (`false`); `null` lets the
+ * pack say again (see `pagesInOrder` in the schema).
+ */
+export function setPagesInOrder(own: OwnPages, say: boolean | null): OwnPages {
+  if (say === null ? own.pagesInOrder === undefined : own.pagesInOrder === say) return own;
+  const next: OwnPages = { ...own };
+  if (say === null) delete next.pagesInOrder;
+  else next.pagesInOrder = say;
+  return next;
+}
+
+/**
+ * Whether a game's pages are read in order: the person's say, kept with
+ * their own pages, else the pack's.
+ */
+export function readInOrder(own: OwnPages, packSays: boolean): boolean {
+  return own.pagesInOrder ?? packSays;
+}

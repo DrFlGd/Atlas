@@ -1,0 +1,293 @@
+/*
+ * Which source of pages Guides shows (src/touch/GuideSources.tsx): the
+ * switcher at the top of Guides and its list, and reading a guide in
+ * order (Previous and Next, Continue). Colours come from the theme tokens.
+ */
+
+/* The switcher: at the top of the contents beside the page (wide), or one line over the reader (compact). */
+.guides-sources {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  padding: 0 12px 8px;
+}
+
+.guides-compact > .guides-sources {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+}
+
+.guides-source-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 22px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.guides-compact .guides-source-chip {
+  min-height: 40px;
+}
+
+.guides-source-chip:hover {
+  border-color: var(--atlas-border-strong);
+}
+
+.guides-source-chip[aria-expanded='true'] {
+  border-color: var(--atlas-accent);
+}
+
+.guides-source-chip .ui-icon {
+  flex: none;
+}
+
+.guides-source-chip .ui-icon:last-child {
+  color: var(--atlas-muted);
+}
+
+.guides-source-chip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Guide" or "Wiki", beside a source's name. */
+.guides-source-type {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* The list of sources, under the switcher. */
+.guides-sources-scrim {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  background: rgba(9, 11, 15, 0.3);
+}
+
+.guides-sources-menu {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 4px);
+  left: 8px;
+  width: max(calc(100% - 16px), min(360px, calc(100vw - var(--touch-rail, 0px) - 32px)));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding: 8px 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-surface);
+  box-shadow: var(--atlas-shadow);
+}
+
+.guides-compact .guides-sources-menu {
+  right: 8px;
+  width: auto;
+}
+
+.guides-sources-title {
+  margin: 0;
+  padding: 8px 16px 6px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.guides-source-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 12px 6px 16px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+
+.guides-source-row:hover,
+.guides-source-row:focus-visible {
+  background: var(--atlas-surface-hover);
+}
+
+.guides-source-row > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.guides-source-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.guides-source-row-name {
+  overflow-wrap: anywhere;
+}
+
+.guides-source-row[aria-current='true'] .guides-source-row-name {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.guides-source-row-site {
+  overflow: hidden;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guides-sources-add {
+  margin: 4px 0 0;
+  padding: 4px 8px 0;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.guides-sources-add .guides-from {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* A search result of another source than the one shown: which it is of. */
+.guides-result-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+/* At the end of a page of a guide: the page before and the page after. */
+.guides-sequence {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 28px 0 0;
+}
+
+.guides-sequence-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.guides-sequence-link:hover {
+  border-color: var(--atlas-accent);
+}
+
+.guides-sequence-next {
+  grid-column: 2;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.guides-sequence-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.guides-sequence-title {
+  max-width: 100%;
+  color: var(--atlas-accent);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* On the landing page of a guide: continue at the page read last. */
+.guides-continue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 4px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+}
+
+.guides-continue .guides-continue-button {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-weight: 600;
+}
+
+.guides-continue-title {
+  min-width: 0;
+  color: var(--atlas-muted);
+  overflow-wrap: anywhere;
+}
+
+.guides-continue-title strong {
+  color: var(--atlas-text);
+}
+
+/* In the contents editor: whether the pages are read in order. */
+.pe-in-order {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+.pe-in-order-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pe-in-order-label input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--atlas-accent);
+}
+
+.pe-in-order-hint {
+  margin: 2px 0 0 28px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
