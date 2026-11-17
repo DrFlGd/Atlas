@@ -26,6 +26,12 @@ import { isBoxMark, markdownMarks } from './markdownMarks';
  *   button carrying the id in `data-atlas-target`, which the app acts on, and
  *   never a link the browser follows. An id the pack does not have, or of a
  *   kind the app cannot show, becomes plain text.
+ * - A web link that names a location of a map by the id its site gives it
+ *   (see {@link MarkdownOptions.mapLink}) is an in-app link to that
+ *   location when the app found it, as a link to its id is: a button with
+ *   the id in `data-atlas-target`, and in `data-atlas-game` the game it is
+ *   in when that is another game of the title. A link that found none
+ *   stays the web link.
  * - A link to a page can name a section of it with its title, `#` and the
  *   section's name: `[by boat](demo:guide:travel "#by-boat")` (see
  *   `sections.ts` in `@atlas/core`). The button carries the section in
@@ -101,6 +107,14 @@ export interface MarkdownOptions {
    * read yet"). It stays plain text, marked with `data-unread`.
    */
   unreadPage?: string;
+  /**
+   * For a web link of the text: the location of a map it names, as the app
+   * found it (the manifest's `mapLinks`, see `mapLinks.ts` in `@atlas/core`),
+   * with the game it is in when that is not the game shown; null when it
+   * names none or none was found. A link that found one becomes an in-app
+   * link to it.
+   */
+  mapLink?: (href: string) => { locationId: string; gameId?: string } | null;
 }
 
 interface AppLinkMeta {
@@ -110,6 +124,7 @@ interface AppLinkMeta {
 markdown.core.ruler.push('atlas_app_links', (state) => {
   const isAppTarget = (state.env as MarkdownOptions | undefined)?.isAppTarget;
   const unreadPage = (state.env as MarkdownOptions | undefined)?.unreadPage;
+  const mapLink = (state.env as MarkdownOptions | undefined)?.mapLink;
   for (const block of state.tokens) {
     if (block.type !== 'inline' || !block.children) continue;
     // Links do not nest, so each link_open is closed by the next link_close.
@@ -118,6 +133,22 @@ markdown.core.ruler.push('atlas_app_links', (state) => {
       if (token.type === 'link_open') {
         const href = String(token.attrGet('href') ?? '');
         const target = parseId(href);
+        // A web link to a location of a map the app found: an in-app link to it.
+        const found = !target && mapLink ? mapLink(href) : null;
+        if (found) {
+          open = token;
+          const title = token.attrGet('title');
+          (token.meta as AppLinkMeta | null) = { appLink: 'ok' };
+          token.tag = 'button';
+          token.attrs = [
+            ['type', 'button'],
+            ['class', 'app-link'],
+            ['data-atlas-target', found.locationId],
+          ];
+          if (found.gameId) token.attrs.push(['data-atlas-game', found.gameId]);
+          if (title !== null && title !== '') token.attrSet('title', String(title));
+          continue;
+        }
         open = target ? token : null;
         if (!open) continue;
         const ok = isAppTarget?.(href) ?? false;
@@ -881,6 +912,12 @@ export function revealHiddenText(target: EventTarget | null, root: Element): boo
 export function appLinkTarget(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
   return target.closest('[data-atlas-target]')?.getAttribute('data-atlas-target') ?? null;
+}
+
+/** The game another than the one shown that the in-app link an event happened in leads to, if any. */
+export function appLinkGame(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest('[data-atlas-target]')?.getAttribute('data-atlas-game') ?? null;
 }
 
 /** The section of its page the in-app link an event happened in names, if any. */

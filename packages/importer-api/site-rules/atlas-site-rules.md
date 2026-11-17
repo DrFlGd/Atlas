@@ -15,7 +15,7 @@ A site rules file is one JSON file that describes one site to the Atlas Importer
 
 **Words used here.** A _part_ is one map, wiki or guide of a site. A _reader_ is the piece of the Importer that reads a part. A _location_ is a point on a map, and each location has a _type_ (item, enemy, boss and so on). A _session_ is one run of reading pages.
 
-**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved: a file whose site one of the Importer's own readers reads can be tried as well as one read by `rules`, if the Importer can try it. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
+**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved: a file whose site one of the Importer's own readers reads can be tried as well as one read by `rules`, if the Importer can try it. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. `mapLinks` of a wiki or guide part (see "Links to a location of a map") came last, also without a new version: an Importer from before it refuses a file that has it, naming the field. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
 
 **Who decides.** The owner checks every file by hand before switching it on. A file states the site's limits: which pages, which ways of reading, which pause, which licence, or that the site is not read at all. The files that come with the Importer state the limits the owner has accepted so far, and a file of the owner's that is switched on wins over them for its site. Some things are no site's to decide and no file can change them: the app's honest name `Atlas/<version>`, `robots.txt` when the app reads by itself, the app's own shortest pause, stopping at the first refusal, never answering a check that asks whether the reader is a person, and never using a window's cookies.
 
@@ -81,7 +81,7 @@ A rules file has one of three shapes: a site file (this section), a reader's def
 | `licence` | no                | object                            | The licence block for every part that has none of its own (see `licence`)                                                                                                                                                                                                                                                                                |
 | `about`   | no                | object with `by`, `on`, `checked` | Who wrote the file, the date as `YYYY-MM-DD`, and what it was checked against, in a few words                                                                                                                                                                                                                                                            |
 
-Every address in a file is either a full `https://` address on one of `site.hosts`, or a path that begins with `/` and is read against the first host. Addresses on other hosts are allowed in one place only, `pictures.hosts` (and the picture of a map, which may be on one of those hosts).
+Every address in a file is either a full `https://` address on one of `site.hosts`, or a path that begins with `/` and is read against the first host. Addresses on other hosts are allowed in one place only, `pictures.hosts` (and the picture of a map, which may be on one of those hosts). The `hosts` of an entry of `mapLinks` name other hosts too, but only to say which links of the pages lead to a map: nothing is read from them.
 
 **The smallest file that is valid** is a wiki on an engine the Importer knows:
 
@@ -118,7 +118,7 @@ Each entry of `parts` describes one map, wiki or guide. These fields are the sam
 | `licence`  | no                | object                               | What to record as the licence. Wins over `site.licence`                                                                       |
 | `notes`    | no                | text, at most 2,000 characters       | Your remarks on this part                                                                                                     |
 
-A part with `"reader": "rules"` also holds the fields of the sections on the general reader below. A wiki or guide part, whichever reader reads it, may also hold `layout` (see "The layout of the pages").
+A part with `"reader": "rules"` also holds the fields of the sections on the general reader below. A wiki or guide part, whichever reader reads it, may also hold `layout` (see "The layout of the pages") and `mapLinks` (see "Links to a location of a map").
 
 ### Parts with a built-in reader
 
@@ -450,6 +450,49 @@ Such pages are private: they hold the site's own words and pictures. Never commi
 - No page is ever fetched to check a layout, by you or by a tool. Work on the pages the owner saved.
 - Layout work changes the `layout` section only. A file's limits (its ways of reading, its pause, its pages, its licence answers, a refusal) are never widened as part of it. When the layout seems to need that, stop and ask the owner.
 - Say in your report which pages you checked, in which way, what you changed and what still differs.
+
+## Links to a location of a map
+
+Many guides and wikis link to a location on a map, of the same site or of another, with the location's id in the link, such as `https://maps.example.org/isle/harbour?spot=17`. A wiki or guide part, whichever reader reads it, may say which of its links are such links, in a list `mapLinks`. The Importer gives the list to Atlas with the game. The text of a page keeps each such link as the link to the web it is. When the owner has a map with that location in Atlas, in the same game or in another game shown under one title with it, the link opens the map at that location. Otherwise it stays a link to the web.
+
+```json
+{
+  "type": "guide",
+  "reader": "rules",
+  "start": "/guides/walkthrough",
+  "pages": { "include": ["/guides/**"] },
+  "contents": { "from": "menu", "links": "nav.guide-menu a", "follow": false },
+  "order": { "from": "menu" },
+  "article": { "content": "main article", "title": "main h1" },
+  "reading": { "ways": ["fetch", "window", "browse"] },
+  "mapLinks": [
+    { "address": "/isle/*", "query": "spot", "hosts": ["maps.example.org"] },
+    { "address": "/world-map/spot/{id}" }
+  ]
+}
+```
+
+With this part, a page's link to `https://maps.example.org/isle/harbour?spot=17` names the location `17`, and so does a link to `/world-map/spot/17` on the site itself. A link to `https://maps.example.org/isle/harbour` names none and stays a link to the web.
+
+`mapLinks` holds 1 to 10 entries. A link counts by the first entry it fits.
+
+| Field     | Needed              | Form                                   | Meaning                                                                                                                                                                               |
+| --------- | ------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `address` | yes                 | address pattern, which may hold `{id}` | The path of such a link. `*` and `**` stand for what they stand for in every address pattern, and `{id}` for the one part of the path, between two `/`, that is the id                |
+| `query`   | without `{id}`: yes | the name of a parameter                | The parameter after `?` whose value is the location's id, such as `spot` in `?spot=17`                                                                                                |
+| `hosts`   | no                  | list of 1 to 5 host names              | The hosts such links are on, written as in `site.hosts` (the same host with `www.` is included). Without it, the hosts of `site.hosts`. Name the map's host when it is another site's |
+
+- **Where the id is.** An entry says it in exactly one way: `{id}` in `address`, or `query`. A link fits an entry when its host is one of the entry's hosts, its whole path matches `address` (upper and lower case count, a `/` at the end is ignored) and it holds an id where the entry says. The rest of its query, and what follows `#`, do not count. An id is letters, digits, `_`, `.` and `-`; a link whose id holds anything else stays a link to the web.
+- **Which location.** The id is the one the map's site gives the location, which the Importer keeps when it reads the map (for a map part read by `rules`, the field `locations.fields.id`). Atlas looks for a location with that id among the locations of the game, then of the other games shown under one title with it. A link to a location the owner's map does not have, or to a map the owner has not added, stays a link to the web.
+- **A file for every game of a site.** In a part whose `start` holds `{game}` or `{guide}`, `address` may hold them too, as `pages.include` does, so that a game's pages name only the locations of that game's map: `"/maps/{game}/*"`.
+- **Data only.** No map is read because of `mapLinks`, and the Importer asks for nothing at these addresses. A map part does not take it: a map's locations link to pages with `locations.fields.page`.
+- **Pages read before.** The Importer gives the list to Atlas each time it builds the game, and the text of a page does not change for it. A game read before the file had `mapLinks` gains the links when the owner builds it again from its saved pages (nothing is downloaded for that), or reads one more of its pages.
+
+**How to check the entries.**
+
+1. **The form.** The schema and the Importer refuse an entry that says where the id is in no way or in both, a `{game}` or `{guide}` that the part's `start` does not hold, and `mapLinks` in a map part.
+2. **The saved pages.** In each saved page, look at the address (`href`) of every link that leads to a location of a map. Each must fit an entry: its host among the entry's hosts, its path matching `address`, and the id where the entry says. Look too at the links to the map that name no location, such as a link to the map's first page: they must fit no entry, or fit one and hold no id. Say in your report how many links of each page fit, and on which hosts.
+3. **In Atlas, by the owner.** With the map in Atlas and shown under one title with the wiki or guide, the owner opens a page of it: a link that fits an entry and finds its location is shown as a link of the app and opens the map at that location; a link that finds none is shown as a link to the web, as before. Tell the owner which page and which link to try.
 
 ## A site that is not read
 
@@ -901,6 +944,7 @@ Some sites need a change to the software, and a few must not be read at all. Do 
 | Addresses of data or pictures carry a key that runs out                                                             | The site gives access for one visit only                                  | Do not copy the key into a file. Report it                                                    |
 | Pages change with a setting the site keeps for the visitor, such as a language or a game version                    | A file cannot choose the setting                                          | Report which setting the owner needs                                                          |
 | The site covers several games                                                                                       | One file can describe them all                                            | Use `{game}` in `start` (see "One file for every game of a site")                             |
+| Pages link to a location of a map by its id, on the same site or another                                            | Atlas can open that location when the owner has that map                  | Describe the links in `mapLinks` (see "Links to a location of a map")                         |
 | The Importer refuses to read the site at all                                                                        | A refusal file of the Importer covers it                                  | Write no file unless the owner tells you the site gave permission. Report it                  |
 
 **The report.** Hand this over with the file, filled in. It is what the owner reads, so write it in plain words.

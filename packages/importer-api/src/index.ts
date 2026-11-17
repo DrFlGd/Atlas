@@ -264,6 +264,14 @@ export interface ImportContext {
    */
   keepsPageWidth?: boolean;
   /**
+   * Optional: true when the app keeps the manifest's `mapLinks`, which web
+   * links of the pages name a location of a map by the id its site gives
+   * it, as the site's rules file gives them (a part's `mapLinks`). An app
+   * that does not say so refuses a pack that has it, as any field it does
+   * not know, so an importer writes it only when this is true.
+   */
+  keepsMapLinks?: boolean;
+  /**
    * Optional: true when the app keeps a guide's `filedUnder`, the guides
    * the site itself files the page under (a wiki's categories, the title
    * of a navigation box). An app that does not say so refuses a pack that

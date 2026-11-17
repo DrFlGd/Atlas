@@ -1708,6 +1708,8 @@ export function importContext(
     keepsHomePage: true,
     // And the width the site's pages are shown at.
     keepsPageWidth: true,
+    // And which links of the pages name a location of a map.
+    keepsMapLinks: true,
     // And the guides the site itself files a page under.
     keepsFiledUnder: true,
     // Built again from the pages kept, as the person asked: nothing is fetched.

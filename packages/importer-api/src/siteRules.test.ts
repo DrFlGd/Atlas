@@ -70,8 +70,9 @@ describe('the guide', () => {
   it('holds the examples it promises', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
     // And one file for every game of a site, a refusal, a part with a layout section,
-    // a map part read from values of its page, and one file for every game and map of a map site.
-    expect(blocks.length).toBe(10);
+    // a map part read from values of its page, one file for every game and map of a map site,
+    // and a part with links to a map.
+    expect(blocks.length).toBe(11);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -1345,5 +1346,86 @@ describe('the layout section of a wiki or guide part', () => {
     expect(
       fields(file({ pageWidth: 'wide' }, { type: 'map', reader: 'example-maps', start: '/' })),
     ).toEqual(['parts[0].layout']);
+  });
+});
+
+describe('the links to a location of a map of a wiki or guide part', () => {
+  const file = (mapLinks: unknown, part: Record<string, unknown> = RULES_WIKI) => ({
+    ...SMALLEST,
+    parts: [{ ...part, mapLinks }],
+  });
+  const said = (value: unknown) => problems(value).map(problemText);
+
+  it('takes an entry by a query or by {id}, in a part read by rules and a part with a built-in reader', () => {
+    const mapLinks = [
+      { address: '/isle/*', query: 'spot', hosts: ['maps.example.org'] },
+      { address: '/world-map/spot/{id}' },
+      { address: '/**/pins/{id}', hosts: ['atlas.example.net', 'maps.example.org'] },
+    ];
+    const guidePart = {
+      ...RULES_WIKI,
+      type: 'guide',
+      start: '/{game}/walkthrough',
+      pages: { include: ['/{game}/*'] },
+      order: { from: 'menu' },
+      contents: { from: 'menu', links: 'nav a' },
+    };
+    const { game: _game, ...noGame } = SMALLEST.site;
+    const guideFile = {
+      ...file([{ address: '/maps/{game}/*', query: 'spot' }], guidePart),
+      site: noGame,
+    };
+    for (const value of [file(mapLinks), file(mapLinks, SMALLEST.parts[0]), guideFile]) {
+      const checked = checkSiteRules(JSON.parse(JSON.stringify(value)));
+      expect(checked.ok ? [] : checked.problems).toEqual([]);
+    }
+  });
+
+  it('says in plain words what is wrong with an entry', () => {
+    expect(said(file([{ address: '/isle/*' }]))).toEqual([
+      'Part 1, mapLinks, entry 1: must say where the id is: query for a parameter of the address, or {id} in address for a part of its path.',
+    ]);
+    expect(said(file([{ address: '/isle/{id}', query: 'spot' }]))).toEqual([
+      'Part 1, mapLinks, entry 1.query: is not needed: address holds {id}, so the id is a part of the path.',
+    ]);
+    expect(said(file([{ address: '/isle/spot-{id}' }]))).toEqual([
+      "Part 1, mapLinks, entry 1.address: may hold { and } only as {id}, and as {game} and {guide} where the part's start holds them, each a whole part of the path between two /.",
+    ]);
+    expect(said(file([{ address: '/isle/{id}/{id}' }]))).toEqual([
+      'Part 1, mapLinks, entry 1.address: holds {id} twice; the id is one part of the path.',
+    ]);
+    expect(said(file([{ address: '/isle?spot=1', query: 'spot' }]))).toEqual([
+      'Part 1, mapLinks, entry 1.address: must be a path only, without ?, #, spaces or backslashes.',
+    ]);
+    expect(said(file([{ address: '/maps/{game}/*', query: 'spot' }]))).toEqual([
+      "Part 1, mapLinks, entry 1.address: holds {game}, which the part's start does not hold.",
+    ]);
+    expect(
+      fields(file([{ address: '/isle/*', query: 'spot', hosts: ['www.maps.example.org'] }])),
+    ).toEqual(['parts[0].mapLinks[0].hosts[0]']);
+    expect(said(file([{ address: '/isle/*', query: 'a spot' }]))).toEqual([
+      'Part 1, mapLinks, entry 1.query: must be the name of a parameter, such as spot.',
+    ]);
+    expect(said(file([]))).toEqual(['Part 1, mapLinks: must hold at least 1 entry.']);
+    expect(said(file([{ address: '/isle/{id}', fragment: true }]))).toEqual([
+      'Part 1, mapLinks, entry 1.fragment: is not a field of this format; a file holds only the fields the guide names.',
+    ]);
+  });
+
+  it('is only for a wiki or guide part', () => {
+    const builtInMap = { type: 'map', reader: 'example-engine', start: '/map' };
+    expect(said(file([{ address: '/isle/{id}' }], builtInMap))).toEqual([
+      'Part 1, mapLinks: is only for a wiki or guide part.',
+    ]);
+    const readerDefaults = {
+      format: 'atlas-site-rules',
+      version: 1,
+      readerDefaults: {
+        reader: 'example-engine',
+        reading: { ways: ['fetch'] },
+        mapLinks: [{ address: '/isle/{id}' }],
+      },
+    };
+    expect(fields(readerDefaults)).toEqual(['readerDefaults.mapLinks']);
   });
 });

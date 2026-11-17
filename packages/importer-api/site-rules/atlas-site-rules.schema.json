@@ -479,6 +479,33 @@
                     },
                     "additionalProperties": false
                   },
+                  "mapLinks": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "query": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]{1,50}$"
+                        },
+                        "hosts": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["address"],
+                      "additionalProperties": false
+                    }
+                  },
                   "pack": {
                     "type": "string",
                     "maxLength": 64,
@@ -922,6 +949,33 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "mapLinks": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "query": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]{1,50}$"
+                        },
+                        "hosts": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["address"],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": ["type", "start", "reader", "reading", "pages", "contents", "article"],
@@ -1375,6 +1429,33 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "mapLinks": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "query": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]{1,50}$"
+                        },
+                        "hosts": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["address"],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [

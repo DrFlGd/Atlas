@@ -35,7 +35,13 @@
  * that asks whether the reader is a person.
  */
 
-import { GAME_ID_PATTERN, PAGE_WIDTHS } from '@atlas/schema';
+import {
+  GAME_ID_PATTERN,
+  MAP_LINK_ID_MARK,
+  MAP_LINK_QUERY_PATTERN,
+  PAGE_WIDTHS,
+  hasIdMark,
+} from '@atlas/schema';
 import { z } from 'zod';
 import {
   dataPathProblem,
@@ -332,6 +338,50 @@ function layoutProblems(layout: SiteLayout | undefined, at: Path): SiteRulesProb
   return problems;
 }
 
+// ---------------------------------------------------------------------------
+// Links to a location of a map, in a wiki's or a guide's pages
+
+/** Entries the `mapLinks` of one part hold at most. */
+export const MAX_MAP_LINK_RULES = 10;
+
+/**
+ * Why `text` cannot be the address of an entry of `mapLinks`, or null: an
+ * address pattern (see {@link patternProblem}) that may also hold `{id}`,
+ * once, as a whole part of the path: the part that is the location's id.
+ * Whether its `{game}` and `{guide}` are the part's own is checked with the
+ * whole file.
+ */
+export function mapLinkRuleAddressProblem(text: string): string | null {
+  const marked = text.split('/').filter((part) => /[{}]/u.test(part));
+  if (marked.some((part) => !['{id}', '{game}', '{guide}'].includes(part))) {
+    return "may hold { and } only as {id}, and as {game} and {guide} where the part's start holds them, each a whole part of the path between two /";
+  }
+  if (marked.filter((part) => part === MAP_LINK_ID_MARK).length > 1) {
+    return 'holds {id} twice; the id is one part of the path';
+  }
+  return patternProblem(text.replaceAll(MAP_LINK_ID_MARK, 'id'));
+}
+
+/**
+ * The `mapLinks` of a wiki or guide part: which links of its pages lead to
+ * a location of a map and where the location's id is in them, as data.
+ * The importer hands them to Atlas with the game (the manifest's
+ * `mapLinks`), with `hosts` filled in from `site.hosts` where an entry has
+ * none, and `{game}` and `{guide}` from the address of the game's pages.
+ */
+const mapLinkRuleSchema = z.strictObject({
+  address: z.string().superRefine(checked(mapLinkRuleAddressProblem)),
+  query: z
+    .string()
+    .regex(MAP_LINK_QUERY_PATTERN, 'must be the name of a parameter, such as spot')
+    .optional(),
+  hosts: once(host, 'host').min(1).max(5).optional(),
+});
+
+const mapLinkRulesSchema = z.array(mapLinkRuleSchema).min(1).max(MAX_MAP_LINK_RULES);
+
+export type MapLinkRule = z.infer<typeof mapLinkRuleSchema>;
+
 const aboutSchema = z.strictObject({
   by: text(120).optional(),
   on: date.optional(),
@@ -363,6 +413,7 @@ function builtInPartSchema<L extends z.ZodType>(licence: L) {
     pictures: pictureHostsSchema.optional(),
     options: z.record(z.string(), z.unknown()).optional(),
     layout: layoutSchema.optional(),
+    mapLinks: mapLinkRulesSchema.optional(),
     pack: z
       .string()
       .max(64)
@@ -433,6 +484,7 @@ function rulesWikiPartSchema<L extends z.ZodType>(licence: L) {
     contents: contentsSchema,
     article: articleSchema,
     layout: layoutSchema.optional(),
+    mapLinks: mapLinkRulesSchema.optional(),
   });
 }
 
@@ -445,6 +497,7 @@ function rulesGuidePartSchema<L extends z.ZodType>(licence: L) {
     article: articleSchema,
     order: orderSchema,
     layout: layoutSchema.optional(),
+    mapLinks: mapLinkRulesSchema.optional(),
   });
 }
 
@@ -822,6 +875,7 @@ const FIELDS_ELSEWHERE: Record<string, string> = {
   options: 'a part with a built-in reader',
   pack: 'a part with a built-in reader',
   layout: 'a wiki or guide part',
+  mapLinks: 'a wiki or guide part',
 };
 
 const describeValue = (value: unknown): string =>
@@ -1268,6 +1322,36 @@ function mapPartProblems(
   return problems;
 }
 
+/**
+ * The problems of the `mapLinks` of a part that their fields' forms alone
+ * do not show: each entry names where the id is in exactly one way, and
+ * holds only the named pieces the part's start holds.
+ */
+function mapLinkProblems(
+  rules: readonly MapLinkRule[],
+  at: Path,
+  onlyStartPieces: (path: Path, text: string) => void,
+): SiteRulesProblem[] {
+  const problems: SiteRulesProblem[] = [];
+  rules.forEach((rule, index) => {
+    const marked = hasIdMark(rule.address);
+    if (marked && rule.query !== undefined) {
+      problems.push({
+        field: fieldPath([...at, index, 'query']),
+        message: 'is not needed: address holds {id}, so the id is a part of the path',
+      });
+    } else if (!marked && rule.query === undefined) {
+      problems.push({
+        field: fieldPath([...at, index]),
+        message:
+          'must say where the id is: query for a parameter of the address, or {id} in address for a part of its path',
+      });
+    }
+    onlyStartPieces([...at, index, 'address'], rule.address);
+  });
+  return problems;
+}
+
 /** The problems of a whole site file that its fields' forms alone do not show. */
 function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
   const problems: SiteRulesProblem[] = [];
@@ -1304,15 +1388,19 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
     else if (!readByRules(part) && part.layout !== undefined) {
       add([...at, 'layout'], 'is only for a wiki or guide part');
     }
-    if (!readByRules(part)) return;
     const pieces = startPieces(part);
     const onlyStartPieces = (path: Path, text: string) => {
-      for (const piece of piecesOf(text).pieces) {
+      for (const piece of piecesOf(text.replaceAll(MAP_LINK_ID_MARK, 'id')).pieces) {
         if (!pieces.includes(piece)) {
           add(path, `holds {${piece}}, which the part's start does not hold`);
         }
       }
     };
+    if ('mapLinks' in part && part.mapLinks !== undefined) {
+      if (part.type === 'map') add([...at, 'mapLinks'], 'is only for a wiki or guide part');
+      problems.push(...mapLinkProblems(part.mapLinks, [...at, 'mapLinks'], onlyStartPieces));
+    }
+    if (!readByRules(part)) return;
     if (part.game !== undefined && !pieces.includes('game')) {
       add([...at, 'game'], 'is only for a part whose start holds {game}');
     }

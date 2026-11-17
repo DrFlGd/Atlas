@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
+import { mapLinksReadSchema, mapLinksWriteSchema } from './mapLinks';
 import { PAGE_WIDTHS } from './pageWidth';
 
 /**
@@ -228,6 +229,14 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    */
   const pageWidthSchema = z.enum(PAGE_WIDTHS);
 
+  /**
+   * Which web links in the pack's pages name a location of a map by the id
+   * its site gives it (see `mapLinks.ts`): as the site's rules file gives
+   * them. Optional; an app that does not know it shows such links as web
+   * links. Read leniently: an entry that cannot be read is left out.
+   */
+  const mapLinksSchema = reading ? mapLinksReadSchema : mapLinksWriteSchema.optional();
+
   const manifestBase = {
     gameId: gameIdSchema,
     /** Display name of the pack. */
@@ -240,6 +249,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     idSections: reading ? descriptive(idSectionsSchema) : idSectionsSchema.optional(),
     homePage: reading ? descriptive(homePageSchema) : homePageSchema.optional(),
     pageWidth: reading ? descriptive(pageWidthSchema) : pageWidthSchema.optional(),
+    mapLinks: mapLinksSchema,
   };
 
   /** The program that wrote a pack: an app or a command-line tool, and its version. */

@@ -212,7 +212,8 @@ export function loadGuideLinks(game: LoadedGame): Promise<void> {
 /** Packs of other games read in this session, by address: their guides do not change while shown. */
 const otherPacks = new Map<string, Promise<LoadedPack>>();
 
-function packAt(entry: PackEntry): Promise<LoadedPack> {
+/** Another game's pack, read once in this session (see `mapLinks.ts` too). */
+export function packAt(entry: PackEntry): Promise<LoadedPack> {
   let pack = otherPacks.get(entry.url);
   if (!pack) {
     pack = loadPack(entry.url);

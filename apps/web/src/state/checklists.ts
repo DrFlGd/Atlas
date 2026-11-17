@@ -2,6 +2,7 @@ import { tickChanges, type ChecklistItemEntry } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import { applyProgress, goToLocation, goToRegion, notify, setPane, showMap } from './actions';
 import { guidesOf, pictureOf } from './guides';
+import { mapLinkOf } from './mapLinks';
 import { ownItemById } from './ownLists';
 import { useAtlas, type ChecklistPage, type LeftTab, type LoadedGame } from './store';
 
@@ -189,10 +190,14 @@ export function followAppLink(rawId: string, section?: string | null): void {
   }
 }
 
-/** Markdown options for a pack: which in-app links can be followed, and its pictures. */
+/**
+ * Markdown options for a pack: which in-app links can be followed, its
+ * pictures, and the locations of a map web links name (see `mapLinks.ts`).
+ */
 export function markdownOptionsFor(game: LoadedGame) {
   return {
     isAppTarget: (id: string) => appLinkKind(game, id) !== null,
     picture: (id: string) => pictureOf(game, id),
+    mapLink: (href: string) => mapLinkOf(game, href),
   };
 }
