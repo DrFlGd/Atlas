@@ -192,6 +192,13 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.20.0
+
+          - **The site's own menu only.** The contents in **Guides** shows only the menu the source itself gives, and what you arranged by hand. Atlas no longer files a page under another by reading pages.
+          - **Home and All pages.** A **Home** button is always in view, and **All pages** opens every page of the game from A to Z.
+          - **No menu, no contents.** A game whose source gives no menu opens on its home page, with **Home** and **All pages** above the page.
+          - **The line above a page** shows the way you came, and **Linked from** under a page names the pages that link to it.
+
           ## New in 0.19.1
 
           - **Fixed: a link to several locations of a map.** A guide's link that names more than one location of a map, or ends with a comma, stayed a web link. It now opens the first of its locations that your map has.

@@ -139,6 +139,20 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.20.0
+
+          The bar beside a page in **Guides** now shows only the menu the source itself gives, and what you arrange by hand.
+
+          - **The site's own menu only.** Atlas no longer files a page under another by reading pages: no tree made from links, and no levels made from the headings of a list page. The bar holds the game's own sections in their order, and the pages you put in a section or under a page yourself.
+          - **Home.** A **Home** button is always in view above the page, and the key H goes there.
+          - **All pages.** A row at the foot of the bar opens every page of the game from A to Z, with letters to jump by.
+          - **No menu, no bar.** A game whose source gives no menu shows no bar. The page takes the width, with Home, search and **All pages** above it.
+          - **The line above a page** shows the way you came. For a page outside the menu that you reach by search, it shows where the source itself files the page, when the game says so.
+          - **Linked from.** Under a page, the pages that link to it.
+          - **Not in the menu.** When you arrange the contents, the pages outside the menu are in a group of that name. Move one into a section or under a page to put it in the bar. **File the pages this page lists under it** still does so for a page you choose.
+
+          A game or a file made with 0.20.0 still opens in older versions of Atlas, which file its pages as before.
+
           ## New in 0.19.1
 
           - **Fixed: a link to several locations of a map.** A guide's link that names more than one location of a map, or ends with a comma, stayed a web link. It now opens the first of its locations that your map has.
