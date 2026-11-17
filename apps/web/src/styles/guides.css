@@ -64,6 +64,12 @@
   font-weight: 600;
 }
 
+/* In place of the arrow of a section led by its own page, with nothing else under it. */
+.guides-tree-icon-space {
+  flex: none;
+  width: 14px;
+}
+
 .guides-tree-row:hover {
   background: var(--atlas-surface-hover);
 }

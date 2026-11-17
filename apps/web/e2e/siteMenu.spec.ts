@@ -161,6 +161,129 @@ test.describe('on a desktop', () => {
     await expect(bar(page).locator('[aria-current="page"]')).toHaveText('Gear');
   });
 
+  test('shows a section led by its own page as that page, in the bar and the line', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    // The wiki's menu as an importer writes a page with pages under it: a
+    // section of its title, led by the page. Armor leads its section, which
+    // also lists Warden Plate (listed under Basics too); Materials is alone in its own.
+    await servePageTree(page);
+    await page.route('**/packs/tree/sections.json', (route) => {
+      const sections = pageTreeSections() as { id: string; title: string; items: string[] }[];
+      const byId = (id: string) => sections.find((section) => section.id === `demo:section:${id}`)!;
+      byId('equipment').items = ['demo:section:armor', 'demo:guide:weapons'];
+      byId('basics').items = [
+        'demo:guide:gear',
+        'demo:section:materials',
+        'demo:guide:field-notes',
+        'demo:guide:warden-plate',
+      ];
+      sections.unshift(
+        {
+          id: 'demo:section:armor',
+          title: 'Armor',
+          items: ['demo:guide:armor', 'demo:guide:warden-plate', 'demo:guide:ash-mail'],
+        },
+        { id: 'demo:section:materials', title: 'Materials', items: ['demo:guide:materials'] },
+      );
+      return route.fulfill({ json: sections });
+    });
+    await page.goto('./');
+    const heading = (name: string) =>
+      bar(page).locator('.guides-tree-section').filter({ hasText: name });
+    await heading('Equipment').click();
+    await expect(heading('Armor')).toHaveAttribute('aria-expanded', 'false');
+    await expect(bar(page).getByTestId('guides-tree-page')).toHaveText(['Weapons']);
+
+    // The heading is the page: it opens it, and the page is not named again under it.
+    await heading('Armor').click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Armor');
+    await expect(heading('Armor')).toHaveAttribute('aria-current', 'page');
+    await expect(heading('Armor')).toHaveAttribute('aria-expanded', 'true');
+    await expect(bar(page).getByTestId('guides-tree-page')).toHaveText([
+      'Warden Plate',
+      'Ash Mail',
+      'Weapons',
+    ]);
+    await expect(bar(page).locator('[aria-current="page"]')).toHaveText(['Armor']);
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Equipment', 'Armor'));
+    // Pressed again while its page is shown, it folds and unfolds.
+    await heading('Armor').click();
+    await expect(heading('Armor')).toHaveAttribute('aria-expanded', 'false');
+    await expect(bar(page).getByTestId('guides-tree-page')).toHaveText(['Weapons']);
+    await expect(shownPage(page).locator('h1')).toHaveText('Armor');
+    await heading('Armor').click();
+    await expect(heading('Armor')).toHaveAttribute('aria-expanded', 'true');
+
+    // A page under it: the section is a step of the line, which opens its page.
+    await bar(page).getByTestId('guides-tree-page').getByText('Ash Mail', { exact: true }).click();
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Equipment', 'Armor', 'Ash Mail'));
+    await crumbs(page).getByRole('button', { name: 'Armor' }).click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Armor');
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Equipment', 'Armor'));
+
+    // A section with its page alone: a heading with no arrow, which opens the page.
+    await heading('Basics').click();
+    await expect(heading('Materials')).not.toHaveAttribute('aria-expanded');
+    await expect(heading('Materials').locator('svg')).toHaveCount(0);
+    await heading('Materials').click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Materials');
+    await expect(heading('Materials')).toHaveAttribute('aria-current', 'page');
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Basics', 'Materials'));
+
+    // A page listed twice, pressed at its second listing: shown there, its first not unfolded.
+    await bar(page)
+      .getByTestId('guides-tree-page')
+      .getByText('Warden Plate', { exact: true })
+      .click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Warden Plate');
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Basics', 'Warden Plate'));
+    await expect(heading('Basics')).toHaveAttribute('aria-expanded', 'true');
+    await expect(heading('Equipment')).toHaveAttribute('aria-expanded', 'false');
+    const here = bar(page).locator('[data-here]');
+    await expect(here).toHaveCount(1);
+    await expect(here).toHaveText('Warden Plate');
+    await expect(here).toHaveAttribute('aria-current', 'page');
+    await expect(here).toBeInViewport();
+    const basicsList = heading('Basics').locator('xpath=..');
+    await expect(basicsList.locator('[data-here]')).toHaveCount(1);
+
+    // Opened another way (search): at its first place, under Armor.
+    await openBySearch(page, 'heavy plate', 'Warden Plate');
+    await expect(crumbs(page)).toHaveText(
+      line('Example Wiki', 'Equipment', 'Armor', 'Warden Plate'),
+    );
+    await expect(heading('Armor')).toHaveAttribute('aria-expanded', 'true');
+    await expect(heading('Basics')).toHaveAttribute('aria-expanded', 'false');
+    await expect(here).toHaveCount(1);
+    await expect(heading('Armor').locator('xpath=..').locator('[data-here]')).toHaveText(
+      'Warden Plate',
+    );
+
+    // Back to the visit opened from Basics: shown there again.
+    await page.getByTestId('guides-back').click();
+    await expect(page.getByTestId('guides-results')).toBeVisible();
+    await page.getByTestId('guides-back').click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Warden Plate');
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Basics', 'Warden Plate'));
+    await expect(heading('Basics')).toHaveAttribute('aria-expanded', 'true');
+    await expect(basicsList.locator('[data-here]')).toHaveText('Warden Plate');
+
+    // The first listing pressed while the page is shown: the bar and the line follow it.
+    await heading('Equipment').click();
+    await heading('Armor').click();
+    await bar(page)
+      .getByTestId('guides-tree-page')
+      .getByText('Warden Plate', { exact: true })
+      .first()
+      .click();
+    await expect(crumbs(page)).toHaveText(
+      line('Example Wiki', 'Equipment', 'Armor', 'Warden Plate'),
+    );
+    expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
+  });
+
   test('names the pages that link to a page, twelve at first', async ({ page }) => {
     await servePageTree(page);
     await page.goto('./');

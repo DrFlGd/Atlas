@@ -3,7 +3,11 @@ import {
   madeLanding,
   OTHER_GAME_SECTION,
   readInOrder,
+  isMenuWayTo,
+  menuWayOf,
   siteOf,
+  stepsOfWay,
+  withoutLedSteps,
   type ContentsEntry,
   type ContentsStep,
   type GuideContents,
@@ -226,17 +230,55 @@ export function trailIn(game: LoadedGame, source: GuideSource | undefined, id: s
   return trail;
 }
 
+/** The ids at the top of a source's menu, as the bar shows them. */
+function menuTopOf(game: LoadedGame, source: GuideSource | undefined): string[] {
+  return (source ? source.top : guidesOf(game).contents.top()).map(entryIdOf);
+}
+
+/**
+ * The way down a source's menu to an entry, as the rows of the bar (see
+ * `menuWayOf` in core): `remembered`, the way to the row it was opened
+ * from, while the menu still shows it and it leads there (see
+ * `isMenuWayTo`); else the way to its first place (see {@link trailIn}).
+ * Null for an entry outside the menu.
+ */
+export function menuWayIn(
+  game: LoadedGame,
+  source: GuideSource | undefined,
+  id: string,
+  remembered?: readonly string[],
+): readonly string[] | null {
+  const { contents } = guidesOf(game);
+  if (remembered && isMenuWayTo(contents, menuTopOf(game, source), remembered, id)) {
+    return remembered;
+  }
+  return contents.isInMenu(id) ? menuWayOf(contents, trailIn(game, source, id), id) : null;
+}
+
 /**
  * The way the line above a page names to it: for a page in the menu, the
- * way from the top of the source's menu (see {@link trailIn}); for a page
- * outside it, the pages the source files it under, from the outermost (see
- * `outsideTrail` in core), cut after the source's home page, which the
- * line starts with. Only the line above a page reads it: the bar never
- * shows a page outside the menu.
+ * way from the top of the source's menu: the way to the row of the bar it
+ * was opened from (`menuWay`) while the bar shows it, else to its first
+ * place (see {@link trailIn}). For a page outside it, the pages the source
+ * files it under, from the outermost (see `outsideTrail` in core), cut
+ * after the source's home page, which the line starts with. A section led
+ * by its own page is that page, as in the menu: it is not named before it
+ * (see `withoutLedSteps` in core). Only the line above a page reads it:
+ * the bar never shows a page outside the menu.
  */
-export function pathIn(game: LoadedGame, source: GuideSource | undefined, id: string) {
+export function pathIn(
+  game: LoadedGame,
+  source: GuideSource | undefined,
+  id: string,
+  menuWay?: readonly string[],
+) {
   const { contents } = guidesOf(game);
-  if (contents.isInMenu(id) || !contents.guide(id)) return trailIn(game, source, id);
+  if (menuWay && isMenuWayTo(contents, menuTopOf(game, source), menuWay, id)) {
+    return withoutLedSteps(contents, stepsOfWay(contents, menuWay.slice(0, -1)), id);
+  }
+  if (contents.isInMenu(id) || !contents.guide(id)) {
+    return withoutLedSteps(contents, trailIn(game, source, id), id);
+  }
   const trail: ContentsStep[] = contents.outsideTrail(id);
   const home = source?.home?.id;
   const at = home ? trail.findLastIndex((step) => entryIdOf(step) === home) : -1;

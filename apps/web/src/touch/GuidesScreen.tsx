@@ -1,4 +1,11 @@
-import type { ContentsEntry, ContentsStep, GuideHit, LandingGroup, LandingTile } from '@atlas/core';
+import type {
+  ContentsEntry,
+  ContentsStep,
+  GuideContents,
+  GuideHit,
+  LandingGroup,
+  LandingTile,
+} from '@atlas/core';
 import type { GuideEntry, GuideSource } from '@atlas/schema';
 import { NO_LICENCE_RECORDED, licenseBasisOf, parseId } from '@atlas/schema';
 import {
@@ -31,6 +38,7 @@ import { guidesOf, hasMap, pictureOf } from '../state/guides';
 import {
   isSourceHome,
   madeLandingOf,
+  menuWayIn,
   pathIn,
   readingOrder,
   sourceOfEntry,
@@ -50,6 +58,7 @@ import {
   arrivedAtSection,
   canGoBack,
   canGoForward,
+  currentMenuWay,
   currentPlace,
   openPlace,
   readerBack,
@@ -330,7 +339,13 @@ function Reader({
           <UiIcon name="forward" size={20} />
         </button>
         <HomeButton game={game} view={view} />
-        <Breadcrumbs game={game} place={place} view={view} way={wayCame(reader)} />
+        <Breadcrumbs
+          game={game}
+          place={place}
+          view={view}
+          way={wayCame(reader)}
+          menuWay={currentMenuWay(reader)}
+        />
         {wide && !menu ? (
           // No bar: what it would hold, in the head.
           <div className="guides-head-tools" data-testid="guides-head-tools">
@@ -490,11 +505,15 @@ function placeTitle(game: LoadedGame, place: ReaderPlace, name: string): string 
 
 /**
  * Where the place is in the contents: the game's name (the landing page) ›
- * Section › Page › … › the place itself. The game's name opens the
- * landing page, a section its contents, a page the page. A page outside
- * the menu is under the pages its source files it under, where it says
- * (see `pathIn`), else under the name alone; "All pages" is under the
- * name.
+ * Section › Page › … › the place itself: for a place opened from a row of
+ * the bar, the way to that row, so a page the menu lists twice is shown
+ * at the listing pressed; else the way to its first place in the menu.
+ * The game's name opens the
+ * landing page, a section its contents, a page the page. A section led by
+ * its own page is that page, as in the bar: it opens the page, and is not
+ * named before it. A page outside the menu is under the pages its source
+ * files it under, where it says, else under the name alone (see `pathIn`
+ * for both); "All pages" is under the name.
  *
  * A page the reader walked to from page to page (see `reader.ts`) shows
  * the way they came instead: the game's name, the contents path of the
@@ -509,16 +528,20 @@ function Breadcrumbs({
   place,
   view,
   way,
+  menuWay,
 }: {
   game: LoadedGame;
   place: ReaderPlace;
   view: SourceView;
   way: readonly WayStep[];
+  /** The way down the menu to the row the place was opened from, if it was (see `reader.ts`). */
+  menuWay: readonly string[] | undefined;
 }) {
   const { contents } = guidesOf(game);
   const { name, shown } = view;
-  // The way within the source shown: its section and home page are its start, the name.
-  const trail = (id: string) => pathIn(game, shown, id);
+  // The way within the source shown: its section and home page are its start, the name;
+  // through the listing of the menu pressed, while the menu still shows it.
+  const trail = (id: string, by?: readonly string[]) => pathIn(game, shown, id, by);
   const line = useRef<HTMLElement>(null);
   const atHome = isLanding(game, place);
   // The pages walked, from the page the walk started on; none from the landing page.
@@ -535,9 +558,11 @@ function Breadcrumbs({
   let path: ContentsStep[] = atHome
     ? []
     : place.kind === 'page'
-      ? trail(fromPage ? walked[0]!.guideId : place.guideId)
+      ? fromPage
+        ? trail(walked[0]!.guideId, way[0]!.menuWay)
+        : trail(place.guideId, menuWay)
       : place.kind === 'contents' && place.sectionId
-        ? trail(place.sectionId)
+        ? trail(place.sectionId, menuWay)
         : [];
   if (way.length > 0 && place.kind === 'page') {
     if (!fromPage) path = [];
@@ -601,7 +626,7 @@ function Breadcrumbs({
             data-testid="guides-crumb"
             data-kind={step.kind}
             onClick={() => {
-              openPlace(placeOf(step));
+              openPlace(stepPlace(contents, step));
             }}
           >
             {entryTitleOf(step)}
@@ -810,26 +835,45 @@ function placeOf(entry: ContentsEntry | ContentsStep): ReaderPlace {
 }
 
 /**
+ * Where a step of the way above a place opens, as the bar opens it: a
+ * section led by its own page (see `leadPage` in core) that page, else as
+ * {@link placeOf}.
+ */
+function stepPlace(contents: GuideContents, step: ContentsStep): ReaderPlace {
+  const lead = step.kind === 'section' ? contents.leadPage(step.section.id) : null;
+  return lead ? { kind: 'page', guideId: lead.id } : placeOf(step);
+}
+
+/**
  * The contents beside the page (wide): a tree open to the place shown,
  * with the entries around it. A section opens its contents when pressed;
  * a page opens the page, and a page with pages under it has a button of
  * its own to show or hide them. The way to a new place opens again.
+ *
+ * A section led by its own page (see `leadPage` in core: a page of the
+ * source's menu with pages under it) is that page, as the source's menu
+ * shows it: its heading opens the page, and under it are the section's
+ * other entries, after any pages put under the page by hand; the page is
+ * not named again. Pressed while its page is shown there, the heading
+ * folds or unfolds them.
+ *
+ * A page the menu lists in several places is marked in each. The tree is
+ * open along the way to the row the place shown was opened from (see
+ * `reader.ts`), that row marked as here (`data-here`); a place opened any
+ * other way, along the way to its first place (see `menuWayIn`).
  */
 function ContentsTree({ game, view }: { game: LoadedGame; view: SourceView }) {
   const place = useReader(currentPlace);
+  const remembered = useReader(currentMenuWay);
   const { contents } = guidesOf(game);
   const root = useRef<HTMLDivElement>(null);
-  const onPath = useMemo(() => {
-    const ids = new Set<string>();
+  const way = useMemo(() => {
     const id =
       place.kind === 'page' ? place.guideId : place.kind === 'contents' ? place.sectionId : null;
     // A page outside the menu has no way in it: the tree stays as it was.
-    if (id && contents.isInMenu(id)) {
-      for (const step of contents.trail(id)) ids.add(entryIdOf(step));
-      ids.add(id);
-    }
-    return ids;
-  }, [contents, place]);
+    return id ? menuWayIn(game, view.shown, id, remembered) : null;
+  }, [game, view.shown, place, remembered]);
+  const onPath = useMemo(() => new Set(way ?? []), [way]);
   // What the person folded or unfolded; the way to a new place opens again.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const [followed, setFollowed] = useState(onPath);
@@ -837,24 +881,27 @@ function ContentsTree({ game, view }: { game: LoadedGame; view: SourceView }) {
     setFollowed(onPath);
     setToggled(new Map([...toggled].filter(([id]) => !onPath.has(id))));
   }
+  const here = way ? way.join('\n') : null;
   const tree: TreeState = {
     game,
     place,
     onPath,
+    isHere: (rowWay) => here !== null && rowWay.join('\n') === here,
     isOpen: (id) => toggled.get(id) ?? onPath.has(id),
     toggle: (id, open) => {
       setToggled(new Map(toggled).set(id, open));
     },
   };
-  // The place shown is in view.
+  // The place shown is in view: the row it was opened from, else its first listing.
   useEffect(() => {
-    root.current
-      ?.querySelector('[aria-current="page"]')
-      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const element = root.current;
+    (
+      element?.querySelector('[data-here]') ?? element?.querySelector('[aria-current="page"]')
+    )?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [onPath]);
   return (
     <div ref={root}>
-      <TreeLevel tree={tree} entries={view.shown?.top ?? contents.top()} depth={0} />
+      <TreeLevel tree={tree} entries={view.shown?.top ?? contents.top()} depth={0} way={[]} />
     </div>
   );
 }
@@ -885,6 +932,8 @@ interface TreeState {
   place: ReaderPlace;
   /** The sections and pages on the way to the place shown, and the place. */
   onPath: ReadonlySet<string>;
+  /** Whether the row at the end of a way down the tree is the one the place shown is at. */
+  isHere: (way: readonly string[]) => boolean;
   isOpen: (id: string) => boolean;
   toggle: (id: string, open: boolean) => void;
 }
@@ -893,49 +942,32 @@ function TreeLevel({
   tree,
   entries,
   depth,
+  way,
   id,
 }: {
   tree: TreeState;
   entries: readonly ContentsEntry[];
   depth: number;
+  /** The ids of the rows above this level, from the top down. */
+  way: readonly string[];
   id?: string;
 }) {
-  const { contents } = guidesOf(tree.game);
   const [count, setCount] = useState(ROWS_AT_ONCE);
   // Long lists show their rows a few hundred at a time, always as far as the way to the place shown.
   const onWay = entries.findIndex((entry) => tree.onPath.has(entryIdOf(entry)));
   const shown = Math.max(count, Math.ceil((onWay + 1) / ROWS_AT_ONCE) * ROWS_AT_ONCE);
-  const indent = (extra: number) => ({ paddingLeft: extra + depth * 14 });
+  const keys = keysOf(entries);
   return (
     <ul id={id} className="touch-plain-list guides-tree-level">
-      {entries.slice(0, shown).map((entry) => {
-        if (entry.kind !== 'section') {
-          return <TreePage key={entryIdOf(entry)} tree={tree} entry={entry} depth={depth} />;
-        }
-        const sectionId = entry.section.id;
-        const expanded = tree.isOpen(sectionId);
-        const current = tree.place.kind === 'contents' && tree.place.sectionId === sectionId;
-        return (
-          <li key={sectionId}>
-            <button
-              type="button"
-              className="guides-tree-row guides-tree-section"
-              style={indent(4)}
-              aria-expanded={expanded}
-              aria-current={current ? 'page' : undefined}
-              onClick={() => {
-                openPlace({ kind: 'contents', sectionId });
-              }}
-            >
-              <UiIcon name={expanded ? 'chevronDown' : 'chevron'} size={14} strokeWidth={2} />
-              {entry.section.title}
-            </button>
-            {expanded ? (
-              <TreeLevel tree={tree} entries={contents.items(sectionId)} depth={depth + 1} />
-            ) : null}
-          </li>
-        );
-      })}
+      {entries
+        .slice(0, shown)
+        .map((entry, at) =>
+          entry.kind === 'section' ? (
+            <TreeSection key={keys[at]} tree={tree} entry={entry} depth={depth} way={way} />
+          ) : (
+            <TreePage key={keys[at]} tree={tree} entry={entry} depth={depth} way={way} />
+          ),
+        )}
       <MoreRows
         left={entries.length - shown}
         className="guides-tree-row guides-tree-more"
@@ -947,20 +979,100 @@ function TreeLevel({
   );
 }
 
+/** A key for each entry of a list, unique in it though the list names an entry twice. */
+function keysOf(entries: readonly ContentsEntry[]): string[] {
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const id = entryIdOf(entry);
+    const times = (seen.get(id) ?? 0) + 1;
+    seen.set(id, times);
+    return times === 1 ? id : `${id}#${times}`;
+  });
+}
+
+/**
+ * A section in the tree: a heading that opens its contents, and its
+ * entries under it when it is open. A section led by its own page is that
+ * page (see {@link ContentsTree}).
+ */
+function TreeSection({
+  tree,
+  entry,
+  depth,
+  way,
+}: {
+  tree: TreeState;
+  entry: Extract<ContentsEntry, { kind: 'section' }>;
+  depth: number;
+  way: readonly string[];
+}) {
+  const { contents } = guidesOf(tree.game);
+  const sectionId = entry.section.id;
+  const rowWay = [...way, sectionId];
+  const lead = contents.leadPage(sectionId);
+  const holds = !lead || contents.itemCount(sectionId) > 1 || contents.itemCount(lead.id) > 0;
+  const expanded = holds && tree.isOpen(sectionId);
+  const leadShown = lead !== null && tree.place.kind === 'page' && tree.place.guideId === lead.id;
+  const current =
+    leadShown || (tree.place.kind === 'contents' && tree.place.sectionId === sectionId);
+  const here = current && tree.isHere(rowWay);
+  return (
+    <li>
+      <button
+        type="button"
+        className="guides-tree-row guides-tree-section"
+        style={{ paddingLeft: 4 + depth * 14 }}
+        aria-expanded={holds ? expanded : undefined}
+        aria-current={current ? 'page' : undefined}
+        data-here={here ? 'true' : undefined}
+        onClick={() => {
+          if (!lead) {
+            openPlace({ kind: 'contents', sectionId }, 'fresh', rowWay);
+          } else if (leadShown && here) {
+            if (holds) tree.toggle(sectionId, !expanded);
+          } else {
+            if (holds) tree.toggle(sectionId, true);
+            openPlace({ kind: 'page', guideId: lead.id }, 'fresh', rowWay);
+          }
+        }}
+      >
+        {holds ? (
+          <UiIcon name={expanded ? 'chevronDown' : 'chevron'} size={14} strokeWidth={2} />
+        ) : (
+          <span className="guides-tree-icon-space" aria-hidden="true" />
+        )}
+        {entry.section.title}
+      </button>
+      {expanded ? (
+        <TreeLevel
+          tree={tree}
+          entries={contents.menuItems(sectionId)}
+          depth={depth + 1}
+          way={rowWay}
+        />
+      ) : null}
+    </li>
+  );
+}
+
 /** A page in the tree; one with pages put under it by hand can show or hide them. */
 function TreePage({
   tree,
   entry,
   depth,
+  way,
 }: {
   tree: TreeState;
   entry: Exclude<ContentsEntry, { kind: 'section' }>;
   depth: number;
+  way: readonly string[];
 }) {
   const { contents } = guidesOf(tree.game);
   const listId = useId();
   const id = entryIdOf(entry);
+  const rowWay = [...way, id];
   const current = tree.place.kind === 'page' && tree.place.guideId === id;
+  const here = current && tree.isHere(rowWay);
   const holds = entry.pages > 0 && contents.itemCount(id) > 0;
   const open = holds && tree.isOpen(id);
   const title = entryTitleOf(entry);
@@ -991,17 +1103,24 @@ function TreePage({
           type="button"
           className="guides-tree-row guides-tree-page-name"
           aria-current={current ? 'page' : undefined}
+          data-here={here ? 'true' : undefined}
           data-testid="guides-tree-page"
           onClick={() => {
             if (holds) tree.toggle(id, true);
-            openPlace(placeOf(entry));
+            openPlace(placeOf(entry), 'fresh', rowWay);
           }}
         >
           {title}
         </button>
       </div>
       {open ? (
-        <TreeLevel tree={tree} entries={contents.items(id)} depth={depth + 1} id={listId} />
+        <TreeLevel
+          tree={tree}
+          entries={contents.items(id)}
+          depth={depth + 1}
+          way={rowWay}
+          id={listId}
+        />
       ) : null}
     </li>
   );

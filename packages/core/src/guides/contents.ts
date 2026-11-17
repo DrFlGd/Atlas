@@ -424,6 +424,38 @@ export class GuideContents {
     return (this.lists.get(id) ?? []).flatMap((item) => this.entry(item));
   }
 
+  /**
+   * A section's own page, which leads it: the first entry the section shows
+   * (see {@link items}), when that is a page whose title has the same words
+   * as the section's (spaces and case aside). A source's menu has entries
+   * that are pages with pages under them; the pack writes each as a section
+   * of that title whose first item is the page, and the menu shows the
+   * section as that page. Null for any other section, for a section of
+   * pages outside the menu (`placeByLinks`), for the section that holds
+   * another game's pages (its first page is that game's home page), and for
+   * an id that is no section here.
+   */
+  leadPage(sectionId: string): GuideEntry | null {
+    const section = this.sections.get(sectionId);
+    if (!this.hasContents || !section || this.outsideSections.has(sectionId)) return null;
+    if (sectionId.endsWith(`:section:${OTHER_GAME_SECTION}`)) return null;
+    const first = this.lists.get(sectionId)?.find((id) => this.entry(id).length > 0);
+    const guide = first === undefined ? undefined : this.guides.get(first);
+    return guide && sameWords(guide.title, section.title) ? guide : null;
+  }
+
+  /**
+   * What the menu shows under an entry: what it holds (see {@link items});
+   * under a section led by its own page (see {@link leadPage}), which the
+   * menu shows as that page, the pages put under the page by hand, then
+   * the section's other entries.
+   */
+  menuItems(id: string): ContentsEntry[] {
+    const items = this.items(id);
+    const lead = this.leadPage(id);
+    return lead ? [...this.items(lead.id), ...items.slice(1)] : items;
+  }
+
   /** How many entries a section or a page holds (not counting deeper ones). */
   itemCount(id: string): number {
     return this.lists.get(id)?.length ?? 0;
@@ -565,6 +597,88 @@ export class GuideContents {
     }
     return out;
   }
+}
+
+/** Whether two titles have the same words: spaces at the ends, runs of spaces and case aside. */
+function sameWords(a: string, b: string): boolean {
+  const words = (title: string) => title.trim().replace(/\s+/gu, ' ').toLowerCase();
+  return words(a) === words(b);
+}
+
+/**
+ * A way down the menu (see {@link GuideContents.trail}) as the menu shows
+ * it, to the entry `id`: a section led by its own page (see
+ * {@link GuideContents.leadPage}) is that page in the menu, so it is left
+ * out where the way goes on to that page, or ends at it. A way to a page
+ * that leads its section is the way to the section; a way to a page put
+ * under it by hand names the page once.
+ */
+export function withoutLedSteps(
+  contents: GuideContents,
+  steps: readonly ContentsStep[],
+  id: string,
+): ContentsStep[] {
+  return steps.filter((step, at) => {
+    if (step.kind !== 'section') return true;
+    const lead = contents.leadPage(step.section.id);
+    if (!lead) return true;
+    const next = steps[at + 1];
+    const to = next ? (next.kind === 'page' ? next.guide.id : null) : id;
+    return to !== lead.id;
+  });
+}
+
+/**
+ * A way down the menu as its rows, top down: the ids of a way's steps
+ * (see {@link GuideContents.trail}), then `id`. A page that leads the
+ * section before it is left out, as the menu shows the section as the
+ * page: the way to that page ends at its section, and the way to a page
+ * put under it by hand goes from the section to that page.
+ */
+export function menuWayOf(
+  contents: GuideContents,
+  steps: readonly ContentsStep[],
+  id: string,
+): string[] {
+  const ids = [...steps.map(entryIdOf), id];
+  return ids.filter((entry, at) => at === 0 || contents.leadPage(ids[at - 1]!)?.id !== entry);
+}
+
+/**
+ * Whether a way down the menu, as its rows (see {@link menuWayOf}), is one
+ * the menu shows and leads to the entry `id`: its first entry is one of
+ * `top`, each other is shown under the one before it (see
+ * {@link GuideContents.menuItems}), and it ends at `id` or at a section
+ * `id` leads. A way remembered when a row was pressed is checked before it
+ * is followed, since the contents may have changed since (the person
+ * arranged them, the pack was read again).
+ */
+export function isMenuWayTo(
+  contents: GuideContents,
+  top: readonly string[],
+  way: readonly string[],
+  id: string,
+): boolean {
+  const last = way.at(-1);
+  if (last === undefined || !top.includes(way[0]!)) return false;
+  if (last !== id && contents.leadPage(last)?.id !== id) return false;
+  for (let at = 1; at < way.length; at++) {
+    const next = way[at];
+    if (!contents.menuItems(way[at - 1]!).some((entry) => entryIdOf(entry) === next)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The steps of a way down the menu (see {@link menuWayOf}): its sections and pages, in order. */
+export function stepsOfWay(contents: GuideContents, way: readonly string[]): ContentsStep[] {
+  return way.flatMap((id): ContentsStep[] => {
+    const section = contents.section(id);
+    if (section) return [{ kind: 'section', section }];
+    const guide = contents.guide(id);
+    return guide ? [{ kind: 'page', guide }] : [];
+  });
 }
 
 /** Guides in their listed order: by `order`, those without one after, by title. */

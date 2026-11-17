@@ -6,6 +6,7 @@ import {
   isReadInOrder,
   isSourceHome,
   madeLandingOf,
+  menuWayIn,
   neighbours,
   pathIn,
   readingOrder,
@@ -342,5 +343,81 @@ describe('the menu of a source, and the pages outside it', () => {
       next: { id: 'isle:guide:boats' },
     });
     expect(neighbours(game, isle, 'isle:guide:oars')).toEqual({ previous: null, next: null });
+  });
+});
+
+/**
+ * A made-up wiki whose menu has a page with pages under it, "Tides", which
+ * its pack writes as a section of that title led by the page; "Boats" is
+ * listed both there and in "The sea".
+ */
+const LED = packOf({
+  gameId: 'isle',
+  title: 'The made-up isle',
+  maps: 1,
+  guides: [
+    page('isle:guide:tides', 'Tides', 0),
+    page('isle:guide:high', 'High tide', 1),
+    page('isle:guide:boats', 'Boats', 2),
+  ],
+  sections: [
+    { id: 'isle:section:sea', title: 'The sea', items: ['isle:section:tides', 'isle:guide:boats'] },
+    {
+      id: 'isle:section:tides',
+      title: 'Tides',
+      items: ['isle:guide:tides', 'isle:guide:high', 'isle:guide:boats'],
+    },
+  ],
+});
+
+describe('a section led by its own page', () => {
+  beforeEach(() => {
+    game = gameOf(LED);
+    useGuideLinks.setState({ gameId: 'isle', others: [] });
+  });
+
+  const titles = (id: string) =>
+    pathIn(game, guideSourcesOf(game)[0], id).map((step) =>
+      step.kind === 'section' ? step.section.title : step.guide.title,
+    );
+
+  it('is not named before its page on the line above it, and is above its other pages', () => {
+    expect(titles('isle:guide:tides')).toEqual(['The sea']);
+    expect(titles('isle:guide:high')).toEqual(['The sea', 'Tides']);
+    // Listed twice: the way follows its first place.
+    expect(titles('isle:guide:boats')).toEqual(['The sea', 'Tides']);
+    expect(titles('isle:section:tides')).toEqual(['The sea']);
+  });
+
+  it('follows the listing pressed while the menu shows it, else the first place', () => {
+    const isle = guideSourcesOf(game)[0];
+    const boats = 'isle:guide:boats';
+    const second = ['isle:section:sea', boats];
+    expect(menuWayIn(game, isle, boats)).toEqual(['isle:section:sea', 'isle:section:tides', boats]);
+    expect(menuWayIn(game, isle, boats, second)).toEqual(second);
+    expect(titles(boats)).toEqual(['The sea', 'Tides']);
+    expect(
+      pathIn(game, isle, boats, second).map((step) =>
+        step.kind === 'section' ? step.section.title : step.guide.title,
+      ),
+    ).toEqual(['The sea']);
+    // A way that does not lead to the page: its first place.
+    expect(menuWayIn(game, isle, boats, ['isle:section:sea', 'isle:guide:high'])).toEqual([
+      'isle:section:sea',
+      'isle:section:tides',
+      boats,
+    ]);
+    // The heading of the section it leads, for the page that leads it.
+    expect(menuWayIn(game, isle, 'isle:guide:tides')).toEqual([
+      'isle:section:sea',
+      'isle:section:tides',
+    ]);
+  });
+
+  it('reads each page once, the page that leads it first', () => {
+    useOwnPages.setState({ own: { ...NO_OWN_PAGES, pagesInOrder: true } });
+    const isle = guideSourcesOf(game)[0]!;
+    expect(readingOrder(game, isle).map((p) => p.title)).toEqual(['Tides', 'High tide', 'Boats']);
+    expect(sourcePages(game, isle)).toHaveLength(3);
   });
 });
