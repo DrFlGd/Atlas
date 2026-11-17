@@ -5,6 +5,7 @@ import {
   allRows,
   headingPages,
   headingTick,
+  readLabel,
   readWhen,
   readingTime,
   selectText,
@@ -165,7 +166,7 @@ describe('the box of a heading', () => {
       disabled: false,
     });
   });
-  it('Select all and Select none act on every page the filter shows, under every heading, never one left out', () => {
+  it('Tick all and Tick none act on every page the filter shows, under every heading, never one left out', () => {
     const titles = (filter: WikiFilter) => shownPages(groups(), filter).map((row) => row.title);
     expect(titles('all')).toEqual(['Welcome', 'Bells', 'Old bell', 'Harbour']);
     expect(titles('not-read')).toEqual(['Old bell', 'Harbour']);
@@ -178,7 +179,7 @@ describe('the box of a heading', () => {
   });
 });
 
-describe('Select all and Select none on the wiki screen', () => {
+describe('Tick all and Tick none on the wiki screen', () => {
   it('act on every page of a heading, not only the 200 it shows at first', () => {
     const pages = Array.from({ length: 450 }, (_, i) => ({
       url: `${WIKI}/Item_${i}`,
@@ -270,5 +271,14 @@ describe('a wiki with a thousand pages found by links', () => {
     expect(rows).toHaveLength(4 + 933 + 1200);
     expect(rows.filter((row) => row.state === 'read')).toHaveLength(933);
     expect(took).toBeLessThan(1000);
+  });
+});
+
+describe('the main button of the page list', () => {
+  it('reads "Read pages" while nothing is ticked, and keeps its count once pages are', () => {
+    expect(readLabel(0)).toBe('Read pages');
+    expect(readLabel(1)).toBe('Read 1 page');
+    expect(readLabel(3)).toBe('Read 3 pages');
+    expect(readLabel(1200)).toBe('Read 1,200 pages');
   });
 });

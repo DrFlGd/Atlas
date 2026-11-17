@@ -18,12 +18,12 @@ const render = (shown: string[], ticked: string[]) => {
   return { html, all: button('all'), none: button('none') };
 };
 
-describe('the Select all and Select none buttons', () => {
+describe('the Tick all and Tick none buttons', () => {
   it('are a named group of real buttons, described by the sentence beside them', () => {
     const { html, all, none } = render(['a', 'b'], ['a']);
     expect(html).toContain('role="group" aria-label="Select the pages listed"');
-    expect(html).toMatch(/>Select all<\/button>/);
-    expect(html).toMatch(/>Select none<\/button>/);
+    expect(html).toMatch(/>Tick all<\/button>/);
+    expect(html).toMatch(/>Tick none<\/button>/);
     expect(all).toContain('type="button"');
     const described = /aria-describedby="([^"]+)"/.exec(all)?.[1];
     expect(described).toBeTruthy();

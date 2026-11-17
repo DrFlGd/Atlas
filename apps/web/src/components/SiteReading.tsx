@@ -280,7 +280,7 @@ function RememberedSite({ importerId, url }: { importerId: string; url: string }
                 setAsking(false);
               }}
             >
-              Keep it
+              Cancel
             </button>
           </div>
         </div>
@@ -382,7 +382,7 @@ function LicenceAskCard({ ask }: { ask: LicenceAsk }) {
             answerLicence(null);
           }}
         >
-          Not now
+          Cancel
         </button>
       </LicenceForm>
       <p className="muted small">

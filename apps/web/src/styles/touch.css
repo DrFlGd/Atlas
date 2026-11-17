@@ -133,6 +133,17 @@
   bottom: var(--touch-bar);
 }
 
+/*
+ * A phone: the map's credit is one line under the row of "Nearest unfound",
+ * cut short with an ellipsis, so the button never lies over it.
+ */
+.touch[data-arrangement='compact'] .touch-map .leaflet-control-attribution {
+  max-width: calc(100vw - var(--atlas-inset-left) - var(--atlas-inset-right));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .touch[data-arrangement='wide'] .touch-map .leaflet-bottom {
   bottom: var(--atlas-inset-bottom);
 }
@@ -301,7 +312,7 @@
 .touch-screen {
   position: absolute;
   z-index: 10;
-  inset: 0 0 var(--touch-bar);
+  inset: var(--touch-toast-h, 0px) 0 var(--touch-bar);
   display: flex;
   flex-direction: column;
   padding: calc(var(--atlas-inset-top) + 4px) var(--atlas-inset-right) 0 var(--atlas-inset-left);
@@ -316,7 +327,7 @@
   z-index: 1100;
   left: var(--atlas-inset-left);
   right: var(--atlas-inset-right);
-  top: calc(var(--atlas-inset-top) + 8px);
+  top: calc(var(--atlas-inset-top) + 8px + var(--touch-toast-h, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -329,7 +340,7 @@
 }
 
 .touch[data-arrangement='wide'] .touch-map-top {
-  top: calc(var(--atlas-inset-top) + 16px);
+  top: calc(var(--atlas-inset-top) + 16px + var(--touch-toast-h, 0px));
   left: 16px;
   right: calc(16px + var(--atlas-inset-right));
   flex-direction: row;
@@ -628,7 +639,7 @@
 }
 
 .touch-filters-sheet {
-  top: calc(var(--atlas-inset-top) + 52px);
+  top: calc(var(--atlas-inset-top) + 52px + var(--touch-toast-h, 0px));
 }
 
 .touch-sheet-grip {
@@ -1055,38 +1066,57 @@
 /* ------------------------------------------------------------------ */
 /* Toast */
 
+/*
+ * The latest notice stands at the top of what it belongs to: the map, or
+ * the Library, Settings, Guides or a section's screen. What stands there
+ * moves down by the notice's height while it shows (`--touch-toast-h`, set
+ * by TouchToast.tsx), so a notice never lies over a button, a foot text, the
+ * Library's strip of what is being read or "Nearest unfound".
+ */
 .touch-toast-region {
   position: absolute;
-  z-index: 50;
-  left: calc(12px + var(--atlas-inset-left));
-  right: calc(12px + var(--atlas-inset-right));
-  bottom: calc(var(--touch-bar) + 16px);
+  z-index: 1140;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   justify-content: center;
+  padding: 0 calc(12px + var(--atlas-inset-right)) 0 calc(12px + var(--atlas-inset-left));
   pointer-events: none;
 }
 
-.touch[data-arrangement='compact'][data-section='map'] .touch-toast-region {
-  bottom: calc(var(--touch-bar) + 92px);
+.touch-toast-region:has(.touch-toast) {
+  padding-top: calc(var(--atlas-inset-top) + 8px);
+  padding-bottom: 8px;
 }
 
-.touch[data-arrangement='compact'][data-place='shown'] .touch-toast-region {
-  bottom: calc(var(--touch-bar) + var(--touch-sheet-h, 220px) + 12px);
-}
-
+/* Wide: at the top of the map, at its left, clear of the zoom buttons and of a card at the right. */
 .touch-toast-region-wide {
-  left: calc(var(--touch-rail) + var(--touch-panel) + 16px);
-  right: auto;
-  bottom: calc(16px + var(--atlas-inset-bottom));
-  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
+  left: calc(var(--touch-rail) + var(--touch-panel));
+  justify-content: flex-start;
+  padding-right: calc(72px + var(--atlas-inset-right));
+  padding-left: 16px;
 }
 
-.touch[data-arrangement='wide'][data-section='map'] .touch-toast-region {
-  bottom: calc(84px + var(--atlas-inset-bottom));
+.touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region-wide {
+  padding-right: calc(380px + 48px + var(--atlas-inset-right));
 }
 
-.touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region {
-  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 380px - 56px);
+.touch[data-arrangement='wide']:has(.editor-side) .touch-toast-region-wide {
+  padding-right: calc(340px + 48px + var(--atlas-inset-right));
+}
+
+/* The Library, Settings and Guides cover the panel and the map: the notice is at their top. */
+.touch[data-arrangement='wide'][data-section='library'] .touch-toast-region-wide,
+.touch[data-arrangement='wide'][data-section='settings'] .touch-toast-region-wide,
+.touch[data-arrangement='wide']:has(.guides-wide) .touch-toast-region-wide {
+  left: var(--touch-rail);
+  justify-content: center;
+  padding-right: calc(16px + var(--atlas-inset-right));
+}
+
+.touch:has(.touch-toast) .touch-screen {
+  padding-top: 4px;
 }
 
 .touch-toast {
@@ -1140,7 +1170,7 @@
 .touch-search-screen {
   position: absolute;
   z-index: 45;
-  inset: 0;
+  inset: var(--touch-toast-h, 0px) 0 0;
   display: flex;
   flex-direction: column;
   padding: calc(var(--atlas-inset-top) + 4px) var(--atlas-inset-right) var(--atlas-inset-bottom)
@@ -1401,7 +1431,7 @@
   flex: 1;
 }
 
-/* A second switch under the first, as "With my notes" under "Hide what I have found". */
+/* A second switch under the first, as "With my notes" under "Hide found". */
 .touch-switch-card + .touch-switch-card {
   margin-top: 8px;
   padding-top: 8px;
@@ -2086,8 +2116,8 @@
     font-size: 15px;
   }
 
-  .touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region {
-    max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 32px);
+  .touch[data-arrangement='wide'][data-place='shown'] .touch-toast-region-wide {
+    padding-right: calc(16px + var(--atlas-inset-right));
   }
 }
 
@@ -3108,15 +3138,6 @@
 
 .touch-list-only-chip[aria-pressed='true'] .ui-icon {
   color: var(--atlas-accent-strong);
-}
-
-/* The toast keeps clear of what is pinned at the bottom of a list, and of the "Next up" card. */
-.touch[data-arrangement='compact'][data-section='lists']:has(.touch-pinned) .touch-toast-region {
-  bottom: calc(var(--touch-bar) + 84px);
-}
-
-.touch[data-arrangement='wide']:has(.touch-next-card) .touch-toast-region {
-  max-width: calc(100% - var(--touch-rail) - var(--touch-panel) - 380px - 56px);
 }
 
 /* A short wide screen (a phone on its side): the card keeps to what matters. */

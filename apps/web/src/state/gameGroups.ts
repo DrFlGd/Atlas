@@ -254,6 +254,15 @@ export function useTitleOf(gameId: string | null | undefined): GameGroup | undef
   return useGameGroups((s) => (gameId ? groupOf(s.groups, gameId) : undefined));
 }
 
+/**
+ * The name the guides of a game go by, its home page's among them: the title
+ * it is shown under with other games, else its own.
+ */
+export function useGameName(game: { pack: { manifest: { gameId: string; title: string } } }) {
+  const group = useTitleOf(game.pack.manifest.gameId);
+  return group?.title ?? game.pack.manifest.title;
+}
+
 /** The rows of a list of games: a title for each group with two or more games here. */
 export function useTitleRows(): TitleRow<PackEntry>[] {
   const catalog = useAtlas((s) => s.catalog);

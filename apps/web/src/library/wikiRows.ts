@@ -208,7 +208,7 @@ export function shownGroups(groups: readonly WikiGroup[], filter: WikiFilter): W
 }
 
 /**
- * The pages "Select all" and "Select none" act on: every page the list
+ * The pages "Tick all" and "Tick none" act on: every page the list
  * shows with its filter, under every heading, open or closed, and however
  * many rows a heading shows yet; each once, never one left out. Those are
  * the pages the headings' own boxes tick, all together.
@@ -225,7 +225,7 @@ export function shownPages(groups: readonly WikiGroup[], filter: WikiFilter): Wi
 }
 
 /**
- * The sentence beside "Select all" and "Select none": what they act on, and
+ * The sentence beside "Tick all" and "Tick none": what they act on, and
  * how many of those pages are ticked. "This filter shows 12 pages to tick,
  * 3 of them ticked."
  */
@@ -270,7 +270,7 @@ export function headingTick(
   return { checked: all, indeterminate: some && !all, disabled: pages.length === 0 };
 }
 
-/** Pages "Tick every page not read" ticks: of the contents, not read yet, not left out. */
+/** Pages "Tick all not read" ticks: of the contents, not read yet, not left out. */
 export const unread = (row: WikiRow) => row.state === 'not-read' || row.state === 'failed';
 
 /**
@@ -296,4 +296,10 @@ export function readWhen(iso: string | null, now = new Date()): string {
   if (at.toDateString() === now.toDateString()) return `Read today at ${time}`;
   const date = at.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   return `Read on ${date}`;
+}
+
+/** The main button of a wiki's page list: "Read pages" while nothing is ticked, else with the count. */
+export function readLabel(ticked: number): string {
+  if (ticked === 0) return 'Read pages';
+  return ticked === 1 ? 'Read 1 page' : `Read ${ticked.toLocaleString('en')} pages`;
 }

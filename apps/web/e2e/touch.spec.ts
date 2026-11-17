@@ -119,6 +119,13 @@ test.describe('on a phone', () => {
   test('Nearest unfound opens the nearest place not found yet', async ({ page }) => {
     const errors = collectErrors(page);
     await openTouch(page);
+    // The map's credit is one line that the button does not lie over.
+    const credit = page.locator('.leaflet-control-attribution');
+    await expect(credit).toBeVisible();
+    const line = (await credit.boundingBox())!;
+    const button = (await page.getByTestId('nearest-unfound').boundingBox())!;
+    expect(line.height).toBeLessThan(24);
+    expect(line.y >= button.y + button.height || line.y + line.height <= button.y).toBe(true);
     await page.getByTestId('nearest-unfound').tap();
     const sheet = page.getByTestId('place-sheet');
     await expect(sheet).toBeVisible();

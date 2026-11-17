@@ -316,11 +316,26 @@ test.describe('on a computer', () => {
     await page.getByTestId('edit-locations').click();
     const point = await emptyPoint(page);
     await page.mouse.click(point.x, point.y);
+    // The first new location of the game: its type is chosen before it is added.
     const name = page.getByTestId('location-name');
     await expect(name).toBeFocused();
     await name.fill('Quiet cove');
-    await page.keyboard.press('Enter');
+    await page.getByTestId('location-type').selectOption({ label: 'Waystone' });
+    await page.getByTestId('add-location').click();
+    await expect(page.getByTestId('location-panel')).toBeVisible();
     await expect(page.getByTestId('locations-save-state')).toHaveAttribute('data-state', 'saved');
+
+    // A file that is not a picture: why, under the button that was pressed.
+    const refusing = page.waitForEvent('filechooser');
+    await page.getByTestId('location-panel').getByTestId('add-photo').click();
+    await (
+      await refusing
+    ).setFiles({ name: 'notes.png', mimeType: 'image/png', buffer: Buffer.from('not a picture') });
+    const problem = page.getByTestId('location-panel').getByTestId('photo-problem');
+    await expect(problem).toContainText(/picture|photo/);
+    await expect(page.getByTestId('toast')).toHaveCount(0);
+    await mkdir(SHOTS, { recursive: true });
+    await page.screenshot({ path: `${SHOTS}/photo-problem.png` });
 
     const choosing = page.waitForEvent('filechooser');
     await page.getByTestId('location-panel').getByTestId('add-photo').click();

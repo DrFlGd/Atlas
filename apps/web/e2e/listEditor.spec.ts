@@ -82,7 +82,7 @@ test.describe('on a computer', () => {
     // An empty list starts with the ways to add steps.
     await expect(page.getByTestId('add-panel')).toBeVisible();
     await expect(page.getByTestId('editor-map-hint')).toHaveText(
-      'Tap a location to add it at the end',
+      'Press a location to add it at the end',
     );
 
     // By name.
@@ -93,7 +93,7 @@ test.describe('on a computer', () => {
     await rows(page).first().locator('.editor-row-main').click();
     await expect(page.getByTestId('step-panel')).toContainText('Step 1 of 1');
     await expect(page.getByTestId('editor-map-hint')).toHaveText(
-      'Tap a location to add it after step 1',
+      'Press a location to add it after step 1',
     );
     const second = await place(page, 'Thornwood waystone 95');
     await mapSettled(page);

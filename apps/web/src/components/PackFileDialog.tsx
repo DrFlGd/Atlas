@@ -75,7 +75,7 @@ const DETAIL_DESCRIPTIONS: Record<Detail, string> = {
 };
 
 /**
- * "Export…" and "Import pack file…", in the desktop app: one game in one
+ * "Export to a file…" and "Import a pack file…", in the desktop app: one game in one
  * `.atlaspack` file, to copy to another computer or to Atlas for Android.
  * A game with a map goes with the map images chosen; a game of pages and
  * pictures with no map (a wiki) goes with its pages, and the dialog speaks
@@ -117,7 +117,7 @@ export function PackFileDialog() {
         <div className="dialog-body">
           <header className="dialog-head">
             <h2 id={titleId}>
-              {state.kind === 'export' ? `Export ${state.title}` : 'Import pack file'}
+              {state.kind === 'export' ? `Export ${state.title}` : 'Import a pack file'}
             </h2>
             <button
               type="button"
@@ -388,8 +388,8 @@ function ExportView({
       {kind ? (
         <p className="download-intro" data-testid="export-intro">
           A pack file holds <strong>{title}</strong> in one file:{' '}
-          {exportHolds(kind, { shared: options?.pictures ?? 0, ownUse })} It never holds your
-          progress.
+          {exportHolds(kind, { shared: options?.pictures ?? 0, ownUse })} Your progress is not in
+          this file. Tick below to save it in a second file.
         </p>
       ) : null}
       {apart ? (
@@ -558,7 +558,7 @@ function ExportView({
                   if (chosen) start(chosen);
                 }}
               >
-                Export…
+                Export
               </button>
               <button type="button" className="button" onClick={closePackFileDialog}>
                 Cancel
@@ -800,7 +800,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
                 setConfirmOlder(false);
               }}
             >
-              Keep the installed game
+              Cancel
             </button>
           </div>
         </div>

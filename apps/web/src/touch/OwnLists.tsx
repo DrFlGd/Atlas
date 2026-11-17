@@ -20,7 +20,7 @@ import '../styles/editor.css';
 
 /**
  * The person's own lists on Lists: "Your own", above the game's lists, with
- * "New list or guide" and "Import a list" where lists can be made (from a
+ * "New list or guide" and "Import a list…" where lists can be made (from a
  * tablet's width up), and one quiet line saying so on a phone.
  */
 export function OwnListsSection({
@@ -89,7 +89,7 @@ export function OwnListsSection({
               }}
             >
               <UiIcon name="upload" size={18} strokeWidth={1.8} />
-              Import a list
+              Import a list…
             </button>
           </div>
         ) : null

@@ -196,7 +196,7 @@ export function DownloadsPanel() {
             setCancelling(null);
           }}
         >
-          Keep it
+          Cancel
         </button>
       </span>
     ) : null;

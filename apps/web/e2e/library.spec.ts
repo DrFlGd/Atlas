@@ -22,10 +22,9 @@ test('the folder button opens the Library over the whole window', async ({ page 
   const demo = library.locator('[data-testid="library-game"][data-pack="demo"]');
   await expect(demo).toContainText('Shown');
   await expect(demo).toContainText('Maps');
-  // Its state: what it holds, or in a build with downloads, what is left to download.
-  await expect(demo.getByTestId('library-status')).toContainText(
-    DOWNLOADS_BUILD ? 'Nothing to download' : 'maps,',
-  );
+  // Its state: what it holds, in the plain colour, as nothing in it needs the person.
+  await expect(demo.getByTestId('library-status')).toHaveText(/^\d+ maps?, [\d,]+ locations?$/);
+  await expect(demo.getByTestId('library-status')).toHaveClass(/library-status-plain/);
   const pane = page.getByTestId('library-game-pane');
   await expect(pane).toHaveAttribute('data-pack', 'demo');
   await expect(pane.getByTestId('library-contents-card')).toContainText('locations');
@@ -52,7 +51,7 @@ test('the folder button opens the Library over the whole window', async ({ page 
   const settings = page.getByTestId('settings-screen');
   await expect(settings.getByTestId('maps-folder-path')).toBeVisible();
   await expect(settings.getByTestId('settings-locations')).toContainText(
-    'Remove from list forgets it and does not delete any files.',
+    'Remove from list forgets a folder and deletes no files.',
   );
   // The classic layout's own bar has the theme and the layout.
   await expect(settings.getByTestId('layout-setting')).toHaveCount(0);

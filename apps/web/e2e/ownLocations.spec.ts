@@ -108,19 +108,30 @@ test('Edit locations: drop, name, type, area, note, move, delete, undo, reload',
   await expect(editor).toBeVisible();
   await expect(page.locator('.touch-panel')).toHaveAttribute('aria-label', 'Edit locations');
   await expect(page.getByTestId('locations-map-hint')).toHaveText(
-    'Click the map to put a location there',
+    'Press the map to put a location there',
   );
   await expect(page.getByTestId('locations-undo')).toBeDisabled();
 
-  // A click off the markers puts a location there, and its name takes the focus.
+  // A click away from the game's locations: the first new location of the game asks for its
+  // type before it is added, and its name takes the focus.
   const point = await emptyPoint(page);
   await page.mouse.click(point.x, point.y);
-  const panel = page.getByTestId('location-panel');
-  await expect(panel).toBeVisible();
+  const draft = page.getByTestId('new-location-panel');
+  await expect(draft).toBeVisible();
   await expect(page.getByTestId('location-name')).toBeFocused();
-  await expect(count).toHaveText('5,001');
+  await expect(page.getByTestId('location-type')).toHaveValue('');
+  await expect(page.getByTestId('location-type').locator('option:checked')).toHaveText(
+    'Choose a type',
+  );
+  await expect(page.getByTestId('add-location')).toBeDisabled();
   await page.getByTestId('location-name').fill('Hidden spring');
   await page.keyboard.press('Enter');
+  await expect(count).toHaveText('5,000');
+  await page.getByTestId('location-type').selectOption({ label: 'Wild herb' });
+  await page.getByTestId('add-location').click();
+  const panel = page.getByTestId('location-panel');
+  await expect(panel).toBeVisible();
+  await expect(count).toHaveText('5,001');
   await expect(page.getByTestId('own-location-row')).toHaveText(/Hidden spring/);
 
   // Its type: one of the game's.
@@ -228,16 +239,33 @@ test('Edit locations: drop, name, type, area, note, move, delete, undo, reload',
   await choosePlace(page, 'Hidden spring');
   await expect(page.getByTestId('place-sheet')).toContainText('Hidden spring');
   await expect(page.getByTestId('place-sheet')).toContainText('Behind the falls.');
+
+  // The type chosen last is kept for the game: the next new location gets it at once.
+  await page.getByTestId('edit-locations').click();
+  const next = await emptyPoint(page);
+  await page.mouse.click(next.x, next.y);
+  await expect(page.getByTestId('location-panel')).toBeVisible();
+  await expect(page.getByTestId('new-location-panel')).toHaveCount(0);
+  await expect(page.getByTestId('location-type')).toHaveValue(file.categories[0]!.id);
   expect(errors).toEqual([]);
 });
 
-/** Puts a location of one's own at an empty point and names it. */
-async function dropLocation(page: Page, name: string): Promise<void> {
+/**
+ * Puts a location of one's own at an empty point and names it; the first one
+ * of the game asks for its type, `firstType`, before it is added.
+ */
+async function dropLocation(page: Page, name: string, firstType?: string): Promise<void> {
   const point = await emptyPoint(page);
   await page.mouse.click(point.x, point.y);
   await expect(page.getByTestId('location-name')).toBeFocused();
   await page.getByTestId('location-name').fill(name);
-  await page.keyboard.press('Enter');
+  if (firstType) {
+    await page.getByTestId('location-type').selectOption({ label: firstType });
+    await page.getByTestId('add-location').click();
+    await expect(page.getByTestId('location-panel')).toBeVisible();
+  } else {
+    await page.keyboard.press('Enter');
+  }
   await expect(page.getByTestId('own-location-row').filter({ hasText: name })).toHaveCount(1);
   await saved(page);
 }
@@ -248,7 +276,7 @@ test('the list editor adds locations of one’s own: from the map, by type and b
   const errors = collectErrors(page);
   await openMap(page, STANDARD);
   await page.getByTestId('edit-locations').click();
-  await dropLocation(page, 'Lookout stone');
+  await dropLocation(page, 'Lookout stone', 'Waystone');
   // A type of one's own, which the next location gets too.
   await page.getByTestId('location-new-type').click();
   await page.getByTestId('type-name').fill('Lookout');

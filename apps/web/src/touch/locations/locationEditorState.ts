@@ -7,6 +7,7 @@ import {
   deleteOwn,
   dropOwnLocation,
   flushOwnLocations,
+  newLocationAsksType,
   ownLocationById,
   undoOwnChange,
   useOwnLocations,
@@ -23,14 +24,30 @@ import { stopEditing, useEditor } from '../editor/editorState';
  * undone.
  */
 
+/** A new location not made yet, while the person chooses its type. */
+export interface NewLocationDraft {
+  mapId: string;
+  layerId: string;
+  x: number;
+  y: number;
+  name: string;
+  /** The type chosen; null shows "Choose a type", and the location cannot be added yet. */
+  typeId: string | null;
+}
+
 /** What the panel beside the map shows. */
 export type EditorSidePanel =
   /** One of the person's own locations. */
   | { kind: 'location'; id: string }
+  /** A new location whose type is to be chosen before it is added. */
+  | { kind: 'new-location'; draft: NewLocationDraft }
   /** A location that came with the game: it is not changed here. */
   | { kind: 'game-location'; id: string }
-  /** A type: a new one (`id` null) or one of the person's own; `forLocation` gets it when saved. */
-  | { kind: 'type'; id: string | null; forLocation: string | null }
+  /**
+   * A type: a new one (`id` null) or one of the person's own; `forLocation`
+   * gets it when saved, or the new location `draft` does.
+   */
+  | { kind: 'type'; id: string | null; forLocation: string | null; draft?: NewLocationDraft }
   /** An area of the map shown: a new one or one of the person's own. */
   | { kind: 'area'; id: string | null; forLocation: string | null };
 
@@ -90,16 +107,44 @@ export function pickedOnMap(id: string): void {
 export function clickedOnMap(point: { x: number; y: number }): void {
   const { mapId, layerId } = useAtlas.getState();
   if (!mapId || !layerId) return;
-  const { moving } = get();
+  const { moving, side } = get();
   if (moving) {
     changeOwn(moving, { x: Math.round(point.x), y: Math.round(point.y) }, 'Location moved');
     set({ moving: null });
+    return;
+  }
+  const at = { mapId, layerId, x: Math.round(point.x), y: Math.round(point.y) };
+  // A new location waiting for its type goes where the map was pressed now.
+  if (side?.kind === 'new-location') {
+    set({ side: { kind: 'new-location', draft: { ...side.draft, ...at } } });
+    return;
+  }
+  // No type chosen for a new location of this game yet: the person chooses one first.
+  if (newLocationAsksType()) {
+    openSide({ kind: 'new-location', draft: { ...at, name: 'New location', typeId: null } });
+    set({ focusName: get().focusName + 1 });
     return;
   }
   const location = dropOwnLocation(mapId, layerId, point.x, point.y);
   if (!location) return;
   openSide({ kind: 'location', id: location.id });
   set({ focusName: get().focusName + 1 });
+}
+
+/** Adds the new location once its type is chosen, and shows it. */
+export function addDraftLocation(draft: NewLocationDraft): boolean {
+  if (draft.typeId === null) return false;
+  const location = dropOwnLocation(
+    draft.mapId,
+    draft.layerId,
+    draft.x,
+    draft.y,
+    draft.name.trim() || 'New location',
+    draft.typeId,
+  );
+  if (!location) return false;
+  openSide({ kind: 'location', id: location.id });
+  return true;
 }
 
 /** Deletes one of the person's own locations, with Undo on the notice. */

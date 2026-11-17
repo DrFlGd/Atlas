@@ -202,7 +202,7 @@ export function DeletePackConfirmView({
           {working ? (info?.downloading ? 'Stopping the download…' : 'Deleting…') : 'Delete'}
         </button>
         <button type="button" className="button" disabled={working} onClick={onCancel}>
-          Keep it
+          Cancel
         </button>
       </div>
     </div>

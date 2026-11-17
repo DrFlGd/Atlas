@@ -121,7 +121,7 @@ export function ProgressScreen() {
 
         {regions.length > 0 ? (
           <section aria-labelledby="progress-regions">
-            <GroupTitle id="progress-regions" figure="Tap to go there">
+            <GroupTitle id="progress-regions" figure="Press to go there">
               Regions of {mapName}
             </GroupTitle>
             <ul className="touch-plain-list" data-testid="region-progress">

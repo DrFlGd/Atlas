@@ -41,7 +41,7 @@ export function withKey(label: string, key: string, shown: boolean): string {
 /** What the mouse does on the map, listed with the keys. */
 export const MOUSE_HELP: readonly { action: string; what: string }[] = [
   { action: 'Point at a location', what: 'Its name' },
-  { action: 'Click a location', what: 'Show it' },
+  { action: 'Press a location', what: 'Show it' },
   { action: 'Right-click a location', what: 'Mark it found, or not found, at once' },
   { action: 'Scroll wheel', what: 'Zoom in and out' },
 ];

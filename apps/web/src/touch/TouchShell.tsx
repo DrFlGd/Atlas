@@ -12,7 +12,7 @@ import { downloadsOffered, keyboardHintsOffered } from '../features';
 import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
 import { loadBuildPrefs } from '../state/buildPlanner';
-import { checklistScreenTitle, setGuideReader } from '../state/checklists';
+import { setGuideReader } from '../state/checklists';
 import { guidesOf, hasListsSection, hasMap, useGuidesSection } from '../state/guides';
 import { numberFormat, useSummary } from '../state/derived';
 import {
@@ -609,7 +609,6 @@ function SectionButtons({
 }) {
   const section = useTouch((s) => s.section);
   const hints = useKeyHints();
-  const listsName = useAtlas((s) => (s.game ? checklistScreenTitle(s.game) : 'Lists'));
   return (library ? LIBRARY_SECTIONS : SECTIONS)
     .filter((s) => !(s.id in shown) || shown[s.id as keyof Shown])
     .map((s) => (
@@ -618,7 +617,7 @@ function SectionButtons({
         type="button"
         className={className}
         aria-current={s.id === section ? 'page' : undefined}
-        title={hints ? (s.id === 'lists' ? withKey(listsName, 'C', true) : s.label) : undefined}
+        title={hints ? (s.id === 'lists' ? withKey('Lists', 'C', true) : s.label) : undefined}
         aria-keyshortcuts={hints && s.id === 'lists' ? 'C' : undefined}
         data-testid={`section-${s.id}`}
         onClick={() => {
@@ -722,14 +721,16 @@ function WideMapControls({
       </div>
     );
   }
+  // Edit locations and the progress belong to the Map section: on Lists and Progress the map's name has the room.
+  const onMap = section === 'map';
   return (
     <>
       <div className="touch-map-top">
         <ListOnlyChip />
         <MapChip />
-        {canLocate ? <EditLocationsButton /> : null}
+        {canLocate && onMap ? <EditLocationsButton /> : null}
         <span className="touch-map-bottom-space" />
-        <ProgressPill />
+        {onMap ? <ProgressPill /> : null}
       </div>
       {section === 'map' ? (
         <div className="touch-map-bottom">

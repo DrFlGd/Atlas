@@ -27,6 +27,7 @@ import type { OwnPages, PagesLayout } from '@atlas/schema';
 import { useId, useMemo, useState } from 'react';
 import { UiIcon } from '../../components/icons';
 import { notify } from '../../state/actions';
+import { useGameName } from '../../state/gameGroups';
 import { guideAliases, guidesOf } from '../../state/guides';
 import {
   changeContents,
@@ -330,6 +331,8 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
   const editing = usePageEditor((s) => s.guideId);
   // The home page is not in the contents: it is above them, the page Guides opens on.
   const home = game.pack.homePage;
+  // Named by the game's name, as the reader's menu names it; the tag says it is the home page.
+  const gameName = useGameName(game);
   const [drag, setDrag] = useState<{ id: string; drop: Drop | null } | null>(null);
   // Pages with pages under them are folded, but the way to the page edited; and as the person chose.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -700,7 +703,7 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
               openPageEditor(home);
             }}
           >
-            {titleOf(game, home)}
+            {gameName}
           </button>
           <span className="pe-tag">Home page</span>
         </div>

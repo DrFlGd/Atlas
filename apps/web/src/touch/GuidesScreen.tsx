@@ -35,7 +35,7 @@ import { MarkdownBody } from '../components/MarkdownBody';
 import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
-import { useTitleOf } from '../state/gameGroups';
+import { useGameName } from '../state/gameGroups';
 import { guidesOf, hasMap, pictureOf } from '../state/guides';
 import { canChangeOwnPages, changeContents, pageWidthOf, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
@@ -117,7 +117,7 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
     >
       {wide ? (
         <aside className="guides-side" aria-label="Contents">
-          <SearchField game={game} />
+          <SearchField />
           <nav className="guides-tree touch-scroll" aria-label="Contents" data-scroll-root>
             <TreeHome game={game} />
             <ContentsTree game={game} />
@@ -230,7 +230,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         <div className="guides-column" data-width={wide ? width : undefined}>
           {!wide &&
           (atHome || place.kind === 'search' || (place.kind === 'contents' && !place.sectionId)) ? (
-            <SearchField game={game} />
+            <SearchField />
           ) : null}
           {atHome ? (
             <Landing game={game} wide={wide} name={name} />
@@ -274,15 +274,6 @@ function headingOf(root: HTMLElement, section: string): HTMLElement | null {
 /** How far down a scrolled element an element inside it stands. */
 function offsetIn(root: HTMLElement, element: HTMLElement): number {
   return element.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
-}
-
-/**
- * The name the guides of a game go by: the title it is shown under with
- * other games (see `gameGroups.ts`), else its own.
- */
-function useGameName(game: LoadedGame): string {
-  const group = useTitleOf(game.pack.manifest.gameId);
-  return group?.title ?? game.pack.manifest.title;
 }
 
 /** Whether a place is the landing page: itself, or the home page opened by a link. */
@@ -1440,7 +1431,7 @@ function TakeWikiDialog({ onClose, onTake }: { onClose: () => void; onTake: () =
         <footer className="own-dialog-foot">
           <span className="own-space" />
           <button type="button" className="own-pill-button" autoFocus onClick={onClose}>
-            Keep mine
+            Cancel
           </button>
           <button
             type="button"
@@ -1574,7 +1565,7 @@ function Credit({ source, title }: { source: GuideSource; title: string }) {
 // ---------------------------------------------------------------------------
 // Search
 
-function SearchField({ game }: { game: LoadedGame }) {
+function SearchField() {
   const place = useReader(currentPlace);
   const shown = place.kind === 'search' ? place.query : '';
   const [text, setText] = useState(shown);
@@ -1597,7 +1588,7 @@ function SearchField({ game }: { game: LoadedGame }) {
         ref={input}
         type="search"
         className="guides-search-input"
-        placeholder={`Search the pages of ${game.pack.manifest.title}`}
+        placeholder="Search pages"
         aria-label="Search the pages"
         data-testid="guides-search"
         value={text}

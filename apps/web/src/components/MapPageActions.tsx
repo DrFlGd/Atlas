@@ -30,7 +30,7 @@ export function MapPageActions({ pack }: { pack: ListedPack }) {
         });
       }}
     >
-      <summary className="link-button">Map page…</summary>
+      <summary className="link-button">Save map images as I browse…</summary>
       <p className="muted small">
         The page this map was made from. View map page opens it in a window of this app, just to
         look at it; with “save images as I browse” it also keeps the map images it shows while you

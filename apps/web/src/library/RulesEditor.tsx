@@ -282,20 +282,22 @@ function EditorBody({
   // What saving would do follows the Sites folder as it changes.
   const saving_ = rules && check.text === text ? savingOf(rules, editing, entries) : null;
 
-  const save = async () => {
+  /** Saves the file; whether it was saved. */
+  const save = async (): Promise<boolean> => {
     const now = checkEditorText(text);
     setCheck(now);
-    if (!now.rules) return;
+    if (!now.rules) return false;
     setSaving(true);
     setSaveProblem(null);
     const saved = await saveRulesText(text, editing);
     setSaving(false);
     if ('problem' in saved) {
       setSaveProblem(saved.problem);
-      return;
+      return false;
     }
     setEditing(saved.name);
     setBaseline(text);
+    return true;
   };
 
   const title = titleOf(origin, editing);
@@ -346,13 +348,27 @@ function EditorBody({
         <div
           className="download-confirm rules-editor-leave"
           role="alertdialog"
-          aria-label="Leave without saving?"
+          aria-label="Save your changes?"
           data-testid="rules-editor-leave"
         >
           <p>
-            <strong>Leave without saving?</strong> Your changes to this file are not kept.
+            <strong>Save your changes?</strong> Your changes to this file are not saved yet.
           </p>
           <div className="row-actions wrap">
+            <button
+              type="button"
+              className="button button-primary"
+              data-testid="rules-editor-leave-save"
+              disabled={!saving_ || saving}
+              onClick={() => {
+                void save().then((saved) => {
+                  if (saved) closeRulesEditor();
+                  else setLeaving(false);
+                });
+              }}
+            >
+              Save
+            </button>
             <button
               type="button"
               className="button"
@@ -361,18 +377,18 @@ function EditorBody({
                 closeRulesEditor();
               }}
             >
-              Leave without saving
+              Discard changes
             </button>
             <button
               ref={keepEditingRef}
               type="button"
-              className="button button-primary"
+              className="button"
               data-testid="rules-editor-leave-no"
               onClick={() => {
                 setLeaving(false);
               }}
             >
-              Keep editing
+              Cancel
             </button>
           </div>
         </div>
@@ -406,7 +422,7 @@ function EditorBody({
                 setRestarting(false);
               }}
             >
-              Keep editing
+              Cancel
             </button>
           </div>
         </div>

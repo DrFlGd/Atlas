@@ -100,6 +100,9 @@ test('lists a wiki’s pages by heading, previews them, and reads the pages tick
   await expect(screen.getByTestId('wiki-filter-not-read')).toContainText('7');
   // No "Changed on the wiki": telling would mean reading every page again.
   await expect(screen.getByTestId('wiki-filter-changed')).toHaveCount(0);
+  // Nothing ticked yet: the main button reads "Read pages" and is off.
+  await expect(page.getByTestId('wiki-read')).toHaveText('Read pages');
+  await expect(page.getByTestId('wiki-read')).toBeDisabled();
 
   // The preview: the wiki is shown first, from the files on this computer.
   await row(page, 'Welcome').getByTestId('wiki-row-open').click();
@@ -511,7 +514,7 @@ test('the box of a heading ticks every page shown under it, never one left out',
   expect(realErrors(errors)).toEqual([]);
 });
 
-test.describe('Select all and Select none', () => {
+test.describe('Tick all and Tick none', () => {
   /** The Example Wiki with a heading of 250 more pages, none of them read: more than a heading shows at first. */
   const BIG_WIKI = {
     ...EXAMPLE_WIKI,
@@ -531,8 +534,8 @@ test.describe('Select all and Select none', () => {
     await addWiki(page, async (flow) => {
       // When adding: every page of the contents.
       const select = flow.getByTestId('add-map-choose-select');
-      const all = select.getByRole('button', { name: 'Select all' });
-      const none = select.getByRole('button', { name: 'Select none' });
+      const all = select.getByRole('button', { name: 'Tick all' });
+      const none = select.getByRole('button', { name: 'Tick none' });
       await expect(select).toHaveAccessibleName('Select the pages listed');
       await expect(select.getByTestId('add-map-choose-select-text')).toHaveText(
         'The list has 254 pages to tick, none of them ticked.',
@@ -556,8 +559,8 @@ test.describe('Select all and Select none', () => {
     const before = await fetched(page);
     const screen = page.getByTestId('wiki-screen');
     const select = screen.getByTestId('wiki-select');
-    const all = select.getByRole('button', { name: 'Select all' });
-    const none = select.getByRole('button', { name: 'Select none' });
+    const all = select.getByRole('button', { name: 'Tick all' });
+    const none = select.getByRole('button', { name: 'Tick none' });
     const text = select.getByTestId('wiki-select-text');
     const ticked = page.getByTestId('wiki-ticked');
 
@@ -628,15 +631,15 @@ test.describe('Select all and Select none', () => {
       await setUp(page, true, { wiki: EXAMPLE_WIKI });
       await addWiki(page, async (flow) => {
         const select = flow.getByTestId('add-map-choose-select');
-        // Nothing ticked at first: Select none has nothing to do.
-        await expect(select.getByRole('button', { name: 'Select none' })).toBeDisabled();
-        // Enter on Select all ticks them all and hands the focus to Select none.
-        await select.getByRole('button', { name: 'Select all' }).focus();
+        // Nothing ticked at first: Tick none has nothing to do.
+        await expect(select.getByRole('button', { name: 'Tick none' })).toBeDisabled();
+        // Enter on Tick all ticks them all and hands the focus to Tick none.
+        await select.getByRole('button', { name: 'Tick all' }).focus();
         await page.keyboard.press('Enter');
-        await expect(select.getByRole('button', { name: 'Select none' })).toBeFocused();
-        await expect(select.getByRole('button', { name: 'Select all' })).toBeDisabled();
+        await expect(select.getByRole('button', { name: 'Tick none' })).toBeFocused();
+        await expect(select.getByRole('button', { name: 'Tick all' })).toBeDisabled();
         await page.keyboard.press('Space');
-        await expect(select.getByRole('button', { name: 'Select all' })).toBeFocused();
+        await expect(select.getByRole('button', { name: 'Tick all' })).toBeFocused();
         await expect(flow.getByTestId('add-map-choose-confirm')).toHaveText('Tick the maps to add');
         expect(
           await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -644,17 +647,17 @@ test.describe('Select all and Select none', () => {
       });
       const select = page.getByTestId('wiki-select');
       await expect(select).toBeVisible();
-      await select.getByRole('button', { name: 'Select all' }).focus();
+      await select.getByRole('button', { name: 'Tick all' }).focus();
       await page.keyboard.press('Enter');
       // Every page of the contents not left out, and the pages found on Welcome.
       await expect(page.getByTestId('wiki-ticked')).toHaveText('8 pages ticked');
-      await expect(select.getByRole('button', { name: 'Select none' })).toBeFocused();
+      await expect(select.getByRole('button', { name: 'Tick none' })).toBeFocused();
       await expect(select.getByTestId('wiki-select-text')).toHaveText(
         'The list has 8 pages to tick, all of them ticked.',
       );
       await page.keyboard.press('Enter');
       await expect(page.getByTestId('wiki-ticked')).toHaveText('No page ticked');
-      await expect(select.getByRole('button', { name: 'Select all' })).toBeFocused();
+      await expect(select.getByRole('button', { name: 'Tick all' })).toBeFocused();
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBe(true);

@@ -178,7 +178,7 @@ export function AddFlow() {
           disabled={phase.kind === 'converting'}
           onClick={closeAdding}
         >
-          {busy || running ? 'Back to the game' : 'Close'}
+          Done
         </button>
       </header>
       <div className="library-pane-body touch-scroll" data-scroll-root>
@@ -437,7 +437,7 @@ function QueuedGameRow({ game }: { game: QueuedGame }) {
                 setAsking(false);
               }}
             >
-              Keep it
+              Cancel
             </button>
           </div>
         </div>

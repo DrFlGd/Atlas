@@ -2,7 +2,7 @@ import { useEffect, useId, useRef } from 'react';
 import type { ShownSelection } from '../state/selectShown';
 
 /**
- * "Select all" and "Select none" above a list to tick, with a sentence that
+ * "Tick all" and "Tick none" above a list to tick, with a sentence that
  * says what they act on and how many are ticked (`selectShown.ts`). Each
  * button is disabled when it has nothing to do; the one pressed hands the
  * focus to the other, so the keyboard user is never left without a focus. The sentence
@@ -56,7 +56,7 @@ export function SelectShown({
           press(true);
         }}
       >
-        Select all
+        Tick all
       </button>
       <button
         ref={none}
@@ -69,7 +69,7 @@ export function SelectShown({
           press(false);
         }}
       >
-        Select none
+        Tick none
       </button>
       <span
         id={textId}

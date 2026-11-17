@@ -203,10 +203,21 @@ export interface StatusLine {
 const plural = (count: number, one: string, many: string) =>
   `${count.toLocaleString('en')} ${count === 1 ? one : many}`;
 
+/** What a game holds, in words: "2 maps, 4 locations", or "6 pages" for one without a map. */
+export function holdsText(
+  contents: Pick<PackDetails['contents'], 'maps' | 'locations' | 'guides'>,
+) {
+  const { maps, locations, guides } = contents;
+  return maps === 0
+    ? plural(guides, 'page', 'pages')
+    : `${plural(maps, 'map', 'maps')}, ${plural(locations, 'location', 'locations')}`;
+}
+
 /**
  * The game's one status line: what is going on now, else what is left to
- * do, else that everything is there. `reading` is the page run's progress
- * when it reads pages of this game.
+ * do, else what the game holds. Only a line that needs the person has a
+ * colour. `reading` is the page run's progress when it reads pages of this
+ * game.
  */
 export function statusLine(options: {
   kind: GameKind;
@@ -248,32 +259,19 @@ export function statusLine(options: {
     return wikiPages.listed !== null && wikiPages.listed > 0
       ? {
           text: `${wikiPages.read.toLocaleString('en')} of ${plural(wikiPages.listed, 'page', 'pages')} read`,
-          tone: wikiPages.read >= wikiPages.listed ? 'done' : 'todo',
+          tone: 'plain',
         }
       : { text: `${plural(wikiPages.read, 'page', 'pages')} read`, tone: 'plain' };
   }
   const details = facts?.details;
-  if (!downloads || kind === 'own') {
-    if (kind === 'own') return { text: 'Nothing to download', tone: 'done' };
-    if (!details) return { text: '', tone: 'plain' };
-    const { maps, locations, guides } = details.contents;
-    return {
-      text:
-        maps === 0
-          ? plural(guides, 'page', 'pages')
-          : `${plural(maps, 'map', 'maps')}, ${plural(locations, 'location', 'locations')}`,
-      tone: 'plain',
-    };
-  }
   if (!details) return { text: '', tone: 'plain' };
+  const holds: StatusLine = { text: holdsText(details.contents), tone: 'plain' };
+  if (!downloads || kind === 'own') return holds;
   let todo = 0;
   const downloadable = details.layers.some((layer) => layer.downloadable);
   if (downloadable && details.detail === null) todo++;
   const photos = facts.photos;
   if (photos && photos.remaining > 0) todo++;
   if (todo > 0) return { text: plural(todo, 'thing to do', 'things to do'), tone: 'todo' };
-  if (downloadable || (photos && photos.total > 0)) {
-    return { text: 'Everything downloaded', tone: 'done' };
-  }
-  return { text: 'Nothing to download', tone: 'done' };
+  return holds;
 }

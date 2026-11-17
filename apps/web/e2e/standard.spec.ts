@@ -179,10 +179,7 @@ test('the classic keys work and are shown, and Esc closes what is on top', async
   await expectFound(page, 0);
 
   // C: the lists, and back.
-  await expect(page.getByTestId('section-lists')).toHaveAttribute(
-    'title',
-    'Checklists and guides (C)',
-  );
+  await expect(page.getByTestId('section-lists')).toHaveAttribute('title', 'Lists (C)');
   await page.keyboard.press('c');
   await expect(root(page)).toHaveAttribute('data-section', 'lists');
   await page.keyboard.press('c');
@@ -362,6 +359,10 @@ test('profiles, and progress export and import, from the rail', async ({ page })
   await dialog.getByRole('radio', { name: /Replace/ }).check();
   await dialog.getByRole('button', { name: 'Import', exact: true }).click();
   await expect(dialog.getByTestId('import-review')).toHaveCount(0);
+  // The ring stands on the Map section only.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await page.getByTestId('section-map').click();
   await expectFound(page, 1);
   expect(errors).toEqual([]);
 });

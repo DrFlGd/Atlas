@@ -85,7 +85,7 @@ export async function openPackFileAt(path: string): Promise<void> {
 }
 
 /**
- * "Import pack file…" in the Android app: asks for a file with the
+ * "Import a pack file…" in the Android app: asks for a file with the
  * system's picker, copies it into the app (the picker gives no path; the
  * dialog shows how far the copy is, with Cancel), then shows what
  * importing it would do. The copy is deleted when the import is over.

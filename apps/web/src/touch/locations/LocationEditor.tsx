@@ -24,6 +24,7 @@ import { useAddPhoto } from '../editor/useAddPhoto';
 import type { SaveState } from '../../state/ownLists';
 import { useAtlas, type LoadedGame } from '../../state/store';
 import {
+  addDraftLocation,
   deleteOwnLocationNow,
   openSide,
   setMoving,
@@ -31,6 +32,7 @@ import {
   stopLocationEditing,
   undoLocationChange,
   useLocationEditor,
+  type NewLocationDraft,
 } from './locationEditorState';
 
 /*
@@ -88,8 +90,8 @@ export function LocationMapHint() {
       <UiIcon name={moving ? 'pin' : 'plus'} size={18} strokeWidth={1.9} />
       <span className="editor-map-hint-text">
         {moving
-          ? `Click where “${name ?? 'the location'}” goes`
-          : 'Click the map to put a location there'}
+          ? `Press where “${name ?? 'the location'}” goes`
+          : 'Press the map to put a location there'}
       </span>
       {moving ? (
         <button
@@ -228,7 +230,7 @@ export function LocationEditorOutline({ game }: { game: LoadedGame }) {
       </div>
       <div className="locations-scroll" aria-labelledby={titleId} role="region">
         <p className="locations-lead">
-          Click the map to put a location there. Click one of yours to change, move or delete it.
+          Press the map to put a location there. Press one of yours to change, move or delete it.
           The game’s own locations stay as they are.
         </p>
         <section className="locations-section" aria-labelledby={`${titleId}-locations`}>
@@ -394,11 +396,19 @@ export function LocationEditorSide({ game }: { game: LoadedGame }) {
   switch (side.kind) {
     case 'location':
       return location ? <LocationForm key={location.id} game={game} location={location} /> : null;
+    case 'new-location':
+      return <NewLocationForm game={game} draft={side.draft} />;
     case 'game-location':
       return <GameLocationNote game={game} id={side.id} />;
     case 'type':
       return (
-        <TypePanel key={side.id ?? 'new'} game={game} id={side.id} forLocation={side.forLocation} />
+        <TypePanel
+          key={side.id ?? 'new'}
+          game={game}
+          id={side.id}
+          forLocation={side.forLocation}
+          draft={side.draft}
+        />
       );
     case 'area':
       return (
@@ -640,6 +650,7 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
           photos={location.photos}
           name={location.name}
           busy={photo.busy}
+          problem={photo.problem}
           add={() => {
             void photo.add();
           }}
@@ -669,7 +680,7 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
             }}
           >
             <UiIcon name="pin" size={18} strokeWidth={1.8} />
-            {moving ? 'Click the map, or press to cancel' : 'Move to a point on the map'}
+            {moving ? 'Press the map, or press here to cancel' : 'Move to a point on the map'}
           </button>
         </div>
       </div>
@@ -697,6 +708,155 @@ function focusOutline() {
   }, 0);
 }
 
+/**
+ * A new location before it is added, the first time one is put on this
+ * game's map: its type is chosen first ("Choose a type"), and it is added
+ * only then. Later new locations get the type chosen last, and are added at
+ * once.
+ */
+function NewLocationForm({ game, draft }: { game: LoadedGame; draft: NewLocationDraft }) {
+  const titleRef = useSideTitle(true);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const id = useId();
+  const groups = useMemo(() => typeGroups(game), [game]);
+  const [name, setName] = useState(draft.name);
+  const typeId = draft.typeId;
+  const type = typeId === null ? undefined : game.pack.categories.get(typeId);
+  const ready = typeId !== null;
+
+  useEffect(() => {
+    nameRef.current?.focus();
+    nameRef.current?.select();
+  }, []);
+
+  const close = () => {
+    openSide(null);
+  };
+
+  return (
+    <aside className="editor-side" aria-labelledby={`${id}-title`} data-testid="new-location-panel">
+      <SideHead
+        id={`${id}-title`}
+        title="New location"
+        titleRef={titleRef}
+        closeLabel="Cancel the new location"
+        onClose={close}
+      />
+      <form
+        className="locations-form"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (ready) addDraftLocation({ ...draft, name });
+        }}
+      >
+        <div className="editor-side-body">
+          <label className="own-field">
+            <span className="own-label">Name</span>
+            <input
+              ref={nameRef}
+              className="own-input"
+              data-testid="location-name"
+              maxLength={200}
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+              }}
+            />
+          </label>
+          <div className="own-field">
+            <label className="own-label" htmlFor={`${id}-type`}>
+              Type
+            </label>
+            <div className="locations-pick">
+              {type ? <GlyphBadge icon={type.icon} color={type.color} size={28} /> : null}
+              <select
+                id={`${id}-type`}
+                className="own-input locations-select"
+                data-testid="location-type"
+                aria-describedby={ready ? undefined : `${id}-needed`}
+                value={typeId ?? ''}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  openSide({
+                    kind: 'new-location',
+                    draft: { ...draft, name, typeId: event.target.value },
+                  });
+                }}
+              >
+                {ready ? null : (
+                  <option value="" disabled>
+                    Choose a type
+                  </option>
+                )}
+                {groups.map((group) => (
+                  <optgroup key={group.id} label={group.name}>
+                    {group.types.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            {ready ? null : (
+              <p
+                id={`${id}-needed`}
+                className="editor-side-line"
+                data-testid="location-type-needed"
+              >
+                Choose a type to add the location. The next new location gets the type you choose.
+              </p>
+            )}
+            <div className="locations-links">
+              <button
+                type="button"
+                className="own-text-button"
+                data-testid="location-new-type"
+                onClick={() => {
+                  openSide({
+                    kind: 'type',
+                    id: null,
+                    forLocation: null,
+                    draft: { ...draft, name },
+                  });
+                }}
+              >
+                <UiIcon name="plus" size={16} strokeWidth={1.9} />
+                New type
+              </button>
+            </div>
+          </div>
+          <div className="own-field">
+            <span className="own-label">Where it is</span>
+            <p className="editor-side-line" data-testid="location-position">
+              {draft.x}, {draft.y}
+              {game.pack.layersOf(draft.mapId).length > 1
+                ? ` on ${game.pack.layers.get(draft.layerId)?.name ?? 'its level'}`
+                : ''}
+              . Press the map to put it somewhere else.
+            </p>
+          </div>
+        </div>
+        <footer className="editor-side-foot">
+          <button
+            type="submit"
+            className="own-pill-button own-pill-primary"
+            data-testid="add-location"
+            disabled={!ready}
+          >
+            Add the location
+          </button>
+          <button type="button" className="own-pill-button" onClick={close}>
+            Cancel
+          </button>
+        </footer>
+      </form>
+    </aside>
+  );
+}
+
 function GameLocationNote({ game, id }: { game: LoadedGame; id: string }) {
   const location = game.pack.locations.get(id);
   const titleRef = useSideTitle();
@@ -714,8 +874,8 @@ function GameLocationNote({ game, id }: { game: LoadedGame; id: string }) {
       />
       <div className="editor-side-body">
         <p className="editor-side-line editor-side-lead">
-          This location comes with the game, so it is not changed here. Click the map off the
-          markers to put a location of your own there.
+          This location comes with the game, so it is not changed here. Press the map away from its
+          locations to put a location of your own there.
         </p>
       </div>
     </aside>
@@ -729,10 +889,12 @@ function TypePanel({
   game,
   id,
   forLocation,
+  draft,
 }: {
   game: LoadedGame;
   id: string | null;
   forLocation: string | null;
+  draft?: NewLocationDraft | undefined;
 }) {
   const before = id ? game.pack.categories.get(id) : undefined;
   const ownGroups = useOwnLocations((s) => s.own.categoryGroups);
@@ -757,7 +919,11 @@ function TypePanel({
     nameRef.current?.focus();
   }, []);
 
-  const back = () => {
+  const back = (saved?: string) => {
+    if (draft) {
+      openSide({ kind: 'new-location', draft: saved ? { ...draft, typeId: saved } : draft });
+      return;
+    }
     openSide(forLocation ? { kind: 'location', id: forLocation } : null);
   };
   const submit = (event: React.SyntheticEvent) => {
@@ -774,7 +940,7 @@ function TypePanel({
     const saved = saveOwnType(form, id ?? undefined);
     if (!saved) return;
     if (forLocation) changeOwn(forLocation, { categoryId: saved }, 'Type changed');
-    back();
+    back(saved);
   };
 
   return (
@@ -784,7 +950,9 @@ function TypePanel({
         title={id ? `Type “${before?.name ?? ''}”` : 'New type'}
         titleRef={titleRef}
         closeLabel="Close without saving"
-        onClose={back}
+        onClose={() => {
+          back();
+        }}
       />
       <form className="locations-form" onSubmit={submit} noValidate>
         <div className="editor-side-body">
@@ -917,7 +1085,13 @@ function TypePanel({
             </button>
           ) : null}
           <span className="own-space" />
-          <button type="button" className="own-pill-button" onClick={back}>
+          <button
+            type="button"
+            className="own-pill-button"
+            onClick={() => {
+              back();
+            }}
+          >
             Cancel
           </button>
           <button

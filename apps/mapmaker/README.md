@@ -10,16 +10,16 @@ No command line needed, ever.
 
 1. **Install.** Open the repository's Releases page, find **Atlas Map Maker 0.2.0** (tag `mapmaker-v0.2.0`, once it is released) and download **Atlas-Map-Maker-0.2.0-setup.exe**. Run it. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**. The installer shows the GNU GPL licence (see below): click **I Agree**, then install. It installs next to Atlas and changes nothing in it.
 2. **Start** Atlas Map Maker from the Start menu.
-3. **Choose your Dark Souls Remastered folder.** Click **Choose folder…** and pick the game's folder, the one that holds `DarkSoulsRemastered.exe`. With Steam it is usually:
+3. **Choose your Dark Souls Remastered folder.** Press **Choose folder…** and pick the game's folder, the one that holds `DarkSoulsRemastered.exe`. With Steam it is usually:
 
    `C:\Program Files (x86)\Steam\steamapps\common\DARK SOULS REMASTERED`
 
    If it is somewhere else: in Steam, right-click Dark Souls Remastered, then **Manage**, **Browse local files**, and choose the folder that opens. Choosing a folder above it also works. The app remembers the folder for next time.
 
-4. **Click Make map.** It reads every area in full (collision, or the navmesh where collision cannot be read), works out the floors, draws them and cuts them into map tiles. A progress bar shows each area as it goes; it may take several minutes. Reading an area's collision is stopped after 5 minutes; that area is then drawn from its navmesh, or with markers only, and the rest goes on. **Cancel** stops it at once and leaves your maps folder as it was.
-5. **Open Atlas.** The map pack is installed in Atlas's maps folder (`%LOCALAPPDATA%\Atlas\Maps\dark-souls-remastered`, or the folder you chose in Atlas's Maps dialog), and the window says where; **Show in folder** opens it. In Atlas, the pack appears in the list of maps (click **Refresh** in the Maps dialog if Atlas was already open). Making the map again replaces the pack it made before; it never replaces a pack it did not make.
+4. **Press Make map.** It reads every area in full (collision, or the navmesh where collision cannot be read), works out the floors, draws them and cuts them into map tiles. A progress bar shows each area as it goes; it may take several minutes. Reading an area's collision is stopped after 5 minutes; that area is then drawn from its navmesh, or with markers only, and the rest goes on. **Cancel** stops it at once and leaves your maps folder as it was.
+5. **Open Atlas.** The map pack is installed in Atlas's maps folder (`%LOCALAPPDATA%\Atlas\Maps\dark-souls-remastered`, or the folder you chose in Atlas's Settings), and the window says where; **Show in folder** opens it. Open the Library in Atlas: the game is listed there. Making the map again replaces the pack it made before; it never replaces a pack it did not make.
 6. **Read the result.** The table lists every area with its floors, its markers by type, and anything to look at (markers not over any floor, bosses not found, item lots missing from the item table, an area too large for one picture). Below are small pictures of every floor.
-7. **Click Save report…**, save the `.zip` file and **upload it to the thread**. It holds the report and the small floor pictures, not the map pack.
+7. **Press Save report…**, save the `.zip` file and **upload it to the thread**. It holds the report and the small floor pictures, not the map pack.
 
 **Check game files** still works as in 0.1: it only reports what can be read, and makes nothing.
 

@@ -245,7 +245,7 @@ function FilterBody({ groups, showAll }: { groups: KindGroups; showAll?: React.R
           setHideFound(!hideFound);
         }}
       >
-        <span className="touch-switch-label">Hide what I have found</span>
+        <span className="touch-switch-label">Hide found</span>
         <SwitchTrack on={hideFound} />
       </button>
       {noted > 0 || notesOnly ? (
@@ -259,14 +259,7 @@ function FilterBody({ groups, showAll }: { groups: KindGroups; showAll?: React.R
             setNotesOnly(!notesOnly);
           }}
         >
-          <span className="touch-switch-label">
-            With my notes
-            <span className="touch-switch-note">
-              {notesOnly
-                ? `Only the ${noted === 1 ? 'location' : `${numberFormat.format(noted)} locations`} with a note of yours, whatever types are shown.`
-                : `Show only the ${noted === 1 ? 'location' : `${numberFormat.format(noted)} locations`} with a note of yours.`}
-            </span>
-          </span>
+          <span className="touch-switch-label">With my notes</span>
           <SwitchTrack on={notesOnly} />
         </button>
       ) : null}
