@@ -1245,6 +1245,21 @@
   margin: 2px 0;
 }
 
+.rules-console-text {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: inherit;
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+
 .rules-result-list {
   margin: 4px 0;
   padding-left: 1.4em;

@@ -16,6 +16,7 @@ import {
   gameAddressOf,
   isAllowedPageUrl,
   isPictureRequest,
+  ownPageReaderOf,
   pageKey,
   readsInWindow,
   pageMeasureStep,
@@ -484,12 +485,17 @@ const closeWindow = (shell: NonNullable<typeof desktop>) => pageWindows.close(sh
 
 let session = 0;
 
-/** The reader and wait for a page: a map page, a game page or the list of games. */
-function readerFor(importer: AtlasImporter, reading: Reading) {
+/**
+ * The reader and wait for a page: a map page (with the importer's reader
+ * of its own for that address, when it gives one), a game page or the list
+ * of games.
+ */
+function readerFor(importer: AtlasImporter, reading: Reading, url: string) {
   const part =
     reading === 'game' ? importer.games : reading === 'catalogue' ? importer.catalogue : null;
+  const own = reading === 'map' ? ownPageReaderOf(importer, url) : null;
   return {
-    pageReader: part?.pageReader ?? importer.pageReader ?? '() => null',
+    pageReader: own ?? part?.pageReader ?? importer.pageReader ?? '() => null',
     waitSeconds: part?.waitSeconds ?? importer.waitSeconds ?? DEFAULT_WAIT_SECONDS,
   };
 }
@@ -522,7 +528,7 @@ async function readPage(
   if (way === 'browse') return { state: 'failed', message: BROWSE_ONLY };
   const fetcher = fetcherFor(importer, reading, url, way);
   if (fetcher) return fetchPage(shell, url, fetcher, importer, id, reading);
-  const { pageReader, waitSeconds } = readerFor(importer, reading);
+  const { pageReader, waitSeconds } = readerFor(importer, reading, url);
   return pageWindows.read(
     shell.importWindow,
     {
@@ -717,7 +723,8 @@ function windowStyles(
   url: string,
 ): { afterRead: () => Promise<void>; sheets: () => PageSheets } | null {
   const reader = importer.styleReader;
-  if (!reader) return null;
+  // A page with a reader of its own is read for its data only (`pageReaderFor`).
+  if (!reader || ownPageReaderOf(importer, url) !== null) return null;
   let styles: PageStyles | null = null;
   return {
     afterRead: async () => {

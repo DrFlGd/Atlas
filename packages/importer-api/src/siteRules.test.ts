@@ -69,8 +69,9 @@ describe('the guide', () => {
 
   it('holds the examples it promises', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
-    // And one file for every game of a site, a refusal, and a part with a layout section.
-    expect(blocks.length).toBe(8);
+    // And one file for every game of a site, a refusal, a part with a layout section,
+    // a map part read from values of its page, and one file for every game and map of a map site.
+    expect(blocks.length).toBe(10);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -555,6 +556,151 @@ describe('checking a file', () => {
       expect(image('/map/world.png', { images: '/{z}/{x}/{y}.png', tile: 256 })).toEqual([
         'parts[0].maps.picture',
       ]);
+    });
+
+    /** A file with one part, with no game of its own: its start's `{game}` names the games. */
+    const withPieces = (part: unknown) =>
+      changed((f) => {
+        f.parts = [part];
+        delete (f.site as Record<string, unknown>).game;
+      });
+    const pieceFields = (part: unknown) => {
+      const result = checkSiteRules(withPieces(part));
+      return result.ok ? [] : result.problems.map((problem) => problem.field).sort();
+    };
+    /** A made-up map part whose data is values of its page, read in the app's window. */
+    const fromValues = {
+      ...oneMap,
+      start: '/maps/{game}/{map}',
+      data: {
+        from: 'values',
+        values: { board: 'boardData.current', state: { store: 'appStore', path: 'atlas' } },
+      },
+      game: { name: 'board.game.title' },
+      maps: {
+        path: 'board.map',
+        id: 'key',
+        name: 'title',
+        picture: {
+          base: 'https://tiles.example.net/sets/',
+          tile: 256,
+          sets: {
+            path: 'board.sets[*]',
+            pattern: 'pattern',
+            extension: 'ext',
+            minZoom: 'low',
+            maxZoom: 'high',
+            bounds: 'box',
+          },
+        },
+      },
+      types: {
+        path: 'state.kinds[*]',
+        id: 'id',
+        name: 'label',
+        group: 'shelf',
+        order: 'rank',
+        groups: { path: 'state.shelves[*]', id: 'id', name: 'label', order: 'rank' },
+      },
+      locations: {
+        path: 'state.spots[*]',
+        markup: 'markdown',
+        pictures: { path: 'shots[*]', address: 'href', hidden: 'secret' },
+        fields: { id: 'id', type: 'kind', name: 'label', x: 'lng', y: 'lat', description: 'text' },
+      },
+      position: { units: 'degrees', area: 'located' },
+      pictures: { hosts: ['tiles.example.net'] },
+      reading: { ways: ['window'] },
+    };
+
+    it('takes data from values of the page, read in the window, with {game} and {map}', () => {
+      expect(pieceFields(fromValues)).toEqual([]);
+      // An element of the page, read in the window as well.
+      expect(
+        pieceFields({
+          ...fromValues,
+          data: {
+            from: 'values',
+            values: { board: { element: 'script#board' }, state: { store: 'appStore' } },
+          },
+        }),
+      ).toEqual([]);
+      // Data in the page's element may be read by itself or in the window.
+      expect(mapFields({ ...oneMap, reading: { ways: ['window', 'fetch'] } })).toEqual([]);
+      // A way the data cannot be read in is the Importer's to leave out: older files stay valid.
+      expect(mapFields({ ...oneMap, reading: { ways: ['browse'] } })).toEqual([]);
+      expect(pieceFields({ ...fromValues, reading: { ways: ['window', 'fetch'] } })).toEqual([
+        'parts[0].reading.ways',
+      ]);
+      expect(pieceFields({ ...fromValues, start: '/maps/{guide}' })).toContain('parts[0].start');
+    });
+
+    it('refuses a page path to anything of the browser’s own, and a value no path reads', () => {
+      const valued = (values: unknown) =>
+        problems(withPieces({ ...fromValues, data: { from: 'values', values } }))
+          .filter((p) => p.field.startsWith('parts[0].data'))
+          .map(problemText);
+      const state = { store: 'appStore', path: 'atlas' };
+      for (const path of [
+        'document.title',
+        'localStorage.map',
+        'boardData.cookie',
+        'window.boardData',
+        'boardData.__proto__.x',
+        'boardData.constructor',
+        'boardData.markers[*]',
+        'boardData.text[json]',
+        'a.b.c.d.e.f.g.h.i.j.k.l.m',
+      ]) {
+        expect(valued({ board: path, state }), path).not.toEqual([]);
+      }
+      expect(
+        valued({ board: 'boardData.current', state: { store: 'appStore', path: 'user' } }),
+      ).not.toEqual([]);
+      expect(valued({ board: 'boardData.current', state, extra: 'other.value' })).toEqual([
+        'Part 1, data.values.extra: is named by no data path of the part: the reader takes only the values the part reads, so leave it out.',
+      ]);
+      expect(valued({ board: 'boardData.current', state, 'Not-A-Name': 'x' })).not.toEqual([]);
+      // Data paths of the part begin with a value's name.
+      expect(
+        pieceFields({ ...fromValues, locations: { ...fromValues.locations, path: 'spots[*]' } }),
+      ).toEqual(['parts[0].locations.path']);
+    });
+
+    it('takes image sets from the data, a picture placed by its locations, groups, order and pictures', () => {
+      const { sets } = fromValues.maps.picture;
+      const withSets = (change: Record<string, unknown>, maps: Record<string, unknown> = {}) =>
+        pieceFields({
+          ...fromValues,
+          maps: {
+            ...fromValues.maps,
+            ...maps,
+            picture: { ...fromValues.maps.picture, ...change },
+          },
+        });
+      expect(withSets({ base: 'https://elsewhere.example.org/' })).toEqual([
+        'parts[0].maps.picture.base',
+      ]);
+      expect(withSets({ base: 'https://tiles.example.net/sets' })).toEqual([
+        'parts[0].maps.picture.base',
+      ]);
+      expect(withSets({ tile: undefined })).toEqual(['parts[0].maps.picture.tile']);
+      expect(withSets({ images: '/{z}/{x}/{y}.png' })).toEqual(['parts[0].maps.picture']);
+      expect(withSets({}, { maxZoom: 'deepest' })).toEqual(['parts[0].maps.maxZoom']);
+      expect(withSets({}, { size: [512, 512] })).toEqual(['parts[0].maps.size']);
+      expect(
+        withSets({ sets: { ...sets, path: 'board.sets[*]' } }, { path: 'board.maps[*]' }),
+      ).toEqual(['parts[0].locations.fields.map', 'parts[0].maps.picture.sets.map']);
+      // Without "located", a map has a size.
+      expect(pieceFields({ ...fromValues, position: { units: 'degrees' } })).toEqual([
+        'parts[0].maps.size',
+      ]);
+      expect(
+        pieceFields({
+          ...fromValues,
+          types: { from: 'locations', order: 'rank', groups: fromValues.types.groups },
+        }).sort(),
+      ).toEqual(['parts[0].types.groups', 'parts[0].types.order']);
     });
   });
 

@@ -37,7 +37,14 @@
 
 import { GAME_ID_PATTERN, PAGE_WIDTHS } from '@atlas/schema';
 import { z } from 'zod';
-import { dataPathProblem, patternProblem, piecesOf, selectorProblem } from './sitePatterns';
+import {
+  dataPathProblem,
+  dataPathSteps,
+  pagePathProblem,
+  patternProblem,
+  piecesOf,
+  selectorProblem,
+} from './sitePatterns';
 import { CONFIRMABLE_LICENCES, MAX_NOTICE_CHARS, rulesLicenceOf, type RulesLicence } from './sites';
 
 /** The value of `format` in every site rules file. */
@@ -120,6 +127,8 @@ const host = z.string().superRefine(checked(hostProblem));
 const selector = z.string().superRefine(checked(selectorProblem));
 const pattern = z.string().superRefine(checked(patternProblem));
 const dataPath = z.string().superRefine(checked(dataPathProblem));
+const pagePath = z.string().superRefine(checked((value) => pagePathProblem(value)));
+const storePath = z.string().superRefine(checked((value) => pagePathProblem(value, true)));
 /** An address: a full `https://` address on one of the site's hosts, or a path beginning with `/` (checked against the hosts once the whole file is read). */
 const address = z.string().min(1).max(MAX_SITE_ADDRESS_CHARS);
 const termsAddress = z
@@ -448,21 +457,60 @@ export const MAP_IMAGE_MARKS = ['{map}', '{z}', '{x}', '{y}', '{-y}'] as const;
 const pathOrInt = (max: number) => z.union([dataPath, z.int().min(0).max(max)]);
 const pixels = z.int().min(1).max(10_000_000);
 
+/**
+ * The image sets of a map in its data (`maps.picture.sets`): where each set's
+ * address pattern, zooms and bounds are, so that the address of a map's
+ * images comes from the data and not from a fixed address in the file.
+ */
+const imageSetsSchema = z.strictObject({
+  path: dataPath,
+  map: dataPath.optional(),
+  pattern: dataPath,
+  extension: dataPath.optional(),
+  minZoom: dataPath.optional(),
+  maxZoom: dataPath,
+  bounds: dataPath.optional(),
+});
+
 const mapsSchema = z.strictObject({
   path: dataPath.optional(),
   id: text(200),
   name: text(200),
-  size: z.union([dataPath, z.tuple([pixels, pixels]), z.tuple([dataPath, dataPath])]),
-  maxZoom: pathOrInt(24),
+  size: z.union([dataPath, z.tuple([pixels, pixels]), z.tuple([dataPath, dataPath])]).optional(),
+  maxZoom: pathOrInt(24).optional(),
   minZoom: pathOrInt(24).optional(),
   group: dataPath.optional(),
   floor: dataPath.optional(),
   picture: z.strictObject({
     image: address.optional(),
     images: address.optional(),
+    sets: imageSetsSchema.optional(),
+    base: address.optional(),
     tile: z.int().min(64).max(1024).optional(),
   }),
 });
+
+/** A value's name in `data.values`: what the part's other data paths begin with. */
+export const PAGE_VALUE_NAME_PATTERN = /^[a-z][A-Za-z0-9]{0,39}$/u;
+/** Values one `data.values` names at most. */
+export const MAX_PAGE_VALUES = 12;
+
+/**
+ * One value of a map page that `data.values` names: a page path to a value
+ * the page's scripts set on its window; a store, a value of the page that
+ * has a `getState` function, with the data path inside what it gives; or an
+ * element of the page whose text is JSON, with the data path inside it.
+ * `getState` is the only function the reader ever calls, and only for the
+ * value that names it.
+ */
+const pageValueSchema = z.union([
+  pagePath,
+  z.strictObject({ store: pagePath, path: storePath.optional() }),
+  z.strictObject({ element: selector, path: storePath.optional() }),
+]);
+
+/** The forms of a value of `data.values`, by the field that names each. */
+export const PAGE_VALUE_FORMS = ['store', 'element'] as const;
 
 /** Type values one `types.found` list names at most. */
 export const MAX_FOUND_TYPES = 200;
@@ -479,10 +527,23 @@ const foundSchema = z.union([
 
 const mapPartFields = {
   data: z.strictObject({
-    from: z.enum(['file', 'page']),
+    from: z.enum(['file', 'page', 'values']),
     address: address.optional(),
     element: selector.optional(),
+    values: z
+      .record(
+        z
+          .string()
+          .regex(
+            PAGE_VALUE_NAME_PATTERN,
+            'must be a name of letters and digits that begins with a small letter, such as board',
+          ),
+        pageValueSchema,
+      )
+      .optional(),
   }),
+  /** For a map part whose start holds `{game}`: where the game's name is in the data. */
+  game: z.strictObject({ name: dataPath }).optional(),
   maps: mapsSchema,
   types: z.strictObject({
     from: z.literal('locations').optional(),
@@ -492,10 +553,27 @@ const mapPartFields = {
     name: dataPath.optional(),
     group: dataPath.optional(),
     icon: dataPath.optional(),
+    order: dataPath.optional(),
+    groups: z
+      .strictObject({
+        path: dataPath,
+        id: dataPath,
+        name: dataPath,
+        order: dataPath.optional(),
+      })
+      .optional(),
     found: foundSchema.optional(),
   }),
   locations: z.strictObject({
     path: dataPath,
+    markup: z.enum(['html', 'markdown']).optional(),
+    pictures: z
+      .strictObject({
+        path: dataPath,
+        address: dataPath,
+        hidden: dataPath.optional(),
+      })
+      .optional(),
     fields: z.strictObject({
       id: dataPath.optional(),
       map: dataPath.optional(),
@@ -515,6 +593,7 @@ const mapPartFields = {
     units: z.enum(['pixels', 'fraction', 'degrees']),
     origin: z.enum(['top-left', 'bottom-left']).optional(),
     zoom: z.int().min(0).max(24).optional(),
+    area: z.enum(['world', 'located']).optional(),
   }),
 };
 
@@ -962,6 +1041,28 @@ export function mapImagesProblem(text: string, hosts: readonly string[]): string
   return null;
 }
 
+/** Whether a data path has `[*]`: it names every entry of a list, not one value. */
+const namesEvery = (path: string | undefined): boolean =>
+  path !== undefined && (dataPathSteps(path) ?? []).some((step) => 'every' in step);
+
+/**
+ * The data paths of a map part read from its data's top, by field: those a
+ * part with `"from": "values"` must begin with a name of `data.values`.
+ */
+export function mapTopPaths(part: RulesMapPart): { field: string[]; path: string }[] {
+  const found: { field: string[]; path: string }[] = [];
+  const add = (field: string[], path: string | undefined) => {
+    if (path !== undefined) found.push({ field, path });
+  };
+  add(['game', 'name'], part.game?.name);
+  add(['maps', 'path'], part.maps.path);
+  add(['maps', 'picture', 'sets', 'path'], part.maps.picture.sets?.path);
+  add(['types', 'path'], part.types.path);
+  add(['types', 'groups', 'path'], part.types.groups?.path);
+  add(['locations', 'path'], part.locations.path);
+  return found;
+}
+
 /** The problems of a map part read by `rules` that its fields' forms alone do not show. */
 function mapPartProblems(
   part: RulesMapPart,
@@ -984,13 +1085,59 @@ function mapPartProblems(
       );
     }
     if (data.element !== undefined) add(['data', 'element'], 'is only for "from": "page"');
-  } else {
+  } else if (data.from === 'page') {
     if (data.element === undefined) add(['data', 'element'], 'is needed with "from": "page"');
     if (data.address !== undefined) add(['data', 'address'], 'is only for "from": "file"');
+  } else {
+    for (const key of ['address', 'element'] as const) {
+      if (data[key] !== undefined) {
+        add(['data', key], `is only for "from": "${key === 'address' ? 'file' : 'page'}"`);
+      }
+    }
+    const names = Object.keys(data.values ?? {});
+    if (names.length === 0) add(['data', 'values'], 'is needed with "from": "values"');
+    if (names.length > MAX_PAGE_VALUES) {
+      add(['data', 'values'], `must name at most ${MAX_PAGE_VALUES} values`);
+    }
+    for (const { field, path } of mapTopPaths(part)) {
+      const first = dataPathSteps(path)?.[0];
+      const name = first && 'field' in first ? first.field : null;
+      if (name === null || !names.includes(name)) {
+        add(
+          field,
+          `must begin with the name of one of data.values (${names.join(', ') || 'none named'}): the data of a map read in the window is those values, by their names`,
+        );
+      }
+    }
+    const read = new Set(
+      mapTopPaths(part).map(({ path }) => {
+        const first = dataPathSteps(path)?.[0];
+        return first && 'field' in first ? first.field : '';
+      }),
+    );
+    for (const name of names) {
+      if (!read.has(name)) {
+        add(
+          ['data', 'values', name],
+          'is named by no data path of the part: the reader takes only the values the part reads, so leave it out',
+        );
+      }
+    }
+    const left = part.reading.ways.filter((way) => way !== 'window');
+    if (left.length > 0) {
+      add(
+        ['reading', 'ways'],
+        `may offer only "window" with "from": "values": the values of a map page are there only once the page's scripts have run in the app's window, so ${left.map((way) => JSON.stringify(way)).join(' and ')} cannot read them`,
+      );
+    }
+  }
+  if (data.from !== 'values' && data.values !== undefined) {
+    add(['data', 'values'], 'is only for "from": "values"');
   }
   const picture = maps.picture;
-  if ((picture.image === undefined) === (picture.images === undefined)) {
-    add(['maps', 'picture'], 'must hold either image or images, not both and not neither');
+  const forms = [picture.image, picture.images, picture.sets].filter((f) => f !== undefined);
+  if (forms.length !== 1) {
+    add(['maps', 'picture'], 'must hold exactly one of image, images and sets');
   }
   if (picture.image !== undefined) {
     add(
@@ -998,16 +1145,57 @@ function mapPartProblems(
       addressProblem(picture.image, pictureHosts) ??
         (/[{}]/u.test(picture.image) ? 'must be one address, without { or }' : null),
     );
-    if (picture.tile !== undefined && picture.images === undefined) {
-      add(['maps', 'picture', 'tile'], 'is only for images');
+    if (picture.tile !== undefined && picture.images === undefined && picture.sets === undefined) {
+      add(['maps', 'picture', 'tile'], 'is only for images and sets');
     }
   }
   if (picture.images !== undefined) {
     add(['maps', 'picture', 'images'], mapImagesProblem(picture.images, pictureHosts));
-    if (picture.tile === undefined) add(['maps', 'picture', 'tile'], 'is needed with images');
+  }
+  if (picture.images !== undefined || picture.sets !== undefined) {
+    if (picture.tile === undefined)
+      add(['maps', 'picture', 'tile'], 'is needed with images and sets');
     else if ((picture.tile & (picture.tile - 1)) !== 0) {
       add(['maps', 'picture', 'tile'], 'must be a power of two, such as 256 or 512');
     }
+  }
+  if (picture.base !== undefined) {
+    if (picture.sets === undefined) add(['maps', 'picture', 'base'], 'is only for sets');
+    else {
+      add(
+        ['maps', 'picture', 'base'],
+        addressProblem(picture.base, pictureHosts) ??
+          (/[{}?#]/u.test(picture.base)
+            ? 'must be one address, without {, }, ? or #: the pattern of each set is written after it'
+            : picture.base.endsWith('/')
+              ? null
+              : 'must end with /: the pattern of each set is written after it'),
+      );
+    }
+  }
+  const sets = picture.sets;
+  const severalMaps = namesEvery(maps.path);
+  if (sets !== undefined) {
+    if (sets.map === undefined && severalMaps) {
+      add(
+        ['maps', 'picture', 'sets', 'map'],
+        'is needed when maps.path names several maps: it says which map each set is of',
+      );
+    }
+    for (const key of ['maxZoom', 'minZoom'] as const) {
+      if (maps[key] !== undefined) {
+        add(['maps', key], 'comes from picture.sets: leave it out, and name it in sets');
+      }
+    }
+  } else if (maps.maxZoom === undefined) {
+    add(['maps', 'maxZoom'], 'is needed, unless picture.sets names the zooms of each set');
+  }
+  const located = position.area === 'located';
+  if (located && maps.size !== undefined) {
+    add(['maps', 'size'], 'is worked out from the locations with "area": "located": leave it out');
+  }
+  if (!located && maps.size === undefined) {
+    add(['maps', 'size'], 'is needed, unless position.area is "located"');
   }
   const oneMap = maps.path === undefined;
   if (oneMap) {
@@ -1017,7 +1205,7 @@ function mapPartProblems(
         ? null
         : "must be the map's id when maps has no path: letters, digits, _, . and -",
     );
-    if (typeof maps.size[0] !== 'number') {
+    if (maps.size !== undefined && typeof maps.size[0] !== 'number') {
       add(['maps', 'size'], 'must be [width, height] in pixels when maps has no path');
     }
     if (typeof maps.maxZoom === 'string') {
@@ -1033,8 +1221,8 @@ function mapPartProblems(
     for (const key of ['id', 'name'] as const) {
       add(['maps', key], dataPathProblem(maps[key]));
     }
-    if (locations.fields.map === undefined) {
-      add(['locations', 'fields', 'map'], 'is needed when there are several maps');
+    if (severalMaps && locations.fields.map === undefined) {
+      add(['locations', 'fields', 'map'], 'is needed when maps.path names several maps');
     }
     if (maps.floor !== undefined && maps.group === undefined) {
       add(['maps', 'floor'], 'is only for maps with a group');
@@ -1051,13 +1239,16 @@ function mapPartProblems(
   if (fromLocations === (types.path !== undefined)) {
     add(['types'], 'must hold either "from": "locations" or path, not both and not neither');
   } else if (fromLocations) {
-    for (const key of ['id', 'name', 'group', 'icon'] as const) {
+    for (const key of ['id', 'name', 'group', 'icon', 'order', 'groups'] as const) {
       if (types[key] !== undefined) add(['types', key], 'is only for types with a path');
     }
   } else {
     if (types.names !== undefined) add(['types', 'names'], 'is only for "from": "locations"');
     if (types.id === undefined) add(['types', 'id'], 'is needed with a path');
     if (types.name === undefined) add(['types', 'name'], 'is needed with a path');
+    if (types.groups !== undefined && types.group === undefined) {
+      add(['types', 'group'], 'is needed with groups: it is the id of the group of each type');
+    }
   }
   if (position.units === 'degrees' && position.origin !== undefined) {
     add(
@@ -1067,6 +1258,12 @@ function mapPartProblems(
   }
   if (position.units !== 'pixels' && position.zoom !== undefined) {
     add(['position', 'zoom'], 'is only for "units": "pixels"');
+  }
+  if (position.units !== 'degrees' && position.area !== undefined) {
+    add(['position', 'area'], 'is only for "units": "degrees"');
+  }
+  if (located && picture.image !== undefined) {
+    add(['position', 'area'], 'is only for a picture of images, by images or sets');
   }
   return problems;
 }
@@ -1095,11 +1292,12 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
     if (part.start !== undefined) {
       const pieces = piecesOf(part.start);
       add([...at, 'start'], pieces.problem ?? addressProblem(part.start, hosts));
-      if (pieces.pieces.length > 0 && !(readByRules(part) && part.type !== 'map')) {
-        add(
-          [...at, 'start'],
-          'may hold {game} and {guide} only in a wiki or guide part read by rules',
-        );
+      if (pieces.pieces.length > 0 && !readByRules(part)) {
+        add([...at, 'start'], 'may hold {game}, {guide} and {map} only in a part read by rules');
+      } else if (part.type === 'map' && pieces.pieces.includes('guide')) {
+        add([...at, 'start'], 'may hold {game} and {map} in a map part, not {guide}');
+      } else if (part.type !== 'map' && pieces.pieces.includes('map')) {
+        add([...at, 'start'], 'may hold {game} and {guide} in a wiki or guide part, not {map}');
       }
     }
     if (part.type !== 'map') problems.push(...layoutProblems(part.layout, [...at, 'layout']));

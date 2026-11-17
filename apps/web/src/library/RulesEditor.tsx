@@ -1,4 +1,5 @@
 import {
+  PAGE_VALUES_FILE_NAME,
   type SiteMapTrial,
   type SiteTrial,
   type SiteTrialNeed,
@@ -8,6 +9,7 @@ import {
 } from '@atlas/importer-api';
 import { DEFAULT_PAGE_WIDTH, PAGE_WIDTH_PIXELS, type PageWidth } from '@atlas/schema';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { copyText } from '../clipboard';
 import { UiIcon } from '../components/icons';
 import { renderGuideMarkdown, revealHiddenText, type GuidePicture } from '../markdown';
 import { formatJson } from '../state/jsonText';
@@ -34,6 +36,7 @@ import {
 } from '../state/rulesTemplates';
 import {
   canonicalAddressOf,
+  consoleLineOf,
   httpsAddress,
   isSavedDataFile,
   pickTrialPage,
@@ -496,6 +499,7 @@ function EditorBody({
               <div className="rules-editor-pane-head">
                 <h3 id={`${titleId}-result`}>{RESULT_VIEWS[0].name}</h3>
               </div>
+              <ConsoleLine rules={rules} />
               <ExamplePages
                 pages={pages}
                 page={page}
@@ -1065,9 +1069,75 @@ function ExamplePages({
       {page && !page.data ? <PageAddress key={page.id} page={page} onAddress={onAddress} /> : null}
       {page?.data ? (
         <p className="muted small">
-          A data file is tried at the start of the file’s map part, as the data of that map.
+          A data file is tried at the start of the file’s map part, as the data of that map: the
+          map’s data file, or the values of its page the console line saved.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * For a map part read in the app's window: the line that saves the map
+ * page's values as a `.json` file, to try the file on (see
+ * `consoleLineOf`). Shown while the file as it stands passes the check, and
+ * made from it alone; copying it changes nothing and sends nothing.
+ */
+function ConsoleLine({ rules }: { rules: EditorCheck['rules'] }) {
+  const line = useMemo(() => consoleLineOf(rules), [rules]);
+  const [copied, setCopied] = useState<{ line: string; ok: boolean } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  if (!line) return null;
+  const said = copied?.line === line ? copied : null;
+  return (
+    <div className="rules-result-block" ref={ref} data-testid="rules-console-line">
+      <h4>Values of the map page</h4>
+      <p className="small">
+        This map is read from values of its page, which a saved page does not hold. To try the file,
+        open the map page in your browser and wait until the map has loaded. Then paste this line in
+        the browser’s console (in its developer tools) and press Enter: it saves the values the file
+        names as {PAGE_VALUES_FILE_NAME}, exactly as the app would take them and nothing else. Add
+        that file here with “Add a saved page…”.
+      </p>
+      <div className="row-actions wrap">
+        <button
+          type="button"
+          className="button button-small"
+          data-testid="rules-console-copy"
+          onClick={() => {
+            void copyText(line, ref.current?.closest('dialog') ?? document.body).then((ok) => {
+              setCopied({ line, ok });
+            });
+          }}
+        >
+          Copy the console line
+        </button>
+        {said ? (
+          <span
+            className={said.ok ? 'muted small' : 'download-error small'}
+            role="status"
+            data-testid="rules-console-copied"
+          >
+            {said.ok
+              ? 'Copied. It is made from the file as it stands: copy it again after a change.'
+              : 'The clipboard could not be used. Select the line below and copy it.'}
+          </span>
+        ) : null}
+      </div>
+      <details>
+        <summary className="small">Show the line</summary>
+        <textarea
+          className="rules-console-text"
+          readOnly
+          rows={4}
+          value={line}
+          aria-label="The console line"
+          data-testid="rules-console-text"
+          onFocus={(event) => {
+            event.currentTarget.select();
+          }}
+        />
+      </details>
     </div>
   );
 }

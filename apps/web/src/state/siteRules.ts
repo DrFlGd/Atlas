@@ -5,6 +5,7 @@ import {
   isReaderDefaults,
   isRefusal,
   isSiteFile,
+  pageValuesConsoleLine,
   parseSiteRules,
   problemText,
   readByRules,
@@ -19,6 +20,7 @@ import {
   type AtlasImporter,
   type PageLayoutRequest,
   type ReadingWay,
+  type RulesMapPart,
   type SiteRules,
   type SiteFile,
   type SiteRulesProblem,
@@ -410,6 +412,25 @@ function mapStartOf(rules: SiteFile): string | null {
 
 /** Whether a picked file is a saved data file (`.json`), not a saved page. */
 const isDataFile = (name: string) => /\.json$/iu.test(name);
+
+/**
+ * The console line of a file's first map part read in the app's window
+ * (`pageValuesConsoleLine` of the contract): pasted in a browser's console
+ * on the map page, it saves the page's values as the window's reader would
+ * take them, as a `.json` file a trial takes. Made from the file as checked
+ * only; null for a file without such a part.
+ */
+export function consoleLineOf(rules: SiteRules | null): string | null {
+  if (!rules || !isSiteFile(rules)) return null;
+  const part = rules.parts.find(
+    (p): p is RulesMapPart =>
+      readByRules(p) &&
+      p.type === 'map' &&
+      'data' in p &&
+      (p.data.from === 'values' || (p.data.from === 'page' && p.reading.ways.includes('window'))),
+  );
+  return part ? pageValuesConsoleLine(part) : null;
+}
 
 /** Why no page is tried for a refusal file. */
 const REFUSAL_UNTRIED =

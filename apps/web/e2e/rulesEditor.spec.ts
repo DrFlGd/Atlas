@@ -139,6 +139,73 @@ const MAP_DATA = {
   ],
 };
 
+/** A made-up map site whose map page keeps its data in values of the page, read in the window. */
+const LANTERN_MAP = {
+  format: 'atlas-site-rules',
+  version: 1,
+  site: {
+    id: 'lantern-maps',
+    name: 'Lantern Maps',
+    hosts: ['maps.example.org'],
+    licence: { ask: true },
+  },
+  parts: [
+    {
+      type: 'map',
+      reader: 'rules',
+      start: '/maps/{game}/{map}',
+      data: {
+        from: 'values',
+        values: { board: 'boardData', state: { store: 'appStore', path: 'atlas' } },
+      },
+      game: { name: 'board.game.title' },
+      maps: {
+        path: 'board.map',
+        id: 'key',
+        name: 'title',
+        size: 'pixels',
+        maxZoom: 'zoom',
+        picture: { images: 'https://tiles.example.org/{map}/{z}/{x}/{y}.png', tile: 256 },
+      },
+      types: {
+        path: 'state.kinds[*]',
+        id: 'id',
+        name: 'label',
+        found: ['11'],
+      },
+      locations: {
+        path: 'state.spots[*]',
+        fields: { id: 'id', type: 'kind', name: 'label', x: 'at[0]', y: 'at[1]' },
+      },
+      position: { units: 'pixels' },
+      pictures: { hosts: ['tiles.example.org'] },
+      reading: { ways: ['window'], pause: 4 },
+    },
+  ],
+};
+
+/** What the console line saves on the made-up map page: the declared values, as the window's reader takes them. */
+const LANTERN_VALUES = {
+  atlasPageValues: 1,
+  values: {
+    board: {
+      game: { title: 'Ember Vale' },
+      map: { key: 'ash-plains', title: 'Ash Plains', pixels: [2048, 2048], zoom: 3 },
+    },
+    state: {
+      kinds: {
+        '11': { id: 11, label: 'Shrine' },
+        '12': { id: 12, label: 'Old well' },
+      },
+      spots: [
+        { id: 501, kind: 11, label: 'Cinder Shrine', at: [410, 820] },
+        { id: 502, kind: 12, label: 'Dry Well', at: [1500, 300] },
+        { id: 503, kind: 11, label: 'Ash Shrine', at: [1990, 1720] },
+      ],
+    },
+  },
+};
+
 async function openSites(page: Page): Promise<Locator> {
   const section = page.getByTestId('section-settings');
   if ((await section.count()) > 0) await section.click();
@@ -456,6 +523,69 @@ test.describe('in the standard layout', () => {
     );
     await toResultStart(editor);
     await page.screenshot({ path: `${SHOTS}/editor-map-data.png` });
+    expect(out).toEqual([]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('tries a map read in the window on the values its console line saves', async ({
+    page,
+    context,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(SHOTS, { recursive: true });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await setUp(page, true, { others: OTHERS });
+    const out = requestsOut(page);
+    const sites = await openSites(page);
+    await sites.getByTestId('sites-new').click();
+    const editor = page.getByTestId('rules-editor');
+    await editor.getByTestId('rules-template-map').click();
+    await setText(editor, `${JSON.stringify(LANTERN_MAP, null, 2)}\n`);
+
+    // The line that saves the page's values, made from the file as it stands.
+    const block = editor.getByTestId('rules-console-line');
+    await expect(block).toContainText('This map is read from values of its page');
+    await block.getByTestId('rules-console-copy').click();
+    await expect(block.getByTestId('rules-console-copied')).toHaveText(
+      'Copied. It is made from the file as it stands: copy it again after a change.',
+    );
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copied).toContain('map-values.json');
+    expect(copied).toContain('"boardData"');
+    expect(copied).not.toContain('\n');
+    await block.locator('summary').click();
+    await expect(block.getByTestId('rules-console-text')).toHaveValue(copied);
+    await toResultStart(editor);
+    await page.screenshot({ path: `${SHOTS}/editor-map-window-console-line.png` });
+
+    // The .json file it saves, tried as the data of the map page.
+    await pickSavedPage(page, { name: 'map-values.json', text: JSON.stringify(LANTERN_VALUES) });
+    await editor.getByTestId('rules-editor-add-page').click();
+    const result = editor.getByTestId('rules-editor-result');
+    await expect(result.getByTestId('rules-result-lead')).toHaveText(
+      'Part 1 of the file read it, as the data of a map.',
+    );
+    await expect(result.getByTestId('rules-result-need')).toHaveText([
+      /^DoneThe hostA data file holds no address, so it is tried as read from maps\.example\.org/u,
+      /^DoneThe addressIt is tried as the data of the map page parts\[0\]\.start names/u,
+      'DoneThe map’s dataThe file’s data paths found 1 map, 2 types and 3 locations.',
+    ]);
+    await expect(result.getByTestId('rules-result-facts')).toContainText('Ember Vale');
+    await expect(result.getByTestId('rules-result-maps').locator('tbody tr')).toHaveText([
+      'Ash Plains2,048 × 2,04830000',
+    ]);
+    await toResultStart(editor);
+    await page.screenshot({ path: `${SHOTS}/editor-map-window-values.png` });
+
+    // A .json file that is not the values of the page: the trial says so.
+    await pickSavedPage(page, { name: 'map-values-wrong.json', text: '{"spots": []}' });
+    await editor.getByTestId('rules-editor-add-page').click();
+    await expect(result.getByTestId('rules-result-need').nth(2)).toHaveAttribute(
+      'data-state',
+      'missing',
+    );
+    await toResultStart(editor);
+    await page.screenshot({ path: `${SHOTS}/editor-map-window-not-values.png` });
     expect(out).toEqual([]);
     expect(realErrors(errors)).toEqual([]);
   });

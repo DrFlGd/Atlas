@@ -979,7 +979,10 @@ function valuesAt(/** @type {unknown} */ data, /** @type {string} */ path) {
   let values = [data];
   for (const step of path.match(/[^.[\]]+|\[(?:\*|\d+)\]/g) ?? []) {
     values = values.flatMap((value) => {
-      if (step === '[*]') return Array.isArray(value) ? value : [];
+      if (step === '[*]') {
+        if (Array.isArray(value)) return value;
+        return value && typeof value === 'object' ? Object.values(value) : [];
+      }
       if (step.startsWith('[')) {
         const at = Number(step.slice(1, -1));
         return Array.isArray(value) && at < value.length ? [value[at]] : [];
@@ -1029,6 +1032,39 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
   trial.part = index;
   trial.type = 'map';
   if (rules.site.game) trial.game = rules.site.game;
+  // A data file holds no address: it is tried as the data of the part's start, on the first host.
+  /** @type {NonNullable<SiteTrial['needs']>} */
+  const needs = [
+    {
+      name: 'The host',
+      state: 'done',
+      says: `A data file holds no address, so it is tried as read from ${rules.site.hosts[0]}, the first of site.hosts.`,
+    },
+    {
+      name: 'The address',
+      state: 'done',
+      says: `It is tried as the data of the map page parts[${index}].start names (${part.start}).`,
+    },
+  ];
+  trial.needs = needs;
+  // The values of a map page read in the window, as the editor's console line saves them.
+  const saved = /** @type {{ atlasPageValues?: unknown, values?: unknown }} */ (data ?? {});
+  if (saved.atlasPageValues === 1 && saved.values && typeof saved.values === 'object') {
+    data =
+      part.data.from === 'page'
+        ? /** @type {Record<string, unknown>} */ (saved.values).page
+        : saved.values;
+  } else if (part.data.from === 'values') {
+    const says =
+      'This is not a file of the map page’s values. This map is read from values of its page, so try the file on the .json file the editor’s console line saves.';
+    needs.push({ name: 'The map’s data', state: 'missing', says, field: `parts[${index}].data` });
+    trial.problems.push(says);
+    return trial;
+  }
+  if (part.game) {
+    const name = valuesAt(data, part.game.name)[0];
+    if (typeof name === 'string') trial.game = name;
+  }
   const used = new Set();
   const read = (
     /** @type {string} */ field,
@@ -1175,6 +1211,21 @@ function tryMapData(/** @type {SiteRules} */ rules, /** @type {string} */ text) 
       (trial.unmatched ??= []).push({ field: `parts[${index}].${field}`, value: path });
     }
   }
+  const mapsFound = maps.length;
+  needs.push(
+    mapsFound > 0 && count > 0
+      ? {
+          name: 'The map’s data',
+          state: 'done',
+          says: `The file’s data paths found ${mapsFound} ${mapsFound === 1 ? 'map' : 'maps'}, ${types.length} ${types.length === 1 ? 'type' : 'types'} and ${count} ${count === 1 ? 'location' : 'locations'}.`,
+        }
+      : {
+          name: 'The map’s data',
+          state: 'missing',
+          says: 'The file’s data paths found no map with a location. See what matched nothing below.',
+          field: `parts[${index}].data`,
+        },
+  );
   return trial;
 }
 

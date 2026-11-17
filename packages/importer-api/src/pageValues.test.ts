@@ -1,0 +1,290 @@
+import { describe, expect, it } from 'vitest';
+import demo from '../demo/demo-importer.js';
+import {
+  MAX_PAGE_VALUE_TEXT,
+  MAX_READER_CHARS,
+  PAGE_VALUES_FILE_NAME,
+  asImporter,
+  checkSiteRules,
+  ownPageReaderOf,
+  pageValuesConsoleLine,
+  pageValuesOf,
+  pageValuesReader,
+  pageValuesSpec,
+  type RulesMapPart,
+} from './index';
+
+/** A made-up map part whose data is values of its page. */
+const PART = {
+  type: 'map',
+  reader: 'rules',
+  start: '/maps/{map}',
+  data: {
+    from: 'values',
+    values: {
+      board: 'boardData.current',
+      state: { store: 'appStore', path: 'atlas' },
+    },
+  },
+  maps: {
+    path: 'board.map',
+    id: 'key',
+    name: 'title',
+    picture: {
+      base: 'https://tiles.example.net/sets/',
+      tile: 256,
+      sets: { path: 'board.sets[*]', pattern: 'pattern', maxZoom: 'high' },
+    },
+  },
+  types: { path: 'state.kinds[*]', id: 'id', name: 'label' },
+  locations: {
+    path: 'state.spots[*]',
+    pictures: { path: 'shots[*]', address: 'href' },
+    fields: { id: 'id', type: 'kind', x: 'lng', y: 'lat' },
+  },
+  position: { units: 'degrees', area: 'located' },
+  pictures: { hosts: ['tiles.example.net'] },
+  reading: { ways: ['window'] },
+};
+
+/** The part as the checker passes it, in a made-up file. */
+function checked(part: unknown = PART): RulesMapPart {
+  const result = checkSiteRules({
+    format: 'atlas-site-rules',
+    version: 1,
+    site: { id: 'cove-maps', name: 'Cove Maps', game: 'Cove', hosts: ['maps.example.net'] },
+    parts: [part],
+  });
+  if (!result.ok) throw new Error(JSON.stringify(result.problems));
+  return (result.rules as { parts: RulesMapPart[] }).parts[0]!;
+}
+
+/** The values of a made-up loaded map page, with fields the file never names. */
+function page(spots: unknown[] = [{ id: 1, kind: 'a', lng: 1, lat: 2, shots: [{ href: 'x' }] }]) {
+  return {
+    boardData: {
+      current: {
+        map: { key: 'cove', title: 'Cove', owner: 'never taken' },
+        sets: [{ pattern: 'cove/{z}/{x}/{y}.png', high: 5, secret: 'never taken' }],
+      },
+    },
+    appStore: {
+      calls: 0,
+      getState() {
+        this.calls++;
+        return {
+          atlas: { kinds: { a: { id: 'a', label: 'Shrine' } }, spots, person: 'never taken' },
+          session: 'never taken',
+        };
+      },
+    },
+  };
+}
+
+/** Runs a reader of no arguments in a made-up window, as the app's window would. */
+function run(reader: string, window: Record<string, unknown>, readyState = 'complete'): unknown {
+  const win = { document: { readyState, querySelector: () => null }, ...window };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const read = new Function('window', `return (${reader})();`) as (w: unknown) => unknown;
+  return read(win);
+}
+
+describe('the values of a map page, read in the window', () => {
+  it('are taken by a spec made from the checked paths only', () => {
+    const spec = pageValuesSpec(checked())!;
+    expect(spec.values).toEqual([
+      { name: 'board', from: ['boardData', 'current'] },
+      { name: 'state', from: ['appStore'], call: 'store', inside: ['atlas'] },
+    ]);
+    expect(spec.keep).toEqual({
+      board: {
+        map: { key: 1, title: 1 },
+        sets: { '*': { pattern: 1, high: 1 } },
+      },
+      state: {
+        kinds: { '*': { id: 1, label: 1 } },
+        spots: { '*': { id: 1, kind: 1, lng: 1, lat: 1, shots: { '*': { href: 1 } } } },
+      },
+    });
+    expect(spec.wait).toEqual([
+      { name: 'board', steps: ['map'] },
+      { name: 'board', steps: ['sets'] },
+      { name: 'state', steps: ['kinds'] },
+      { name: 'state', steps: ['spots'] },
+    ]);
+    // A part whose data is a file has no values to read in a window.
+    expect(
+      pageValuesSpec({ ...checked(), data: { from: 'file', address: '/map.json' } }),
+    ).toBeNull();
+  });
+
+  it('copy only the named fields, call only getState, and run no getter', () => {
+    const reader = pageValuesReader(checked())!;
+    expect(reader.length).toBeLessThan(MAX_READER_CHARS);
+    const values = page();
+    const got = run(reader, values);
+    expect(got).toEqual({
+      atlasPageValues: 1,
+      values: {
+        board: {
+          map: { key: 'cove', title: 'Cove' },
+          sets: [{ pattern: 'cove/{z}/{x}/{y}.png', high: 5 }],
+        },
+        state: {
+          kinds: { a: { id: 'a', label: 'Shrine' } },
+          spots: [{ id: 1, kind: 'a', lng: 1, lat: 2, shots: [{ href: 'x' }] }],
+        },
+      },
+    });
+    expect(values.appStore.calls).toBe(1);
+    expect(JSON.stringify(got)).not.toContain('never taken');
+    // Behind a getter, inherited, or in an object of a class: not taken, so the reader waits.
+    let ran = false;
+    const getter = {
+      ...page(),
+      boardData: {
+        get current() {
+          ran = true;
+          return page().boardData.current;
+        },
+      },
+    };
+    expect(run(reader, getter)).toBeNull();
+    expect(ran).toBe(false);
+    const inherited = { ...page(), boardData: Object.create(page().boardData) as object };
+    expect(run(reader, inherited)).toBeNull();
+    class Board {
+      map = { key: 'cove', title: 'Cove' };
+      sets = [];
+    }
+    const classy = { ...page(), boardData: { current: new Board() } };
+    expect(run(reader, classy)).toBeNull();
+  });
+
+  it('wait until the values are there and the lists hold something', () => {
+    const reader = pageValuesReader(checked())!;
+    expect(run(reader, page(), 'loading')).toBeNull();
+    expect(run(reader, { appStore: page().appStore })).toBeNull();
+    expect(run(reader, { ...page(), appStore: {} })).toBeNull();
+    const empty = page([]);
+    expect(run(reader, empty, 'interactive')).toBeNull();
+    expect(run(reader, { ...empty, performance: { now: () => 1_000 } })).toBeNull();
+    expect(run(reader, { ...empty, performance: { now: () => 16_000 } })).not.toBeNull();
+  });
+
+  it('leave out a text that is too long, and say so', () => {
+    const reader = pageValuesReader(checked())!;
+    const long = page([{ id: 'x'.repeat(MAX_PAGE_VALUE_TEXT + 1), kind: 'a', lng: 1, lat: 2 }]);
+    const got = run(reader, long) as { cut?: number; values: { state: { spots: object[] } } };
+    expect(got.cut).toBe(1);
+    expect(got.values.state.spots[0]).toEqual({ kind: 'a', lng: 1, lat: 2 });
+  });
+
+  it('read the JSON of an element of the page', () => {
+    const part = checked({
+      ...PART,
+      data: {
+        from: 'values',
+        values: { board: { element: 'script#board' }, state: PART.data.values.state },
+      },
+      maps: { ...PART.maps, path: 'board.map' },
+    });
+    const reader = pageValuesReader(part)!;
+    const json = JSON.stringify(page().boardData.current);
+    const document = {
+      readyState: 'complete',
+      querySelector: (selector: string) =>
+        selector === 'script#board' ? { textContent: json } : null,
+    };
+    const got = run(reader, { ...page(), document }) as { values: Record<string, unknown> };
+    expect(got.values.board).toEqual({
+      map: { key: 'cove', title: 'Cove' },
+      sets: [{ pattern: 'cove/{z}/{x}/{y}.png', high: 5 }],
+    });
+    const broken = { readyState: 'complete', querySelector: () => ({ textContent: '{nope' }) };
+    expect(run(reader, { ...page(), document: broken })).toBeNull();
+  });
+
+  it('are handed over as one checked shape', () => {
+    expect(pageValuesOf({ atlasPageValues: 1, values: { a: 1 } })).toEqual({
+      atlasPageValues: 1,
+      values: { a: 1 },
+    });
+    expect(pageValuesOf({ atlasPageValues: 1, values: { a: 1 }, cut: 2.5 })).toMatchObject({
+      cut: 2,
+    });
+    expect(pageValuesOf({ atlasPageValues: 2, values: {} })).toBeNull();
+    expect(pageValuesOf({ fetched: [] })).toBeNull();
+    expect(pageValuesOf([])).toBeNull();
+  });
+});
+
+describe('the console line', () => {
+  it('is one line that saves what the window reader would hand over', () => {
+    const line = pageValuesConsoleLine(checked())!;
+    expect(line).not.toContain('\n');
+    expect(line).toContain(PAGE_VALUES_FILE_NAME);
+    let saved: { name: string; text: string } | null = null;
+    const logged: string[] = [];
+    class FakeBlob {
+      constructor(readonly parts: string[]) {}
+    }
+    const fake = (values: object) => ({
+      document: {
+        readyState: 'complete',
+        querySelector: () => null,
+        createElement: () => {
+          const link = {
+            href: '',
+            download: '',
+            click: () => {
+              saved = { name: link.download, text: link.href };
+            },
+          };
+          return link;
+        },
+      },
+      ...values,
+    });
+    const urls = { createObjectURL: (blob: FakeBlob) => blob.parts.join('') };
+    const console = { log: (text: string) => logged.push(text) };
+    const runLine = (window: object) => {
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      const fn = new Function('window', 'document', 'URL', 'Blob', 'console', line) as (
+        ...a: unknown[]
+      ) => void;
+      fn(window, (window as { document: unknown }).document, urls, FakeBlob, console);
+    };
+    runLine(fake({ appStore: page().appStore }));
+    expect(saved).toBeNull();
+    expect(logged).toEqual([
+      'The map’s values are not there yet. Wait until the map has loaded, then paste the line again.',
+    ]);
+    runLine(fake(page()));
+    expect(saved!.name).toBe(PAGE_VALUES_FILE_NAME);
+    expect(JSON.parse(saved!.text)).toEqual(run(pageValuesReader(checked())!, page()));
+  });
+});
+
+describe('an importer’s reader of its own for an address', () => {
+  const base = demo as object;
+
+  it('is the reader it gives, or none', () => {
+    expect(ownPageReaderOf(asImporter(base), 'https://maps.example.net/x')).toBeNull();
+    const own = asImporter({
+      ...base,
+      pageReaderFor: (url: string) => (url.endsWith('/cove') ? '() => 1' : null),
+    });
+    expect(ownPageReaderOf(own, 'https://maps.example.net/maps/cove')).toBe('() => 1');
+    expect(ownPageReaderOf(own, 'https://maps.example.net/other')).toBeNull();
+    const throws = asImporter({
+      ...base,
+      pageReaderFor: () => {
+        throw new Error('no');
+      },
+    });
+    expect(ownPageReaderOf(throws, 'https://maps.example.net/maps/cove')).toBeNull();
+    const long = asImporter({ ...base, pageReaderFor: () => 'x'.repeat(MAX_READER_CHARS + 1) });
+    expect(ownPageReaderOf(long, 'https://maps.example.net/maps/cove')).toBeNull();
+  });
+});
