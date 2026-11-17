@@ -9,5 +9,5 @@ import type { LoadedPack } from '@atlas/core';
  * Read here only, so that the field is read in one place.
  */
 export function packSaysPagesInOrder(pack: LoadedPack): boolean {
-  return (pack.manifest as { pagesInOrder?: unknown }).pagesInOrder === true;
+  return pack.manifest.pagesInOrder === true;
 }
