@@ -1,5 +1,5 @@
 /**
- * "Select all" and "Select none" above a list of pages or games to tick:
+ * "Tick all" and "Tick none" above a list of pages or games to tick:
  * what each would change. They act on everything the list shows under its
  * filter or search, whether or not its row is on the screen (a long list
  * shows its rows a step at a time, and a heading may be closed), and never
@@ -10,9 +10,9 @@ export interface ShownSelection {
   shown: number;
   /** How many of those are ticked. */
   ticked: number;
-  /** What "Select all" ticks: those shown and not ticked yet. */
+  /** What "Tick all" ticks: those shown and not ticked yet. */
   toTick: string[];
-  /** What "Select none" unticks: those shown and ticked. */
+  /** What "Tick none" unticks: those shown and ticked. */
   toUntick: string[];
 }
 

@@ -13,6 +13,7 @@ export function PhotosField({
   onSpoiler,
   busy,
   add,
+  problem = null,
 }: {
   game: LoadedGame;
   photos: readonly Photo[] | undefined;
@@ -22,6 +23,8 @@ export function PhotosField({
   busy: boolean;
   /** An "Add a photo" button of its own, where there is none in a toolbar. */
   add?: () => void;
+  /** Why the last photo could not be added: shown under the button of its own. */
+  problem?: string | null;
 }) {
   const labelId = useId();
   const list = photos ?? [];
@@ -52,7 +55,7 @@ export function PhotosField({
                       onSpoiler(photo.picture, event.target.checked);
                     }}
                   />
-                  Spoiler: blurred until tapped
+                  Spoiler: blurred until pressed
                 </label>
                 <button
                   type="button"
@@ -86,6 +89,11 @@ export function PhotosField({
           <UiIcon name="image" size={18} strokeWidth={1.8} />
           Add a photo
         </button>
+      ) : null}
+      {add && problem ? (
+        <p className="own-problem" role="alert" data-testid="photo-problem">
+          {problem}
+        </p>
       ) : null}
       {full ? (
         <p className="muted small-text">{MAX_PHOTOS} photos is the most there can be.</p>

@@ -9,6 +9,7 @@ import {
   readerForward,
   rememberScroll,
   resetReader,
+  stampSource,
   useReader,
   waitsForSection,
   arrivedAtSection,
@@ -248,5 +249,27 @@ describe('the way the reader came', () => {
     expect(steps).toHaveLength(99);
     expect(steps[0]).toEqual({ at: 0, place: page('50') });
     expect(steps.every((step, i) => step.at === i)).toBe(true);
+  });
+
+  it('keeps the landing page of each source of pages as a place of its own', () => {
+    // The landing page shown first is of the source it was shown of.
+    stampSource('isle');
+    expect(currentPlace()).toEqual({ kind: 'home', source: 'isle' });
+    stampSource('walk');
+    expect(currentPlace()).toEqual({ kind: 'home', source: 'isle' });
+    openPlace({ kind: 'home', source: 'walk' });
+    expect(useReader.getState().visits).toHaveLength(2);
+    openPlace({ kind: 'home', source: 'walk' });
+    expect(useReader.getState().visits).toHaveLength(2);
+    openPlace({ kind: 'contents', sectionId: null, source: 'walk' });
+    openPlace({ kind: 'contents', sectionId: null, source: 'isle' });
+    expect(useReader.getState().visits).toHaveLength(4);
+    readerBack();
+    readerBack();
+    expect(currentPlace()).toEqual({ kind: 'home', source: 'walk' });
+    // A page is no landing page: nothing is stamped on it.
+    openPlace(page('a'));
+    stampSource('isle');
+    expect(currentPlace()).toEqual(page('a'));
   });
 });

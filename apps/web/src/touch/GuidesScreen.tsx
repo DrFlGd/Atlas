@@ -35,14 +35,21 @@ import { MarkdownBody } from '../components/MarkdownBody';
 import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
-import { useTitleOf } from '../state/gameGroups';
 import { guidesOf, hasMap, pictureOf } from '../state/guides';
+import {
+  isSourceHome,
+  madeLandingOf,
+  readingOrder,
+  sourceOfEntry,
+  trailIn,
+} from '../state/guideSources';
 import { canChangeOwnPages, changeContents, pageWidthOf, useOwnPages } from '../state/ownPages';
 import { useAtlas, type LoadedGame } from '../state/store';
 import { AddToBuildBar, AddToBuildButton } from './AddToBuild';
 import { useAddToBuild } from './buildChoice';
 import { GuideLinksReview } from './GuideLinksReview';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
+import { ContinueReading, PreviousNext, SourceSwitcher } from './GuideSources';
 import { PageWidthMenu } from './PageWidthMenu';
 import { showPageOnMap } from './listViews';
 import {
@@ -63,6 +70,7 @@ import {
   type WayStep,
 } from './reader';
 import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
+import { sequenceOf, useFollowSource, useSourceView, type SourceView } from './sourceView';
 import { useTouch } from './state';
 import '../styles/guides.css';
 import '../styles/landing.css';
@@ -89,6 +97,11 @@ import '../styles/landing.css';
  * of the contents, its sections as groups of tiles. The game's name leads
  * back to it from the top of the contents and the start of the way above
  * every page. "Contents" names only the list a phone opens from its button.
+ *
+ * A game's pages may come from several sources (its own, and other games
+ * read with it, see `GuideSources.tsx`): a switcher at the top chooses the
+ * one whose contents, landing page and way above a page are shown. Search
+ * looks in all of them, and a link opens a page of any of them.
  */
 const PageEditor = lazy(() => import('./pages/PageEditor'));
 
@@ -98,18 +111,23 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
   // The person's own pages and changes change what is shown.
   useOwnPages((s) => s.own);
   if (!game) return null;
-  if (editing) {
-    return (
-      <div
-        className={`guides ${wide ? 'guides-wide' : 'guides-compact'} guides-editing`}
-        data-testid="guides-screen"
-      >
-        <Suspense fallback={<p className="touch-empty">Opening the editor…</p>}>
-          <PageEditor wide={wide} />
-        </Suspense>
-      </div>
-    );
-  }
+  if (!editing) return <GuidesShown game={game} wide={wide} />;
+  return (
+    <div
+      className={`guides ${wide ? 'guides-wide' : 'guides-compact'} guides-editing`}
+      data-testid="guides-screen"
+    >
+      <Suspense fallback={<p className="touch-empty">Opening the editor…</p>}>
+        <PageEditor wide={wide} />
+      </Suspense>
+    </div>
+  );
+}
+
+/** The pages of a game being read: the contents beside them when wide, and the reader. */
+function GuidesShown({ game, wide }: { game: LoadedGame; wide: boolean }) {
+  const view = useSourceView(game);
+  useFollowSource(game, view);
   return (
     <div
       className={wide ? 'guides guides-wide' : 'guides guides-compact'}
@@ -117,14 +135,17 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
     >
       {wide ? (
         <aside className="guides-side" aria-label="Contents">
-          <SearchField game={game} />
+          <SourceSwitcher game={game} view={view} />
+          <SearchField />
           <nav className="guides-tree touch-scroll" aria-label="Contents" data-scroll-root>
-            <TreeHome game={game} />
-            <ContentsTree game={game} />
+            <TreeHome game={game} view={view} />
+            <ContentsTree game={game} view={view} />
           </nav>
         </aside>
-      ) : null}
-      <Reader game={game} wide={wide} />
+      ) : (
+        <SourceSwitcher game={game} view={view} />
+      )}
+      <Reader game={game} wide={wide} view={view} />
     </div>
   );
 }
@@ -132,7 +153,7 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
 // ---------------------------------------------------------------------------
 // The reader
 
-function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
+function Reader({ game, wide, view }: { game: LoadedGame; wide: boolean; view: SourceView }) {
   const reader = useReader();
   // Pages of other games, and the links, change what is shown.
   useGuideLinks((s) => s.others);
@@ -173,7 +194,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
     });
   };
 
-  const name = useGameName(game);
+  const { name } = view;
   const atHome = isLanding(game, place);
   const title = placeTitle(game, place, name);
   // On a computer or a tablet, the pages are as wide as the person (or the site) chose.
@@ -203,7 +224,7 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         >
           <UiIcon name="forward" size={20} />
         </button>
-        <Breadcrumbs game={game} place={place} name={name} way={wayCame(reader)} />
+        <Breadcrumbs game={game} place={place} view={view} way={wayCame(reader)} />
         {wide ? <PageWidthMenu game={game} /> : null}
         {wide ? null : (
           <button
@@ -213,7 +234,11 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
             title="Contents"
             data-testid="guides-contents-button"
             onClick={() => {
-              openPlace({ kind: 'contents', sectionId: null });
+              openPlace({
+                kind: 'contents',
+                sectionId: null,
+                ...(view.shown ? { source: view.shown.gameId } : {}),
+              });
             }}
           >
             <UiIcon name="book" size={20} />
@@ -230,21 +255,21 @@ function Reader({ game, wide }: { game: LoadedGame; wide: boolean }) {
         <div className="guides-column" data-width={wide ? width : undefined}>
           {!wide &&
           (atHome || place.kind === 'search' || (place.kind === 'contents' && !place.sectionId)) ? (
-            <SearchField game={game} />
+            <SearchField />
           ) : null}
           {atHome ? (
-            <Landing game={game} wide={wide} name={name} />
+            <Landing game={game} wide={wide} view={view} />
           ) : place.kind === 'page' ? (
-            <Page game={game} guide={contents.guide(place.guideId)} wide={wide} />
+            <Page game={game} guide={contents.guide(place.guideId)} wide={wide} view={view} />
           ) : place.kind === 'links' ? (
             <GuideLinksReview game={game} />
           ) : place.kind === 'search' ? (
-            <SearchResults game={game} query={place.query} />
+            <SearchResults game={game} query={place.query} view={view} />
           ) : (
             <ContentsPlace
               game={game}
               sectionId={place.kind === 'contents' ? place.sectionId : null}
-              name={name}
+              view={view}
             />
           )}
         </div>
@@ -277,20 +302,16 @@ function offsetIn(root: HTMLElement, element: HTMLElement): number {
 }
 
 /**
- * The name the guides of a game go by: the title it is shown under with
- * other games (see `gameGroups.ts`), else its own.
+ * Whether a place is the landing page: itself, or the home page of a
+ * source of pages opened by a link.
  */
-function useGameName(game: LoadedGame): string {
-  const group = useTitleOf(game.pack.manifest.gameId);
-  return group?.title ?? game.pack.manifest.title;
+function isLanding(game: LoadedGame, place: ReaderPlace): boolean {
+  return place.kind === 'home' || (place.kind === 'page' && isSourceHome(game, place.guideId));
 }
 
-/** Whether a place is the landing page: itself, or the home page opened by a link. */
-function isLanding(game: LoadedGame, place: ReaderPlace): boolean {
-  return (
-    place.kind === 'home' ||
-    (place.kind === 'page' && guidesOf(game).contents.isHomePage(place.guideId))
-  );
+/** The landing page of the source shown, as a place: Back and Forward show it of that source. */
+function homeOf(view: SourceView): ReaderPlace {
+  return view.shown ? { kind: 'home', source: view.shown.gameId } : { kind: 'home' };
 }
 
 function placeTitle(game: LoadedGame, place: ReaderPlace, name: string): string {
@@ -328,15 +349,18 @@ function placeTitle(game: LoadedGame, place: ReaderPlace, name: string): string 
 function Breadcrumbs({
   game,
   place,
-  name,
+  view,
   way,
 }: {
   game: LoadedGame;
   place: ReaderPlace;
-  name: string;
+  view: SourceView;
   way: readonly WayStep[];
 }) {
   const { contents } = guidesOf(game);
+  const { name, shown } = view;
+  // The way within the source shown: its section and home page are its start, the name.
+  const trail = (id: string) => trailIn(game, shown, id);
   const line = useRef<HTMLElement>(null);
   const atHome = isLanding(game, place);
   // The pages walked, from the page the walk started on; none from the landing page.
@@ -353,9 +377,9 @@ function Breadcrumbs({
   let path: ContentsStep[] = atHome
     ? []
     : place.kind === 'page'
-      ? contents.trail(fromPage ? walked[0]!.guideId : place.guideId)
+      ? trail(fromPage ? walked[0]!.guideId : place.guideId)
       : place.kind === 'contents' && place.sectionId
-        ? contents.trail(place.sectionId)
+        ? trail(place.sectionId)
         : [];
   if (way.length > 0 && place.kind === 'page') {
     if (!fromPage) path = [];
@@ -402,7 +426,7 @@ function Breadcrumbs({
           className="guides-crumb"
           data-testid="guides-crumb-game"
           onClick={() => {
-            openPlace({ kind: 'home' });
+            openPlace(homeOf(view));
           }}
         >
           {name}
@@ -465,27 +489,30 @@ function Breadcrumbs({
 // Contents
 
 /**
- * A section's contents; or, with none, the top of the contents as a list,
- * headed with the game's name: what a phone opens from its "Contents"
- * button, the home page first when there is one.
+ * A section's contents; or, with none, the top of the contents of the
+ * source shown as a list, headed with its name: what a phone opens from
+ * its "Contents" button, the home page first when there is one.
  */
 function ContentsPlace({
   game,
   sectionId,
-  name,
+  view,
 }: {
   game: LoadedGame;
   sectionId: string | null;
-  name: string;
+  view: SourceView;
 }) {
   const { contents } = guidesOf(game);
+  const { name, shown } = view;
   const section = sectionId ? contents.section(sectionId) : undefined;
-  const entries = section ? contents.items(section.id) : contents.top();
-  const home = section ? null : contents.homePage();
+  const entries = section ? contents.items(section.id) : (shown?.top ?? contents.top());
+  const home = section ? null : (shown?.home ?? contents.homePage());
+  // The pages of another game read with this one are changed in that game.
+  const editable = !shown || shown.own;
   return (
     <div className="guides-contents" data-testid="guides-contents">
       <h1 className="guides-title">{section ? section.title : name}</h1>
-      {!section ? <EditPagesButton label="Edit the pages" guideId={null} /> : null}
+      {!section && editable ? <EditPagesButton label="Edit the pages" guideId={null} /> : null}
       {home ? (
         <ul className="touch-plain-list guides-entries guides-entries-home">
           <li>
@@ -494,7 +521,7 @@ function ContentsPlace({
               className="guides-entry guides-entry-home"
               data-testid="guides-home-link"
               onClick={() => {
-                openPlace({ kind: 'home' });
+                openPlace(homeOf(view));
               }}
             >
               <UiIcon name="home" size={20} />
@@ -658,7 +685,7 @@ function headingAt(contents: GuideContents, place: ReaderPlace): ContentsHeading
  * a page opens the page, and a page with pages under it has a button of
  * its own to show or hide them. The way to a new place opens again.
  */
-function ContentsTree({ game }: { game: LoadedGame }) {
+function ContentsTree({ game, view }: { game: LoadedGame; view: SourceView }) {
   const place = useReader(currentPlace);
   const { contents } = guidesOf(game);
   const root = useRef<HTMLDivElement>(null);
@@ -701,15 +728,15 @@ function ContentsTree({ game }: { game: LoadedGame }) {
   }, [onPath]);
   return (
     <div ref={root}>
-      <TreeLevel tree={tree} entries={contents.top()} depth={0} />
+      <TreeLevel tree={tree} entries={view.shown?.top ?? contents.top()} depth={0} />
     </div>
   );
 }
 
-/** At the top of the contents beside the page: the game's name, which opens the landing page. */
-function TreeHome({ game }: { game: LoadedGame }) {
+/** At the top of the contents beside the page: the source's name, which opens its landing page. */
+function TreeHome({ game, view }: { game: LoadedGame; view: SourceView }) {
   const place = useReader(currentPlace);
-  const name = useGameName(game);
+  const { name } = view;
   const here = isLanding(game, place);
   return (
     <button
@@ -718,7 +745,7 @@ function TreeHome({ game }: { game: LoadedGame }) {
       aria-current={here ? 'page' : undefined}
       data-testid="guides-tree-home"
       onClick={() => {
-        openPlace({ kind: 'home' });
+        openPlace(homeOf(view));
       }}
     >
       <UiIcon name="home" size={16} />
@@ -872,13 +899,19 @@ function TreePage({
  * stored page. Below either, what the top of the contents offers: linking
  * the pages to the map, and guides of other games.
  */
-function Landing({ game, wide, name }: { game: LoadedGame; wide: boolean; name: string }) {
+function Landing({ game, wide, view }: { game: LoadedGame; wide: boolean; view: SourceView }) {
   const { contents } = guidesOf(game);
-  const home = contents.homePage();
-  if (!home) return <MadeLanding game={game} name={name} />;
+  const home = view.shown ? view.shown.home : contents.homePage();
+  if (!home) return <MadeLanding game={game} view={view} />;
   return (
-    <div className="guides-landing" data-testid="guides-home" data-landing="page">
-      <Page game={game} guide={home} wide={wide} home={name} />
+    <div
+      className="guides-landing"
+      data-testid="guides-home"
+      data-landing="page"
+      data-source={view.shown?.gameId}
+    >
+      <ContinueReading game={game} view={view} />
+      <Page game={game} guide={home} wide={wide} view={view} home={view.name} />
       <LandingFoot game={game} />
     </div>
   );
@@ -906,31 +939,46 @@ function LandingFoot({ game }: { game: LoadedGame }) {
   );
 }
 
-/** The landing page made from the top of the contents: each section a group of tiles. */
-function MadeLanding({ game, name }: { game: LoadedGame; name: string }) {
+/** The landing page made from the top of the contents of the source shown: each section a group of tiles. */
+function MadeLanding({ game, view }: { game: LoadedGame; view: SourceView }) {
   const { contents } = guidesOf(game);
-  const groups = useMemo(() => madeLanding(contents), [contents]);
-  const pages = contents.pages();
+  const { name, shown } = view;
+  const groups = useMemo(
+    () => (shown ? madeLandingOf(game, shown) : madeLanding(contents)),
+    [game, contents, shown],
+  );
+  const pages = shown ? readingOrder(game, shown) : contents.pages();
   // Pages read from a site whose own home page was not kept with them.
   const fromSite = pages.some((page) => page.source !== undefined);
+  const sequence = sequenceOf(game, view, null);
   return (
     <div
       className="guides-landing guides-landing-made"
       data-testid="guides-home"
       data-landing="made"
+      data-source={shown?.gameId}
     >
       <h1 className="guides-title">{name}</h1>
       <p className="guides-lead">{pagesText(pages.length)}</p>
-      <EditPagesButton label="Edit the pages" guideId={null} />
+      <ContinueReading game={game} view={view} />
+      {!shown || shown.own ? <EditPagesButton label="Edit the pages" guideId={null} /> : null}
       {groups.length === 0 ? <p className="touch-empty">Nothing here yet.</p> : null}
       {groups.map((group, index) => (
         <LandingGroupView
           key={group.section?.id ?? `pages-${index}`}
           game={game}
           group={group}
-          name={name}
+          view={view}
         />
       ))}
+      {sequence ? (
+        <PreviousNext
+          previous={sequence.previous}
+          next={sequence.next}
+          name={name}
+          home={shown?.home?.id ?? null}
+        />
+      ) : null}
       {fromSite ? (
         <p className="guides-landing-note" data-testid="guides-landing-note">
           The site’s own home page has not been read, so this page is made from the contents. Read
@@ -946,17 +994,24 @@ function MadeLanding({ game, name }: { game: LoadedGame; name: string }) {
 function LandingGroupView({
   game,
   group,
-  name,
+  view,
 }: {
   game: LoadedGame;
   group: LandingGroup;
-  name: string;
+  view: SourceView;
 }) {
   const { section } = group;
+  const { name } = view;
   const withPictures = group.tiles.some((tile) => tile.picture !== null);
   const openGroup = () => {
     openPlace(
-      section ? { kind: 'contents', sectionId: section.id } : { kind: 'contents', sectionId: null },
+      section
+        ? { kind: 'contents', sectionId: section.id }
+        : {
+            kind: 'contents',
+            sectionId: null,
+            ...(view.shown ? { source: view.shown.gameId } : {}),
+          },
     );
   };
   return (
@@ -1105,11 +1160,13 @@ function Page({
   game,
   guide,
   wide,
+  view,
   home,
 }: {
   game: LoadedGame;
   guide: GuideEntry | undefined;
   wide: boolean;
+  view: SourceView;
   /**
    * The game's name, for the home page shown as the landing page: its
    * heading, with nothing of a page in the contents (the way to the map,
@@ -1127,6 +1184,8 @@ function Page({
     own.pages.find((p) => p.id === guide.id),
   );
   const shown = showWiki && pack ? pack : guide;
+  // A page of a guide, read in order: the pages before and after it.
+  const sequence = sequenceOf(game, view, guide.id);
   return (
     <article
       className="guides-page"
@@ -1178,6 +1237,14 @@ function Page({
         </p>
       ) : change.own ? (
         <p className="guides-changed">A page of your own.</p>
+      ) : null}
+      {sequence ? (
+        <PreviousNext
+          previous={sequence.previous}
+          next={sequence.next}
+          name={view.name}
+          home={view.shown?.home?.id ?? null}
+        />
       ) : null}
       {wide || home !== undefined ? null : <PagesUnder game={game} guideId={guide.id} />}
       {home === undefined ? <AlsoLinkedFrom key={guide.id} game={game} guideId={guide.id} /> : null}
@@ -1440,7 +1507,7 @@ function TakeWikiDialog({ onClose, onTake }: { onClose: () => void; onTake: () =
         <footer className="own-dialog-foot">
           <span className="own-space" />
           <button type="button" className="own-pill-button" autoFocus onClick={onClose}>
-            Keep mine
+            Cancel
           </button>
           <button
             type="button"
@@ -1574,7 +1641,7 @@ function Credit({ source, title }: { source: GuideSource; title: string }) {
 // ---------------------------------------------------------------------------
 // Search
 
-function SearchField({ game }: { game: LoadedGame }) {
+function SearchField() {
   const place = useReader(currentPlace);
   const shown = place.kind === 'search' ? place.query : '';
   const [text, setText] = useState(shown);
@@ -1597,7 +1664,7 @@ function SearchField({ game }: { game: LoadedGame }) {
         ref={input}
         type="search"
         className="guides-search-input"
-        placeholder={`Search the pages of ${game.pack.manifest.title}`}
+        placeholder="Search pages"
         aria-label="Search the pages"
         data-testid="guides-search"
         value={text}
@@ -1612,8 +1679,22 @@ function SearchField({ game }: { game: LoadedGame }) {
   );
 }
 
-function SearchResults({ game, query }: { game: LoadedGame; query: string }) {
+function SearchResults({
+  game,
+  query,
+  view,
+}: {
+  game: LoadedGame;
+  query: string;
+  view: SourceView;
+}) {
   const hits = useMemo(() => guidesOf(game).search.search(query, 100), [game, query]);
+  // A page of another source than the one shown says which, so the choice of source hides none.
+  const elsewhere = (guideId: string): string | null => {
+    if (view.sources.length < 2) return null;
+    const source = sourceOfEntry(game, guideId);
+    return source && source !== view.shown ? (view.names.get(source.gameId) ?? source.title) : null;
+  };
   return (
     <div className="guides-results" data-testid="guides-results">
       <h1 className="guides-title">Search</h1>
@@ -1635,6 +1716,7 @@ function SearchResults({ game, query }: { game: LoadedGame; query: string }) {
             >
               <span className="guides-result-title">{hit.guide.title}</span>
               {hit.snippet ? <Snippet hit={hit} /> : null}
+              <ResultSource name={elsewhere(hit.guide.id)} />
             </button>
             <AddToBuildButton
               game={game}
@@ -1645,6 +1727,17 @@ function SearchResults({ game, query }: { game: LoadedGame; query: string }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/** Under a result of another source than the one shown: which it is of. */
+function ResultSource({ name }: { name: string | null }) {
+  if (!name) return null;
+  return (
+    <span className="guides-result-source" data-testid="guides-result-source">
+      <UiIcon name="book" size={14} />
+      In {name}
+    </span>
   );
 }
 

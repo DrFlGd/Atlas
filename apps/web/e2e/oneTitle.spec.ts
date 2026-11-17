@@ -175,6 +175,20 @@ async function chooseOther(page: Page, id: string): Promise<void> {
   await expect(form).toHaveCount(0);
 }
 
+/** The sources of pages Guides lists at its top, by game id, as its switcher lists them. */
+async function guideSources(page: Page): Promise<(string | null)[]> {
+  const menu = page.getByTestId('guides-sources-menu');
+  await page.getByTestId('guides-source-chip').click();
+  await expect(menu).toBeVisible();
+  const rows = menu.getByTestId('guides-source');
+  const sources = await Promise.all(
+    (await rows.all()).map((row) => row.getAttribute('data-source')),
+  );
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  return sources;
+}
+
 const gameRow = (page: Page, id: string) =>
   page.locator(`[data-testid="game-row"][data-pack="${id}"]`);
 
@@ -331,10 +345,11 @@ test.describe('in Games', () => {
     );
     await stored(page, { 'Atlas demo world': ['demo', 'isle-wiki', 'isles-two'] });
 
-    // Guides: the wiki's pages, under its heading, said to come with the title.
+    // Guides: the wiki's pages, a source of their own, said to come with the title.
     await page.getByTestId('section-guides').click();
     const sections = page.locator('.guides-side .guides-tree-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki/]);
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/]);
+    expect(await guideSources(page)).toEqual(['demo', 'isle-wiki']);
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
     await expect(page.getByTestId('guides-from-title')).toHaveText('With this title');
     await shot(page, '4-guides-wiki-of-the-title');
@@ -353,8 +368,8 @@ test.describe('in Games', () => {
       /Basics/,
       /The isle/,
       /Gear/,
-      /Isle Wiki/,
     ]);
+    expect(await guideSources(page)).toEqual(['isles-two', 'isle-wiki']);
     expect(await storedSetting(page, 'guideLinks:isles-two')).toBeUndefined();
 
     // The wiki itself: the maps of its title, a tap away.
@@ -385,6 +400,7 @@ test.describe('in Games', () => {
     await reloadShown(page);
     await page.getByTestId('section-guides').click();
     await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/]);
+    await expect(page.getByTestId('guides-source-chip')).toHaveCount(0);
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
   });
 
@@ -400,7 +416,11 @@ test.describe('in Games', () => {
     await stored(page, { 'Atlas demo world': ['demo', 'isle-wiki'] });
 
     await page.getByTestId('section-guides').click();
-    await openGuidesSection(page, 'Isle Wiki');
+    await page.getByTestId('guides-source-chip').click();
+    await page
+      .getByTestId('guides-sources-menu')
+      .locator('[data-testid="guides-source"][data-source="isle-wiki"]')
+      .click();
     await openGuidesSection(page, 'Gear');
     await page.getByTestId('guides-page-link').filter({ hasText: 'Ember blade' }).click();
     const shown = page.getByTestId('guides-page');

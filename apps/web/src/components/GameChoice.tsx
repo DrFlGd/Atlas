@@ -130,7 +130,7 @@ export function Listing({
 export function CataloguePick({ pick }: { pick: GamePick }) {
   const searchId = useId();
   const shown = filterGames(pick.games, pick.query);
-  // "Select all" and "Select none": the games the search shows.
+  // "Tick all" and "Tick none": the games the search shows.
   const selection = selectShown(
     shown.map((game) => game.id),
     pick.ticked,
@@ -388,7 +388,7 @@ export function ChoosePages({ choice }: { choice: Choice }) {
   const followFor = choice.games.find((game) => game.queues)?.importerId ?? null;
   const windowed = choice.games.some((game) => game.inWindow);
   const left = goRoom(choice);
-  // "Select all" and "Select none": every page of every game listed that this app can add.
+  // "Tick all" and "Tick none": every page of every game listed that this app can add.
   const keys = choicePageKeys(choice);
   const selection = selectShown(keys.shown, keys.ticked);
   const unsupported = choice.games.some((game) => game.pages.some((page) => !page.supported));

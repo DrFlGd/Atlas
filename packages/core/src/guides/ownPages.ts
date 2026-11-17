@@ -16,6 +16,7 @@ import {
   linksThrough,
   listingWithSay,
   sortGuides,
+  spreaderOf,
   type GuidePages,
 } from './contents';
 import { headingSteps } from './headingSteps';
@@ -62,13 +63,18 @@ export function packLayout(data: GuidePages['data']): PagesLayout {
     };
   }
   const listed = new Set(sections.flatMap((section) => section.items));
+  // An unheaded section is no entry of the layout: what it holds stands in its place.
+  const spread = spreaderOf(sections);
   const layout: PagesLayout = {
-    top: sections.filter((section) => !listed.has(section.id)).map((section) => section.id),
+    top: spread.items(
+      sections.filter((section) => !listed.has(section.id)).map((section) => section.id),
+    ),
     sections: {},
   };
   for (const section of sections) {
+    if (spread.unheaded.has(section.id)) continue;
     // A section listed twice in a file keeps its first entry, as the contents shows it.
-    layout.sections[section.id] ??= [...section.items];
+    layout.sections[section.id] ??= spread.items(section.items);
   }
   return layout;
 }
@@ -205,11 +211,17 @@ function ownIdsOf(own: OwnPages): string[] {
   ];
 }
 
-/** The pack's sections and pages there are, with the person's own. */
+/**
+ * The pack's sections and pages there are, with the person's own. An
+ * unheaded section is none: a layout made before the pack had it unheaded
+ * (its pages then under a heading) loses it, and its pages go where the
+ * pack puts them now.
+ */
 function existing(data: GuidePages['data'], own: OwnPages): (id: string) => boolean {
+  const unheaded = spreaderOf(data.sections ?? []).unheaded;
   const ids = new Set([
     ...data.guides.map((guide) => guide.id),
-    ...(data.sections ?? []).map((section) => section.id),
+    ...(data.sections ?? []).map((section) => section.id).filter((id) => !unheaded.has(id)),
     ...ownIdsOf(own),
   ]);
   return (id) => ids.has(id);
@@ -419,8 +431,10 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
   const shown = (items: readonly string[]) => items.filter((id) => !hidden.has(id));
   const sections: Section[] = [];
   const seen = new Set<string>();
+  // An unheaded section is in no layout: what it held is in its place.
+  const unheaded = spreaderOf(packSections).unheaded;
   for (const section of packSections) {
-    if (seen.has(section.id)) continue;
+    if (seen.has(section.id) || unheaded.has(section.id)) continue;
     seen.add(section.id);
     sections.push({
       id: section.id,
@@ -934,4 +948,25 @@ export function setListPageSay(own: OwnPages, id: string, say: boolean | null): 
   const next: OwnPages = { ...own, listPages };
   if (Object.keys(listPages).length === 0) delete next.listPages;
   return next;
+}
+
+/**
+ * The person's say on whether the game's pages are read in order, as a
+ * guide (`true`), or as a collection, as a wiki (`false`); `null` lets the
+ * pack say again (see `pagesInOrder` in the schema).
+ */
+export function setPagesInOrder(own: OwnPages, say: boolean | null): OwnPages {
+  if (say === null ? own.pagesInOrder === undefined : own.pagesInOrder === say) return own;
+  const next: OwnPages = { ...own };
+  if (say === null) delete next.pagesInOrder;
+  else next.pagesInOrder = say;
+  return next;
+}
+
+/**
+ * Whether a game's pages are read in order: the person's say, kept with
+ * their own pages, else the pack's.
+ */
+export function readInOrder(own: OwnPages, packSays: boolean): boolean {
+  return own.pagesInOrder ?? packSays;
 }

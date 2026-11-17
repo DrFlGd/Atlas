@@ -232,7 +232,7 @@ function MapMaker() {
       {status?.state === 'failed' && <Failure status={status} />}
       {status?.state === 'cancelled' && (
         <p className="mm-alert">
-          The {what} was stopped. Nothing was changed in the maps folder. Click a button above to
+          The {what} was stopped. Nothing was changed in the maps folder. Press a button above to
           start again.
         </p>
       )}
@@ -240,10 +240,7 @@ function MapMaker() {
       {isMakeReport(report) && status?.pack && (
         <section className="mm-card" aria-labelledby="pack-title">
           <h2 id="pack-title">Your map pack is ready</h2>
-          <p>
-            Open Atlas (or click Refresh in its Maps dialog): <strong>{report.pack?.id}</strong> is
-            in its list of maps.
-          </p>
+          <p>Open the Library in Atlas: the game is listed there.</p>
           <div className="mm-row">
             <span className="mm-path" title={status.pack.folder}>
               {status.pack.folder}

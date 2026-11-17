@@ -42,7 +42,7 @@ test('opens the touch layout, offers Games without folders and progress files', 
   await page.getByTestId('section-games').click();
   const games = page.getByTestId('games-screen');
   await expect(games.getByRole('heading', { name: 'Games on this device' })).toBeVisible();
-  await expect(games.getByTestId('import-pack-file')).toHaveText('Import pack file…');
+  await expect(games.getByTestId('import-pack-file')).toHaveText('Import a pack file…');
   // No folder choices, no folders to open, nothing to export or download.
   for (const id of [
     'maps-folder-path',
@@ -102,7 +102,7 @@ test('imports a pack file from the picker, copying it into the app first', async
     hold: true,
   });
   await importButton.click();
-  await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
+  await expect(dialog.getByRole('heading')).toHaveText('Import a pack file');
   await expect(dialog.getByTestId('copy-file')).toHaveText(
     'Atlas demo world (standard).atlaspack (2.1 MB)',
   );
@@ -223,7 +223,8 @@ test('exports progress through the save screen and imports it through the picker
   // Unmarked here, then the saved file is imported over it.
   await page.keyboard.press('Escape');
   await found.click();
-  await expectFound(page, 0);
+  // The ring stands on the Map section only; here, the overall progress says it.
+  await expect(page.getByTestId('overall-progress')).toHaveAttribute('data-found', '0');
   await page.getByTestId('profile-chip').click();
   // The picker closed: nothing happens.
   await dialog.getByTestId('import-file-desktop').click();
@@ -236,7 +237,6 @@ test('exports progress through the save screen and imports it through the picker
   await review.getByRole('button', { name: 'Import' }).click();
   await expect(page.getByText('Imported atlas-progress.json (replace).')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expectFound(page, 1);
   await expect(page.getByTestId('overall-progress')).toHaveAttribute('data-found', '1');
   await expectNoDesktopOnlyCalls(page);
   expect(errors).toEqual([]);

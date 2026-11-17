@@ -463,6 +463,9 @@ export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
   // The width the file's pages were shown at, when it says one.
   const pageWidth = incoming.pageWidth ?? here.pageWidth;
   if (pageWidth) merged.pageWidth = pageWidth;
+  // Whether the pages are read in order, when the file says.
+  const pagesInOrder = incoming.pagesInOrder ?? here.pagesInOrder;
+  if (pagesInOrder !== undefined) merged.pagesInOrder = pagesInOrder;
   return merged;
 }
 

@@ -352,7 +352,7 @@ function NoteEditor({
         }}
       />
       <p className="muted small-text place-note-hint" id={hintId}>
-        Markdown works: **bold**, - lists, and ||a spoiler|| hidden until tapped. Ctrl+Enter saves,
+        Markdown works: **bold**, - lists, and ||a spoiler|| hidden until pressed. Ctrl+Enter saves,
         Esc cancels.
       </p>
       {photo.fileInput}
@@ -361,6 +361,7 @@ function NoteEditor({
         photos={direct ? direct.photos : draftPhotos}
         name={name}
         busy={photo.busy}
+        problem={photo.problem}
         add={() => {
           void photo.add();
         }}

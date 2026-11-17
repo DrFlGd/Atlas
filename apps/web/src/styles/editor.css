@@ -794,12 +794,15 @@
 }
 
 .editor-map-hint {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: calc(100% - 120px);
 }
 
+/* The map's name keeps its room beside a side panel; the hint is cut first. */
 .editor-map-top .touch-map-chip {
-  flex-shrink: 4;
+  flex: 0 0 auto;
+  max-width: 55%;
 }
 
 .editor-map-hint-text {

@@ -4,6 +4,8 @@ import { create } from 'zustand';
 import { goToLocation } from './actions';
 import { loadSourceFacts, presentMembers, showSource, titleOf, useGameGroups } from './gameGroups';
 import { packAt, useGuideLinks } from './guideLinks';
+import { chooseGuideSource } from './guideSources';
+import { onPackSaved } from './packTurns';
 import { useAtlas, type LoadedGame } from './store';
 
 /**
@@ -16,8 +18,9 @@ import { useAtlas, type LoadedGame } from './store';
  * for it. A link that fits one is looked up among the locations of the
  * game shown, then of the other games of its title that have a map (see
  * `gameGroups.ts`), in the title's order. Those games' packs are read only
- * when some page shown has entries, once per session, as the pages of
- * other games are; nothing is ever written.
+ * when some page shown has entries, once per session for as long as their
+ * files stay as they are, as the pages of other games are; nothing is ever
+ * written.
  *
  * A link that finds its location is shown as an in-app link (see
  * `markdown.ts`), and following it shows the location: on the map of the
@@ -140,6 +143,13 @@ useGuideLinks.subscribe((state, before) => {
 useGameGroups.subscribe((state, before) => {
   if (state.groups !== before.groups) refreshSafely();
 });
+// A map of the title was saved (a check for changes, a pack file): it is read again.
+onPackSaved((packId) => {
+  const { sources } = get();
+  if (!sources.some((source) => source.gameId === packId)) return;
+  set({ sources: sources.filter((source) => source.gameId !== packId) });
+  refreshSafely();
+});
 
 /**
  * The location a web link of a page shown names, as {@link MarkdownOptions.mapLink}
@@ -170,11 +180,22 @@ export function mapLinkOf(
 /**
  * Follows a link to a location of another game of the title: that game
  * opens as itself (see `showSource`), and the location is shown on its map.
+ * The game the link was followed from, when its pages are read with that
+ * game (a guide or a wiki of the same title), is the source its Guides
+ * show from then on: going back to Guides shows the pages the person was
+ * reading, not another source of the title.
  */
 export async function followMapLink(gameId: string, locationId: string): Promise<void> {
+  const from = useAtlas.getState().game;
   await showSource(gameId);
   const game = useAtlas.getState().game;
-  if (game?.entry.id === gameId && game.pack.locations.has(locationId)) goToLocation(locationId);
+  if (game?.entry.id !== gameId) return;
+  if (from && from.entry.id !== gameId) {
+    const group = titleOf(gameId);
+    const together = group && presentMembers(group).some((entry) => entry.id === from.entry.id);
+    if (together) chooseGuideSource(game.pack.manifest.gameId, from.pack.manifest.gameId);
+  }
+  if (game.pack.locations.has(locationId)) goToLocation(locationId);
 }
 
 refreshSafely();

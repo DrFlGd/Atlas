@@ -81,6 +81,18 @@ describe('pack descriptions (manifest version 2)', () => {
     ).toBe(false);
   });
 
+  it('keeps the flag that the pages are read in order', () => {
+    const pack = makeFixturePack();
+    pack.manifest.pagesInOrder = true;
+    const manifest = describePack(pack, { updated: '2026-11-10T12:00:00Z', writtenBy });
+    expect(manifest.pagesInOrder).toBe(true);
+    expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
+    expect(
+      'pagesInOrder' in
+        describePack(makeFixturePack(), { updated: '2026-11-10T12:00:00Z', writtenBy }),
+    ).toBe(false);
+  });
+
   it('keeps the width of the pages', () => {
     const pack = makeFixturePack();
     pack.manifest.pageWidth = 'wide';

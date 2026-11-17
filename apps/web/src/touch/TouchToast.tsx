@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { undo } from '../state/actions';
 import { useAtlas } from '../state/store';
@@ -6,8 +6,11 @@ import { KeyHint } from './widgets';
 import { useKeyHints } from './state';
 
 /**
- * The latest notice, at the bottom over the map, announced to screen
- * readers. A change that undo takes back gets an Undo button.
+ * The latest notice, at the top of the map or of the screen shown,
+ * announced to screen readers. A change that undo takes back gets an Undo
+ * button. While it shows, its height is `--touch-toast-h` on the layout, and
+ * what stands at the top moves down by it (see touch.css), so the notice
+ * never lies over a button.
  */
 export function TouchToast({ wide }: { wide: boolean }) {
   const notice = useAtlas((s) => s.notice);
@@ -26,8 +29,25 @@ export function TouchToast({ wide }: { wide: boolean }) {
     };
   }, [notice]);
   const shown = notice && notice.seq !== dismissed ? notice : null;
+  const region = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = region.current;
+    const layout = element?.closest<HTMLElement>('.touch');
+    if (!element || !layout) return;
+    const follow = () => {
+      layout.style.setProperty('--touch-toast-h', `${element.offsetHeight}px`);
+    };
+    follow();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(follow);
+    observer?.observe(element);
+    return () => {
+      observer?.disconnect();
+      layout.style.removeProperty('--touch-toast-h');
+    };
+  }, [shown?.seq, wide]);
   return (
     <div
+      ref={region}
       className={wide ? 'touch-toast-region touch-toast-region-wide' : 'touch-toast-region'}
       role="status"
       aria-live="polite"

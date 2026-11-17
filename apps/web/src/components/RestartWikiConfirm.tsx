@@ -121,10 +121,10 @@ export function RestartWikiConfirmView({
           disabled={working}
           onClick={onConfirm}
         >
-          {working ? 'Deleting…' : 'Delete and start again'}
+          {working ? 'Deleting…' : 'Start again'}
         </button>
         <button type="button" className="button" disabled={working} onClick={onCancel}>
-          Keep it
+          Cancel
         </button>
       </div>
     </div>

@@ -280,6 +280,22 @@ export interface ImportContext {
    */
   keepsFiledUnder?: boolean;
   /**
+   * Optional: true when the app keeps a section's `unheaded`, which shows
+   * what the section holds in its place, so the top of the contents holds
+   * pages and sections in one order. An app that does not say so refuses
+   * a pack that has it, as any field it does not know, so an importer
+   * writes it only when this is true (and else keeps such pages in a
+   * section with a heading, as before).
+   */
+  keepsUnheadedSections?: boolean;
+  /**
+   * Optional: true when the app keeps the manifest's `pagesInOrder`, which
+   * says the pages are one guide read in order (Previous and Next). An app
+   * that does not say so refuses a pack that has it, as any field it does
+   * not know, so an importer writes it only when this is true.
+   */
+  keepsPagesInOrder?: boolean;
+  /**
    * Optional: the size the person chose to keep the pictures of the site's
    * pages at, in an app that downloads them (see
    * {@link AtlasImporter.picturesWithPages}). `full`: where the importer

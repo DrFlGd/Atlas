@@ -23,10 +23,15 @@
 }
 
 /* The standard layout: beside the rail, over the panel and the map. */
+/* The Library and Settings cover the map: with a background of their own, above its buttons. */
 .touch .library-section {
   position: absolute;
   z-index: 12;
-  inset: 0 0 0 var(--touch-rail);
+  inset: var(--touch-toast-h, 0px) 0 0 var(--touch-rail);
+  background: var(--atlas-bg);
+  /* The band a notice moves it down by: its colour too, not the map behind. */
+  box-shadow: 0 calc(-1 * var(--touch-toast-h, 0px)) 0 var(--atlas-bg);
+  color: var(--atlas-text);
 }
 
 .touch[data-arrangement='compact'] .library-section {

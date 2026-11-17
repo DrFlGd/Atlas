@@ -150,12 +150,15 @@ export function Locations() {
   const library = useAtlas((s) => s.library);
   if (!library) return null;
   return (
-    <section className="settings-group" aria-label="Added folders" data-testid="settings-locations">
-      <h2 className="settings-group-title">Map packs elsewhere</h2>
+    <section
+      className="settings-group"
+      aria-label="Games in other folders"
+      data-testid="settings-locations"
+    >
+      <h2 className="settings-group-title">Games in other folders</h2>
       <p className="muted small">
-        Show map packs kept in other folders, for example on another drive. They are remembered
-        between runs. Open folder shows a folder in your file manager; Remove from list forgets it
-        and does not delete any files.
+        Games kept outside the maps folder, for example on another drive, are remembered between
+        runs. Remove from list forgets a folder and deletes no files.
       </p>
       {library.locations.length > 0 ? (
         <ul className="profile-list" data-testid="location-list">
@@ -169,9 +172,9 @@ export function Locations() {
               <div className="pack-info">
                 <span className="path">{location.path}</span>
                 <span className="muted small">
-                  {location.kind === 'pack' ? 'Map pack' : 'Folder of map packs'}
+                  {location.kind === 'pack' ? 'A game’s folder' : 'A folder of games'}
                   {location.state === 'ok' && location.kind === 'folder'
-                    ? ` · ${location.packs.length} pack${location.packs.length === 1 ? '' : 's'}`
+                    ? ` · ${location.packs.length} game${location.packs.length === 1 ? '' : 's'}`
                     : ''}
                   {location.state !== 'ok' ? (
                     <span className="badge badge-warn">{LOCATION_STATE[location.state]}</span>
@@ -211,19 +214,19 @@ export function Locations() {
           type="button"
           className="button"
           data-testid="open-pack"
-          title="Show one map pack folder from anywhere on this computer"
+          title="Show one game from its folder, anywhere on this computer"
           onClick={() => void openPackFolder()}
         >
-          Open a map pack…
+          Add a game’s folder…
         </button>
         <button
           type="button"
           className="button"
           data-testid="add-packs-folder"
-          title="Show every map pack in a folder you choose"
+          title="Show every game in a folder you choose"
           onClick={() => void addPacksFolder()}
         >
-          Choose maps folder…
+          Add a folder of games…
         </button>
         <button
           type="button"
@@ -243,9 +246,7 @@ export function Locations() {
         </button>
       </div>
       <p className="muted small">
-        Open a map pack shows one pack folder from anywhere on this computer. Choose maps folder
-        shows every map pack in a folder you choose. Look again reads every folder again, for maps
-        another Atlas app added meanwhile.
+        Look again reads every folder again, for games another Atlas app added meanwhile.
       </p>
       {library.hidden.length > 0 ? (
         <div className="download-note" data-testid="hidden-packs">

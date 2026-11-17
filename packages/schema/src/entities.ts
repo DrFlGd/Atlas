@@ -237,6 +237,16 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    */
   const mapLinksSchema = reading ? mapLinksReadSchema : mapLinksWriteSchema.optional();
 
+  /**
+   * The pack's pages are one guide, read in order: each page leads on to
+   * the next in the order of the contents (Previous and Next), as the
+   * guide's own site orders them. Only `true`; left out for pages that are
+   * not read in order (a wiki). Optional; an app that does not know it
+   * shows the pages without Previous and Next. Read leniently: a value
+   * that cannot be read is left out.
+   */
+  const pagesInOrderSchema = z.literal(true);
+
   const manifestBase = {
     gameId: gameIdSchema,
     /** Display name of the pack. */
@@ -250,6 +260,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     homePage: reading ? descriptive(homePageSchema) : homePageSchema.optional(),
     pageWidth: reading ? descriptive(pageWidthSchema) : pageWidthSchema.optional(),
     mapLinks: mapLinksSchema,
+    pagesInOrder: reading ? descriptive(pagesInOrderSchema) : pagesInOrderSchema.optional(),
   };
 
   /** The program that wrote a pack: an app or a command-line tool, and its version. */
@@ -702,6 +713,14 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * order the source lists them. A section that no other section lists is
    * at the top of the contents, in file order. A section is listed by one
    * section at most; a guide may be listed by several.
+   *
+   * A section marked `unheaded` is no heading of its own: the contents
+   * shows what it holds in its place, in its order, beside its neighbours.
+   * So the top of the contents (or a section) holds pages and sections in
+   * one order, as a guide's own table of contents has them: pages that
+   * stand alone at the top are kept in an unheaded section between the
+   * sections they stand between. Its title is what an app before it shows
+   * (it shows the section as any other). Never with `placeByLinks`.
    */
   const sectionSchema = record({
     id: idOf('section'),
@@ -719,6 +738,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * drop it when reading and show the section as it is.
      */
     placeByLinks: reading ? z.boolean().optional().catch(undefined) : z.literal(true).optional(),
+    /**
+     * What it holds stands in its place (see above). Added without a
+     * schema version change; apps before it drop it when reading and show
+     * the section with its title. An importer writes it only when the app
+     * says it keeps it (`keepsUnheadedSections` of the import context).
+     */
+    unheaded: reading ? z.boolean().optional().catch(undefined) : z.literal(true).optional(),
   });
 
   /** A smaller copy of a picture for page text (see the picture's `pageCopy`). */

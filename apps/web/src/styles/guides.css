@@ -21,7 +21,7 @@
 .guides-wide {
   position: absolute;
   z-index: 12;
-  inset: 0 0 0 var(--touch-rail);
+  inset: var(--touch-toast-h, 0px) 0 0 var(--touch-rail);
 }
 
 .guides-side {

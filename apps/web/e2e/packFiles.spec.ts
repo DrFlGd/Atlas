@@ -13,7 +13,7 @@ import {
 } from './helpers';
 
 /**
- * Pack files in the desktop app: "Export…" and "Details" on a game in
+ * Pack files in the desktop app: "Export to a file…" and "Details" on a game in
  * the Maps dialog, and "Import pack file…". A stand-in shell answers
  * the commands with made-up facts about the demo pack, and about a wiki
  * made from the demo's pages ("Isle Wiki", a game with no map); it writes
@@ -553,7 +553,9 @@ test('exports a game at a chosen detail, with progress beside it when asked', as
   const dialog = page.getByTestId('pack-file-dialog');
   await expect(dialog.getByRole('heading')).toHaveText('Export Atlas demo world');
   await expect(dialog).toContainText('Atlas for Android');
-  await expect(dialog).toContainText('It never holds your progress.');
+  await expect(dialog).toContainText(
+    'Your progress is not in this file. Tick below to save it in a second file.',
+  );
   await expect(dialog.getByTestId('export-overview')).toHaveText('18 map images · about 150 KB');
   await expect(dialog.getByTestId('export-full')).toHaveText('Not downloaded: Surface (World).');
   await expect(dialog.locator('input[value="full"]')).toBeDisabled();
@@ -623,7 +625,7 @@ test('imports a pack file, saying which is newer and asking before using older d
   // Older than the game installed: keeping it is the first choice.
   await setShell(page, { pick: pickedFile('2026-10-20T10:00:00.000Z') });
   await libraryMore(page, 'import-pack-file');
-  await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
+  await expect(dialog.getByRole('heading')).toHaveText('Import a pack file');
   await expect(dialog.getByTestId('import-summary')).toHaveText(
     'Atlas demo world, version 1.0.0: 2 maps, 5,000 locations, 1 checklist, 1 guide. 340 map images at standard detail.',
   );
@@ -639,7 +641,7 @@ test('imports a pack file, saying which is newer and asking before using older d
   await expect(dialog.getByTestId('import-start')).toHaveCount(0);
   await dialog.getByTestId('import-older').click();
   await expect(dialog.getByTestId('import-start')).toHaveText('Replace with the older file');
-  await dialog.getByRole('button', { name: 'Keep the installed game' }).click();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog.getByTestId('import-start')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Keep the installed game' }).click();
   await expect(dialog).toBeHidden();
@@ -979,7 +981,7 @@ test.describe('in the standard layout', () => {
     // Import a pack file, in the same More.
     await setShell(page, { pick: pickedFile('2026-11-08T10:00:00.000Z') });
     await libraryMore(page, 'import-pack-file');
-    await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
+    await expect(dialog.getByRole('heading')).toHaveText('Import a pack file');
     await expect(dialog.getByTestId('import-verdict')).toHaveAttribute(
       'data-verdict',
       'file-newer',
@@ -1136,7 +1138,7 @@ test.describe('a wiki, a game with no map', () => {
     const dialog = page.getByTestId('pack-file-dialog');
     await expect(dialog.getByRole('heading')).toHaveText('Export Isle Wiki');
     await expect(dialog.getByTestId('export-intro')).toHaveText(
-      'A pack file holds Isle Wiki in one file: its pages, and the pictures of its pages as you choose below. Copy it to another computer or to Atlas for Android and import it there to read the pages offline. It never holds your progress.',
+      'A pack file holds Isle Wiki in one file: its pages, and the pictures of its pages as you choose below. Copy it to another computer or to Atlas for Android and import it there to read the pages offline. Your progress is not in this file. Tick below to save it in a second file.',
     );
     // No map: no detail to choose, and nothing said of maps, locations or map images.
     await expect(dialog.getByTestId('export-start')).toBeEnabled();
@@ -1179,7 +1181,7 @@ test.describe('a wiki, a game with no map', () => {
     // A wiki file: what it holds and what importing it replaces, in pages and pictures.
     await setShell(page, { pick: pickedWikiFile() });
     await libraryMore(page, 'import-pack-file');
-    await expect(dialog.getByRole('heading')).toHaveText('Import pack file');
+    await expect(dialog.getByRole('heading')).toHaveText('Import a pack file');
     await expect(dialog.getByTestId('import-summary')).toHaveText(
       'Isle Wiki, version 1.0.0: 11 pages.',
     );

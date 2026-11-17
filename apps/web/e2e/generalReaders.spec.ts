@@ -211,7 +211,7 @@ test('a page that states no licence is kept only once the person confirms one, w
   await setUp(page, true, { others: OTHERS });
   const flow = page.getByTestId('library-flow');
 
-  // Not now: nothing is added.
+  // Cancel: nothing is added.
   await add(page, `${MARSH_WIKI}/Glass`);
   await flow.getByTestId('add-how-go').click();
   const question = page.getByTestId('licence-question');

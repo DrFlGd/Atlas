@@ -311,7 +311,7 @@ function PlayerControls() {
     <>
       {placing ? (
         <div className="placing-notice" role="status" data-testid="placing-notice">
-          <span>Click the spot on {placingName ?? 'the map'} where you stood when you saved.</span>
+          <span>Press the spot on {placingName ?? 'the map'} where you stood when you saved.</span>
           <button
             type="button"
             className="button button-small"

@@ -172,9 +172,10 @@ test('a link of the guide opens its location on the map of the title, one not fo
   await page.waitForTimeout(800);
   await shot(page, '2-map-after-following-desktop');
 
-  // With the map shown, the guide's pages come with the title, and a link leads to another map of it.
+  // With the map shown, Guides shows the guide the link was followed from, a source of
+  // the title chosen at its top, and a link leads to another map of the title.
   await page.getByTestId('section-guides').click();
-  await openGuidesSection(page, 'Isle Guide');
+  await expect(page.getByTestId('guides-source-chip')).toContainText('Isle Guide');
   await openGuidesSection(page, 'Chests');
   await page.getByTestId('guides-page-link').filter({ hasText: 'Chests of the isle' }).click();
   await expectLinks(page, false);

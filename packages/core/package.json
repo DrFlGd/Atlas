@@ -1,13 +1,14 @@
 {
   "name": "@atlas/core",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./dexie": "./src/dexie.ts",
     "./mapview": "./src/mapview/index.ts",
-    "./sections": "./src/guides/sections.ts"
+    "./sections": "./src/guides/sections.ts",
+    "./homeMenu": "./src/guides/homeMenu.ts"
   },
   "scripts": {
     "test": "vitest run",

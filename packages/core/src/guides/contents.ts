@@ -200,6 +200,48 @@ export function listingWithSay(
 }
 
 /**
+ * The pack's unheaded sections (a section's `unheaded`), and a list of the
+ * contents with each of them replaced by what it holds, in its place,
+ * however deep (an unheaded section in an unheaded section too). A section
+ * placed by links is never unheaded: it keeps its heading. A list that
+ * names one twice spreads it once, where it is first.
+ */
+export function spreaderOf(sections: readonly Section[]): {
+  unheaded: ReadonlySet<string>;
+  items: (items: readonly string[]) => string[];
+} {
+  const held = new Map<string, readonly string[]>();
+  for (const section of sections) {
+    if (section.unheaded === true && section.placeByLinks !== true && !held.has(section.id)) {
+      held.set(section.id, section.items);
+    }
+  }
+  const unheaded: ReadonlySet<string> = new Set(held.keys());
+  const items = (list: readonly string[]): string[] => {
+    if (unheaded.size === 0 || !list.some((id) => unheaded.has(id))) return [...list];
+    const out: string[] = [];
+    const spreadOnce = new Set<string>();
+    // Walked without recursion: a contents may be deep.
+    const stack: { list: readonly string[]; at: number }[] = [{ list, at: 0 }];
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      if (frame.at >= frame.list.length) {
+        stack.pop();
+        continue;
+      }
+      const id = frame.list[frame.at++]!;
+      if (!unheaded.has(id)) out.push(id);
+      else if (!spreadOnce.has(id)) {
+        spreadOnce.add(id);
+        stack.push({ list: held.get(id)!, at: 0 });
+      }
+    }
+    return out;
+  };
+  return { unheaded, items };
+}
+
+/**
  * The contents as shown: sections that hold sections and pages, and pages
  * that hold pages. A page of a section marked `placeByLinks` is shown
  * under the list page that lists it (see `pageTree.ts`); every entry has one
@@ -258,16 +300,19 @@ export class GuideContents {
         ? top.some((id) => this.sections.has(id) || this.guides.has(id))
         : this.hasContents || (!hasMap && guides.length > 0);
 
-    // What the pack and the person list: sections, and pages under pages.
+    // What the pack and the person list: sections, and pages under pages. An
+    // unheaded section is no entry of its own: what it holds stands in its place.
+    const spread = spreaderOf(sections);
     const lists = new Map<string, readonly string[]>();
     const listedBy = new Set<string>();
     for (const section of sections) {
-      if (lists.has(section.id)) continue;
-      lists.set(section.id, section.items);
-      for (const item of section.items) {
-        if (this.sections.has(item)) listedBy.add(item);
-        else if (this.guides.has(item)) this.listed.add(item);
-      }
+      if (lists.has(section.id) || spread.unheaded.has(section.id)) continue;
+      const items = spread.items(section.items);
+      lists.set(section.id, items);
+      for (const item of items) if (this.guides.has(item)) this.listed.add(item);
+    }
+    for (const section of sections) {
+      for (const item of section.items) if (this.sections.has(item)) listedBy.add(item);
     }
     for (const [id, items] of Object.entries(pack.under ?? {})) {
       if (!this.guides.has(id)) continue;
@@ -276,11 +321,13 @@ export class GuideContents {
     }
     let topIds: string[];
     if (top !== undefined) {
-      topIds = top.filter((id) => this.sections.has(id) || this.guides.has(id));
-      for (const id of topIds) if (this.guides.has(id)) this.listed.add(id);
+      topIds = spread
+        .items(top)
+        .filter((id) => (this.sections.has(id) && !spread.unheaded.has(id)) || this.guides.has(id));
     } else {
-      topIds = sections.filter((s) => !listedBy.has(s.id)).map((s) => s.id);
+      topIds = spread.items(sections.filter((s) => !listedBy.has(s.id)).map((s) => s.id));
     }
+    for (const id of topIds) if (this.guides.has(id)) this.listed.add(id);
 
     this.baseTop = topIds;
     this.baseLists = lists;

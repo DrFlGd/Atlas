@@ -27,6 +27,7 @@ export function MoreMenu({
   title,
   listed,
   updatable,
+  checkOnCard = false,
   groupable = false,
   grouped = false,
   kind = 'maps',
@@ -38,6 +39,11 @@ export function MoreMenu({
   /** The game as the shell lists it; undefined for one served from the app itself. */
   listed: ListedPack | undefined;
   updatable: boolean;
+  /**
+   * The game's card shows "Check the site for changes…" (or a wiki's "Choose
+   * pages to read…", which does the same), so More does not offer it again.
+   */
+  checkOnCard?: boolean;
   /** Another game is here, so this one can be shown with it under one title. */
   groupable?: boolean;
   /** It is shown under one title already (its card says so). */
@@ -62,7 +68,7 @@ export function MoreMenu({
     setMoreOpen(false);
   };
   const rows: MoreRow[] = [];
-  if (updatable && !busy) {
+  if (updatable && !busy && !checkOnCard) {
     rows.push({
       id: 'update-pack',
       icon: 'search',
@@ -104,7 +110,7 @@ export function MoreMenu({
     rows.push({
       id: 'export-pack',
       icon: 'download',
-      title: 'Export to a file',
+      title: 'Export to a file…',
       text:
         kind === 'wiki'
           ? 'Saves this wiki with its pages and pictures in one pack file (.atlaspack), for another computer or Atlas for Android. Your progress is not in it.'
@@ -118,7 +124,7 @@ export function MoreMenu({
     rows.push({
       id: 'import-pack-file',
       icon: 'upload',
-      title: 'Import a pack file',
+      title: 'Import a pack file…',
       text: 'Adds a game or a wiki from a pack file (.atlaspack) exported by Atlas on another computer. This game is not changed.',
       run: () => void pickPackFile(),
     });

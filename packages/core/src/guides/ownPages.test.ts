@@ -15,10 +15,12 @@ import {
   packLayout,
   pageChange,
   pageTitle,
+  readInOrder,
   renameSection,
   revertPage,
   savePage,
   setPageHidden,
+  setPagesInOrder,
   setWhenWikiChanges,
   stepInLayout,
 } from './ownPages';
@@ -229,5 +231,23 @@ describe('own pages over a pack', () => {
     expect(pageTitle('  A   page \n title ')).toBe('A page title');
     expect(pageTitle('   ')).toBeNull();
     expect(pageTitle('x'.repeat(300))).toHaveLength(200);
+  });
+
+  it('keeps the say on reading in order, which wins over the pack', () => {
+    const said = setPagesInOrder(NO_OWN_PAGES, true);
+    expect(said.pagesInOrder).toBe(true);
+    expect(setPagesInOrder(said, true)).toBe(said);
+    expect(readInOrder(said, false)).toBe(true);
+    const wiki = setPagesInOrder(said, false);
+    expect(wiki.pagesInOrder).toBe(false);
+    expect(readInOrder(wiki, true)).toBe(false);
+    // Nothing said: the pack says.
+    const unsaid = setPagesInOrder(wiki, null);
+    expect('pagesInOrder' in unsaid).toBe(false);
+    expect(setPagesInOrder(NO_OWN_PAGES, null)).toBe(NO_OWN_PAGES);
+    expect(readInOrder(unsaid, true)).toBe(true);
+    expect(readInOrder(unsaid, false)).toBe(false);
+    // The contents is not changed by it.
+    expect(applyOwnPages(pack(), said)).toEqual(applyOwnPages(pack(), NO_OWN_PAGES));
   });
 });

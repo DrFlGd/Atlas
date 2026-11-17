@@ -338,11 +338,16 @@ test.describe('the pages of another game', () => {
     await page.getByTestId('add-guides-from').click();
     await page.getByTestId('guides-from-choice').filter({ hasText: 'Isle Wiki' }).click();
     await expect(page.getByTestId('guides-from-game')).toHaveText(/Isle Wiki/);
-    // Its contents, under its own heading, and its pages read here.
+    // Its pages, a source of their own chosen at the top of Guides, are read here.
     const sections = page.locator('.guides-side .guides-tree-section');
-    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/, /Isle Wiki/]);
-    await sections.filter({ hasText: 'Isle Wiki' }).click();
-    await page.getByTestId('guides-section').filter({ hasText: 'The isle' }).click();
+    await expect(sections).toHaveText([/Basics/, /The isle/, /Gear/]);
+    await page.getByTestId('guides-source-chip').click();
+    await page
+      .getByTestId('guides-sources-menu')
+      .locator('[data-testid="guides-source"][data-source="isle-wiki"]')
+      .click();
+    await expect(page.getByTestId('guides-home')).toHaveAttribute('data-source', 'isle-wiki');
+    await sections.filter({ hasText: 'The isle' }).click();
     await page.getByTestId('guides-section').filter({ hasText: 'Foes' }).click();
     await page.getByTestId('guides-page-link').filter({ hasText: 'Wolf dens' }).click();
     await expect(page.getByTestId('guides-page').locator('h1')).toHaveText('Wolf dens');

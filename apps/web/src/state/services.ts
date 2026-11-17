@@ -81,6 +81,12 @@ export const SETTINGS = {
   listViews: (gameId: string) => `listViews:${gameId}`,
   /** The list last opened in the standard layout, for Lists to offer to continue. */
   lastList: (gameId: string) => `lastList:${gameId}`,
+  /** The source of pages Guides showed last for a game, by its game id (see `guideSources.ts`). */
+  guidesSource: (gameId: string) => `guidesSource:${gameId}`,
+  /** The page read last in a guide read in order, by the game id of its pages (see `guideSources.ts`). */
+  guideReadLast: (sourceId: string) => `guideReadLast:${sourceId}`,
+  /** The type last chosen for a new location of the person's own, for the next one. */
+  newLocationType: (gameId: string) => `newLocationType:${gameId}`,
   /** Whether an open list is shown alone on the map in the standard layout (on unless turned off). */
   listOnlyOnMap: 'listOnlyOnMap',
   /** Whether the Android app keeps the screen on while it is shown. */

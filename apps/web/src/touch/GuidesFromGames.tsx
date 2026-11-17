@@ -25,13 +25,25 @@ const NONE: readonly never[] = [];
  * whose pages are read with this one's, and "Add guides from another
  * game", which lists the games on this device that have pages and no map
  * (a wiki read as a game of its own). Choosing one reads its pages here,
- * under its own heading; the other game stays as it is, and its pack is
- * never changed. The choice is kept with the person's links (see
- * `guideLinks.ts`). The wikis of the game's title (see `gameGroups.ts`) are
- * listed too, as shown with this title: they are not this game's choice,
- * so they are not stopped from here.
+ * a source of its own at the top of Guides; the other game stays as it
+ * is, and its pack is never changed. The choice is kept with the person's
+ * links (see `guideLinks.ts`). The wikis of the game's title (see
+ * `gameGroups.ts`) are listed too, as shown with this title: they are not
+ * this game's choice, so they are not stopped from here.
+ *
+ * With `addOnly` (in the list of sources at the top of Guides, which names
+ * the other games already), only "Add guides from another game"; the game
+ * chosen is passed to `onAdded` once its pages are read.
  */
-export function GuidesFromGames({ game }: { game: LoadedGame }) {
+export function GuidesFromGames({
+  game,
+  addOnly = false,
+  onAdded,
+}: {
+  game: LoadedGame;
+  addOnly?: boolean;
+  onAdded?: (gameId: string) => void;
+}) {
   const gameId = game.pack.manifest.gameId;
   const others: readonly OtherGuides[] = useGuideLinks((s) =>
     s.gameId === gameId ? s.others : NONE,
@@ -56,8 +68,12 @@ export function GuidesFromGames({ game }: { game: LoadedGame }) {
   const added = new Set([...others.map((o) => o.gameId), ...missing]);
   const offered = (games ?? []).filter((g) => !added.has(g.id));
   return (
-    <section className="guides-from" aria-label="Pages from other games" data-testid="guides-from">
-      {others.length > 0 || missing.length > 0 ? (
+    <section
+      className={addOnly ? 'guides-from guides-from-add' : 'guides-from'}
+      aria-label={addOnly ? 'Add guides from another game' : 'Pages from other games'}
+      data-testid="guides-from"
+    >
+      {!addOnly && (others.length > 0 || missing.length > 0) ? (
         <>
           <h2 className="guide-links-group-title">Pages from other games</h2>
           <ul className="touch-plain-list guides-from-list">
@@ -129,8 +145,8 @@ export function GuidesFromGames({ game }: { game: LoadedGame }) {
           ) : (
             <>
               <p className="guide-links-group-line">
-                Games on this device with pages and no map. Their pages are read here, under their
-                own heading, and can be linked to this map. The other game stays as it is.
+                Games on this device with pages and no map. Their pages can be read here, chosen at
+                the top of Guides, and linked to this map. The other game stays as it is.
               </p>
               <ul className="touch-plain-list">
                 {offered.map((other) => (
@@ -141,7 +157,9 @@ export function GuidesFromGames({ game }: { game: LoadedGame }) {
                       data-testid="guides-from-choice"
                       onClick={() => {
                         setOpen(false);
-                        void addGuidesFrom(other.id);
+                        void addGuidesFrom(other.id).then(() => {
+                          onAdded?.(other.id);
+                        });
                       }}
                     >
                       <UiIcon name="book" size={20} />

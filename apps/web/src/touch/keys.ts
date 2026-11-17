@@ -28,6 +28,7 @@ export function keyList(lists: string | null): KeyHelp[] {
     },
     { keys: ['Z'], what: 'Undo' },
     ...(lists ? [{ keys: ['C'], what: `${lists}, or back to the map` }] : []),
+    { keys: ['[', ']'], what: 'In a guide read in order, the previous or the next page' },
     { keys: ['Esc'], what: 'Close what is on top: a menu, search, the location, a list' },
     { keys: ['?'], what: 'This list of keys' },
   ];
@@ -41,7 +42,7 @@ export function withKey(label: string, key: string, shown: boolean): string {
 /** What the mouse does on the map, listed with the keys. */
 export const MOUSE_HELP: readonly { action: string; what: string }[] = [
   { action: 'Point at a location', what: 'Its name' },
-  { action: 'Click a location', what: 'Show it' },
+  { action: 'Press a location', what: 'Show it' },
   { action: 'Right-click a location', what: 'Mark it found, or not found, at once' },
   { action: 'Scroll wheel', what: 'Zoom in and out' },
 ];

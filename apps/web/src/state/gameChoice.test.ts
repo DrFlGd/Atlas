@@ -169,7 +169,7 @@ describe('the choice', () => {
   });
 });
 
-describe('Select all and Select none among the pages to choose', () => {
+describe('Tick all and Tick none among the pages to choose', () => {
   const choice = () =>
     newChoice(
       'add',

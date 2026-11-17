@@ -109,11 +109,11 @@ export function AddPanel({ game, list }: { game: LoadedGame; list: OwnList }) {
         {tab === 'map' ? (
           <div className="editor-side-body">
             <p className="editor-side-line editor-side-lead">
-              Tap a location on the map to add it {where}.
+              Press a location on the map to add it {where}.
             </p>
             <p className="editor-side-line">
-              Each tap adds one step and opens it. A location that is in the list already opens its
-              step.
+              Each press adds one step and opens it. A location that is in the list already opens
+              its step.
             </p>
           </div>
         ) : tab === 'type' ? (

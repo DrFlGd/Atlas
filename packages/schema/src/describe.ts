@@ -118,6 +118,7 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
     ...(previous.homePage ? { homePage: previous.homePage } : {}),
     ...(previous.pageWidth ? { pageWidth: previous.pageWidth } : {}),
     ...(previous.mapLinks && previous.mapLinks.length > 0 ? { mapLinks: previous.mapLinks } : {}),
+    ...(previous.pagesInOrder === true ? { pagesInOrder: true as const } : {}),
     created,
     updated: info.updated,
     writtenBy: info.writtenBy,

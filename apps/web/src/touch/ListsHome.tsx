@@ -1,7 +1,7 @@
 import { checklistTally, tallyStates, type ChecklistEntry, type ChecklistTally } from '@atlas/core';
 import { useMemo } from 'react';
 import { UiIcon } from '../components/icons';
-import { checklistScreenTitle, openChecklist, openGuide } from '../state/checklists';
+import { openChecklist, openGuide } from '../state/checklists';
 import { numberFormat } from '../state/derived';
 import { listedGuides } from '../state/guides';
 import { useOwnLists } from '../state/ownLists';
@@ -58,7 +58,7 @@ export function ListsHome({ game }: { game: LoadedGame }) {
     <div className="touch-page" data-testid="lists-home">
       <header className="touch-page-head">
         <div className="touch-page-head-text">
-          <h1 className="touch-page-title">{checklistScreenTitle(game)}</h1>
+          <h1 className="touch-page-title">Lists</h1>
           <p className="touch-page-figure">
             {game.pack.manifest.title}
             {profile ? ` · ${profile}` : ''}

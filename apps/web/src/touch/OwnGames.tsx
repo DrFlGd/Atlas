@@ -630,7 +630,7 @@ function DeleteMapConfirm({
           {working ? 'Deleting…' : 'Delete map'}
         </button>
         <button type="button" className="own-pill-button" disabled={working} onClick={onClose}>
-          Keep it
+          Cancel
         </button>
       </div>
       {problem ? (

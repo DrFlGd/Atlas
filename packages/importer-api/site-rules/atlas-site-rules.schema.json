@@ -479,6 +479,42 @@
                     },
                     "additionalProperties": false
                   },
+                  "menu": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "enum": ["both", "main", "side"]
+                      },
+                      "headings": {
+                        "type": "string"
+                      },
+                      "leaveOut": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "keep": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "pagesInOrder": {
+                    "type": "boolean"
+                  },
                   "mapLinks": {
                     "minItems": 1,
                     "maxItems": 10,
@@ -949,6 +985,42 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "menu": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "enum": ["both", "main", "side"]
+                      },
+                      "headings": {
+                        "type": "string"
+                      },
+                      "leaveOut": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "keep": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "pagesInOrder": {
+                    "type": "boolean"
                   },
                   "mapLinks": {
                     "minItems": 1,
@@ -1429,6 +1501,42 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "menu": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "enum": ["both", "main", "side"]
+                      },
+                      "headings": {
+                        "type": "string"
+                      },
+                      "leaveOut": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "keep": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "pagesInOrder": {
+                    "type": "boolean"
                   },
                   "mapLinks": {
                     "minItems": 1,
@@ -2401,6 +2509,42 @@
                 }
               },
               "additionalProperties": false
+            },
+            "menu": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "enum": ["both", "main", "side"]
+                },
+                "headings": {
+                  "type": "string"
+                },
+                "leaveOut": {
+                  "minItems": 1,
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "keep": {
+                  "minItems": 1,
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "pagesInOrder": {
+              "type": "boolean"
             }
           },
           "required": ["reader", "reading"],

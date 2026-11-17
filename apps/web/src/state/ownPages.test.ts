@@ -45,3 +45,12 @@ describe('the width of a game’s pages', () => {
     expect(mergeOwnPages(NO_OWN_PAGES, NO_OWN_PAGES)).not.toHaveProperty('pageWidth');
   });
 });
+
+describe('whether a game’s pages are read in order', () => {
+  it('comes with own pages added from a pack file, when the file says', () => {
+    const here: OwnPages = { ...NO_OWN_PAGES, pagesInOrder: true };
+    expect(mergeOwnPages(here, { ...NO_OWN_PAGES, pagesInOrder: false }).pagesInOrder).toBe(false);
+    expect(mergeOwnPages(here, NO_OWN_PAGES).pagesInOrder).toBe(true);
+    expect(mergeOwnPages(NO_OWN_PAGES, NO_OWN_PAGES)).not.toHaveProperty('pagesInOrder');
+  });
+});
