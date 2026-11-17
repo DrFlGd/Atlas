@@ -129,7 +129,7 @@ jobs:
           commit="$(git rev-parse --short HEAD)"
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas $VERSION for Windows: an offline map, checklist and guide viewer. It comes with a small demo world, and shows map packs from its maps folder and from any folder you choose (**Settings**, then **Map packs elsewhere**).
+          Atlas $VERSION for Windows: an offline map, checklist and guide viewer. It comes with a small demo world, and shows map packs from its maps folder and from any folder you choose (**Settings**, then **Games in other folders**).
 
           ## How to install
 
@@ -138,6 +138,10 @@ jobs:
           3. Follow the installer, then start **Atlas** from the Start menu.
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
+
+          ## New in 0.19.1
+
+          - **Fixed: a link to several locations of a map.** A guide's link that names more than one location of a map, or ends with a comma, stayed a web link. It now opens the first of its locations that your map has.
 
           ## New in 0.19.0
 

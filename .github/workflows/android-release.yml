@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.19.1
+
+          - **Fixed: a link to several locations of a map.** A guide's link that names more than one location of a map, or ends with a comma, stayed a web link. It now opens the first of its locations that your map has.
+
           ## New in 0.19.0
 
           - **Choose what to read.** When a game has pages from more than one source, a switcher at the top of **Guides** lists each one with its site and the word Guide or Wiki. The app remembers your choice for each game, and links and search still reach every source.
