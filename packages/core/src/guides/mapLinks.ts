@@ -54,22 +54,25 @@ const decoded = (text: string): string | null => {
 };
 
 /**
- * The id of a location a web link names, by the first entry of `links` it
- * fits: its host is one of the entry's (with or without `www.`, `http` or
- * `https`), its whole path matches the entry's address (a `/` at the end
- * ignored, case counting), and the id is the part of the path at `{id}`, or
- * the value of the entry's `query`. Null when it fits no entry, or the id
- * it holds cannot be a location's.
+ * The ids of the locations a web link names, by the first entry of `links`
+ * it fits: its host is one of the entry's (with or without `www.`, `http`
+ * or `https`), its whole path matches the entry's address (a `/` at the
+ * end ignored, case counting), and the ids are the part of the path at
+ * `{id}`, or the value of the entry's `query`. A site may name several
+ * locations in one link, with commas between their ids, or end the one id
+ * with a comma: each part is an id, in the link's order, an empty part or
+ * one that cannot be a location's left out. None when the link fits no
+ * entry, or holds no id that can be a location's.
  */
-export function mapLinkId(links: readonly MapLink[], href: string): string | null {
-  if (links.length === 0 || !/^https?:\/\//iu.test(href)) return null;
+export function mapLinkIds(links: readonly MapLink[], href: string): string[] {
+  if (links.length === 0 || !/^https?:\/\//iu.test(href)) return [];
   let url: URL;
   try {
     url = new URL(href);
   } catch {
-    return null;
+    return [];
   }
-  if (url.username || url.password) return null;
+  if (url.username || url.password) return [];
   const host = url.hostname.toLowerCase().replace(/^www\./u, '');
   const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/u, '') : url.pathname;
   for (const link of links) {
@@ -78,10 +81,19 @@ export function mapLinkId(links: readonly MapLink[], href: string): string | nul
     if (!match) continue;
     const raw =
       link.query === undefined ? decoded(match[1] ?? '') : url.searchParams.get(link.query);
-    const id = raw?.trim() ?? '';
-    if (LOCAL_ID.test(id)) return id;
+    const ids: string[] = [];
+    for (const part of (raw ?? '').split(',')) {
+      const id = part.trim();
+      if (LOCAL_ID.test(id) && !ids.includes(id)) ids.push(id);
+    }
+    if (ids.length > 0) return ids;
   }
-  return null;
+  return [];
+}
+
+/** The id of the first location a web link names (see {@link mapLinkIds}), or null. */
+export function mapLinkId(links: readonly MapLink[], href: string): string | null {
+  return mapLinkIds(links, href)[0] ?? null;
 }
 
 /** The site id of a location: the local id of its id, or null for one a person made. */
@@ -119,19 +131,20 @@ export interface MapLinkTarget {
 /**
  * The location a web link of a page names, among the games given in order
  * (the game shown first, then the other games of its title): the first
- * game with a location of that site id. Null when the link fits no entry
- * of `links`, or no game has the location.
+ * game with a location of that site id; of a link that names several
+ * locations, the first of them any game has. Null when the link fits no
+ * entry of `links`, or no game has a location it names.
  */
 export function mapLinkTarget(
   links: readonly MapLink[],
   href: string,
   games: readonly { gameId: string; locations: readonly Location[] }[],
 ): MapLinkTarget | null {
-  const siteId = mapLinkId(links, href);
-  if (siteId === null) return null;
-  for (const game of games) {
-    const locationId = locationsBySiteId(game.locations).get(siteId);
-    if (locationId) return { gameId: game.gameId, locationId };
+  for (const siteId of mapLinkIds(links, href)) {
+    for (const game of games) {
+      const locationId = locationsBySiteId(game.locations).get(siteId);
+      if (locationId) return { gameId: game.gameId, locationId };
+    }
   }
   return null;
 }
