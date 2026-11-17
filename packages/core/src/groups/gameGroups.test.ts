@@ -7,6 +7,7 @@ import {
   makeFirst,
   renameGroup,
   sameTitleGames,
+  siteOf,
   sourceNames,
   sourceToOpen,
   takeOut,
@@ -145,6 +146,92 @@ describe('a list of games with titles', () => {
     ]);
   });
 
+  it('tells sources of one importer apart by their sites, and numbers only those still alike', () => {
+    const names = sourceNames([
+      {
+        gameId: 'a',
+        title: 'Fenmoor',
+        importerTitle: 'Example Wiki',
+        site: 'wiki.fenmoor.example',
+      },
+      {
+        gameId: 'b',
+        title: 'Fenmoor',
+        importerTitle: 'Demo map site',
+        site: 'maps.fenmoor.example',
+      },
+      {
+        gameId: 'c',
+        title: 'Fenmoor',
+        importerTitle: 'Example Wiki',
+        site: 'fenmoor.pages.example',
+      },
+      { gameId: 'd', title: 'Fenmoor', importerTitle: 'Example Wiki' },
+    ]);
+    // The map site's name is no other's: it stays as it is, without its site.
+    expect([...names.values()]).toEqual([
+      'Example Wiki (wiki.fenmoor.example)',
+      'Demo map site',
+      'Example Wiki (fenmoor.pages.example)',
+      'Example Wiki',
+    ]);
+  });
+
+  it('numbers sources of one importer whose site is the same or not known, never with their site', () => {
+    expect([
+      ...sourceNames([
+        {
+          gameId: 'a',
+          title: 'Fenmoor',
+          importerTitle: 'Example Wiki',
+          site: 'wiki.fenmoor.example',
+        },
+        {
+          gameId: 'b',
+          title: 'Fenmoor',
+          importerTitle: 'Example Wiki',
+          site: 'WIKI.fenmoor.example',
+        },
+        {
+          gameId: 'c',
+          title: 'Fenmoor',
+          importerTitle: 'Example Wiki',
+          site: 'fenmoor.pages.example',
+        },
+        { gameId: 'd', title: 'Fenmoor', importerTitle: 'Example Wiki', site: null },
+      ]).values(),
+    ]).toEqual([
+      'Example Wiki 1',
+      'Example Wiki 2',
+      'Example Wiki (fenmoor.pages.example)',
+      'Example Wiki 3',
+    ]);
+    // No site known for any: numbered, as before sites were known.
+    expect([
+      ...sourceNames([
+        { gameId: 'a', title: 'Fenmoor', importerTitle: 'Example Wiki' },
+        { gameId: 'b', title: 'Fenmoor', importerTitle: 'Example Wiki', site: '' },
+      ]).values(),
+    ]).toEqual(['Example Wiki 1', 'Example Wiki 2']);
+    // Two games made in the app have no site.
+    expect([
+      ...sourceNames([
+        { gameId: 'a', title: 'Fenmoor', madeInApp: true },
+        { gameId: 'b', title: 'Fenmoor', madeInApp: true },
+      ]).values(),
+    ]).toEqual(['Your own 1', 'Your own 2']);
+  });
+
+  it('keeps every name different from the plain names of other sources', () => {
+    const names = sourceNames([
+      { gameId: 'a', title: 'Fenmoor', importerTitle: 'Example Wiki' },
+      { gameId: 'b', title: 'Fenmoor', importerTitle: 'Example Wiki' },
+      { gameId: 'c', title: 'Example Wiki 1' },
+    ]);
+    expect([...names.values()]).toEqual(['Example Wiki 1', 'Example Wiki 2', 'Example Wiki 1 2']);
+    expect(new Set(names.values()).size).toBe(3);
+  });
+
   it('opens the source last used, else the first here, a map before a wiki', () => {
     const group: GameGroup = {
       id: 'g',
@@ -159,5 +246,49 @@ describe('a list of games with titles', () => {
     // Wikis only: the first.
     expect(sourceToOpen(group, new Set(['wiki']), null, hasMap)).toBe('wiki');
     expect(sourceToOpen(group, new Set(), null, hasMap)).toBeNull();
+  });
+});
+
+describe('the site a game was made from', () => {
+  it('is the host of its first web page, in lower case and without www', () => {
+    expect(siteOf([{ url: 'https://wiki.fenmoor.example/wiki/Stones' }])).toBe(
+      'wiki.fenmoor.example',
+    );
+    expect(siteOf([{ url: 'http://WWW.Fenmoor.Example:8080/maps?x=1#top' }])).toBe(
+      'fenmoor.example',
+    );
+    expect(siteOf([{ url: 'https://user:secret@wiki.fenmoor.example./a' }])).toBe(
+      'wiki.fenmoor.example',
+    );
+    // Only a leading www goes.
+    expect(siteOf([{ url: 'https://wiki.www.example/' }])).toBe('wiki.www.example');
+    expect(siteOf([{ url: 'https://www/' }])).toBe('www');
+  });
+
+  it('is the host of the first page when pages are of several hosts', () => {
+    expect(
+      siteOf([
+        { url: 'https://fenmoor.pages.example/a' },
+        { url: 'https://wiki.fenmoor.example/b' },
+      ]),
+    ).toBe('fenmoor.pages.example');
+  });
+
+  it('counts only https and http addresses', () => {
+    expect(siteOf([{ url: 'ftp://files.fenmoor.example/a' }])).toBeNull();
+    expect(siteOf([{ url: 'file:///home/maps/a.html' }])).toBeNull();
+    expect(siteOf([{ url: 'atlas-pack://localhost/demo/' }])).toBeNull();
+    expect(siteOf([{ url: 'not an address' }])).toBeNull();
+    expect(siteOf([{ url: 42 }, {}])).toBeNull();
+    // A page that does not count is passed over for the next.
+    expect(siteOf([{ url: 'file:///a.html' }, { url: 'https://maps.fenmoor.example/b' }])).toBe(
+      'maps.fenmoor.example',
+    );
+  });
+
+  it('is none for a game that records no page', () => {
+    expect(siteOf([])).toBeNull();
+    expect(siteOf(undefined)).toBeNull();
+    expect(siteOf(null)).toBeNull();
   });
 });

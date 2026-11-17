@@ -222,11 +222,13 @@ function installFakeShell({
   downloads,
   wiki,
   others,
+  listed,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
   wiki: WikiSite | null;
   others: Record<string, WikiSite>;
+  listed: Record<string, unknown>[];
 }) {
   const shell: MockShell = {
     events: [],
@@ -260,14 +262,21 @@ function installFakeShell({
     current = { ...current, url, polls: 0, read: false };
     shell.events.push({ what: 'browse', url, at: Date.now() });
   };
-  const packs: Record<string, unknown>[] = [];
+  const packs: Record<string, unknown>[] = structuredClone(listed);
   const sources: Record<
     string,
     { key: string; url: string; importedAt: string; mapId?: string; data: string }[]
   > = {};
   // What each pack written holds, and the pages it was made from, for the Library's facts.
   const contents: Record<string, Record<string, number>> = {};
-  const written: Record<string, { url: string; mapId?: string; importedAt?: string }[]> = {};
+  const written: Record<string, { url: string; mapId?: string; importedAt?: string }[]> =
+    Object.fromEntries(
+      listed.flatMap((pack) =>
+        Array.isArray(pack.pages) && pack.pages.length > 0
+          ? [[pack.id as string, pack.pages as { url: string }[]]]
+          : [],
+      ),
+    );
   const listing = () => ({
     mapsFolder: { path: '/maps', isDefault: true, exists: true },
     packs: structuredClone(packs),
@@ -718,10 +727,13 @@ export async function setUp(
   {
     wiki = null,
     others = null,
+    listed = [],
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
     others?: Record<string, WikiSite> | null;
+    /** Packs the shell lists from the start, as it lists packs in the maps folder (`ListedPack`). */
+    listed?: Record<string, unknown>[];
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -797,6 +809,7 @@ export async function setUp(
     downloads,
     wiki,
     others: others ?? {},
+    listed,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');

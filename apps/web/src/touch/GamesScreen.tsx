@@ -241,7 +241,11 @@ function TitleRow({ group, shownId }: { group: GameGroup; shownId: string | null
           <span className="touch-row-title">{group.title}</span>
           <SourcesLine group={group} className="touch-row-detail" />
           {current && shownId ? (
-            <span className="touch-row-detail" data-testid="title-shown">
+            <span
+              className="touch-row-detail"
+              title={`Shown: ${names.get(shownId) ?? shownId}`}
+              data-testid="title-shown"
+            >
               Shown: {names.get(shownId) ?? shownId}
             </span>
           ) : null}

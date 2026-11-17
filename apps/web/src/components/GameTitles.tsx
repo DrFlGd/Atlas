@@ -14,6 +14,7 @@ import {
   useGameGroups,
   useOfferFor,
   useSourceNames,
+  useSourceSites,
   useTitleOf,
   whyGroupsCannotChange,
 } from '../state/gameGroups';
@@ -37,9 +38,15 @@ export function SourcesLine({ group, className }: { group: GameGroup; className?
   const names = useSourceNames(group);
   const catalog = useAtlas((s) => s.catalog);
   const listed = presentMembers(group, catalog).map((entry) => names.get(entry.id) ?? entry.title);
+  const text = `Sources: ${listed.join(', ')}`;
+  // Cut short where the line is one line (Games): the whole of it shows on hover.
   return (
-    <span className={className} data-testid="title-sources">
-      Sources: {listed.join(', ')}
+    <span
+      className={className ? `${className} wrap-anywhere` : 'wrap-anywhere'}
+      title={text}
+      data-testid="title-sources"
+    >
+      {text}
     </span>
   );
 }
@@ -161,9 +168,10 @@ export function ShowWithAnotherForm({ gameId, onClose }: { gameId: string; onClo
 }
 
 /**
- * A title's sources, each with its name and its game's title, the one
- * shown marked, a way to open each (`onOpen`) and to take it out; renaming
- * the title, adding another game, and "Show separately again".
+ * A title's sources, each with its name, its game's title and the site it
+ * was made from where that is known, the one shown marked, a way to open
+ * each (`onOpen`) and to take it out; renaming the title, adding another
+ * game, and "Show separately again".
  */
 export function TitleSourcesPanel({
   group,
@@ -179,6 +187,7 @@ export function TitleSourcesPanel({
 }) {
   const catalog = useAtlas((s) => s.catalog);
   const names = useSourceNames(group);
+  const sites = useSourceSites(group);
   const editable = useGameGroups((s) => canChangeGameGroups(s));
   const why = useGameGroups((s) => whyGroupsCannotChange(s));
   const [mode, setMode] = useState<'rename' | 'add' | null>(null);
@@ -189,6 +198,7 @@ export function TitleSourcesPanel({
       <ul className="title-sources-list">
         {present.map((entry) => {
           const name = names.get(entry.id) ?? entry.title;
+          const site = sites.get(entry.id);
           const shown = entry.id === shownId;
           return (
             <li
@@ -199,8 +209,9 @@ export function TitleSourcesPanel({
             >
               <span className="title-source-text">
                 <span className="title-source-name">{name}</span>
-                <span className="muted small">
+                <span className="muted small wrap-anywhere" data-testid="title-source-detail">
                   {entry.title}
+                  {site ? ` · ${site}` : ''}
                   {shown ? ' · shown' : ''}
                 </span>
               </span>
@@ -386,7 +397,7 @@ export function SameTitleOfferCard({ gameId }: { gameId: string | null }) {
         , already here. Show them under one title?
       </p>
       {names && names.size > 0 ? (
-        <p className="muted small">Sources now: {[...names.values()].join(', ')}.</p>
+        <p className="muted small wrap-anywhere">Sources now: {[...names.values()].join(', ')}.</p>
       ) : null}
       <label htmlFor={inputId} className="title-legend">
         Title

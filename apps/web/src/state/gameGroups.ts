@@ -5,6 +5,7 @@ import {
   randomId,
   renameGroup,
   sameTitleGames,
+  siteOf,
   sourceNames,
   sourceToOpen,
   takeOut,
@@ -61,6 +62,8 @@ export interface SourceFacts {
   /** The importer that made it (its manifest's `source.importer.title`). */
   importerTitle: string | null;
   madeInApp: boolean;
+  /** The site it was made from (see `siteOf` in core), or null when it records no web page. */
+  site: string | null;
   /** Its maps, in order; empty for a game of pages with no map. */
   maps: { id: string; name: string }[];
 }
@@ -306,18 +309,20 @@ function factsAt(entry: PackEntry): Promise<SourceFacts> {
       const manifest = (await json('manifest.json')) as {
         title?: unknown;
         madeInApp?: unknown;
-        source?: { importer?: { title?: unknown } };
+        source?: { importer?: { title?: unknown }; pages?: unknown };
         contents?: { counts?: { maps?: unknown } };
       } | null;
       const counted = manifest?.contents?.counts?.maps;
       // A game of pages has no maps file: its manifest says so where it can.
       const maps = counted === 0 ? [] : await json('maps.json');
       const importer = manifest?.source?.importer?.title;
+      const pages = manifest?.source?.pages;
       return {
         gameId: entry.id,
         title: typeof manifest?.title === 'string' ? manifest.title : entry.title,
         importerTitle: typeof importer === 'string' && importer.trim() !== '' ? importer : null,
         madeInApp: manifest?.madeInApp === true,
+        site: Array.isArray(pages) ? siteOf(pages.filter(isRecord)) : null,
         maps: Array.isArray(maps)
           ? maps.flatMap((map: unknown) => {
               const { id, name } = (map ?? {}) as { id?: unknown; name?: unknown };
@@ -330,6 +335,9 @@ function factsAt(entry: PackEntry): Promise<SourceFacts> {
   }
   return known;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
 
 /** Reads what is known of the games of the titles here, once per game and its files. */
 export async function loadSourceFacts(entries: readonly PackEntry[]): Promise<void> {
@@ -347,6 +355,31 @@ useAtlas.subscribe((state, before) => {
 });
 
 /**
+ * What is known of each source of a title on this device, to name it: what
+ * its pack says, or what the Library lists while that is read (the desktop
+ * and Android apps list the pages a pack was made from; a browser has no
+ * list and waits for the pack).
+ */
+function sourcesHere(
+  group: GameGroup,
+  catalog: readonly PackEntry[],
+  facts: Readonly<Record<string, SourceFacts>>,
+) {
+  const listing = useAtlas.getState().library;
+  return presentMembers(group, catalog).map((entry) => {
+    const known = facts[entry.id];
+    const listed = listing?.packs.find((pack) => pack.id === entry.id);
+    return {
+      gameId: entry.id,
+      title: known?.title ?? entry.title,
+      importerTitle: known?.importerTitle ?? listed?.imported?.importerTitle ?? null,
+      madeInApp: known?.madeInApp ?? listed?.madeInApp === true,
+      site: known?.site ?? siteOf(listed?.pages),
+    };
+  });
+}
+
+/**
  * The name of each source of a title on this device, by game id (see
  * `sourceNames` in core): from what its pack says, or what the Library
  * lists while that is read.
@@ -356,19 +389,7 @@ export function namesOfSources(
   catalog: readonly PackEntry[] = useAtlas.getState().catalog,
   facts: Readonly<Record<string, SourceFacts>> = get().facts,
 ): Map<string, string> {
-  const listing = useAtlas.getState().library;
-  return sourceNames(
-    presentMembers(group, catalog).map((entry) => {
-      const known = facts[entry.id];
-      const listed = listing?.packs.find((pack) => pack.id === entry.id);
-      return {
-        gameId: entry.id,
-        title: known?.title ?? entry.title,
-        importerTitle: known?.importerTitle ?? listed?.imported?.importerTitle ?? null,
-        madeInApp: known?.madeInApp ?? listed?.madeInApp === true,
-      };
-    }),
-  );
+  return sourceNames(sourcesHere(group, catalog, facts));
 }
 
 /** The names of a title's sources, kept up to date, and read when first asked for. */
@@ -377,6 +398,23 @@ export function useSourceNames(group: GameGroup | undefined): Map<string, string
   const facts = useGameGroups((s) => s.facts);
   useSourceFacts(group);
   return group ? namesOfSources(group, catalog, facts) : new Map<string, string>();
+}
+
+/**
+ * The site each source of a title on this device was made from, by game
+ * id, where it is known (see `siteOf` in core), kept up to date.
+ */
+export function useSourceSites(group: GameGroup | undefined): Map<string, string> {
+  const catalog = useAtlas((s) => s.catalog);
+  const facts = useGameGroups((s) => s.facts);
+  useAtlas((s) => s.library);
+  useSourceFacts(group);
+  const sites = new Map<string, string>();
+  if (!group) return sites;
+  for (const source of sourcesHere(group, catalog, facts)) {
+    if (source.site) sites.set(source.gameId, source.site);
+  }
+  return sites;
 }
 
 /** Reads what is known of a title's sources while it is shown (see {@link loadSourceFacts}). */
