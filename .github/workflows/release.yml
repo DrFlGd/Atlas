@@ -139,6 +139,21 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.19.0
+
+          You choose which guide or wiki to read at the top of **Guides**, a guide reads in order, and many screens say things more plainly.
+
+          - **Choose what to read.** When a game has pages from more than one source, a switcher at the top of **Guides** lists each one with its site and the word Guide or Wiki. The contents, the landing page and the path line show the one you chose, and the app remembers it for each game. Links, search and **From the wiki** still reach every source: following a link to a page of another source switches to it, and a search result from another source says which one it is in.
+          - **A guide reads in order.** Each page of a guide ends with **Previous** and **Next**, the keys [ and ] turn the pages, and the guide's first screen offers **Continue** at the page you read last. A game says whether its pages are a guide. For any game you can say so yourself: **Edit the pages**, then **These pages are read in order**.
+          - **Pages beside sections.** The top of a game's contents can hold pages and sections in one order, so a guide's table of contents shows as its site orders it.
+          - **Notices cover nothing.** A notice now stands at the top and moves the screen down a little while it shows, so it never lies over a button or a field.
+          - **A new location of yours takes the type you used last.** The first time, the form asks you to choose a type. Before, it took the game's first type without asking.
+          - **Clearer words.** Press in place of Tap and Click. The Lists section is headed **Lists**. **Hide found** on every size of screen. **Export to a file…**, **Import a pack file…** and **Import a list…** read the same everywhere. Every question offers the action by its name and **Cancel**; leaving a page with changes offers **Save**, **Discard changes** and **Cancel**.
+          - **Smaller fixes.** **Edit locations** and the progress ring show on the Map only, so the map's name is no longer cut short. A problem with a photo shows under the button that caused it. On a phone the map's credit line is no longer under **Nearest unfound**. In Settings, **Games in other folders** names its two buttons for what they add.
+          - **Fixed: pages of another game that stayed as they were.** When the pages of another game shown with this one were built again or replaced, Guides kept showing the earlier pages until the app was restarted.
+
+          A game or a file made with 0.19.0 still opens in older versions of Atlas, which show loose pages at the top of the contents under a heading of their own.
+
           ## New in 0.18.0
 
           A picture that opens large or moves says so with a small mark, sources are told apart by their site, and a guide's link to a location of a map opens that location.
