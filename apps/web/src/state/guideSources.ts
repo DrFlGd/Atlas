@@ -333,11 +333,19 @@ export async function loadReadLast(sourceIds: readonly string[]): Promise<void> 
   if (Object.keys(found).length > 0) set({ readLast: { ...get().readLast, ...found } });
 }
 
-/** Shows a source in a game's Guides, and keeps that for the next time. */
+/**
+ * Shows a source in a game's Guides, and keeps that for the next time. For
+ * a game whose kept choice was not read yet, this one is the newer, so
+ * there is nothing left to read.
+ */
 export function chooseGuideSource(gameId: string, sourceId: string): void {
   const state = get();
   if (state.gameId === gameId && state.chosen === sourceId) return;
-  set(state.gameId === gameId ? { chosen: sourceId } : { gameId, chosen: sourceId, ready: false });
+  set(
+    state.gameId === gameId
+      ? { chosen: sourceId }
+      : { gameId, chosen: sourceId, ready: true, othersSay: {} },
+  );
   saveSetting(SETTINGS.guidesSource(gameId), sourceId);
 }
 
