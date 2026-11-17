@@ -68,7 +68,7 @@ export function ProgressScreen() {
       </header>
       <div className="touch-scroll touch-page-body" data-scroll-root>
         {group ? (
-          <p className="touch-note" data-testid="progress-source">
+          <p className="touch-note wrap-anywhere" data-testid="progress-source">
             Progress of the source {names.get(game.entry.id) ?? game.pack.manifest.title} only. Each
             source of {group.title} keeps its own found marks.
           </p>

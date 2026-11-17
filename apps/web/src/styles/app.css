@@ -90,6 +90,12 @@ select {
   font-size: 12.5px;
 }
 
+/* Text that can hold a long word, such as the host of a site: it wraps anywhere rather than overflow. */
+.wrap-anywhere {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .mono {
   font-family: var(--atlas-mono);
   font-size: 12.5px;

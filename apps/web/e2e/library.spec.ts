@@ -1,6 +1,6 @@
 import { collectErrors } from './helpers';
 import { expect, test } from './layout';
-import { DOWNLOADS_BUILD, mock, paste, realErrors, setUp, url } from './fakeShell';
+import { DOWNLOADS_BUILD, mock, paste, realErrors, setUp, SITE, url } from './fakeShell';
 
 /**
  * The Library of the desktop app, against the stand-in shell of
@@ -81,7 +81,10 @@ test('adds a map from the box, opens it, and shows its map', async ({ page }) =>
   await expect(flow).toBeHidden();
   const pane = page.getByTestId('library-game-pane');
   await expect(pane).toHaveAttribute('data-pack', 'test-valley');
-  await expect(pane.getByTestId('library-facts')).toContainText('Added with Demo map site');
+  // The importer, and the site of the page it was added from.
+  await expect(pane.getByTestId('library-origin')).toHaveText(
+    `Added with Demo map site from ${new URL(SITE).hostname}`,
+  );
   const row = page.locator('[data-testid="library-game"][data-pack="test-valley"]');
   await expect(row).toHaveAttribute('aria-current', 'true');
 

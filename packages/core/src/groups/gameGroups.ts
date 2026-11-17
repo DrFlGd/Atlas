@@ -166,6 +166,39 @@ export function titleRows<E extends { id: string }>(
   return rows;
 }
 
+/**
+ * The site a game was made from, for people to read: the host of the first
+ * web page its manifest records (`source.pages`), in lower case and without
+ * a leading `www.`, such as `wiki.fenmoor.example`. Only `https` and `http`
+ * addresses count; a page with any other address is passed over. Null when
+ * no page counts: a game made in the app, one that comes with the app, or
+ * one from a pack file that records no page.
+ */
+export function siteOf(pages: readonly { url?: unknown }[] | null | undefined): string | null {
+  for (const page of pages ?? []) {
+    const host = webHost(page.url);
+    if (host) return host;
+  }
+  return null;
+}
+
+/** The host of a web address, as {@link siteOf} gives it; null for anything else. */
+function webHost(address: unknown): string | null {
+  if (typeof address !== 'string') return null;
+  let url: URL;
+  try {
+    url = new URL(address.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^www\.(?=.)/, '');
+  return host === '' ? null : host;
+}
+
 /** What is known of a source to name it. */
 export interface SourceFacts {
   gameId: string;
@@ -175,13 +208,30 @@ export interface SourceFacts {
   importerTitle?: string | null;
   /** It was made in the app. */
   madeInApp?: boolean;
+  /** The site it was made from (see {@link siteOf}), when known. */
+  site?: string | null;
 }
 
 /**
- * The name of each source of a title, by game id: the importer that made
- * it, "Your own" for a game made in the app, else the game's own title.
- * Sources that would have the same name are numbered in the title's order
- * ("Demo map site 1", "Demo map site 2").
+ * The name of each source of a title, by game id. A source is first named
+ * by the importer that made it, "Your own" for a game made in the app, else
+ * the game's own title. When two or more sources would have the same name
+ * (compared as titles are, see {@link titleKey}), those sources are told
+ * apart, and only those:
+ *
+ * - one whose site is known and is the site of no other of them gets its
+ *   site: "Example Wiki (wiki.fenmoor.example)";
+ * - the others (no site known, or a site another of them shares) are
+ *   numbered among themselves in the title's order: "Example Wiki 1",
+ *   "Example Wiki 2". A site and a number are never both given;
+ * - when only one of them is left without a site of its own, it keeps the
+ *   plain name ("Example Wiki"), which is no other's.
+ *
+ * A source whose name is no other's keeps it as it is. So a name changes
+ * only when a source that would share it joins or leaves the title, or its
+ * site becomes known. Should a name made so be the plain name of another
+ * source, the later one in the title's order gets a further number, so the
+ * names are always different.
  */
 export function sourceNames(sources: readonly SourceFacts[]): Map<string, string> {
   const base = sources.map((source) => {
@@ -190,20 +240,44 @@ export function sourceNames(sources: readonly SourceFacts[]): Map<string, string
     if (source.madeInApp) return 'Your own';
     return source.title.trim() || source.gameId;
   });
-  const counts = new Map<string, number>();
-  for (const name of base) counts.set(titleKey(name), (counts.get(titleKey(name)) ?? 0) + 1);
-  const seen = new Map<string, number>();
+  const sites = sources.map((source) => {
+    const site = source.site?.trim().toLowerCase();
+    return site === undefined || site === '' ? null : site;
+  });
+  const sharing = new Map<string, number[]>();
+  base.forEach((name, i) => {
+    const key = titleKey(name);
+    sharing.set(key, [...(sharing.get(key) ?? []), i]);
+  });
+  const named: string[] = [...base];
+  for (const indexes of sharing.values()) {
+    if (indexes.length < 2) continue;
+    const siteCounts = new Map<string, number>();
+    for (const i of indexes) {
+      const site = sites[i];
+      if (site) siteCounts.set(site, (siteCounts.get(site) ?? 0) + 1);
+    }
+    const left: number[] = [];
+    for (const i of indexes) {
+      const site = sites[i];
+      if (site && siteCounts.get(site) === 1) named[i] = `${base[i]!} (${site})`;
+      else left.push(i);
+    }
+    if (left.length > 1) {
+      left.forEach((i, n) => {
+        named[i] = `${base[i]!} ${n + 1}`;
+      });
+    }
+  }
+  // Names made above are different from one another; this keeps them
+  // different from the plain names of other sources too.
+  const taken = new Set<string>();
   const names = new Map<string, string>();
   sources.forEach((source, i) => {
-    const name = base[i]!;
-    const key = titleKey(name);
-    if ((counts.get(key) ?? 0) < 2) {
-      names.set(source.gameId, name);
-      return;
-    }
-    const n = (seen.get(key) ?? 0) + 1;
-    seen.set(key, n);
-    names.set(source.gameId, `${name} ${n}`);
+    let name = named[i]!;
+    for (let n = 2; taken.has(titleKey(name)); n++) name = `${named[i]!} ${n}`;
+    taken.add(titleKey(name));
+    names.set(source.gameId, name);
   });
   return names;
 }

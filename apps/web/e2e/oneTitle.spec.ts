@@ -46,6 +46,8 @@ interface Copy {
   importer?: string;
   /** A game of pages: the demo's guides only, without its maps. */
   wiki?: boolean;
+  /** The web pages its manifest records it was made from (with `importer`). */
+  pages?: string[];
 }
 
 /**
@@ -76,9 +78,9 @@ async function serveGames(page: Page, copies: Copy[], demoImporter?: string): Pr
   }
 }
 
-const importedBy = (title: string) => ({
+const importedBy = (title: string, pages: string[] = []) => ({
   importer: { id: title.toLowerCase().replaceAll(' ', '-'), title },
-  pages: [],
+  pages: pages.map((url) => ({ url, importedAt: '2026-01-05T10:00:00.000Z' })),
 });
 
 const WIKI_FILES = ['manifest.json', 'sections.json', 'pictures.json', 'guides.json'];
@@ -106,7 +108,7 @@ async function serveCopy(route: Route, copy: Copy): Promise<void> {
         gameId: copy.id,
         title: copy.title,
         idMigrations: {},
-        ...(copy.importer ? { source: importedBy(copy.importer) } : {}),
+        ...(copy.importer ? { source: importedBy(copy.importer, copy.pages) } : {}),
       },
     });
   }
@@ -119,6 +121,59 @@ async function serveCopy(route: Route, copy: Copy): Promise<void> {
 
 const SECOND: Copy = { id: 'isles-two', title: 'Atlas Demo World!', importer: 'Second map site' };
 const WIKI: Copy = { id: 'isle-wiki', title: 'Isle Wiki', wiki: true };
+
+const LONG_HOST = 'fenmoor-marsh-and-the-sunken-villages.pages.example';
+
+/**
+ * Four sources of one title, all named Fenmoor: three of one importer (two
+ * read from sites of their own, one whose pack records no page) and one of
+ * another importer.
+ */
+const FENMOOR: Copy[] = [
+  {
+    id: 'fen-wiki',
+    title: 'Fenmoor',
+    importer: 'Example Wiki',
+    pages: ['https://wiki.fenmoor.example/wiki/Stones', 'https://maps.fenmoor.example/marsh'],
+  },
+  {
+    id: 'fen-map',
+    title: 'Fenmoor',
+    importer: 'Demo map site',
+    pages: ['https://maps.fenmoor.example/fenmoor/marsh'],
+  },
+  {
+    id: 'fen-pages',
+    title: 'Fenmoor',
+    importer: 'Example Wiki',
+    pages: [`https://www.${LONG_HOST}/Stones`],
+  },
+  { id: 'fen-old', title: 'Fenmoor', importer: 'Example Wiki' },
+];
+
+/** A copy as the shell lists a pack in the maps folder that an importer made. */
+const listedCopy = (copy: Copy, base: string) => ({
+  id: copy.id,
+  title: copy.title,
+  url: new URL(`packs/${copy.id}/`, base).href,
+  origin: 'maps-folder',
+  path: `/maps/${copy.id}`,
+  packVersion: '1.0.0',
+  bundled: false,
+  imported: copy.importer
+    ? { importerId: copy.importer.toLowerCase().replaceAll(' ', '-'), importerTitle: copy.importer }
+    : null,
+  pages: (copy.pages ?? []).map((url) => ({ url, mapId: null })),
+});
+
+/** In the form of showing with another game, chooses the game `id` (the titles are the same) and saves. */
+async function chooseOther(page: Page, id: string): Promise<void> {
+  const form = page.getByTestId('title-form');
+  await form.locator(`input[value="${id}"]`).check();
+  await form.getByTestId('title-name').fill('Fenmoor');
+  await form.getByTestId('title-save').click();
+  await expect(form).toHaveCount(0);
+}
 
 const gameRow = (page: Page, id: string) =>
   page.locator(`[data-testid="game-row"][data-pack="${id}"]`);
@@ -447,6 +502,82 @@ test.describe('in the Library', () => {
     // The classic layout has no title row: the game is there under its own title, and opens.
     await page.getByLabel('Game').selectOption('isles-two');
     await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+    expect(realErrors(errors)).toEqual([]);
+  });
+
+  test('sources of one importer are told apart by their sites, in the heading and the card', async ({
+    page,
+    baseURL,
+  }) => {
+    const errors = collectErrors(page);
+    await serveGames(page, FENMOOR);
+    await setUp(page, DOWNLOADS_BUILD, {
+      listed: FENMOOR.map((copy) => listedCopy(copy, baseURL ?? '')),
+    });
+    await openLibraryGame(page, 'fen-wiki');
+    const pane = page.getByTestId('library-game-pane');
+    // Where the game came from: its importer, and the site of its first page.
+    await expect(pane.getByTestId('library-origin')).toHaveText(
+      'Added with Example Wiki from wiki.fenmoor.example',
+    );
+    await libraryMore(page, 'show-with-another');
+    await chooseOther(page, 'fen-map');
+    const card = pane.getByTestId('library-title-card');
+    for (const other of ['fen-pages', 'fen-old']) {
+      await card.getByTestId('title-add').click();
+      await chooseOther(page, other);
+    }
+    await stored(page, { Fenmoor: ['fen-wiki', 'fen-map', 'fen-pages', 'fen-old'] });
+
+    // One importer's sources by their sites; the one left without a site
+    // keeps the plain name, and a name no other has stays as it is.
+    const library = page.getByTestId('library');
+    await expect(library.getByTestId('library-title').getByTestId('title-sources')).toHaveText(
+      `Sources: Example Wiki (wiki.fenmoor.example), Demo map site, Example Wiki (${LONG_HOST}), Example Wiki`,
+    );
+    await expect(card.getByTestId('title-source').locator('.title-source-name')).toHaveText([
+      'Example Wiki (wiki.fenmoor.example)',
+      'Demo map site',
+      `Example Wiki (${LONG_HOST})`,
+      'Example Wiki',
+    ]);
+    // Under each name, the game's title and its site.
+    await expect(card.getByTestId('title-source-detail')).toHaveText([
+      'Fenmoor · wiki.fenmoor.example · shown',
+      'Fenmoor · maps.fenmoor.example',
+      `Fenmoor · ${LONG_HOST}`,
+      'Fenmoor',
+    ]);
+    await expect(card).toContainText('This is the source Example Wiki (wiki.fenmoor.example).');
+    // Buttons are named as the rows read.
+    await expect(
+      card.getByRole('button', { name: `Open Example Wiki (${LONG_HOST})` }),
+    ).toBeVisible();
+
+    // A game whose pack records no page says only its importer.
+    await card
+      .locator('[data-testid="title-source"][data-pack="fen-old"]')
+      .getByTestId('title-source-open')
+      .click();
+    await expect(pane).toHaveAttribute('data-pack', 'fen-old');
+    await expect(pane.getByTestId('library-origin')).toHaveText('Added with Example Wiki');
+    await expect(card).toContainText('This is the source Example Wiki.');
+
+    // At phone width, the long site wraps: nothing is wider than the window.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await card
+      .locator('[data-testid="title-source"][data-pack="fen-pages"]')
+      .getByTestId('title-source-open')
+      .click();
+    await expect(pane.getByTestId('library-origin')).toHaveText(
+      `Added with Example Wiki from ${LONG_HOST}`,
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    for (const text of await card.getByTestId('title-source-detail').all()) {
+      expect(await text.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
     expect(realErrors(errors)).toEqual([]);
   });
 

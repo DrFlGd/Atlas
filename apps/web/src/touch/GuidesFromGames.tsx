@@ -190,7 +190,9 @@ export function TitleMaps({ game }: { game: LoadedGame }) {
         {withMaps.map((entry) => (
           <li key={entry.id} className="guides-from-row">
             <UiIcon name="map" size={18} />
-            <span className="guides-from-name">{names.get(entry.id) ?? entry.title}</span>
+            <span className="guides-from-name wrap-anywhere">
+              {names.get(entry.id) ?? entry.title}
+            </span>
             <button
               type="button"
               className="touch-text-button"
