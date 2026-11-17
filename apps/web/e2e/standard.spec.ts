@@ -206,7 +206,18 @@ test('the classic keys work and are shown, and Esc closes what is on top', async
   await page.keyboard.press('?');
   const keys = page.getByTestId('keys-dialog');
   await expect(keys).toBeVisible();
-  await expect(keys.locator('kbd')).toHaveText(['/', 'N', 'F', 'Z', 'C', 'H', '[', ']', 'Esc', '?']);
+  await expect(keys.locator('kbd')).toHaveText([
+    '/',
+    'N',
+    'F',
+    'Z',
+    'C',
+    'H',
+    '[',
+    ']',
+    'Esc',
+    '?',
+  ]);
   await expect(keys).toContainText('Right-click a location');
   await page.keyboard.press('Escape');
   await expect(keys).toBeHidden();
