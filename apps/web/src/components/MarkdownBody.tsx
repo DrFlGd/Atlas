@@ -1,6 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { buildRowAt, enhanceBuildRows, type RowThing } from '../buildRows';
-import { appLinkSection, appLinkTarget, renderGuideMarkdown, revealHiddenText } from '../markdown';
+import {
+  appLinkGame,
+  appLinkSection,
+  appLinkTarget,
+  renderGuideMarkdown,
+  revealHiddenText,
+} from '../markdown';
 import {
   largePictureAt,
   markLargePicture,
@@ -12,6 +18,7 @@ import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
 import { useGuideLinks } from '../state/guideLinks';
+import { followMapLink, useMapLinks } from '../state/mapLinks';
 import { useOwnPages } from '../state/ownPages';
 import { useOwnPictures } from '../state/ownPictures';
 import { useAtlas } from '../state/store';
@@ -22,8 +29,10 @@ export const UNREAD_PAGE = 'This page has not been read yet';
 /**
  * Guide Markdown from the pack, rendered safely (see `renderGuideMarkdown`).
  * In-app links are buttons; pressing one acts in the app (a link to a
- * section of a page opens the page there). Web links open
- * outside the app as before. Hidden text shows when its button is pressed.
+ * section of a page opens the page there). A web link that names a
+ * location of a map the app found is one too (see `mapLinks.ts`): it shows
+ * the location, on the map of another game of the title when it is there.
+ * Other web links open outside the app as before. Hidden text shows when its button is pressed.
  * On a guide page (`page`) of a game read from a site, a link to a page of
  * it that was not read yet says so (see `MarkdownOptions.unreadPage`).
  * On a page, its tables sort by a column the reader presses (see
@@ -52,6 +61,9 @@ export function MarkdownBody({
   const game = useAtlas((s) => s.game);
   // Pages of other games read with this one can be linked to, once loaded.
   const others = useGuideLinks((s) => s.others);
+  // Web links that name a location of a map, and the other maps of the title, once read.
+  const mapLinks = useMapLinks((s) => s.links);
+  const mapSources = useMapLinks((s) => s.sources);
   // The person's own pages and photos, as they change and as photos are read.
   const own = useOwnPages((s) => s.own);
   const draftPictures = useOwnPages((s) => s.draftPictures);
@@ -159,7 +171,7 @@ export function MarkdownBody({
           : {},
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, game, page, others, own, draftPictures, ownPictures],
+    [source, game, page, others, own, draftPictures, ownPictures, mapLinks, mapSources],
   );
   return (
     <div
@@ -198,7 +210,10 @@ export function MarkdownBody({
         const id = appLinkTarget(event.target);
         if (!id) return;
         event.preventDefault();
-        followAppLink(id, appLinkSection(event.target));
+        // A location of a map of another game of the title: that game opens, at the location.
+        const other = appLinkGame(event.target);
+        if (other) void followMapLink(other, id);
+        else followAppLink(id, appLinkSection(event.target));
       }}
       onKeyDown={(event) => {
         const large = largePictureAt(event.target);

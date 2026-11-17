@@ -17,6 +17,7 @@ import {
   trialRead,
   trierFor,
   tryRulesOn,
+  consoleLineOf,
 } from './siteRules';
 
 const trial = (fields: Partial<SiteTrial>): SiteTrial => ({
@@ -412,5 +413,49 @@ describe('the importer that tries a file', () => {
         importer(() => null),
       ]),
     ).toEqual({ problem: 'Give the address the page was saved from first.' });
+  });
+});
+
+describe('the console line of a map read in the window', () => {
+  /** A made-up file with a map part whose data is values of its page. */
+  const file = (data: unknown, ways: string[] = ['window']) => {
+    const checked = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'cove-maps', name: 'Cove Maps', game: 'Cove', hosts: ['maps.example.net'] },
+      parts: [
+        {
+          type: 'map',
+          reader: 'rules',
+          start: '/map',
+          data,
+          maps: {
+            id: 'cove',
+            name: 'Cove',
+            size: [1024, 1024],
+            maxZoom: 2,
+            picture: { images: '/tiles/{z}/{x}/{y}.png', tile: 256 },
+          },
+          types: { from: 'locations' },
+          locations: { path: 'board.spots[*]', fields: { type: 'kind', x: 'x', y: 'y' } },
+          position: { units: 'pixels' },
+          reading: { ways },
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
+    return checked.rules;
+  };
+
+  it('is offered for values of the page, and for an element read in the window', () => {
+    const line = consoleLineOf(file({ from: 'values', values: { board: 'coveData.board' } }))!;
+    expect(line).toContain('"coveData"');
+    expect(line).toContain('map-values.json');
+    expect(line).not.toContain('\n');
+    expect(
+      consoleLineOf(file({ from: 'page', element: 'script#board' }, ['window', 'fetch'])),
+    ).not.toBeNull();
+    expect(consoleLineOf(file({ from: 'page', element: 'script#board' }, ['fetch']))).toBeNull();
+    expect(consoleLineOf(null)).toBeNull();
   });
 });

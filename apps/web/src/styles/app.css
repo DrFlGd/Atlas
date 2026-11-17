@@ -1048,6 +1048,21 @@ label.tree-row:hover,
   color: var(--atlas-accent);
 }
 
+/*
+ * A link to the web in guide text opens outside the app: a small arrow after
+ * it sets it apart from the app's own links (buttons, see .app-link), which
+ * look like links without it. A screen reader hears a link against a button,
+ * and skips the arrow.
+ */
+.guide-body a[target='_blank']::after {
+  content: '\2197' / '';
+  margin-left: 0.15em;
+  font-size: 0.8em;
+  color: var(--atlas-muted);
+  text-decoration: none;
+  display: inline-block;
+}
+
 .guide-body blockquote {
   margin: 0 0 10px;
   padding: 4px 12px;

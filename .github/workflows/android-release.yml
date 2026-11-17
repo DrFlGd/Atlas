@@ -192,6 +192,12 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.18.0
+
+          - **Marks on pictures.** A picture on a page that opens large has a small mark in its corner, and a picture that moves has a play mark. A picture that moves opens large when pressed and plays there from its start.
+          - **Sources named by their site.** Where two sources of a title would share a name, each is named by the site its pages came from.
+          - **Links to a location of a map.** A link in a guide that names a location of a map opens that location when the map is on the phone, in the same game or in another game under the same title. A link that opens in the browser has a small arrow beside it.
+
           ## New in 0.17.0
 
           - **Lists of icons in columns.** A list flowed in columns whose every item is one line that begins with a small picture is shown without bullets, each picture beside its words.

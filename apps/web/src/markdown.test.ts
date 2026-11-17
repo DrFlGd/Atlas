@@ -136,6 +136,52 @@ describe('in-app links', () => {
   });
 });
 
+describe('web links that name a location of a map', () => {
+  const found: Record<string, { locationId: string; gameId?: string }> = {
+    'https://maps.example.org/isle/harbour?spot=17': { locationId: 'demo:loc:0017' },
+    'https://maps.example.org/isle/deep?spot=40': {
+      locationId: 'isle-two:loc:40',
+      gameId: 'isle-two',
+    },
+  };
+  const options = {
+    isAppTarget: (id: string) => id === 'demo:loc:0017',
+    mapLink: (href: string) => found[href] ?? null,
+  };
+
+  it('makes a link whose location was found an in-app link to it, of another game too', () => {
+    const html = renderGuideMarkdown(
+      '[the rusty key](https://maps.example.org/isle/harbour?spot=17 "On the map") and [the lamp](https://maps.example.org/isle/deep?spot=40)',
+      options,
+    );
+    expect(html).toContain(
+      '<button type="button" class="app-link" data-atlas-target="demo:loc:0017" title="On the map">the rusty key</button>',
+    );
+    expect(html).toContain(
+      '<button type="button" class="app-link" data-atlas-target="isle-two:loc:40" data-atlas-game="isle-two">the lamp</button>',
+    );
+    expect(html).not.toContain('<a ');
+  });
+
+  it('leaves a link whose location was not found the web link it was', () => {
+    const html = renderGuideMarkdown(
+      '[gone](https://maps.example.org/isle/harbour?spot=99) and <https://maps.example.org/isle/harbour?spot=17>',
+      options,
+    );
+    expect(html).toContain(
+      '<a href="https://maps.example.org/isle/harbour?spot=99" target="_blank" rel="noopener noreferrer">gone</a>',
+    );
+    // An address written out in the text is a link as any.
+    expect(html).toContain(
+      'data-atlas-target="demo:loc:0017">https://maps.example.org/isle/harbour?spot=17</button>',
+    );
+    // Without the option, every web link stays one.
+    expect(renderGuideMarkdown('[key](https://maps.example.org/isle/harbour?spot=17)')).toContain(
+      'target="_blank"',
+    );
+  });
+});
+
 describe('hidden text', () => {
   const known = new Set(['demo:loc:0412', 'demo:loc:0413']);
   const options = { isAppTarget: (id: string) => known.has(id) };

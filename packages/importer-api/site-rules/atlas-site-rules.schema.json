@@ -479,6 +479,33 @@
                     },
                     "additionalProperties": false
                   },
+                  "mapLinks": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "query": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]{1,50}$"
+                        },
+                        "hosts": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["address"],
+                      "additionalProperties": false
+                    }
+                  },
                   "pack": {
                     "type": "string",
                     "maxLength": 64,
@@ -922,6 +949,33 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "mapLinks": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "query": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]{1,50}$"
+                        },
+                        "hosts": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["address"],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": ["type", "start", "reader", "reading", "pages", "contents", "article"],
@@ -1375,6 +1429,33 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "mapLinks": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "query": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.-]{1,50}$"
+                        },
+                        "hosts": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["address"],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
@@ -1592,11 +1673,6 @@
                     "properties": {
                       "name": {
                         "type": "string"
-                      },
-                      "nameEnd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 120
                       }
                     },
                     "required": ["name"],
@@ -1607,7 +1683,7 @@
                     "properties": {
                       "from": {
                         "type": "string",
-                        "enum": ["file", "page"]
+                        "enum": ["file", "page", "values"]
                       },
                       "address": {
                         "type": "string",
@@ -1616,6 +1692,46 @@
                       },
                       "element": {
                         "type": "string"
+                      },
+                      "values": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[a-z][A-Za-z0-9]{0,39}$"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "store": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["store"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "element": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["element"],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
                       }
                     },
                     "required": ["from"],
@@ -1700,6 +1816,46 @@
                           }
                         ]
                       },
+                      "shared": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "array",
+                                "prefixItems": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "string"
+                                  }
+                                ],
+                                "items": false,
+                                "minItems": 2,
+                                "maxItems": 2
+                              }
+                            ]
+                          },
+                          "maxZoom": {
+                            "type": "string"
+                          },
+                          "minZoom": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["path"],
+                        "additionalProperties": false
+                      },
                       "group": {
                         "type": "string"
                       },
@@ -1719,6 +1875,39 @@
                             "minLength": 1,
                             "maxLength": 2048
                           },
+                          "sets": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "map": {
+                                "type": "string"
+                              },
+                              "pattern": {
+                                "type": "string"
+                              },
+                              "extension": {
+                                "type": "string"
+                              },
+                              "minZoom": {
+                                "type": "string"
+                              },
+                              "maxZoom": {
+                                "type": "string"
+                              },
+                              "bounds": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["path", "pattern", "maxZoom"],
+                            "additionalProperties": false
+                          },
+                          "base": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2048
+                          },
                           "tile": {
                             "type": "integer",
                             "minimum": 64,
@@ -1728,7 +1917,7 @@
                         "additionalProperties": false
                       }
                     },
-                    "required": ["id", "name", "size", "maxZoom", "picture"],
+                    "required": ["id", "name", "picture"],
                     "additionalProperties": false
                   },
                   "types": {
@@ -1766,6 +1955,28 @@
                       "icon": {
                         "type": "string"
                       },
+                      "order": {
+                        "type": "string"
+                      },
+                      "groups": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "order": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["path", "id", "name"],
+                        "additionalProperties": false
+                      },
                       "found": {
                         "anyOf": [
                           {
@@ -1792,6 +2003,26 @@
                     "properties": {
                       "path": {
                         "type": "string"
+                      },
+                      "markup": {
+                        "type": "string",
+                        "enum": ["html", "markdown"]
+                      },
+                      "pictures": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string"
+                          },
+                          "hidden": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["path", "address"],
+                        "additionalProperties": false
                       },
                       "fields": {
                         "type": "object",
@@ -1855,6 +2086,10 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 24
+                      },
+                      "area": {
+                        "type": "string",
+                        "enum": ["world", "located"]
                       }
                     },
                     "required": ["units"],

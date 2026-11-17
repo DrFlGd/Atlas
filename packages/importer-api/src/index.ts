@@ -58,6 +58,7 @@ import type { SiteInfo, SiteLicence } from './sites';
 
 export * from './fetching';
 export * from './layoutNotes';
+export * from './pageValues';
 export * from './sitePatterns';
 export * from './siteRules';
 export * from './siteTrial';
@@ -262,6 +263,14 @@ export interface ImportContext {
    * when this is true.
    */
   keepsPageWidth?: boolean;
+  /**
+   * Optional: true when the app keeps the manifest's `mapLinks`, which web
+   * links of the pages name a location of a map by the id its site gives
+   * it, as the site's rules file gives them (a part's `mapLinks`). An app
+   * that does not say so refuses a pack that has it, as any field it does
+   * not know, so an importer writes it only when this is true.
+   */
+  keepsMapLinks?: boolean;
   /**
    * Optional: true when the app keeps a guide's `filedUnder`, the guides
    * the site itself files the page under (a wiki's categories, the title
@@ -1166,6 +1175,19 @@ export interface AtlasImporter {
    */
   pageReader?: string;
   /**
+   * Optional: the reader for the page at `url` (a full `https:` URL), when
+   * it is not {@link pageReader}: the source of a function of no arguments,
+   * as for `pageReader` and under the same rules, made by the importer for
+   * that address alone (a map whose site rules file names the values of its
+   * page to read, see `pageValues.ts`). Null or undefined for an address
+   * read by `pageReader`. A page read by a reader of its own is read for its
+   * data only: the app runs no {@link styleReader} on it. The app asks for
+   * it each time it opens a page in its window for this importer, and uses
+   * `pageReader` when it throws or answers anything but text of at most
+   * {@link MAX_READER_CHARS} characters. Must not throw.
+   */
+  pageReaderFor?(url: string): string | null | undefined;
+  /**
    * Optional: the reader of "browse and keep" (the reading way `browse`,
    * see `fetching.ts`), a function's source like {@link pageReader}, run
    * in the app's window on each page the person opens there themselves,
@@ -1401,6 +1423,7 @@ export const importerSchema = z
     siteInfo: z.custom<NonNullable<AtlasImporter['siteInfo']>>(isFunction).optional(),
     fetch: fetchSchema.optional(),
     pageReader: z.string().min(1).max(MAX_READER_CHARS).optional(),
+    pageReaderFor: z.custom<NonNullable<AtlasImporter['pageReaderFor']>>(isFunction).optional(),
     browseReader: readerSchema.optional(),
     styleReader: readerSchema.optional(),
     pageMeasure: z
@@ -2129,4 +2152,26 @@ export async function trySitePage(
   } catch {
     return null;
   }
+}
+
+/**
+ * The reader of its own an importer gives for the page at `url`
+ * ({@link AtlasImporter.pageReaderFor}), checked: text of 1 to
+ * {@link MAX_READER_CHARS} characters, or null when it gives none, gives
+ * something else or throws.
+ */
+export function ownPageReaderOf(
+  importer: Pick<AtlasImporter, 'pageReaderFor'>,
+  url: string,
+): string | null {
+  if (!importer.pageReaderFor) return null;
+  let given: unknown;
+  try {
+    given = importer.pageReaderFor(url);
+  } catch {
+    return null;
+  }
+  return typeof given === 'string' && given.length > 0 && given.length <= MAX_READER_CHARS
+    ? given
+    : null;
 }

@@ -139,6 +139,17 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.18.0
+
+          A picture that opens large or moves says so with a small mark, sources are told apart by their site, and a guide's link to a location of a map opens that location.
+
+          - **Marks on pictures.** A picture on a page that opens in the larger view has a small mark in its bottom right corner, and a picture that moves has a play mark beside it. A picture that moves opens large when pressed, whatever its size, and plays there from its start. The photos on a location's card carry the same mark. Small pictures in a line of text and pictures that are links have none.
+          - **Sources named by their site.** Where two sources of a title would share a name, each is named by the site its pages came from, in place of a number. The rows under **One title** show each game's site.
+          - **Links to a location of a map.** A guide can say which of its links lead to a location of a map. Such a link opens the location on its map when you have that map, in the same game or in another game shown under the same title. A link that finds no location stays a web link.
+          - **Web links are marked.** A link in a guide's text that opens in your browser has a small arrow beside it, so that it looks different from a link that stays in the app.
+
+          A game or a file made with 0.18.0 still opens in older versions of Atlas, which show such links as web links.
+
           ## New in 0.17.0
 
           - **Lists of icons in columns.** A list flowed in columns whose every item is one line that begins with a small picture is shown without bullets, each picture beside its words, as a list of that sort set in a row already was.
