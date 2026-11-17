@@ -120,14 +120,25 @@ async function refresh(): Promise<void> {
 const sameLinks = (a: readonly MapLink[], b: readonly MapLink[]) =>
   JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * Refreshes without ever failing: these run as the stores change, where
+ * nothing could take a failure. A game whose pack cannot be read here has
+ * no entries, so the links of its pages stay web links.
+ */
+function refreshSafely(): void {
+  refresh().catch(() => {
+    set({ gameId: null, links: [], sources: [] });
+  });
+}
+
 useAtlas.subscribe((state, before) => {
-  if (state.game !== before.game) void refresh();
+  if (state.game !== before.game) refreshSafely();
 });
 useGuideLinks.subscribe((state, before) => {
-  if (state.others !== before.others) void refresh();
+  if (state.others !== before.others) refreshSafely();
 });
 useGameGroups.subscribe((state, before) => {
-  if (state.groups !== before.groups) void refresh();
+  if (state.groups !== before.groups) refreshSafely();
 });
 
 /**
@@ -166,4 +177,4 @@ export async function followMapLink(gameId: string, locationId: string): Promise
   if (game?.entry.id === gameId && game.pack.locations.has(locationId)) goToLocation(locationId);
 }
 
-void refresh();
+refreshSafely();
