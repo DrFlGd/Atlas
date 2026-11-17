@@ -51,6 +51,7 @@ import {
   piecesOf,
   selectorProblem,
 } from './sitePatterns';
+import { READING_WAYS, type ReadingWay } from './fetching';
 import { CONFIRMABLE_LICENCES, MAX_NOTICE_CHARS, rulesLicenceOf, type RulesLicence } from './sites';
 
 /** The value of `format` in every site rules file. */
@@ -176,11 +177,14 @@ const builtInReader = reader.refine((name) => name !== RULES_READER, {
 // ---------------------------------------------------------------------------
 // Blocks every part may have
 
+/** The pause between pages a file may give (`reading.pause`), in seconds. */
+export const READING_PAUSE_SECONDS = { min: 1, max: 60 } as const;
+
 const readingSchema = z.strictObject({
-  ways: once(z.enum(['fetch', 'window', 'browse']), 'way')
+  ways: once(z.enum(READING_WAYS as readonly [ReadingWay, ...ReadingWay[]]), 'way')
     .min(1)
-    .max(3),
-  pause: z.number().min(1).max(60).optional(),
+    .max(READING_WAYS.length),
+  pause: z.number().min(READING_PAUSE_SECONDS.min).max(READING_PAUSE_SECONDS.max).optional(),
 });
 
 /** `pictures` of a part with a built-in reader, and of a reader's defaults: its hosts only. */
@@ -219,6 +223,11 @@ const licenceForms = {
   blank: z.strictObject({ blank: z.literal(true), credit }),
 };
 
+/** A form of a licence block: `ask`, `stated` (`{ "ask": false }`), `known`, `permission` or `blank`. */
+export type LicenceBlockForm = keyof typeof licenceForms;
+/** The five forms of a licence block, in the order the guide lists them. */
+export const LICENCE_FORMS = Object.keys(licenceForms) as readonly LicenceBlockForm[];
+
 const licenceSchema = z.union([
   licenceForms.ask,
   licenceForms.stated,
@@ -227,8 +236,8 @@ const licenceSchema = z.union([
   licenceForms.blank,
 ]);
 
-/** The form of a licence block: its key in {@link licenceForms}, or null when it names none or several. */
-function licenceFormOf(value: unknown): keyof typeof licenceForms | 'several' | null {
+/** The form of a licence block: one of {@link LICENCE_FORMS}, `several` when it names more than one, or null when it names none. */
+export function licenceFormOf(value: unknown): LicenceBlockForm | 'several' | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const named = (['ask', 'known', 'permission', 'blank'] as const).filter((key) =>
     Object.hasOwn(value, key),

@@ -129,6 +129,12 @@ export interface SiteEntry {
   editable: boolean;
   /** What it reads and how, in one sentence (see `readsInWords`); empty when its form is wrong. */
   reads: string;
+  /**
+   * For a file of the person's: the shipped file with the same key, which
+   * applies again once theirs is removed ("Revert to defaults"); null when
+   * an importer comes with none.
+   */
+  shipped?: { name: string; importer: string } | null;
 }
 
 /** A file of the person's that was just checked and kept, waiting to be switched on. */
@@ -550,6 +556,10 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
           builtInFiles(importer).some((b) => siteRulesKey(b.rules) === siteRulesKey(rules)),
         )
       : undefined;
+    const shipped =
+      rules && replacing
+        ? builtInFiles(replacing).find((b) => siteRulesKey(b.rules) === siteRulesKey(rules))
+        : undefined;
     const problems = rules
       ? [
           ...readerProblems(rules, importers),
@@ -574,6 +584,7 @@ function entriesOf(state: SitesState, importers: readonly AtlasImporter[]): Site
       widens: rules ? wideningsOf(rules, importers) : [],
       tryable: tryableBy(rules, importers),
       editable: file.text !== null,
+      shipped: shipped && replacing ? { name: shipped.name, importer: replacing.title } : null,
     };
   });
   const builtIn = importers.flatMap((importer) =>
@@ -1157,6 +1168,39 @@ export async function rulesTextOf(key: string): Promise<string | null> {
   for (const importer of screenImporters) {
     const file = (importer.sites?.files ?? []).find((b) => builtInKey(importer.id, b.name) === key);
     if (file) return `${JSON.stringify(file.rules, null, 2)}\n`;
+  }
+  return null;
+}
+
+/** A file an importer comes with, as the settings of a copy of it compare with it. */
+export interface ShippedRules {
+  /** Its file name, which a copy of it is saved under too. */
+  name: string;
+  /** The title of the importer it comes with. */
+  importer: string;
+  /** Its JSON value, as the importer gives it. */
+  value: unknown;
+  /** Its text, laid out as the editor opens a copy of it. */
+  text: string;
+}
+
+/**
+ * The file an importer comes with that has the key `key` (`site:<id>` or
+ * `reader:<name>`, see `siteRulesKey`): the file a copy of it, or a file of
+ * the person's for the same site, takes the place of. Null when none has.
+ */
+export function shippedRulesOf(key: string): ShippedRules | null {
+  for (const importer of screenImporters) {
+    const file = builtInFiles(importer).find((b) => siteRulesKey(b.rules) === key);
+    const raw = file && importer.sites?.files.find((b) => b.name === file.name);
+    if (file && raw) {
+      return {
+        name: file.name,
+        importer: importer.title,
+        value: raw.rules,
+        text: `${JSON.stringify(raw.rules, null, 2)}\n`,
+      };
+    }
   }
   return null;
 }

@@ -1408,6 +1408,204 @@
   white-space: normal;
 }
 
+/* The two views of the file in the editor, as tabs: its settings, and its text as JSON. */
+.rules-editor-pane-head {
+  flex-wrap: wrap;
+}
+
+.rules-view-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: auto;
+  padding: 2px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+.rules-view-tab {
+  padding: 3px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--atlas-muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.rules-view-tab:hover {
+  color: var(--atlas-text);
+}
+
+.rules-view-tab[aria-selected='true'] {
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+}
+
+/* The settings of the file: one group per part, each setting with its problems and how it differs. */
+.rules-form-panel {
+  flex: 1 1 auto;
+  min-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+}
+
+.rules-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rules-form-why,
+.rules-form-head p,
+.rules-form-hint,
+.rules-form-problems,
+.rules-form-shipped,
+.rules-form-also,
+.rules-form-none {
+  margin: 0;
+}
+
+.rules-form-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rules-form-revert-ask {
+  margin: 0;
+}
+
+.rules-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 12px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+.rules-form-group > legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.rules-form-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rules-form-setting[data-changed='true'] {
+  padding-left: 9px;
+  border-left: 3px solid var(--atlas-accent);
+}
+
+.rules-form-label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+}
+
+.rules-form-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rules-form-choices > legend {
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.rules-form-ticks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.rules-form-select {
+  max-width: 100%;
+}
+
+.rules-form-setting .text-input {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 34rem;
+}
+
+.rules-form-setting textarea.text-input {
+  height: auto;
+  padding: 6px 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.rules-form-pause {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.rules-form-pause .text-input {
+  width: 9rem;
+}
+
+.rules-form-problems {
+  padding-left: 18px;
+  color: var(--atlas-danger);
+}
+
+.rules-form-shipped {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--atlas-muted);
+}
+
+.rules-form-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-form-list li,
+.rules-form-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 34rem;
+}
+
+.rules-form-list .text-input,
+.rules-form-add .text-input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.rules-form-licence .follow-links-options {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
 /* One above the other where two panes do not fit: the whole window scrolls. */
 @media (max-width: 899px) {
   .rules-editor-dialog {
@@ -1429,9 +1627,14 @@
   }
 
   .rules-check,
-  .rules-editor-result {
+  .rules-editor-result,
+  .rules-form-panel {
     max-height: none;
     overflow: visible;
+  }
+
+  .rules-form-panel {
+    flex: none;
   }
 }
 

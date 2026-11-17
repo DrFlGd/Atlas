@@ -26,6 +26,7 @@ import {
 } from '../state/siteRules';
 import { useAtlas } from '../state/store';
 import { RulesEditor } from './RulesEditor';
+import { RevertConfirm } from './RulesForm';
 import { AddedFile } from './SiteSwitchOn';
 
 /**
@@ -38,8 +39,11 @@ import { AddedFile } from './SiteSwitchOn';
  * which says at once why a file no importer can try cannot be; the rules
  * file editor (`RulesEditor.tsx`), on a file of the person's ("Edit…"), a
  * copy of a shipped file ("Edit a copy…") or a new file from a template or
- * a copy of any file listed ("New rules file…"); and the guide and the
- * schema to save for writing one.
+ * a copy of any file listed ("New rules file…"); "Settings…", the same
+ * editor on the file's settings as ordinary controls (on a copy, for a
+ * shipped file); "Revert to defaults" on a file of the person's that takes
+ * the place of a shipped file, which removes it once they confirm; and the
+ * guide and the schema to save for writing one.
  */
 export function SitesSettings() {
   const offered = useAtlas(sitesOffered);
@@ -161,6 +165,9 @@ function SiteList({ entries }: { entries: readonly SiteEntry[] }) {
 
 function SiteRow({ entry }: { entry: SiteEntry }) {
   const trying = useSites((s) => (s.trying?.key === entry.key ? s.trying : null));
+  const [reverting, setReverting] = useState<'ask' | 'working' | null>(null);
+  // A file whose form is right, with simple choices: a site file or a reader's defaults.
+  const settable = entry.editable && entry.readable && entry.refusal === null;
   const facts = entry.refusal
     ? ['Refused: the importers never read these sites']
     : [
@@ -256,6 +263,16 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
               {entry.own ? 'Edit…' : 'Edit a copy…'}
             </button>
           ) : null}
+          {settable ? (
+            <button
+              type="button"
+              className="button button-small"
+              data-testid="site-settings"
+              onClick={() => void editRulesFile(entry, undefined, 'form')}
+            >
+              Settings…
+            </button>
+          ) : null}
           {entry.own ? (
             <button
               type="button"
@@ -266,7 +283,36 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
               Remove
             </button>
           ) : null}
+          {entry.own && entry.shipped && reverting === null ? (
+            <button
+              type="button"
+              className="button button-small"
+              data-testid="site-revert"
+              onClick={() => {
+                setReverting('ask');
+              }}
+            >
+              Revert to defaults
+            </button>
+          ) : null}
         </div>
+        {entry.own && entry.shipped && reverting !== null ? (
+          <RevertConfirm
+            name={entry.name}
+            importer={entry.shipped.importer}
+            saved
+            working={reverting === 'working'}
+            onConfirm={() => {
+              setReverting('working');
+              void removeSiteFile(entry.name).then(() => {
+                setReverting(null);
+              });
+            }}
+            onCancel={() => {
+              setReverting(null);
+            }}
+          />
+        ) : null}
         {trying ? <SiteTrialCard trying={trying} entry={entry} /> : null}
       </div>
     </li>

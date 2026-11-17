@@ -9,6 +9,7 @@ import {
 } from '@atlas/importer-api';
 import { DEFAULT_PAGE_WIDTH, PAGE_WIDTH_PIXELS, type PageWidth } from '@atlas/schema';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { copyText } from '../clipboard';
 import { UiIcon } from '../components/icons';
 import { renderGuideMarkdown, revealHiddenText, type GuidePicture } from '../markdown';
@@ -26,7 +27,9 @@ import {
   type EditorProblem,
   type ExamplePage,
   type RulesEditorStart,
+  type RulesEditorView,
 } from '../state/rulesEditor';
+import { ownNameOfKey, readRulesForm } from '../state/rulesForm';
 import { hostOf, idFromName, idProblem } from '../state/rulesCopy';
 import {
   RULES_TEMPLATES,
@@ -36,14 +39,17 @@ import {
 } from '../state/rulesTemplates';
 import {
   canonicalAddressOf,
+  closeSwitchOn,
   consoleLineOf,
   httpsAddress,
   isSavedDataFile,
   pickTrialPage,
+  removeSiteFile,
   saveRulesText,
   savingOf,
   layoutInWords,
   SAVED_PAGE_LAYOUT_NOTE,
+  shippedRulesOf,
   trialInWords,
   trialRead,
   tryRulesOn,
@@ -51,6 +57,7 @@ import {
   type SiteEntry,
 } from '../state/siteRules';
 import type { TrialLayoutOutcome } from '../state/trialLayout';
+import { RulesForm } from './RulesForm';
 import { AddedFile } from './SiteSwitchOn';
 
 /**
@@ -59,7 +66,12 @@ import { AddedFile } from './SiteSwitchOn';
  * what the reader makes of an example page with the file as it stands. Side
  * by side where there is room, one above the other where there is not.
  *
- * The left side is a plain text box in a fixed-width face, with line
+ * The left side shows the file two ways, as two tabs over the same text:
+ * its settings as ordinary controls (`RulesForm.tsx`, opened by
+ * "Settings…"), and its text as JSON (opened by "Edit…"). A change in one
+ * is in the other at once.
+ *
+ * The JSON is a plain text box in a fixed-width face, with line
  * numbers, checked after a short pause: each problem is listed in words
  * under the text, marked at its line, and moves the cursor to its field
  * when pressed. Tab puts in two spaces; Esc, then Tab, leaves the box.
@@ -176,6 +188,12 @@ function EditorBody({
   const [saving, setSaving] = useState(false);
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  /** Which view of the file the left side shows. */
+  const [view, setView] = useState<RulesEditorView>(
+    start.kind !== 'new' && start.view === 'form' ? 'form' : 'json',
+  );
+  /** The text the file was just reverted to, and whether a file of the person's was removed: said while it stands. */
+  const [reverted, setReverted] = useState<{ text: string; removed: boolean } | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const keepEditingRef = useRef<HTMLButtonElement>(null);
   const nextPage = useRef(startPages(start).length + 1);
@@ -229,8 +247,13 @@ function EditorBody({
     });
   }, [rules, page, check.text, trials]);
 
-  /** Moves the cursor to a place of the text, and the text there into view. */
+  /** Moves the cursor to a place of the text, and the text there into view: in the JSON view. */
   const goTo = (at: number, end = at) => {
+    if (view !== 'json') {
+      flushSync(() => {
+        setView('json');
+      });
+    }
     const box = textRef.current;
     if (!box) return;
     box.focus();
@@ -277,6 +300,42 @@ function EditorBody({
   const setAddress = (id: number, address: string) => {
     setPages((all) => all.map((p) => (p.id === id ? { ...p, address } : p)));
     setTrials(({ [id]: _gone, ...others }) => others);
+  };
+
+  // The settings view: the text read into settings, and the shipped file it is a copy of.
+  const formRead = useMemo(() => readRulesForm(text), [text]);
+  const formKey = formRead.ok ? formRead.key : null;
+  const shipped = formKey ? shippedRulesOf(formKey) : null;
+  const copyName = formKey && shipped ? ownNameOfKey(formKey) : null;
+  const savedCopy =
+    copyName && entries.some((entry) => entry.own && entry.name === copyName) ? copyName : null;
+
+  /**
+   * "Revert to defaults": the person's copy is removed, as "Remove" removes
+   * it, and the editor shows the shipped file again, as a copy not saved.
+   */
+  const revert = async () => {
+    if (!shipped) return;
+    if (savedCopy) {
+      if (confirm?.name === savedCopy) closeSwitchOn();
+      await removeSiteFile(savedCopy);
+    }
+    const fresh = shipped.text;
+    const title = entries.find((entry) => !entry.own && entry.name === shipped.name)?.title;
+    setText(fresh);
+    setBaseline(fresh);
+    setCheck(checkEditorText(fresh));
+    setEditing(null);
+    setSaveProblem(null);
+    setStarted(null);
+    setOrigin({
+      kind: 'copy',
+      name: shipped.name,
+      title: title ?? shipped.name,
+      importer: shipped.importer,
+      text: fresh,
+    });
+    setReverted({ text: fresh, removed: savedCopy !== null });
   };
 
   // What saving would do follows the Sites folder as it changes.
@@ -444,10 +503,12 @@ function EditorBody({
             <section className="rules-editor-pane" aria-labelledby={`${titleId}-file`}>
               <div className="rules-editor-pane-head">
                 <h3 id={`${titleId}-file`}>The file</h3>
+                <ViewTabs view={view} idBase={titleId} onView={setView} />
                 <button
                   type="button"
                   className="button button-small"
                   data-testid="rules-editor-format"
+                  hidden={view !== 'json'}
                   disabled={formatJson(text) === null}
                   onClick={() => {
                     const laid = formatJson(text);
@@ -472,7 +533,33 @@ function EditorBody({
                   Start again from another template…
                 </button>
               </div>
+              {view === 'form' ? (
+                <div
+                  className="rules-form-panel"
+                  role="tabpanel"
+                  id={`${titleId}-view-form`}
+                  aria-labelledby={`${titleId}-tab-form`}
+                  data-testid="rules-editor-form"
+                >
+                  <RulesForm
+                    text={text}
+                    read={formRead}
+                    problems={check.problems}
+                    shipped={shipped}
+                    savedCopy={savedCopy}
+                    reverted={reverted?.text === text ? { removed: reverted.removed } : null}
+                    onChange={setText}
+                    onOpenJson={() => {
+                      setView('json');
+                    }}
+                    onRevert={revert}
+                  />
+                </div>
+              ) : null}
               <JsonText
+                hidden={view !== 'json'}
+                panelId={`${titleId}-view-json`}
+                tabId={`${titleId}-tab-json`}
                 text={text}
                 textRef={textRef}
                 problemLines={problemLines}
@@ -580,6 +667,61 @@ function EditorBody({
           </footer>
         </>
       )}
+    </div>
+  );
+}
+
+/** The two views of the file, as tabs: its settings, and its text as JSON. */
+const VIEWS: readonly { view: RulesEditorView; name: string }[] = [
+  { view: 'form', name: 'Settings' },
+  { view: 'json', name: 'JSON' },
+];
+
+/**
+ * The tabs that switch the left side between the settings and the JSON:
+ * arrow keys move between them, as between any tabs.
+ */
+function ViewTabs({
+  view,
+  idBase,
+  onView,
+}: {
+  view: RulesEditorView;
+  idBase: string;
+  onView: (view: RulesEditorView) => void;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  return (
+    <div className="rules-view-tabs" role="tablist" aria-label="How the file is shown">
+      {VIEWS.map((one, index) => (
+        <button
+          key={one.view}
+          ref={(element) => {
+            refs.current[index] = element;
+          }}
+          type="button"
+          role="tab"
+          id={`${idBase}-tab-${one.view}`}
+          aria-selected={view === one.view}
+          aria-controls={`${idBase}-view-${one.view}`}
+          tabIndex={view === one.view ? 0 : -1}
+          className="rules-view-tab"
+          data-testid={`rules-editor-view-${one.view}`}
+          onClick={() => {
+            onView(one.view);
+          }}
+          onKeyDown={(event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (step === 0) return;
+            event.preventDefault();
+            const next = VIEWS[(index + step + VIEWS.length) % VIEWS.length]!;
+            onView(next.view);
+            refs.current[VIEWS.indexOf(next)]?.focus();
+          }}
+        >
+          {one.name}
+        </button>
+      ))}
     </div>
   );
 }
@@ -845,6 +987,9 @@ function CopyForm({
  * Esc, then Tab or Shift+Tab, moves out of it, as the hint under it says.
  */
 function JsonText({
+  hidden,
+  panelId,
+  tabId,
   text,
   textRef,
   problemLines,
@@ -853,6 +998,10 @@ function JsonText({
   describedBy,
   onChange,
 }: {
+  /** The settings view is shown instead: the text stays, with its undo, for when it is shown again. */
+  hidden: boolean;
+  panelId: string;
+  tabId: string;
   text: string;
   textRef: React.RefObject<HTMLTextAreaElement | null>;
   problemLines: ReadonlySet<number>;
@@ -875,7 +1024,13 @@ function JsonText({
     }
   };
   return (
-    <div className="rules-json">
+    <div
+      className="rules-json"
+      hidden={hidden}
+      role="tabpanel"
+      id={panelId}
+      aria-labelledby={tabId}
+    >
       <div className="rules-json-box">
         <div className="rules-json-gutter" ref={gutterRef} aria-hidden="true">
           {Array.from({ length: lines }, (_, i) => {
