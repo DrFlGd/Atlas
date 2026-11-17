@@ -52,6 +52,7 @@ function sourceOfPlace(game: LoadedGame, place: ReaderPlace): GuideSource | unde
         ? sourceOfEntry(game, place.sectionId)
         : guideSource(game, place.source ?? null);
     case 'home':
+    case 'all':
       return guideSource(game, place.source ?? null);
     default:
       return undefined;
@@ -129,12 +130,14 @@ export function useFollowSource(game: LoadedGame, view: SourceView): void {
   useEffect(() => {
     if (placeSource && placeSource.gameId !== chosen) chooseGuideSource(gameId, placeSource.gameId);
   }, [placeSource, chosen, gameId]);
+  // Only a page of the guide's order is read in it: a page outside its menu has no place there.
   const readId =
     place.kind === 'page' &&
     inOrder &&
     shown &&
     placeSource === shown &&
-    !isSourceHome(game, place.guideId)
+    !isSourceHome(game, place.guideId) &&
+    readingOrder(game, shown).some((page) => page.id === place.guideId)
       ? place.guideId
       : null;
   useEffect(() => {
@@ -145,7 +148,8 @@ export function useFollowSource(game: LoadedGame, view: SourceView): void {
 /**
  * The pages before and after a page in the order of the guide shown (with
  * none, `guideId` null: the landing page made from the contents, before
- * the first page); null for a wiki.
+ * the first page); null for a wiki. A page outside the guide's menu is in
+ * no order: it has neither.
  */
 export function sequenceOf(
   game: LoadedGame,

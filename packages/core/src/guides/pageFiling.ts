@@ -1,11 +1,14 @@
 import { layoutFormsIn, type GuideEntry } from '@atlas/schema';
-import { guideLinks, guideLinksIn } from './pageTree';
+import { guideLinks, guideLinksIn } from './pageLinks';
 import { headingNames } from './sections';
 
 /**
- * Which links of a page list other pages, read from its Markdown: what
- * decides where the pages of a section placed by links go (see
- * `pageTree.ts`).
+ * Which links of a page list other pages, read from its Markdown: what a
+ * page lists, as an index lists what it is about. The menu a home page
+ * gives is read from it (see `homeMenu.ts`), and the arrange tool's "File
+ * the pages this page lists under it" puts the pages a page lists under it
+ * when the person asks. Nothing here places a page by itself: the contents
+ * Guides shows is only the source's own menu and what the person arranged.
  *
  * A link is a *listing* link when it is what an entry of a list is about:
  *
@@ -16,8 +19,8 @@ import { headingNames } from './sections';
  *   first column with content, past columns only of pictures (an icon,
  *   linked or not). When its cells are no links (words, numbers, a level),
  *   the table lists nothing, whatever later columns name: a weapons table
- *   files the weapon of each row, never the location a later column names,
- *   and an item's table of upgrades ("Level | Cost | Where") files nothing;
+ *   lists the weapon of each row, never the location a later column names,
+ *   and an item's table of upgrades ("Level | Cost | Where") lists nothing;
  * - a tile (an item of a list of tiles is a list item whose main link is
  *   its linked picture or its name);
  * - an index written without a list: a line of a paragraph (the whole
@@ -37,18 +40,7 @@ import { headingNames } from './sections';
  * enough to read as prose; in a line of links with words between them, or
  * other separators (a trail of the way, "Home › Weapons › Sword"); in the
  * line right after a line that is only a picture (its caption); in
- * another column of a table. A mention never files a page.
- *
- * A *listing unit* is what lists a page: a table row whose name cell lists
- * one, a list item whose main link (or run of links) lists one, a tile, a
- * line of a paragraph and a heading that list one. Its other links (a
- * row's "found at" column, the location named in an item after its name)
- * describe the page it lists: they file nothing, and they do not count
- * against the page being a list page.
- *
- * A *list page* is a page that lists enough pages, and whose listing links
- * are a large share of the pages it lists or mentions outside its listing
- * units (see the constants below).
+ * another column of a table. A mention lists nothing.
  */
 
 /**
@@ -59,27 +51,6 @@ import { headingNames } from './sections';
  */
 export const LISTING_WORDS_MAX = 100;
 
-/**
- * A list page lists at least this many pages. Two links in a list ("See
- * also") are no index; three is the least an index of a type of thing has.
- */
-export const LIST_PAGE_MIN_LISTED = 3;
-
-/**
- * A list page lists at least this share of the pages it lists or mentions
- * outside its listing units (a link in a row, an item or a line that lists
- * a page describes that page, and is left out). An item page has a few
- * listing links of its own (a "See also" list) among many mentions (its
- * box, its sentences, a table of upgrades whose first column is a level),
- * and an article with one table about things of a type (a boss page with a
- * small table of what it drops, among long prose) lists a small part of
- * what it names: both stay below. An index of a type of thing lists most
- * of what it names outside its rows, its introduction of a few sentences
- * aside, however many locations and characters its rows name beside each
- * thing.
- */
-export const LIST_PAGE_SHARE = 0.6;
-
 /** The listing links of a page (see the top of this file). */
 export interface PageFiling {
   /** The pages it lists, by guide id, in order, each once, never itself. */
@@ -87,14 +58,7 @@ export interface PageFiling {
   /** How many pages it links to in any way, each once (see `guideLinksIn`). */
   linked: number;
   /**
-   * How many pages it links to outside its listing units (a sentence, a
-   * box, a table that lists nothing) and does not list, each once. For a
-   * page that lists too few pages to be a list page: every page it links
-   * to and does not list.
-   */
-  mentioned: number;
-  /**
-   * The headings of the page, in order (none when it is not read closely):
+   * The headings of the page, in order (none when it links to no page):
    * where its listed pages are listed, see {@link listedUnder}.
    */
   headings?: readonly ListingHeading[];
@@ -118,10 +82,19 @@ export interface ListingHeading {
   guide: string | null;
 }
 
-/** Whether a page lists enough pages to be a list page (see the constants above). */
-export function isListPage(filing: PageFiling): boolean {
-  const listed = filing.listing.length;
-  return listed >= LIST_PAGE_MIN_LISTED && listed >= LIST_PAGE_SHARE * (listed + filing.mentioned);
+/**
+ * The heading around each heading of a page, by index: the nearest one
+ * before it of a lower level; -1 for none.
+ */
+export function headingParents(headings: readonly ListingHeading[]): number[] {
+  const parents: number[] = [];
+  const open: number[] = [];
+  headings.forEach((heading, i) => {
+    while (open.length > 0 && headings[open.at(-1)!]!.level >= heading.level) open.pop();
+    parents.push(open.at(-1) ?? -1);
+    open.push(i);
+  });
+  return parents;
 }
 
 /** A guide id as a link's address, with or without `<…>`. */
@@ -326,6 +299,9 @@ function runOf(spans: readonly Span[], text: string): string[] | null {
   return new Set(ids).size >= 2 ? ids : null;
 }
 
+/** A letter: a line that starts with one starts with a word. */
+const WORD_START = /^\p{L}/u;
+
 /**
  * The listing links of one line of a paragraph or a heading (see the top
  * of this file): a run of links, or one link alone (in a heading, with
@@ -429,8 +405,7 @@ function emptyOrPictures(cell: string): boolean {
 /**
  * The listing links of a table: the main links of each line of the cells
  * of its name column, the first column with more than pictures (none for
- * a box of facts). A table whose name column holds no links lists nothing:
- * when it is unsure what a table lists, the contents stays flat.
+ * a box of facts). A table whose name column holds no links lists nothing.
  *
  * By row under the heading row: what it lists.
  */
@@ -455,35 +430,17 @@ function tableListing(rows: readonly string[], hidden: boolean): (readonly strin
 
 const NO_IDS: readonly string[] = [];
 
-/** A guide id in a Markdown link, read as `guideLinksIn` reads it. */
-const GUIDE_LINK = /\]\(\s*<?([a-z0-9][a-z0-9-]*:guide:[A-Za-z0-9][A-Za-z0-9_.-]*)/g;
-
-/** Adds `by` to the count of each link to a guide in a piece of Markdown, the page itself left out. */
-function countLinks(
-  text: string,
-  self: string | undefined,
-  counts: Map<string, number>,
-  by: number,
-): void {
-  if (!text.includes(':guide:')) return;
-  GUIDE_LINK.lastIndex = 0;
-  for (let match = GUIDE_LINK.exec(text); match; match = GUIDE_LINK.exec(text)) {
-    const id = match[1]!;
-    if (id !== self) counts.set(id, (counts.get(id) ?? 0) + by);
-  }
-}
-
 /**
- * The listing links of a page's Markdown, how many pages it links to, and
- * how many it mentions outside its listing units (see the top of this
- * file); `linked` when that is known already.
+ * The listing links of a page's Markdown, with the headings they are
+ * listed under, and how many pages it links to (see the top of this file);
+ * `linked` when that is known already.
  */
 export function pageFilingIn(
   body: string,
   self?: string,
   linked: number = guideLinksIn(body, self).length,
 ): PageFiling {
-  if (linked === 0) return { listing: [], linked: 0, mentioned: 0 };
+  if (linked === 0) return { listing: [], linked: 0 };
   const listing: string[] = [];
   const seen = new Set<string>();
   /** The headings read, and those open around the line read (innermost last), by index. */
@@ -496,13 +453,9 @@ export function pageFilingIn(
     listing.push(id);
     listedUnder.push(openHeadings.at(-1) ?? -1);
   };
-  /** The listing units read (a row, an item, a line, a heading), as written. */
-  const units: string[] = [];
-  /** Lists what a listing unit lists; a unit that lists nothing is no unit. */
-  const listUnit = (ids: readonly string[], text: string) => {
-    if (ids.length === 0) return;
+  /** Lists what a listing unit lists (a row, an item, a line, a heading). */
+  const listUnit = (ids: readonly string[]) => {
     for (const id of ids) list(id);
-    units.push(text);
   };
   const lines = body.split('\n');
   // The blocks of layout forms are read in order, as blocks of the page; a
@@ -549,9 +502,7 @@ export function pageFilingIn(
       while (j < lines.length && TABLE_ROW.test(lines[j]!)) rows.push(lines[j++]!);
       const byRow = tableListing(rows, hidden);
       if (byRow) {
-        byRow.forEach((ids, at) => {
-          listUnit(ids, rows[at + 1]!);
-        });
+        for (const ids of byRow) listUnit(ids);
       }
       afterPicture = false;
       i = j;
@@ -577,7 +528,7 @@ export function pageFilingIn(
           text += ` ${lines[j]!.trim()}`;
           j++;
         }
-        listUnit(itemListing(text, hidden, false), text);
+        listUnit(itemListing(text, hidden, false));
         passBars(text);
         // A blank line between items keeps the list going.
         let next = j;
@@ -598,7 +549,7 @@ export function pageFilingIn(
       const text = line.slice(heading[0].length).replace(/\s+#+\s*$/, '');
       // A heading that is one link lists that page, under the headings around it.
       const ids = shown() ? lineListing(text, true) : [];
-      listUnit(ids, text);
+      listUnit(ids);
       const guide = ids.length === 1 && ids[0] !== self ? ids[0]! : null;
       openHeadings.push(headings.length);
       headings.push({ level, words: wordsOf(text), guide });
@@ -634,7 +585,7 @@ export function pageFilingIn(
       }
       if (text) pieces.push(text);
       for (const piece of pieces.flatMap((piece) => piece.split('<br>'))) {
-        if (shown() && !afterPicture) listUnit(lineListing(piece, false), piece);
+        if (shown() && !afterPicture) listUnit(lineListing(piece, false));
         afterPicture = onlyPictures(piece);
         passBars(piece);
       }
@@ -650,109 +601,19 @@ export function pageFilingIn(
   return {
     listing,
     linked,
-    mentioned: mentionedOutside(body, self, linked, listing, seen, units),
     headings: headings.map((heading, i) => ({ ...heading, section: names[i]! })),
     listedUnder,
   };
 }
 
-/**
- * How many pages a page links to outside its listing units, and does not
- * list: each link of the page counted, less those of its listing units.
- * A page that lists too few pages is no list page, whatever it mentions:
- * then every page it links to and does not list is counted.
- */
-function mentionedOutside(
-  body: string,
-  self: string | undefined,
-  linked: number,
-  listing: readonly string[],
-  listed: ReadonlySet<string>,
-  units: readonly string[],
-): number {
-  if (listing.length < LIST_PAGE_MIN_LISTED) return Math.max(0, linked - listing.length);
-  const counts = new Map<string, number>();
-  countLinks(body, self, counts, 1);
-  for (const unit of units) countLinks(unit, self, counts, -1);
-  let mentioned = 0;
-  for (const [id, count] of counts) if (count > 0 && !listed.has(id)) mentioned++;
-  return mentioned;
-}
-
-/**
- * Whether a page may be a list page, by a quick look at its lines: a line
- * that starts with a word lists no page up to a `<br>` (it is a sentence,
- * or a list item, a line or a heading that starts with words), and any
- * other line (or the rest of one after a `<br>`) lists at most the pages
- * it links to. A line that starts with a word right after a
- * blank line (or first in the page) opens a paragraph: its links, up to a
- * `<br>`, are outside any listing unit, so the pages it names are listed
- * or mentioned. A page whose other lines hold too few links to list enough
- * of those pages is no list page, and need not be read closely (most pages
- * of a wiki).
- */
-export function mayBeListPage(body: string, linked: number, self?: string): boolean {
-  if (linked < LIST_PAGE_MIN_LISTED) return false;
-  // Never more pages are named outside listing units than are linked: as many links surely do.
-  const surely = Math.max(LIST_PAGE_MIN_LISTED, LIST_PAGE_SHARE * linked);
-  let links = 0;
-  /** The pages named in lines that open a paragraph. */
-  const outside = new Set<string>();
-  /** The next `<br>` from the line read: the lines are read in order. */
-  let nextBreak = -1;
-  // The next link to a guide, and the lines before it skipped at once.
-  let link = body.indexOf(':guide:');
-  while (link >= 0) {
-    const start = body.lastIndexOf('\n', link) + 1;
-    let end = body.indexOf('\n', link);
-    if (end < 0) end = body.length;
-    let at = start;
-    while (body[at] === ' ' || body[at] === '\t') at++;
-    // A line that starts with a word may list after a `<br>`, as a line of its own.
-    let from = link;
-    if (WORD_START.test(body[at] ?? '')) {
-      if (nextBreak !== Infinity && nextBreak < at) {
-        nextBreak = body.indexOf('<br>', at);
-        if (nextBreak < 0) nextBreak = Infinity;
-      }
-      const head = Math.min(nextBreak, end);
-      if (start === 0 || body.slice(body.lastIndexOf('\n', start - 2) + 1, start).trim() === '') {
-        for (const id of guideLinksIn(body.slice(at, head), self)) outside.add(id);
-      }
-      from = head === end ? -1 : body.indexOf(':guide:', head);
-    }
-    for (let found = from; found >= 0 && found < end; found = body.indexOf(':guide:', found + 7)) {
-      if (++links >= surely) return true;
-    }
-    link = body.indexOf(':guide:', end);
-  }
-  return links >= LIST_PAGE_MIN_LISTED && links >= LIST_PAGE_SHARE * outside.size;
-}
-
-/** A letter: a line that starts with one starts with a word. */
-const WORD_START = /^\p{L}/u;
-
 /** The listing links of each guide object, read once: a guide is never changed in place. */
 const filingOfGuide = new WeakMap<GuideEntry, PageFiling>();
-/** The guides found to be no list page at a quick look, with how many pages each links to. */
-const noListOfGuide = new WeakMap<GuideEntry, PageFiling>();
-const NO_LISTING: readonly string[] = [];
 
-/**
- * The listing links of a guide (see {@link pageFilingIn}), read once per
- * guide. With `onlyListPage`, a page that cannot be a list page (see
- * {@link mayBeListPage}) is not read closely: its listing is then empty.
- */
-export function guideFiling(guide: GuideEntry, onlyListPage = false): PageFiling {
-  let filing = filingOfGuide.get(guide) ?? (onlyListPage ? noListOfGuide.get(guide) : undefined);
+/** The listing links of a guide (see {@link pageFilingIn}), read once per guide. */
+export function guideFiling(guide: GuideEntry): PageFiling {
+  let filing = filingOfGuide.get(guide);
   if (filing) return filing;
-  const linked = guideLinks(guide).length;
-  if (onlyListPage && !mayBeListPage(guide.body, linked, guide.id)) {
-    filing = { listing: NO_LISTING, linked, mentioned: linked };
-    noListOfGuide.set(guide, filing);
-    return filing;
-  }
-  filing = pageFilingIn(guide.body, guide.id, linked);
+  filing = pageFilingIn(guide.body, guide.id, guideLinks(guide).length);
   filingOfGuide.set(guide, filing);
   return filing;
 }

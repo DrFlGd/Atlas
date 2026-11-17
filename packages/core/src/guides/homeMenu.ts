@@ -1,6 +1,5 @@
 import type { GuideEntry } from '@atlas/schema';
-import { guideFiling } from './pageFiling';
-import { headingParents } from './pageTree';
+import { guideFiling, headingParents } from './pageFiling';
 import { sectionName } from './sections';
 
 /**
@@ -29,8 +28,8 @@ import { sectionName } from './sections';
  *
  * An importer writes the menu as the pack's sections (an importer knows the
  * side menu and which pages are about the wiki itself, which the pack does
- * not); the pages under each page are worked out by their links, as for
- * any page of the contents (see `pageTree.ts`).
+ * not). Guides shows those sections as they are, and puts no page under
+ * another by its links.
  */
 
 /** An entry of a menu made from a home page: a page, or a block with what it holds. */

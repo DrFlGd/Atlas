@@ -1,7 +1,7 @@
 /**
  * A list of pages as Markdown: one item per page, a link to it by its id,
  * with the pages under it as a list in the item, as deep as they go. A
- * level that is no page (a heading of a list page) is its words, with its
+ * level that is no page (a group of words) is its words, with its
  * pages under it. What a person puts in a page's text, which reads as an
  * index from then on and never changes by itself.
  */

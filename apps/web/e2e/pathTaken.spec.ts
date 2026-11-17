@@ -7,9 +7,11 @@ import { servePageTree } from './pageTreePack';
  * The line above a page shows the way the reader came: walked from page
  * to page (a link in a page's text, a tile of the landing page, the pages
  * under a page), it names each page walked, and pressing one goes back to
- * it as Back would. Opened afresh (from the contents, a search), it is the
- * way to the page in the contents, as before. On the made-up wiki of
- * `pageTreePack.ts`: Basics › Gear › Weapons › Short Blades › Dirk.
+ * it as Back would. Opened afresh (from the menu, a search), it is the
+ * way to the page in the menu, as before; for a page outside the menu,
+ * the pages the wiki files it under. On the made-up wiki of
+ * `pageTreePack.ts`: Basics › Gear in the menu, and Short Blades (filed
+ * under Gear) and Dirk (filed under Short Blades) outside it.
  */
 
 test.use({ layout: 'standard' });
@@ -102,8 +104,8 @@ test.describe('on a desktop', () => {
       line('Example Wiki', 'Basics', 'Gear', 'Short Blades', 'Dirk'),
     );
     await expect(walked(page)).toHaveText(['Gear', 'Short Blades']);
-    // The contents beside the page still marks where Dirk is in the contents.
-    await expect(side(page).locator('[aria-current="page"]')).toHaveText('Dirk');
+    // Dirk is outside the menu: the bar marks nothing.
+    await expect(side(page).locator('[aria-current="page"]')).toHaveCount(0);
 
     // Gear, two steps back: where it was scrolled to, and Forward still there.
     await walked(page).filter({ hasText: 'Gear' }).click();
@@ -123,20 +125,18 @@ test.describe('on a desktop', () => {
     await crumbs(page).getByRole('button', { name: 'Basics' }).click();
     await expect(page.getByTestId('guides-contents').locator('h1')).toHaveText('Basics');
 
-    // Opened from a search: the way to it in the contents, nothing walked.
+    // Opened from a search: outside the menu, the pages the wiki files it under, nothing walked.
     await page.getByTestId('guides-search').first().fill('next to it lies the kris');
     await page.getByTestId('guides-result').filter({ hasText: 'Dirk' }).first().click();
     await expect(shownPage(page).locator('h1')).toHaveText('Dirk');
-    await expect(crumbs(page)).toHaveText(
-      line('Example Wiki', 'Basics', 'Gear', 'Weapons', 'Short Blades', 'Dirk'),
-    );
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Gear', 'Short Blades', 'Dirk'));
     await expect(walked(page)).toHaveCount(0);
-    await expect(crumbs(page).getByTestId('guides-crumb')).toHaveText([
-      'Basics',
-      'Gear',
-      'Weapons',
-      'Short Blades',
-    ]);
+    await expect(crumbs(page).getByTestId('guides-crumb')).toHaveText(['Gear', 'Short Blades']);
+    // A page the wiki files under nothing: its name alone.
+    await page.getByTestId('guides-search').first().fill('next to it lies the shiv');
+    await page.getByTestId('guides-result').filter({ hasText: 'Kris' }).first().click();
+    await expect(shownPage(page).locator('h1')).toHaveText('Kris');
+    await expect(crumbs(page)).toHaveText(line('Example Wiki', 'Kris'));
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
   });
 });
@@ -154,11 +154,11 @@ test.describe('on a phone', () => {
       .first()
       .tap();
     await expect(shownPage(page).locator('h1')).toHaveText('Short Blades');
-    // The pages under a page are a step on the way too.
-    await page
-      .getByTestId('pages-under')
-      .getByTestId('guides-page-link')
-      .filter({ hasText: 'Dirk' })
+    // No page is under Short Blades: its list leads on.
+    await expect(page.getByTestId('pages-under')).toHaveCount(0);
+    await shownPage(page)
+      .locator('.guides-page-body .app-link', { hasText: /^Dirk$/ })
+      .first()
       .tap();
     await expect(shownPage(page).locator('h1')).toHaveText('Dirk');
     await shownPage(page).locator('.guides-page-body .app-link', { hasText: 'Kris' }).tap();

@@ -356,16 +356,18 @@ const menuHeadings = once(text(200), 'heading').min(1).max(MAX_MENU_HEADINGS);
 /**
  * The `menu` section of a wiki or guide part, and of a reader's defaults:
  * where the wiki's menu comes from, and what is left out of it. Every
- * entry may be left out, and the general rules then hold: the headed
- * blocks of the home page's main part first, then the side menu's groups,
- * without the blocks of news and the groups about the wiki itself.
+ * entry may be left out, and the general rules then hold: the side menu's
+ * groups (a guide's own table of contents), without the groups about the
+ * wiki itself. Atlas shows the site's own menu, and makes none by reading
+ * pages.
  *
- * - `from`: `both` (the default), `main` or `side` (the default of a part
- *   whose pages are read in order, `pagesInOrder`: a guide keeps its own
- *   table of contents).
+ * - `from`: `side` (the default), or with the headed blocks of the home
+ *   page's main part before the side menu (`both`) or alone (`main`),
+ *   without the blocks of news.
  * - `headings`: the elements of the home page's main part that are the
- *   headings of its blocks, where the page marks them with no heading of
- *   its own (a box's title): each starts a block, as a heading does.
+ *   titles of its blocks, where the page marks them with no heading of
+ *   its own (a box's title): each is a heading of the home page's text,
+ *   and starts a block of the menu where the main part gives one.
  * - `leaveOut`: blocks and groups left out, by their heading's words.
  * - `keep`: blocks and groups kept whatever the general rules say (a
  *   block of dated items that is no news), by their heading's words.
@@ -383,13 +385,6 @@ export type SiteMenu = z.infer<typeof menuSchema>;
 function menuProblems(menu: SiteMenu | undefined, at: Path): SiteRulesProblem[] {
   if (!menu) return [];
   const problems: SiteRulesProblem[] = [];
-  if (menu.from === 'side' && menu.headings !== undefined) {
-    problems.push({
-      field: fieldPath([...at, 'headings']),
-      message:
-        'is never used with "from": "side", which takes the menu from the side menu alone; leave it out or choose "both" or "main"',
-    });
-  }
   const kept = new Set((menu.keep ?? []).map((words) => words.trim().toLowerCase()));
   (menu.leaveOut ?? []).forEach((words, i) => {
     if (kept.has(words.trim().toLowerCase())) {

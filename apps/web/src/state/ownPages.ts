@@ -1,6 +1,7 @@
 import {
   layoutFor,
   moveShownEntry,
+  packMenuPages,
   shownContentsFor,
   type ContentsParent,
   type LoadedPack,
@@ -21,7 +22,6 @@ import { create } from 'zustand';
 import { desktop } from '../desktop';
 import { notify } from './actions';
 import type { SaveState } from './ownLists';
-import { guideAliases } from './guides';
 import { addOwnPictureSource, sweepOwnPicturesLater } from './ownPictures';
 import { progressStore } from './services';
 import { useAtlas, type LoadedGame } from './store';
@@ -220,27 +220,59 @@ export function layoutOf(game: LoadedGame): PagesLayout {
 const shownKnown = new WeakMap<LoadedPack, { own: OwnPages; shown: ShownContents }>();
 
 /**
- * The contents as the arrange tool shows it: the person's layout with the
- * pages placed by their links, hidden pages included (see
- * `shownContentsFor`). Worked out once per pack and change.
+ * The contents as the arrange tool shows it: the person's layout, the
+ * pages outside the menu as one group at its end, hidden pages included
+ * (see `shownContentsFor`). Worked out once per pack and change.
  */
 export function shownContentsOf(game: LoadedGame): ShownContents {
   const own = ownPagesOf(game.pack.manifest.gameId);
   const known = shownKnown.get(game.pack);
   if (known?.own === own) return known.shown;
-  const shown = shownContentsFor(
-    game.pack.data,
-    own,
-    guideAliases([game.pack]) ?? undefined,
-    game.pack.homePage,
-  );
+  const shown = shownContentsFor(game.pack.data, own, game.pack.homePage);
   shownKnown.set(game.pack, { own, shown });
   return shown;
 }
 
+/** What the arrange tool calls the group of pages outside the menu (see `ShownContents`). */
+export const OUTSIDE_MENU_TITLE = 'Not in the menu';
+
+const packMenuKnown = new WeakMap<LoadedPack, ReadonlySet<string>>();
+
+/**
+ * Of `ids`, the pages the pack's own menu names, when `to` is the group of
+ * pages outside the menu: such a page stays in the menu, as the pack would
+ * put it back there (see `packMenuPages` in core). None for anywhere else.
+ */
+export function menuPagesKept(
+  game: LoadedGame,
+  ids: readonly string[],
+  to: ContentsParent,
+): string[] {
+  if (to === null || to !== shownContentsOf(game).outside) return [];
+  let pages = packMenuKnown.get(game.pack);
+  if (!pages) {
+    pages = packMenuPages(game.pack.data);
+    packMenuKnown.set(game.pack, pages);
+  }
+  const menu = pages;
+  return ids.filter((id) => menu.has(id));
+}
+
+/** What is said of the pages kept in the menu (see {@link menuPagesKept}). */
+export function staysInMenuText(game: LoadedGame, kept: readonly string[]): string {
+  if (kept.length === 0) return '';
+  const name = (id: string) =>
+    game.pack.data.guides.find((guide) => guide.id === id)?.title ?? 'The page';
+  return kept.length === 1
+    ? `“${name(kept[0]!)}” is in the site’s own menu, so it stays in the menu. Move it to another section instead.`
+    : `${kept.length} of the pages are in the site’s own menu, so they stay in the menu. Move them to another section instead.`;
+}
+
 /**
  * Moves an entry of the contents as shown, under a page too, and says so
- * with a way to undo it (see `moveInContents`). Returns whether it moved.
+ * with a way to undo it (see `moveInContents`). A page the site's own menu
+ * names does not go out of the menu (see {@link menuPagesKept}): that is
+ * said instead. Returns whether it moved.
  */
 export function moveInContentsOf(
   game: LoadedGame,
@@ -249,14 +281,18 @@ export function moveInContentsOf(
   before: string | null,
   said: string,
 ): boolean {
+  const kept = menuPagesKept(game, [id], to);
+  if (kept.length > 0) {
+    notify(staysInMenuText(game, kept), 'error');
+    return false;
+  }
   const data = game.pack.data;
   return changeContents(
     (own, layout) =>
       moveShownEntry(
         own,
         layout,
-        shownContentsFor(data, own, guideAliases([game.pack]) ?? undefined, game.pack.homePage)
-          .layout,
+        shownContentsFor(data, own, game.pack.homePage).layout,
         id,
         to,
         before,
@@ -457,7 +493,7 @@ export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
   if (contents) merged.contents = contents;
   const pictures = byId(here.pictures ?? [], incoming.pictures ?? []);
   if (pictures.length > 0) merged.pictures = pictures;
-  // The says on list pages: the file's for the pages it names.
+  // The says on list pages an earlier app kept, kept in turn (they change nothing now).
   const listPages = { ...here.listPages, ...incoming.listPages };
   if (Object.keys(listPages).length > 0) merged.listPages = listPages;
   // The width the file's pages were shown at, when it says one.

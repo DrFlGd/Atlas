@@ -28,10 +28,20 @@ export function keyList(lists: string | null): KeyHelp[] {
     },
     { keys: ['Z'], what: 'Undo' },
     ...(lists ? [{ keys: ['C'], what: `${lists}, or back to the map` }] : []),
+    { keys: ['H'], what: 'In Guides, the home page' },
     { keys: ['[', ']'], what: 'In a guide read in order, the previous or the next page' },
     { keys: ['Esc'], what: 'Close what is on top: a menu, search, the location, a list' },
     { keys: ['?'], what: 'This list of keys' },
   ];
+}
+
+/** Whether a key press is the person typing, or meant for a dialog that is open. */
+export function typingOrDialog(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(target.tagName))) {
+    return true;
+  }
+  return document.querySelector('dialog[open], [role="dialog"]') !== null;
 }
 
 /** A button's tooltip with its key, where keys are shown: "Lists (C)". */
