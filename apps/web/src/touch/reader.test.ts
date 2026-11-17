@@ -272,4 +272,20 @@ describe('the way the reader came', () => {
     stampSource('isle');
     expect(currentPlace()).toEqual(page('a'));
   });
+
+  it('keeps All pages as a place of its source, where it was scrolled to', () => {
+    openPlace({ kind: 'all' });
+    stampSource('isle');
+    expect(currentPlace()).toEqual({ kind: 'all', source: 'isle' });
+    rememberScroll(4000);
+    openPlace(page('a'));
+    expect(readerBack()).toBe(true);
+    expect(currentPlace()).toEqual({ kind: 'all', source: 'isle' });
+    expect(useReader.getState().visits[useReader.getState().at]?.scroll).toBe(4000);
+    // The same again is no new visit; another source's is.
+    openPlace({ kind: 'all', source: 'isle' });
+    expect(useReader.getState().at).toBe(1);
+    openPlace({ kind: 'all', source: 'notes' });
+    expect(useReader.getState().at).toBe(2);
+  });
 });

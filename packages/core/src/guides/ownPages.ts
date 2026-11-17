@@ -10,17 +10,7 @@ import {
   type Section,
   type WikiChangeChoice,
 } from '@atlas/schema';
-import {
-  aliasedId,
-  filedUnderThrough,
-  linksThrough,
-  listingWithSay,
-  sortGuides,
-  spreaderOf,
-  type GuidePages,
-} from './contents';
-import { headingSteps } from './headingSteps';
-import { guideLinksIn, placePagesByLinks } from './pageTree';
+import { sortGuides, spreaderOf, type GuidePages } from './contents';
 
 /**
  * A person's own pages laid over a pack's (see `ownPages.ts` in the schema
@@ -41,12 +31,13 @@ import { guideLinksIn, placePagesByLinks } from './pageTree';
  * out of sight.
  *
  * A layout also holds, by a page's id, the pages put under that page by
- * hand. The pages a pack leaves to be placed by their links (a section
- * marked `placeByLinks`, see `pageTree.ts`) are placed when the contents
- * is shown, never written into a layout: a page the person's layout still
- * has in such a section is placed by its links like any other, and one the
- * pack has since placed elsewhere goes there. Only where the person put a
- * page by hand stays theirs.
+ * hand. A pack's section marked `placeByLinks` holds its pages outside the
+ * menu (see `contents.ts`): the arrange tool shows them as one group, "Not
+ * in the menu", from which the person moves pages into the menu, and to
+ * which a page returns when they take it out. A page the person's layout
+ * still has in such a section that the pack has since put in its menu
+ * goes where the pack puts it. Only where the person put a page by hand
+ * stays theirs; nothing here files a page under another by itself.
  */
 
 /** Where an entry of the contents is: in a section, or at the top (`null`). */
@@ -106,12 +97,12 @@ export function mergeLayouts(
   mine: PagesLayout | undefined,
   exists: (id: string) => boolean,
   own: readonly string[],
-  /** The pack's sections whose pages are placed by their links. */
+  /** The pack's sections of pages outside the menu (`placeByLinks`). */
   loose: ReadonlySet<string> = new Set(),
 ): PagesLayout {
   const result: PagesLayout = { top: [], sections: {} };
   const sectionIds = new Set([...Object.keys(mine?.sections ?? {}), ...Object.keys(pack.sections)]);
-  // What the pack places itself, outside the sections it leaves to links.
+  // What the pack places in its menu, outside its sections of pages outside it.
   const packPlaced = new Set<string>(pack.top);
   for (const [id, items] of Object.entries(pack.sections)) {
     if (!loose.has(id)) for (const item of items) packPlaced.add(item);
@@ -119,7 +110,7 @@ export function mergeLayouts(
   for (const id of sectionIds) {
     if (!exists(id)) continue;
     let items = mine?.sections[id] ?? pack.sections[id] ?? [];
-    // A page the person left among those placed by links goes where the pack places it now.
+    // A page the person left outside the menu goes where the pack places it in its menu now.
     if (loose.has(id) && mine?.sections[id]) items = items.filter((item) => !packPlaced.has(item));
     result.sections[id] = items.filter(exists);
   }
@@ -241,7 +232,7 @@ export function layoutFor(data: GuidePages['data'], own: OwnPages): PagesLayout 
   );
 }
 
-/** The pack's sections whose pages are placed by their links. */
+/** The pack's sections of pages outside the menu (`placeByLinks`). */
 export function looseSections(data: GuidePages['data']): Set<string> {
   return new Set(
     (data.sections ?? []).filter((section) => section.placeByLinks === true).map((s) => s.id),
@@ -250,133 +241,103 @@ export function looseSections(data: GuidePages['data']): Set<string> {
 
 const isPageId = (id: string | null) => id !== null && parseId(id)?.kind === 'guide';
 
-/** A heading of a list page shown as a level in the arrange tool (see `headingSteps.ts`). */
-export interface ShownLevel {
-  /** Its id: the list page's id, `#`, the heading's section. */
-  id: string;
-  /** The list page it is a level of. */
-  page: string;
-  /** The heading's words. */
-  title: string;
-  section: string;
+/**
+ * The pages the pack itself puts in its menu: at the top, or in a section
+ * not marked `placeByLinks`. Taken out of the menu by the person, such a
+ * page would go back where the pack puts it (see {@link mergeLayouts}), so
+ * the arrange tool keeps it in the menu.
+ */
+export function packMenuPages(data: GuidePages['data']): Set<string> {
+  const layout = packLayout(data);
+  const loose = looseSections(data);
+  const pages = new Set<string>();
+  for (const id of layout.top) if (isPageId(id)) pages.add(id);
+  for (const [id, items] of Object.entries(layout.sections)) {
+    if (loose.has(id)) continue;
+    for (const item of items) if (isPageId(item)) pages.add(item);
+  }
+  return pages;
 }
 
-/** The contents as the arrange tool shows it: the person's layout with the pages placed by links. */
+/** The contents as the arrange tool shows it: the menu, and the pages outside it as one group. */
 export interface ShownContents {
-  /** What is at the top, and what each section and page holds, as shown. */
-  layout: PagesLayout;
-  /** The pages placed by their links: by page id, the page it is under. */
-  placed: ReadonlyMap<string, string>;
   /**
-   * The headings of list pages as levels, as Guides shows them: by list
-   * page id and by level id, what each holds as shown, levels included.
-   * Only for showing: `layout` holds no level, and a page is moved by it.
+   * What is at the top, and what each section and page holds, as shown:
+   * the menu, then, last at the top, the group of pages outside the menu
+   * (by the id of {@link outside}), flat, each with the pages put under it
+   * by hand.
    */
-  levels: ReadonlyMap<string, readonly string[]>;
-  /** The levels, by id. */
-  steps: ReadonlyMap<string, ShownLevel>;
+  layout: PagesLayout;
+  /**
+   * The id the group "Not in the menu" goes by: the pack's first section
+   * marked `placeByLinks`, where a page taken out of the menu goes; null
+   * when the pack has none.
+   */
+  outside: string | null;
 }
 
 /**
  * The contents as the person sees it, hidden pages included (where the
- * person's layout has them), with the pages placed by their links as the
- * Guides section places them: the arrange tool shows this. With a home
- * page, the top branches from it as in Guides, and it is not in the
- * contents.
+ * person's layout has them): the menu as Guides shows it, and the pages
+ * outside it as one group at its end (see {@link ShownContents}). The
+ * arrange tool shows this. The home page is not in it: the guides open on
+ * it, above the menu.
  */
 export function shownContentsFor(
   data: GuidePages['data'],
   own: OwnPages,
-  aliases?: GuidePages['aliases'],
   homePage?: string | null,
 ): ShownContents {
   const layout = layoutFor(data, own);
-  const guides = new Map(data.guides.map((guide) => [guide.id, guide]));
-  const pages = new Map(own.pages.map((page) => [page.id, page]));
-  const sectionIds = new Set([
-    ...(data.sections ?? []).map((section) => section.id),
-    ...own.sections.map((section) => section.id),
-  ]);
-  const isPage = (id: string) =>
-    guides.has(id) || (isOwnId(id) && pages.get(id)?.body !== undefined);
-  // A page of the pack, shown: it places and is placed. One hidden does neither.
-  const shownPack = (id: string) => guides.has(id) && pages.get(id)?.hidden !== true;
-  const lists = new Map<string, string[]>();
-  for (const [id, items] of Object.entries(layout.sections)) lists.set(id, items);
-  const filingOf = (id: string, onlyListPage: boolean) => {
-    const guide = guides.get(id)!;
-    const page = pages.get(id);
-    const say = own.listPages?.[id];
-    if (page?.body === undefined) return listingWithSay(guide, aliases, onlyListPage, say);
-    return listingWithSay({ ...guide, body: shownBody(guide, page) }, aliases, onlyListPage, say);
-  };
-  const tree = placePagesByLinks({
-    top: layout.top,
-    lists,
-    isSection: (id) => sectionIds.has(id),
-    isPage,
-    byLinks: looseSections(data),
-    linksOf: (id) => {
-      const guide = guides.get(id)!;
-      const page = pages.get(id);
-      if (page?.body === undefined) return linksThrough(guide, aliases);
-      return guideLinksIn(shownBody(guide, page), id).map((link) => aliasedId(aliases, link));
-    },
-    filingOf: (id) => filingOf(id, id !== homePage),
-    filedUnderOf: (id) => filedUnderThrough(guides.get(id)!, aliases),
-    leads: shownPack,
-    movable: shownPack,
-    root: homePage ?? null,
-  });
-  // The headings of list pages as levels, as Guides shows them.
-  const levels = new Map<string, string[]>();
-  const steps = new Map<string, ShownLevel>();
-  const counted = new Map<string, number>();
-  const pagesUnder = (id: string, depth = 0): number => {
-    let count = counted.get(id);
-    if (count !== undefined) return count;
-    count = 0;
-    if (depth < 64) {
-      for (const item of tree.lists.get(id) ?? []) count += 1 + pagesUnder(item, depth + 1);
+  const loose = looseSections(data);
+  const shown = (items: readonly string[]) =>
+    items.filter((id) => id !== homePage && !loose.has(id));
+  const sections: Record<string, string[]> = {};
+  for (const [id, items] of Object.entries(layout.sections)) {
+    if (!loose.has(id)) sections[id] = shown(items);
+  }
+  const top = shown(layout.top);
+  const outside =
+    (data.sections ?? []).find(
+      (section) => section.placeByLinks === true && layout.sections[section.id] !== undefined,
+    )?.id ?? null;
+  if (outside === null) return { layout: { top, sections }, outside: null };
+
+  // What the menu shows, however deep, and the pages put under a page by hand.
+  const within = (from: readonly string[]): Set<string> => {
+    const found = new Set<string>();
+    const queue = [...from];
+    // The queue grows as it is walked.
+    for (const id of queue) {
+      if (found.has(id)) continue;
+      found.add(id);
+      for (const item of sections[id] ?? []) queue.push(item);
     }
-    counted.set(id, count);
-    return count;
+    return found;
   };
-  for (const [id, items] of tree.lists) {
-    if (!guides.has(id) || id === homePage) continue;
-    const grouped = (item: string) => tree.placed.get(item) === id && !tree.filed.has(item);
-    if (!items.some(grouped)) continue;
-    const { listing, headings, listedUnder } = filingOf(id, true);
-    if (!headings || !listedUnder || headings.length === 0) continue;
-    const title = pages.get(id)?.title ?? guides.get(id)!.title;
-    const found = headingSteps({
-      page: id,
-      title,
-      items,
-      grouped,
-      weight: (item) => 1 + pagesUnder(item),
-      listing,
-      headings,
-      listedUnder,
-    });
-    if (!found) continue;
-    levels.set(id, found.items);
-    for (const step of found.steps) {
-      levels.set(step.id, step.items);
-      steps.set(step.id, {
-        id: step.id,
-        page: id,
-        title: step.words || title,
-        section: step.section,
-      });
+  const inMenu = within(top);
+  const byHand = new Set<string>();
+  for (const [id, items] of Object.entries(sections)) {
+    if (isPageId(id)) for (const item of items) byHand.add(item);
+  }
+  // The pages outside the menu, flat, in the pack's order; a page put under
+  // one of them by hand is shown under it, and none is ever left out.
+  const waiting: string[] = [];
+  for (const section of data.sections ?? []) {
+    if (!loose.has(section.id)) continue;
+    for (const id of layout.sections[section.id] ?? []) {
+      if (id !== homePage && !loose.has(id) && !inMenu.has(id)) waiting.push(id);
     }
   }
-  return {
-    layout: { top: tree.top, sections: Object.fromEntries(tree.lists) },
-    placed: tree.placed,
-    levels,
-    steps,
-  };
+  const group = [...new Set(waiting.filter((id) => !byHand.has(id)))];
+  const reached = within(group);
+  for (const id of waiting) {
+    if (reached.has(id)) continue;
+    group.push(id);
+    for (const found of within([id])) reached.add(found);
+  }
+  sections[outside] = group;
+  return { layout: { top: [...top, outside], sections }, outside };
 }
 
 /** Whether anything of the person's changes what the contents shows. */
@@ -393,10 +354,8 @@ function changesContents(own: OwnPages): boolean {
  * takes them. Without anything of theirs, the pack's own data, as it is.
  */
 export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePages {
-  const says =
-    own.listPages && Object.keys(own.listPages).length > 0 ? { listPages: own.listPages } : {};
   if (own.pages.length === 0 && own.sections.length === 0 && own.contents === undefined) {
-    return { data, ...says };
+    return { data };
   }
   const byId = new Map(own.pages.map((page) => [page.id, page]));
   const guides: GuideEntry[] = data.guides.map((guide) => {
@@ -421,7 +380,6 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
           titles.has(section.id) ? { ...section, title: titles.get(section.id)! } : section,
         ),
       },
-      ...says,
     };
   }
   const layout = layoutFor(data, own);
@@ -453,7 +411,7 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
     });
   }
   // The pages put under a page by hand. A hidden page is not shown, so the
-  // contents shows its pages where pages nothing leads to are (see `pageTree.ts`).
+  // contents shows its pages outside the menu (see `contents.ts`).
   const under: Record<string, string[]> = {};
   for (const [id, items] of Object.entries(layout.sections)) {
     if (isPageId(id)) under[id] = shown(items);
@@ -462,7 +420,6 @@ export function applyOwnPages(data: GuidePages['data'], own: OwnPages): GuidePag
     data: { ...data, guides, sections },
     top: shown(layout.top),
     ...(Object.keys(under).length > 0 ? { under } : {}),
-    ...says,
   };
 }
 
@@ -533,17 +490,13 @@ export function moveInLayout(
 
 /**
  * Moves an entry of the contents as shown (`shown`, see
- * {@link shownContentsFor}) to a section, under a page (`to` a page id), or
- * to the top, before the entry `before` there (at the end when it is null
- * or not there), changing the person's layout (`layout`, see
- * {@link layoutFor}). Under a page, only the moved page is placed by hand:
- * it goes among the pages put there by hand, before `before` when that is
- * one of them, else after them. The pages the app places there (by their
- * links, or as the source files them) stay placed by the app, after the
- * pages put there by hand, so a list page keeps its levels and follows its
- * text when the pack is read again. Only pages go under a page, and never
- * under themselves. Returns the layout unchanged when the move cannot be
- * made.
+ * {@link shownContentsFor}) to a section (the group of pages outside the
+ * menu too), under a page (`to` a page id), or to the top, before the
+ * entry `before` there (at the end when it is null or not there), changing
+ * the person's layout (`layout`, see {@link layoutFor}). Under a page, it
+ * goes among the pages put there by hand, before `before` when that is one
+ * of them, else at their end. Only pages go under a page, and never under
+ * themselves. Returns the layout unchanged when the move cannot be made.
  */
 export function moveInContents(
   layout: PagesLayout,
@@ -566,7 +519,6 @@ export function moveInContents(
     }
   }
   if (toPage) {
-    // Among the pages put there by hand; before a page the app places there, after them.
     const list = (next.sections[to!] ?? []).filter((item) => item !== id);
     const index = before === null ? -1 : list.indexOf(before);
     list.splice(index < 0 ? list.length : index, 0, id);
@@ -887,10 +839,8 @@ export function moveShownEntries(
       list.splice(list.indexOf(id), 1);
     }
     if (isPageId(to)) {
-      // As shown: the pages put there by hand, then those the app places there.
-      const byHand = next.sections[to!]!;
-      const rest = (view.sections[to!] ?? []).filter((item) => !byHand.includes(item));
-      view.sections[to!] = [...byHand, ...rest];
+      // As shown: the pages put there by hand.
+      view.sections[to!] = [...next.sections[to!]!];
     } else {
       const target = listOf(view, to) ?? view.top;
       const index = after === null ? -1 : target.indexOf(after);
@@ -936,18 +886,36 @@ export function addLevelPage(
   };
 }
 
+/** What "File the pages this page lists under it" did (see {@link fileListedPages}). */
+export interface FiledListed extends MovedMany {
+  /** The pages it lists that are in the menu, or put under a page by hand: they stay. */
+  placed: string[];
+}
+
 /**
- * The person's say on whether a pack's page files the pages it lists
- * under it: `true` whatever share of its links it lists, `false` none,
- * `null` to let the app decide again (see `listPages` in the schema).
+ * "File the pages this page lists under it": of the pages a page lists
+ * (`listing`, see `listingThrough`), those in the group of pages outside
+ * the menu (see {@link shownContentsFor}) go under it by hand, in the
+ * order it lists them, after the pages put there before. A page it lists
+ * that is in the menu, or that the person put under a page, stays where it
+ * is; so do the page itself and a page it is under. One change, which the
+ * person can undo; nothing is filed again by itself later.
  */
-export function setListPageSay(own: OwnPages, id: string, say: boolean | null): OwnPages {
-  const before = own.listPages ?? {};
-  if (say === null ? !(id in before) : before[id] === say) return own;
-  const listPages = say === null ? withoutKey(before, id) : { ...before, [id]: say };
-  const next: OwnPages = { ...own, listPages };
-  if (Object.keys(listPages).length === 0) delete next.listPages;
-  return next;
+export function fileListedPages(
+  own: OwnPages,
+  layout: PagesLayout,
+  shown: ShownContents,
+  pageId: string,
+  listing: readonly string[],
+): FiledListed {
+  const group = new Set(shown.outside ? (shown.layout.sections[shown.outside] ?? []) : []);
+  const known = new Set<string>();
+  for (const id of shown.layout.top)
+    for (const found of entriesWithin(shown.layout, id)) known.add(found);
+  const ids = listing.filter((id) => id !== pageId && group.has(id));
+  const placed = listing.filter((id) => id !== pageId && !group.has(id) && known.has(id));
+  if (ids.length === 0) return { own, moved: [], left: [], placed };
+  return { ...moveShownEntries(own, layout, shown.layout, ids, pageId, null), placed };
 }
 
 /**

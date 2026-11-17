@@ -6,6 +6,7 @@ import {
   deleteOwnPage,
   deleteOwnSection,
   entriesWithin,
+  fileListedPages,
   listingThrough,
   moveShownEntries,
   newOwnId,
@@ -15,15 +16,12 @@ import {
   parentOf,
   readInOrder,
   renameSection,
-  setListPageSay,
   setPageHidden,
   setPagesInOrder,
   stepInLayout,
   type ContentsParent,
   type ListedPage,
   type MovedMany,
-  type ShownContents,
-  type ShownLevel,
 } from '@atlas/core';
 import type { OwnPages, PagesLayout } from '@atlas/schema';
 import { useId, useMemo, useState } from 'react';
@@ -35,8 +33,11 @@ import {
   changeContents,
   canChangeOwnPages,
   layoutOf,
+  menuPagesKept,
   moveInContentsOf,
+  OUTSIDE_MENU_TITLE,
   shownContentsOf,
+  staysInMenuText,
   useOwnPages,
 } from '../../state/ownPages';
 import { packSaysPagesInOrder } from '../../state/pagesInOrder';
@@ -54,19 +55,19 @@ import '../../styles/guideSources.css';
  * ("Move up", "Move down", "Move to…"); new pages and sections of one's
  * own; a wiki page hidden or shown again; one's own deleted.
  *
- * It shows the contents as Guides does, with the pages placed by their
- * links under the pages that lead to them, and the headings of list pages
- * as levels (rows with no handle: they come from the page's text). A page
- * moved by hand stays where it was put; under a page, the pages shown
- * there stay as arranged. A page moved back to a section whose pages are
- * placed by their links is placed by its links again. Only pages go under
- * a page.
+ * It shows the menu as Guides does: the site's own sections, and what the
+ * person placed by hand. The pages the site's menu does not name are in
+ * one flat group at its end, "Not in the menu" (a row with no handle),
+ * from which a page is moved into the menu, and to which it returns when
+ * it is taken out. A page the site's own menu names stays in the menu. A
+ * page moved by hand stays where it was put. Only pages go under a page;
+ * the app never puts one there by itself.
  *
  * Pages can be ticked (a box on each page row; Shift ticks a run), and
  * the ticked pages moved together (dragged, or "Move to…"), or made the
- * pages of a new level: a page of one's own put where the first was. A
- * pack's page can be told to file the pages it lists under it, or none,
- * whatever the app would decide.
+ * pages of a new level: a page of one's own put where the first was. "File
+ * the pages this page lists under it" puts the pages a page lists that are
+ * not in the menu under it, once, as if the person had moved them.
  *
  * One switch says whether the pages are read in order, as a guide (each
  * page ends with Previous and Next), or as a collection, as a wiki; it
@@ -75,11 +76,8 @@ import '../../styles/guideSources.css';
 
 interface Drop {
   id: string;
-  /**
-   * Before the entry, after it, or into the section or page (at its end);
-   * `level` on a heading level, where nothing can be dropped.
-   */
-  where: 'before' | 'after' | 'into' | 'level';
+  /** Before the entry, after it, or into the section or page (at its end). */
+  where: 'before' | 'after' | 'into';
 }
 
 const isSectionId = (id: string) => parseId(id)?.kind === 'section';
@@ -111,19 +109,6 @@ function dropPlace(layout: PagesLayout, drop: Drop): { to: ContentsParent; befor
   return { to: parent, before: items[at + 1] ?? null };
 }
 
-/**
- * What is said when pages are put among the pages the app files under a
- * page (by the entry they were dropped on, else by `before`): they go
- * with the pages put there by hand, which come first, and the app's keep
- * their order. Empty when they were not.
- */
-function filedNote(game: LoadedGame, to: ContentsParent, near: readonly (string | null)[]): string {
-  if (to === null || isSectionId(to)) return '';
-  const { placed } = shownContentsOf(game);
-  if (!near.some((id) => id !== null && placed.get(id) === to)) return '';
-  return `Pages put under “${titleOf(game, to)}” by hand come first, and the pages the app files there keep the order of its text.`;
-}
-
 /** A sentence and another after it. */
 const withSentence = (text: string, more: string) =>
   more === '' ? text : `${text.endsWith('.') ? text : `${text}.`} ${more}`;
@@ -134,7 +119,6 @@ function move(
   to: ContentsParent,
   before: string | null,
   more = '',
-  near: readonly string[] = [],
 ): void {
   const shown = shownContentsOf(game).layout;
   if (to !== null && entriesWithin(shown, id).has(to)) return;
@@ -143,13 +127,7 @@ function move(
     (to !== null && !isSectionId(to)
       ? `Moved “${titleOf(game, id)}” under “${titleOf(game, to)}”`
       : `Moved “${titleOf(game, id)}”`) + more;
-  moveInContentsOf(
-    game,
-    id,
-    to,
-    before,
-    withSentence(said, filedNote(game, to, near.length > 0 ? near : [before])),
-  );
+  moveInContentsOf(game, id, to, before, said);
 }
 
 function step(game: LoadedGame, id: string, by: -1 | 1, more = ''): void {
@@ -210,10 +188,16 @@ function moveMany(
   ids: readonly string[],
   to: ContentsParent,
   before: string | null,
-  near: readonly string[] = [],
 ): boolean {
   const { own, layout, shown } = startOf(game);
-  const result = moveShownEntries(own, layout, shown, ids, to, before);
+  // The pages the site's menu names stay in the menu.
+  const kept = menuPagesKept(game, ids, to);
+  const going = ids.filter((id) => !kept.includes(id));
+  if (going.length === 0) {
+    notify(staysInMenuText(game, kept), 'error');
+    return false;
+  }
+  const result = moveShownEntries(own, layout, shown, going, to, before);
   if (result.moved.length === 0) {
     notify(
       ids.length === 1
@@ -228,35 +212,14 @@ function moveMany(
     result.moved.length === 1
       ? `“${titleOf(game, result.moved[0]!)}”`
       : `${result.moved.length} pages`;
-  const note = filedNote(game, to, near.length > 0 ? near : [before]);
   return applyMany(
     result,
     own,
-    withSentence(`Moved ${what}${where}.${leftText(result.left.length)}`, note),
+    withSentence(
+      `Moved ${what}${where}.${leftText(result.left.length)}`,
+      kept.length > 0 ? staysInMenuText(game, kept) : '',
+    ),
   );
-}
-
-/** The pages of a level, however deep, in order, and what it holds as a list for a page's text. */
-function levelPages(
-  game: LoadedGame,
-  shown: ShownContents,
-  id: string,
-): { pages: string[]; list: ListedPage[] } {
-  const pages: string[] = [];
-  const listOf = (items: readonly string[], depth: number): ListedPage[] =>
-    items.map((item) => {
-      const step = shown.steps.get(item);
-      if (step) {
-        return {
-          title: step.title,
-          under: depth < 16 ? listOf(shown.levels.get(item) ?? [], depth + 1) : [],
-        };
-      }
-      pages.push(item);
-      return { id: item, title: titleOf(game, item) };
-    });
-  const list = listOf(shown.levels.get(id) ?? [], 0);
-  return { pages, list };
 }
 
 /** A new page of one's own id, not taken by any page there is. */
@@ -305,29 +268,41 @@ function makeLevel(
   return applyMany(made, own, said) ? id : null;
 }
 
-/** Whether a pack's page files the pages it lists, as the person said; undefined when the app decides. */
-const listPageSay = (own: OwnPages, id: string): boolean | undefined => own.listPages?.[id];
-
-/** Tells a pack's page to file the pages it lists, or none, or lets the app decide again. */
-function sayListPage(game: LoadedGame, id: string, say: boolean | null): void {
+/**
+ * "File the pages this page lists under it": the pages its text lists that
+ * are not in the menu go under it, as if the person had moved them (see
+ * `fileListedPages` in core); once, and undone as any move.
+ */
+function fileListed(game: LoadedGame, id: string): boolean {
   const title = titleOf(game, id);
-  let said: string;
-  if (say === true) {
-    const guide = guidesOf(game).contents.guide(id);
-    const listing = guide
-      ? listingThrough(guide, guideAliases([game.pack]) ?? undefined, false).listing
-      : [];
-    said =
-      listing.length === 0
-        ? `“${title}” lists no pages in its text, so nothing goes under it until it does.`
-        : `“${title}” files the pages it lists under it now.`;
-  } else if (say === false) {
-    said = `“${title}” files no pages under it now.`;
-  } else {
-    said = `The app decides again what goes under “${title}”.`;
+  const guide = guidesOf(game).contents.guide(id);
+  const listing = guide ? listingThrough(guide, guideAliases([game.pack]) ?? undefined) : [];
+  if (listing.length === 0) {
+    notify(`“${title}” lists no pages in its text, so there is nothing to file under it.`);
+    return false;
   }
-  const changed = changeContents((own) => setListPageSay(own, id, say), said);
-  if (!changed && say === true) notify(said);
+  const { own, layout } = startOf(game);
+  const result = fileListedPages(own, layout, shownContentsOf(game), id, listing);
+  const placed = result.placed.length;
+  const stay =
+    placed === 0
+      ? ''
+      : placed === 1
+        ? ' One page it lists stays where it is: it is in the menu, or under a page, already.'
+        : ` ${placed} pages it lists stay where they are: they are in the menu, or under a page, already.`;
+  if (result.moved.length === 0) {
+    notify(
+      placed > 0
+        ? `Every page “${title}” lists is in the menu, or under a page, already, so nothing moved.`
+        : `None of the pages “${title}” lists can go under it.`,
+    );
+    return false;
+  }
+  return applyMany(
+    result,
+    own,
+    `Filed ${pagesText(result.moved.length)} under “${title}”.${stay}${leftText(result.left.length)}`,
+  );
 }
 
 export function ContentsEditor({ game }: { game: LoadedGame }) {
@@ -344,21 +319,14 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
   const [drag, setDrag] = useState<{ id: string; drop: Drop | null } | null>(null);
   // Pages with pages under them are folded, but the way to the page edited; and as the person chose.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
-  // Where each entry is shown: under a heading level, or where the layout has it.
-  const shownParent = useMemo(() => {
-    const parents = new Map<string, string>();
-    for (const [id, items] of shown.levels) for (const item of items) parents.set(item, id);
-    return parents;
-  }, [shown]);
   const onWay = useMemo(() => {
     const ids = new Set<string>();
-    const up = (id: string) => shownParent.get(id) ?? parentOf(layout, id);
-    for (let at = editing ? up(editing) : null; at; at = up(at)) {
+    for (let at = editing ? parentOf(layout, editing) : null; at; at = parentOf(layout, at)) {
       if (ids.has(at)) break;
       ids.add(at);
     }
     return ids;
-  }, [layout, editing, shownParent]);
+  }, [layout, editing]);
   const [counts, setCounts] = useState<ReadonlyMap<string, number>>(new Map());
   const [dialog, setDialog] = useState<
     | { kind: 'rename'; id: string }
@@ -434,10 +402,6 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
       setDrag({ ...drag, drop: null });
       return;
     }
-    if (element.dataset.kind === 'level') {
-      setDrag({ ...drag, drop: { id: element.dataset.entry!, where: 'level' } });
-      return;
-    }
     const rect = element.getBoundingClientRect();
     const y = (event.clientY - rect.top) / rect.height;
     // Into a section anything; into a page only a page.
@@ -457,23 +421,11 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
   };
   const endDrag = () => {
     const drop = drag?.drop;
-    if (drag && drop?.where === 'level') {
-      const level = shown.steps.get(drop.id);
-      notify(
-        `“${level?.title ?? 'This level'}” comes from the headings of “${titleOf(
-          game,
-          level?.page ?? '',
-        )}”, so nothing can be put in it. Drop the page on “${titleOf(
-          game,
-          level?.page ?? '',
-        )}” to put it under that page.`,
-        'error',
-      );
-    } else if (drag && drop) {
+    if (drag && drop) {
       const place = dropPlace(layout, drop);
       if (ticked.has(drag.id) && ticked.size > 1) {
-        if (moveMany(game, tickedInOrder, place.to, place.before, [drop.id])) clearTicks();
-      } else move(game, drag.id, place.to, place.before, '', [drop.id]);
+        if (moveMany(game, tickedInOrder, place.to, place.before)) clearTicks();
+      } else move(game, drag.id, place.to, place.before);
     }
     setDrag(null);
   };
@@ -486,34 +438,32 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
     );
     const rows = items.slice(0, count).map((id) => {
       const isSection = isSectionId(id);
-      const level = shown.steps.get(id);
-      const under = isSection ? [] : (shown.levels.get(id) ?? layout.sections[id] ?? []);
-      const open = isSection || (under.length > 0 && (toggled.get(id) ?? onWay.has(id)));
+      const under = isSection ? [] : (layout.sections[id] ?? []);
       const dropHere = drag?.drop?.id === id ? drag.drop.where : null;
-      if (level) {
+      if (id === shown.outside) {
+        // The pages outside the menu: one group, at the end, folded until opened.
+        const pages = layout.sections[id] ?? [];
+        const opened = toggled.get(id) ?? onWay.has(id);
         return (
           <li key={id} className="pe-tree-item">
-            <LevelRow
-              game={game}
-              level={level}
-              depth={depth}
-              under={under.length}
-              open={open}
+            <OutsideRow
+              id={id}
+              count={pages.length}
+              open={opened}
               onFold={(next) => {
                 setToggled(new Map(toggled).set(id, next));
               }}
-              refused={dropHere === 'level'}
-              canChange={canChange}
-              onOwn={() => {
-                const { pages, list } = levelPages(game, shown, id);
-                const made = makeLevel(game, level.title, pages, list);
-                if (made) setToggled(new Map(toggled).set(made, true));
-              }}
+              dropHere={dropHere}
             />
-            {open ? <ul className="touch-plain-list">{rowsOf(id, under, depth + 1)}</ul> : null}
+            {opened ? (
+              <ul className="touch-plain-list" data-testid="contents-outside-list">
+                {rowsOf(id, pages, depth + 1)}
+              </ul>
+            ) : null}
           </li>
         );
       }
+      const open = isSection || (under.length > 0 && (toggled.get(id) ?? onWay.has(id)));
       if (!isSection) rowOrder.push(id);
       const dragging = drag !== null && (drag.id === id || (ticked.has(drag.id) && ticked.has(id)));
       return (
@@ -529,7 +479,7 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
               setToggled(new Map(toggled).set(id, next));
             }}
             current={editing === id}
-            dropHere={dropHere === 'level' ? null : dropHere}
+            dropHere={dropHere}
             dragging={dragging}
             canChange={canChange}
             ticked={ticked.has(id)}
@@ -546,7 +496,9 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
             onDialog={(kind) => {
               if (kind === 'move') setDialog({ kind, ids: [id] });
               else if (kind === 'new-page') newPageUnder(id);
-              else setDialog({ kind, id });
+              else if (kind === 'file-listed') {
+                if (fileListed(game, id)) setToggled(new Map(toggled).set(id, true));
+              } else setDialog({ kind, id });
             }}
           />
           {open ? (
@@ -594,7 +546,8 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
       <h2 className="pe-contents-title">Guides</h2>
       <p className="pe-note">
         {game.pack.manifest.title}. Drag to move a page or a section; drop a page on a page to put
-        it under that page. Tick pages to move them together or make a level of them.
+        it under that page. Tick pages to move them together or make a level of them. The pages the
+        site’s menu does not name are in “{OUTSIDE_MENU_TITLE}”, at the end.
       </p>
       <ReadInOrderSwitch game={game} canChange={canChange} />
       <div className="pe-contents-actions">
@@ -877,7 +830,7 @@ function Row({
   open: boolean;
   onFold: (open: boolean) => void;
   current: boolean;
-  dropHere: Exclude<Drop['where'], 'level'> | null;
+  dropHere: Drop['where'] | null;
   dragging: boolean;
   canChange: boolean;
   ticked: boolean;
@@ -890,7 +843,7 @@ function Row({
   onDragStart: (event: React.PointerEvent) => void;
   onDragMove: (event: React.PointerEvent) => void;
   onDragEnd: () => void;
-  onDialog: (kind: 'rename' | 'move' | 'delete' | 'new-page') => void;
+  onDialog: (kind: 'rename' | 'move' | 'delete' | 'new-page' | 'file-listed') => void;
 }) {
   const [menu, setMenu] = useState(false);
   const menuId = useId();
@@ -899,7 +852,6 @@ function Row({
   const page = section ? undefined : own.pages.find((p) => p.id === id);
   const change = section ? null : pageChange(packPage(game, id), page);
   const mine = isOwnId(id);
-  const say = section || mine ? undefined : listPageSay(own, id);
   const tag = mine
     ? 'Yours'
     : change?.hidden
@@ -998,19 +950,6 @@ function Row({
           {tag}
         </span>
       ) : null}
-      {say !== undefined ? (
-        <span
-          className="pe-tag"
-          title={
-            say
-              ? 'You said it files the pages it lists under it.'
-              : 'You said it files no pages under it.'
-          }
-          data-testid="contents-say"
-        >
-          {say ? 'Files its list' : 'Files none'}
-        </span>
-      ) : null}
       <span className="pe-menu-anchor">
         <button
           type="button"
@@ -1087,41 +1026,17 @@ function Row({
                 New page under this page
               </MenuItem>
             )}
-            {!section && !mine ? (
-              <>
-                <MenuItem
-                  checked={say === true}
-                  testId="contents-file-listed"
-                  onClick={() => {
-                    setMenu(false);
-                    sayListPage(game, id, say === true ? null : true);
-                  }}
-                >
-                  File the pages this page lists under it
-                </MenuItem>
-                <MenuItem
-                  checked={say === false}
-                  testId="contents-file-none"
-                  onClick={() => {
-                    setMenu(false);
-                    sayListPage(game, id, say === false ? null : false);
-                  }}
-                >
-                  Do not file pages under this page
-                </MenuItem>
-                {say !== undefined ? (
-                  <MenuItem
-                    testId="contents-file-auto"
-                    onClick={() => {
-                      setMenu(false);
-                      sayListPage(game, id, null);
-                    }}
-                  >
-                    Let the app decide
-                  </MenuItem>
-                ) : null}
-              </>
-            ) : null}
+            {section ? null : (
+              <MenuItem
+                testId="contents-file-listed"
+                onClick={() => {
+                  setMenu(false);
+                  onDialog('file-listed');
+                }}
+              >
+                File the pages this page lists under it
+              </MenuItem>
+            )}
             {!section && !mine ? (
               <MenuItem
                 testId="contents-hide"
@@ -1209,119 +1124,61 @@ function NameDialog({
 }
 
 /**
- * A heading of a list page shown as a level: no handle, as it comes from
- * the page's text and moves with it. Its pages can be moved out of it, and
- * it can be made a page of one's own.
+ * The group of pages outside the menu, "Not in the menu": no handle and no
+ * menu, as it is no section of the person's or the site's; pages are
+ * dropped into it to take them out of the menu.
  */
-function LevelRow({
-  game,
-  level,
-  depth,
-  under,
+function OutsideRow({
+  id,
+  count,
   open,
   onFold,
-  refused,
-  canChange,
-  onOwn,
+  dropHere,
 }: {
-  game: LoadedGame;
-  level: ShownLevel;
-  depth: number;
-  under: number;
+  id: string;
+  count: number;
   open: boolean;
   onFold: (open: boolean) => void;
-  /** A page is dragged over it, where none can be dropped. */
-  refused: boolean;
-  canChange: boolean;
-  onOwn: () => void;
+  dropHere: Drop['where'] | null;
 }) {
-  const [menu, setMenu] = useState(false);
-  const menuId = useId();
-  const page = titleOf(game, level.page);
   return (
     <div
-      className={`pe-tree-row pe-tree-level${refused ? ' pe-drop-refused' : ''}`}
-      style={{ paddingLeft: 4 + depth * 16 }}
-      data-entry={level.id}
-      data-kind="level"
-      data-testid="contents-level"
+      className={`pe-tree-row pe-tree-section pe-tree-outside${dropHere ? ` pe-drop-${dropHere}` : ''}`}
+      style={{ paddingLeft: 4 }}
+      data-entry={id}
+      data-kind="section"
+      data-testid="contents-outside"
     >
-      <span className="pe-drag-spacer" aria-hidden="true" />
-      <span className="pe-tick-spacer" aria-hidden="true" />
-      {under > 0 ? (
-        <button
-          type="button"
-          className="pe-tree-fold"
-          aria-expanded={open}
-          aria-label={
-            open ? `Hide the pages under “${level.title}”` : `Show the pages under “${level.title}”`
-          }
-          title={open ? 'Hide the pages under it' : 'Show the pages under it'}
-          data-testid="contents-fold"
-          onClick={() => {
-            onFold(!open);
-          }}
-        >
-          <UiIcon name={open ? 'chevronDown' : 'chevron'} size={14} />
-        </button>
-      ) : null}
-      <span
-        className="pe-tree-name pe-tree-level-name"
-        title={`A heading of “${page}”: the pages it lists under this heading are shown here.`}
+      <button
+        type="button"
+        className="pe-tree-fold"
+        aria-expanded={open}
+        aria-label={
+          open ? `Hide the pages ${OUTSIDE_MENU_LOWER}` : `Show the pages ${OUTSIDE_MENU_LOWER}`
+        }
+        title={open ? 'Hide these pages' : 'Show these pages'}
+        data-testid="contents-outside-fold"
+        onClick={() => {
+          onFold(!open);
+        }}
       >
-        <UiIcon name="heading" size={14} />
-        {level.title}
+        <UiIcon name={open ? 'chevronDown' : 'chevron'} size={14} />
+      </button>
+      <span
+        className="pe-tree-name pe-tree-section-name"
+        title="The pages the site’s menu does not name. All pages lists them; move one into the menu to show it in the bar."
+      >
+        <UiIcon name="bullets" size={16} />
+        {OUTSIDE_MENU_TITLE}
       </span>
-      <span className="pe-tag" title={`A heading of “${page}”`}>
-        Heading
-      </span>
-      <span className="pe-menu-anchor">
-        <button
-          type="button"
-          className="pe-tree-more"
-          aria-label={`More for “${level.title}”`}
-          title="Make it a page of your own"
-          aria-haspopup="menu"
-          aria-expanded={menu}
-          aria-controls={menu ? menuId : undefined}
-          disabled={!canChange}
-          data-testid="contents-more"
-          onClick={() => {
-            setMenu(!menu);
-          }}
-        >
-          <UiIcon name="more" size={16} />
-        </button>
-        {menu ? (
-          <div
-            id={menuId}
-            className="pe-menu pe-menu-right"
-            role="menu"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.stopPropagation();
-                setMenu(false);
-              }
-            }}
-          >
-            <MenuItem
-              testId="contents-level-own"
-              onClick={() => {
-                setMenu(false);
-                onOwn();
-              }}
-            >
-              Make this a page of my own
-            </MenuItem>
-            <p className="pe-menu-note">
-              {`A page named “${level.title}” under “${page}”, with these pages under it and listed in its text.`}
-            </p>
-          </div>
-        ) : null}
+      <span className="pe-tag" data-testid="contents-outside-count">
+        {count === 1 ? '1 page' : `${count.toLocaleString('en')} pages`}
       </span>
     </div>
   );
 }
+
+const OUTSIDE_MENU_LOWER = 'not in the menu';
 
 /**
  * "New level from these": names a page of one's own put where the first
@@ -1423,13 +1280,11 @@ function MoveDialog({
   const many = ids.length > 1;
   const inside = new Set(ids.flatMap((one) => [...entriesWithin(shown, one)]));
   const parent = many ? undefined : (parentOf(shown, id) ?? null);
-  const choices = sectionChoices(game).filter((s) => !inside.has(s.id));
   const page = ids.every((one) => !isSectionId(one));
+  // Only pages go out of the menu.
+  const choices = sectionChoices(game).filter((s) => !inside.has(s.id) && (page || !s.outside));
   const [query, setQuery] = useState('');
   const queryId = useId();
-  const loose = new Set(
-    (game.pack.data.sections ?? []).filter((s) => s.placeByLinks === true).map((s) => s.id),
-  );
   const words = query.trim().toLowerCase();
   // The first twenty pages whose title has the words, in contents order.
   const pages: { id: string; title: string }[] = [];
@@ -1474,16 +1329,14 @@ function MoveDialog({
               className="pe-move-choice"
               style={{ paddingLeft: 12 + section.depth * 16 }}
               disabled={section.id === parent}
-              data-testid="move-choice"
+              data-testid={section.outside ? 'move-outside' : 'move-choice'}
               onClick={() => {
                 go(section.id);
               }}
             >
               {section.title}
-              {loose.has(section.id) && page ? (
-                <span className="pe-move-note">
-                  A page here is put under the page that links to it, when one does.
-                </span>
+              {section.outside ? (
+                <span className="pe-move-note">All pages lists it; the bar does not show it.</span>
               ) : null}
             </button>
           </li>

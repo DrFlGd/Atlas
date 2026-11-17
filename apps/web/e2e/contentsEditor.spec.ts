@@ -4,12 +4,12 @@ import { expect, test } from './layout';
 import { servePageTree } from './pageTreePack';
 
 /**
- * The tools of the contents beside the page edited that make levels of
- * pages and fill them, on the made-up wiki of `pageTreePack.ts`: pages
- * ticked and moved together, a new level made of them with a list of them
- * in its text, a page told to file the pages it lists (and the app let
- * decide again), a list of the pages under a page put in its text, and a
- * level made of a page's heading made a page of one's own.
+ * The tools of the contents beside the page edited that arrange the menu,
+ * on the made-up wiki of `pageTreePack.ts`: the pages its menu does not
+ * name in one group at the end, "Not in the menu", moved into the menu
+ * and back; pages ticked and moved together; a new level made of them
+ * with a list of them in its text; the pages a page lists filed under it
+ * at once; and a list of the pages under a page put in its text.
  */
 
 test.use({ layout: 'standard' });
@@ -32,6 +32,7 @@ async function stored(page: Page): Promise<Stored | null> {
 
 const shownPage = (page: Page) => page.getByTestId('guides-page');
 const contents = (page: Page) => page.getByTestId('contents-editor');
+const outside = (page: Page) => contents(page).getByTestId('contents-outside');
 const row = (page: Page, title: string) =>
   contents(page)
     .getByTestId('contents-row')
@@ -64,7 +65,11 @@ test.describe('on a desktop', () => {
   }) => {
     const errors = collectErrors(page);
     await edit(page, 'helm of the warden', 'Warden Helm');
-    // The way to the page edited is open: Armor › Warden Plate › its three pieces.
+    // The page edited is outside the menu: its group is open, its pages flat, in the wiki's order.
+    await expect(outside(page).getByTestId('contents-outside-fold')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
     await row(page, 'Warden Helm').getByTestId('contents-tick').click();
     await row(page, 'Warden Gloves')
       .getByTestId('contents-tick')
@@ -112,44 +117,98 @@ test.describe('on a desktop', () => {
       g('ash-mail'),
       g('iron-cap'),
     ]);
-    // Under Armor, where Ash Mail was, holding the two.
+    // Where Ash Mail was, outside the menu, holding the two.
     await expect(row(page, 'Light armour')).toBeVisible();
     await page.getByTestId('cancel-edit').click();
     await openBySearch(page, 'a plain cap', 'Iron Cap');
     await expect(page.locator('.guides-crumbs')).toHaveText(
-      /Equipment\s*›\s*Armor\s*›\s*Light armour\s*›\s*Iron Cap/,
+      /^Example Wiki\s*›\s*Light armour\s*›\s*Iron Cap$/,
     );
   });
 
-  test('files the pages a page lists when told to, and lets the app decide again', async ({
+  test('files the pages a page lists under it at once, and nothing more after', async ({
     page,
   }) => {
     await edit(page, 'notes from the field', 'Field Notes');
     const notes = row(page, 'Field Notes');
     await expect(notes.getByTestId('contents-fold')).toHaveCount(0);
+    // No say on the page to keep: one move, as if the person had made it.
+    await expect(notes.getByTestId('contents-say')).toHaveCount(0);
     await notes.getByTestId('contents-more').click();
     await notes.getByTestId('contents-file-listed').click();
     await expect
-      .poll(async () => (await stored(page))?.listPages)
-      .toEqual({
-        [g('field-notes')]: true,
-      });
-    await expect(notes.getByTestId('contents-say')).toHaveText('Files its list');
+      .poll(async () => (await stored(page))?.contents?.sections[g('field-notes')])
+      .toEqual([g('old-map'), g('lost-key'), g('torn-page')]);
+    expect((await stored(page))?.listPages).toBeUndefined();
+    await expect(page.getByText('Filed 3 pages under “Field Notes”.')).toBeVisible();
     await unfold(page, 'Field Notes');
     await expect(row(page, 'Old Map')).toBeVisible();
-    await expect(row(page, 'Torn Page')).toBeVisible();
-    // The menu says which is in force, and takes it back.
+    // Again: they are under it already, so nothing moves.
     await notes.getByTestId('contents-more').click();
-    await expect(notes.getByTestId('contents-file-listed')).toHaveAttribute('aria-checked', 'true');
-    await expect(notes.getByTestId('contents-file-none')).toHaveAttribute('aria-checked', 'false');
-    await notes.getByTestId('contents-file-auto').click();
-    await expect.poll(async () => (await stored(page))?.listPages).toBeUndefined();
-    await expect(notes.getByTestId('contents-fold')).toHaveCount(0);
-    await expect(notes.getByTestId('contents-say')).toHaveCount(0);
+    await notes.getByTestId('contents-file-listed').click();
+    await expect(page.getByText(/so nothing moved/)).toBeVisible();
+    // In the menu now, by hand: the bar shows them under Field Notes.
+    await page.getByTestId('cancel-edit').click();
+    await openBySearch(page, 'a keepsake: the lost key', 'Lost Key');
+    await expect(page.locator('.guides-crumbs')).toHaveText(
+      /^Example Wiki\s*›\s*Basics\s*›\s*Field Notes\s*›\s*Lost Key$/,
+    );
+    await expect(page.locator('.guides-side [aria-current="page"]')).toHaveText('Lost Key');
+  });
+
+  test('moves a page from Not in the menu into the menu, and back', async ({ page }) => {
+    await edit(page, 'nothing links here', 'Stray Note');
+    await expect(outside(page)).toContainText('Not in the menu');
+    // No handle and no menu: it is no section to move.
+    await expect(outside(page).getByTestId('contents-handle')).toHaveCount(0);
+    await expect(outside(page).getByTestId('contents-more')).toHaveCount(0);
+    const stray = row(page, 'Stray Note');
+    await stray.getByTestId('contents-more').click();
+    await stray.getByTestId('contents-move-to').click();
+    const dialog = page.getByTestId('move-dialog');
+    await dialog.getByTestId('move-choice').filter({ hasText: 'Basics' }).click();
+    await expect
+      .poll(async () => (await stored(page))?.contents?.sections['demo:section:basics'])
+      .toEqual([g('gear'), g('field-notes'), g('stray-note')]);
+    await page.getByTestId('cancel-edit').click();
+    await expect(page.locator('.guides-crumbs')).toHaveText(
+      /^Example Wiki\s*›\s*Basics\s*›\s*Stray Note$/,
+    );
+
+    // Taken out again: back to the group, and out of the bar.
+    await page.getByTestId('edit-page').click();
+    await row(page, 'Stray Note').getByTestId('contents-more').click();
+    await row(page, 'Stray Note').getByTestId('contents-move-to').click();
+    await page.getByTestId('move-dialog').getByTestId('move-outside').click();
+    await expect
+      .poll(async () => (await stored(page))?.contents?.sections['demo:section:basics'])
+      .toEqual([g('gear'), g('field-notes')]);
+    await page.getByTestId('cancel-edit').click();
+    await expect(page.locator('.guides-crumbs')).toHaveText(/^Example Wiki\s*›\s*Stray Note$/);
+
+    // A page the site's own menu names stays in the menu.
+    await page.getByTestId('edit-page').click();
+    await contents(page).locator('.pe-tree-section').filter({ hasText: 'Equipment' }).waitFor();
+    const armor = row(page, 'Armor');
+    await armor.getByTestId('contents-more').click();
+    await armor.getByTestId('contents-move-to').click();
+    await page.getByTestId('move-dialog').getByTestId('move-outside').click();
+    await expect(page.getByText(/“Armor” is in the site’s own menu, so it stays/)).toBeVisible();
+    expect((await stored(page))?.contents?.sections['demo:section:equipment']).toEqual([
+      g('armor'),
+      g('weapons'),
+    ]);
   });
 
   test('puts a list of the pages under a page in its text, as links', async ({ page }) => {
     await edit(page, 'heavy plate worn by the wardens', 'Warden Plate');
+    // The pages it lists, put under it first.
+    const plate = row(page, 'Warden Plate');
+    await plate.getByTestId('contents-more').click();
+    await plate.getByTestId('contents-file-listed').click();
+    await expect
+      .poll(async () => (await stored(page))?.contents?.sections[g('warden-plate')])
+      .toEqual([g('warden-helm'), g('warden-boots'), g('warden-gloves')]);
     await page.getByTestId('paragraph-field').first().click();
     await page.getByTestId('tool-more').click();
     await expect(page.getByText('The list is text from then on')).toBeVisible();
@@ -165,30 +224,6 @@ test.describe('on a desktop', () => {
       'Warden Boots',
       'Warden Gloves',
     ]);
-  });
-
-  test('shows the levels of a list page’s headings, and makes one a page of one’s own', async ({
-    page,
-  }) => {
-    await edit(page, 'all the gear of the isle', 'Gear');
-    await unfold(page, 'Gear');
-    const levels = contents(page).getByTestId('contents-level');
-    await expect(levels).toHaveText([/Weapons/, /Charms/]);
-    // No handle: they come from the page's headings.
-    await expect(levels.first().getByTestId('contents-handle')).toHaveCount(0);
-    const charms = levels.filter({ hasText: 'Charms' });
-    await charms.getByTestId('contents-more').click();
-    await charms.getByTestId('contents-level-own').click();
-    await expect(levels).toHaveText([/Weapons/]);
-    await expect(row(page, 'Charms')).toBeVisible();
-    await expect(row(page, 'Charms').getByTestId('contents-tag')).toHaveText('Yours');
-    await expect
-      .poll(async () => {
-        const own = await stored(page);
-        const made = own?.pages.find((p) => p.title === 'Charms');
-        return made ? own?.contents?.sections[made.id] : undefined;
-      })
-      .toEqual([g('bone-charm'), g('tin-charm'), g('reed-charm')]);
   });
 });
 
@@ -210,63 +245,38 @@ async function dragOnto(
 }
 
 test.describe('dragging and new pages', () => {
-  test('drags the ticked pages together, and nothing onto a level', async ({ page }) => {
+  test('drags the ticked pages together, and no page of the site’s menu out of it', async ({
+    page,
+  }) => {
     await edit(page, 'light mail from the ash', 'Ash Mail');
     await row(page, 'Ash Mail').getByTestId('contents-tick').click();
     await row(page, 'Iron Cap').getByTestId('contents-tick').click();
+    // Weapons in view below the bar of ticked pages, and Iron Cap with it.
+    await row(page, 'Weapons').evaluate((element) => {
+      element.scrollIntoView({ block: 'start' });
+      let parent = element.parentElement;
+      while (parent && parent.scrollHeight <= parent.clientHeight) parent = parent.parentElement;
+      if (parent) parent.scrollTop -= 200;
+    });
     await dragOnto(page, row(page, 'Iron Cap'), row(page, 'Weapons'));
     await expect
       .poll(async () => (await stored(page))?.contents?.sections[g('weapons')])
       .toEqual([g('ash-mail'), g('iron-cap')]);
-    // Only the pages put there: what Weapons lists stays placed by the app, after them.
-    expect((await stored(page))?.contents?.sections['demo:section:pages']).toContain(
-      g('longblade'),
+    // Out of the group of pages outside the menu.
+    expect((await stored(page))?.contents?.sections['demo:section:pages']).not.toContain(
+      g('ash-mail'),
     );
 
-    // A level comes from a page's headings: a page dropped on it is refused, and says why.
-    await contents(page).getByTestId('contents-page').getByText('Gear', { exact: true }).click();
-    await unfold(page, 'Gear');
-    const charms = contents(page).getByTestId('contents-level').filter({ hasText: 'Charms' });
-    await dragOnto(page, row(page, 'Field Notes'), charms);
-    await expect(page.getByText(/comes from the headings of “Gear”/)).toBeVisible();
-    await expect
-      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
-      .toBeUndefined();
-  });
-
-  test('puts a page under a list page beside its levels, which stay', async ({ page }) => {
-    await edit(page, 'all the gear of the isle', 'Gear');
-    await unfold(page, 'Gear');
-    const levels = contents(page).getByTestId('contents-level');
-    await expect(levels).toHaveText([/Weapons/, /Charms/]);
-    await dragOnto(page, row(page, 'Field Notes'), row(page, 'Gear'));
-    await expect
-      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
-      .toEqual([g('field-notes')]);
-    // The levels stay, with the page beside them, first.
-    await expect(levels).toHaveText([/Weapons/, /Charms/]);
-    const notes = await row(page, 'Field Notes').boundingBox();
-    const weapons = await levels.first().boundingBox();
-    expect(notes!.y).toBeLessThan(weapons!.y);
-    await levels.filter({ hasText: 'Charms' }).getByTestId('contents-fold').click();
-    await expect(row(page, 'Bone Charm')).toBeVisible();
-
-    // Dropped among the pages the app files there: with the pages put there by hand, and said so.
-    await page.getByRole('button', { name: 'Undo' }).last().click();
-    await expect
-      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
-      .toBeUndefined();
-    await row(page, 'Tin Charm').evaluate((element) => {
+    // A page the site's menu names is refused by the group, and the app says why.
+    await row(page, 'Field Notes').evaluate((element) => {
       element.scrollIntoView({ block: 'center' });
     });
-    await dragOnto(page, row(page, 'Field Notes'), row(page, 'Tin Charm'), 0.1);
-    await expect(
-      page.getByText(/by hand come first, and the pages the app files there/),
-    ).toBeVisible();
-    await expect
-      .poll(async () => (await stored(page))?.contents?.sections[g('gear')])
-      .toEqual([g('field-notes')]);
-    await expect(levels).toHaveText([/Weapons/, /Charms/]);
+    await dragOnto(page, row(page, 'Field Notes'), outside(page));
+    await expect(page.getByText(/“Field Notes” is in the site’s own menu/)).toBeVisible();
+    expect((await stored(page))?.contents?.sections['demo:section:basics']).toEqual([
+      g('gear'),
+      g('field-notes'),
+    ]);
   });
 
   test('adds a new page under a page from its menu, opened to be written', async ({ page }) => {
@@ -293,12 +303,11 @@ test.describe('on a phone', () => {
   test('ticks pages and moves them together in the contents sheet', async ({ page }) => {
     await servePageTree(page);
     await page.goto('./');
-    await page.getByTestId('guides-search').first().fill('heavy plate');
+    await page.getByTestId('guides-search').first().fill('helm of the warden');
     await page.getByTestId('guides-result').first().tap();
     await page.getByTestId('edit-page').tap();
     await page.getByTestId('page-editor').getByRole('button', { name: 'Contents' }).tap();
     await expect(contents(page)).toBeVisible();
-    await unfold(page, 'Warden Plate');
     // On a touch screen the boxes are in view without a pointer over them.
     await expect(row(page, 'Warden Helm').getByTestId('contents-tick')).toHaveCSS('opacity', '1');
     await row(page, 'Warden Helm').getByTestId('contents-tick').tap();

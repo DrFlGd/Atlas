@@ -11,10 +11,10 @@ import { firstPictureIn, madeLanding } from './landing';
 import { shownContentsFor } from './ownPages';
 
 /**
- * A wiki's home page: the page Guides opens on, which the top of the
- * contents branches from; and the landing page made for guides that have
- * none. On a made-up wiki: a menu of one section, the pages nothing in the
- * menu names in a section placed by links ("Pages"), and a home page that
+ * A wiki's home page: the page Guides opens on, shown on its own and not
+ * in the menu; and the landing page made for guides that have none. On a
+ * made-up wiki: a menu of one section, the pages its menu does not name
+ * in a section of pages outside the menu ("Pages"), and a home page that
  * leads to the main areas.
  */
 
@@ -80,69 +80,45 @@ function tree(contents: GuideContents): unknown[] {
 }
 
 describe('a home page', () => {
-  it('is the root the top of the contents branches from', () => {
+  it('is shown on its own: the menu is only the source’s own, nothing put at its top', () => {
     const contents = new GuideContents(wiki(g('main-page')));
     expect(contents.homePage()?.id).toBe(g('main-page'));
-    expect(tree(contents)).toEqual([
-      // The menu's pages stay where the menu puts them.
-      { Menu: [{ Help: ['Editing'] }] },
-      // The main areas the home page leads to, at the top, before the pages nothing leads to.
-      { Classes: ['Knight', 'Archer'] },
-      { Items: ['Sword'] },
-      'Quests',
-      { Pages: ['Stray'] },
-    ]);
-    // A page at the top has no way above it, and the home page is in no section.
-    expect(contents.trail(g('classes'))).toEqual([]);
-    expect(contents.parentOf(g('classes'))).toBeNull();
+    // The pages the home page lists stay outside the menu, and nothing goes under Help.
+    expect(tree(contents)).toEqual([{ Menu: ['Help'] }]);
+    expect(contents.isInMenu(g('classes'))).toBe(false);
+    expect(contents.parentOf(g('classes'))).toBeUndefined();
     expect(contents.parentOf(g('main-page'))).toBeUndefined();
     expect(contents.trail(g('main-page'))).toEqual([]);
-    expect(contents.placedByLinks(g('classes'))).toBe(true);
-    // It is a page to read and to find, the first.
+    // It is a page to read and to find, the first; every other page is one too.
     expect(contents.isPage(g('main-page'))).toBe(true);
+    expect(contents.isPage(g('classes'))).toBe(true);
     expect(contents.isHomePage(g('main-page'))).toBe(true);
     expect(contents.isHomePage(g('help'))).toBe(false);
     expect(contents.pages()[0]!.id).toBe(g('main-page'));
     expect(contents.pages()).toHaveLength(guides().length);
   });
 
-  it('without one, places the same pages as before', () => {
+  it('without one, shows the same menu', () => {
     const contents = new GuideContents(wiki(null));
     expect(contents.homePage()).toBeNull();
-    expect(tree(contents)).toEqual([
-      { Menu: [{ Help: ['Editing'] }] },
-      // A list page nothing leads to keeps the pages it lists under it.
-      { Pages: [{ Classes: ['Knight', 'Archer'] }, { Items: ['Sword'] }, 'Quests', 'Stray'] },
-    ]);
-  });
-
-  it('leaves out the section of pages placed by links once it leads to all of them', () => {
-    const data = wiki(g('main-page'));
-    const all = {
-      ...data.data,
-      guides: data.data.guides.filter((guide) => guide.id !== g('stray')),
-    };
-    const contents = new GuideContents({ ...data, data: all });
-    expect(
-      tree(contents).map((entry) =>
-        typeof entry === 'string' ? entry : Object.keys(entry as object)[0],
-      ),
-    ).toEqual(['Menu', 'Classes', 'Items', 'Quests']);
+    expect(tree(contents)).toEqual([{ Menu: ['Help'] }]);
     expect(contents.topEntryIds()).not.toContain(s('pages'));
+    // Every page the contents lists, the home page aside, which no section lists.
+    expect(contents.pages()).toHaveLength(guides().length - 1);
   });
 
   it('is shown on its own even where a section lists it', () => {
     const contents = new GuideContents(wiki(g('main-page'), true));
-    expect(tree(contents)[0]).toEqual({ Menu: [{ Help: ['Editing'] }] });
+    expect(tree(contents)[0]).toEqual({ Menu: ['Help'] });
     expect(contents.pages().filter((p) => p.id === g('main-page'))).toHaveLength(1);
   });
 
-  it('is never named under "Also linked from"', () => {
+  it('is never named under "Linked from"', () => {
     const contents = new GuideContents(wiki(g('main-page')));
-    // Knight is under Classes; Sword links to it as well; the home page leads to neither.
-    expect(contents.linkedFrom(g('knight')).map((p) => p.title)).toEqual(['Sword']);
-    // Help is in the menu, and the home page links to it: not named, as the way above leads there.
+    expect(contents.linkedFrom(g('knight')).map((p) => p.title)).toEqual(['Classes', 'Sword']);
+    // Help is linked from the home page only, which every page's way leads to.
     expect(contents.linkedFrom(g('help'))).toEqual([]);
+    expect(contents.linkedFrom(g('editing')).map((p) => p.title)).toEqual(['Help']);
   });
 
   it('is not used when the guides lack it, or through another name', () => {
@@ -165,18 +141,14 @@ describe('a home page', () => {
     expect(contents.pages()[0]!.id).toBe(g('main-page'));
   });
 
-  it('branches the arrange tool’s contents the same way', () => {
-    const { data } = wiki(g('main-page'));
-    const shown = shownContentsFor(data, NO_OWN_PAGES, undefined, g('main-page'));
-    expect(shown.layout.top).toEqual([
-      s('menu'),
-      g('classes'),
-      g('items'),
-      g('quests'),
-      s('pages'),
-    ]);
-    expect(shown.layout.sections[s('pages')]).toEqual([g('stray')]);
-    expect(shown.placed.get(g('classes'))).toBe(g('main-page'));
+  it('is not in the arrange tool’s contents, which ends with the pages outside the menu', () => {
+    const { data } = wiki(g('main-page'), true);
+    const shown = shownContentsFor(data, NO_OWN_PAGES, g('main-page'));
+    expect(shown.layout.top).toEqual([s('menu'), s('pages')]);
+    expect(shown.layout.sections[s('menu')]).toEqual([g('help')]);
+    expect(shown.layout.sections[s('pages')]).toEqual(
+      ['classes', 'knight', 'archer', 'items', 'sword', 'quests', 'editing', 'stray'].map(g),
+    );
     expect(Object.keys(shown.layout.sections)).not.toContain(g('main-page'));
   });
 
@@ -197,37 +169,33 @@ describe('a home page', () => {
     expect(section?.kind === 'section' && section.section.title).toBe('The Wiki');
     const first = contents.items((section as { section: Section }).section.id)[0];
     expect(first?.kind === 'page' && first.guide.id).toBe(g('main-page'));
+    // Its pages outside its menu are pages of the contents, not in the menu.
+    expect(contents.isPage(g('stray'))).toBe(true);
+    expect(contents.isInMenu(g('stray'))).toBe(false);
     // Its own game's home page is not this game's.
     expect(contents.homePage()).toBeNull();
   });
 });
 
 describe('the landing page made from the contents', () => {
-  it('groups the top of the contents, with a picture where a page has one', () => {
-    const contents = new GuideContents(wiki(null));
+  it('groups the top of the menu, with a picture where a page has one, the rest counted', () => {
+    const data = wiki(null).data;
+    const menu: Section = {
+      id: s('areas'),
+      title: 'Areas',
+      items: ['classes', 'items', 'quests', 'knight'].map(g),
+    };
+    const contents = new GuideContents({ data: { ...data, sections: [menu, ...data.sections!] } });
     const groups = madeLanding(contents, 3);
-    expect(groups.map((group) => group.section?.title ?? null)).toEqual(['Menu', 'Pages']);
-    const [menu, pages] = groups;
-    expect(menu!.tiles.map((t) => (t.entry.kind === 'page' ? t.entry.guide.title : ''))).toEqual([
-      'Help',
-    ]);
-    // Three tiles at most, the rest counted: Classes and Items hold the pages they list.
-    expect(pages!.tiles).toHaveLength(3);
-    expect(pages!.more).toBe(1);
-    expect([menu!.pages, pages!.pages]).toEqual([2, 7]);
-    expect(pages!.tiles.map((t) => t.picture)).toEqual([null, pic('items'), null]);
+    expect(groups.map((group) => group.section?.title ?? null)).toEqual(['Areas', 'Menu']);
+    const [areas] = groups;
+    expect(areas!.tiles).toHaveLength(3);
+    expect(areas!.more).toBe(1);
+    expect(areas!.pages).toBe(4);
+    expect(areas!.tiles.map((t) => t.picture)).toEqual([null, pic('items'), null]);
   });
 
-  it('gives a section the picture of its first page that has one, and pages at the top a group', () => {
-    const contents = new GuideContents(wiki(g('main-page')));
-    const groups = madeLanding(contents);
-    expect(groups.map((group) => group.section?.title ?? null)).toEqual(['Menu', null, 'Pages']);
-    const top = groups[1]!;
-    expect(top.tiles.map((t) => (t.entry.kind === 'page' ? t.entry.guide.title : ''))).toEqual([
-      'Classes',
-      'Items',
-      'Quests',
-    ]);
+  it('gives a section the picture of its first page that has one', () => {
     const sections = new GuideContents({
       data: {
         guides: guides(),

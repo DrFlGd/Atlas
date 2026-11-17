@@ -95,8 +95,8 @@ test.describe('on a desktop', () => {
     await expect(page.getByTestId('guides-crumb-game')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('guides-tree-home')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByTestId('guides-tree-home')).toHaveText('Atlas demo world');
-    // Not a page about the map: nothing to add to a build, no "Also linked from".
-    await expect(page.getByTestId('also-linked-from')).toHaveCount(0);
+    // Not a page about the map: nothing to add to a build, no "Linked from".
+    await expect(page.getByTestId('linked-from')).toHaveCount(0);
     await shot(page, '1-desktop-landing-light');
 
     // A link on it opens the page; the way above starts with the game's name.

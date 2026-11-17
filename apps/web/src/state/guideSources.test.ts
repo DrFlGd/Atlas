@@ -7,8 +7,10 @@ import {
   isSourceHome,
   madeLandingOf,
   neighbours,
+  pathIn,
   readingOrder,
   sourceOfEntry,
+  sourcePages,
   trailIn,
   useGuideSources,
 } from './guideSources';
@@ -242,5 +244,103 @@ describe('a guide read in order', () => {
     });
     const isle = guideSourcesOf(game)[0]!;
     expect(readingOrder(game, isle).map((p) => p.title)).toEqual(['Boats']);
+  });
+});
+
+/**
+ * A made-up wiki whose menu names two pages: its other pages are in a
+ * section marked `placeByLinks`, outside the menu, two of them filed under
+ * others by the wiki (`filedUnder`).
+ */
+const WIKI = packOf({
+  gameId: 'isle',
+  title: 'The made-up isle',
+  maps: 1,
+  guides: [
+    page('isle:guide:tides', 'Tides', 0),
+    page('isle:guide:boats', 'Boats', 1),
+    {
+      ...page('isle:guide:rowing', 'Rowing', 2),
+      filedUnder: ['isle:guide:gone', 'isle:guide:boats'],
+    },
+    { ...page('isle:guide:oars', 'Oars', 3), filedUnder: ['isle:guide:rowing'] },
+    page('isle:guide:gulls', 'Gulls', 4, 'See [the oars](isle:guide:oars).'),
+  ],
+  sections: [
+    { id: 'isle:section:sea', title: 'The sea', items: ['isle:guide:tides', 'isle:guide:boats'] },
+    {
+      id: 'isle:section:more',
+      title: 'More pages',
+      items: ['isle:guide:rowing', 'isle:guide:oars', 'isle:guide:gulls'],
+      placeByLinks: true,
+    },
+  ],
+});
+
+/** Another made-up wiki with no menu at all: every page outside it. */
+const LOOSE = packOf({
+  gameId: 'loose',
+  title: 'Loose notes',
+  guides: [page('loose:guide:b', 'Bees', 0), page('loose:guide:a', 'Ants', 1)],
+  sections: [
+    {
+      id: 'loose:section:all',
+      title: 'Pages',
+      items: ['loose:guide:b', 'loose:guide:a'],
+      placeByLinks: true,
+    },
+  ],
+});
+
+describe('the menu of a source, and the pages outside it', () => {
+  beforeEach(() => {
+    game = gameOf(WIKI);
+    useGuideLinks.setState({ gameId: 'isle', others: [other(LOOSE)] });
+  });
+
+  it('is the source’s own sections only, and every page is in its All pages', () => {
+    const [isle, loose] = guideSourcesOf(game);
+    expect(isle!.menu).toBe(true);
+    expect(isle!.top.map((e) => e.kind === 'section' && e.section.title)).toEqual(['The sea']);
+    expect(sourcePages(game, isle!).map((p) => p.title)).toEqual([
+      'Tides',
+      'Boats',
+      'Rowing',
+      'Oars',
+      'Gulls',
+    ]);
+    // A source whose pack names no page in a menu is still a source, with no menu.
+    expect(loose!.gameId).toBe('loose');
+    expect(loose!.menu).toBe(false);
+    expect(loose!.top).toEqual([]);
+    expect(sourcePages(game, loose!).map((p) => p.title)).toEqual(['Bees', 'Ants']);
+    expect(sourceOfEntry(game, 'loose:guide:a')?.gameId).toBe('loose');
+  });
+
+  it('gives a page outside the menu the way its source files it under, or none', () => {
+    const isle = guideSourcesOf(game)[0]!;
+    const titles = (id: string) =>
+      pathIn(game, isle, id).map((step) =>
+        step.kind === 'section' ? step.section.title : step.guide.title,
+      );
+    // In the menu: the sections above it, as before.
+    expect(titles('isle:guide:boats')).toEqual(['The sea']);
+    // Outside it: the first page of its filing that is a page here, then that page's.
+    expect(titles('isle:guide:rowing')).toEqual(['Boats']);
+    expect(titles('isle:guide:oars')).toEqual(['Boats', 'Rowing']);
+    // Filed under nothing: only the source's name is above it.
+    expect(titles('isle:guide:gulls')).toEqual([]);
+  });
+
+  it('reads a guide in the order of its menu, and a page outside it has no Previous or Next', () => {
+    useOwnPages.setState({ own: { ...NO_OWN_PAGES, pagesInOrder: true } });
+    const isle = guideSourcesOf(game)[0]!;
+    expect(isReadInOrder(isle)).toBe(true);
+    expect(readingOrder(game, isle).map((p) => p.title)).toEqual(['Tides', 'Boats']);
+    expect(neighbours(game, isle, 'isle:guide:tides')).toMatchObject({
+      previous: null,
+      next: { id: 'isle:guide:boats' },
+    });
+    expect(neighbours(game, isle, 'isle:guide:oars')).toEqual({ previous: null, next: null });
   });
 });

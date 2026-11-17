@@ -1,9 +1,12 @@
 import type { GuideEntry, Section } from '@atlas/schema';
 
 /**
- * A made-up wiki of any size, for the tests of where pages are filed (and
- * to time it): every name in it is invented. It has the shapes that go
- * wrong when every link files a page:
+ * A made-up wiki of any size, for the tests of the menu, "All pages", the
+ * line above a page outside the menu and "Linked from" (and to time
+ * them), and of which links of a page list pages: every name in it is
+ * invented. Its pages outside the menu are in a section marked
+ * `placeByLinks`. It has the shapes an app that filed pages by their
+ * links got wrong, kept so the tests show none is filed so now:
  *
  * - A home page whose tiles lead to three list pages (Weapons, Armour,
  *   Enemies), and that mentions a note in a sentence.

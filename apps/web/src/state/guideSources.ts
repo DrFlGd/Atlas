@@ -28,6 +28,11 @@ import { useAtlas, type LoadedGame } from './store';
  * between the sources, "From the wiki" and the rest work on all of them
  * together, as before.
  *
+ * A source's bar shows its menu: what its pack's menu lists, and what the
+ * person placed by hand. Every page of a source, in its menu or not, is
+ * in its "All pages" (see `sourcePages`); a source with nothing for the
+ * bar has none, and Guides shows "All pages" in its place.
+ *
  * A source is a guide, read in order, when its pack says so (see
  * `pagesInOrder.ts`) or the person said so in that game's contents editor
  * (kept with their own pages, see `pagesInOrder` in the schema); else it is
@@ -55,8 +60,10 @@ export interface GuideSource {
   sectionId: string | null;
   /** Its home page, which its landing page shows; null for none. */
   home: GuideEntry | null;
-  /** What the top of its part of the contents lists, its home page left out. */
+  /** What the top of its part of the contents lists, its home page left out: its menu. */
   top: readonly ContentsEntry[];
+  /** Whether it has a menu: anything at its top. Without one Guides shows no bar. */
+  menu: boolean;
 }
 
 interface Sources {
@@ -65,6 +72,8 @@ interface Sources {
   byGame: ReadonlyMap<string, GuideSource>;
   /** By source, its pages in reading order, worked out when first asked. */
   orders: Map<string, readonly GuideEntry[]>;
+  /** By source, every page of it, worked out when first asked (see {@link sourcePages}). */
+  pages: Map<string, readonly GuideEntry[]> | null;
 }
 
 const known = new WeakMap<GameGuides, Sources>();
@@ -91,7 +100,12 @@ function sourcesFor(game: LoadedGame): Sources {
   const list: GuideSource[] = [];
   const ownTop = top.filter((entry) => !others.has(entryIdOf(entry)));
   const ownHome = contents.homePage();
-  if (ownTop.length > 0 || ownHome) {
+  const otherGames = new Set([...others.values()].map((other) => other.gameId));
+  // The game's own pages outside the menu make it a source too: "All pages" lists them.
+  const ownOutside =
+    contents.hasPagesOutsideMenu() &&
+    contents.pages().some((page) => !otherGames.has(parseId(page.id)?.gameId ?? ''));
+  if (ownTop.length > 0 || ownHome || ownOutside) {
     list.push({
       gameId,
       own: true,
@@ -101,6 +115,7 @@ function sourcesFor(game: LoadedGame): Sources {
       sectionId: null,
       home: ownHome,
       top: ownTop,
+      menu: ownTop.length > 0,
     });
   }
   for (const entry of top) {
@@ -112,6 +127,7 @@ function sourcesFor(game: LoadedGame): Sources {
     const first = items[0];
     const home =
       first?.kind === 'page' && first.guide.id === other.pack.homePage ? first.guide : null;
+    const otherTop = home ? [...contents.items(home.id), ...items.slice(1)] : items;
     list.push({
       gameId: other.gameId,
       own: false,
@@ -120,7 +136,8 @@ function sourcesFor(game: LoadedGame): Sources {
       site: siteOfPack(other.pack),
       sectionId,
       home,
-      top: home ? [...contents.items(home.id), ...items.slice(1)] : items,
+      top: otherTop,
+      menu: otherTop.length > 0,
     });
   }
   const sources: Sources = {
@@ -128,6 +145,7 @@ function sourcesFor(game: LoadedGame): Sources {
     bySection: new Map(list.flatMap((s) => (s.sectionId ? [[s.sectionId, s] as const] : []))),
     byGame: new Map(list.map((s) => [s.gameId, s])),
     orders: new Map(),
+    pages: null,
   };
   known.set(guides, sources);
   return sources;
@@ -144,10 +162,9 @@ export function guideSource(game: LoadedGame, gameId: string | null): GuideSourc
 }
 
 /**
- * The source an entry of the contents (a page, a section, or a heading of
- * a list page) is shown in: the source whose part of the contents holds
- * it, or, for a page no contents lists, the one its id is of. Undefined
- * when it is of none.
+ * The source an entry of the contents (a page or a section) is shown in:
+ * the source whose part of the menu holds it, or, for a page outside the
+ * menu, the one its id is of. Undefined when it is of none.
  */
 export function sourceOfEntry(game: LoadedGame, id: string): GuideSource | undefined {
   const sources = sourcesFor(game);
@@ -164,6 +181,27 @@ export function sourceOfEntry(game: LoadedGame, id: string): GuideSource | undef
   if (contents.parentOf(id) !== undefined || contents.isHomePage(id)) return ownSource;
   const of = parseId(id.split('#')[0] ?? id)?.gameId;
   return of ? sources.byGame.get(of) : undefined;
+}
+
+/**
+ * Every page of a source, in its menu or not, its home page too, each
+ * once: what its "All pages" lists. The pages of the contents are split by
+ * the game their ids are of; a page of the game shown's own (or of none
+ * read with it) is of its own source.
+ */
+export function sourcePages(game: LoadedGame, source: GuideSource): readonly GuideEntry[] {
+  const sources = sourcesFor(game);
+  if (!sources.pages) {
+    const byGame = new Map<string, GuideEntry[]>(sources.list.map((s) => [s.gameId, []]));
+    const own = sources.list.find((s) => s.own);
+    for (const page of guidesOf(game).contents.pages()) {
+      const of = parseId(page.id)?.gameId;
+      const found = of !== undefined && !sources.byGame.get(of)?.own ? byGame.get(of) : undefined;
+      (found ?? (own ? byGame.get(own.gameId) : undefined))?.push(page);
+    }
+    sources.pages = byGame;
+  }
+  return sources.pages.get(source.gameId) ?? [];
 }
 
 /** Whether a page is the home page of a source: the one its landing page shows. */
@@ -186,6 +224,23 @@ export function trailIn(game: LoadedGame, source: GuideSource | undefined, id: s
     trail = trail.slice(1);
   }
   return trail;
+}
+
+/**
+ * The way the line above a page names to it: for a page in the menu, the
+ * way from the top of the source's menu (see {@link trailIn}); for a page
+ * outside it, the pages the source files it under, from the outermost (see
+ * `outsideTrail` in core), cut after the source's home page, which the
+ * line starts with. Only the line above a page reads it: the bar never
+ * shows a page outside the menu.
+ */
+export function pathIn(game: LoadedGame, source: GuideSource | undefined, id: string) {
+  const { contents } = guidesOf(game);
+  if (contents.isInMenu(id) || !contents.guide(id)) return trailIn(game, source, id);
+  const trail: ContentsStep[] = contents.outsideTrail(id);
+  const home = source?.home?.id;
+  const at = home ? trail.findLastIndex((step) => entryIdOf(step) === home) : -1;
+  return at < 0 ? trail : trail.slice(at + 1);
 }
 
 /**

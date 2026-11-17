@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 /**
  * The Guides section's reader: where it is (the landing page, the
- * contents, a section, a page or a search), and the places it was before
+ * contents, a section, "All pages", a page or a search), and the places it was before
  * and after, so Back and Forward return to them, each where it was
  * scrolled to. A game's guides open on the landing page: the wiki's own
  * home page, or one made from the top of the contents.
@@ -15,9 +15,9 @@ import { create } from 'zustand';
  *
  * Each visit remembers the way the reader came to it: the pages walked
  * from the place shown (a link in a page's text or a box of facts, a tile
- * of the landing page, "Also linked from", the pages under a page), back
+ * of the landing page, "Linked from", the pages under a page), back
  * to the last fresh start (the landing page, or a page opened from the
- * contents, a search, a list or the map). Walking to a page already on
+ * contents, "All pages", a search, a list or the map). Walking to a page already on
  * the way cuts it back to that page, so no page is on it twice; a jump to
  * a heading of the same page is no step. The way belongs to the visit:
  * Back and Forward show each visit's own.
@@ -32,6 +32,11 @@ export type ReaderPlace =
   | { kind: 'home'; source?: string }
   /** The contents: its top (`sectionId` null, of a source as the landing page is), or one section. */
   | { kind: 'contents'; sectionId: string | null; source?: string }
+  /**
+   * "All pages": every page of a source from A to Z (see `allPages.ts` in
+   * `@atlas/core`), of a source as the landing page is.
+   */
+  | { kind: 'all'; source?: string }
   /** A page, at its top or at one of its sections. */
   | { kind: 'page'; guideId: string; section?: string }
   | { kind: 'search'; query: string }
@@ -82,7 +87,7 @@ const samePlace = (a: ReaderPlace, b: ReaderPlace) =>
   a.kind === b.kind &&
   (a.kind === 'contents'
     ? a.sectionId === (b as typeof a).sectionId && a.source === (b as typeof a).source
-    : a.kind === 'home'
+    : a.kind === 'home' || a.kind === 'all'
       ? a.source === (b as typeof a).source
       : a.kind === 'page'
         ? a.guideId === (b as typeof a).guideId && a.section === (b as typeof a).section
@@ -225,8 +230,8 @@ export function readerForward(): boolean {
 }
 
 /**
- * The landing page or the top of the contents shown names no source of
- * pages: it is of `source` from now on, so Back and Forward show it of the
+ * The landing page, the top of the contents or "All pages" shown names no
+ * source of pages: it is of `source` from now on, so Back and Forward show it of the
  * source it was shown of.
  */
 export function stampSource(source: string): void {
@@ -234,7 +239,10 @@ export function stampSource(source: string): void {
   const visit = visits[at];
   if (!visit) return;
   const { place } = visit;
-  const top = place.kind === 'home' || (place.kind === 'contents' && place.sectionId === null);
+  const top =
+    place.kind === 'home' ||
+    place.kind === 'all' ||
+    (place.kind === 'contents' && place.sectionId === null);
   if (!top || place.source !== undefined) return;
   const next = [...visits];
   next[at] = { ...visit, place: { ...place, source } };

@@ -103,28 +103,19 @@ describe('pagesFiling', () => {
       ],
     });
 
-  it('counts the pages under a list page, in a section of the menu and in Pages', () => {
-    // Weapons is at the top, listed by the home page; the vale only mentioned.
+  it('counts the pages in the site’s menu and outside it, each once', () => {
+    // Only the rules are in the menu: nothing is put under the list page Weapons.
     expect(pagesFiling(pack(true))).toEqual({
       pages: 6,
-      underListPage: 4,
-      underFiledPage: 0,
-      inSection: 1,
-      inPagesSection: 1,
+      inMenu: 1,
       byHand: 0,
-      pagesTitle: 'Pages',
+      outsideMenu: 5,
     });
     expect(pagesFiling(pack(false))).toBeNull();
   });
 
-  it('counts the pages under the page the site files them under', () => {
-    // The site files the vale under the rules, a page of the menu.
-    expect(pagesFiling(pack(true, true))).toMatchObject({
-      pages: 6,
-      underListPage: 4,
-      underFiledPage: 1,
-      inSection: 1,
-      inPagesSection: 0,
-    });
+  it('never files a page under the page the site files it under', () => {
+    // The site files the vale under the rules, a page of the menu: it stays outside the menu.
+    expect(pagesFiling(pack(true, true))).toEqual(pagesFiling(pack(true)));
   });
 });

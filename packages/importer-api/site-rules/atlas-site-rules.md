@@ -455,24 +455,25 @@ Such pages are private: they hold the site's own words and pictures. Never commi
 
 ## The menu of a wiki
 
-Atlas shows a wiki's pages under a menu (its contents). The Importer makes it from the wiki's home page and its side menu, in this order:
+Atlas shows a wiki's own menu in its bar, and nothing it would have to work out by reading pages. The Importer takes the menu from the site:
 
-1. **The main part of the home page.** Each headed block of the home page that lists pages of the wiki becomes a section, in the page's order, and the pages its tiles and lists name are the pages under it, in order. A heading that is a link to a page puts that page first in its section. A home page with one block, or with no heading at all, gives its pages as the top of the menu directly, with no section around them. What stands before the first heading (a welcome box) makes no section.
-2. **The side menu**, after it. Each of its groups that leads to pages of the wiki becomes a further section. A page the main part already placed is not repeated there, and a group that adds nothing is left out.
-3. **Other pages.** The pages neither of them reaches are under "Other pages" at the end, each under the list page that lists it where Atlas finds one, so nothing is lost.
+1. **The side menu.** Each of its groups that leads to pages of the wiki becomes a section, in the menu's order, and a group that leads to none is left out. A wiki with no side menu has no bar in Atlas: its home page is the way in.
+2. **Other pages.** The pages the menu does not name are kept in a section marked `placeByLinks`, outside the menu: Atlas lists them under "All pages", every page of the wiki from A to Z, and files none of them under another page, so nothing is lost. The person may move any of them into the menu.
+
+A file may ask for the main part of the wiki's home page as well (`from` below, `both` or `main`). Each headed block of the home page that lists pages of the wiki then becomes a section before the side menu's, in the page's order, and the pages its tiles and lists name are the pages under it, in order. A heading that is a link to a page puts that page first in its section. A home page with one block, or with no heading at all, gives its pages as the top of the menu directly, with no section around them. What stands before the first heading (a welcome box) makes no section. A page the main part placed is not repeated by the side menu. Ask for it only where the home page is laid out as a menu and the owner wants it in the bar: the home page itself is always one press away.
 
 What is left out is decided by where a link leads, not by its words: links that leave the wiki, pages about the wiki itself (its rules, noticeboards and style guide; on a wiki whose page names start with a namespace, the pages of the namespace named after the wiki and the namespaces that hold no articles, while a namespace of its own that holds articles, such as one for guides, stays), the site's tools (what links here, special pages), and blocks of news (a block whose links mostly leave the wiki, or whose items are mostly dated).
 
-A guide keeps its own table of contents: its order and its nesting, with the pages that stand alone at the top between the sections, as the site shows them. A part whose pages are read in order (`pagesInOrder`, below) takes its menu from its table of contents alone, unless its `menu` says otherwise.
+A guide keeps its own table of contents: its order and its nesting, with the pages that stand alone at the top between the sections, as the site shows them. It is the side menu of the guide's pages.
 
 The section `menu` of a wiki or guide part (and of a reader's defaults) changes this for one site. Every entry may be left out:
 
-| Field      | Needed | Form                               | Meaning                                                                                                                                                                                  |
-| ---------- | ------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `from`     | no     | `both`, `main` or `side`           | Where the menu comes from: the home page's main part and then the side menu (`both`, the default), the main part only, or the side menu only (the default of a part with `pagesInOrder`) |
-| `headings` | no     | selector                           | The elements of the home page's main part that are the headings of its blocks, where the page marks them with no heading element of its own (the title of a box). Each starts a block    |
-| `leaveOut` | no     | list of 1 to 40 headings, as words | Blocks and groups left out of the menu, by their heading's words (upper and lower case do not count)                                                                                     |
-| `keep`     | no     | list of 1 to 40 headings, as words | Blocks and groups kept whatever the rules above say, such as a block of dated items that is no news. A heading is never in both lists                                                    |
+| Field      | Needed | Form                               | Meaning                                                                                                                                                                                                                                                                                    |
+| ---------- | ------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `from`     | no     | `both`, `main` or `side`           | Where the menu comes from: the side menu only (`side`, the default), the home page's main part and then the side menu (`both`), or the main part only (`main`)                                                                                                                             |
+| `headings` | no     | selector                           | The elements of the home page's main part that are the titles of its blocks, where the page marks them with no heading element of its own (the title of a box). Each becomes a heading of the home page as Atlas shows it, and starts a block of the menu where `from` is `both` or `main` |
+| `leaveOut` | no     | list of 1 to 40 headings, as words | Blocks and groups left out of the menu, by their heading's words (upper and lower case do not count)                                                                                                                                                                                       |
+| `keep`     | no     | list of 1 to 40 headings, as words | Blocks and groups kept whatever the rules above say, such as a block of dated items that is no news. A heading is never in both lists                                                                                                                                                      |
 
 ```json
 {
@@ -480,6 +481,7 @@ The section `menu` of a wiki or guide part (and of a reader's defaults) changes 
   "reader": "example-engine",
   "start": "/",
   "menu": {
+    "from": "both",
     "headings": ".box > .box-title",
     "leaveOut": ["Wiki community"]
   }
@@ -488,7 +490,7 @@ The section `menu` of a wiki or guide part (and of a reader's defaults) changes 
 
 `pagesInOrder` of a wiki or guide part (and of a reader's defaults), `true` or `false`, says whether the part's pages are one guide read in order, as its table of contents orders them. The Importer then tells Atlas so with the game. Leave it out for a wiki.
 
-**How to check the menu.** Try the file on the saved home page (Settings, "Sites", "Try on a saved page"): the trial's notes give the sections of the menu that the page gives, in order, each with its pages (an importer that reads wikis puts them there). Every block you meant to keep must be there with its pages, and no block of news or of the wiki's own affairs. A game read before the file had `menu` gains it when the owner builds it again from its saved pages (nothing is downloaded for that), or reads one more of its pages.
+**How to check the menu.** A file that takes blocks of the home page (`both` or `main`) is tried on the saved home page (Settings, "Sites", "Try on a saved page"): the trial's notes give the sections of the menu that the page gives, in order, each with its pages (an importer that reads wikis puts them there). Every block you meant to keep must be there with its pages, and no block of news or of the wiki's own affairs. With the side menu alone, the notes say that the home page gives none. A game read before the file had `menu` gains it when the owner builds it again from its saved pages (nothing is downloaded for that), or reads one more of its pages.
 
 ## Links to a location of a map
 

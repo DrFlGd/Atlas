@@ -1,8 +1,9 @@
 /*
- * Guides read as pages (src/touch/GuidesScreen.tsx): the contents, a page
- * with its credit, search. Colours come from the theme tokens. Wide, the
- * contents stay beside the page, over the panel and the map; compact (a
- * phone), the reader fills the screen above the bar of sections.
+ * Guides read as pages (src/touch/GuidesScreen.tsx): the bar, a page with
+ * its credit, "All pages", search. Colours come from the theme tokens.
+ * Wide, the bar stays beside the page, over the panel and the map, unless
+ * the source has no menu; compact (a phone), the reader fills the screen
+ * above the bar of sections.
  */
 
 .guides {
@@ -107,14 +108,151 @@
   padding-left: 4px;
 }
 
-/* A heading of a list page shown as a level: no page of its own, so set apart. */
-.guides-tree-heading {
+.guides-tree-more,
+.guides-more {
+  color: var(--atlas-accent);
+}
+
+/* At the foot of the bar, always in view: "All pages", with how many. */
+.guides-all-foot {
+  flex: none;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.guides-contents .guides-all-foot {
+  margin-top: 8px;
+  padding: 8px 0 0;
+}
+
+.guides-all-row-link {
   color: var(--atlas-text);
+}
+
+.guides-all-row-link > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.guides-contents .guides-all-row-link {
+  min-height: 48px;
+  padding: 10px 12px;
+  font-size: 16px;
+}
+
+/* No bar (a source with no menu): what it would hold, in the head of the reader. */
+.guides-head-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+.guides-head-tools .guides-search {
+  width: clamp(160px, 22vw, 260px);
+  margin: 0;
+}
+
+.guides-head-tools .guides-search-input {
+  height: 38px;
+}
+
+.guides-head-tools .guides-sources {
+  width: clamp(160px, 18vw, 240px);
+  padding: 0;
+}
+
+.guides-head-tools .guides-source-chip {
+  min-height: 40px;
+}
+
+.guides-head-tools .guides-sources-menu {
+  right: 0;
+  left: auto;
+  width: min(360px, calc(100vw - var(--touch-rail, 0px) - 32px));
+}
+
+.guides-all-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.guides-all-button[aria-current='page'] {
+  border-color: var(--atlas-accent);
+  color: var(--atlas-accent);
+}
+
+/* "All pages": every page of a source from A to Z, under its letters. */
+.guides-all-letters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 8px;
+}
+
+.guides-all-letter-link {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-accent);
+  font: inherit;
+  font-size: 14px;
   font-weight: 600;
 }
 
-.guides-tree-more,
-.guides-more {
+.guides-all-letter-link:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.guides-all-group {
+  margin: 0 0 8px;
+}
+
+.guides-all-letter {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  margin: 0;
+  padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-bg);
+  color: var(--atlas-muted);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* A part out of view is drawn when it comes into view; its room is kept (set by the app). */
+.guides-all-part {
+  content-visibility: auto;
+}
+
+.guides-all-row {
+  display: block;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 40px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guides-all-row:hover {
+  background: var(--atlas-surface-hover);
   color: var(--atlas-accent);
 }
 
@@ -370,17 +508,8 @@ button.guides-crumb:hover {
   min-width: 0;
 }
 
-.guides-entry-section .guides-entry-name,
-.guides-entry-heading .guides-entry-name {
+.guides-entry-section .guides-entry-name {
   font-weight: 600;
-}
-
-/* A heading of a list page, over the pages it holds, set in under it. */
-.guides-entry-group > .guides-entries {
-  margin-top: 2px;
-  padding-left: 16px;
-  border-left: 2px solid var(--atlas-border);
-  margin-left: 12px;
 }
 
 /* Search */

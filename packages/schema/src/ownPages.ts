@@ -25,14 +25,15 @@ import { PAGE_WIDTHS, type PageWidth } from './pageWidth';
  * - `contents`: the contents as the person arranged it (what is at the top,
  *   what each section holds, and the pages they put under a page, in
  *   order), once they moved anything. A page or section the pack adds
- *   later goes where the pack puts it. A page they left in a section whose
- *   pages are placed by their links (`placeByLinks`) is still placed by
- *   its links: only where they put a page by hand is kept as theirs.
+ *   later goes where the pack puts it. A page they left in a section of
+ *   pages outside the menu (`placeByLinks`) that the pack has since put in
+ *   its menu goes where the pack puts it: only where they put a page by
+ *   hand is kept as theirs.
  * - `pictures`: their own pictures the pages show (see `ownPictures.ts`).
- * - `listPages`: by a pack's page id, the person's say on whether the page
- *   files the pages it lists under it: `true` makes it a list page whatever
- *   share of its links it lists, `false` makes it file none (see
- *   `pageTree.ts` in the core package). Absent where the app decides.
+ * - `listPages`: by a pack's page id, a say an earlier app kept on whether
+ *   the page files the pages it lists under it. The app files no page
+ *   under another by itself any more, so it reads the field, keeps it as
+ *   it is when it writes the file again, and is guided by it in nothing.
  *   Apps before it ignore the field.
  * - `pageWidth`: the width the person shows the game's pages at (see
  *   `pageWidth.ts`), which wins over the pack's. Absent where they never
@@ -219,9 +220,9 @@ export interface OwnPages {
   /** Their own pictures the pages show; absent when there are none. */
   pictures?: Picture[];
   /**
-   * By a pack's page id, whether the page files the pages it lists under
-   * it (`true`) or none (`false`), whatever the app would decide; absent
-   * when the person said nothing.
+   * By a pack's page id, the say an earlier app kept on whether the page
+   * files the pages it lists under it; kept as read, and ignored (see the
+   * top of this file).
    */
   listPages?: Record<string, boolean>;
   /** The width the person shows the game's pages at; absent when they never chose. */

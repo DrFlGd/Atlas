@@ -212,8 +212,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   /**
    * The pack's home page: the guide that is the site's own home page (a
    * wiki's main page), from which its main areas branch off. Guides opens
-   * on it, and the top of the contents branches from it (see `pageTree.ts`
-   * in `@atlas/core`). Optional; an app that does not know it opens on the
+   * on it, above the menu (see `contents.ts` in `@atlas/core`). Optional; an app that does not know it opens on the
    * contents. Read leniently: a value that cannot be read is left out, and
    * one that names no guide of the pack is not used.
    */
@@ -728,14 +727,14 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     /** The ids of the guides and sections in it, in order. */
     items: z.array(z.union([idOf('guide'), idOf('section')])),
     /**
-     * The pages in it are pages the source did not place: the app shows
-     * each under the list page that lists it, met first from a page placed
-     * in another section (see `pageTree.ts` in the core package), and here
-     * only the pages no list page lists (and list pages nothing leads to,
-     * with what they list). Guide
-     * bodies link to other guides by id, so this is worked out from the
-     * pack alone. Added without a schema version change; apps before it
-     * drop it when reading and show the section as it is.
+     * The pages in it are pages the source's menu does not name: the
+     * pages outside the menu. The app never shows the section in the menu
+     * (the bar beside a page); it lists its pages under "All pages", every
+     * page of the source from A to Z, and the person may move any of them
+     * into the menu by hand (see `contents.ts` in the core package). The
+     * app files none of them under another page by itself. Added without a
+     * schema version change; apps before it drop it when reading and show
+     * the section as it is.
      */
     placeByLinks: reading ? z.boolean().optional().catch(undefined) : z.literal(true).optional(),
     /**
@@ -841,10 +840,11 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * (a wiki's categories that are pages of the wiki, the title of a
      * navigation box at the foot of the page), the most fitting first. A
      * guide the pack does not have (not read yet) is no error: it is left
-     * out where the guide is placed. Only a page of a section marked
-     * `placeByLinks` is placed by it (see `pageTree.ts` in the core
-     * package). Optional; read leniently: one that cannot be read is left
-     * out.
+     * out. It is read only for the line above a page outside the menu,
+     * which names the pages the source files it under (see `outsideTrail`
+     * in `contents.ts` in the core package); the menu never shows a page
+     * under another by it. Optional; read leniently: one that cannot be
+     * read is left out.
      */
     filedUnder: reading ? descriptive(filedUnderSchema) : filedUnderSchema.optional(),
   });

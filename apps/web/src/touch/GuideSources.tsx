@@ -11,6 +11,7 @@ import {
 import { useOwnPages } from '../state/ownPages';
 import type { LoadedGame } from '../state/store';
 import { GuidesFromGames } from './GuidesFromGames';
+import { typingOrDialog } from './keys';
 import { openPlace } from './reader';
 import type { SourceView } from './sourceView';
 import '../styles/guideSources.css';
@@ -204,15 +205,6 @@ function SourcesMenu({
 /** Keys that turn the pages of a guide: `[` the previous page, `]` the next. */
 export const PREVIOUS_KEY = '[';
 export const NEXT_KEY = ']';
-
-/** Whether a key press is the person typing, or meant for a dialog that is open. */
-function typingOrDialog(event: KeyboardEvent): boolean {
-  const target = event.target as HTMLElement | null;
-  if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(target.tagName))) {
-    return true;
-  }
-  return document.querySelector('dialog[open], [role="dialog"]') !== null;
-}
 
 /**
  * At the end of a page of a guide (or on its landing page): the page
