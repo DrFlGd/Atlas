@@ -24,10 +24,14 @@ import { create } from 'zustand';
  */
 
 export type ReaderPlace =
-  /** The landing page: the home page, or one made from the top of the contents. */
-  | { kind: 'home' }
-  /** The contents: its top (`sectionId` null), or one section. */
-  | { kind: 'contents'; sectionId: string | null }
+  /**
+   * The landing page: the home page, or one made from the top of the
+   * contents; of one source of pages (by the game id of its pages, see
+   * `guideSources.ts`), or of the one chosen when it names none.
+   */
+  | { kind: 'home'; source?: string }
+  /** The contents: its top (`sectionId` null, of a source as the landing page is), or one section. */
+  | { kind: 'contents'; sectionId: string | null; source?: string }
   /** A page, at its top or at one of its sections. */
   | { kind: 'page'; guideId: string; section?: string }
   | { kind: 'search'; query: string }
@@ -77,12 +81,14 @@ export const canGoForward = (state: ReaderState) => state.at < state.visits.leng
 const samePlace = (a: ReaderPlace, b: ReaderPlace) =>
   a.kind === b.kind &&
   (a.kind === 'contents'
-    ? a.sectionId === (b as typeof a).sectionId
-    : a.kind === 'page'
-      ? a.guideId === (b as typeof a).guideId && a.section === (b as typeof a).section
-      : a.kind === 'search'
-        ? a.query === (b as typeof a).query
-        : true);
+    ? a.sectionId === (b as typeof a).sectionId && a.source === (b as typeof a).source
+    : a.kind === 'home'
+      ? a.source === (b as typeof a).source
+      : a.kind === 'page'
+        ? a.guideId === (b as typeof a).guideId && a.section === (b as typeof a).section
+        : a.kind === 'search'
+          ? a.query === (b as typeof a).query
+          : true);
 
 /** Keeps how far the place shown is scrolled, for when it is shown again. */
 export function rememberScroll(scroll: number): void {
@@ -216,6 +222,23 @@ export function readerForward(): boolean {
   if (!canGoForward(state)) return false;
   set({ at: state.at + 1 });
   return true;
+}
+
+/**
+ * The landing page or the top of the contents shown names no source of
+ * pages: it is of `source` from now on, so Back and Forward show it of the
+ * source it was shown of.
+ */
+export function stampSource(source: string): void {
+  const { visits, at } = get();
+  const visit = visits[at];
+  if (!visit) return;
+  const { place } = visit;
+  const top = place.kind === 'home' || (place.kind === 'contents' && place.sectionId === null);
+  if (!top || place.source !== undefined) return;
+  const next = [...visits];
+  next[at] = { ...visit, place: { ...place, source } };
+  set({ visits: next });
 }
 
 /** A new game: the reader starts at its landing page. */

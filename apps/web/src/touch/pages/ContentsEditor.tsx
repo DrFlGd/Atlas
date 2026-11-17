@@ -13,9 +13,11 @@ import {
   pagesListMarkdown,
   pageTitle,
   parentOf,
+  readInOrder,
   renameSection,
   setListPageSay,
   setPageHidden,
+  setPagesInOrder,
   stepInLayout,
   type ContentsParent,
   type ListedPage,
@@ -36,11 +38,13 @@ import {
   shownContentsOf,
   useOwnPages,
 } from '../../state/ownPages';
+import { packSaysPagesInOrder } from '../../state/pagesInOrder';
 import type { LoadedGame } from '../../state/store';
 import { sectionChoices } from './pageActions';
 import { MenuItem } from './PageBlocks';
 import { ConfirmDialog, Modal } from './PageDialogs';
 import { editNewPage, openPageEditor, packPage, usePageEditor } from './pageEditorState';
+import '../../styles/guideSources.css';
 
 /**
  * The contents as the person arranges it, beside the page edited: sections
@@ -62,6 +66,10 @@ import { editNewPage, openPageEditor, packPage, usePageEditor } from './pageEdit
  * pages of a new level: a page of one's own put where the first was. A
  * pack's page can be told to file the pages it lists under it, or none,
  * whatever the app would decide.
+ *
+ * One switch says whether the pages are read in order, as a guide (each
+ * page ends with Previous and Next), or as a collection, as a wiki; it
+ * wins over what the pack says (see `pagesInOrder` in the schema).
  */
 
 interface Drop {
@@ -585,6 +593,7 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
         {game.pack.manifest.title}. Drag to move a page or a section; drop a page on a page to put
         it under that page. Tick pages to move them together or make a level of them.
       </p>
+      <ReadInOrderSwitch game={game} canChange={canChange} />
       <div className="pe-contents-actions">
         <button
           type="button"
@@ -800,6 +809,38 @@ export function ContentsEditor({ game }: { game: LoadedGame }) {
         />
       ) : null}
     </nav>
+  );
+}
+
+/** "These pages are read in order": a guide, read page after page, or a wiki read as a collection. */
+function ReadInOrderSwitch({ game, canChange }: { game: LoadedGame; canChange: boolean }) {
+  const own = useOwnPages((s) => s.own);
+  const on = readInOrder(own, packSaysPagesInOrder(game.pack));
+  const hint = useId();
+  return (
+    <div className="pe-in-order" data-testid="read-in-order">
+      <label className="pe-in-order-label">
+        <input
+          type="checkbox"
+          role="switch"
+          checked={on}
+          disabled={!canChange}
+          aria-describedby={hint}
+          data-testid="read-in-order-switch"
+          onChange={(event) => {
+            const say = event.target.checked;
+            changeContents(
+              (o) => setPagesInOrder(o, say),
+              say ? 'The pages are read in order now' : 'The pages are read as a collection now',
+            );
+          }}
+        />
+        <span>These pages are read in order</span>
+      </label>
+      <p id={hint} className="pe-in-order-hint">
+        Each page of a guide ends with Previous and Next.
+      </p>
+    </div>
   );
 }
 

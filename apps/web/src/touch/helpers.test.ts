@@ -371,7 +371,7 @@ describe('choosing the layout', () => {
 describe('keys', () => {
   it('lists the classic keys, with C only where there are lists', () => {
     const keys = keyList('Checklists and guides').flatMap((k) => k.keys);
-    expect(keys).toEqual(['/', 'N', 'F', 'Z', 'C', 'Esc', '?']);
+    expect(keys).toEqual(['/', 'N', 'F', 'Z', 'C', '[', ']', 'Esc', '?']);
     expect(keyList(null).flatMap((k) => k.keys)).not.toContain('C');
     expect(keyList('Lists').find((k) => k.keys[0] === 'C')?.what).toBe('Lists, or back to the map');
   });
