@@ -1,4 +1,4 @@
-import { devices, type Page } from '@playwright/test';
+import { devices, type Locator, type Page } from '@playwright/test';
 import { collectErrors, openGuidesSection } from './helpers';
 import { expect, test } from './layout';
 import { back } from './touch';
@@ -17,6 +17,52 @@ const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7'];
 const shownPage = (page: Page) => page.getByTestId('guides-page');
 const viewer = (page: Page) => page.getByTestId('photo-viewer');
 const viewed = (page: Page) => page.getByTestId('photo-viewer-picture');
+
+/** The tooltips of a picture that opens large, and of one that moves (pictureLarge.ts). */
+const LARGE_TIP = 'Press to see this picture larger.';
+const MOVING_TIP = 'This picture moves. Press to see it larger and play it from its start.';
+
+/** The box with a corner mark around a picture of the page. */
+const markOf = (picture: Locator) => picture.locator('xpath=ancestor::span[@class="picture-box"]');
+
+/** How the corner mark of the picture box at or around `element` is drawn. */
+function mark(element: Locator) {
+  return element.evaluate((node) => {
+    const box = node.closest('.picture-box') ?? node.querySelector('.picture-box') ?? node;
+    const style = getComputedStyle(box, '::after');
+    return {
+      display: style.content === 'none' ? 'none' : style.display,
+      width: style.width,
+      height: style.height,
+      opacity: style.opacity,
+      pointerEvents: style.pointerEvents,
+      right: style.right,
+      bottom: style.bottom,
+    };
+  });
+}
+
+/** Black or white: the colour in the middle of an element as shown, read from a screenshot of it. */
+async function colourOf(page: Page, element: Locator): Promise<string> {
+  const shot = (await element.screenshot({ animations: 'allow' })).toString('base64');
+  const reader = await page.context().newPage();
+  try {
+    const red = await reader.evaluate(async (png) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${png}`;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const context = canvas.getContext('2d')!;
+      context.drawImage(img, 0, 0);
+      return context.getImageData(img.width >> 1, img.height >> 1, 1, 1).data[0]!;
+    }, shot);
+    return red < 64 ? 'black' : red > 192 ? 'white' : `grey ${red}`;
+  } finally {
+    await reader.close();
+  }
+}
 
 /** A page with a picture shown smaller than its file, an icon in a line, a linked icon and a hidden picture. */
 const PICTURES = [
@@ -137,6 +183,79 @@ test.describe('on a desktop', () => {
     expect(errors).toEqual([]);
   });
 
+  test('marks a picture that opens large in its corner, and a press on the mark opens it', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveRegions(
+      page,
+      `${PICTURES}\n\nFar off: ![a far waystone](demo:picture:wiki-waystone "=80").`,
+    );
+    await openRegions(page);
+    const pictures = shownPage(page).locator('.guide-picture img');
+    await expect(pictures).toHaveCount(5);
+    const large = pictures.nth(0);
+    const icon = pictures.nth(1);
+    const linked = pictures.nth(2);
+    const far = pictures.nth(4);
+    await expect(large).toHaveAttribute('data-opens-large', '');
+    await expect(markOf(large)).toHaveAttribute('data-mark', 'large');
+    await expect(large).toHaveAttribute('title', LARGE_TIP);
+    // A screen reader hears what it shows, that it is a button, and what a press does.
+    await expect(large).toHaveAccessibleName('a waystone');
+    await expect(large).toHaveAccessibleDescription(LARGE_TIP);
+    // The box is the picture's own size: nothing moves.
+    const shown = await large.boundingBox();
+    expect(shown).toMatchObject({ width: 320, height: 200 });
+    expect(await markOf(large).boundingBox()).toEqual(shown);
+    expect(await mark(large)).toEqual({
+      display: 'block',
+      width: '24px',
+      height: '24px',
+      opacity: '0.85',
+      pointerEvents: 'none',
+      right: '6px',
+      bottom: '6px',
+    });
+    // Stronger on hover and on keyboard focus.
+    await large.hover();
+    await expect.poll(async () => (await mark(large)).opacity).toBe('1');
+    await page.mouse.move(4, 400);
+    await expect.poll(async () => (await mark(large)).opacity).toBe('0.85');
+    await large.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(large).toBeFocused();
+    await expect.poll(async () => (await mark(large)).opacity).toBe('1');
+    // A press on the mark is a press on the picture.
+    await page.mouse.click(shown!.x + shown!.width - 18, shown!.y + shown!.height - 18);
+    await expect(viewer(page)).toBeVisible();
+    await expect(viewed(page)).toHaveAttribute('src', /pictures\/wiki-waystone\.png$/);
+    // Its tooltip is not taken for what it shows.
+    await expect(viewer(page)).toHaveAttribute('aria-label', /^A woken waystone/);
+    await page.keyboard.press('Escape');
+    await expect(viewer(page)).toBeHidden();
+
+    // An icon in a line of text, and a picture under 96 pixels wide, open large with no mark.
+    await expect(icon).toHaveAttribute('data-opens-large', '');
+    await expect(markOf(icon)).toHaveCount(0);
+    await expect(icon).toHaveAttribute('title', 'A woken waystone');
+    await expect(far).toHaveAttribute('data-opens-large', '');
+    await expect(markOf(far)).toHaveCount(0);
+    await expect(far).toHaveAttribute('title', LARGE_TIP);
+    await far.click();
+    await expect(viewer(page)).toBeVisible();
+    await page.keyboard.press('Escape');
+    // A picture that is a link has none.
+    await expect(markOf(linked)).toHaveCount(0);
+    await expect(linked).not.toHaveAttribute('title', LARGE_TIP);
+
+    // A hidden picture has its mark once shown.
+    await shownPage(page).getByRole('button', { name: 'Show hidden text' }).click();
+    await expect(markOf(pictures.nth(3))).toHaveAttribute('data-mark', 'large');
+    expect(errors).toEqual([]);
+  });
+
   test('shows a picture’s copy for pages on the page and its file in the larger view', async ({
     page,
   }) => {
@@ -189,10 +308,14 @@ test.describe('on a desktop', () => {
   });
 });
 
-/** A GIF of `frames` pictures of 1 × 1 pixel, black then white: one that moves when more than one. */
-function gif(frames: number): Buffer {
+/**
+ * A GIF of `frames` pictures of 1 × 1 pixel, black then white, each shown
+ * `delay` hundredths of a second: one that moves when more than one. It
+ * has no looping extension, so it plays once and stops on its last.
+ */
+function gif(frames: number, delay = 50): Buffer {
   const picture = (colour: number) => [
-    ...[0x21, 0xf9, 4, 0, 50, 0, 0, 0],
+    ...[0x21, 0xf9, 4, 0, delay, 0, 0, 0],
     ...[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, colour, 1, 0],
   ];
   return Buffer.from([
@@ -233,7 +356,8 @@ test.describe('a picture that moves', () => {
     const errors = collectErrors(page);
     await serveMoving(page);
     await openRegions(page);
-    const torch = shownPage(page).getByRole('img', { name: 'a torch that flickers' });
+    // A picture that moves opens large whatever its size: a button.
+    const torch = shownPage(page).getByRole('button', { name: 'a torch that flickers' });
     await expect(torch).toHaveAttribute('src', /pictures\/torch\.gif$/);
     await expect(torch).toHaveAttribute('width', '96');
     await expect
@@ -242,6 +366,22 @@ test.describe('a picture that moves', () => {
     await expect(torch).toBeVisible();
     // Without the system's setting, nothing holds it still.
     await expect(shownPage(page).getByRole('button', { name: /^Play/ })).toHaveCount(0);
+    // Its corner mark says it plays, and its tooltip what a press does.
+    await expect(torch).toHaveAttribute('data-moves', 'stops');
+    await expect(markOf(torch)).toHaveAttribute('data-mark', 'moving');
+    await expect(torch).toHaveAttribute('title', MOVING_TIP);
+    await expect(torch).toHaveAccessibleDescription(MOVING_TIP);
+    expect(await mark(torch)).toMatchObject({ display: 'block', width: '40px' });
+    // The lamp does not move, and its file is no larger than shown: as before.
+    const lamp = shownPage(page).getByRole('img', { name: 'a lamp' });
+    await expect(lamp).not.toHaveAttribute('data-opens-large');
+    await expect(lamp).not.toHaveAttribute('title');
+    await expect(markOf(lamp)).toHaveCount(0);
+    // Pressed, it plays in the larger view from its own bytes, read once.
+    await torch.click();
+    await expect(viewed(page)).toHaveAttribute('src', /^blob:/);
+    await expect(page.getByTestId('photo-viewer-size')).toContainText('1 × 1 pixels');
+    await page.keyboard.press('Escape');
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
   });
 
@@ -261,6 +401,11 @@ test.describe('a picture that moves', () => {
     await expect(frame).toHaveAttribute('data-still', '');
     await expect(frame.locator('canvas')).toHaveCount(1);
     await expect(frame.locator('img')).toBeHidden();
+    // While it is still, the Play button is what it offers: no corner mark.
+    const box = shownPage(page).locator('.picture-box');
+    await expect(box).toHaveAttribute('data-mark', 'moving');
+    await expect(box.locator('.moving-picture')).toHaveCount(1);
+    expect((await mark(frame)).display).toBe('none');
     // The lamp does not move: no button on it.
     await expect(shownPage(page).getByRole('button', { name: /^Play/ })).toHaveCount(1);
     await expect(shownPage(page).getByRole('img', { name: 'a lamp' })).toBeVisible();
@@ -270,8 +415,119 @@ test.describe('a picture that moves', () => {
     await expect(play).toHaveCount(0);
     await expect(frame).not.toHaveAttribute('data-still');
     await expect(frame.locator('canvas')).toHaveCount(0);
-    await expect(shownPage(page).getByRole('img', { name: 'a torch that flickers' })).toBeVisible();
+    const torch = shownPage(page).getByRole('button', {
+      name: 'a torch that flickers',
+      exact: true,
+    });
+    await expect(torch).toBeVisible();
+    // Played, it has its corner mark, and a press opens it large.
+    expect((await mark(frame)).display).toBe('block');
+    await torch.click();
+    await expect(viewed(page)).toHaveAttribute('src', /^blob:/);
+    await page.keyboard.press('Escape');
+    await expect(viewer(page)).toBeHidden();
     expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
+  });
+
+  test('plays again from its start in the larger view once it has stopped on the page', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await serveRegions(
+      page,
+      'A beacon: ![a beacon that flashes once](demo:picture:beacon "=160").',
+      (list) => [
+        ...list,
+        { id: 'demo:picture:beacon', file: 'pictures/beacon.gif', shareable: true },
+      ],
+    );
+    let asked = 0;
+    await page.route('**/packs/demo/pictures/beacon.gif', (route) => {
+      asked += 1;
+      return route.fulfill({ headers: { 'content-type': 'image/gif' }, body: gif(2, 150) });
+    });
+    await openRegions(page);
+    const beacon = shownPage(page).getByRole('button', { name: 'a beacon that flashes once' });
+    await expect(beacon).toHaveAttribute('data-moves', 'stops');
+    // Black for a second and a half, then white, where it stops.
+    await expect.poll(() => colourOf(page, beacon), { timeout: 8000 }).toBe('white');
+    await beacon.click();
+    await expect(viewed(page)).toHaveAttribute('src', /^blob:/);
+    const first = await viewed(page).getAttribute('src');
+    await expect.poll(() => colourOf(page, viewed(page))).toBe('black');
+    await expect.poll(() => colourOf(page, viewed(page)), { timeout: 8000 }).toBe('white');
+    await page.keyboard.press('Escape');
+    await expect(viewer(page)).toBeHidden();
+    // Its address is let go when the view closes.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (address) =>
+            fetch(address!).then(
+              () => 'read',
+              () => 'gone',
+            ),
+          first,
+        ),
+      )
+      .toBe('gone');
+    // Opened again: from its start again, from a new address.
+    await beacon.press('Enter');
+    await expect(viewed(page)).toHaveAttribute('src', /^blob:/);
+    expect(await viewed(page).getAttribute('src')).not.toBe(first);
+    await expect.poll(() => colourOf(page, viewed(page))).toBe('black');
+    await page.keyboard.press('Escape');
+    // Its file was read twice in all: shown on the page, and read once for its motion.
+    expect(asked).toBe(2);
+    // The one error is the test's own read of the address let go.
+    expect(errors.filter((e) => !e.includes('ERR_FILE_NOT_FOUND'))).toEqual([]);
+  });
+
+  test('with less motion, is read once, held still, and plays in the larger view when opened', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await serveRegions(
+      page,
+      'A beacon: ![a beacon that flashes once](demo:picture:beacon "=160").',
+      (list) => [
+        ...list,
+        { id: 'demo:picture:beacon', file: 'pictures/beacon.gif', shareable: true },
+      ],
+    );
+    let asked = 0;
+    await page.route('**/packs/demo/pictures/beacon.gif', (route) => {
+      asked += 1;
+      return route.fulfill({ headers: { 'content-type': 'image/gif' }, body: gif(2, 150) });
+    });
+    await openRegions(page);
+    const play = shownPage(page).getByRole('button', {
+      name: 'Play the moving picture: a beacon that flashes once',
+    });
+    await expect(play).toBeVisible();
+    const still = shownPage(page).locator('.moving-picture-still');
+    expect((await mark(still)).display).toBe('none');
+    // Still on its first picture.
+    await page.waitForTimeout(1800);
+    expect(await colourOf(page, still)).toBe('black');
+    // Shown on the page, then read once, for its motion and its first picture alike.
+    expect(asked).toBe(2);
+    await play.click();
+    const beacon = shownPage(page).getByRole('button', {
+      name: 'a beacon that flashes once',
+      exact: true,
+    });
+    expect((await mark(beacon)).display).toBe('block');
+    // The larger view plays it, as it did before the corner marks.
+    await beacon.click();
+    await expect(viewed(page)).toHaveAttribute('src', /^blob:/);
+    await expect.poll(() => colourOf(page, viewed(page))).toBe('black');
+    await expect.poll(() => colourOf(page, viewed(page)), { timeout: 8000 }).toBe('white');
+    await page.keyboard.press('Escape');
+    // Play shows the page's picture again from its file; the larger view reads nothing.
+    expect(asked).toBe(3);
+    expect(errors).toEqual([]);
   });
 });
 
@@ -284,6 +540,12 @@ test.describe('on a phone', () => {
     const errors = collectErrors(page);
     await serveRegions(page, PICTURES);
     await openRegions(page);
+    // Its corner mark shows on a touch screen too, with no hover.
+    await expect(markOf(shownPage(page).locator('.guide-picture img').first())).toHaveAttribute(
+      'data-mark',
+      'large',
+    );
+    expect((await mark(shownPage(page).locator('.picture-box').first())).display).toBe('block');
     await shownPage(page).locator('.guide-picture img').first().tap();
     await expect(viewer(page)).toBeVisible();
     const fitted = await viewed(page).boundingBox();

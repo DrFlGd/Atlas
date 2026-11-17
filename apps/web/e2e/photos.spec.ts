@@ -95,9 +95,26 @@ test.describe('on a computer', () => {
     expect(order.before).toBe(true);
     await page.screenshot({ path: `${SHOTS}/1-location-card.png` });
 
-    // A click opens it large; Escape closes it.
-    await photo.getByRole('button', { name: 'Open The waystone from the road' }).click();
+    // Its corner mark says it opens large, and a press on the mark opens it.
+    const opens = photo.getByRole('button', { name: 'Open The waystone from the road' });
+    await expect(opens).toHaveAttribute('title', 'Press to see this photo larger.');
+    const mark = photo.locator('.photo-mark');
+    await expect(mark).toBeVisible();
+    const box = (await opens.boundingBox())!;
+    expect(await mark.boundingBox()).toEqual({
+      x: box.x + box.width - 30,
+      y: box.y + box.height - 30,
+      width: 24,
+      height: 24,
+    });
     const viewer = page.getByTestId('photo-viewer');
+    await mark.click();
+    await expect(viewer).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(viewer).toBeHidden();
+
+    // A click opens it large; Escape closes it.
+    await opens.click();
     await expect(viewer).toBeVisible();
     await expect(viewer.locator('figcaption')).toContainText('The waystone from the road');
     await page.screenshot({ path: `${SHOTS}/2-opened.png` });
@@ -110,6 +127,8 @@ test.describe('on a computer', () => {
     await expect(spoiler).toHaveAttribute('data-spoiler', 'hidden');
     await expect(spoiler).toContainText('Spoiler · show photo');
     await expect(spoiler.locator('img')).toHaveAttribute('alt', '');
+    // No corner mark while it is a spoiler: a press shows it first.
+    await expect(spoiler.locator('.photo-mark')).toHaveCount(0);
     const filter = () =>
       spoiler.locator('img').evaluate((element) => getComputedStyle(element).filter);
     expect(await filter()).toContain('blur');
@@ -118,6 +137,7 @@ test.describe('on a computer', () => {
     await expect(spoiler).toHaveAttribute('data-spoiler', 'shown');
     await expect(viewer).toBeHidden();
     await expect.poll(filter).not.toContain('blur');
+    await expect(spoiler.locator('.photo-mark')).toBeVisible();
     await spoiler.getByRole('button', { name: 'Open The waystone after the climb' }).click();
     await expect(viewer).toBeVisible();
     await viewer.getByRole('button', { name: 'Close picture' }).click();
@@ -191,6 +211,8 @@ test.describe('on a computer', () => {
     await expect(card.locator('.photo-card-where')).toHaveText('Saltmarsh Wilds');
     await expect(card.getByTestId('photo-card-note')).not.toBeEmpty();
     await expectLoaded(card.getByTestId('photo'));
+    // A card's photo, 120 pixels wide, has its corner mark too.
+    await expect(card.getByTestId('photo').locator('.photo-mark')).toBeVisible();
     // The wreck is a spoiler: blurred on its card.
     const wreck = cards.filter({ hasText: 'The wreck below the cliffs' });
     await expect(wreck.getByTestId('photo')).toHaveAttribute('data-spoiler', 'hidden');

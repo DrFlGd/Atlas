@@ -18,6 +18,14 @@ import { UiIcon } from './icons';
  * uses the zoom button. Sizes are set through the elements' style objects,
  * never a style attribute, as the desktop app's content security policy
  * refuses those.
+ *
+ * A GIF that moves, opened from a page with its bytes (`moving`), is
+ * shown from those bytes, as a picture of its own (a `blob:` address made
+ * when the view opens and let go when it closes): it plays from its start
+ * each time, even when the page's picture of it has stopped, and nothing
+ * is read again. It plays as it would on the page without the system's
+ * setting for less motion, with or without it: opening it is asking to
+ * see it.
  */
 
 /** Room kept around a fitted picture, in CSS pixels: beside it, and above and below for the buttons and caption. */
@@ -46,18 +54,23 @@ export function PictureViewer() {
   const opened = useViewer((s) => s.opened);
   const ref = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
+  // Which opening the dialog shows: a close event comes a moment after the
+  // dialog closes, and must not close a picture opened again meanwhile
+  // (Escape, then Enter at once on the picture).
+  const showing = useRef(0);
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (shown && !dialog.open) {
       opener.current = shown.opener ?? null;
+      showing.current = opened;
       dialog.showModal();
       // The focus goes to its close button (React's autoFocus ran before the dialog was open).
       dialog.querySelector<HTMLElement>('[data-close]')?.focus();
     }
     if (!shown && dialog.open) dialog.close();
-  }, [shown]);
+  }, [shown, opened]);
 
   return (
     <dialog
@@ -65,7 +78,9 @@ export function PictureViewer() {
       className="photo-viewer"
       aria-label={shown ? shown.description : 'Picture'}
       data-testid="photo-viewer"
-      onClose={() => {
+      onClose={(event) => {
+        // Opened again since it closed: that picture stays.
+        if (event.currentTarget.open || useViewer.getState().opened !== showing.current) return;
         closePicture();
         // Back to the picture it was opened from.
         const back = opener.current;
@@ -88,7 +103,19 @@ export function PictureViewer() {
 function ViewerBody({ shown }: { shown: ShownPicture }) {
   const titleId = useId();
   const stage = useRef<HTMLDivElement>(null);
-  const [src, setSrc] = useState(shown.url);
+  // A GIF that moves is shown from its own bytes, as a picture of their own,
+  // given to the picture directly (null here) and let go when the view closes.
+  const [src, setSrc] = useState<string | null>(shown.moving ? null : shown.url);
+  const picture = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    const img = picture.current;
+    if (!shown.moving || !img) return;
+    const own = URL.createObjectURL(new Blob([shown.moving as BlobPart], { type: 'image/gif' }));
+    img.src = own;
+    return () => {
+      URL.revokeObjectURL(own);
+    };
+  }, [shown.moving]);
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
   const [room, setRoom] = useState(roomOf);
   const [real, setReal] = useState(false);
@@ -203,7 +230,8 @@ function ViewerBody({ shown }: { shown: ShownPicture }) {
         }}
       >
         <img
-          src={src}
+          ref={picture}
+          src={src ?? undefined}
           alt={shown.description}
           draggable={false}
           data-upscaled={upscaled ? '' : undefined}
@@ -218,7 +246,9 @@ function ViewerBody({ shown }: { shown: ShownPicture }) {
             }
           }}
           onError={() => {
-            if (shown.fallbackUrl && src !== shown.fallbackUrl) setSrc(shown.fallbackUrl);
+            // Its own bytes could not be shown: its file, as any other picture.
+            if (src === null) setSrc(shown.url);
+            else if (shown.fallbackUrl && src !== shown.fallbackUrl) setSrc(shown.fallbackUrl);
           }}
           onClick={(event) => {
             event.stopPropagation();

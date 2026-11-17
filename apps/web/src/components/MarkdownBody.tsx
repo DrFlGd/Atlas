@@ -7,7 +7,7 @@ import {
   openLargePicture,
   showFileInstead,
 } from '../pictureLarge';
-import { holdMovingPicture } from '../movingPictures';
+import { holdMovingPicture, readMotion } from '../movingPictures';
 import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
@@ -32,7 +32,9 @@ export const UNREAD_PAGE = 'This page has not been read yet';
  * `onAddRow`, a row of a page's table that names something has a button to
  * add it to a build (see `buildRows.ts`). A picture whose file is larger
  * than the page shows it opens in the larger view when pressed, or with
- * Enter or Space (see `pictureLarge.ts`). A picture that moves is shown
+ * Enter or Space (see `pictureLarge.ts`), and so does a picture that
+ * moves, whatever its size; one shown on its own and large enough has a
+ * small mark in its corner that says so. A picture that moves is shown
  * still, with a Play button, when the system asks for less motion (see
  * `movingPictures.ts`).
  */
@@ -106,25 +108,41 @@ export function MarkdownBody({
         img.setAttribute('data-upscaled', '');
       }
     };
+    // A GIF is read once to learn whether it moves: one that does opens large too.
+    const lookAt = (img: HTMLImageElement) => {
+      markUpscaled(img);
+      markLargePicture(img);
+      void readMotion(img).then((motion) => {
+        if (motion?.moves) markLargePicture(img);
+      });
+      void holdMovingPicture(img);
+    };
     const onLoad = (event: Event) => {
-      if (!(event.target instanceof HTMLImageElement)) return;
-      markUpscaled(event.target);
-      markLargePicture(event.target);
-      void holdMovingPicture(event.target);
+      if (event.target instanceof HTMLImageElement) lookAt(event.target);
     };
     for (const img of root.querySelectorAll('.guide-picture img')) {
-      if (img instanceof HTMLImageElement && img.complete) {
-        markUpscaled(img);
-        markLargePicture(img);
-        void holdMovingPicture(img);
-      }
+      if (img instanceof HTMLImageElement && img.complete) lookAt(img);
     }
+    // The size pictures are shown at changes with the window's: whether
+    // they open large and have a corner mark is looked at again.
+    let frame = 0;
+    const onResize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        for (const img of root.querySelectorAll('.guide-picture img')) {
+          if (img instanceof HTMLImageElement) markLargePicture(img);
+        }
+      });
+    };
     // An image's error and load do not bubble; they are seen on the way down.
     root.addEventListener('error', onError, true);
     root.addEventListener('load', onLoad, true);
+    window.addEventListener('resize', onResize);
     return () => {
       root.removeEventListener('error', onError, true);
       root.removeEventListener('load', onLoad, true);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(frame);
     };
   });
   const html = useMemo(
