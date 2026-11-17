@@ -47,8 +47,11 @@ export function AddedFile() {
       {confirm.widens.length > 0 ? (
         <>
           <p>
-            <strong>It widens the limits of the importers’ files.</strong> Switch it on only if the
-            site or the guide’s author gave permission:
+            <strong>
+              It widens the limits of the importers’ shipped files, or takes the place of one of
+              their readers.
+            </strong>{' '}
+            Switch it on only if the site or the guide’s author gave permission:
           </p>
           <ul className="sites-widens" data-testid="sites-confirm-widens">
             {confirm.widens.map((widening) => (

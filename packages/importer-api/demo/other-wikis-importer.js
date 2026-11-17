@@ -433,6 +433,140 @@ function cannotTry(/** @type {SiteRules} */ rules) {
     : 'No part of this file is read by a reader of the importer “Other wikis”, so it cannot try this file.';
 }
 
+/** Whether an address pattern of a file fits a path: `*` a run without `/`, `**` any run. */
+function patternFits(/** @type {string} */ pattern, /** @type {string} */ path) {
+  const plain = (/** @type {string} */ text) => (text.length > 1 ? text.replace(/\/+$/, '') : text);
+  const source = plain(pattern)
+    .split(/(\*\*|\*|\{(?:game|guide)\})/)
+    .map((piece) =>
+      piece === '**'
+        ? '.*'
+        : piece === '*'
+          ? '[^/]*'
+          : /^\{(?:game|guide)\}$/.test(piece)
+            ? '[^/]+'
+            : piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    )
+    .join('');
+  return new RegExp(`^${source}$`).test(plain(path));
+}
+
+/** Values in one sentence, each in quotation marks: "a", "b" and "c". */
+const quoted = (/** @type {readonly string[]} */ values) => {
+  const each = values.map((value) => `"${value}"`);
+  return each.length < 2
+    ? (each[0] ?? '')
+    : `${each.slice(0, -1).join(', ')} and ${each[each.length - 1]}`;
+};
+
+/**
+ * What a page needs before a wiki or guide part read by rules reads it, in
+ * the order they are checked (`SiteTrial.needs`): the host, the address,
+ * and where the title and text are. Each that is missing says what to change.
+ * The page is read when its host and address are done and its text is found.
+ */
+function needsOf(
+  /** @type {Extract<SiteRules, { site: unknown }>} */ rules,
+  /** @type {any} */ part,
+  /** @type {number} */ index,
+  /** @type {string} */ url,
+  /** @type {string} */ host,
+  /** @type {Document} */ doc,
+) {
+  /** @type {NonNullable<SiteTrial['needs']>} */
+  const needs = [];
+  needs.push(
+    rules.site.hosts.includes(host)
+      ? {
+          name: 'The host',
+          state: 'done',
+          says: `site.hosts holds ${host}, the host the page was saved from.`,
+        }
+      : {
+          name: 'The host',
+          state: 'missing',
+          says: `The page was saved from ${host}, and site.hosts does not hold it (it holds ${quoted(rules.site.hosts)}). Put "${host}" in site.hosts, or try a page saved from the site the file is for.`,
+          field: 'site.hosts',
+        },
+  );
+  let path = '/';
+  try {
+    const pathname = new URL(url).pathname;
+    path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : '/';
+  } catch {
+    // An address that is not one fits no pattern.
+  }
+  const fits = (/** @type {readonly string[] | undefined} */ patterns) =>
+    (patterns ?? []).find((pattern) => patternFits(pattern, path));
+  const included = fits(part.pages.include);
+  const excluded = fits(part.pages.exclude);
+  if (included && !excluded) {
+    needs.push({
+      name: 'The address',
+      state: 'done',
+      says: `The page’s address, ${path}, is a page of part ${index + 1}: pages.include fits it, and no pages.exclude does.`,
+    });
+  } else {
+    const folder = path.replace(/\/[^/]*$/, '');
+    const advice = excluded
+      ? `pages.include "${included}" fits it, but pages.exclude "${excluded}" leaves it out. Take that pattern out of pages.exclude, or narrow it.`
+      : path === '/'
+        ? 'For a page saved from the site’s start address, set start to "/" and add "/" to pages.include.'
+        : `If this page is the part’s first page, set start to "${path}" and add it to pages.include. If it is one of its pages, add a pattern that fits it to pages.include, such as "${folder}/*".`;
+    needs.push({
+      name: 'The address',
+      state: 'missing',
+      says: `The page’s address, ${path}, is not a page of part ${index + 1}, which starts at "${part.start}" and reads the pages that pages.include (${quoted(part.pages.include)}) fits. ${advice}`,
+      field: excluded
+        ? `parts[${index}].pages.exclude`
+        : path === '/'
+          ? `parts[${index}].start`
+          : `parts[${index}].pages.include`,
+    });
+    needs.push({
+      name: 'Where the title and text are',
+      state: 'unchecked',
+      says: 'Not checked yet: where the title and the text are is checked once the page’s address fits a part of the file.',
+    });
+    return { needs, read: false };
+  }
+  const contents = Array.isArray(part.article.content)
+    ? part.article.content
+    : [part.article.content];
+  const found = contents.some((/** @type {string} */ selector) => doc.querySelector(selector));
+  const title = part.article.title ? doc.querySelector(part.article.title) : null;
+  /** @type {string[]} */
+  const lost = [];
+  if (!found) {
+    lost.push(
+      `article.content (${quoted(contents)}) matched nothing on this page, so there is no text to keep. Set it to a selector of the one element that holds the article’s text.`,
+    );
+  }
+  if (part.article.title && !title) {
+    lost.push(
+      `article.title ("${part.article.title}") matched nothing, so the page’s own <title> stands in as its title. Set it to a selector of the page’s heading.`,
+    );
+  }
+  needs.push(
+    lost.length > 0
+      ? {
+          name: 'Where the title and text are',
+          state: 'missing',
+          says: lost.join(' '),
+          field: `parts[${index}].article.${found ? 'title' : 'content'}`,
+        }
+      : {
+          name: 'Where the title and text are',
+          state: 'done',
+          says: title
+            ? `article.content found the text, and article.title found the title “${wordsOf(title)}”.`
+            : 'article.content found the text.',
+        },
+  );
+  // A title that matched nothing leaves the page read, its <title> in its place; no text does not.
+  return { needs, read: found && needs[0]?.state === 'done' };
+}
+
 /**
  * Tries a file on one saved page, with the browser's HTML parser: nothing
  * of the page is run or fetched. A file of its own reader reads the page
@@ -482,11 +616,16 @@ async function tryPage(/** @type {SiteTrialRequest} */ request) {
     trial.problems.push('The file has no wiki or guide part read by rules to try.');
     return trial;
   }
-  if (!rules.site.hosts.includes(host)) {
-    trial.problems.push(`The address ${url} is not on a host the file names.`);
+  const doc = new globalThis.DOMParser().parseFromString(html, 'text/html');
+  // What the page needs before the file reads it, each checked in its order.
+  const { needs, read } = needsOf(rules, part, index, url, host, doc);
+  if (!read) {
+    trial.type = part.type === 'guide' ? 'guide' : 'wiki';
+    trial.needs = needs;
+    trial.problems = needs.filter((need) => need.state === 'missing').map((need) => need.says);
     return trial;
   }
-  const doc = new globalThis.DOMParser().parseFromString(html, 'text/html');
+  trial.needs = needs;
   /** @type {NonNullable<SiteTrial['unmatched']>} */
   const unmatched = [];
   trial.unmatched = unmatched;

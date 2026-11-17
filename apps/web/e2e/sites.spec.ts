@@ -359,7 +359,9 @@ test.describe('what a file widens, and trying a file on a saved page', () => {
     });
     await sites.getByTestId('sites-add').click();
     const confirm = sites.getByTestId('sites-confirm');
-    await expect(confirm).toContainText('It widens the limits of the importers’ files.');
+    await expect(confirm).toContainText(
+      'It widens the limits of the importers’ shipped files, or takes the place of one of their readers.',
+    );
     await expect(confirm.getByTestId('sites-confirm-widens').locator('li')).toHaveText([
       'Part 1, reading.ways: adds In a window for harbour.example.net.',
       'site.hosts, entry 2: reads north.quiet-archive.example, which the file “quiet-archive.refused.atlas-site.json” of the importer refuses: This app does not read the Quiet Archive’s wikis, so nothing was opened or added.',
@@ -437,9 +439,11 @@ test.describe('what a file widens, and trying a file on a saved page', () => {
     await cove.getByTestId('site-try').click();
     await trial.getByTestId('site-trial-address').fill('https://elsewhere.example.org/page');
     await trial.getByTestId('site-trial-go').click();
-    await expect(trial.getByTestId('site-trial-problems')).toHaveText(
-      'The address https://elsewhere.example.org/page is not on a host the file names.',
-    );
+    // What the page needs: its host is not the file's, and its address fits no page of the part.
+    await expect(trial.getByTestId('site-trial-problems').locator('li')).toHaveText([
+      'The page was saved from elsewhere.example.org, and site.hosts does not hold it (it holds "guide.example.org"). Put "elsewhere.example.org" in site.hosts, or try a page saved from the site the file is for.',
+      'The page’s address, /page, is not a page of part 1, which starts at "/cove" and reads the pages that pages.include ("/cove/*") fits. If this page is the part’s first page, set start to "/page" and add it to pages.include. If it is one of its pages, add a pattern that fits it to pages.include, such as "/*".',
+    ]);
     await trial.getByTestId('site-trial-close').click();
     await expect(trial).toHaveCount(0);
     expect(realErrors(errors)).toEqual([]);

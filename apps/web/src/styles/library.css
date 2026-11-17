@@ -1414,3 +1414,83 @@
     overflow: visible;
   }
 }
+
+/* What a page needs before the file reads it (the editor's trial): each with its state. */
+.rules-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-need {
+  display: grid;
+  grid-template-columns: minmax(7.5em, auto) minmax(0, 1fr);
+  gap: 2px 10px;
+  padding: 5px 8px;
+  border: 1px solid var(--atlas-border);
+  border-left: 3px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.rules-need[data-state='done'] {
+  border-left-color: var(--atlas-complete);
+}
+
+.rules-need[data-state='missing'] {
+  border-left-color: var(--atlas-danger);
+}
+
+.rules-need-state {
+  grid-row: span 3;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rules-need[data-state='done'] .rules-need-state {
+  color: var(--atlas-complete);
+}
+
+.rules-need[data-state='missing'] .rules-need-state {
+  color: var(--atlas-danger);
+}
+
+.rules-need[data-state='unchecked'] .rules-need-state {
+  color: var(--atlas-muted);
+}
+
+.rules-need-name {
+  font-weight: 600;
+}
+
+.rules-need-says {
+  overflow-wrap: anywhere;
+}
+
+.rules-need-go {
+  justify-self: start;
+}
+
+.rules-example-note {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-left: 3px solid var(--atlas-focus);
+  background: var(--atlas-surface-raised);
+}
+
+.rules-example-note p {
+  margin: 2px 0;
+}
+
+@media (max-width: 480px) {
+  .rules-need {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rules-need-state {
+    grid-row: auto;
+  }
+}

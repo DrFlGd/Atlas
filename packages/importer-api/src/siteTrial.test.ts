@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_TRIAL_ENTRIES,
   MAX_TRIAL_MAPS,
+  MAX_TRIAL_NEEDS,
   MAX_TRIAL_PAGE,
   MAX_TRIAL_TYPES,
   siteTrialOf,
@@ -179,6 +180,48 @@ describe('an importer’s answer to a trial', () => {
     expect(none).not.toHaveProperty('page');
     expect(none).not.toHaveProperty('pictureList');
     expect(none).not.toHaveProperty('unmatched');
+  });
+
+  it('takes what a page needs, in order and in bounds', () => {
+    const trial = siteTrialOf({
+      part: null,
+      needs: [
+        {
+          name: 'The host',
+          state: 'missing',
+          says: 'The page was saved from other.example.org, and site.hosts does not hold it.',
+          field: 'site.hosts',
+        },
+        {
+          name: 'The address',
+          state: 'done',
+          says: 'It is a page of part 1.',
+          field: 'not a field',
+        },
+        { name: 'Where the text is', state: 'unchecked', says: 'Not checked yet.' },
+        { name: 'No state', state: 'waiting', says: 'Left out.' },
+        { name: '', state: 'done', says: 'Left out.' },
+        'not a need',
+      ],
+      problems: [],
+    });
+    expect(trial?.needs).toEqual([
+      {
+        name: 'The host',
+        state: 'missing',
+        says: 'The page was saved from other.example.org, and site.hosts does not hold it.',
+        field: 'site.hosts',
+      },
+      { name: 'The address', state: 'done', says: 'It is a page of part 1.' },
+      { name: 'Where the text is', state: 'unchecked', says: 'Not checked yet.' },
+    ]);
+    const many = Array.from({ length: MAX_TRIAL_NEEDS + 3 }, (_, n) => ({
+      name: `Need ${n}`,
+      state: 'done',
+      says: 'Done.',
+    }));
+    expect(siteTrialOf({ part: 0, needs: many })?.needs).toHaveLength(MAX_TRIAL_NEEDS);
+    expect(siteTrialOf({ part: 0, needs: 'no' })).not.toHaveProperty('needs');
   });
 
   it('takes the layout a reader found, in bounds', () => {

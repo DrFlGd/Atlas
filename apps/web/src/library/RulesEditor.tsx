@@ -1,6 +1,7 @@
 import {
   type SiteMapTrial,
   type SiteTrial,
+  type SiteTrialNeed,
   type SiteTrialPicture,
   type SiteTrialLayout,
   type SiteTrialUnmatched,
@@ -25,7 +26,12 @@ import {
   type RulesEditorStart,
 } from '../state/rulesEditor';
 import { hostOf, idFromName, idProblem } from '../state/rulesCopy';
-import { RULES_TEMPLATES, rulesTemplate } from '../state/rulesTemplates';
+import {
+  RULES_TEMPLATES,
+  examplesLeft,
+  rulesTemplate,
+  type RulesTemplateType,
+} from '../state/rulesTemplates';
 import {
   canonicalAddressOf,
   httpsAddress,
@@ -117,8 +123,8 @@ function titleOf(start: RulesEditorStart, name: string | null): string {
   return 'New rules file';
 }
 
-/** What a new file was started from: a template, or a copy of a file listed (its name). */
-type Started = { from: 'template' } | { from: 'copy'; name: string };
+/** What a new file was started from: a template (its type), or a copy of a file listed (its name). */
+type Started = { from: 'template'; type: RulesTemplateType } | { from: 'copy'; name: string };
 
 /** What the right side shows for one example page: the last trial of it. */
 interface PageTrial {
@@ -406,8 +412,8 @@ function EditorBody({
       {choosing ? (
         <TemplateChoice
           entries={entries}
-          onTemplate={(fresh) => {
-            startFrom(fresh, { from: 'template' });
+          onTemplate={(fresh, type) => {
+            startFrom(fresh, { from: 'template', type });
           }}
           onCopy={(fresh, name) => {
             startFrom(fresh, { from: 'copy', name });
@@ -464,6 +470,9 @@ function EditorBody({
                   goTo(problem.at, problem.end);
                 }}
               />
+              {started?.from === 'template' && rules ? (
+                <ExampleNote type={started.type} rules={rules} onGo={goToField} />
+              ) : null}
               {started?.from === 'copy' && !editing ? (
                 <p className="muted small" data-testid="rules-editor-copied">
                   This file started from a copy of {started.name}, made for the site you named.
@@ -566,7 +575,7 @@ function TemplateChoice({
   onCopy,
 }: {
   entries: readonly SiteEntry[];
-  onTemplate: (text: string) => void;
+  onTemplate: (text: string, type: RulesTemplateType) => void;
   onCopy: (text: string, from: string) => void;
 }) {
   const [source, setSource] = useState<SiteEntry | null>(null);
@@ -592,6 +601,13 @@ function TemplateChoice({
         What does the site hold? The new file starts from an example for it, with every value one
         you write the site’s own in place of. Nothing is saved until you press Save.
       </p>
+      <p className="small" data-testid="rules-templates-change">
+        Before a saved page shows, change the example’s host, its start address and page patterns,
+        and where the title and text are (for a map: where its data and locations are) to the site’s
+        own; a site that one of the importers’ own readers reads is often simpler to start from a
+        copy of that reader’s file instead
+        {sources.length > 0 ? ', listed under “A copy of a file”' : ''}.
+      </p>
       <ul className="rules-template-list">
         {RULES_TEMPLATES.map((template) => (
           <li key={template.type}>
@@ -600,7 +616,7 @@ function TemplateChoice({
               className="button rules-template"
               data-testid={`rules-template-${template.type}`}
               onClick={() => {
-                onTemplate(rulesTemplate(template.type));
+                onTemplate(rulesTemplate(template.type), template.type);
               }}
             >
               <strong>{template.name}</strong>
@@ -1185,21 +1201,30 @@ function TrialResult({
 }) {
   const lead = trialInWords(result, layout)[0];
   const unmatched = result.unmatched ?? [];
-  // The problems the list of what matched nothing does not already say.
+  const needs = result.needs ?? [];
+  // The problems the list of what a page needs and of what matched nothing do not already say.
   const others = result.problems.filter(
     (problem) =>
+      !needs.some((need) => need.says === problem) &&
       !unmatched.some((u) => problem.includes(u.value) && problem.includes('matched no')),
   );
   return (
     <div className="rules-result" data-testid="rules-editor-result">
       {lead ? <p data-testid="rules-result-lead">{lead}</p> : null}
       {!trialRead(result) ? (
-        <p>
-          {result.type === 'map' || page.data
-            ? 'The file did not read the data.'
-            : 'The file did not read the page.'}
-        </p>
-      ) : result.map ? (
+        <>
+          <p>
+            {result.type === 'map' || page.data
+              ? 'The file did not read the data.'
+              : 'The file did not read the page.'}
+          </p>
+          {needs.length > 0 ? <TrialNeeds needs={needs} onGoToField={onGoToField} /> : null}
+        </>
+      ) : null}
+      {trialRead(result) && needs.length > 0 ? (
+        <TrialNeeds needs={needs} onGoToField={onGoToField} />
+      ) : null}
+      {!trialRead(result) ? null : result.map ? (
         <MapResult result={result} map={result.map} />
       ) : (
         <PageResult result={result} layout={layout} />
@@ -1221,6 +1246,64 @@ function TrialResult({
             : 'Every selector of the file matched on this page.'}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/** How each state of a need is said. */
+const NEED_STATES: Record<SiteTrialNeed['state'], string> = {
+  done: 'Done',
+  missing: 'Missing',
+  unchecked: 'Not checked yet',
+};
+
+/**
+ * What the page needs before the file reads it, in the order the importer
+ * checks them, each with its state and what to change; a need that names
+ * its field leads to it.
+ */
+function TrialNeeds({
+  needs,
+  onGoToField,
+}: {
+  needs: readonly SiteTrialNeed[];
+  onGoToField: (field: string) => void;
+}) {
+  const missing = needs.filter((need) => need.state === 'missing').length;
+  return (
+    <div className="rules-result-block" data-testid="rules-result-needs">
+      <h4>What the page needs</h4>
+      <p className="muted small">
+        {missing === 0
+          ? 'The page has everything the file needs to read it.'
+          : `Each is checked in this order. ${missing === 1 ? 'One is' : `${missing.toLocaleString('en')} are`} missing: change what it says, and the file is tried again.`}
+      </p>
+      <ol className="rules-needs">
+        {needs.map((need) => (
+          <li
+            key={need.name}
+            className="rules-need"
+            data-state={need.state}
+            data-testid="rules-result-need"
+          >
+            <span className="rules-need-state">{NEED_STATES[need.state]}</span>
+            <span className="rules-need-name">{need.name}</span>
+            <span className="rules-need-says">{need.says}</span>
+            {need.field && need.state === 'missing' ? (
+              <button
+                type="button"
+                className="link-button rules-need-go"
+                data-field={need.field}
+                onClick={() => {
+                  onGoToField(need.field!);
+                }}
+              >
+                Go to {need.field}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -1687,6 +1770,49 @@ function TrialPageText({
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * While a file started from a template still holds the example's values
+ * where a saved page needs the site's own: what to change first, and which
+ * fields are still the example's, each leading to its field.
+ */
+function ExampleNote({
+  type,
+  rules,
+  onGo,
+}: {
+  type: RulesTemplateType;
+  rules: object;
+  onGo: (field: string) => void;
+}) {
+  const left = examplesLeft(type, rules);
+  const template = RULES_TEMPLATES.find((one) => one.type === type);
+  if (left.length === 0 || !template) return null;
+  return (
+    <div className="small rules-example-note" data-testid="rules-editor-example">
+      <p>{template.change}</p>
+      <p className="muted">
+        Still the example’s:{' '}
+        {left.map((field, n) => (
+          <span key={field}>
+            {n > 0 ? ', ' : ''}
+            <button
+              type="button"
+              className="link-button"
+              data-field={field}
+              onClick={() => {
+                onGo(field);
+              }}
+            >
+              {field}
+            </button>
+          </span>
+        ))}
+        .
+      </p>
+    </div>
   );
 }
 
