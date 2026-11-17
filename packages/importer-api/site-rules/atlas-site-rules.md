@@ -753,21 +753,26 @@ The maps of the game: areas, regions, floors. With `path`, each entry of that li
 | `size`    | yes, but not with `"area": "located"` | data path, two data paths, or `[width, height]` | The size of the map's picture in pixels at its highest zoom. One data path names `[width, height]`, or a single number for a square; two name width and height |
 | `maxZoom` | yes, but not with `picture.sets`      | data path, or a number from 0 to 24             | The highest zoom of the map's images. At that zoom one pixel of an image is one pixel of the picture                                                           |
 | `minZoom` | no, and not with `picture.sets`       | data path, or a number, default 0               | The lowest zoom the site has images for                                                                                                                        |
+| `shared`  | no                                    | object                                          | Facts every map shares, read from one object of the data (see "Facts every map shares")                                                                        |
 | `group`   | no                                    | data path                                       | For a building with several floors: the value that is the same for all of its floors                                                                           |
 | `floor`   | no                                    | data path                                       | With `group`: the floor's name or number                                                                                                                       |
 | `picture` | yes                                   | object                                          | Where the map's images are (next table)                                                                                                                        |
+
+`size` and `maxZoom` may be given in `shared` instead, and are then not needed in `maps` itself.
+
+**A site's zoom numbers need not start at 0.** `maxZoom` is the site's own number for the zoom at which one pixel of an image is one pixel of the picture, and `minZoom` and `position.zoom` are counted the same way. Some sites number their zooms from a higher base: a picture 20,000 pixels wide in images of 256 pixels needs 7 zooms above the one where it fits in one image, so a site may call its highest zoom 18 and its lowest 11 where another calls them 7 and 0. Write the site's own numbers (`"maxZoom": 18, "minZoom": 11`): the reader works out the numbers Atlas keeps from the size, and asks for each image under the site's own zoom number. This holds with `"units": "pixels"` and `"fraction"`; with `"degrees"` the zooms are the web's usual ones, which start at 0. A map whose zooms start above 0 must count the rows of its images from the top (`{y}`): rows counted from the bottom have no agreed meaning there, so such a map is left out, and "Try on a saved page" says so. A `maxZoom` too low for the size, so that the images at the highest zoom cannot cover the picture, also leaves the map out, and the trial names the map, its size and its zoom.
 
 **Floors.** Atlas has no floors yet. Each floor becomes a map of its own, named with its floor ("Old Tower, Ground floor" when the floor's name is not in the map's name already), and the floors of one group stand together in the list of maps, where the first of them stands in the data.
 
 **`maps.picture`** holds exactly one of `images`, `sets` and `image`.
 
-| Field    | Form                      | Meaning                                                                                                                                                                                                                                                  |
-| -------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `images` | address with marks        | The address of one image, on `site.hosts` or `pictures.hosts`, with `{z}` for its zoom, `{x}` for its column and `{y}` for its row counted from the top, or `{-y}` for a row counted from the bottom, and `{map}` for the map's id where the maps differ |
-| `sets`   | object                    | Where the data itself gives the address of the images, as image sets (next table)                                                                                                                                                                        |
-| `base`   | address ending in `/`     | With `sets`: the address a set's pattern is written after, when the data gives the pattern without its host                                                                                                                                              |
-| `tile`   | 64, 128, 256, 512 or 1024 | With `images` or `sets`: the width of one image in pixels                                                                                                                                                                                                |
-| `image`  | address                   | The picture as one image. The format takes it, and the Importer says plainly when it cannot read such a map yet                                                                                                                                          |
+| Field    | Form                      | Meaning                                                                                                                                                                                                                                                                                                |
+| -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `images` | address with marks        | The address of one image, on `site.hosts` or `pictures.hosts`, with `{z}` for its zoom, `{x}` for its column and `{y}` for its row counted from the top, or `{-y}` for a row counted from the bottom, `{map}` for the map's id where the maps differ, and `{shared}` for the id `maps.shared.id` reads |
+| `sets`   | object                    | Where the data itself gives the address of the images, as image sets (next table)                                                                                                                                                                                                                      |
+| `base`   | address ending in `/`     | With `sets`: the address a set's pattern is written after, when the data gives the pattern without its host                                                                                                                                                                                            |
+| `tile`   | 64, 128, 256, 512 or 1024 | With `images` or `sets`: the width of one image in pixels                                                                                                                                                                                                                                              |
+| `image`  | address                   | The picture as one image. The format takes it, and the Importer says plainly when it cannot read such a map yet                                                                                                                                                                                        |
 
 The marks stand in the path of the address only. What follows `?` is fixed: a query the site's own map asks with, such as a version (`?v=7`), is written as it is, and the images are asked for with it.
 
@@ -784,6 +789,63 @@ The marks stand in the path of the address only. What follows `?` is fixed: a qu
 | `bounds`    | no                     | With `"area": "located"`: the set's bounds in degrees, `[west, south, east, north]` or two corners `[[west, south], [east, north]]`; `null` is no bounds       |
 
 A map with several sets uses the one with the highest `maxZoom`, the first of those in the data. A set whose address is not on the picture hosts, or whose zooms are not usable, is left out, and the trial says so.
+
+**Facts every map shares (`maps.shared`).** Some sites give the size and zooms once for all the maps of a page, in one object beside the list of maps, and the address of their images holds an id of that object as well as each map's own id. `shared` reads those facts from that object:
+
+| Field     | Needed | Form                      | Meaning                                                                                                                                           |
+| --------- | ------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`    | yes    | data path                 | The one object the facts are in, read from the data's top, such as `sheet`. It names one object, so it holds no `[*]`                             |
+| `id`      | no     | data path                 | An id `{shared}` stands for in `picture.images`, letters, digits, `_`, `.` and `-`. It is needed when the address holds `{shared}`, and only then |
+| `size`    | no     | data path, two data paths | As `maps.size`, the same for every map                                                                                                            |
+| `maxZoom` | no     | data path                 | As `maps.maxZoom`, the same for every map                                                                                                         |
+| `minZoom` | no     | data path                 | As `maps.minZoom`, the same for every map                                                                                                         |
+
+The data paths of `id`, `size`, `maxZoom` and `minZoom` are read inside the object `path` names, and `shared` names at least one of them. Each of `size`, `maxZoom` and `minZoom` is given in `maps` or in `shared`, never in both. With `picture.sets`, the zooms come from the sets, so `shared` gives no `maxZoom` or `minZoom`; with `"area": "located"`, it gives no `size`. `shared` may be used with every form of `maps`: a list of maps, one object, or one map whose facts are written in the file. A map is left out, and the trial says so, when the id read for `{shared}` is missing or cannot stand in an address.
+
+```json
+{
+  "type": "map",
+  "reader": "rules",
+  "start": "/charts",
+  "data": { "from": "file", "address": "/charts/data.json" },
+  "maps": {
+    "path": "sheet.layers[*]",
+    "id": "key",
+    "name": "label",
+    "shared": {
+      "path": "sheet",
+      "id": "number",
+      "size": ["width", "height"],
+      "maxZoom": "top",
+      "minZoom": "low"
+    },
+    "picture": { "images": "/pictures/{shared}/{map}/{z}/{x}-{y}.png", "tile": 256 }
+  },
+  "types": { "path": "sheet.kinds[*]", "id": "id", "name": "label", "found": "all" },
+  "locations": {
+    "path": "sheet.spots[*]",
+    "fields": {
+      "id": "id",
+      "map": "layers[*]",
+      "type": "kind",
+      "name": "label",
+      "x": "at[0]",
+      "y": "at[1]"
+    }
+  },
+  "position": { "units": "pixels" },
+  "reading": { "ways": ["fetch"] }
+}
+```
+
+The data this part reads would look like this (made up, shortened). The two maps are the harbour by day and at low tide, 12,000 by 9,000 pixels each, with the site's zooms 10 to 16, and the first image of the harbour's lowest zoom is `/pictures/31/4/10/0-0.png`. North Light is on both maps (see `locations`).
+
+```text
+{ "sheet": { "number": 31, "width": 12000, "height": 9000, "top": 16, "low": 10,
+             "layers": [ { "key": 4, "label": "Harbour" }, { "key": 5, "label": "Harbour at low tide" } ],
+             "kinds": [ { "id": 2, "label": "Lighthouse" } ],
+             "spots": [ { "id": 70, "kind": 2, "label": "North Light", "layers": [4, 5], "at": [5120, 3300] } ] } }
+```
 
 ### `types`
 
@@ -809,7 +871,7 @@ Types are shown by their group's place, then by their own `order`, then by the s
 | ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `type`        | yes               | The location's type                                                                                                                                                                                                                                                       |
 | `x`, `y`      | yes               | Its position (see `position`)                                                                                                                                                                                                                                             |
-| `map`         | with several maps | The id of the map it is on, as `maps.id` gives it                                                                                                                                                                                                                         |
+| `map`         | with several maps | The id of the map it is on, as `maps.id` gives it, or a list of them (next paragraph)                                                                                                                                                                                     |
 | `id`          | no                | The site's own id of the location. Give it when there is one: it keeps a location the same location in Atlas, with what the owner ticked, when the data changes, and the location's Atlas id holds it. Without it a location is known by its map, type, name and position |
 | `name`        | no                | Its name. A location without one is named after its type and numbered                                                                                                                                                                                                     |
 | `description` | no                | Its description. Markup in it is turned into text with headings, lists and links, and anything else is dropped (see `markup`)                                                                                                                                             |
@@ -825,6 +887,8 @@ Two more fields of `locations`, beside `path` and `fields`:
 | ---------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `markup`   | `html` (default) or `markdown` | What the descriptions are written in. With `markdown`, links on the web are kept as links, any other link and every picture as their words                                                                                        |
 | `pictures` | object                         | A list of pictures in each location: `path` (inside one location), `address` (inside one picture, on `site.hosts` or `pictures.hosts`) and, if there is one, `hidden` (a picture the site hides until asked). At most 20 are kept |
+
+**A location on several maps.** Some sites show one location on several maps, such as the same harbour by day and at low tide, and give it a list of map ids. A `map` data path with `[*]`, such as `layers[*]` or `onMaps[*].id`, reads every id it finds, and the location is put on every map of the list that the data has, at the same position. Each copy is a location of its own in Atlas and is ticked as found by itself. The copy on the first of those maps, in the list's order, keeps the location's Atlas id made from the site's id (see "The site's id of each location"); each further copy has an id of its own, made from the site's id and the map's id, which stays the same each time the data is read. A path without `[*]` reads one map id, as before, and an id that names no map of the data is passed over. The trial counts the locations put on more than one map.
 
 A value of the wrong kind (a name that is a list, a position that is not a number) leaves that fact out, or, for `type`, `x`, `y` and `map`, the location; the Importer counts what it left out and says so.
 

@@ -71,8 +71,8 @@ describe('the guide', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
     // And one file for every game of a site, a refusal, a part with a layout section,
     // a map part read from values of its page, one file for every game and map of a map site,
-    // and a part with links to a map.
-    expect(blocks.length).toBe(11);
+    // a part with links to a map, and a map part with facts every map shares.
+    expect(blocks.length).toBe(12);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -543,6 +543,95 @@ describe('checking a file', () => {
       ).toBe(
         'Part 1, maps.picture.images: must hold {z}, {x} and either {y} or {-y} (rows counted from the bottom).',
       );
+    });
+
+    it('takes facts every map shares from one object of the data, and {shared} for its id', () => {
+      /** A made-up part whose maps share their size, zooms and an id beside the list of maps. */
+      const sharing = {
+        ...several,
+        maps: {
+          path: 'sheet.layers[*]',
+          id: 'key',
+          name: 'label',
+          shared: {
+            path: 'sheet',
+            id: 'number',
+            size: ['width', 'height'],
+            maxZoom: 'top',
+            minZoom: 'low',
+          },
+          picture: { images: '/pictures/{shared}/{map}/{z}/{x}-{y}.png', tile: 256 },
+        },
+        locations: { ...several.locations, fields: { ...several.locations.fields, map: 'on[*]' } },
+        position: { units: 'pixels' },
+      };
+      const said = (maps: Record<string, unknown>, change: Record<string, unknown> = {}) => {
+        const result = checkSiteRules(withPart({ ...sharing, ...change, maps }));
+        return result.ok ? [] : result.problems.map(problemText);
+      };
+      expect(said(sharing.maps)).toEqual([]);
+      // One fact in shared, the others in maps, and one map whose facts are written in the file.
+      expect(
+        said({
+          ...sharing.maps,
+          maxZoom: 'top',
+          shared: { path: 'sheet', id: 'number', size: 'dims' },
+        }),
+      ).toEqual([]);
+      expect(
+        said({
+          id: 'harbour',
+          name: 'Harbour',
+          maxZoom: 16,
+          shared: { path: 'sheet', size: ['width', 'height'], id: 'number' },
+          picture: sharing.maps.picture,
+        }),
+      ).toEqual([]);
+      const { shared } = sharing.maps;
+      expect(said({ ...sharing.maps, size: 'dims', maxZoom: 7, minZoom: 'low' })).toEqual([
+        'Part 1, maps.shared.size: is given in maps.size as well: give it in one of the two places only.',
+        'Part 1, maps.shared.maxZoom: is given in maps.maxZoom as well: give it in one of the two places only.',
+        'Part 1, maps.shared.minZoom: is given in maps.minZoom as well: give it in one of the two places only.',
+      ]);
+      expect(said({ ...sharing.maps, shared: { path: 'sheet' } })).toEqual([
+        'Part 1, maps.maxZoom: is needed, unless picture.sets names the zooms of each set.',
+        'Part 1, maps.size: is needed, unless position.area is "located".',
+        'Part 1, maps.shared: must name at least one of id, size, maxZoom and minZoom.',
+        'Part 1, maps.picture.images: holds {shared}, which stands for the id maps.shared.id reads: name that id, or leave {shared} out.',
+      ]);
+      expect(said({ ...sharing.maps, shared: { ...shared, path: 'sheets[*]' } })).toEqual([
+        'Part 1, maps.shared.path: must name one object of the data, the same for every map, not every entry of a list: write it without [*].',
+      ]);
+      expect(
+        said({
+          ...sharing.maps,
+          picture: { images: '/pictures/{map}/{z}/{x}-{y}.png', tile: 256 },
+        }),
+      ).toEqual([
+        'Part 1, maps.shared.id: is only for an address of images (picture.images) that holds {shared}, which it stands for.',
+      ]);
+      // The zooms of image sets, and the size of a picture placed by its locations, are not shared.
+      expect(
+        said(
+          {
+            ...sharing.maps,
+            shared: { path: 'sheet', size: 'dims', maxZoom: 'top', minZoom: 'low' },
+            picture: {
+              base: 'https://tiles.example.net/sets/',
+              tile: 256,
+              sets: { path: 'sheet.sets[*]', map: 'of', pattern: 'pattern', maxZoom: 'high' },
+            },
+          },
+          { position: { units: 'degrees', area: 'located' } },
+        ),
+      ).toEqual([
+        'Part 1, maps.shared.maxZoom: comes from picture.sets: leave it out, and name it in sets.',
+        'Part 1, maps.shared.minZoom: comes from picture.sets: leave it out, and name it in sets.',
+        'Part 1, maps.shared.size: is worked out from the locations with "area": "located": leave it out.',
+      ]);
+      expect(
+        mapFields({ ...sharing, maps: { ...sharing.maps, shared: { ...shared, extra: 'x' } } }),
+      ).toEqual(['parts[0].maps.shared.extra']);
     });
 
     it('takes a picture of one image, on the site or a picture host', () => {

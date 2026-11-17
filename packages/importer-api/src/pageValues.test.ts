@@ -161,6 +161,66 @@ describe('the values of a map page, read in the window', () => {
     expect(run(reader, classy)).toBeNull();
   });
 
+  it('take the facts every map shares, and nothing else of their object', () => {
+    const part = checked({
+      ...PART,
+      maps: {
+        path: 'board.sheet.layers[*]',
+        id: 'key',
+        name: 'label',
+        shared: {
+          path: 'board.sheet',
+          id: 'number',
+          size: ['width', 'height'],
+          maxZoom: 'top',
+          minZoom: 'low',
+        },
+        picture: { images: '/pictures/{shared}/{map}/{z}/{x}-{y}.png', tile: 256 },
+      },
+      locations: { ...PART.locations, fields: { ...PART.locations.fields, map: 'on[*]' } },
+      position: { units: 'pixels' },
+    });
+    const spec = pageValuesSpec(part)!;
+    expect(spec.keep.board).toEqual({
+      sheet: {
+        layers: { '*': { key: 1, label: 1 } },
+        number: 1,
+        width: 1,
+        height: 1,
+        top: 1,
+        low: 1,
+      },
+    });
+    expect(spec.wait).toContainEqual({ name: 'board', steps: ['sheet'] });
+    expect((spec.keep.state as { spots: { '*': object } }).spots['*']).toMatchObject({
+      on: { '*': 1 },
+    });
+    const sheet = {
+      number: 31,
+      width: 12_000,
+      height: 9_000,
+      top: 16,
+      low: 10,
+      owner: 'never taken',
+      layers: [{ key: 4, label: 'Harbour', secret: 'never taken' }],
+    };
+    const got = run(pageValuesReader(part)!, {
+      ...page([{ id: 1, kind: 'a', lng: 1, lat: 2, on: [4, 5] }]),
+      boardData: { current: { sheet } },
+    }) as { values: { board: unknown; state: { spots: unknown[] } } };
+    expect(got.values.board).toEqual({
+      sheet: {
+        number: 31,
+        width: 12_000,
+        height: 9_000,
+        top: 16,
+        low: 10,
+        layers: [{ key: 4, label: 'Harbour' }],
+      },
+    });
+    expect(got.values.state.spots).toEqual([{ id: 1, kind: 'a', lng: 1, lat: 2, on: [4, 5] }]);
+  });
+
   it('wait until the values are there and the lists hold something', () => {
     const reader = pageValuesReader(checked())!;
     expect(run(reader, page(), 'loading')).toBeNull();

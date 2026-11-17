@@ -503,8 +503,11 @@ function rulesGuidePartSchema<L extends z.ZodType>(licence: L) {
 
 /** A map's own id, as a file gives it for a site with one map: it stands for `{map}` in an address. */
 export const MAP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/u;
-/** The marks an address of a map's images may hold, in its path only. */
-export const MAP_IMAGE_MARKS = ['{map}', '{z}', '{x}', '{y}', '{-y}'] as const;
+/**
+ * The marks an address of a map's images may hold, in its path only:
+ * `{shared}` stands for the id `maps.shared.id` reads, the same for every map.
+ */
+export const MAP_IMAGE_MARKS = ['{map}', '{shared}', '{z}', '{x}', '{y}', '{-y}'] as const;
 
 /** A number of a map, as a data path in each entry or as a plain number for a site with one map. */
 const pathOrInt = (max: number) => z.union([dataPath, z.int().min(0).max(max)]);
@@ -525,6 +528,23 @@ const imageSetsSchema = z.strictObject({
   bounds: dataPath.optional(),
 });
 
+/**
+ * Facts every map of the part shares, read from one object of the data
+ * (`maps.shared`): an id the address of the images holds as `{shared}`,
+ * and the size and zooms when the data gives them once, beside the list of
+ * maps rather than in each entry.
+ */
+const sharedMapsSchema = z.strictObject({
+  path: dataPath,
+  id: dataPath.optional(),
+  size: z.union([dataPath, z.tuple([dataPath, dataPath])]).optional(),
+  maxZoom: dataPath.optional(),
+  minZoom: dataPath.optional(),
+});
+
+/** The facts of a map `maps.shared` may give instead of `maps`: each in one of the two, never both. */
+export const SHARED_MAP_FACTS = ['size', 'maxZoom', 'minZoom'] as const;
+
 const mapsSchema = z.strictObject({
   path: dataPath.optional(),
   id: text(200),
@@ -532,6 +552,7 @@ const mapsSchema = z.strictObject({
   size: z.union([dataPath, z.tuple([pixels, pixels]), z.tuple([dataPath, dataPath])]).optional(),
   maxZoom: pathOrInt(24).optional(),
   minZoom: pathOrInt(24).optional(),
+  shared: sharedMapsSchema.optional(),
   group: dataPath.optional(),
   floor: dataPath.optional(),
   picture: z.strictObject({
@@ -1110,6 +1131,7 @@ export function mapTopPaths(part: RulesMapPart): { field: string[]; path: string
   };
   add(['game', 'name'], part.game?.name);
   add(['maps', 'path'], part.maps.path);
+  add(['maps', 'shared', 'path'], part.maps.shared?.path);
   add(['maps', 'picture', 'sets', 'path'], part.maps.picture.sets?.path);
   add(['types', 'path'], part.types.path);
   add(['types', 'groups', 'path'], part.types.groups?.path);
@@ -1228,6 +1250,7 @@ function mapPartProblems(
     }
   }
   const sets = picture.sets;
+  const shared = maps.shared;
   const severalMaps = namesEvery(maps.path);
   if (sets !== undefined) {
     if (sets.map === undefined && severalMaps) {
@@ -1240,16 +1263,57 @@ function mapPartProblems(
       if (maps[key] !== undefined) {
         add(['maps', key], 'comes from picture.sets: leave it out, and name it in sets');
       }
+      if (shared?.[key] !== undefined) {
+        add(['maps', 'shared', key], 'comes from picture.sets: leave it out, and name it in sets');
+      }
     }
-  } else if (maps.maxZoom === undefined) {
+  } else if (maps.maxZoom === undefined && shared?.maxZoom === undefined) {
     add(['maps', 'maxZoom'], 'is needed, unless picture.sets names the zooms of each set');
   }
   const located = position.area === 'located';
   if (located && maps.size !== undefined) {
     add(['maps', 'size'], 'is worked out from the locations with "area": "located": leave it out');
   }
-  if (!located && maps.size === undefined) {
+  if (located && shared?.size !== undefined) {
+    add(
+      ['maps', 'shared', 'size'],
+      'is worked out from the locations with "area": "located": leave it out',
+    );
+  }
+  if (!located && maps.size === undefined && shared?.size === undefined) {
     add(['maps', 'size'], 'is needed, unless position.area is "located"');
+  }
+  if (shared !== undefined) {
+    if (shared.id === undefined && SHARED_MAP_FACTS.every((key) => shared[key] === undefined)) {
+      add(['maps', 'shared'], 'must name at least one of id, size, maxZoom and minZoom');
+    }
+    if (namesEvery(shared.path)) {
+      add(
+        ['maps', 'shared', 'path'],
+        'must name one object of the data, the same for every map, not every entry of a list: write it without [*]',
+      );
+    }
+    for (const key of SHARED_MAP_FACTS) {
+      if (shared[key] !== undefined && maps[key] !== undefined) {
+        add(
+          ['maps', 'shared', key],
+          `is given in maps.${key} as well: give it in one of the two places only`,
+        );
+      }
+    }
+  }
+  const sharedMark = picture.images?.includes('{shared}') === true;
+  if (sharedMark && shared?.id === undefined) {
+    add(
+      ['maps', 'picture', 'images'],
+      'holds {shared}, which stands for the id maps.shared.id reads: name that id, or leave {shared} out',
+    );
+  }
+  if (shared?.id !== undefined && !sharedMark) {
+    add(
+      ['maps', 'shared', 'id'],
+      'is only for an address of images (picture.images) that holds {shared}, which it stands for',
+    );
   }
   const oneMap = maps.path === undefined;
   if (oneMap) {

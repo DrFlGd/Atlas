@@ -1816,6 +1816,46 @@
                           }
                         ]
                       },
+                      "shared": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "array",
+                                "prefixItems": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "string"
+                                  }
+                                ],
+                                "items": false,
+                                "minItems": 2,
+                                "maxItems": 2
+                              }
+                            ]
+                          },
+                          "maxZoom": {
+                            "type": "string"
+                          },
+                          "minZoom": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["path"],
+                        "additionalProperties": false
+                      },
                       "group": {
                         "type": "string"
                       },

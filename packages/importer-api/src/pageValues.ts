@@ -219,6 +219,13 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
     maps.group,
     maps.floor,
   ]);
+  const shared = maps.shared;
+  if (shared) {
+    const sharedSize = typeof shared.size === 'string' ? [shared.size] : (shared.size ?? []);
+    const facts = [shared.id, ...sharedSize, shared.maxZoom, shared.minZoom];
+    // Only the facts it names: a shared object that names none (which the checker refuses) gives nothing.
+    if (facts.some((fact) => fact !== undefined)) under(shared.path, facts);
+  }
   const sets = maps.picture.sets;
   if (sets) {
     under(sets.path, [
