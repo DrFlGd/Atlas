@@ -855,6 +855,9 @@ function MapChip() {
   if (maps.length < 2 && layers.length < 2 && others.length === 0) return null;
   const layer = layers.length > 1 ? game.pack.layers.get(layerId ?? '') : undefined;
   const source = group && gameId ? names.get(gameId) : undefined;
+  const mapName = game.pack.maps.get(mapId)?.name;
+  // Cut short on a narrow screen: the whole of it shows on hover.
+  const chipText = [source, mapName, layer?.name].filter(Boolean).join(' · ');
   return (
     <button
       type="button"
@@ -867,13 +870,13 @@ function MapChip() {
       }}
     >
       <UiIcon name="layers" size={18} />
-      <span className="touch-map-chip-name">
+      <span className="touch-map-chip-name" title={chipText}>
         {source ? (
           <span className="muted" data-testid="map-chip-source">
-            {source} ·{' '}
+            <span className="touch-map-chip-source">{source}</span> ·{' '}
           </span>
         ) : null}
-        {game.pack.maps.get(mapId)?.name}
+        {mapName}
         {layer ? <span className="muted"> · {layer.name}</span> : null}
       </span>
       <UiIcon name="chevronDown" size={14} strokeWidth={2} />
@@ -942,7 +945,11 @@ function MapsMenu({ wide }: { wide: boolean }) {
           </button>
         </div>
         {sources ? (
-          <h3 className="touch-group-title" data-testid="maps-menu-source" data-pack={gameId}>
+          <h3
+            className="touch-group-title wrap-anywhere"
+            data-testid="maps-menu-source"
+            data-pack={gameId}
+          >
             {names.get(gameId ?? '') ?? game.pack.manifest.title} · shown
           </h3>
         ) : null}
@@ -969,7 +976,7 @@ function MapsMenu({ wide }: { wide: boolean }) {
           ? others.map((entry) => (
               <div key={entry.id}>
                 <h3
-                  className="touch-group-title"
+                  className="touch-group-title wrap-anywhere"
                   data-testid="maps-menu-source"
                   data-pack={entry.id}
                 >

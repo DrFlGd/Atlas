@@ -1,3 +1,4 @@
+import { siteOf } from '@atlas/core';
 import { useEffect, useId, useState } from 'react';
 import { DeleteImagesConfirm } from '../components/DeleteImagesConfirm';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
@@ -54,10 +55,17 @@ const isGoing = (job: DownloadSnapshot | null | undefined): boolean => jobGoing(
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** Where a game came from, in a few words. */
+/**
+ * Where a game came from, in a few words: for a game added from web pages,
+ * the importer and, when the pack records its pages, the site they were on
+ * ("Added with Example Wiki from wiki.fenmoor.example").
+ */
 function originText(listed: ListedPack | undefined): string {
   if (listed?.madeInApp) return 'Made in this app';
-  if (listed?.imported) return `Added with ${listed.imported.importerTitle}`;
+  if (listed?.imported) {
+    const site = siteOf(listed.pages);
+    return `Added with ${listed.imported.importerTitle}${site ? ` from ${site}` : ''}`;
+  }
   if (!listed || listed.origin === 'bundled') return 'Comes with the app';
   if (listed.origin === 'location') return 'In a folder you added';
   return 'In the maps folder';
@@ -136,7 +144,9 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
           <p className="library-facts" data-testid="library-facts">
             <span className={`library-kind library-kind-${kind}`}>{KIND_LABEL[kind]}</span>
             {contents ? <span>{contents}</span> : null}
-            <span>{originText(listed)}</span>
+            <span className="wrap-anywhere" data-testid="library-origin">
+              {originText(listed)}
+            </span>
             {listed?.personalUse ? (
               <span className="badge" data-testid="library-personal-use">
                 For personal use
@@ -278,8 +288,8 @@ function TitleCard({ id }: { id: string }) {
   return (
     <Card icon="layers" title={`One title: ${group.title}`} testId="library-title-card">
       <p className="library-card-state">
-        This is the source {names.get(id) ?? id}. Show the map shows this source; the maps menu
-        lists the maps of every source.
+        This is the source <span className="wrap-anywhere">{names.get(id) ?? id}</span>. Show the
+        map shows this source; the maps menu lists the maps of every source.
       </p>
       <TitleSourcesPanel
         group={group}

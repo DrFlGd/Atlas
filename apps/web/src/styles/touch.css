@@ -555,6 +555,16 @@
   text-overflow: ellipsis;
 }
 
+/* A long source name (one with its site) is cut on its own, so the map's name still shows. */
+.touch-map-chip-source {
+  display: inline-block;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 .touch-map-chip .ui-icon:last-child {
   color: var(--atlas-muted);
 }

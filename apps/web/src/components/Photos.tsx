@@ -20,7 +20,12 @@ import { packFolderOf } from '../desktop';
  * `photoCopy.ts`) shows the copy, or its file when the copy is not there,
  * and opens its file large. A spoiler photo stays blurred until it is
  * tapped or clicked; then a tap opens it large (see `PictureViewer.tsx`).
+ * A photo that opens large has a small mark in its corner that says so,
+ * as a picture of a page has (see `pictureLarge.ts`).
  */
+
+/** The tooltip of a photo that opens large. */
+const PHOTO_TIP = 'Press to see this photo larger.';
 
 const packPictures = new WeakMap<LoadedPack, Map<string, Picture>>();
 
@@ -140,6 +145,7 @@ export function PhotoTile({
         type="button"
         className="photo-button"
         aria-label={hidden ? 'Spoiler photo: show it' : `Open ${description}`}
+        title={hidden ? undefined : PHOTO_TIP}
         onClick={(event) => {
           event.stopPropagation();
           if (hidden) setRevealed(true);
@@ -171,6 +177,7 @@ export function PhotoTile({
             if (failedAt !== null) setFailedAt(null);
           }}
         />
+        {hidden ? null : <span className="photo-mark" aria-hidden="true" />}
         {hidden ? (
           <span className="photo-spoiler-label">
             <UiIcon name="eyeOff" size={18} />

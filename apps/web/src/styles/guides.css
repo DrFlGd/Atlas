@@ -766,6 +766,69 @@ img[data-opens-large]:focus-visible {
   outline-offset: 2px;
 }
 
+/*
+ * A picture that opens large, shown on its own and large enough, in its
+ * box with a small mark in its bottom right corner (pictureLarge.ts): two
+ * arrows out to the corners, and a triangle before them for a picture
+ * that moves. The mark takes no presses (a press on it is a press on the
+ * picture), and the box is the picture's own size.
+ */
+.picture-box {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  vertical-align: top;
+}
+
+.picture-box > img,
+.picture-box > .moving-picture {
+  display: block;
+}
+
+.picture-box[data-mark]::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background-color: var(--atlas-picture-mark-fill);
+  background-image: var(--atlas-picture-mark-large);
+  background-position: center;
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 1px var(--atlas-picture-mark-edge);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.picture-box[data-mark='moving']::after {
+  width: 40px;
+  background-image: var(--atlas-picture-mark-moving);
+  background-size: 26px 14px;
+}
+
+.picture-box[data-mark]:hover::after,
+.picture-box[data-mark]:has(img:focus-visible)::after {
+  background-color: var(--atlas-picture-mark-fill-strong);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .picture-box[data-mark]::after {
+    transition:
+      opacity 120ms ease,
+      background-color 120ms ease;
+  }
+}
+
+/* Shown still, with its Play button, for less motion: the button is what it offers until it plays. */
+.picture-box:has(.moving-picture[data-still])::after {
+  display: none;
+}
+
 /* A list of tiles: pictures side by side, each name under its picture. */
 .guide-body ul.guide-tiles {
   display: flex;

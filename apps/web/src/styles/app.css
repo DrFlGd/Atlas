@@ -90,6 +90,12 @@ select {
   font-size: 12.5px;
 }
 
+/* Text that can hold a long word, such as the host of a site: it wraps anywhere rather than overflow. */
+.wrap-anywhere {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .mono {
   font-family: var(--atlas-mono);
   font-size: 12.5px;
@@ -2923,6 +2929,45 @@ th[aria-sort='descending'] .table-sort-arrow::after {
 .photo-button:focus-visible {
   outline: 2px solid var(--atlas-focus);
   outline-offset: -2px;
+}
+
+/*
+ * The mark of a photo that opens in the larger view, as on a picture of a
+ * page (see guides.css): only on a photo at least 96 by 64 CSS pixels.
+ * Photos are shown 16:10, so 103 pixels wide is 64 tall.
+ */
+.photo-button {
+  container-type: inline-size;
+}
+
+.photo-mark {
+  display: none;
+}
+
+@container (min-width: 103px) {
+  .photo-mark {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    display: block;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background-color: var(--atlas-picture-mark-fill);
+    background-image: var(--atlas-picture-mark-large);
+    background-position: center;
+    background-size: 14px 14px;
+    background-repeat: no-repeat;
+    box-shadow: 0 0 0 1px var(--atlas-picture-mark-edge);
+    opacity: 0.85;
+    pointer-events: none;
+  }
+}
+
+.photo-button:hover .photo-mark,
+.photo-button:focus-visible .photo-mark {
+  background-color: var(--atlas-picture-mark-fill-strong);
+  opacity: 1;
 }
 
 .photo[data-spoiler='hidden'] .photo-button {
