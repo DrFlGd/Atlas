@@ -115,7 +115,7 @@ export function DeleteImagesConfirmView({
           </button>
         )}
         <button type="button" className="button" disabled={working} onClick={onCancel}>
-          {nothing ? 'Close' : 'Keep them'}
+          {nothing ? 'Close' : 'Cancel'}
         </button>
       </div>
     </div>

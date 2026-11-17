@@ -455,7 +455,7 @@ export function LeaveDialog() {
             answerLeave('discard');
           }}
         >
-          Don’t save
+          Discard changes
         </button>
         <span className="own-space" />
         <button
@@ -466,7 +466,7 @@ export function LeaveDialog() {
             answerLeave('stay');
           }}
         >
-          Keep editing
+          Cancel
         </button>
         <button
           type="button"
@@ -505,7 +505,7 @@ export function ConfirmDialog({
       <footer className="own-dialog-foot">
         <span className="own-space" />
         <button type="button" className="own-pill-button" autoFocus onClick={onClose}>
-          Keep it
+          Cancel
         </button>
         <button
           type="button"

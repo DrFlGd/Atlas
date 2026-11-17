@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { selectShown, shownCount } from './selectShown';
 
-describe('Select all and Select none', () => {
+describe('Tick all and Tick none', () => {
   it('tick what is shown and not ticked, and untick what is shown and ticked', () => {
     const selection = selectShown(['a', 'b', 'c', 'd'], new Set(['b', 'd', 'hidden']));
     expect(selection).toEqual({

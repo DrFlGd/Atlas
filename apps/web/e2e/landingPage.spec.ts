@@ -117,7 +117,7 @@ test.describe('on a desktop', () => {
     expect(errors).toEqual([]);
   });
 
-  test('the home page is edited as any page, and named so in the arrange tool', async ({
+  test('the home page is edited as any page, and named by the game in the arrange tool', async ({
     page,
   }) => {
     await openGuides(page);
@@ -125,8 +125,9 @@ test.describe('on a desktop', () => {
     await page.getByTestId('edit-page').click();
     await expect(page.getByTestId('page-editor')).toBeVisible();
     await expect(page.getByTestId('page-title')).toHaveValue('Main Page');
+    // Named by the game's name, as the reader's menu names it, and tagged as the home page.
     const home = page.getByTestId('contents-home');
-    await expect(home).toContainText('Main Page');
+    await expect(home.getByTestId('contents-home-page')).toHaveText('Atlas demo world');
     await expect(home).toContainText('Home page');
     await expect(home.getByTestId('contents-home-page')).toHaveAttribute('aria-current', 'page');
     await shot(page, '3-desktop-editor-home-light');

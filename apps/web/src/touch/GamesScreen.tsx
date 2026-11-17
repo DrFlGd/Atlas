@@ -80,7 +80,7 @@ export function GamesScreen() {
                 onClick={() => void (copies ? importPickedPackFile() : pickPackFile())}
               >
                 <UiIcon name="upload" size={20} />
-                Import pack file…
+                Import a pack file…
               </button>
               <p className="touch-note">
                 Add a game or a wiki with a pack file (.atlaspack) exported by Atlas on your

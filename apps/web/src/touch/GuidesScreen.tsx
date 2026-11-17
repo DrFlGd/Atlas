@@ -136,7 +136,7 @@ function GuidesShown({ game, wide }: { game: LoadedGame; wide: boolean }) {
       {wide ? (
         <aside className="guides-side" aria-label="Contents">
           <SourceSwitcher game={game} view={view} />
-          <SearchField game={game} />
+          <SearchField />
           <nav className="guides-tree touch-scroll" aria-label="Contents" data-scroll-root>
             <TreeHome game={game} view={view} />
             <ContentsTree game={game} view={view} />
@@ -255,7 +255,7 @@ function Reader({ game, wide, view }: { game: LoadedGame; wide: boolean; view: S
         <div className="guides-column" data-width={wide ? width : undefined}>
           {!wide &&
           (atHome || place.kind === 'search' || (place.kind === 'contents' && !place.sectionId)) ? (
-            <SearchField game={game} />
+            <SearchField />
           ) : null}
           {atHome ? (
             <Landing game={game} wide={wide} view={view} />
@@ -1507,7 +1507,7 @@ function TakeWikiDialog({ onClose, onTake }: { onClose: () => void; onTake: () =
         <footer className="own-dialog-foot">
           <span className="own-space" />
           <button type="button" className="own-pill-button" autoFocus onClick={onClose}>
-            Keep mine
+            Cancel
           </button>
           <button
             type="button"
@@ -1641,7 +1641,7 @@ function Credit({ source, title }: { source: GuideSource; title: string }) {
 // ---------------------------------------------------------------------------
 // Search
 
-function SearchField({ game }: { game: LoadedGame }) {
+function SearchField() {
   const place = useReader(currentPlace);
   const shown = place.kind === 'search' ? place.query : '';
   const [text, setText] = useState(shown);
@@ -1664,7 +1664,7 @@ function SearchField({ game }: { game: LoadedGame }) {
         ref={input}
         type="search"
         className="guides-search-input"
-        placeholder={`Search the pages of ${game.pack.manifest.title}`}
+        placeholder="Search pages"
         aria-label="Search the pages"
         data-testid="guides-search"
         value={text}

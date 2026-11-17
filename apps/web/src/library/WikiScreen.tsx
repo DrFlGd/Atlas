@@ -34,6 +34,7 @@ import {
   headingPages,
   headingTick,
   matchesFilter,
+  readLabel,
   readWhen,
   readingTime,
   selectText,
@@ -211,7 +212,7 @@ export function WikiScreen({
   };
 
   const shown = shownGroups(groups, filter);
-  // "Select all" and "Select none": every page this filter shows, under every heading.
+  // "Tick all" and "Tick none": every page this filter shows, under every heading.
   const selection = selectShown(
     shownPages(groups, filter).map((row) => row.key),
     ticked,
@@ -401,7 +402,7 @@ export function WikiScreen({
             );
           }}
         >
-          Tick every page not read
+          Tick all not read
         </button>
         {browsing ? (
           browseOn ? (
@@ -445,9 +446,7 @@ export function WikiScreen({
             onClick={() => void readNow(tickedRows, notes.follow)}
           >
             <UiIcon name="download" size={16} />
-            {tickedRows.length === 1
-              ? 'Read 1 page'
-              : `Read ${tickedRows.length.toLocaleString('en')} pages`}
+            {readLabel(tickedRows.length)}
           </button>
         )}
       </footer>

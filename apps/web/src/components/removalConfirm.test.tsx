@@ -35,7 +35,7 @@ describe('DeletePackConfirmView', () => {
     expect(shown).toContain('its 320 map images (about 2.5 MB)');
     expect(shown).toContain('The download is stopped first.');
     expect(shown).toContain('Also delete my progress for this game in this app');
-    expect(shown).toContain('Keep it');
+    expect(shown).toContain('Cancel');
     expect(view()).toContain('data-testid="confirm-delete-pack"');
   });
 
@@ -139,7 +139,7 @@ describe('DeleteImagesConfirmView', () => {
     expect(shown).toContain('This removes 12 map images (about 840 KB) of My Game');
     expect(shown).toContain('your found marks');
     expect(shown).toContain('Delete map images');
-    expect(shown).toContain('Keep them');
+    expect(shown).toContain('Cancel');
   });
 
   it('waits for the count before it can delete', () => {
@@ -210,8 +210,8 @@ describe('RestartWikiConfirmView', () => {
     expect(shown).toContain(
       'Then the address box holds its start address, https://wiki.marsh.example/wiki/Contents, and this app asks how its pages are read. Nothing is read until you choose.',
     );
-    expect(shown).toContain('Delete and start again');
-    expect(shown).toContain('Keep it');
+    expect(shown).toContain('Start again');
+    expect(shown).toContain('Cancel');
     expect(shown).not.toContain('title');
   });
 

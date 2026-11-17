@@ -248,10 +248,10 @@ export function tickFrom(choice: Choice, gameKey: string, url: string): Choice {
   };
 }
 
-/** The key of a page in "Select all" and "Select none": its game's key and its address. */
+/** The key of a page in "Tick all" and "Tick none": its game's key and its address. */
 export const choicePageKey = (gameKey: string, url: string) => `${gameKey}\n${url}`;
 
-/** The pages "Select all" and "Select none" act on: every page of every game this app can add. */
+/** The pages "Tick all" and "Tick none" act on: every page of every game this app can add. */
 export function choicePageKeys(choice: Choice): { shown: string[]; ticked: string[] } {
   const shown: string[] = [];
   const ticked: string[] = [];

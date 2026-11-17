@@ -113,8 +113,7 @@ test('adds the maps and checklist of a game from its game page, and updates it l
   const row = page.locator('[data-testid="library-game"][data-pack="test-valley"]');
   await expect(page.getByTestId('update-all')).toBeVisible();
   await row.click();
-  await page.getByTestId('library-more').click();
-  await page.getByTestId('update-pack').click();
+  await page.getByTestId('library-check-site').click();
   await expect(dialog(page)).toHaveAttribute('data-phase', 'choose', { timeout: 30_000 });
   await expect(page.getByTestId('add-map-choose')).toHaveAttribute('data-mode', 'update');
   expect(await choiceRows(page)).toEqual([
@@ -169,24 +168,24 @@ test('lists the games of the site to tick, then their maps', async ({ page }) =>
   await page.getByTestId('add-map-catalogue-search').fill('hills');
   await expect(games).toHaveCount(1);
   await expect(games.first()).toContainText('One map');
-  // Select all and Select none act on the games the search shows.
+  // Tick all and Tick none act on the games the search shows.
   const select = page.getByTestId('add-map-catalogue-select');
   const selectText = select.getByTestId('add-map-catalogue-select-text');
   await expect(select).toHaveAccessibleName('Select the games this search shows');
   await expect(selectText).toHaveText('This search shows 1 game to tick, not ticked yet.');
-  await expect(select.getByRole('button', { name: 'Select none' })).toBeDisabled();
-  await select.getByRole('button', { name: 'Select all' }).click();
+  await expect(select.getByRole('button', { name: 'Tick none' })).toBeDisabled();
+  await select.getByRole('button', { name: 'Tick all' }).click();
   await expect(games.first().getByRole('checkbox')).toBeChecked();
   await expect(selectText).toHaveText('This search shows 1 game to tick, and it is ticked.');
   await page.getByTestId('add-map-catalogue-search').fill('');
   await expect(select).toHaveAccessibleName('Select the games listed');
   await expect(selectText).toHaveText('The list has 3 games to tick, 1 of them ticked.');
-  await select.getByRole('button', { name: 'Select all' }).click();
+  await select.getByRole('button', { name: 'Tick all' }).click();
   await expect(selectText).toHaveText('The list has 3 games to tick, all of them ticked.');
   await expect(games.getByRole('checkbox').and(page.locator(':checked'))).toHaveCount(3);
-  await select.getByRole('button', { name: 'Select none' }).click();
+  await select.getByRole('button', { name: 'Tick none' }).click();
   await expect(page.getByTestId('add-map-catalogue-confirm')).toHaveText('Tick the games to add');
-  await expect(select.getByRole('button', { name: 'Select none' })).toBeDisabled();
+  await expect(select.getByRole('button', { name: 'Tick none' })).toBeDisabled();
   await page.getByTestId('add-map-catalogue-search').fill('hills');
   await games.first().getByRole('checkbox').check();
   await page.getByTestId('add-map-catalogue-search').fill('');
@@ -272,16 +271,16 @@ test('"Update all" lists the games added from web pages, and reads each game pag
   await expect(page.getByTestId('add-map-update-confirm')).toHaveText('Read 2 game pages');
   await games.nth(1).getByRole('checkbox').uncheck();
   await expect(page.getByTestId('add-map-update-confirm')).toHaveText('Read 1 game page');
-  // Select none and Select all, over every game to update.
+  // Tick none and Tick all, over every game to update.
   const select = page.getByTestId('add-map-update-select');
   await expect(select.getByTestId('add-map-update-select-text')).toHaveText(
     'The list has 2 games to tick, 1 of them ticked.',
   );
-  await select.getByRole('button', { name: 'Select none' }).click();
+  await select.getByRole('button', { name: 'Tick none' }).click();
   await expect(page.getByTestId('add-map-update-confirm')).toBeDisabled();
-  await expect(select.getByRole('button', { name: 'Select none' })).toBeDisabled();
-  await select.getByRole('button', { name: 'Select all' }).click();
-  await expect(select.getByRole('button', { name: 'Select all' })).toBeDisabled();
+  await expect(select.getByRole('button', { name: 'Tick none' })).toBeDisabled();
+  await select.getByRole('button', { name: 'Tick all' }).click();
+  await expect(select.getByRole('button', { name: 'Tick all' })).toBeDisabled();
   await expect(games.nth(1).getByRole('checkbox')).toBeChecked();
   await page.screenshot({ path: `${SHOTS}/4-update-all.png` });
   await page.getByTestId('add-map-update-confirm').click();

@@ -1689,17 +1689,12 @@ export function importContext(
         ? { key: source.key, url: source.url, importedAt: source.importedAt, data }
         : null;
     },
-    async existingPack(packId) {
+    existingPack(packId) {
       // A pack in the maps folder, else one that comes with the app (to refresh it).
       const url =
         listing?.packs.find((p) => p.id === packId)?.url ??
         state.bundledCatalog.find((p) => p.id === packId)?.url;
-      if (!url) return null;
-      try {
-        return (await loadPack(url)).data;
-      } catch {
-        return null;
-      }
+      return openListedPack(url, async (at) => (await loadPack(at)).data);
     },
     isBundled: (packId) => bundled.has(packId),
     // The sections other names of pages lead to are kept with the pack.
@@ -1731,6 +1726,41 @@ export function importContext(
         }
       : {}),
   };
+}
+
+/** Why a read stopped when the game it adds to is listed but could not be opened. */
+export const PACK_NOT_OPENED =
+  'This game could not be opened, so nothing was read. Press Look again in Settings, then try again.';
+
+/** Thrown by `existingPack` for a game that is listed but could not be opened. */
+export class PackNotOpenedError extends Error {
+  constructor() {
+    super(PACK_NOT_OPENED);
+    this.name = 'PackNotOpenedError';
+  }
+}
+
+/**
+ * The pack a read adds to: null only for a game that is not listed yet, which
+ * the read then starts new. A game that is listed but cannot be opened stops
+ * the read, so that a game of one page is never written over the real one.
+ */
+export async function openListedPack(
+  url: string | undefined,
+  load: (url: string) => Promise<PackData>,
+): Promise<PackData | null> {
+  if (!url) return null;
+  try {
+    return await load(url);
+  } catch {
+    throw new PackNotOpenedError();
+  }
+}
+
+/** What to show when an importer's `convert` stopped with an error. */
+export function importerStoppedMessage(error: unknown): string {
+  if (error instanceof PackNotOpenedError) return PACK_NOT_OPENED;
+  return `The importer stopped with an error, so nothing was added: ${errorText(error)}`;
 }
 
 /** The `source` block of the manifest: every page the pack was made from. */
@@ -1826,11 +1856,16 @@ async function convertAndSave(
     );
   // When the importer read each pack: changed since, it reads it again (see `packTurns.ts`).
   const readAt = new Map<string, number>();
+  // A listed game that could not be opened: the read stops even if the importer went on without it.
+  let unopened = false;
   const noting = (given: ImportContext): ImportContext => ({
     ...given,
     existingPack: (packId) => {
       readAt.set(packId, packSaves(packId));
-      return given.existingPack(packId);
+      return given.existingPack(packId).catch((error: unknown) => {
+        if (error instanceof PackNotOpenedError) unopened = true;
+        throw error;
+      });
     },
     ...(turn.onProgress
       ? {
@@ -1849,11 +1884,12 @@ async function convertAndSave(
   let context = noting(contextWith(site?.licence));
   const convert = async () => {
     try {
-      return checkOutcome(await importer.convert(data, context), page.url);
+      const checked = checkOutcome(await importer.convert(data, context), page.url);
+      return unopened ? { ok: false as const, message: PACK_NOT_OPENED } : checked;
     } catch (error) {
       return {
         ok: false as const,
-        message: `The importer stopped with an error, so nothing was added: ${errorText(error)}`,
+        message: unopened ? PACK_NOT_OPENED : importerStoppedMessage(error),
       };
     }
   };
@@ -1918,7 +1954,15 @@ async function convertAndSave(
       };
     }
 
-    const existing = await context.existingPack(outcome.packId);
+    let existing: PackData | null;
+    try {
+      existing = await context.existingPack(outcome.packId);
+    } catch (error) {
+      return {
+        kind: 'failed',
+        message: error instanceof PackNotOpenedError ? PACK_NOT_OPENED : errorText(error),
+      };
+    }
     if (bundled) {
       // A refresh keeps every map the game has; the shell checks this, and the version, again.
       const missing = (existing?.maps ?? []).filter(
@@ -2785,7 +2829,7 @@ export function toggleCatalogueGame(id: string): void {
   if (phase.kind === 'catalogue') setPhase({ ...phase, pick: toggleGame(phase.pick, id) });
 }
 
-/** "Select all" and "Select none" in a site's list of games: the games its search shows. */
+/** "Tick all" and "Tick none" in a site's list of games: the games its search shows. */
 export function tickCatalogueGames(ids: readonly string[], on: boolean): void {
   const { phase } = useImport.getState();
   if (phase.kind === 'catalogue') setPhase({ ...phase, pick: tickGames(phase.pick, ids, on) });
@@ -3123,7 +3167,7 @@ export function toggleUpdateGame(packId: string): void {
   });
 }
 
-/** "Select all" and "Select none" among the games to update. */
+/** "Tick all" and "Tick none" among the games to update. */
 export function tickUpdateGames(packIds: readonly string[], on: boolean): void {
   const { phase } = useImport.getState();
   if (phase.kind !== 'update-games') return;
@@ -3245,7 +3289,7 @@ export function toggleChoice(gameKey: string, url: string): void {
     setPhase({ kind: 'choose', choice: togglePage(phase.choice, gameKey, url) });
 }
 
-/** "Select all" and "Select none" among the pages to choose: the pages named by `choicePageKey`. */
+/** "Tick all" and "Tick none" among the pages to choose: the pages named by `choicePageKey`. */
 export function tickChoicePages(keys: readonly string[], on: boolean): void {
   const { phase } = useImport.getState();
   if (phase.kind === 'choose')

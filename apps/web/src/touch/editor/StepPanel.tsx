@@ -113,6 +113,7 @@ export function StepPanel({
           item={item}
           addPhoto={photo.add}
           addingPhoto={photo.busy}
+          photoProblem={photo.problem}
           photosFull={(item.photos?.length ?? 0) >= MAX_PHOTOS}
         />
         {photo.fileInput}
@@ -409,7 +410,7 @@ function LocationField({ game, item }: { game: LoadedGame; item: ChecklistItem }
         <LocationFinder
           game={game}
           label="Find a location by name"
-          hint="Or tap one on the map."
+          hint="Or press one on the map."
           onChoose={choose}
           onCancel={() => {
             setPicking(null);
@@ -596,12 +597,15 @@ function NoteEditor({
   item,
   addPhoto,
   addingPhoto,
+  photoProblem,
   photosFull,
 }: {
   game: LoadedGame;
   item: ChecklistItem;
   addPhoto: () => Promise<void>;
   addingPhoto: boolean;
+  /** Why the last photo could not be added: shown under the row of tools with its button. */
+  photoProblem: string | null;
   photosFull: boolean;
 }) {
   const area = useRef<HTMLTextAreaElement>(null);
@@ -791,11 +795,16 @@ function NoteEditor({
             Hide
           </button>
         </div>
+        {photoProblem ? (
+          <p className="own-problem" role="alert" data-testid="photo-problem">
+            {photoProblem}
+          </p>
+        ) : null}
         {linking ? (
           <LocationFinder
             game={game}
             label="Find a location to link"
-            hint="Or tap one on the map."
+            hint="Or press one on the map."
             onChoose={insertLink}
             onCancel={() => {
               setPicking(null);

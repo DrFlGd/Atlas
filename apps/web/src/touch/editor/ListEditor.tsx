@@ -93,8 +93,8 @@ export function EditorMapHint() {
   if (picking) {
     text =
       picking.purpose === 'link'
-        ? 'Tap a location to link it in the note'
-        : 'Tap a location for this step';
+        ? 'Press a location to link it in the note'
+        : 'Press a location for this step';
   } else if (panel === 'find') {
     text = 'Check what was found, then put it on the steps';
   } else if (panel === 'add' && tab === 'type') {
@@ -108,10 +108,10 @@ export function EditorMapHint() {
     const openRow = rows.find((r) => rowId(r) === open);
     text =
       number > 0
-        ? `Tap a location to add it after step ${number}`
+        ? `Press a location to add it after step ${number}`
         : openRow?.kind === 'heading'
-          ? `Tap a location to add it under “${openRow.heading.title}”`
-          : 'Tap a location to add it at the end';
+          ? `Press a location to add it under “${openRow.heading.title}”`
+          : 'Press a location to add it at the end';
   }
   return (
     <div className="touch-pill editor-map-hint" role="status" data-testid="editor-map-hint">
@@ -334,7 +334,7 @@ function Outline({ game, list }: { game: LoadedGame; list: OwnList }) {
       >
         {rows.length === 0 ? (
           <li className="editor-empty">
-            Nothing here yet. Tap a location on the map, or use Add below.
+            Nothing here yet. Press a location on the map, or use Add below.
           </li>
         ) : null}
         {rows.map((row, index) => (
@@ -775,7 +775,7 @@ function ListMenu({
       }}
     >
       {item('Change template…', 'menu-change-template', onChangeTemplate)}
-      {item('Export…', 'menu-export', onExport)}
+      {item('Export to a file…', 'menu-export', onExport)}
       {item('Delete list…', 'menu-delete', onDelete, true)}
     </div>
   );
@@ -817,7 +817,7 @@ function DeleteListDialog({ list, onClose }: { list: OwnList; onClose: () => voi
         <footer className="own-dialog-foot">
           <span className="own-space" />
           <button type="button" className="own-pill-button" autoFocus onClick={onClose}>
-            Keep it
+            Cancel
           </button>
           <button
             type="button"

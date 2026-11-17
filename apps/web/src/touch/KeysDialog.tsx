@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
 import { UiIcon } from '../components/icons';
-import { checklistScreenTitle } from '../state/checklists';
 import { useAtlas } from '../state/store';
 import { keyList, MOUSE_HELP } from './keys';
 import { setKeysOpen, useTouch } from './state';
@@ -11,7 +10,7 @@ export function KeysDialog() {
   const game = useAtlas((s) => s.game);
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const lists = game && !game.checklists.isEmpty ? checklistScreenTitle(game) : null;
+  const lists = game && !game.checklists.isEmpty ? 'Lists' : null;
 
   useEffect(() => {
     const dialog = ref.current;

@@ -692,7 +692,7 @@ test('shows map images saved while browsing a map page without a restart', async
   // Open the map page with saving on, from the game in the Library.
   await openLibraryGame(page, 'remote');
   const row = page.getByTestId('library-game-pane');
-  await row.getByText('Map page…').click();
+  await row.getByText('Save map images as I browse…').click();
   await row.getByTestId('map-page-save').click();
   await expect(page.getByTestId('library')).toBeHidden();
 
@@ -1023,7 +1023,7 @@ test.describe('in the standard layout', () => {
     // "View map page and save images as I browse", on the game in the Library.
     await openLibraryGame(page, 'remote');
     const row = page.getByTestId('library-game-pane');
-    await row.getByText('Map page…').click();
+    await row.getByText('Save map images as I browse…').click();
     await row.getByTestId('map-page-save').click();
     await expect(page.getByTestId('library')).toBeHidden();
     await expect(page.getByTestId('map-page-status')).toBeVisible();

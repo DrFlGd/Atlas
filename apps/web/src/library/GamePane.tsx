@@ -194,6 +194,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
             title={title}
             listed={listed}
             updatable={updatable}
+            // The card shows it, except for a wiki shown with its page list: More keeps it then.
+            checkOnCard={!(kind === 'wiki' && wiki) && Boolean(facts?.details)}
             groupable={several}
             grouped={group !== undefined}
             kind={kind}

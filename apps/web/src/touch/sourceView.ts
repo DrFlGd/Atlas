@@ -1,6 +1,6 @@
 import type { GuideEntry } from '@atlas/schema';
 import { useEffect } from 'react';
-import { useTitleOf } from '../state/gameGroups';
+import { useGameName } from '../state/gameGroups';
 import { useGuideLinks } from '../state/guideLinks';
 import {
   chooseGuideSource,
@@ -28,15 +28,6 @@ import { currentPlace, stampSource, useReader, type ReaderPlace } from './reader
  * followed, so the source of a page opened by a link or a search is the
  * one chosen from then on.
  */
-
-/**
- * The name the guides of a game go by: the title it is shown under with
- * other games (see `gameGroups.ts`), else its own.
- */
-export function useGameName(game: LoadedGame): string {
-  const group = useTitleOf(game.pack.manifest.gameId);
-  return group?.title ?? game.pack.manifest.title;
-}
 
 /** What Guides shows of its sources now. */
 export interface SourceView {

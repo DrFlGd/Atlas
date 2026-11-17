@@ -43,7 +43,7 @@ import {
 import { create } from 'zustand';
 import { desktop } from '../desktop';
 import { sweepOwnPicturesLater } from './ownPictures';
-import { progressStore } from './services';
+import { progressStore, SETTINGS } from './services';
 import { useAtlas } from './store';
 import type { SaveState } from './ownLists';
 
@@ -208,6 +208,7 @@ export async function readOwnLocationsOf(gameId: string): Promise<OwnLocationsLo
   void flushOwnLocations();
   keepCopyNext = false;
   set({ ...INITIAL, gameId, status: 'loading' });
+  void readLastType(gameId);
   try {
     const text = await ownLocationsBackend().read(gameId);
     if (token !== readToken) return { own: NO_OWN_LOCATIONS, problem: null };
@@ -372,8 +373,60 @@ function context() {
   return { game, gameId: game.pack.manifest.gameId, data: base.pack.data, own: get().own };
 }
 
-/** The type a new location gets: the last one chosen, if it is still there. */
-let lastTypeId: string | null = null;
+/**
+ * The type last chosen for a new location, kept per game as other choices
+ * of a game are (`SETTINGS.newLocationType`). Until there is one, the
+ * person chooses the type of a new location.
+ */
+let lastType: { gameId: string; id: string } | null = null;
+/** Counts reads and choices, so that a read that ends after a choice leaves the choice. */
+let typeTurn = 0;
+
+async function readLastType(gameId: string): Promise<void> {
+  lastType = null;
+  const turn = ++typeTurn;
+  try {
+    const kept = await progressStore().getSetting(SETTINGS.newLocationType(gameId));
+    if (typeof kept === 'string' && turn === typeTurn && get().gameId === gameId) {
+      lastType = { gameId, id: kept };
+    }
+  } catch {
+    // Not kept: the person chooses the type of the next new location.
+  }
+}
+
+/** Keeps a type as the one the next new location of this game gets. */
+function rememberType(id: string): void {
+  const { gameId } = get();
+  if (!gameId) return;
+  typeTurn++;
+  lastType = { gameId, id };
+  try {
+    progressStore()
+      .putSetting(SETTINGS.newLocationType(gameId), id)
+      .catch(() => undefined);
+  } catch {
+    // A convenience: kept for this run only.
+  }
+}
+
+/**
+ * The type a new location of the game shown gets: the one chosen last for a
+ * new location, while the game still has it; null when the person is to
+ * choose one ("Choose a type").
+ */
+export function newLocationType(): string | null {
+  const ctx = context();
+  if (!ctx || lastType?.gameId !== ctx.gameId) return null;
+  return ctx.game.pack.categories.has(lastType.id) ? lastType.id : null;
+}
+
+/** Whether a new location waits for the person to choose its type: the game has types, none chosen yet. */
+export function newLocationAsksType(): boolean {
+  const ctx = context();
+  if (!ctx) return false;
+  return newLocationType() === null && ctx.game.pack.data.categories.length > 0;
+}
 
 /** The name and colour of the type made when a game has none. */
 export const FIRST_TYPE = { name: 'Location', group: 'My types', icon: 'pin' } as const;
@@ -385,15 +438,20 @@ export function dropOwnLocation(
   x: number,
   y: number,
   name = 'New location',
+  typeId?: string,
 ): OwnLocation | null {
   const ctx = context();
   if (!ctx || !canChangeOwnLocations()) return null;
   let own = ctx.own;
   const pack = ctx.game.pack;
+  const chosen = typeId !== undefined && pack.categories.has(typeId) ? typeId : null;
+  if (chosen) rememberType(chosen);
   let categoryId =
-    lastTypeId && pack.categories.has(lastTypeId)
-      ? lastTypeId
-      : (own.categories[0]?.id ?? pack.data.categories.find((c) => c.trackable)?.id ?? null);
+    chosen ??
+    newLocationType() ??
+    own.categories[0]?.id ??
+    pack.data.categories.find((c) => c.trackable)?.id ??
+    null;
   if (categoryId === null) {
     const group = newOwnTypeGroup(ctx.gameId, FIRST_TYPE.group, ctx.data, own);
     const type = newOwnType(
@@ -433,7 +491,7 @@ export function changeOwn(
   label = 'Location changed',
 ): void {
   const { own } = get();
-  if (changes.categoryId) lastTypeId = changes.categoryId;
+  if (changes.categoryId) rememberType(changes.categoryId);
   const next = changeOwnLocation(own, id, changes, new Date());
   apply(next, label);
 }
@@ -522,7 +580,7 @@ export function saveOwnType(form: TypeForm, id?: string): string | null {
     putOwnType(ctx.own, type, group),
     id ? `Type “${type.name}” changed` : `Type “${type.name}” made`,
   );
-  if (changed && !id) lastTypeId = type.id;
+  if (changed && !id) rememberType(type.id);
   return changed || id ? type.id : null;
 }
 

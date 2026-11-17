@@ -616,7 +616,7 @@ kbd {
   gap: 8px;
 }
 
-/* "Select all" and "Select none" above a list to tick (SelectShown.tsx). */
+/* "Tick all" and "Tick none" above a list to tick (SelectShown.tsx). */
 .select-shown {
   display: flex;
   flex-wrap: wrap;

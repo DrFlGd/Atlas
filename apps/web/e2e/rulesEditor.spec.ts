@@ -431,8 +431,9 @@ test.describe('in the standard layout', () => {
     await editor.getByTestId('rules-editor-done').click();
     const leave = editor.getByTestId('rules-editor-leave');
     await expect(leave).toContainText(
-      'Leave without saving? Your changes to this file are not kept.',
+      'Save your changes? Your changes to this file are not saved yet.',
     );
+    await expect(leave.getByRole('button')).toHaveText(['Save', 'Discard changes', 'Cancel']);
     await expect(leave.getByTestId('rules-editor-leave-no')).toBeFocused();
     await leave.getByTestId('rules-editor-leave-no').click();
     await expect(editor).toBeVisible();

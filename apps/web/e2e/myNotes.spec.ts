@@ -160,7 +160,7 @@ test.describe('on a computer', () => {
 
     // With my notes: the location of the game and the location of one's own with a note.
     const only = page.getByTestId('notes-only-switch');
-    await expect(only).toContainText('2 locations');
+    await expect(only).toHaveText('With my notes');
     await only.click();
     await expect(only).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByTestId('marker-count')).toHaveText('2');
