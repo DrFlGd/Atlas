@@ -204,7 +204,8 @@ function SiteRow({ entry }: { entry: SiteEntry }) {
         ) : null}
         {entry.widens.length > 0 ? (
           <div className="small" data-testid="site-widens">
-            It widens the limits of the importers’ files:
+            It widens the limits of the importers’ shipped files, or takes the place of one of their
+            readers:
             <ul className="sites-widens">
               {entry.widens.map((widening) => (
                 <li key={widening}>{widening}</li>

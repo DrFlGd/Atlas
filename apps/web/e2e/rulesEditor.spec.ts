@@ -863,6 +863,109 @@ test.describe('starting a new file from another', () => {
   });
 });
 
+/** A made-up wiki's start page, saved from its start address. */
+const LANTERNS_START = `<!doctype html>
+<html><head><title>Lanterns Wiki</title>
+<link rel="canonical" href="https://wiki.lanterns.example/"></head>
+<body>
+<nav class="side"><a href="/wiki/Lamps">Lamps</a> <a href="/wiki/Wicks">Wicks</a></nav>
+<div id="body">
+<h1 class="heading">Lanterns Wiki</h1>
+<div class="text"><p>Welcome to the made-up wiki of lanterns, lamps and wicks.</p>
+<h2>Where to start</h2><p>Read about <a href="/wiki/Lamps">lamps</a> first.</p></div>
+</div>
+</body></html>`;
+
+/** Where the screenshots of what a page needs go: ATLAS_NEEDS_SHOTS, or with the editor's. */
+const NEEDS_SHOTS = process.env.ATLAS_NEEDS_SHOTS ?? SHOTS;
+
+test.describe('what a page needs', () => {
+  test.use({ layout: 'standard' });
+
+  test('lists the host, the address and where the text is for an example, and reads the page once all are the site’s own', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    await mkdir(NEEDS_SHOTS, { recursive: true });
+    await setUp(page, true, { others: OTHERS });
+    const out = requestsOut(page);
+    const sites = await openSites(page);
+    await sites.getByTestId('sites-new').click();
+    const editor = page.getByTestId('rules-editor');
+    // The choice says what an example needs, and where a site an importer's own reader reads starts.
+    await expect(editor.getByTestId('rules-templates-change')).toHaveText(
+      'Before a saved page shows, change the example’s host, its start address and page patterns, and where the title and text are (for a map: where its data and locations are) to the site’s own; a site that one of the importers’ own readers reads is often simpler to start from a copy of that reader’s file instead, listed under “A copy of a file”.',
+    );
+    await editor.getByTestId('rules-template-wiki').click();
+    const example = editor.getByTestId('rules-editor-example');
+    await expect(example).toContainText(
+      'Before a saved page shows here, change the host (site.hosts), the start address and page patterns (start, pages.include) and where the title and text are (article.title, article.content) to the site’s own;',
+    );
+    await expect(example).toContainText(
+      'Still the example’s: site.hosts, parts[0].start, parts[0].pages.include, parts[0].article.content, parts[0].article.title.',
+    );
+
+    // A page saved from the made-up wiki's start address, tried on the untouched example.
+    await pickSavedPage(page, { name: 'lanterns-start.html', text: LANTERNS_START });
+    await editor.getByTestId('rules-editor-add-page').click();
+    const result = editor.getByTestId('rules-editor-result');
+    await expect(result).toContainText('The file did not read the page.');
+    const needs = result.getByTestId('rules-result-need');
+    await expect(needs).toHaveCount(3);
+    await expect(needs.nth(0)).toHaveAttribute('data-state', 'missing');
+    await expect(needs.nth(0)).toContainText(
+      'The page was saved from wiki.lanterns.example, and site.hosts does not hold it (it holds "wiki.example.org").',
+    );
+    await expect(needs.nth(1)).toHaveAttribute('data-state', 'missing');
+    await expect(needs.nth(1)).toContainText(
+      'For a page saved from the site’s start address, set start to "/" and add "/" to pages.include.',
+    );
+    await expect(needs.nth(2)).toHaveAttribute('data-state', 'unchecked');
+    await expect(needs.nth(2)).toContainText('Not checked yet');
+    // Each need's sentence is said once: not again under what else went wrong.
+    await expect(result.getByTestId('rules-result-problems')).toHaveCount(0);
+    await toResultStart(editor);
+    await page.screenshot({ path: `${NEEDS_SHOTS}/trial-needs-untouched-example.png` });
+
+    // A need leads to its field.
+    await needs.nth(0).getByRole('button', { name: 'Go to site.hosts' }).click();
+    const text = editor.getByTestId('rules-editor-text');
+    await expect(text).toBeFocused();
+
+    // The host, the start and the selectors made the site's own: the page is read and drawn.
+    const own = JSON.parse(await text.inputValue()) as {
+      site: { hosts: string[] };
+      parts: Record<string, unknown>[];
+    };
+    own.site.hosts = ['wiki.lanterns.example'];
+    own.parts[0] = {
+      ...own.parts[0],
+      start: '/',
+      pages: { include: ['/', '/wiki/*'] },
+      contents: { from: 'menu', links: 'nav.side a' },
+      article: { content: '#body .text', title: '#body .heading' },
+    };
+    await setText(editor, `${JSON.stringify(own, null, 2)}\n`);
+    await expect(needs.nth(2)).toHaveAttribute('data-state', 'done');
+    await expect(needs).toHaveText([
+      /^DoneThe hostsite\.hosts holds wiki\.lanterns\.example/u,
+      /^DoneThe addressThe page’s address, \/, is a page of part 1/u,
+      'DoneWhere the title and text arearticle.content found the text, and article.title found the title “Lanterns Wiki”.',
+    ]);
+    await expect(result.getByTestId('rules-result-lead')).toHaveText(
+      'Part 1 of the file read it, as a page of a wiki.',
+    );
+    await expect(result.getByTestId('rules-result-page')).toContainText(
+      'Welcome to the made-up wiki of lanterns, lamps and wicks.',
+    );
+    await expect(example).toHaveCount(0);
+    await toResultStart(editor);
+    await page.screenshot({ path: `${NEEDS_SHOTS}/trial-needs-done.png` });
+    expect(out).toEqual([]);
+    expect(realErrors(errors)).toEqual([]);
+  });
+});
+
 test.describe('in the classic layout, narrow', () => {
   test.use({ layout: 'classic', viewport: { width: 760, height: 1000 } });
 

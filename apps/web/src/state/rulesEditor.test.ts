@@ -2,7 +2,7 @@ import { checkSiteRules, parseSiteRules } from '@atlas/importer-api';
 import { describe, expect, it } from 'vitest';
 import { formatJson, lineAndColumnOf, scanJson, spotOfField } from './jsonText';
 import { checkEditorText, fieldSpot } from './rulesEditor';
-import { RULES_TEMPLATES, rulesTemplate } from './rulesTemplates';
+import { RULES_TEMPLATES, examplesLeft, rulesTemplate } from './rulesTemplates';
 
 /** A made-up file for a made-up site, laid out as the editor lays files out. */
 const FILE = `${JSON.stringify(
@@ -149,5 +149,39 @@ describe('the templates of a new file', () => {
       expect(checkSiteRules(rules).ok).toBe(true);
       expect(checkEditorText(text, noNotes).problems).toEqual([]);
     }
+  });
+
+  it('say what must change before a saved page shows, and which fields are still the example’s', () => {
+    for (const { type, change } of RULES_TEMPLATES) {
+      expect(change, type).toMatch(/^Before a saved (page|data file) shows here, change the host/u);
+      expect(change, type).toContain('simpler to start from a copy of that reader’s file instead');
+      expect(change, type).not.toMatch(/—/u);
+    }
+    const wiki = JSON.parse(rulesTemplate('wiki')) as {
+      site: { hosts: string[] };
+      parts: { start: string; article: { content: string; title: string } }[];
+    };
+    expect(examplesLeft('wiki', wiki)).toEqual([
+      'site.hosts',
+      'parts[0].start',
+      'parts[0].pages.include',
+      'parts[0].article.content',
+      'parts[0].article.title',
+    ]);
+    wiki.site.hosts = ['wiki.lanterns.example'];
+    wiki.parts[0]!.start = '/';
+    wiki.parts[0]!.article.content = '#body .text';
+    expect(examplesLeft('wiki', wiki)).toEqual([
+      'parts[0].pages.include',
+      'parts[0].article.title',
+    ]);
+    const map = JSON.parse(rulesTemplate('map')) as object;
+    expect(examplesLeft('map', map)).toEqual([
+      'site.hosts',
+      'parts[0].start',
+      'parts[0].data.address',
+      'parts[0].locations.path',
+      'parts[0].locations.fields',
+    ]);
   });
 });

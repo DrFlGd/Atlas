@@ -98,6 +98,24 @@ export interface SiteTrialUnmatched {
   value: string;
 }
 
+/**
+ * One of the things a page needs before a file reads it, in the order they
+ * are checked (see {@link SiteTrial.needs}): done, missing, or not checked
+ * yet because one before it is missing.
+ */
+export type SiteTrialNeedState = 'done' | 'missing' | 'unchecked';
+
+/** One thing a page needs before a file reads it, and whether this page has it. */
+export interface SiteTrialNeed {
+  /** What is needed, in a few words, such as "The host". */
+  name: string;
+  state: SiteTrialNeedState;
+  /** What was found, and for a need that is missing what to change, in plain sentences. */
+  says: string;
+  /** The field to change, as `checkSiteRules` names fields, when one field is it. */
+  field?: string;
+}
+
 /** What the reader understood of one saved page. */
 export interface SiteTrial {
   /**
@@ -138,6 +156,15 @@ export interface SiteTrial {
    * the same in words.
    */
   unmatched?: SiteTrialUnmatched[];
+  /**
+   * Optional: what a page needs before the file reads it, each with its
+   * state, in the order they are checked, at most {@link MAX_TRIAL_NEEDS}
+   * (such as the host, the address, and where the text is). An importer
+   * gives them for the parts it reads by a file's own selectors, so that a
+   * page the file does not read says what is missing. Each that is missing
+   * is among {@link problems} too, in the same words.
+   */
+  needs?: SiteTrialNeed[];
   /**
    * Optional: what to know of how the page was read that is no problem, in
    * plain sentences (such as a name the reader took from the page's
@@ -302,6 +329,8 @@ export const MAX_TRIAL_PAGE = 256 * 1024;
 export const MAX_TRIAL_PICTURES = 200;
 /** Entries of a trial's contents, and chapter titles, listed at most. */
 export const MAX_TRIAL_ENTRIES = 200;
+/** What a page needs, listed at most (see {@link SiteTrial.needs}). */
+export const MAX_TRIAL_NEEDS = 8;
 const MAX_WORDS = 300;
 const MAX_LIST = 20;
 const MAX_PROBLEMS = 40;
@@ -388,6 +417,9 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
           .slice(0, MAX_PROBLEMS),
       }
     : {};
+  const needs = Array.isArray(answer.needs)
+    ? { needs: list(answer.needs).slice(0, MAX_TRIAL_NEEDS).flatMap(trialNeedOf) }
+    : {};
   const reader =
     typeof answer.reader === 'string' &&
     READER_NAME_PATTERN.test(answer.reader) &&
@@ -413,6 +445,7 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
     ...pictureList,
     ...chapterTitles,
     ...unmatched,
+    ...needs,
     ...notes,
     headings: count(answer.headings),
     pictures: count(answer.pictures),
@@ -429,6 +462,24 @@ export function siteTrialOf(value: unknown): SiteTrial | null {
       .flatMap((problem) => words(problem, 500) ?? [])
       .slice(0, MAX_PROBLEMS),
   };
+}
+
+/** One need of a trial, in bounds; nothing when it has no name, state or words. */
+function trialNeedOf(value: unknown): SiteTrialNeed[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+  const given = value as Record<string, unknown>;
+  const name = words(given.name, 80);
+  const says = words(given.says, 600);
+  const state =
+    given.state === 'done' || given.state === 'missing' || given.state === 'unchecked'
+      ? given.state
+      : null;
+  if (!name || !says || !state) return [];
+  const field =
+    typeof given.field === 'string' && given.field.length <= 200 && FIELD_PATH.test(given.field)
+      ? { field: given.field }
+      : {};
+  return [{ name, state, says, ...field }];
 }
 
 /** An address given as text, when it is a whole `https` address. */
