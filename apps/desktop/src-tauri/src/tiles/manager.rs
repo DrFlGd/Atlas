@@ -2713,8 +2713,11 @@ mod tests {
         ensure_crypto();
         let dir = TempDir::new("manager-measure-busy");
         let base = tile_server();
+        // Slow enough that the download's first images are still on their way
+        // when the test ends, however slow the machine: every request seen
+        // after `asked` is then one of the two the download makes at a time.
         let server = MockServer::start(Arc::new(move |path, count| {
-            base(path, count).delayed(Duration::from_millis(100))
+            base(path, count).delayed(Duration::from_secs(5))
         }))
         .await;
         let pack = dir.0.join("pack");
@@ -2746,8 +2749,11 @@ mod tests {
         ensure_crypto();
         let dir = TempDir::new("manager-measure-busy-page");
         let base = tile_server();
+        // Slow enough that the download's first images are still on their way
+        // when the test ends, however slow the machine: every request seen
+        // after `asked` is then one of the two the download makes at a time.
         let server = MockServer::start(Arc::new(move |path, count| {
-            base(path, count).delayed(Duration::from_millis(100))
+            base(path, count).delayed(Duration::from_secs(5))
         }))
         .await;
         let pack = dir.0.join("pack");

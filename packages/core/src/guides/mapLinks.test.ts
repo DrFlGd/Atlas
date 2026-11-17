@@ -1,6 +1,12 @@
 import type { Location, MapLink } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
-import { locationsBySiteId, mapLinkId, mapLinkTarget, siteIdOfLocation } from './mapLinks';
+import {
+  locationsBySiteId,
+  mapLinkId,
+  mapLinkIds,
+  mapLinkTarget,
+  siteIdOfLocation,
+} from './mapLinks';
 
 const BY_QUERY: MapLink = { hosts: ['maps.example.org'], address: '/isle/*', query: 'spot' };
 const BY_PATH: MapLink = { hosts: ['atlas.example.net'], address: '/m/*/spot/{id}' };
@@ -54,6 +60,22 @@ describe('the id a web link names', () => {
     expect(mapLinkId([], 'https://maps.example.org/isle/harbour?spot=17')).toBeNull();
   });
 
+  it('reads several ids with commas between them, and an id that ends with a comma', () => {
+    const href = (spot: string) => `https://maps.example.org/isle/harbour?spot=${spot}`;
+    expect(mapLinkIds([BY_QUERY], href('17,'))).toEqual(['17']);
+    expect(mapLinkId([BY_QUERY], href('17,'))).toBe('17');
+    expect(mapLinkIds([BY_QUERY], href('17,18,%2019,17'))).toEqual(['17', '18', '19']);
+    expect(mapLinkId([BY_QUERY], href('17,18'))).toBe('17');
+    // A part that cannot be an id is left out; a link of only such parts names nothing.
+    expect(mapLinkIds([BY_QUERY], href(',a%20b,18'))).toEqual(['18']);
+    expect(mapLinkIds([BY_QUERY], href(','))).toEqual([]);
+    expect(mapLinkId([BY_QUERY], href(','))).toBeNull();
+    expect(mapLinkIds([BY_PATH], 'https://atlas.example.net/m/harbour/spot/key-7,key-8')).toEqual([
+      'key-7',
+      'key-8',
+    ]);
+  });
+
   it('takes the first entry the link fits', () => {
     const wide: MapLink = { hosts: ['maps.example.org'], address: '/**', query: 'at' };
     expect(mapLinkId([wide, BY_QUERY], 'https://maps.example.org/isle/harbour?spot=17&at=9')).toBe(
@@ -90,6 +112,15 @@ describe('the location of a site id', () => {
     expect(mapLinkTarget([BY_QUERY], href('20'), games)).toBeNull();
     expect(mapLinkTarget([BY_QUERY], href('own.17'), games)).toBeNull();
     expect(mapLinkTarget([], href('18'), games)).toBeNull();
+    // An id that ends with a comma; and of several, the first any game has.
+    expect(mapLinkTarget([BY_QUERY], href('18,'), games)).toEqual({
+      gameId: 'isle-map',
+      locationId: 'isle-map:loc:18',
+    });
+    expect(mapLinkTarget([BY_QUERY], href('20,19,18'), games)).toEqual({
+      gameId: 'isle-two',
+      locationId: 'isle-two:loc:19',
+    });
   });
 
   it('is looked up in one table per list of locations', () => {
