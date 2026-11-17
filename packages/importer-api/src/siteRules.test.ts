@@ -71,8 +71,8 @@ describe('the guide', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
     // And one file for every game of a site, a refusal, a part with a layout section,
     // a map part read from values of its page, one file for every game and map of a map site,
-    // a part with links to a map, and a map part with facts every map shares.
-    expect(blocks.length).toBe(12);
+    // a part with links to a map, a map part with facts every map shares, and a part with a menu section.
+    expect(blocks.length).toBe(13);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -1316,6 +1316,57 @@ describe('the additions of the general reader', () => {
       fields({ ...refusal, refusal: { ...refusal.refusal, domains: ['*.example.org'] } }),
     ).toEqual(['refusal.domains[0]']);
     expect(fields({ ...refusal, site: SMALLEST.site })).toEqual(['site']);
+  });
+});
+
+describe('the menu section of a wiki or guide part', () => {
+  const file = (part: Record<string, unknown>) => ({ ...SMALLEST, parts: [part] });
+  const said = (value: unknown) => problems(value).map(problemText);
+  const wiki = SMALLEST.parts[0]!;
+
+  it('takes the main part, the side menu or both, headings, and blocks left out or kept', () => {
+    for (const value of [
+      file({ ...wiki, menu: { from: 'both', headings: '.box > .box-title' } }),
+      file({ ...wiki, menu: { from: 'side', leaveOut: ['Community'] }, pagesInOrder: false }),
+      file({ ...RULES_WIKI, menu: { from: 'main', keep: ['Latest guides'] } }),
+      file({ ...RULES_WIKI, type: 'guide', order: { from: 'menu' }, pagesInOrder: true }),
+      {
+        format: 'atlas-site-rules',
+        version: 1,
+        readerDefaults: {
+          reader: 'example-engine',
+          reading: { ways: ['fetch'] },
+          menu: { leaveOut: ['News'] },
+          pagesInOrder: true,
+        },
+      },
+    ]) {
+      const checked = checkSiteRules(value);
+      expect(checked.ok ? [] : checked.problems).toEqual([]);
+    }
+  });
+
+  it('says in plain words what is wrong with it', () => {
+    expect(said(file({ ...wiki, menu: { from: 'top' } }))).toEqual([
+      'Part 1, menu.from: must be one of "both", "main" or "side".',
+    ]);
+    expect(fields(file({ ...wiki, menu: { from: 'side', headings: '.box-title' } }))).toEqual([
+      'parts[0].menu.headings',
+    ]);
+    expect(said(file({ ...wiki, menu: { leaveOut: ['News'], keep: [' news '] } }))).toEqual([
+      'Part 1, menu.leaveOut, entry 1: is also in "keep": a heading is either left out or kept.',
+    ]);
+    expect(fields(file({ ...wiki, menu: { headings: 'a:hover' } }))).toEqual([
+      'parts[0].menu.headings',
+    ]);
+    expect(fields(file({ ...wiki, menu: { title: 'Menu' } }))).toEqual(['parts[0].menu.title']);
+    expect(fields(file({ ...wiki, pagesInOrder: 'yes' }))).toEqual(['parts[0].pagesInOrder']);
+    expect(
+      said(file({ ...wiki, type: 'map', menu: { from: 'main' }, pagesInOrder: true })),
+    ).toEqual([
+      'Part 1, menu: is only for a wiki or guide part.',
+      'Part 1, pagesInOrder: is only for a wiki or guide part.',
+    ]);
   });
 });
 

@@ -15,7 +15,7 @@ A site rules file is one JSON file that describes one site to the Atlas Importer
 
 **Words used here.** A _part_ is one map, wiki or guide of a site. A _reader_ is the piece of the Importer that reads a part. A _location_ is a point on a map, and each location has a _type_ (item, enemy, boss and so on). A _session_ is one run of reading pages.
 
-**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved: a file whose site one of the Importer's own readers reads can be tried as well as one read by `rules`, if the Importer can try it. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. `mapLinks` of a wiki or guide part (see "Links to a location of a map") came last, also without a new version: an Importer from before it refuses a file that has it, naming the field. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
+**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved: a file whose site one of the Importer's own readers reads can be tried as well as one read by `rules`, if the Importer can try it. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. `mapLinks` of a wiki or guide part (see "Links to a location of a map") came later, also without a new version: an Importer from before it refuses a file that has it, naming the field. So did `menu` and `pagesInOrder` of a wiki or guide part (see "The menu of a wiki"), last. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
 
 **Who decides.** The owner checks every file by hand before switching it on. A file states the site's limits: which pages, which ways of reading, which pause, which licence, or that the site is not read at all. The files that come with the Importer state the limits the owner has accepted so far, and a file of the owner's that is switched on wins over them for its site. Some things are no site's to decide and no file can change them: the app's honest name `Atlas/<version>`, `robots.txt` when the app reads by itself, the app's own shortest pause, stopping at the first refusal, never answering a check that asks whether the reader is a person, and never using a window's cookies.
 
@@ -118,7 +118,7 @@ Each entry of `parts` describes one map, wiki or guide. These fields are the sam
 | `licence`  | no                | object                               | What to record as the licence. Wins over `site.licence`                                                                       |
 | `notes`    | no                | text, at most 2,000 characters       | Your remarks on this part                                                                                                     |
 
-A part with `"reader": "rules"` also holds the fields of the sections on the general reader below. A wiki or guide part, whichever reader reads it, may also hold `layout` (see "The layout of the pages") and `mapLinks` (see "Links to a location of a map").
+A part with `"reader": "rules"` also holds the fields of the sections on the general reader below. A wiki or guide part, whichever reader reads it, may also hold `layout` (see "The layout of the pages"), `menu` and `pagesInOrder` (see "The menu of a wiki") and `mapLinks` (see "Links to a location of a map").
 
 ### Parts with a built-in reader
 
@@ -213,15 +213,17 @@ A second shape of the same format gives the defaults of one built-in reader: the
 }
 ```
 
-| Field                     | Needed | Form                           | Meaning                                                                              |
-| ------------------------- | ------ | ------------------------------ | ------------------------------------------------------------------------------------ |
-| `readerDefaults.reader`   | yes    | a built-in reader's name       | The reader these defaults are for                                                    |
-| `readerDefaults.reading`  | yes    | object                         | The ways and pause, as in `reading`                                                  |
-| `readerDefaults.notice`   | no     | text, at most 500 characters   | The sentence the owner sees for every such site                                      |
-| `readerDefaults.pictures` | no     | object with `hosts`            | Picture hosts every such site's pages use                                            |
-| `readerDefaults.licence`  | no     | object                         | The licence form for every such site, as in `licence`. Without it the owner is asked |
-| `readerDefaults.layout`   | no     | object                         | The layout section for every such site (see "The layout of the pages")               |
-| `notes`                   | no     | text, at most 2,000 characters | Your remarks                                                                         |
+| Field                         | Needed | Form                           | Meaning                                                                              |
+| ----------------------------- | ------ | ------------------------------ | ------------------------------------------------------------------------------------ |
+| `readerDefaults.reader`       | yes    | a built-in reader's name       | The reader these defaults are for                                                    |
+| `readerDefaults.reading`      | yes    | object                         | The ways and pause, as in `reading`                                                  |
+| `readerDefaults.notice`       | no     | text, at most 500 characters   | The sentence the owner sees for every such site                                      |
+| `readerDefaults.pictures`     | no     | object with `hosts`            | Picture hosts every such site's pages use                                            |
+| `readerDefaults.licence`      | no     | object                         | The licence form for every such site, as in `licence`. Without it the owner is asked |
+| `readerDefaults.layout`       | no     | object                         | The layout section for every such site (see "The layout of the pages")               |
+| `readerDefaults.menu`         | no     | object                         | The menu section for every such site (see "The menu of a wiki")                      |
+| `readerDefaults.pagesInOrder` | no     | `true` or `false`              | Whether every such site's pages are a guide read in order (see "The menu of a wiki") |
+| `notes`                       | no     | text, at most 2,000 characters | Your remarks                                                                         |
 
 ## The general reader for a wiki or a guide
 
@@ -450,6 +452,43 @@ Such pages are private: they hold the site's own words and pictures. Never commi
 - No page is ever fetched to check a layout, by you or by a tool. Work on the pages the owner saved.
 - Layout work changes the `layout` section only. A file's limits (its ways of reading, its pause, its pages, its licence answers, a refusal) are never widened as part of it. When the layout seems to need that, stop and ask the owner.
 - Say in your report which pages you checked, in which way, what you changed and what still differs.
+
+## The menu of a wiki
+
+Atlas shows a wiki's pages under a menu (its contents). The Importer makes it from the wiki's home page and its side menu, in this order:
+
+1. **The main part of the home page.** Each headed block of the home page that lists pages of the wiki becomes a section, in the page's order, and the pages its tiles and lists name are the pages under it, in order. A heading that is a link to a page puts that page first in its section. A home page with one block, or with no heading at all, gives its pages as the top of the menu directly, with no section around them. What stands before the first heading (a welcome box) makes no section.
+2. **The side menu**, after it. Each of its groups that leads to pages of the wiki becomes a further section. A page the main part already placed is not repeated there, and a group that adds nothing is left out.
+3. **Other pages.** The pages neither of them reaches are under "Other pages" at the end, each under the list page that lists it where Atlas finds one, so nothing is lost.
+
+What is left out is decided by where a link leads, not by its words: links that leave the wiki, pages about the wiki itself (its rules, noticeboards and style guide; on a wiki whose page names start with a namespace, the pages of the namespace named after the wiki and the namespaces that hold no articles, while a namespace of its own that holds articles, such as one for guides, stays), the site's tools (what links here, special pages), and blocks of news (a block whose links mostly leave the wiki, or whose items are mostly dated).
+
+A guide keeps its own table of contents: its order and its nesting, with the pages that stand alone at the top between the sections, as the site shows them. A part whose pages are read in order (`pagesInOrder`, below) takes its menu from its table of contents alone, unless its `menu` says otherwise.
+
+The section `menu` of a wiki or guide part (and of a reader's defaults) changes this for one site. Every entry may be left out:
+
+| Field      | Needed | Form                               | Meaning                                                                                                                                                                                  |
+| ---------- | ------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`     | no     | `both`, `main` or `side`           | Where the menu comes from: the home page's main part and then the side menu (`both`, the default), the main part only, or the side menu only (the default of a part with `pagesInOrder`) |
+| `headings` | no     | selector                           | The elements of the home page's main part that are the headings of its blocks, where the page marks them with no heading element of its own (the title of a box). Each starts a block    |
+| `leaveOut` | no     | list of 1 to 40 headings, as words | Blocks and groups left out of the menu, by their heading's words (upper and lower case do not count)                                                                                     |
+| `keep`     | no     | list of 1 to 40 headings, as words | Blocks and groups kept whatever the rules above say, such as a block of dated items that is no news. A heading is never in both lists                                                    |
+
+```json
+{
+  "type": "wiki",
+  "reader": "example-engine",
+  "start": "/",
+  "menu": {
+    "headings": ".box > .box-title",
+    "leaveOut": ["Wiki community"]
+  }
+}
+```
+
+`pagesInOrder` of a wiki or guide part (and of a reader's defaults), `true` or `false`, says whether the part's pages are one guide read in order, as its table of contents orders them. The Importer then tells Atlas so with the game. Leave it out for a wiki.
+
+**How to check the menu.** Try the file on the saved home page (Settings, "Sites", "Try on a saved page"): the trial's notes give the sections of the menu that the page gives, in order, each with its pages (an importer that reads wikis puts them there). Every block you meant to keep must be there with its pages, and no block of news or of the wiki's own affairs. A game read before the file had `menu` gains it when the owner builds it again from its saved pages (nothing is downloaded for that), or reads one more of its pages.
 
 ## Links to a location of a map
 

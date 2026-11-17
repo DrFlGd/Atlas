@@ -1712,6 +1712,10 @@ export function importContext(
     keepsMapLinks: true,
     // And the guides the site itself files a page under.
     keepsFiledUnder: true,
+    // And sections whose pages stand in their place, beside the other sections.
+    keepsUnheadedSections: true,
+    // And whether the pages are one guide read in order.
+    keepsPagesInOrder: true,
     // Built again from the pages kept, as the person asked: nothing is fetched.
     ...(rebuilt ? { rebuild: true } : {}),
     ...(listed ? { listed } : {}),

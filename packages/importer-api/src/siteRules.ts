@@ -339,6 +339,70 @@ function layoutProblems(layout: SiteLayout | undefined, at: Path): SiteRulesProb
 }
 
 // ---------------------------------------------------------------------------
+// The menu (contents) of a wiki
+
+/**
+ * Where a wiki's menu (its contents) comes from (`menu.from`): the main
+ * part of its home page and its side menu after it (`both`), or only one
+ * of them.
+ */
+export const MENU_FROM = ['both', 'main', 'side'] as const;
+export type MenuFrom = (typeof MENU_FROM)[number];
+/** Headings one list of the menu section holds at most. */
+export const MAX_MENU_HEADINGS = 40;
+
+const menuHeadings = once(text(200), 'heading').min(1).max(MAX_MENU_HEADINGS);
+
+/**
+ * The `menu` section of a wiki or guide part, and of a reader's defaults:
+ * where the wiki's menu comes from, and what is left out of it. Every
+ * entry may be left out, and the general rules then hold: the headed
+ * blocks of the home page's main part first, then the side menu's groups,
+ * without the blocks of news and the groups about the wiki itself.
+ *
+ * - `from`: `both` (the default), `main` or `side` (the default of a part
+ *   whose pages are read in order, `pagesInOrder`: a guide keeps its own
+ *   table of contents).
+ * - `headings`: the elements of the home page's main part that are the
+ *   headings of its blocks, where the page marks them with no heading of
+ *   its own (a box's title): each starts a block, as a heading does.
+ * - `leaveOut`: blocks and groups left out, by their heading's words.
+ * - `keep`: blocks and groups kept whatever the general rules say (a
+ *   block of dated items that is no news), by their heading's words.
+ */
+const menuSchema = z.strictObject({
+  from: z.enum(MENU_FROM).optional(),
+  headings: selector.optional(),
+  leaveOut: menuHeadings.optional(),
+  keep: menuHeadings.optional(),
+});
+
+export type SiteMenu = z.infer<typeof menuSchema>;
+
+/** The problems of a menu section that its fields' forms alone do not show. */
+function menuProblems(menu: SiteMenu | undefined, at: Path): SiteRulesProblem[] {
+  if (!menu) return [];
+  const problems: SiteRulesProblem[] = [];
+  if (menu.from === 'side' && menu.headings !== undefined) {
+    problems.push({
+      field: fieldPath([...at, 'headings']),
+      message:
+        'is never used with "from": "side", which takes the menu from the side menu alone; leave it out or choose "both" or "main"',
+    });
+  }
+  const kept = new Set((menu.keep ?? []).map((words) => words.trim().toLowerCase()));
+  (menu.leaveOut ?? []).forEach((words, i) => {
+    if (kept.has(words.trim().toLowerCase())) {
+      problems.push({
+        field: fieldPath([...at, 'leaveOut', i]),
+        message: `is also in "keep": a heading is either left out or kept`,
+      });
+    }
+  });
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
 // Links to a location of a map, in a wiki's or a guide's pages
 
 /** Entries the `mapLinks` of one part hold at most. */
@@ -413,6 +477,8 @@ function builtInPartSchema<L extends z.ZodType>(licence: L) {
     pictures: pictureHostsSchema.optional(),
     options: z.record(z.string(), z.unknown()).optional(),
     layout: layoutSchema.optional(),
+    menu: menuSchema.optional(),
+    pagesInOrder: z.boolean().optional(),
     mapLinks: mapLinkRulesSchema.optional(),
     pack: z
       .string()
@@ -484,6 +550,8 @@ function rulesWikiPartSchema<L extends z.ZodType>(licence: L) {
     contents: contentsSchema,
     article: articleSchema,
     layout: layoutSchema.optional(),
+    menu: menuSchema.optional(),
+    pagesInOrder: z.boolean().optional(),
     mapLinks: mapLinkRulesSchema.optional(),
   });
 }
@@ -497,6 +565,8 @@ function rulesGuidePartSchema<L extends z.ZodType>(licence: L) {
     article: articleSchema,
     order: orderSchema,
     layout: layoutSchema.optional(),
+    menu: menuSchema.optional(),
+    pagesInOrder: z.boolean().optional(),
     mapLinks: mapLinkRulesSchema.optional(),
   });
 }
@@ -735,6 +805,8 @@ function readerDefaultsFileSchemaWith<L extends z.ZodType>(licence: L) {
       pictures: pictureHostsSchema.optional(),
       licence: licence.optional(),
       layout: layoutSchema.optional(),
+      menu: menuSchema.optional(),
+      pagesInOrder: z.boolean().optional(),
     }),
     notes: text(2000).optional(),
   });
@@ -896,6 +968,8 @@ const FIELDS_ELSEWHERE: Record<string, string> = {
   options: 'a part with a built-in reader',
   pack: 'a part with a built-in reader',
   layout: 'a wiki or guide part',
+  menu: 'a wiki or guide part',
+  pagesInOrder: 'a wiki or guide part',
   mapLinks: 'a wiki or guide part',
 };
 
@@ -1448,9 +1522,19 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
         add([...at, 'start'], 'may hold {game} and {guide} in a wiki or guide part, not {map}');
       }
     }
-    if (part.type !== 'map') problems.push(...layoutProblems(part.layout, [...at, 'layout']));
-    else if (!readByRules(part) && part.layout !== undefined) {
-      add([...at, 'layout'], 'is only for a wiki or guide part');
+    if (part.type !== 'map') {
+      problems.push(...layoutProblems(part.layout, [...at, 'layout']));
+      problems.push(...menuProblems('menu' in part ? part.menu : undefined, [...at, 'menu']));
+    } else {
+      if (!readByRules(part) && part.layout !== undefined) {
+        add([...at, 'layout'], 'is only for a wiki or guide part');
+      }
+      if ('menu' in part && part.menu !== undefined) {
+        add([...at, 'menu'], 'is only for a wiki or guide part');
+      }
+      if ('pagesInOrder' in part && part.pagesInOrder !== undefined) {
+        add([...at, 'pagesInOrder'], 'is only for a wiki or guide part');
+      }
     }
     const pieces = startPieces(part);
     const onlyStartPieces = (path: Path, text: string) => {
@@ -1573,7 +1657,10 @@ export function checkSiteRules(value: unknown): SiteRulesCheck {
     if (problems.length > 0) return fail(problems);
     const full = checkAgainst(readerDefaultsFileSchema, value, []);
     if (!full.value) return fail(full.problems);
-    const whole = layoutProblems(full.value.readerDefaults.layout, ['readerDefaults', 'layout']);
+    const whole = [
+      ...layoutProblems(full.value.readerDefaults.layout, ['readerDefaults', 'layout']),
+      ...menuProblems(full.value.readerDefaults.menu, ['readerDefaults', 'menu']),
+    ];
     return whole.length > 0 ? fail(whole) : { ok: true, rules: full.value };
   }
 

@@ -34,6 +34,7 @@ export * from './guides/pagesList';
 export * from './guides/pageFiling';
 export * from './guides/pageTree';
 export * from './guides/headingSteps';
+export * from './guides/homeMenu';
 export * from './guides/sections';
 export * from './guides/mapLinks';
 export * from './guides/nameMatch';

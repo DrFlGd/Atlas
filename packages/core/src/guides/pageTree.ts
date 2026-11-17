@@ -68,7 +68,11 @@ import type { ListingHeading } from './pageFiling';
  *   it is not shown in the contents (Guides shows it on its own), and the
  *   pages it lists (whether or not it is a list page itself) and those put
  *   under it by hand are at the top of the contents, before the sections
- *   whose pages are placed by links.
+ *   whose pages are placed by links. When the contents already places
+ *   most of what it lists (see {@link HOME_LAID_OUT_SHARE}: an importer
+ *   made the contents from the home page's blocks, in its order), it files
+ *   nothing more at the top: what it lists and the contents left out (a
+ *   block of news) is placed by its links like any page of its section.
  *
  * Every page is reached once, so links in a circle (A to B, B to A) or to
  * the page itself change nothing; one read more adds the new page and may
@@ -90,6 +94,16 @@ export const POPULAR_MIN_LINKERS = 8;
  * them (an enemy's three haunts), however soon the walk meets that one.
  */
 export const POPULAR_PARENT_SHARE = 0.5;
+
+/**
+ * The share of the pages a home page lists (of those the pack has) that the
+ * contents places itself, from which the contents counts as made from the
+ * home page: its blocks are the contents' sections. The home page then
+ * files nothing at the top; the pages it lists that the contents left out
+ * (a block of news, of the wiki's own affairs) stay where pages nothing
+ * places are, placed by their links.
+ */
+export const HOME_LAID_OUT_SHARE = 0.8;
 
 /**
  * The heading around each heading of a page, by index: the nearest one
@@ -191,6 +205,21 @@ export interface PageTree {
   filed: Set<string>;
 }
 
+/**
+ * Whether the contents already holds most of what the home page lists (see
+ * {@link HOME_LAID_OUT_SHARE}): the contents was made from it.
+ */
+function laidOutFrom(input: PageTreeInput, root: string, placed: ReadonlySet<string>): boolean {
+  let listed = 0;
+  let there = 0;
+  for (const id of input.filingOf(root).listing) {
+    if (id === root || !input.isPage(id) || !input.leads(id)) continue;
+    listed += 1;
+    if (placed.has(id)) there += 1;
+  }
+  return listed > 0 && there >= HOME_LAID_OUT_SHARE * listed;
+}
+
 /** Places the pages of `placeByLinks` sections under the list pages that list them. */
 export function placePagesByLinks(input: PageTreeInput): PageTree {
   const { isSection, isPage, byLinks } = input;
@@ -252,6 +281,10 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
   }
   // A page placed in the contents is not waiting, wherever else it is listed.
   for (const id of reached) waiting.delete(id);
+
+  // A contents made from the home page (its blocks as sections) already
+  // places what it lists: the home page then files nothing more at the top.
+  const rootLaidOut = root !== null && laidOutFrom(input, root, reached);
 
   // Which pages file which: by page, what it lists when it files pages
   // (the home page and list pages); by waiting page, how many pages link
@@ -484,7 +517,7 @@ export function placePagesByLinks(input: PageTreeInput): PageTree {
       // The pages it files: those kept for it, then those it lists that no page took first.
       const listed = keptBy.get(page) ?? [];
       keptBy.delete(page);
-      const listing = withLinks ? filing.get(page) : undefined;
+      const listing = withLinks && !(page === root && rootLaidOut) ? filing.get(page) : undefined;
       if (listing) {
         for (const target of listing) {
           if (!waiting.has(target) || reached.has(target) || wikiParent.has(target)) continue;

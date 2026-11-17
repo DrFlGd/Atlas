@@ -22,6 +22,7 @@ import {
   parseId,
   regionSchema,
   resolveIconName,
+  sectionSchema,
   tileSourceSchema,
 } from './index';
 import { makeFixturePack } from './testing/fixture';
@@ -341,6 +342,33 @@ describe('reading tolerantly, writing strictly', () => {
     const lost = { ...pack, manifest: { ...pack.manifest, homePage: 'demo:guide:nowhere' } };
     expect(checkPackIntegrity(lost).map((issue) => issue.path)).toEqual(['manifest.homePage']);
     expect(checkPackIntegrity({ ...pack, manifest })).toEqual([]);
+  });
+
+  it('writes and reads the flag that the pages are read in order', () => {
+    const pack = makeFixturePack();
+    const manifest = { ...pack.manifest, pagesInOrder: true };
+    expect(manifestSchema.parse(manifest).pagesInOrder).toBe(true);
+    expect(packReadSchemas.manifestSchema.parse(manifest).pagesInOrder).toBe(true);
+    // Only true.
+    for (const pagesInOrder of [false, 'yes', 1]) {
+      expect(manifestSchema.safeParse({ ...manifest, pagesInOrder }).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      const read = packReadSchemas.manifestSchema.parse({ ...manifest, pagesInOrder });
+      expect(read.pagesInOrder).toBeUndefined();
+    }
+  });
+
+  it('writes unheaded sections, and an app before them reads one as a section', () => {
+    const section = { id: 'demo:section:loose', title: 'Menu', items: ['demo:guide:herbs'] };
+    expect(sectionSchema.parse({ ...section, unheaded: true }).unheaded).toBe(true);
+    expect(sectionSchema.safeParse({ ...section, unheaded: false }).success).toBe(false);
+    const read = packReadSchemas.sectionSchema;
+    expect(read.parse({ ...section, unheaded: true }).unheaded).toBe(true);
+    // A value that cannot be read is left out: the section is shown with its title.
+    expect(read.parse({ ...section, unheaded: 'yes' }).unheaded).toBeUndefined();
+    // An app before the field drops it as any unknown key, and keeps the section.
+    const before = packReadSchemas.sectionSchema.omit({ unheaded: true });
+    expect(before.parse({ ...section, unheaded: true })).toEqual(section);
   });
 
   it('writes and reads the width of the pages', () => {
