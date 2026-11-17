@@ -17,6 +17,7 @@ import { applyListing } from './library';
 import { addImportedOwnLists, flushOwnLists } from './ownLists';
 import { addImportedOwnLocations, flushOwnLocations } from './ownLocations';
 import { keepPictureFiles } from './ownPictures';
+import { notePackSaved } from './packTurns';
 import { useAtlas } from './store';
 
 /**
@@ -283,6 +284,8 @@ export async function importPackFile(
   if (pickedCopy === file.path) discardPickedCopy();
   // Kept where the person keeps them before the game opens, so it opens with them.
   const mine = await restoreMine(imported);
+  // A copy of the game kept in memory, as another game's pages or maps, is not the game any more.
+  notePackSaved(imported.packId);
   applyListing(imported.listing);
   const entry = get().catalog.find((pack) => pack.id === imported.packId);
   if (entry) {

@@ -11,6 +11,7 @@ import { applyListing } from './library';
 import { deleteOwnListsOf, ownListsBackend } from './ownLists';
 import { deleteOwnLocationsOf, ownLocationsBackend } from './ownLocations';
 import { deleteOwnPictures, deleteOwnPicturesOf, picturesInFile } from './ownPictures';
+import { notePackSaved } from './packTurns';
 import { loadMapImages } from './mapImages';
 import { clock, progressStore } from './services';
 import { useAtlas } from './store';
@@ -88,6 +89,8 @@ export async function deletePack(
     return { ok: false, error: plainError(error, `delete ${title}`) };
   }
   await refreshWithout(id);
+  // Its pages or maps shown with another game go with it.
+  notePackSaved(id);
   // It leaves the title it was shown under; the title's other games stay together.
   if (!keepTitle) await forgetDeletedGame(id).catch(() => undefined);
   // A wiki's site is forgotten, unless another wiki in the Library is read from it.

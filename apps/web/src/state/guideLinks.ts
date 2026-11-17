@@ -14,6 +14,7 @@ import { desktop } from '../desktop';
 import { notify } from './actions';
 import { titleOf, useGameGroups } from './gameGroups';
 import type { SaveState } from './ownLists';
+import { onPackSaved, packSaves } from './packTurns';
 import { progressStore } from './services';
 import { useAtlas, type LoadedGame } from './store';
 
@@ -209,19 +210,51 @@ export function loadGuideLinks(game: LoadedGame): Promise<void> {
   return loading;
 }
 
-/** Packs of other games read in this session, by address: their guides do not change while shown. */
-const otherPacks = new Map<string, Promise<LoadedPack>>();
+/**
+ * Packs of other games read in this session, by address, each as it was
+ * after a count of saves (see `packTurns.ts`): a pack saved since it was
+ * read (a session, "Build again from saved pages", a check for changes, a
+ * pack file) is read again, never shown as it was before.
+ */
+const otherPacks = new Map<string, { saves: number; pack: Promise<LoadedPack> }>();
 
-/** Another game's pack, read once in this session (see `mapLinks.ts` too). */
+/** Another game's pack, read once in this session for as long as its files stay as they are (see `mapLinks.ts` too). */
 export function packAt(entry: PackEntry): Promise<LoadedPack> {
-  let pack = otherPacks.get(entry.url);
-  if (!pack) {
-    pack = loadPack(entry.url);
-    otherPacks.set(entry.url, pack);
-    pack.catch(() => otherPacks.delete(entry.url));
-  }
+  const saves = packSaves(entry.id);
+  const kept = otherPacks.get(entry.url);
+  if (kept?.saves === saves) return kept.pack;
+  const pack = loadPack(entry.url);
+  const mine = { saves, pack };
+  otherPacks.set(entry.url, mine);
+  pack.catch(() => {
+    if (otherPacks.get(entry.url) === mine) otherPacks.delete(entry.url);
+  });
   return pack;
 }
+
+/** The pages of another game are read again this long after the last save of its pack. */
+export const OTHERS_SETTLE_MS = 2_000;
+/** While its pack is saved over and over (a session), they are read again at most this often. */
+export const OTHERS_EVERY_MS = 60_000;
+
+let othersTimer: ReturnType<typeof setTimeout> | null = null;
+let othersReadAt = 0;
+
+// A pack whose pages are shown with the game shown was saved: they are read
+// again once the saving settles, so the pages shown are the pages kept.
+onPackSaved((packId) => {
+  const { gameId, status, others } = get();
+  if (!gameId || status !== 'ready' || !others.some((other) => other.gameId === packId)) return;
+  if (othersTimer) clearTimeout(othersTimer);
+  const wait = Math.max(OTHERS_SETTLE_MS, othersReadAt + OTHERS_EVERY_MS - Date.now());
+  othersTimer = setTimeout(() => {
+    othersTimer = null;
+    const now = get();
+    if (now.gameId !== gameId || now.status !== 'ready') return;
+    othersReadAt = Date.now();
+    void loadOthers(gameId);
+  }, wait);
+});
 
 /**
  * Loads the guides of the other games named in the links, those on this

@@ -40,10 +40,28 @@ export const packBusy = (packId: string): boolean => lasts.has(packId);
 
 const saves = new Map<string, number>();
 
-/** How many times the pack `packId` was saved by a step, since the app started. */
+/** How many times the files of the pack `packId` changed, since the app started. */
 export const packSaves = (packId: string): number => saves.get(packId) ?? 0;
 
-/** A step saved the pack `packId`. */
+const savedListeners = new Set<(packId: string) => void>();
+
+/**
+ * Calls `listener` each time a pack was saved (see {@link notePackSaved}),
+ * with its id, so that a copy of the pack kept in memory is not used as if
+ * it were the pack. Returns how to stop.
+ */
+export function onPackSaved(listener: (packId: string) => void): () => void {
+  savedListeners.add(listener);
+  return () => {
+    savedListeners.delete(listener);
+  };
+}
+
+/**
+ * The files of the pack `packId` changed: a step saved it, a pack file
+ * took its place, or it was deleted.
+ */
 export function notePackSaved(packId: string): void {
   saves.set(packId, packSaves(packId) + 1);
+  for (const listener of [...savedListeners]) listener(packId);
 }
