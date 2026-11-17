@@ -13,6 +13,12 @@ export interface ShownPicture {
   credit?: string;
   /** Another file of it, shown when `url` cannot be loaded (a copy for pages). */
   fallbackUrl?: string;
+  /**
+   * The bytes of a GIF that moves, already read from `url`: the view plays
+   * them from their start, as a picture of their own, each time it is
+   * opened (a picture of `url` may share one that has stopped playing).
+   */
+  moving?: Uint8Array;
   /** The element it was opened from, which gets the focus back. */
   opener?: HTMLElement | null;
 }
