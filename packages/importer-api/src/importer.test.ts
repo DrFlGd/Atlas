@@ -342,6 +342,43 @@ describe('outcome checks', () => {
     }
     expect(checkOutcome({ ...good, summary: { ...good.summary, other: 1 } }).ok).toBe(false);
   });
+
+  it('takes sentences of what was left out, and the cuts of whole pictures its layers use', async () => {
+    const good = await demo.convert(page('east'), context());
+    if (!good.ok) throw new Error('expected a pack');
+    const layer = good.pack.layers[0]!;
+    const pack = structuredClone(good.pack);
+    pack.layers[0] = {
+      id: layer.id,
+      mapId: layer.mapId,
+      name: layer.name,
+      tiles: { type: 'xyz', url: 'tiles/stage-4_/{z}/{x}/{y}.jpg' },
+      minZoom: 0,
+      maxZoom: 2,
+      tileSize: 256,
+    };
+    const leftOut = ['Stage 9 was left out: it is a GIF picture.'];
+    const checked = checkOutcome({
+      ...good,
+      pack,
+      summary: { ...good.summary, leftOut },
+      cutPictures: [
+        { picture: 'a1-0', folder: 'stage-4_' },
+        // The same folder twice, a folder no layer names, and names of other forms: left out.
+        { picture: 'b2-0', folder: 'stage-4_' },
+        { picture: 'c3-0', folder: 'elsewhere' },
+        { picture: '../x', folder: 'stage-4_' },
+        'text',
+      ],
+    });
+    expect(checked).toMatchObject({
+      ok: true,
+      summary: { leftOut },
+      cutPictures: [{ picture: 'a1-0', folder: 'stage-4_' }],
+    });
+    expect(checkOutcome({ ...good, summary: { ...good.summary, leftOut: [''] } }).ok).toBe(false);
+    expect('cutPictures' in checkOutcome({ ...good, cutPictures: [] })).toBe(false);
+  });
 });
 
 describe('measuring a picture', () => {

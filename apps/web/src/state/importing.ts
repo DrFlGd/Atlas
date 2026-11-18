@@ -46,6 +46,9 @@ import {
   type PictureSummary,
   type PictureTiles,
   type PictureTilesRequest,
+  type WholePicture,
+  type WholePictureProblem,
+  type WholePictureRequest,
   type ReadingWay,
   type SavedSource,
   type SiteInfo,
@@ -642,16 +645,20 @@ function limitsOf(importer: AtlasImporter, address: string): SiteLimits {
  * least the pause after the last request; null when another go or a cancel
  * took over meanwhile.
  */
-async function fetchAsApp(
+async function fetchAsApp<T = ShellFetchedPage>(
   shell: NonNullable<typeof desktop>,
   address: string,
   id: number,
-): Promise<ShellFetchedPage | null> {
-  const wait = Math.max(pauseLeft(), lastFetchAt + FETCH_PAUSE_MS - Date.now());
+  /** How the address is asked for: as a page, unless said otherwise (a picture, say). */
+  ask: (address: string) => Promise<T> = (at) => shell.tiles.fetchPage(at) as unknown as Promise<T>,
+  /** A longer pause than the app's own, as the site's rules file sets it. */
+  pauseMs = 0,
+): Promise<T | null> {
+  const wait = Math.max(pauseLeft(), lastFetchAt + Math.max(FETCH_PAUSE_MS, pauseMs) - Date.now());
   if (wait > 0) await sleep(wait);
   if (id !== session) return null;
   try {
-    return await shell.tiles.fetchPage(address);
+    return await ask(address);
   } finally {
     lastFetchAt = Date.now();
   }
@@ -679,8 +686,8 @@ async function robotsFor(
 }
 
 /** How asking for one address as the app ended (see {@link askAsApp}). */
-type AppAsk =
-  | { kind: 'answer'; answer: ShellFetchedPage }
+type AppAsk<T = ShellFetchedPage> =
+  | { kind: 'answer'; answer: T }
   | { kind: 'cancelled' }
   /** The site's rules file keeps the app off it: nothing was asked. */
   | { kind: 'kept-off' }
@@ -697,12 +704,14 @@ type AppAsk =
  * for only where the site's permission the file records covers it. Then
  * the address, after the pause.
  */
-async function askAsApp(
+async function askAsApp<T = ShellFetchedPage>(
   shell: NonNullable<typeof desktop>,
   address: string,
   id: number,
   limits: SiteLimits,
-): Promise<AppAsk> {
+  /** How the address is asked for, and the site's own pause (see {@link fetchAsApp}). */
+  how?: { ask: (address: string) => Promise<T>; pauseMs: number },
+): Promise<AppAsk<T>> {
   if (keptOff(limits, address)) return { kind: 'kept-off' };
   const robots = await robotsFor(shell, new URL(address).origin, id);
   if (!robots) return { kind: 'cancelled' };
@@ -710,8 +719,86 @@ async function askAsApp(
   const verdict = fetchVerdict(robots, limits, address).verdict;
   if (verdict === 'kept-off') return { kind: 'kept-off' };
   if (verdict === 'robots') return { kind: 'robots' };
-  const answer = await fetchAsApp(shell, address, id);
+  const answer = how
+    ? await fetchAsApp(shell, address, id, how.ask, how.pauseMs)
+    : ((await fetchAsApp(shell, address, id)) as T | null);
   return answer ? { kind: 'answer', answer } : { kind: 'cancelled' };
+}
+
+// ---------------------------------------------------------------------------
+// Whole pictures of maps (see `ImportContext.wholePicture` in the importer contract)
+
+/**
+ * How an importer's convert call has whole pictures of maps fetched and
+ * cut (`ImportContext.wholePicture`), in go `id`, for the page at
+ * `pageUrl`: each picture asked for as every page is ({@link askAsApp}:
+ * the site's rules file, `robots.txt`, the pause, the app's own name),
+ * then cut by the shell as "New game" cuts a picture. `cuts` gathers the
+ * names of the cuts made, so those no saved pack names are thrown away.
+ */
+function wholePictures(
+  shell: NonNullable<typeof desktop>,
+  importer: AtlasImporter,
+  pageUrl: string,
+  id: number,
+  cuts: string[],
+): (request: WholePictureRequest) => Promise<WholePicture> {
+  const failed = (problem: WholePictureProblem, message: string): WholePicture => ({
+    ok: false,
+    problem,
+    message,
+  });
+  return async (request) => {
+    // What an importer hands over is checked as it is, whatever its type says.
+    const given = request as unknown as { url?: unknown } | null | undefined;
+    const url = typeof given?.url === 'string' ? given.url.trim() : '';
+    if (!isAllowedPageUrl(url)) return failed('failed', 'This app does not read that address.');
+    // The page's site's rules file: its addresses kept off, its permission and its pause.
+    const limits = limitsOf(importer, pageUrl);
+    const pauseMs = (siteInfoOf(importer, pageUrl).pause ?? 0) * 1000;
+    try {
+      const asked = await askAsApp(shell, url, id, limits, {
+        ask: (at) => shell.tiles.fetchPicture(at),
+        pauseMs,
+      });
+      if (asked.kind === 'cancelled') return failed('cancelled', 'The session was stopped.');
+      if (asked.kind === 'kept-off') return failed('kept-off', keptOffMessage(url));
+      if (asked.kind === 'refused') {
+        return failed('stop', `${asked.refusal} This app stopped and read no more pages.`);
+      }
+      if (asked.kind === 'robots') return failed('stop', robotsStopMessage(url, limits));
+      const answer = asked.answer;
+      const refusal = refusalOf(answer.status, answer.retryAfter);
+      if (refusal) return failed('stop', `${refusal} This app stopped and read no more pages.`);
+      if (answer.picture === null) {
+        return answer.tooLarge
+          ? failed('size', 'Its file is larger than this app keeps.')
+          : failed('missing', 'The site has no picture at its address.');
+      }
+      cuts.push(answer.picture);
+      if (id !== session) return failed('cancelled', 'The session was stopped.');
+      const cut = await shell.tiles.cutPicture(answer.picture);
+      if (!cut.ok) {
+        const problem = (['format', 'size', 'missing'] as const).find((p) => p === cut.problem);
+        return {
+          ...failed(problem ?? 'failed', cut.message ?? 'It could not be cut into map images.'),
+          ...(problem === 'size' ? { width: cut.width, height: cut.height } : {}),
+        };
+      }
+      return {
+        ok: true,
+        picture: answer.picture,
+        width: cut.width,
+        height: cut.height,
+        maxZoom: cut.maxZoom,
+        tileSize: cut.tileSize,
+        extension: cut.extension === 'png' ? 'png' : 'jpg',
+      };
+    } catch (error) {
+      if (id !== session) return failed('cancelled', 'The session was stopped.');
+      return failed('failed', `It could not be read: ${errorText(error)}`);
+    }
+  };
 }
 
 /**
@@ -1520,6 +1607,9 @@ async function startRun(
             refreshed: outcome.summary.refreshed,
             ...(outcome.summary.checklist ? { checklist: outcome.summary.checklist } : {}),
             ...(outcome.summary.picture ? { picture: outcome.summary.picture } : {}),
+            ...(outcome.summary.leftOut && outcome.summary.leftOut.length > 0
+              ? { leftOut: outcome.summary.leftOut }
+              : {}),
             ...(outcome.guideId ? { guide: true } : {}),
             ...(outcome.pictures ? { pictures: true } : {}),
             ...(outcome.photos ? { photos: true } : {}),
@@ -1738,6 +1828,8 @@ export function importContext(
     reading?: ReadingWay;
     confirmedLicence?: SiteLicence;
     pictureSize?: PictureSize;
+    /** Fetches and cuts whole pictures of maps, in a go of a build that downloads. */
+    wholePicture?: ImportContext['wholePicture'];
   } = {},
 ): ImportContext {
   const state = useAtlas.getState();
@@ -1808,6 +1900,8 @@ export function importContext(
           pictureTiles: (request: PictureTilesRequest) =>
             measurePicture(request, rebuilt, onMeasuring, rebuilt ? undefined : observations),
           ...(observations && !rebuilt ? { pageObservations: observations } : {}),
+          // Nothing is fetched for a game built again.
+          ...(site.wholePicture && !rebuilt ? { wholePicture: site.wholePicture } : {}),
         }
       : {}),
   };
@@ -1883,9 +1977,39 @@ export function packFiles(pack: PackData): Record<string, string> {
 
 /**
  * Hands page data to the importer, checks what it returns, and writes the
- * pack. Returns the phase to show.
+ * pack. Returns the phase to show. Whole pictures of maps the importer had
+ * cut (`ImportContext.wholePicture`) that no saved pack names are thrown
+ * away at the end.
  */
 async function convertAndSave(
+  importer: AtlasImporter,
+  page: Parameters<typeof convertPage>[1],
+  rebuilt = false,
+  show = true,
+  onMeasuring?: () => void,
+  turn: Parameters<typeof convertPage>[5] = {},
+): Promise<ImportPhase> {
+  const shell = desktop;
+  if (!shell) return { kind: 'idle' };
+  const cuts: string[] = [];
+  const saved = new Set<string>();
+  const wholePicture =
+    __ATLAS_DOWNLOADS__ && downloadsOffered(useAtlas.getState()) && !rebuilt
+      ? wholePictures(shell, importer, page.url, session, cuts)
+      : undefined;
+  try {
+    return await convertPage(importer, page, rebuilt, show, onMeasuring, turn, {
+      ...(wholePicture ? { wholePicture } : {}),
+      saved,
+    });
+  } finally {
+    const left = cuts.filter((name) => !saved.has(name));
+    if (left.length > 0) void shell.tiles.discardPictures(left).catch(() => undefined);
+  }
+}
+
+/** {@link convertAndSave}, with the whole pictures of maps it may have cut and those it saved. */
+async function convertPage(
   importer: AtlasImporter,
   page: {
     url: string;
@@ -1909,6 +2033,11 @@ async function convertAndSave(
     /** Lays out the pages the importer asks to (see `ImportContext.layOut`); the caller closes it. */
     layouts?: PageLayouts | null;
   } = {},
+  cutting: {
+    wholePicture?: ImportContext['wholePicture'];
+    /** The names of the cuts the saved pack took. */
+    saved: Set<string>;
+  } = { saved: new Set() },
 ): Promise<ImportPhase> {
   const shell = desktop;
   if (!shell) return { kind: 'idle' };
@@ -1937,6 +2066,7 @@ async function convertAndSave(
         ...(importer.picturesWithPages === true
           ? { pictureSize: site?.pictures ?? DEFAULT_PICTURE_SIZE }
           : {}),
+        ...(cutting.wholePicture ? { wholePicture: cutting.wholePicture } : {}),
       },
     );
   // When the importer read each pack: changed since, it reads it again (see `packTurns.ts`).
@@ -2095,7 +2225,10 @@ async function convertAndSave(
         ...(page.way === 'browse' && outcome.pictureFiles
           ? { pictures: Object.fromEntries(outcome.pictureFiles.map((p) => [p.file, p.data])) }
           : {}),
+        // Whole pictures of maps cut for it, moved into the game's folder.
+        ...(outcome.cutPictures ? { cutPictures: outcome.cutPictures } : {}),
       });
+      for (const cut of outcome.cutPictures ?? []) cutting.saved.add(cut.picture);
     } catch (error) {
       return { kind: 'failed', message: errorText(error) };
     }

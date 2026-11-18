@@ -125,5 +125,6 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
     ...(info.source ? { source: info.source } : {}),
     contents: describeContents(data, info.images ?? recordedImages(previous)),
     ...(isForPersonalUse(data) ? { personalUse: true as const } : {}),
+    ...(previous.schemaVersion === 2 && previous.system ? { system: previous.system } : {}),
   };
 }

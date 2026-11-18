@@ -98,7 +98,7 @@ pub fn redirect_target(start: &Url, at: &Url, location: &str) -> Option<Url> {
     (same_site(start, &secure) && is_allowed(&secure)).then_some(secure)
 }
 
-fn client() -> reqwest::Result<Client> {
+fn client(timeout: Duration) -> reqwest::Result<Client> {
     Client::builder()
         .user_agent(USER_AGENT)
         // A redirect would otherwise send the address it came from.
@@ -106,31 +106,101 @@ fn client() -> reqwest::Result<Client> {
         // Redirects are followed here, one request at a time (see `redirect_target`).
         .redirect(redirect::Policy::none())
         .connect_timeout(Duration::from_secs(20))
-        .timeout(TIMEOUT)
+        .timeout(timeout)
         .build()
 }
 
 /// Fetches `address`: its answer, whatever the status, or why there is none.
 pub async fn fetch_page(address: &str) -> Result<FetchedPage, String> {
+    let (url, mut response) = request(
+        address,
+        "text/html, application/json;q=0.9, application/xml;q=0.8, text/*;q=0.5",
+        TIMEOUT,
+    )
+    .await?;
+    let head = Head::of(&response);
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "The answer was cut off.".to_owned())?
+    {
+        let room = MAX_FETCHED_BYTES - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if body.len() >= MAX_FETCHED_BYTES {
+            break;
+        }
+    }
+    Ok(FetchedPage {
+        url: url.to_string(),
+        final_url: head.final_url,
+        status: head.status,
+        content_type: head.content_type,
+        text: String::from_utf8_lossy(&body).into_owned(),
+        retry_after: head.retry_after,
+    })
+}
+
+/// What an answer says of itself, besides its body.
+pub(crate) struct Head {
+    pub final_url: String,
+    pub status: u16,
+    /// Lowercase, without parameters; empty when absent.
+    pub content_type: String,
+    pub retry_after: Option<String>,
+}
+
+impl Head {
+    pub(crate) fn of(response: &reqwest::Response) -> Self {
+        let text_header = |name: header::HeaderName| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        Self {
+            final_url: response.url().to_string(),
+            status: response.status().as_u16(),
+            content_type: text_header(header::CONTENT_TYPE)
+                .map(|value| {
+                    value
+                        .split(';')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_ascii_lowercase()
+                })
+                .unwrap_or_default(),
+            retry_after: text_header(header::RETRY_AFTER),
+        }
+    }
+}
+
+/// Asks for `address` as the app, following redirects on the same site
+/// (see [`redirect_target`]), within `timeout` for the whole answer: the
+/// address asked, and the answer whose body is still to be read.
+pub(crate) async fn request(
+    address: &str,
+    accept: &str,
+    timeout: Duration,
+) -> Result<(Url, reqwest::Response), String> {
     let url = Url::parse(address.trim()).map_err(|_| "That is not a web address.".to_owned())?;
     if !is_allowed(&url) {
         return Err("This app does not read that address.".to_owned());
     }
-    let client = client().map_err(|error| error.to_string())?;
+    let client = client(timeout).map_err(|error| error.to_string())?;
     let started = Instant::now();
     let mut at = url.clone();
     let mut redirects = 0;
-    let mut response = loop {
-        let left = TIMEOUT.saturating_sub(started.elapsed());
+    let response = loop {
+        let left = timeout.saturating_sub(started.elapsed());
         if left.is_zero() {
             return Err("The site did not answer in time.".to_owned());
         }
         let response = client
             .get(at.clone())
-            .header(
-                header::ACCEPT,
-                "text/html, application/json;q=0.9, application/xml;q=0.8, text/*;q=0.5",
-            )
+            .header(header::ACCEPT, accept)
             .timeout(left)
             .send()
             .await
@@ -159,46 +229,7 @@ pub async fn fetch_page(address: &str) -> Result<FetchedPage, String> {
         redirects += 1;
         at = next;
     };
-    let status = response.status().as_u16();
-    let final_url = response.url().to_string();
-    let text_header = |name: header::HeaderName| {
-        response
-            .headers()
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned)
-    };
-    let content_type = text_header(header::CONTENT_TYPE)
-        .map(|value| {
-            value
-                .split(';')
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase()
-        })
-        .unwrap_or_default();
-    let retry_after = text_header(header::RETRY_AFTER);
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "The answer was cut off.".to_owned())?
-    {
-        let room = MAX_FETCHED_BYTES - body.len();
-        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
-        if body.len() >= MAX_FETCHED_BYTES {
-            break;
-        }
-    }
-    Ok(FetchedPage {
-        url: url.to_string(),
-        final_url,
-        status,
-        content_type,
-        text: String::from_utf8_lossy(&body).into_owned(),
-        retry_after,
-    })
+    Ok((url, response))
 }
 
 #[cfg(test)]

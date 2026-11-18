@@ -414,6 +414,12 @@ export interface ListedPack {
    * none recorded. Absent (an older shell) counts as false.
    */
   personalUse?: boolean;
+  /**
+   * The system the game is for, such as a console (its manifest's
+   * `system`), as the site it was read from names it. Absent when the
+   * manifest names none, or from an older shell.
+   */
+  system?: string;
 }
 
 /** A pack that is not shown because another with the same id is. */
@@ -487,6 +493,11 @@ export interface SaveImportRequest {
    * base64, written into the pack folder with the pack.
    */
   pictures?: Record<string, string>;
+  /**
+   * Whole pictures of maps cut for this import (`ImportSuccess.cutPictures`),
+   * each moved into the pack's `tiles/<folder>/`.
+   */
+  cutPictures?: { picture: string; folder: string }[];
 }
 
 /** What the shell found when it looked at the import window. */
@@ -892,6 +903,32 @@ export interface PackFileProgress {
   cancelling: boolean;
 }
 
+/** One answer to {@link DesktopBridge.tiles.fetchPicture}. */
+export interface ShellFetchedPicture {
+  url: string;
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  retryAfter: string | null;
+  /** The shell's name of the picture it kept, for a successful answer it kept whole. */
+  picture: string | null;
+  /** The answer was larger than the shell keeps, so it was not kept. */
+  tooLarge: boolean;
+}
+
+/** What {@link DesktopBridge.tiles.cutPicture} gave. */
+export interface ShellPictureCut {
+  ok: boolean;
+  width: number;
+  height: number;
+  maxZoom: number;
+  tileSize: number;
+  extension: string;
+  /** Why it was not cut: `format`, `size`, `missing` or `failed`. */
+  problem: string | null;
+  message: string | null;
+}
+
 /** One answer to {@link DesktopBridge.tiles.fetchPage}. */
 export interface ShellFetchedPage {
   url: string;
@@ -934,6 +971,16 @@ export interface DesktopBridge {
      * whatever its status. Rejects when the site could not be reached.
      */
     fetchPage(url: string): Promise<ShellFetchedPage>;
+    /**
+     * Reads one whole picture of a map for an importer, as the app, and
+     * keeps it until it is cut (`ImportContext.wholePicture`): the answer,
+     * whatever its status. Rejects when the site could not be reached.
+     */
+    fetchPicture(url: string): Promise<ShellFetchedPicture>;
+    /** Cuts a picture `fetchPicture` kept into map images, as "New game" does. */
+    cutPicture(picture: string): Promise<ShellPictureCut>;
+    /** Throws away kept pictures and cuts that no saved import names. */
+    discardPictures(pictures: string[]): Promise<void>;
     /** "Download location photos": the pictures a pack lists to be fetched later. */
     photosPlan(packId: string): Promise<PhotoPlan>;
     photosStart(packId: string): Promise<DownloadSnapshot>;
@@ -1251,6 +1298,9 @@ function noDownloads(): DesktopBridge['tiles'] {
     pictureTiles: missing,
     cancelPicture: missing,
     fetchPage: missing,
+    fetchPicture: missing,
+    cutPicture: missing,
+    discardPictures: missing,
     photosPlan: missing,
     photosStart: missing,
     photosStartAgain: missing,
@@ -1302,6 +1352,9 @@ export function createBridge(invoke: Invoke): DesktopBridge {
           pictureTiles: (request) => call('picture_tiles', { request }),
           cancelPicture: () => call('picture_cancel'),
           fetchPage: (url) => call('import_fetch', { url }),
+          fetchPicture: (url) => call('import_fetch_picture', { url }),
+          cutPicture: (picture) => call('import_cut_picture', { picture }),
+          discardPictures: (pictures) => call('import_discard_pictures', { pictures }),
           photosPlan: (packId) => call('photos_plan', { packId }),
           photosStart: (packId) => call('photos_start', { packId }),
           photosStartAgain: (packId) => call('photos_start_again', { packId }),

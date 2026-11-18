@@ -190,6 +190,10 @@ pub struct ListedPack {
     pub made_in_app: bool,
     /// The game is kept for personal use (its manifest's `personalUse`).
     pub personal_use: bool,
+    /// The system the game is for, such as a console (its manifest's
+    /// `system`); left out when it names none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -334,6 +338,44 @@ pub struct SaveImport {
     /// whose bytes are not of the type its name says is refused.
     #[serde(default)]
     pub pictures: BTreeMap<String, String>,
+    /// Whole pictures of maps the app cut for this import (see
+    /// `picturecuts.rs`), each moved from the hidden folder of cuts into
+    /// the pack's `tiles/<folder>/`, in place of what was there.
+    #[serde(default)]
+    pub cut_pictures: Vec<CutPictureUse>,
+}
+
+/// A cut an import's layer uses: the app's name of the cut, and the folder
+/// of the pack's `tiles/` it goes in.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutPictureUse {
+    pub picture: String,
+    pub folder: String,
+}
+
+/// The hidden folder of the maps folder that holds cuts until their import
+/// is saved (`picturecuts::CUTS_DIR`).
+const CUTS_DIR: &str = ".importing-picture-cuts";
+
+/// Whether a cut's name and folder are of the forms the importer contract
+/// gives them (`CUT_PICTURE_PATTERN` and `CUT_FOLDER_PATTERN`).
+fn usable_cut(cut: &CutPictureUse) -> bool {
+    let name = &cut.picture;
+    let folder = &cut.folder;
+    (1..=64).contains(&name.len())
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && (1..=100).contains(&folder.len())
+        && folder
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && folder
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
 /// The pictures of an import, checked: each a picture file of a type the
@@ -650,6 +692,7 @@ impl Library {
                 pages: head.pages,
                 made_in_app: head.made_in_app,
                 personal_use: head.personal_use,
+                system: head.system,
             });
             true
         };
@@ -1193,6 +1236,15 @@ impl Library {
             return Err("The pack is too large.".to_owned());
         }
         let pictures = import_pictures(&request.pictures)?;
+        let cuts = self.maps_folder().join(CUTS_DIR);
+        for cut in &request.cut_pictures {
+            if !usable_cut(cut) || !is_real_dir(&cuts.join(&cut.picture)) {
+                return Err(format!(
+                    "The map images for tiles/{} are not there any more, so the game was not saved. Read the page again.",
+                    cut.folder
+                ));
+            }
+        }
         let manifest = request
             .files
             .get(MANIFEST_FILE)
@@ -1263,6 +1315,23 @@ impl Library {
             tiles_before.remove(&layer);
         }
         written?;
+
+        // The map images of whole pictures cut for this import.
+        for cut in &request.cut_pictures {
+            let target = dir.join(crate::owngame::TILES_DIR).join(&cut.folder);
+            let moved = fs::create_dir_all(dir.join(crate::owngame::TILES_DIR))
+                .and_then(|()| match fs::symlink_metadata(&target) {
+                    Ok(_) => fs::remove_dir_all(&target),
+                    Err(_) => Ok(()),
+                })
+                .and_then(|()| move_tree(&cuts.join(&cut.picture), &target));
+            if let Err(error) = moved {
+                return Err(format!(
+                    "Could not keep the map images of tiles/{}: {error}",
+                    cut.folder
+                ));
+            }
+        }
 
         // Pictures the pack no longer lists (another name after a page was
         // read again, or a picture no page shows any more), with what was
@@ -2493,7 +2562,55 @@ mod tests {
             .into(),
             refresh_bundled: false,
             pictures: BTreeMap::new(),
+            cut_pictures: Vec::new(),
         }
+    }
+
+    #[test]
+    fn moves_the_cut_whole_pictures_into_the_pack_and_refuses_a_cut_that_is_gone() {
+        let s = setup("library-import-cuts", Vec::new());
+        let cuts = s.library.maps_folder().join(CUTS_DIR);
+        let cut = |name: &str| {
+            let at = cuts.join(name).join("0/0");
+            fs::create_dir_all(&at).unwrap();
+            fs::write(at.join("0.jpg"), name).unwrap();
+        };
+        cut("a1-0");
+        let mut request = import("strips", "list");
+        request.cut_pictures = vec![CutPictureUse {
+            picture: "a1-0".into(),
+            folder: "stage-1".into(),
+        }];
+        let dir = s.library.save_import(&request).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("tiles/stage-1/0/0/0.jpg")).unwrap(),
+            "a1-0"
+        );
+        assert!(!cuts.join("a1-0").exists());
+        // A new cut for the same folder takes the place of the old one, whole.
+        cut("b2-0");
+        fs::write(dir.join("tiles/stage-1/0/0/1.jpg"), "old").unwrap();
+        request.cut_pictures[0].picture = "b2-0".into();
+        s.library.save_import(&request).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("tiles/stage-1/0/0/0.jpg")).unwrap(),
+            "b2-0"
+        );
+        assert!(!dir.join("tiles/stage-1/0/0/1.jpg").exists());
+        // A cut that is not there, or a name or folder of another form: nothing is saved.
+        for (picture, folder) in [("c3-0", "stage-2"), ("../x", "stage-2"), ("b2-0", "../up")] {
+            let mut bad = import("strips", "other");
+            bad.cut_pictures = vec![CutPictureUse {
+                picture: picture.into(),
+                folder: folder.into(),
+            }];
+            assert!(s.library.save_import(&bad).is_err(), "{picture} {folder}");
+        }
+        assert!(s
+            .library
+            .saved_source("strips", "demo-maps", "other")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

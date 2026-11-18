@@ -105,6 +105,18 @@ describe('pack descriptions (manifest version 2)', () => {
     ).toBe(false);
   });
 
+  it('keeps the system the game is for, and drops one that cannot be read', () => {
+    const pack = makeFixturePack();
+    const first = describePack(pack, { updated: '2026-11-10T12:00:00Z', writtenBy });
+    expect('system' in first).toBe(false);
+    const named = { ...pack, manifest: { ...first, system: 'Saltbox 64' } };
+    const manifest = describePack(named, { updated: '2026-11-11T12:00:00Z', writtenBy });
+    expect(manifest.system).toBe('Saltbox 64');
+    expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
+    const odd = manifestSchema.parse({ ...manifest, system: 64 });
+    expect(odd.schemaVersion === 2 && odd.system).toBeUndefined();
+  });
+
   it('still reads version 1 manifests, without descriptive fields', () => {
     const { manifest } = makeFixturePack();
     expect(manifest.schemaVersion).toBe(1);

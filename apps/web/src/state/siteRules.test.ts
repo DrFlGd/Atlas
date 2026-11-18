@@ -36,6 +36,10 @@ describe('the address of a saved page', () => {
     expect(httpsAddress(' https://guide.example.org/cove/one#top ')).toBe(
       'https://guide.example.org/cove/one',
     );
+    // An address the person gives keeps it: on a list page of maps it names the game.
+    expect(httpsAddress('https://maps.example.org/atlas/saltbox/index.html#Emberfall', true)).toBe(
+      'https://maps.example.org/atlas/saltbox/index.html#Emberfall',
+    );
     expect(httpsAddress('http://guide.example.org/cove/one')).toBeNull();
     expect(httpsAddress('/cove/one')).toBeNull();
     expect(httpsAddress('')).toBeNull();
@@ -180,6 +184,60 @@ describe('what the reader understood of a saved page, in words', () => {
     );
     expect(foundLine({ can: [], cannot: [], byName: true })).toBeUndefined();
     expect(foundLine(undefined)).toBeUndefined();
+  });
+
+  it('says what a list page of maps that are whole pictures holds, and what would be left out', () => {
+    expect(
+      trialInWords(
+        trial({
+          part: 0,
+          type: 'map',
+          game: 'Emberfall',
+          map: {
+            wholePictures: true,
+            maps: {
+              count: 3,
+              listed: [
+                {
+                  name: 'Harbour',
+                  width: 4096,
+                  height: 1200,
+                  locations: 0,
+                  described: 0,
+                  linked: 0,
+                  pictured: 0,
+                  outside: 0,
+                  image: 'https://maps.example.org/atlas/saltbox/Emberfall-Harbour.png',
+                  credit: 'Ana',
+                },
+                {
+                  name: 'Saltmarsh (Past): North',
+                  width: 0,
+                  height: 0,
+                  locations: 0,
+                  described: 0,
+                  linked: 0,
+                  pictured: 0,
+                  outside: 0,
+                  leftOut: 'It would be left out: its picture is a GIF, which this app cannot cut.',
+                },
+              ],
+            },
+            types: { count: 0, first: [] },
+            locations: { count: 0, first: [] },
+          },
+        }),
+      ),
+    ).toEqual([
+      'Part 1 of the file read it, as a list of maps that are whole pictures.',
+      'The game is “Emberfall”.',
+      'It lists 3 maps. 1 map below would be left out, as it says.',
+      '“Harbour”, 4,096 × 1,200 pixels, by Ana.',
+      'Its picture: https://maps.example.org/atlas/saltbox/Emberfall-Harbour.png',
+      '“Saltmarsh (Past): North”, its size not given. It would be left out: its picture is a GIF, which this app cannot cut.',
+      '1 other map is not listed here.',
+      'No picture was asked for: each is asked for when the game is read.',
+    ]);
   });
 
   it('says nothing when no part read the page: its problems say why', () => {

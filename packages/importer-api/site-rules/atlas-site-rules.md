@@ -15,7 +15,7 @@ A site rules file is one JSON file that describes one site to the Atlas Importer
 
 **Words used here.** A _part_ is one map, wiki or guide of a site. A _reader_ is the piece of the Importer that reads a part. A _location_ is a point on a map, and each location has a _type_ (item, enemy, boss and so on). A _session_ is one run of reading pages.
 
-**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved: a file whose site one of the Importer's own readers reads can be tried as well as one read by `rules`, if the Importer can try it. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. `mapLinks` of a wiki or guide part (see "Links to a location of a map") came later, also without a new version: an Importer from before it refuses a file that has it, naming the field. So did `menu` and `pagesInOrder` of a wiki or guide part (see "The menu of a wiki"), and then `keepOff` and `permission` of `reading` (see "Addresses the app keeps off, and a permission from the site"), last. Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
+**State of this version.** The format, its JSON Schema and the check of a file's form are part of the Importer. The parts read by a built-in reader are read as this guide says, and so are the wiki and guide parts read by `rules`, the general reader. So are the map parts read by `rules`, whose data is read by the Importer itself. "Try on a saved page" under Settings, "Sites" tries a file on one page the owner saved, or a map part on a data file the owner saved: a file whose site one of the Importer's own readers reads can be tried as well as one read by `rules`, if the Importer can try it. The `layout` section of a wiki or guide part came later than the rest of version 1, without a new version: an Importer from before it refuses a file that has one, naming the field. The section "Checking the layout" came later still, and changes nothing in the format. `mapLinks` of a wiki or guide part (see "Links to a location of a map") came later, also without a new version: an Importer from before it refuses a file that has it, naming the field. So did `menu` and `pagesInOrder` of a wiki or guide part (see "The menu of a wiki"), then `keepOff` and `permission` of `reading` (see "Addresses the app keeps off, and a permission from the site"), and last the map part of pictures listed on a page, with its piece `{system}` (see "Maps that are whole pictures listed on a page"). Where this guide and the released Importer differ, the guide that ships with that Importer wins (Settings, "Sites", "Save the guide…").
 
 **Who decides.** The owner checks every file by hand before switching it on. A file states the site's limits: which pages, which ways of reading, which pause, which licence, or that the site is not read at all. The files that come with the Importer state the limits the owner has accepted so far, and a file of the owner's that is switched on wins over them for its site. Some things are no site's to decide and no file can change them: the app's honest name `Atlas/<version>`, the app's own shortest pause, stopping at the first refusal, never answering a check that asks whether the reader is a person, and never using a window's cookies. When the app reads by itself it follows the site's live `robots.txt`. A file can only add to that (`reading.keepOff`), except where the site itself told the owner that the app may read some addresses by itself: a file of the owner's then records who said so, when, and which addresses (`reading.permission`).
 
@@ -407,7 +407,7 @@ A site that holds guides for many games, each under its own path, needs one file
 - Each game is a game of its own in Atlas. Its id is made from the site's `id` and the pieces, so it stays the same at every read. `site.game` is left out.
 - `game` (optional) reads the game's name from a page: `name` is a selector, `nameEnd` text to cut from the end of its words. Without it, the name is made from the piece (`lantern-quest` becomes "Lantern Quest").
 - A part whose `start` holds `{guide}` is one guide per address, such as a guide written as one long page. Each such guide is a game of its own, named by its title.
-- The pieces are `{game}` and `{guide}` only. A file with no piece describes one site and one game, as before.
+- The pieces of a wiki or guide part are `{game}` and `{guide}` only. A file with no piece describes one site and one game, as before. A map part has `{game}` and `{map}` (see "The general reader for a map"), and a map part of pictures listed on a page `{system}` and `{game}` (see "Maps that are whole pictures listed on a page").
 
 ## The layout of the pages
 
@@ -992,6 +992,82 @@ Nothing else is worked out: no formula, no condition, no sum of fields. Check th
 The licence block of a map part is recorded with the game as the source of its data: a known licence or the words filled in are written under the map's credit, and `ask` records none and asks nothing, as for the maps of the Importer's other readers. `pictures.hosts` names the hosts of the images and of the locations' pictures; the other fields of `pictures` are for pages and are not used.
 
 **One file for a site with a wiki and a map.** Write both parts in one file. They become two games of the same name: the wiki's pages and the map. The Importer offers to show them under one title, and the links of locations to the wiki's pages then lead to those pages in Atlas.
+
+## Maps that are whole pictures listed on a page
+
+Some map sites keep each map as one whole picture, and list a game's pictures in a table on one page: one row a map, with a link to its picture, its name, its size and who made it. A map part read by `rules` of this second form holds `list` in place of `data`, `maps`, `types`, `locations` and `position`. Each picture becomes one map of the game, with no locations, types or areas: the owner adds their own in Atlas. The Importer asks for the list page, and then for each picture, by itself and one at a time, after the site's `robots.txt`, with the pause, under the app's own name, and it stops at the first refusal. It cuts each picture into map images with levels further out, as "New game" does with a picture the owner picks, so a picture is read once and never again at a later read of the game.
+
+```json
+{
+  "format": "atlas-site-rules",
+  "version": 1,
+  "site": {
+    "id": "example-map-atlas",
+    "name": "Example Map Atlas",
+    "hosts": ["maps.example.org"],
+    "notice": "The pictures belong to their makers and the games' copyright holders. They are kept for your own use."
+  },
+  "parts": [
+    {
+      "type": "map",
+      "reader": "rules",
+      "start": "/atlas/{system}/index.html#{game}",
+      "game": { "name": "tr.heading > td:first-child", "nameEnd": " maps" },
+      "list": {
+        "block": "table",
+        "rows": "tr",
+        "picture": "td:nth-child(-n+2) a[href]",
+        "name": ["td:nth-child(1)", "td:nth-child(2)"],
+        "size": "td:nth-child(3)",
+        "credit": "td:nth-child(5)",
+        "notice": "tr.heading > td:nth-child(2)"
+      },
+      "reading": { "ways": ["fetch"], "pause": 3 },
+      "licence": { "ask": true }
+    }
+  ]
+}
+```
+
+The list page this part reads would look like this (made up, shortened). Its address is `https://maps.example.org/atlas/saltbox/index.html#Emberfall`:
+
+```text
+<table>
+  <tr><td colspan="5"><a name="Emberfall"><img src="titles/emberfall.png"></a></td></tr>
+  <tr class="heading"><td>Emberfall maps</td><td>© 2031 Example Games</td></tr>
+  <tr><td><a href="Emberfall-Harbour.png">Harbour</a></td><td>Harbour</td>
+      <td>4096 x 1200</td><td>PNG</td><td><a href="https://example.org/~ana">Ana</a></td></tr>
+  <tr><td>Saltmarsh (Past)</td><td><a href="Emberfall-Saltmarsh-North.png">North</a></td>
+      <td>2048 x 2048</td><td>PNG</td><td>Ben</td></tr>
+</table>
+```
+
+It gives one game, "Emberfall", with two maps in the page's order: "Harbour", and "Saltmarsh (Past): North".
+
+**`start` and its pieces.** `start` is the address of the list page. Its piece `{system}` stands for one whole part of the path, as `{game}` does in other parts: one file reads the lists of every system of the site. `{game}` may stand in the path as well, or after `#` as the address's fragment, written exactly `#{game}`: the game is then the anchor on the list page that the owner's address points at. The owner gives the address of the list page with the game's anchor, such as `https://maps.example.org/atlas/saltbox/index.html#Emberfall`; the Importer asks for the page without its fragment. Without `{game}`, the page lists one game, named by `site.game`.
+
+**`list`**
+
+| Field     | Needed | Form                                         | Meaning                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------- | ------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `block`   | yes    | selector                                     | The element that holds one game's maps, such as `table`. The Importer finds the game's anchor (the element whose `id` is `{game}`, or the link whose `name` is), and takes the nearest element around it that `block` matches. A game with several such blocks has them all, in the page's order. Without `{game}`, the first element `block` matches                                                  |
+| `rows`    | yes    | selector, tried inside the block             | Each element that may be one map, such as `tr`. A row in which `picture` finds no link is not a map, and is passed over without a word (a heading row, say). A row inside another block within the block is that block's, not this one's                                                                                                                                                               |
+| `picture` | yes    | selector, tried inside the row               | The link to the map's whole picture. The first link it finds counts, and its `href` is read against the address of the list page. The picture must be on one of `site.hosts` or `pictures.hosts`                                                                                                                                                                                                       |
+| `name`    | yes    | selector, or a list of two selectors         | The map's name: the words of the element. With two, the first names a group and the second the map, and the map's name is "Group: Map". Where the two say the same, or one says nothing, the name is the one that says it, and where the map's words begin with the group's ("Harbour (Night)" in the group "Harbour"), the map's words alone. Words on several lines of a cell are joined with spaces |
+| `size`    | no     | selector, tried inside the row               | The picture's size in pixels, as the page writes it: two whole numbers, such as `4096 x 1200`. A picture too large for the Importer to cut is then left out before it is asked for                                                                                                                                                                                                                     |
+| `credit`  | no     | selector, tried inside the row               | Who made the map: the words of the element, and its link when that is a web address. The credit is kept with the map, where the game's sources are shown. An e-mail address is never kept                                                                                                                                                                                                              |
+| `notice`  | no     | selector, tried inside the block             | The game's copyright line, kept with the game's source                                                                                                                                                                                                                                                                                                                                                 |
+| `system`  | no     | text, or an object with `name` and `nameEnd` | The name of the system (a console, say) the game is for, kept with the game. Text names it for a part whose `start` holds no `{system}`. `{ "name": "<selector>", "nameEnd": "…" }` reads it from the whole list page. Without it, or when its selector finds nothing, the words of `{system}` are the name, when `start` holds it                                                                     |
+
+`game` (optional) reads the game's name from the block, as in "One file for every game of a site": `name` is a selector tried inside the block, `nameEnd` text cut from the end of its words. Without it, the name is made from `{game}`.
+
+The selectors of `list` count the cells of a row (`td:nth-child(3)`), which "Selectors" asks you to avoid. A table of maps gives each column one meaning and no name, so here counting is right: check every selector on the saved list page, on two or three games. A selector tried inside the row or the block sees only what that element holds, never the page around it: `td a` inside a row finds a link in a cell of the row, and not the row's other links through a cell of a table the page is laid out in.
+
+- `reading.ways` offers `fetch` only. The list and its pictures are not read in a window or as the owner browses.
+- Pictures the Importer cannot cut are left out, and the Importer says which and why, in one sentence each: a picture larger than 268 million pixels in all or 65,535 pixels a side, or one that is not a PNG, JPEG or WebP picture (a GIF, say). The rest of the game is still made.
+- The licence block applies as for a wiki: with `"ask": true` the owner is asked once for the site, and the answer is kept with the game. Write the site's own words about its pictures in `site.notice`, so the owner reads them when the file is added.
+- The title picture of a game, and any other picture of the list page that no row's `picture` names, is never asked for.
+- "Try on a saved page" tries such a part on a list page the owner saved. Give it the address the page was saved from, with the game's anchor: the trial says which game it found, every map with its name and size, and which pictures would be left out and why. Without the anchor, it names the first anchors the page has.
 
 ## Selectors, address patterns and data paths
 

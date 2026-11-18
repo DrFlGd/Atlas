@@ -782,12 +782,16 @@ export function canonicalAddressOf(html: string): string | null {
   return null;
 }
 
-/** A whole `https` address, without its fragment; null for anything else. */
-export function httpsAddress(text: string): string | null {
+/**
+ * A whole `https` address, without its fragment; null for anything else.
+ * With `fragment`, an address the person gives keeps its fragment: on a
+ * list page of maps it names the game (`#{game}` of a map part's start).
+ */
+export function httpsAddress(text: string, fragment = false): string | null {
   try {
     const url = new URL(text.trim());
     if (url.protocol !== 'https:' || !url.hostname) return null;
-    url.hash = '';
+    if (!fragment) url.hash = '';
     return url.href;
   } catch {
     return null;
@@ -881,7 +885,7 @@ export async function trySavedPage(entry: Pick<SiteEntry, 'key' | 'title'>): Pro
 
 /** The address the person gave for a saved page without a canonical link. */
 export async function tryWithAddress(text: string): Promise<boolean> {
-  const address = httpsAddress(text);
+  const address = httpsAddress(text, true);
   if (!address) return false;
   await runTrial(address);
   return true;
@@ -1107,6 +1111,7 @@ function foundInWords({ can, cannot, byName }: SiteMapTrialFound): string | null
 
 /** What the reader found in a saved data file, in plain sentences. */
 function mapTrialInWords(part: number, game: string | undefined, map: SiteMapTrial): string[] {
+  if (map.wholePictures) return pictureTrialInWords(part, game, map);
   const lines = [`Part ${part + 1} of the file read it, as the data of a map.`];
   if (game) lines.push(`The game is “${game}”.`);
   const { maps, types, locations } = map;
@@ -1152,6 +1157,37 @@ function mapTrialInWords(part: number, game: string | undefined, map: SiteMapTri
       ? 'Every position falls inside its map.'
       : 'Not every position falls inside its map: the maps above say how many fall outside.',
   );
+  return lines;
+}
+
+/** What a trial found on a list page of maps that are whole pictures, as the lines of the answer. */
+function pictureTrialInWords(part: number, game: string | undefined, map: SiteMapTrial): string[] {
+  const lines = [
+    `Part ${part + 1} of the file read it, as a list of maps that are whole pictures.`,
+  ];
+  if (game) lines.push(`The game is “${game}”.`);
+  const { maps } = map;
+  const left = maps.listed.filter((one) => one.leftOut).length;
+  lines.push(
+    left > 0
+      ? `It lists ${plural(maps.count, 'map')}. ${plural(left, 'map')} below would be left out, as ${left === 1 ? 'it says' : 'each says'}.`
+      : `It lists ${plural(maps.count, 'map')}.`,
+  );
+  for (const one of maps.listed) {
+    const size =
+      one.width > 0 && one.height > 0
+        ? `, ${one.width.toLocaleString('en')} × ${one.height.toLocaleString('en')} pixels`
+        : ', its size not given';
+    const credit = one.credit ? `, by ${one.credit}` : '';
+    lines.push(`“${one.name}”${size}${credit}.${one.leftOut ? ` ${one.leftOut}` : ''}`);
+    if (one.image) lines.push(`Its picture: ${one.image}`);
+  }
+  if (maps.listed.length < maps.count) {
+    lines.push(
+      `${plural(maps.count - maps.listed.length, 'other map')} ${maps.count - maps.listed.length === 1 ? 'is' : 'are'} not listed here.`,
+    );
+  }
+  lines.push('No picture was asked for: each is asked for when the game is read.');
   return lines;
 }
 

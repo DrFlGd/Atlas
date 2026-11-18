@@ -350,6 +350,26 @@ export interface ImportContext {
    * offer it, or a page it does not lay out, is read as before.
    */
   layOut?(page: PageLayoutRequest): Promise<string | null>;
+  /**
+   * Optional: fetches one whole picture of a map and cuts it into map
+   * images with levels further out, as "New game" cuts a picture the person
+   * picks, for an importer whose site keeps each map as one picture (see
+   * {@link WholePictureRequest}). Only an app that downloads offers it, in
+   * its desktop builds; an importer must check that it is there.
+   *
+   * The app asks for the picture as it asks for every page it reads by
+   * itself in a go: never an address the site's rules file keeps it off,
+   * the site's live `robots.txt` first, its own pause before the request,
+   * its own name (`Atlas/<version>`), no cookies, and redirects on the same
+   * site only. A refusal (see {@link refusalOf}), or an address `robots.txt`
+   * does not allow that no permission covers, ends the answer with
+   * `stop`: the importer then stops too, with a failure that has `stop`,
+   * and the app reads no more of the go. One picture at a time; it never
+   * rejects. Nothing is written into a pack until the importer names the
+   * cut in {@link ImportSuccess.cutPictures} and the pack is saved; a cut
+   * no saved pack names is thrown away.
+   */
+  wholePicture?(request: WholePictureRequest): Promise<WholePicture>;
 }
 
 /** The sizes the pictures of a site's pages can be kept at (see {@link ImportContext.pictureSize}). */
@@ -534,6 +554,123 @@ export function checkPictureTiles(
   const hasStart = parsed.data.present.some(([x, y]) => x === startX && y === startY);
   if (!hasStart && fromPage === 0) return null;
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// A map that is one whole picture (optional)
+
+/**
+ * The longest side of a picture the app cuts into a map (the cutter of "New
+ * game"): a long thin picture is taken up to this, within
+ * {@link WHOLE_PICTURE_MAX_PIXELS}. The desktop shell enforces the same.
+ */
+export const WHOLE_PICTURE_MAX_SIDE = 65_535;
+/** The most pixels a picture the app cuts into a map may have: 16,384 × 16,384. */
+export const WHOLE_PICTURE_MAX_PIXELS = 16_384 * 16_384;
+/** The shortest side of a picture the app cuts into a map. */
+export const WHOLE_PICTURE_MIN_SIDE = 16;
+/** The edge of the map images a whole picture is cut into. */
+export const WHOLE_PICTURE_TILE_SIZE = 256;
+
+/** What an importer asks {@link ImportContext.wholePicture}. */
+export interface WholePictureRequest {
+  /**
+   * The picture's address: `https` (plain `http` only on this computer,
+   * for tests), with no user name or password, on the site of the page
+   * being read or on a host its rules file names for pictures.
+   */
+  url: string;
+}
+
+/**
+ * Why a whole picture was not cut:
+ *
+ * - `stop`: the site refused, asked to slow down, or its `robots.txt` does
+ *   not allow the address; `message` says which, and the go ends.
+ * - `kept-off`: the site's rules file keeps the app off the address.
+ * - `missing`: the site has no picture there (404, 410, another answer
+ *   that is not a picture, or none at all).
+ * - `format`: the file is not a PNG, JPEG or WebP picture.
+ * - `size`: the picture is larger than {@link WHOLE_PICTURE_MAX_SIDE} or
+ *   {@link WHOLE_PICTURE_MAX_PIXELS}, or smaller than
+ *   {@link WHOLE_PICTURE_MIN_SIDE}; `width` and `height` say how large.
+ * - `failed`: anything else, such as a damaged picture or a full disk.
+ * - `cancelled`: the session was stopped meanwhile.
+ */
+export type WholePictureProblem =
+  'stop' | 'kept-off' | 'missing' | 'format' | 'size' | 'failed' | 'cancelled';
+
+/** What {@link ImportContext.wholePicture} gave. */
+export type WholePicture =
+  | {
+      ok: true;
+      /** The app's name for the cut, to name in {@link ImportSuccess.cutPictures}. */
+      picture: string;
+      width: number;
+      height: number;
+      /** The level at which one map image pixel is one pixel of the picture; levels go from 0. */
+      maxZoom: number;
+      /** {@link WHOLE_PICTURE_TILE_SIZE}. */
+      tileSize: number;
+      /** The map images' files: `jpg`, or `png` for a picture with transparency. */
+      extension: 'jpg' | 'png';
+    }
+  | {
+      ok: false;
+      problem: WholePictureProblem;
+      /** One plain sentence for the person, about the picture. */
+      message: string;
+      width?: number;
+      height?: number;
+    };
+
+/** A cut a pack's layer uses (see {@link ImportSuccess.cutPictures}). */
+export interface CutPictureUse {
+  /** The app's name for the cut ({@link WholePicture}). */
+  picture: string;
+  /**
+   * The folder of the pack's `tiles/` it goes in: the layer whose
+   * `tiles.url` is `tiles/<folder>/{z}/{x}/{y}.<extension>` shows it.
+   * Letters, digits, `_`, `.` and `-`, starting with a letter or digit.
+   */
+  folder: string;
+}
+
+/** The form of a cut's folder ({@link CutPictureUse.folder}). */
+export const CUT_FOLDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
+/** The form of the app's name for a cut ({@link CutPictureUse.picture}). */
+export const CUT_PICTURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** Cuts one import names at most. */
+export const MAX_CUT_PICTURES = 500;
+
+/**
+ * The cuts of an import as the app takes them (see
+ * {@link ImportSuccess.cutPictures}): each named once, each folder once and
+ * the folder of a layer of `pack` whose tiles are `tiles/<folder>/{z}/{x}/{y}`
+ * with a `jpg` or `png` extension, at most {@link MAX_CUT_PICTURES}, in the
+ * order given; anything else is left out.
+ */
+export function cutPicturesOf(value: unknown, pack: PackData): CutPictureUse[] {
+  if (!Array.isArray(value)) return [];
+  const folders = new Set(
+    pack.layers.flatMap((layer) => {
+      if (layer.tiles.type !== 'xyz') return [];
+      const found = /^tiles\/([^/]+)\/\{z\}\/\{x\}\/\{y\}\.(?:jpg|png)$/.exec(layer.tiles.url);
+      return found ? [found[1]!] : [];
+    }),
+  );
+  const kept: CutPictureUse[] = [];
+  for (const entry of value as unknown[]) {
+    if (kept.length >= MAX_CUT_PICTURES) break;
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { picture, folder } = entry as { picture?: unknown; folder?: unknown };
+    if (typeof picture !== 'string' || typeof folder !== 'string') continue;
+    if (!CUT_PICTURE_PATTERN.test(picture) || !CUT_FOLDER_PATTERN.test(folder)) continue;
+    if (!folders.has(folder)) continue;
+    if (kept.some((k) => k.picture === picture || k.folder === folder)) continue;
+    kept.push({ picture, folder });
+  }
+  return kept;
 }
 
 // ---------------------------------------------------------------------------
@@ -867,7 +1004,18 @@ export interface ImportSummary {
    * field and refuse a summary that has it.
    */
   picture?: PictureSummary;
+  /**
+   * What the importer left out of what the page lists, one plain sentence
+   * each (a picture too large to cut, say), at most
+   * {@link MAX_LEFT_OUT_SENTENCES}; the app shows them with the figures.
+   * Set it only when the context has {@link ImportContext.wholePicture}:
+   * apps without it do not know this field and refuse a summary that has it.
+   */
+  leftOut?: string[];
 }
+
+/** Sentences of {@link ImportSummary.leftOut} the app takes at most. */
+export const MAX_LEFT_OUT_SENTENCES = 200;
 
 export interface ImportSuccess {
   ok: true;
@@ -936,6 +1084,15 @@ export interface ImportSuccess {
    * have no `remote`: the app's own picture download never runs for them.
    */
   pictureFiles?: PictureFile[];
+  /**
+   * Optional, for maps made from whole pictures
+   * ({@link ImportContext.wholePicture}): the cuts the pack's layers use,
+   * each put into the pack's folder as `tiles/<folder>/` when the pack is
+   * saved, in place of what was there. A map read before keeps its images:
+   * it names no cut. The app leaves out an entry that names no layer of
+   * `pack` (see {@link cutPicturesOf}).
+   */
+  cutPictures?: CutPictureUse[];
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
@@ -1592,6 +1749,7 @@ const summarySchema = z.strictObject({
         .optional(),
     })
     .optional(),
+  leftOut: z.array(z.string().trim().min(1).max(500)).max(MAX_LEFT_OUT_SENTENCES).optional(),
 });
 
 const outcomeSchema = z.discriminatedUnion('ok', [
@@ -1612,6 +1770,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     pageAddress: z.unknown().optional(),
     // Checked against the pack, entry by entry (`pictureFilesOf`).
     pictureFiles: z.unknown().optional(),
+    // Checked against the pack, entry by entry (`cutPicturesOf`).
+    cutPictures: z.unknown().optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
@@ -1761,6 +1921,7 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
     writtenAgain: again,
     pictureFiles: files,
     pageAddress: arrived,
+    cutPictures: cuts,
     ...rest
   } = success;
   const pageAddress = ownAddress(arrived, pageUrl);
@@ -1768,8 +1929,10 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   const links = pageLinks(given, pageAddress ?? pageUrl);
   const writtenAgain = writtenAgainLinks(again, pageUrl);
   const pictureFiles = pictureFilesOf(files, pack.data);
+  const cutPictures = cutPicturesOf(cuts, pack.data);
   return {
     ...rest,
+    ...(cutPictures.length > 0 ? { cutPictures } : {}),
     ...(pageAddress ? { pageAddress } : {}),
     ...(links.length > 0 ? { links } : {}),
     ...(writtenAgain.length > 0 ? { writtenAgain } : {}),

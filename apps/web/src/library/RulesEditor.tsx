@@ -1330,7 +1330,7 @@ function PageAddress({
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
-        const address = httpsAddress(given);
+        const address = httpsAddress(given, true);
         setWrong(!address);
         if (address) {
           setGiven(address);
@@ -1482,9 +1482,11 @@ function TrialResult({
         </div>
       ) : unmatched.length === 0 && trialRead(result) ? (
         <p className="muted small">
-          {result.map
-            ? 'Every data path of the file matched in this data.'
-            : 'Every selector of the file matched on this page.'}
+          {result.map?.wholePictures
+            ? 'Every selector of the file matched on this page.'
+            : result.map
+              ? 'Every data path of the file matched in this data.'
+              : 'Every selector of the file matched on this page.'}
         </p>
       ) : null}
     </div>
@@ -1756,6 +1758,7 @@ function ContentsList({ contents }: { contents: NonNullable<SiteTrial['contents'
 
 /** What a map part found in the data: its maps, types and first locations. */
 function MapResult({ result, map }: { result: SiteTrial; map: SiteMapTrial }) {
+  if (map.wholePictures) return <PictureListResult result={result} map={map} />;
   const { maps, types, locations } = map;
   const outside = maps.listed.reduce((sum, one) => sum + one.outside, 0);
   return (
@@ -1892,6 +1895,75 @@ function MapResult({ result, map }: { result: SiteTrial; map: SiteMapTrial }) {
           </div>
         </div>
       ) : null}
+    </>
+  );
+}
+
+/** What the reader found on a list page of maps that are whole pictures. */
+function PictureListResult({ result, map }: { result: SiteTrial; map: SiteMapTrial }) {
+  const { maps } = map;
+  const left = maps.listed.filter((one) => one.leftOut).length;
+  return (
+    <>
+      <dl className="rules-result-facts" data-testid="rules-result-facts">
+        {result.game ? (
+          <div>
+            <dt>Game</dt>
+            <dd>{result.game}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>It lists</dt>
+          <dd>
+            {count(maps.count, 'map')}, each a whole picture
+            {left > 0 ? `, of which ${count(left, 'map')} below would be left out` : ''}
+          </dd>
+        </div>
+      </dl>
+      <div className="rules-result-block">
+        <h4>Maps</h4>
+        <div className="rules-result-table-wrap">
+          <table className="rules-result-table" data-testid="rules-result-maps">
+            <thead>
+              <tr>
+                <th scope="col">Map</th>
+                <th scope="col">Size in pixels</th>
+                <th scope="col">By</th>
+                <th scope="col">Its picture</th>
+              </tr>
+            </thead>
+            <tbody>
+              {maps.listed.map((one, n) => (
+                <tr key={`${n}:${one.name}`}>
+                  <th scope="row">
+                    {one.name}
+                    {one.leftOut ? <span className="muted small"> · {one.leftOut}</span> : null}
+                  </th>
+                  <td>
+                    {one.width > 0 && one.height > 0
+                      ? `${one.width.toLocaleString('en')} × ${one.height.toLocaleString('en')}`
+                      : 'Not given'}
+                  </td>
+                  <td>{one.credit ?? ''}</td>
+                  <td>
+                    {one.image ? (
+                      <span className="path-inline rules-result-address">{one.image}</span>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {maps.listed.length < maps.count ? (
+          <p className="muted small">
+            {count(maps.count - maps.listed.length, 'other map')} not listed here.
+          </p>
+        ) : null}
+        <p className="muted small">
+          No picture was asked for: each is asked for when the game is read.
+        </p>
+      </div>
     </>
   );
 }

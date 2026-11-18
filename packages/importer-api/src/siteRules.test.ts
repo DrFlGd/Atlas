@@ -74,8 +74,9 @@ describe('the guide', () => {
     // And one file for every game of a site, a refusal, a part with a layout section,
     // a map part read from values of its page, one file for every game and map of a map site,
     // a part with links to a map, a map part with facts every map shares, a part with a menu section,
-    // and a part that keeps the app off addresses and records a permission.
-    expect(blocks.length).toBe(14);
+    // a part that keeps the app off addresses and records a permission,
+    // and a map part of pictures listed on a page.
+    expect(blocks.length).toBe(15);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -843,6 +844,101 @@ describe('checking a file', () => {
     expect(fieldInWords('parts[2]')).toBe('Part 3');
     expect(fieldInWords('parts[0].pages.include[1]')).toBe('Part 1, pages.include, entry 2');
     expect(fieldInWords('site.hosts[0]')).toBe('site.hosts, entry 1');
+  });
+});
+
+describe('a map part of pictures listed on a page', () => {
+  const listed = {
+    type: 'map',
+    reader: 'rules',
+    start: '/atlas/{system}/index.html#{game}',
+    game: { name: 'tr.heading > td:first-child', nameEnd: ' maps' },
+    list: {
+      block: 'table',
+      rows: 'tr',
+      picture: 'td:nth-child(-n+2) a[href]',
+      name: ['td:nth-child(1)', 'td:nth-child(2)'],
+      size: 'td:nth-child(3)',
+      credit: 'td:nth-child(5)',
+      notice: 'tr.heading > td:nth-child(2)',
+      system: { name: 'h1', nameEnd: ' maps' },
+    },
+    reading: { ways: ['fetch'] },
+    licence: { ask: true },
+  };
+  const file = (part: Record<string, unknown>) =>
+    changed((f) => {
+      delete (f.site as Record<string, unknown>).game;
+      (f.site as Record<string, unknown>).hosts = ['maps.example.org'];
+      f.parts = [part];
+    });
+  const listFields = (part: Record<string, unknown>) => {
+    const result = checkSiteRules(file(part));
+    return result.ok ? [] : result.problems.map((problem) => problem.field).sort();
+  };
+
+  it('takes a part whose game is the anchor of the list page, with a system and one name', () => {
+    expect(listFields(listed)).toEqual([]);
+    const oneName = { ...listed.list, name: 'td:first-child', system: 'Saltbox' };
+    expect(
+      listFields({ ...listed, start: '/atlas/saltbox/index.html#{game}', list: oneName }),
+    ).toEqual([]);
+    const result = checkSiteRules(file(listed));
+    expect(result.ok && !isRefusal(result.rules) && 'site' in result.rules).toBe(true);
+  });
+
+  it('takes a page of one game, with the game named in the file', () => {
+    const one = changed((f) => {
+      (f.site as Record<string, unknown>).hosts = ['maps.example.org'];
+      f.parts = [
+        {
+          ...listed,
+          start: '/emberfall/maps.html',
+          game: undefined,
+          list: { block: 'table', rows: 'tr', picture: 'a[href]', name: 'td:first-child' },
+        },
+      ];
+    });
+    expect(checkSiteRules(JSON.parse(JSON.stringify(one))).ok).toBe(true);
+  });
+
+  it('is read by the app by itself only, with {system} and {game} in the start only', () => {
+    expect(listFields({ ...listed, reading: { ways: ['fetch', 'window'] } })).toEqual([
+      'parts[0].reading.ways',
+    ]);
+    expect(listFields({ ...listed, start: '/atlas/{game}/index.html#{system}' })).toEqual([
+      'parts[0].start',
+    ]);
+    expect(listFields({ ...listed, start: '/atlas/{map}/index.html#{game}' })).toEqual([
+      'parts[0].start',
+    ]);
+    const message = (part: Record<string, unknown>) => {
+      const result = checkSiteRules(file(part));
+      return result.ok ? [] : result.problems.map(problemText);
+    };
+    expect(message({ ...listed, list: { ...listed.list, system: 'Saltbox' } })).toEqual([
+      'Part 1, list.system: is one name for every system, and the start holds {system}: read the name from the page with { "name": "<selector>" }, or leave it out to use the words of {system}.',
+    ]);
+    expect(message({ ...listed, list: { ...listed.list, name: [] } })).not.toEqual([]);
+  });
+
+  it('keeps {system} and a piece after # out of the other parts', () => {
+    const wiki = {
+      ...RULES_WIKI,
+      start: '/{system}/{game}',
+    };
+    expect(listFields(wiki)).toContain('parts[0].start');
+    const message = checkSiteRules(file({ ...RULES_WIKI, start: '/wiki#{game}' }));
+    expect(message.ok ? [] : message.problems.map(problemText)).toContain(
+      'Part 1, start: may hold a piece after # only in a map part of pictures listed on a page.',
+    );
+  });
+
+  it('names the fields of the other form of a map part as such', () => {
+    const found = problems(file({ ...listed, data: { from: 'page', element: 'script' } }));
+    expect(found.map(problemText)).toEqual([
+      'Part 1, data: is a field of a map part read by rules from its data, not of this part.',
+    ]);
   });
 });
 

@@ -83,9 +83,10 @@ const withoutEndSlash = (path: string) => (path.length > 1 ? path.replace(/\/+$/
 /**
  * The named pieces an address or pattern of a part read by rules may hold:
  * `{game}` and `{guide}` in a wiki or guide part, `{game}` and `{map}` in a
- * map part.
+ * map part, `{system}` and `{game}` in a map part of whole pictures listed
+ * on a page (where `{game}` may also be the address's fragment, after `#`).
  */
-const PIECE_NAMES = ['game', 'guide', 'map'] as const;
+const PIECE_NAMES = ['game', 'guide', 'map', 'system'] as const;
 export type PieceName = (typeof PIECE_NAMES)[number];
 /** The values of named pieces, as they stand in an address's path. */
 export type PieceValues = Partial<Record<PieceName, string>>;
@@ -116,11 +117,14 @@ export function piecesOf(text: string): { pieces: PieceName[]; problem: string |
 }
 
 const BRACES =
-  'may hold { and } only as the named pieces {game}, {guide} and {map}, each a whole part of the path between two /';
+  'may hold { and } only as the named pieces {game}, {guide}, {map} and {system}, each a whole part of the path between two /';
 
 /** An address or pattern with its named pieces filled in; a piece with no value is left as it is. */
 export function fillPieces(text: string, values: PieceValues): string {
-  return text.replace(/\{(game|guide|map)\}/gu, (whole, name: PieceName) => values[name] ?? whole);
+  return text.replace(
+    /\{(game|guide|map|system)\}/gu,
+    (whole, name: PieceName) => values[name] ?? whole,
+  );
 }
 
 /**
@@ -132,9 +136,9 @@ export function fillPieces(text: string, values: PieceValues): string {
 export function piecesIn(start: string, path: string): PieceValues | null {
   const names: PieceName[] = [];
   const source = withoutEndSlash(start)
-    .split(/(\{(?:game|guide|map)\})/u)
+    .split(/(\{(?:game|guide|map|system)\})/u)
     .map((part) => {
-      const named = /^\{(game|guide|map)\}$/u.exec(part)?.[1] as PieceName | undefined;
+      const named = /^\{(game|guide|map|system)\}$/u.exec(part)?.[1] as PieceName | undefined;
       if (named) {
         names.push(named);
         return '([^/]+)';
