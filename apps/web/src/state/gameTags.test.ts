@@ -45,19 +45,18 @@ beforeAll(async () => {
 /** Until the save under way is done. */
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-/** A made-up game as the shell lists it, with the system its pack would name (a stand-in for that field). */
-const listed = (id: string, more: Partial<ListedPack> & { system?: string } = {}) =>
-  ({
-    id,
-    title: id,
-    url: `packs/${id}/`,
-    origin: 'maps-folder',
-    path: `/maps/${id}`,
-    packVersion: '1.0.0',
-    bundled: false,
-    imported: null,
-    ...more,
-  }) as ListedPack;
+/** A made-up game as the shell lists it, with the system its pack names. */
+const listed = (id: string, more: Partial<ListedPack> = {}): ListedPack => ({
+  id,
+  title: id,
+  url: `packs/${id}/`,
+  origin: 'maps-folder',
+  path: `/maps/${id}`,
+  packVersion: '1.0.0',
+  bundled: false,
+  imported: null,
+  ...more,
+});
 
 /** The stand-in: suggests the system a listed game names as a System tag, as the real one will. */
 const standIn = (pack: ListedPack | undefined): SuggestedTag[] => {
@@ -81,10 +80,14 @@ const TITLE: GameGroup = {
 };
 
 describe('the tags a game gets from its pack', () => {
-  it('are none for now', () => {
-    expect(suggestedTags(listed('emberfall', { system: 'Tern 16' }))).toEqual([]);
+  it('are the system its pack names, as a tag of the System group', () => {
+    expect(suggestedTags(listed('emberfall', { system: 'Tern 16' }))).toEqual([
+      { group: 'system', name: 'Tern 16' },
+    ]);
+    expect(suggestedTags(listed('emberfall', { system: '  ' }))).toEqual([]);
+    expect(suggestedTags(listed('emberfall'))).toEqual([]);
     expect(suggestedTags(undefined)).toEqual([]);
-    expect(suggestionsOf(PACKS)('emberfall')).toEqual([]);
+    expect(suggestionsOf(PACKS)('emberfall')).toEqual([{ group: 'system', name: 'Tern 16' }]);
   });
 
   it('count as the game’s tags of their group, tidied', () => {

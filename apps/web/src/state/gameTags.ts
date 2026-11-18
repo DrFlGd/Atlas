@@ -81,12 +81,12 @@ export interface SuggestedTag {
 
 /**
  * The tags a game gets from its pack until the person changes its tags of
- * that group: for now none. A pack listing's own system name (a `system`
- * field being added to the listing) will be returned here, as a tag of the
- * System group (`{ group: 'system', name }`).
+ * that group: the system its pack names (the listing's `system`, such as
+ * a console), as a tag of the System group.
  */
-export function suggestedTags(_pack: ListedPack | undefined): SuggestedTag[] {
-  return [];
+export function suggestedTags(pack: ListedPack | undefined): SuggestedTag[] {
+  const system = pack?.system?.trim();
+  return system ? [{ group: 'system', name: system }] : [];
 }
 
 /** The tags each game's pack suggests, by game id (see {@link suggestedTags}). */
