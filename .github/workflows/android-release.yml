@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.20.1
+
+          - **On a tablet, the contents beside a page fold away.** In **Guides**, the button at the top of the contents folds it away so the page takes the width, and the button beside **Home** brings it back. Your choice is kept on this device for every game.
+
           ## New in 0.20.0
 
           - **The site's own menu only.** The contents in **Guides** shows only the menu the source itself gives, and what you arranged by hand. Atlas no longer files a page under another by reading pages.

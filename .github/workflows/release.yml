@@ -139,6 +139,10 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.20.1
+
+          - **The contents beside a page fold away.** In **Guides**, the button at the top of the contents, or the key B, folds the contents away so the page takes the width. The button beside **Home** brings it back. Your choice is kept on this device for every game, and folding never loses your place in the page or in the contents.
+
           ## New in 0.20.0
 
           The bar beside a page in **Guides** now shows only the menu the source itself gives, and what you arrange by hand.
