@@ -363,6 +363,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * schema version change; apps before it drop it when reading.
      */
     personalUse: descriptive(z.literal(true)),
+    /**
+     * The system the game is for, such as the name of a console, as the
+     * site it was read from names it. Informational: nothing depends on it.
+     * Added without a schema version change; apps before it drop it when
+     * reading.
+     */
+    system: descriptive(z.string().trim().min(1).max(80)),
   });
 
   const manifestSchema = z.discriminatedUnion('schemaVersion', [

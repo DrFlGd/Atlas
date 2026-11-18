@@ -804,14 +804,55 @@ function rulesMapPartSchema<L extends z.ZodType>(licence: L) {
   return z.strictObject({ ...rulesFields(licence), type: z.literal('map'), ...mapPartFields });
 }
 
-/** Which of the four forms of a part a value is meant to be: by its reader, and for `rules` its type. */
-function partFormOf(value: unknown): 'builtIn' | 'wiki' | 'guide' | 'map' {
-  const { reader: name, type } = (typeof value === 'object' && value !== null ? value : {}) as {
+/**
+ * The second form of a map part read by `rules` (`list`): a game whose maps
+ * are whole pictures, each linked from a row of a list on one page (a
+ * table, say), rather than a set of images and a list of locations. The
+ * page at `start` is read once; the game's block is the element `block`
+ * names around the game's anchor (the element whose `id`, or the link whose
+ * `name`, is the fragment `{game}` of the address), each element `rows`
+ * finds in it a map, and in each row `picture` finds the link to the
+ * picture, `name` the map's name (or a group and a map, one name "Group:
+ * Map"), `size` its size in pixels and `credit` who made it. Each picture
+ * becomes one map of its own, with no locations, types or areas. All
+ * selectors of a row are tried inside the row, those of the block inside
+ * the block, each seeing only what that element holds; `system` is read
+ * from the whole page.
+ */
+const pictureListSchema = z.strictObject({
+  block: selector,
+  rows: selector,
+  picture: selector,
+  name: z.union([selector, z.tuple([selector, selector])]),
+  size: selector.optional(),
+  credit: selector.optional(),
+  notice: selector.optional(),
+  system: z.union([text(80), gameNameSchema]).optional(),
+});
+
+export type PictureList = z.infer<typeof pictureListSchema>;
+
+function rulesPictureMapPartSchema<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    ...rulesFields(licence),
+    type: z.literal('map'),
+    list: pictureListSchema,
+  });
+}
+
+/** The forms of a part: by its reader, and for `rules` its type (and for a map, its form). */
+type PartForm = 'builtIn' | 'wiki' | 'guide' | 'map' | 'pictures';
+
+/** Which of the five forms of a part a value is meant to be: by its reader, and for `rules` its type. */
+function partFormOf(value: unknown): PartForm {
+  const record = (typeof value === 'object' && value !== null ? value : {}) as {
     reader?: unknown;
     type?: unknown;
   };
+  const { reader: name, type } = record;
   if (name !== RULES_READER) return 'builtIn';
-  return type === 'guide' ? 'guide' : type === 'map' ? 'map' : 'wiki';
+  if (type === 'map') return Object.hasOwn(record, 'list') ? 'pictures' : 'map';
+  return type === 'guide' ? 'guide' : 'wiki';
 }
 
 function partSchemas<L extends z.ZodType>(licence: L) {
@@ -820,6 +861,7 @@ function partSchemas<L extends z.ZodType>(licence: L) {
     wiki: rulesWikiPartSchema(licence),
     guide: rulesGuidePartSchema(licence),
     map: rulesMapPartSchema(licence),
+    pictures: rulesPictureMapPartSchema(licence),
   };
 }
 
@@ -890,7 +932,13 @@ const refusalFileSchema = z.strictObject({
 });
 
 const fullParts = partSchemas(licenceSchema);
-const partSchema = z.union([fullParts.builtIn, fullParts.wiki, fullParts.guide, fullParts.map]);
+const partSchema = z.union([
+  fullParts.builtIn,
+  fullParts.wiki,
+  fullParts.guide,
+  fullParts.map,
+  fullParts.pictures,
+]);
 
 /** A site file, as the JSON Schema describes it. */
 export const siteFileSchema = siteFileSchemaWith(licenceSchema, partSchema);
@@ -911,6 +959,8 @@ export type BuiltInPart = z.infer<typeof fullParts.builtIn>;
 export type RulesWikiPart = z.infer<typeof fullParts.wiki>;
 export type RulesGuidePart = z.infer<typeof fullParts.guide>;
 export type RulesMapPart = z.infer<typeof fullParts.map>;
+/** A map part read by `rules` whose maps are whole pictures listed on a page (`list`). */
+export type RulesPictureMapPart = z.infer<typeof fullParts.pictures>;
 export type SitePart = z.infer<typeof partSchema>;
 export type SiteFile = z.infer<typeof siteFileSchema>;
 export type ReaderDefaultsFile = z.infer<typeof readerDefaultsFileSchema>;
@@ -943,7 +993,16 @@ export function refusalCovers(refusal: SiteRefusal, host: string): boolean {
 /** Whether a part is read by `rules`, the general reader. */
 export const readByRules = (
   part: SitePart,
-): part is RulesWikiPart | RulesGuidePart | RulesMapPart => part.reader === RULES_READER;
+): part is RulesWikiPart | RulesGuidePart | RulesMapPart | RulesPictureMapPart =>
+  part.reader === RULES_READER;
+
+/** Whether a part is a map part read by `rules` whose maps are whole pictures listed on a page. */
+export const isPictureMapPart = (part: SitePart): part is RulesPictureMapPart =>
+  part.reader === RULES_READER && part.type === 'map' && 'list' in part;
+
+/** Whether a part is a map part read by `rules` from its data (`data`, `maps`, `locations`…). */
+export const isDataMapPart = (part: SitePart): part is RulesMapPart =>
+  part.reader === RULES_READER && part.type === 'map' && 'data' in part;
 
 /**
  * The JSON Schema of the format, made from the schemas here: what
@@ -1019,11 +1078,12 @@ const FIELDS_ELSEWHERE: Record<string, string> = {
   contents: 'a wiki or guide part read by rules',
   article: 'a wiki or guide part read by rules',
   order: 'a guide part read by rules',
-  data: 'a map part read by rules',
-  maps: 'a map part read by rules',
-  types: 'a map part read by rules',
-  locations: 'a map part read by rules',
-  position: 'a map part read by rules',
+  data: 'a map part read by rules from its data',
+  maps: 'a map part read by rules from its data',
+  types: 'a map part read by rules from its data',
+  locations: 'a map part read by rules from its data',
+  position: 'a map part read by rules from its data',
+  list: 'a map part read by rules whose maps are pictures listed on a page',
   options: 'a part with a built-in reader',
   pack: 'a part with a built-in reader',
   layout: 'a wiki or guide part',
@@ -1540,6 +1600,34 @@ function mapPartProblems(
 }
 
 /**
+ * The problems of a map part of pictures listed on a page (`list`) that
+ * its fields' forms alone do not show: it is read by the app by itself,
+ * the list page and then each picture, and a fixed name of the system is
+ * for a part whose start does not hold `{system}`.
+ */
+function pictureMapProblems(part: RulesPictureMapPart, at: Path): SiteRulesProblem[] {
+  const problems: SiteRulesProblem[] = [];
+  const add = (path: Path, message: string) => {
+    problems.push({ field: fieldPath([...at, ...path]), message });
+  };
+  const left = part.reading.ways.filter((way) => way !== 'fetch');
+  if (left.length > 0) {
+    add(
+      ['reading', 'ways'],
+      `may offer only "fetch" for a map part of pictures listed on a page: the app reads the list page and then each picture by itself, so ${left.map((way) => JSON.stringify(way)).join(' and ')} cannot read it`,
+    );
+  }
+  const system = part.list.system;
+  if (typeof system === 'string' && piecesOf(part.start).pieces.includes('system')) {
+    add(
+      ['list', 'system'],
+      'is one name for every system, and the start holds {system}: read the name from the page with { "name": "<selector>" }, or leave it out to use the words of {system}',
+    );
+  }
+  return problems;
+}
+
+/**
  * The problems of the `mapLinks` of a part that their fields' forms alone
  * do not show: each entry names where the id is in exactly one way, and
  * holds only the named pieces the part's start holds.
@@ -1617,12 +1705,32 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
     if (part.start !== undefined) {
       const pieces = piecesOf(part.start);
       add([...at, 'start'], pieces.problem ?? addressProblem(part.start, hosts));
+      const listed = isPictureMapPart(part);
       if (pieces.pieces.length > 0 && !readByRules(part)) {
         add([...at, 'start'], 'may hold {game}, {guide} and {map} only in a part read by rules');
+      } else if (listed && (pieces.pieces.includes('guide') || pieces.pieces.includes('map'))) {
+        add(
+          [...at, 'start'],
+          'may hold {system} and {game} in a map part of pictures listed on a page, not {guide} or {map}',
+        );
+      } else if (!listed && pieces.pieces.includes('system')) {
+        add([...at, 'start'], 'may hold {system} only in a map part of pictures listed on a page');
       } else if (part.type === 'map' && pieces.pieces.includes('guide')) {
         add([...at, 'start'], 'may hold {game} and {map} in a map part, not {guide}');
       } else if (part.type !== 'map' && pieces.pieces.includes('map')) {
         add([...at, 'start'], 'may hold {game} and {guide} in a wiki or guide part, not {map}');
+      }
+      const hash = part.start.indexOf('#');
+      const fragment = hash < 0 ? '' : part.start.slice(hash);
+      if (/[{}]/u.test(fragment)) {
+        add(
+          [...at, 'start'],
+          !listed
+            ? 'may hold a piece after # only in a map part of pictures listed on a page'
+            : fragment !== '#{game}'
+              ? 'may hold after # only #{game}, the anchor of the game on the list page'
+              : null,
+        );
       }
     }
     if (part.type !== 'map') {
@@ -1661,6 +1769,10 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
     }
     if (pictures?.full !== 'attribute' && pictures?.fullAttribute !== undefined) {
       add([...at, 'pictures', 'fullAttribute'], 'is only for "full": "attribute"');
+    }
+    if (isPictureMapPart(part)) {
+      problems.push(...pictureMapProblems(part, at));
+      return;
     }
     if (part.type === 'map') {
       problems.push(...mapPartProblems(part, at, hosts));

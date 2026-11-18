@@ -192,6 +192,15 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.21.0
+
+          - **Two views of your games.** Above the list in **Games**, **Cards** shows each game as before, and **Compact** shows one short row for each game.
+          - **Tags.** A game's actions have **Tags…**. Tags stand in groups: **System** and **Genre** are there from the start, and you can add groups of your own.
+          - **Group by.** Lists your games under headings by **Source**, by **Contents**, or by the tags of one group. A heading shows its count and folds away.
+          - **Find a game.** A box above the list finds a game by its name or a tag.
+
+          Tags are kept by this app on this device. They are not in pack files or progress files.
+
           ## New in 0.20.1
 
           - **On a tablet, the contents beside a page fold away.** In **Guides**, the button at the top of the contents folds it away so the page takes the width, and the button beside **Home** brings it back. Your choice is kept on this device for every game.

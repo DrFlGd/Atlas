@@ -108,6 +108,19 @@ describe('named pieces', () => {
     expect(patternProblem('/x{game}')).not.toBeNull();
   });
 
+  it('take {system}, and {game} as the fragment of a list page', () => {
+    expect(piecesOf('/atlas/{system}/index.html#{game}')).toEqual({
+      pieces: ['system', 'game'],
+      problem: null,
+    });
+    expect(piecesIn('/atlas/{system}/index.html', '/atlas/saltbox/index.html')).toEqual({
+      system: 'saltbox',
+    });
+    expect(fillPieces('/atlas/{system}/index.html#{game}', { system: 'saltbox' })).toBe(
+      '/atlas/saltbox/index.html#{game}',
+    );
+  });
+
   it('give their values in the path a pattern matches', () => {
     expect(patternPieces('/{game}/notes/{guide}', '/lantern/notes/42-tide.html')).toEqual({
       game: 'lantern',

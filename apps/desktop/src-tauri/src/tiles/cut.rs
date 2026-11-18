@@ -43,8 +43,11 @@ use crate::packfile::Stop;
 
 /// The edge of a tile, in pixels: what the app's other maps use.
 pub const TILE_SIZE: u32 = 256;
-/// The longest side a picture may have.
-pub const MAX_SIDE: u32 = 20_000;
+/// The longest side a picture may have: the most a PNG or JPEG decoder
+/// is asked to read across or down. A long thin picture (a map of a level
+/// that scrolls sideways, say) is within [`MAX_PIXELS`] all the same; a
+/// band of 256 of its rows is held at once, 64 MiB at most.
+pub const MAX_SIDE: u32 = 65_535;
 /// The most pixels a picture may have: 16,384 × 16,384. Decoded, a JPEG
 /// this large takes 768 MiB and a WebP with transparency 1 GiB, with a
 /// quarter of that again for the level below while it is made; a PNG is
@@ -191,6 +194,12 @@ fn format_of(path: &Path) -> Result<PictureFormat, String> {
                 .to_owned(),
         )
     }
+}
+
+/// Whether a file is a picture of a format a map can be made from, by its
+/// first bytes.
+pub fn is_picture(path: &Path) -> bool {
+    format_of(path).is_ok()
 }
 
 fn open_reader(path: &Path) -> Result<(PictureFormat, ImageReader<BufReader<File>>), String> {
@@ -835,10 +844,15 @@ pub(crate) mod tests {
     fn refuses_pictures_too_large_or_too_small_with_a_clear_message() {
         assert_eq!(check_size(16_384, 16_384), None);
         assert_eq!(check_size(20_000, 10_000), None);
+        // A long thin picture within the pixels taken, up to the longest side.
+        assert_eq!(check_size(65_469, 4_100), None);
+        assert_eq!(check_size(MAX_SIDE, 100), None);
         let large = check_size(16_385, 16_384).unwrap();
         assert!(large.contains("16,385 × 16,384 pixels"), "{large}");
         assert!(large.contains("268 million pixels"), "{large}");
-        assert!(check_size(20_001, 100).is_some());
+        assert!(large.contains("65,535 pixels a side"), "{large}");
+        assert!(check_size(MAX_SIDE + 1, 100).is_some());
+        assert!(check_size(100, MAX_SIDE + 1).is_some());
         assert!(check_size(8, 600).unwrap().contains("too small"));
     }
 
@@ -916,6 +930,29 @@ pub(crate) mod tests {
             pixel(&out.join("0/0/0.jpg"), 200, 50),
             [11, 13, 18, 255]
         ));
+    }
+
+    #[test]
+    fn cuts_a_long_thin_picture_wider_than_twenty_thousand_pixels() {
+        let dir = TempDir::new("cut-thin");
+        let picture = dir.0.join("strip.png");
+        save(
+            &DynamicImage::ImageRgb8(gradient(40_000, 20)),
+            &picture,
+            ImageFormat::Png,
+        );
+        let out = dir.0.join("tiles");
+        let done = cut(&picture, &out, &mut |_| {}, &never).unwrap();
+        assert_eq!((done.width, done.height, done.max_zoom), (40_000, 20, 8));
+        assert_eq!(done.tiles, tiles_for(40_000, 20));
+        // The top level is one row of 157 tiles; each level further out half as wide.
+        assert!(out.join("8/156/0.jpg").is_file());
+        assert!(!out.join("8/157").exists());
+        assert!(out.join("1/1/0.jpg").is_file());
+        assert!(!out.join("1/2").exists());
+        assert!(out.join("0/0/0.jpg").is_file());
+        assert!(!out.join("0/1").exists());
+        assert_eq!(files(&out).len() as u64, done.tiles);
     }
 
     #[test]

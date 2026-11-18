@@ -142,4 +142,12 @@ export const SETTINGS = {
   gameGroupsLast: 'gameGroupsLast',
   /** Games the Importer offered to show with a game of the same title, once each. */
   gameGroupsAsked: 'gameGroupsAsked',
+  /**
+   * The person's own tags of each game and title, in groups such as System
+   * and Genre, and their own groups (see `gameTags.ts`): their own data,
+   * kept on this device.
+   */
+  gameTags: 'gameTags',
+  /** How Games and the Library list the games: the view, the group of tags they are grouped by and the headings folded. */
+  gamesList: 'gamesList',
 } as const;

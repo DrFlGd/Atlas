@@ -42,6 +42,8 @@ mod pagemeasure;
 #[cfg(feature = "downloads")]
 mod pageview;
 pub mod picked;
+#[cfg(feature = "downloads")]
+mod picturecuts;
 mod removal;
 pub mod saves;
 pub mod settings;
@@ -196,6 +198,9 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::picture_tiles,
         commands::picture_cancel,
         commands::import_fetch,
+        commands::import_fetch_picture,
+        commands::import_cut_picture,
+        commands::import_discard_pictures,
         commands::library_style_texts,
         commands::download_settings_get,
         commands::download_settings_set,

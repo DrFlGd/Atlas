@@ -191,6 +191,8 @@ export type RunPageState =
       pictures?: boolean;
       /** Its location photos are fetched when the run is over (see `mapPhotos.ts`). */
       photos?: boolean;
+      /** What the importer left out of what the page lists, one sentence each (`ImportSummary.leftOut`). */
+      leftOut?: string[];
     }
   /** A page that lists pages (a game page) or games was read. */
   | { kind: 'listed'; game: string; count: number; other: number }
@@ -250,6 +252,8 @@ export type PageOutcome =
       pictures?: boolean;
       /** Its location photos are fetched when the run is over (see `mapPhotos.ts`). */
       photos?: boolean;
+      /** What the importer left out of what the page lists, one sentence each (`ImportSummary.leftOut`). */
+      leftOut?: string[];
     }
   /** A list was read: `count` pages (or games) the app can add, `other` it cannot yet. */
   | { kind: 'listed'; game: string; count: number; other: number }

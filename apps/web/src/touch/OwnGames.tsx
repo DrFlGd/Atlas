@@ -414,10 +414,18 @@ function useMapsOf(gameId: string): { id: string; name: string }[] {
 
 const EMPTY_MAPS: { id: string; name: string }[] = [];
 
+/** The forms under a game's actions: one is open at a time. */
+type OwnForm = 'map' | 'level' | 'rename' | 'delete-map';
+
 export function OwnGameActions({ id, title }: { id: string; title: string }) {
-  const [open, setOpen] = useState<'map' | 'level' | 'rename' | 'delete-map' | null>(null);
+  const [open, setOpen] = useState<OwnForm | null>(null);
   const maps = useMapsOf(id);
   const shown = useAtlas((s) => s.game?.entry.id === id);
+  // A form closes itself only: one that ends its work late (a rename reads
+  // the game again first) must not close the form opened after it.
+  const closing = (form: OwnForm) => () => {
+    setOpen((now) => (now === form ? null : now));
+  };
   return (
     <>
       <div className="touch-game-actions own-game-actions" data-testid="own-game-actions">
@@ -475,28 +483,12 @@ export function OwnGameActions({ id, title }: { id: string; title: string }) {
               ? { kind: 'map', gameId: id, title }
               : { kind: 'level', gameId: id, title, maps }
           }
-          onClose={() => {
-            setOpen(null);
-          }}
+          onClose={closing(open)}
         />
       ) : null}
-      {open === 'rename' ? (
-        <RenameForm
-          id={id}
-          title={title}
-          onClose={() => {
-            setOpen(null);
-          }}
-        />
-      ) : null}
+      {open === 'rename' ? <RenameForm id={id} title={title} onClose={closing('rename')} /> : null}
       {open === 'delete-map' ? (
-        <DeleteMapConfirm
-          id={id}
-          maps={maps}
-          onClose={() => {
-            setOpen(null);
-          }}
-        />
+        <DeleteMapConfirm id={id} maps={maps} onClose={closing('delete-map')} />
       ) : null}
     </>
   );

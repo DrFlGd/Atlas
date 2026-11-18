@@ -40,6 +40,43 @@ function patch(id: string, next: Partial<GameFacts>): void {
   useGameFacts.setState({ byId: { ...byId, [id]: { ...EMPTY, ...byId[id], ...next } } });
 }
 
+/**
+ * Keeps details of a game read elsewhere (a card of Games), so a compact
+ * row can say what the game holds without reading anything itself.
+ */
+export function rememberDetails(id: string, details: PackDetails): void {
+  if (useGameFacts.getState().byId[id]?.details === details) return;
+  patch(id, { details, error: null });
+}
+
+/**
+ * Reads the details of the games whose details are not known yet, a few
+ * at a time, and keeps them in a few changes rather than one for each game:
+ * for Games grouped by what the games hold. Files on this device only.
+ */
+export async function loadMissingDetails(ids: readonly string[]): Promise<void> {
+  const shell = desktop;
+  if (!shell) return;
+  const missing = ids.filter((id) => !useGameFacts.getState().byId[id]?.details);
+  for (let start = 0; start < missing.length; start += 24) {
+    const batch = missing.slice(start, start + 24);
+    const read = await Promise.all(
+      batch.map((id) =>
+        shell.packFiles.details(id).then(
+          (details) => [id, details] as const,
+          () => null,
+        ),
+      ),
+    );
+    const { byId } = useGameFacts.getState();
+    const next = { ...byId };
+    for (const entry of read) {
+      if (entry) next[entry[0]] = { ...EMPTY, ...byId[entry[0]], details: entry[1], error: null };
+    }
+    useGameFacts.setState({ byId: next });
+  }
+}
+
 /** Reads the details of a game, and its photos in an app that downloads. */
 export async function loadGameFacts(id: string, withImages = false): Promise<void> {
   const shell = desktop;

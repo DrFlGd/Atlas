@@ -23,6 +23,8 @@ interface Game {
   title: string;
   maps: { id: string; name: string; width: number; height: number }[];
   layers: Record<string, unknown>[];
+  /** The game's maps are served only once this is over (a game read slowly). */
+  hold?: Promise<void>;
 }
 
 const layerOf = (local: string, name: string) => ({
@@ -37,7 +39,7 @@ const layerOf = (local: string, name: string) => ({
 
 /** Serves the game the stand-in shell made, as the shell's pack protocol would. */
 async function serveGame(page: Page, game: Game): Promise<void> {
-  await page.route('**/own-packs/cloud-isles/**', (route: Route) => {
+  await page.route('**/own-packs/cloud-isles/**', async (route: Route) => {
     const file = new URL(route.request().url()).pathname.split('/own-packs/cloud-isles/')[1]!;
     if (file.startsWith('tiles/')) {
       return route.fulfill({ status: 200, contentType: 'image/png', body: TILE });
@@ -60,6 +62,7 @@ async function serveGame(page: Page, game: Game): Promise<void> {
           madeInApp: true,
         });
       case 'maps.json':
+        await game.hold;
         return json(game.maps);
       case 'layers.json':
         return json(game.layers);
@@ -365,15 +368,25 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
     'cloud-isles:layer:sea-caves',
   );
 
-  // Rename.
+  // Rename. The game is read again after it, slowly here: the list has the
+  // new name at once, and the rename is over only when the game is read.
+  let renamedGameRead!: () => void;
+  game.hold = new Promise<void>((resolve) => {
+    renamedGameRead = resolve;
+  });
   game.title = 'Cloud Isles of Ash';
   await row.getByTestId('rename-game').click();
   await page.getByTestId('rename-game-input').fill('Cloud Isles of Ash');
   await page.getByTestId('rename-game-save').click();
   await expect(row).toContainText('Cloud Isles of Ash');
 
-  // Delete a map, after asking which.
+  // Delete a map, after asking which. Opened while the rename still reads
+  // the game: the rename ending must not close it.
   await row.getByTestId('delete-map').click();
+  await expect(page.getByTestId('delete-map-confirm')).toBeVisible();
+  renamedGameRead();
+  await expect(page.getByTestId('toast')).toContainText('Renamed the game to Cloud Isles of Ash.');
+  await expect(page.getByTestId('delete-map-confirm')).toBeVisible();
   await page.getByTestId('delete-map-choice').selectOption({ label: 'Sea caves' });
   game.maps.pop();
   game.layers.pop();

@@ -281,8 +281,18 @@ export interface SiteMapTrialMap {
   pictured: number;
   /** Its locations whose position falls outside its picture. */
   outside: number;
-  /** The address of one of its images, as the file's template makes it. */
+  /**
+   * The address of one of its images, as the file's template makes it; for
+   * a map that is one whole picture, the address of the picture.
+   */
   image?: string;
+  /** For a map that is one whole picture: who made it, as the list page says. */
+  credit?: string;
+  /**
+   * For a map that is one whole picture: why it would be left out, in one
+   * plain sentence (a picture too large to cut, say); none when it would be kept.
+   */
+  leftOut?: string;
 }
 
 /** One location as the reader found it, with its position in pixels of its map's picture. */
@@ -305,6 +315,12 @@ export interface SiteMapTrial {
   types: { count: number; first: string[]; found?: SiteMapTrialFound };
   /** The locations: how many, and the first few. */
   locations: { count: number; first: SiteMapTrialLocation[] };
+  /**
+   * Optional: true for a map part whose maps are whole pictures listed on a
+   * page, which has no types or locations; each map's size is the one the
+   * page gives (0 when it gives none), as the pictures are not asked for.
+   */
+  wholePictures?: true;
 }
 
 /** Which types of a map part's data can be ticked as found, by their names. */
@@ -555,6 +571,8 @@ function mapTrialOf(value: unknown): { map?: SiteMapTrial } {
           if (!name) return [];
           const group = words(map.group, 200);
           const floor = words(map.floor, 200);
+          const credit = words(map.credit, 200);
+          const leftOut = words(map.leftOut, 500);
           return [
             {
               name,
@@ -568,6 +586,8 @@ function mapTrialOf(value: unknown): { map?: SiteMapTrial } {
               pictured: count(map.pictured),
               outside: count(map.outside),
               ...image(map.image),
+              ...(credit ? { credit } : {}),
+              ...(leftOut ? { leftOut } : {}),
             },
           ];
         }),
@@ -588,6 +608,7 @@ function mapTrialOf(value: unknown): { map?: SiteMapTrial } {
           return [{ name, map, type, x: position(location.x), y: position(location.y) }];
         }),
       },
+      ...(given.wholePictures === true ? { wholePictures: true as const } : {}),
     },
   };
 }

@@ -679,7 +679,7 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
             Read it in Guides
           </button>
         ) : null}
-        {__ATLAS_DOWNLOADS__ && downloadable ? (
+        {__ATLAS_DOWNLOADS__ && downloadable && !summary.leftOut ? (
           <button
             type="button"
             className="button button-primary"
@@ -757,11 +757,38 @@ function MapFigures({
           {pictureText(summary.picture)}
         </p>
       ) : null}
-      <p className="muted small">
-        {__ATLAS_DOWNLOADS__ && downloadable
-          ? 'Its map images are not downloaded yet, so the markers show on a blank map until you download them.'
-          : 'Its map images are not installed, so the markers show on a plain background.'}
+      {summary.leftOut ? (
+        <LeftOut sentences={summary.leftOut} />
+      ) : (
+        <p className="muted small">
+          {__ATLAS_DOWNLOADS__ && downloadable
+            ? 'Its map images are not downloaded yet, so the markers show on a blank map until you download them.'
+            : 'Its map images are not installed, so the markers show on a plain background.'}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * For maps made from the site's whole pictures (`ImportSummary.leftOut`):
+ * their map images are made on this computer as the pictures are read,
+ * and what was left out, one sentence each.
+ */
+function LeftOut({ sentences }: { sentences: readonly string[] }) {
+  return (
+    <>
+      <p className="muted small" data-testid="add-map-cut">
+        Its map images were made on this computer from the site’s pictures, so they are ready to
+        use.
       </p>
+      {sentences.length > 0 ? (
+        <ul className="small" data-testid="add-map-left-out">
+          {sentences.map((sentence, index) => (
+            <li key={index}>{sentence}</li>
+          ))}
+        </ul>
+      ) : null}
     </>
   );
 }
@@ -940,6 +967,7 @@ export function PageState({ state }: { state: RunPageState }) {
                   ? `; map picture measured${state.picture.tiles === undefined ? '' : ` (${state.picture.tiles} map images)`}`
                   : '; map picture not measured, sized from the locations'
               : ''}
+            {state.leftOut ? `. ${state.leftOut.join(' ')}` : ''}
           </span>
         </span>
       );

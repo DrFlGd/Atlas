@@ -8,6 +8,7 @@ import {
   ShowWithAnotherForm,
   TitleSourcesPanel,
 } from '../components/GameTitles';
+import { TagChips, TagsDialog } from '../components/GameListTools';
 import { DETAILS, downloadPercent, formatBytes, roughDuration } from '../components/downloadFormat';
 import { UiIcon } from '../components/icons';
 import { MapPageActions } from '../components/MapPageActions';
@@ -31,6 +32,7 @@ import {
   type GameFacts,
   type GameKind,
 } from '../state/gameFacts';
+import { useTagsOfGame } from '../state/gameTags';
 import { canChangeGuideLinks, useGuideLinks, type OtherGuides } from '../state/guideLinks';
 import { hasMap } from '../state/guides';
 import { updateGame, wikiSourceOf, type WikiSource } from '../state/importing';
@@ -92,6 +94,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const [confirming, setConfirming] = useState<MoreConfirm | null>(null);
   const canMake = useAtlas(ownGamesOffered);
   const group = useTitleOf(id);
+  const { tags, tagGroups } = useTagsOfGame(id);
   const several = useAtlas((s) => s.catalog.length > 1);
   // A wiki read page by page: its own screen, once its importer is known.
   const [wiki, setWiki] = useState<WikiSource | null>(null);
@@ -152,6 +155,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
                 For personal use
               </span>
             ) : null}
+            <TagChips tags={tags} tagGroups={tagGroups} skip={null} className="library-tags" />
             {busy ? <span>Moving files from an older version…</span> : null}
             {shown ? <span className="badge badge-done">Shown</span> : null}
           </p>
@@ -204,7 +208,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
           />
         ) : null}
       </header>
-      {confirming && kind === 'wiki' && wiki ? (
+      {confirming === 'tags' ? <TagsDialog gameId={id} title={title} onClose={close} /> : null}
+      {confirming && confirming !== 'tags' && kind === 'wiki' && wiki ? (
         <div className="library-cards library-cards-confirm">
           {confirming === 'pack' ? (
             <DeletePackConfirm id={id} title={title} onClose={close} />

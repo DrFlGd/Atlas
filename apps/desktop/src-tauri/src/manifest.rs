@@ -38,7 +38,13 @@ pub struct ManifestHead {
     /// The game is kept for personal use (`personalUse`): a page of it was
     /// read under a licence the person filled in, or with none recorded.
     pub personal_use: bool,
+    /// The system the game is for, such as a console (`system`), when the
+    /// manifest names one: trimmed, at most [`MAX_SYSTEM_CHARS`] characters.
+    pub system: Option<String>,
 }
+
+/// The longest system name a listing carries; a longer one is left out.
+pub const MAX_SYSTEM_CHARS: usize = 80;
 
 /// A page an imported pack was made from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -67,6 +73,9 @@ struct RawHead {
     /// Read loosely: anything but `true` is false.
     #[serde(default)]
     personal_use: Option<Value>,
+    /// Read loosely: anything but a usable text is none.
+    #[serde(default)]
+    system: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +155,13 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
         pages,
         made_in_app: raw.made_in_app == Some(Value::Bool(true)),
         personal_use: raw.personal_use == Some(Value::Bool(true)),
+        system: raw
+            .system
+            .as_ref()
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && name.chars().count() <= MAX_SYSTEM_CHARS)
+            .map(str::to_owned),
     })
 }
 
@@ -390,6 +406,24 @@ mod tests {
             )
             .unwrap();
             assert_eq!(read_head(&dir.0).unwrap().personal_use, kept, "{mark}");
+        }
+        // The system: a short text, trimmed; anything else is none.
+        assert_eq!(head.system, None);
+        let long = format!("\"{}\"", "x".repeat(MAX_SYSTEM_CHARS + 1));
+        for (mark, kept) in [
+            ("\" Saltbox 64 \"", Some("Saltbox 64")),
+            ("\"  \"", None),
+            ("3", None),
+            (long.as_str(), None),
+        ] {
+            fs::write(
+                dir.0.join(MANIFEST_FILE),
+                format!(
+                    r#"{{"schemaVersion":2,"gameId":"t","title":"T","packVersion":"1.0.0","system":{mark}}}"#
+                ),
+            )
+            .unwrap();
+            assert_eq!(read_head(&dir.0).unwrap().system.as_deref(), kept, "{mark}");
         }
         // Recorded pages: web addresses only; an odd entry does not spoil the rest.
         fs::write(

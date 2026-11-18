@@ -139,6 +139,18 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.21.0
+
+          The list of your games is made for many games.
+
+          - **Two views.** Above the list, **Cards** shows each game as before, and **Compact** shows one short row for each game.
+          - **Tags.** A game's **More** menu has **Tags…**. Tags stand in groups: **System** and **Genre** are there from the start, and you can add groups of your own. A game can carry several tags.
+          - **Group by.** Lists your games under headings: by **Source**, by **Contents** (Maps, Guides, Wiki pages), which the app fills in, or by the tags of one group. A heading shows its count and folds away.
+          - **Find a game.** A box above the list finds a game by its name or a tag.
+          - **Longer pictures in New game.** A map's picture may now be up to 65,535 pixels a side, within the same total of 268 million pixels, so long, thin maps are taken.
+
+          Tags are kept by this app on this device. They are not in pack files or progress files.
+
           ## New in 0.20.1
 
           - **The contents beside a page fold away.** In **Guides**, the button at the top of the contents, or the key B, folds the contents away so the page takes the width. The button beside **Home** brings it back. Your choice is kept on this device for every game, and folding never loses your place in the page or in the contents.

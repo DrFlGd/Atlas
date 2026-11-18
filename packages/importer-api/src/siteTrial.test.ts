@@ -99,6 +99,44 @@ describe('an importer’s answer to a trial', () => {
     });
   });
 
+  it('keeps the maps of whole pictures listed on a page, with their credit and why one is left out', () => {
+    const trial = siteTrialOf({
+      part: 0,
+      type: 'map',
+      map: {
+        wholePictures: true,
+        maps: {
+          count: 2,
+          listed: [
+            {
+              name: 'Harbour',
+              width: 4096,
+              height: 1200,
+              image: 'https://maps.example.org/atlas/saltbox/Emberfall-Harbour.png',
+              credit: 'Ana',
+            },
+            {
+              name: 'Saltmarsh (Past): North',
+              credit: 7,
+              leftOut: '“Saltmarsh (Past): North” would be left out: its picture is a GIF.',
+            },
+          ],
+        },
+      },
+    });
+    expect(trial?.map?.wholePictures).toBe(true);
+    expect(trial?.map?.maps.listed.map((map) => [map.credit, map.leftOut])).toEqual([
+      ['Ana', undefined],
+      [undefined, '“Saltmarsh (Past): North” would be left out: its picture is a GIF.'],
+    ]);
+    expect(trial?.map?.maps.listed[0]?.image).toBe(
+      'https://maps.example.org/atlas/saltbox/Emberfall-Harbour.png',
+    );
+    expect(
+      siteTrialOf({ part: 0, type: 'map', map: { wholePictures: 'yes' } })?.map?.wholePictures,
+    ).toBeUndefined();
+  });
+
   it('lists a limited number of maps, and leaves out a map block that is not one', () => {
     const many = Array.from({ length: MAX_TRIAL_MAPS + 5 }, (_, i) => ({ name: `Map ${i}` }));
     const trial = siteTrialOf({ part: 0, type: 'map', map: { maps: { count: 45, listed: many } } });

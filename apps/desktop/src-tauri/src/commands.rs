@@ -654,6 +654,75 @@ pub async fn import_fetch<R: Runtime>(
     crate::pagefetch::fetch_page(&url).await
 }
 
+/// Where whole pictures of maps and their cuts wait for their import (see
+/// `picturecuts.rs`): a hidden folder of the maps folder.
+#[cfg(feature = "downloads")]
+fn picture_cuts(library: &Library) -> std::path::PathBuf {
+    library.maps_folder().join(crate::picturecuts::CUTS_DIR)
+}
+
+/// Fetches one whole picture of a map for an importer, as the app (see
+/// `picturecuts.rs`); the web app has followed the site's rules and
+/// `robots.txt` first. Only the app's own window may ask.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_fetch_picture<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    url: String,
+) -> Result<crate::picturecuts::FetchedPicture, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    let cuts = picture_cuts(&library);
+    crate::picturecuts::fetch_picture(&url, &cuts).await
+}
+
+/// Cuts a picture `import_fetch_picture` kept into map images, as "New
+/// game" does. Not on Android, which has no cutter.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_cut_picture<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    picture: String,
+) -> Result<crate::picturecuts::PictureCut, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = (library, picture);
+        Err(NOT_ON_THIS_DEVICE.to_owned())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let cuts = picture_cuts(&library);
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::picturecuts::cut_picture(&cuts, &picture)
+        })
+        .await
+        .map_err(|error| error.to_string())
+    }
+}
+
+/// Throws away pictures and cuts no saved import named.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_discard_pictures<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    pictures: Vec<String>,
+) -> Result<(), String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    let cuts = picture_cuts(&library);
+    tauri::async_runtime::spawn_blocking(move || crate::picturecuts::discard(&cuts, &pictures))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_snapshot(
