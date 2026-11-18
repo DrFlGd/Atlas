@@ -218,6 +218,7 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
     zoom(maps.minZoom),
     maps.group,
     maps.floor,
+    maps.picture.pattern,
   ]);
   const shared = maps.shared;
   if (shared) {
@@ -275,6 +276,46 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
     }
   }
   return { values: values.filter((value) => keep[value.name] !== undefined), keep, wait };
+}
+
+/** The name the JSON of a list of games' element is handed over under (see {@link gamesListSpec}). */
+export const GAMES_LIST_VALUE = 'games';
+
+/**
+ * What the reader is given for the site's list of games of a map part
+ * (`games`): the JSON of the list page's element, under the name
+ * {@link GAMES_LIST_VALUE}, and of it only the list and, in each game, the
+ * fields its data paths name. Null for a part without `games`, or one whose
+ * paths do not pass the checker.
+ */
+export function gamesListSpec(part: RulesMapPart): PageValuesSpec | null {
+  const games = part.games;
+  if (!games || selectorProblem(games.element) !== null) return null;
+  const paths = [games.path, games.id, games.name, games.only?.path];
+  if (paths.some((path) => path !== undefined && dataPathSteps(path) === null)) return null;
+  const tree: KeepFields = {};
+  const base = keyStepsOf(games.path);
+  for (const field of [games.id, games.name, games.only?.path]) {
+    if (field !== undefined) keepPath(tree, [...base, ...keyStepsOf(field)]);
+  }
+  const steps: string[] = [];
+  for (const step of dataPathSteps(games.path) ?? []) {
+    if (!('field' in step)) break;
+    steps.push(step.field);
+  }
+  return {
+    values: [
+      { name: GAMES_LIST_VALUE, from: [], call: 'element', element: games.element, inside: [] },
+    ],
+    keep: { [GAMES_LIST_VALUE]: tree },
+    wait: [{ name: GAMES_LIST_VALUE, steps }],
+  };
+}
+
+/** The window reader of a part's list of games: {@link PAGE_VALUES_READER} with {@link gamesListSpec}. */
+export function gamesListReader(part: RulesMapPart): string | null {
+  const spec = gamesListSpec(part);
+  return spec ? `() => (${PAGE_VALUES_READER})(${specText(spec)})` : null;
 }
 
 /**
@@ -464,6 +505,134 @@ export function pageValuesConsoleLine(part: RulesMapPart): string | null {
     ' link.click();',
     '})();',
   ].join('');
+}
+
+/**
+ * Whether every value a part declares is an element of the page whose text
+ * is JSON (`{ "element": … }`): such values are in a saved copy of the map
+ * page too, so "Try on a saved page" can take them from it
+ * ({@link pageValuesOfElements}).
+ */
+export function valuesAreElements(part: RulesMapPart): boolean {
+  const values = part.data.from === 'values' ? Object.values(part.data.values ?? {}) : [];
+  return (
+    values.length > 0 && values.every((value) => typeof value === 'object' && 'element' in value)
+  );
+}
+
+/** A JSON value's own field, or an entry of a list by its number; undefined for anything else. */
+function ownStep(value: unknown, step: string | number): unknown {
+  if (value === null || typeof value !== 'object') return undefined;
+  if (typeof step === 'number') return Array.isArray(value) ? (value[step] as unknown) : undefined;
+  return Object.hasOwn(value, step) ? (value as Record<string, unknown>)[step] : undefined;
+}
+
+/**
+ * The values of a part whose values are all elements of the page
+ * ({@link valuesAreElements}), taken from a saved copy of the map page, as
+ * the window reader takes them from the page it has open: each element's
+ * text read as JSON (at most {@link MAX_JSON_TEXT} characters), walked by
+ * the value's path, and of that only the fields the part's data paths name,
+ * within the reader's bounds of depth, count and size. `textOf` gives the
+ * text of the first element a selector finds in the saved page, or null
+ * when it finds none: the page is only parsed as text, never loaded. Null
+ * for a part of another form; else the values, or a plain sentence that
+ * says which value is missing.
+ */
+export function pageValuesOfElements(
+  part: RulesMapPart,
+  textOf: (selector: string) => string | null,
+): PageValues | { problem: string } | null {
+  if (!valuesAreElements(part)) return null;
+  const spec = pageValuesSpec(part);
+  if (!spec) return null;
+  let nodes = 0;
+  let chars = 0;
+  let cut = 0;
+  const copy = (value: unknown, keep: KeepTree, depth: number): unknown => {
+    if (value === null) return null;
+    if (typeof value === 'string') {
+      if (value.length > MAX_PAGE_VALUE_TEXT || chars + value.length > MAX_PAGE_VALUE_CHARS) {
+        cut++;
+        return undefined;
+      }
+      chars += value.length;
+      return value;
+    }
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'boolean') return value;
+    if (typeof value !== 'object') return undefined;
+    if (depth >= MAX_PAGE_VALUE_DEPTH || nodes >= MAX_PAGE_VALUE_NODES) {
+      cut++;
+      return undefined;
+    }
+    nodes++;
+    if (Array.isArray(value)) {
+      if (keep !== 1 && keep['*'] === undefined) return [];
+      const inner = keep === 1 ? 1 : keep['*']!;
+      const count = Math.min(value.length, MAX_PAGE_VALUE_ENTRIES);
+      if (value.length > count) cut++;
+      const out: unknown[] = [];
+      for (let i = 0; i < count; i++) {
+        const entry = copy(value[i], inner, depth + 1);
+        out.push(entry === undefined ? null : entry);
+      }
+      return out;
+    }
+    const record = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    const keys = keep === 1 || keep['*'] !== undefined ? Object.keys(record) : Object.keys(keep);
+    for (const key of keys) {
+      if (key === '__proto__' || !Object.hasOwn(record, key)) continue;
+      const inner = keep === 1 ? 1 : joinKeep(keep[key], keep['*']);
+      if (inner === undefined) continue;
+      const entry = copy(record[key], inner, depth + 1);
+      if (entry !== undefined) out[key] = entry;
+    }
+    return out;
+  };
+  const values: Record<string, unknown> = {};
+  for (const one of spec.values) {
+    const selector = one.element ?? '';
+    const field = `data.values.${one.name}`;
+    const text = textOf(selector);
+    if (text === null) {
+      return { problem: `The saved page has no element ${selector} (${field}).` };
+    }
+    if (text.length > MAX_JSON_TEXT) {
+      return { problem: `The text of the element ${selector} (${field}) is too large to read.` };
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(text) as unknown;
+    } catch {
+      return { problem: `The text of the element ${selector} (${field}) is not JSON.` };
+    }
+    for (const step of one.inside ?? []) value = ownStep(value, step);
+    if (value === undefined || value === null) {
+      return {
+        problem: `The path of ${field} found nothing in the JSON of the element ${selector}.`,
+      };
+    }
+    const copied = copy(value, spec.keep[one.name] ?? 1, 0);
+    if (copied === undefined) {
+      return { problem: `The value of ${field} is too large to read.` };
+    }
+    values[one.name] = copied;
+  }
+  return cut > 0
+    ? { atlasPageValues: PAGE_VALUES_FORMAT, values, cut }
+    : { atlasPageValues: PAGE_VALUES_FORMAT, values };
+}
+
+/** Two keep trees joined, as the window reader joins them: a whole value wins. */
+function joinKeep(a: KeepTree | undefined, b: KeepTree | undefined): KeepTree | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  if (a === 1 || b === 1) return 1;
+  const out: KeepFields = { ...a };
+  for (const key of Object.keys(b)) out[key] = joinKeep(out[key], b[key])!;
+  return out;
 }
 
 /**

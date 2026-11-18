@@ -2,6 +2,7 @@ import {
   HOME_PAGE_KIND,
   MAP_KIND,
   canAddPage,
+  cataloguesOf,
   checkCatalogue,
   pageKey,
   type AtlasImporter,
@@ -379,6 +380,8 @@ export interface PickGame extends CatalogueGame {
 export interface GamePick {
   importerId: string;
   importerTitle: string;
+  /** The site's name, for a list of a site an importer describes by a file; the importer's title stands for it when absent. */
+  site?: string;
   /** The list of games' address. */
   url: string;
   games: PickGame[];
@@ -409,11 +412,14 @@ export interface KeptCatalogue {
  */
 export function keptCatalogue(
   value: unknown,
-  importer: Pick<AtlasImporter, 'matches' | 'games' | 'catalogue'>,
+  importer: Pick<AtlasImporter, 'matches' | 'games' | 'catalogue' | 'catalogues'>,
+  /** The list's address; the importer's own list when absent. */
+  address: string | undefined = importer.catalogue?.address,
 ): KeptCatalogue | null {
   if (!value || typeof value !== 'object') return null;
   const { url, readAt, games } = value as Record<string, unknown>;
-  if (typeof url !== 'string' || url !== importer.catalogue?.address) return null;
+  if (typeof url !== 'string' || url !== address) return null;
+  if (!cataloguesOf(importer).some((catalogue) => catalogue.address === url)) return null;
   if (typeof readAt !== 'string' || Number.isNaN(Date.parse(readAt))) return null;
   const checked = checkCatalogue({ ok: true, games }, url, importer);
   if (!checked.ok || checked.games.length === 0) return null;
@@ -425,12 +431,13 @@ export function newPick(
   url: string,
   games: readonly CatalogueGame[],
   addedIds: ReadonlySet<string>,
-  options: { keptFrom?: string | null; ticked?: readonly string[] } = {},
+  options: { keptFrom?: string | null; ticked?: readonly string[]; site?: string } = {},
 ): GamePick {
   const listed = new Set(games.map((game) => game.id));
   return {
     importerId: importer.id,
     importerTitle: importer.title,
+    ...(options.site ? { site: options.site } : {}),
     url,
     games: games.map((game) => ({
       ...game,

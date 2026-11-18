@@ -139,6 +139,10 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.22.0
+
+          Nothing changes in what you see in this release. The viewer keeps the same version number as the Importer, which gains a new map source.
+
           ## New in 0.21.0
 
           The list of your games is made for many games.

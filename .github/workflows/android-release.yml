@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.22.0
+
+          Nothing changes in what you see in this release. The viewer keeps the same version number as the Importer, which gains a new map source.
+
           ## New in 0.21.0
 
           - **Two views of your games.** Above the list in **Games**, **Cards** shows each game as before, and **Compact** shows one short row for each game.

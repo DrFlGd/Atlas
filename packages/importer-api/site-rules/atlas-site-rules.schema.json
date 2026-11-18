@@ -2008,6 +2008,24 @@
                             "type": "array",
                             "prefixItems": [
                               {
+                                "type": "number",
+                                "exclusiveMinimum": 0,
+                                "maximum": 1
+                              },
+                              {
+                                "type": "number",
+                                "exclusiveMinimum": 0,
+                                "maximum": 1
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
                                 "type": "string"
                               },
                               {
@@ -2130,6 +2148,9 @@
                             },
                             "required": ["path", "pattern", "maxZoom"],
                             "additionalProperties": false
+                          },
+                          "pattern": {
+                            "type": "string"
                           },
                           "base": {
                             "type": "string",
@@ -2299,16 +2320,104 @@
                     "required": ["path", "fields"],
                     "additionalProperties": false
                   },
+                  "games": {
+                    "type": "object",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048
+                      },
+                      "element": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "only": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "picture": {
+                            "type": "string"
+                          },
+                          "hosts": {
+                            "minItems": 1,
+                            "maxItems": 5,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": ["hosts"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["address", "element", "path", "id", "name"],
+                    "additionalProperties": false
+                  },
+                  "gamePage": {
+                    "type": "object",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048
+                      },
+                      "links": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "only": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "picture": {
+                            "type": "string"
+                          },
+                          "hosts": {
+                            "minItems": 1,
+                            "maxItems": 5,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": ["hosts"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["address", "links"],
+                    "additionalProperties": false
+                  },
                   "position": {
                     "type": "object",
                     "properties": {
                       "units": {
                         "type": "string",
-                        "enum": ["pixels", "fraction", "degrees"]
+                        "enum": ["pixels", "fraction", "degrees", "square"]
                       },
                       "origin": {
                         "type": "string",
                         "enum": ["top-left", "bottom-left"]
+                      },
+                      "y": {
+                        "type": "string",
+                        "enum": ["down", "up"]
                       },
                       "zoom": {
                         "type": "integer",

@@ -11,6 +11,8 @@ import {
   PICTURE_MAX_ZOOM,
   asImporter,
   canAddPage,
+  catalogueAt,
+  cataloguesOf,
   checkCatalogue,
   checkGameListing,
   checkOutcome,
@@ -19,7 +21,9 @@ import {
   findCatalogueImporter,
   findGameImporter,
   findImporter,
+  findReader,
   gameAddressOf,
+  gamePageReaderOf,
   isAllowedPageUrl,
   isAllowedPictureTemplate,
   isPictureRequest,
@@ -34,6 +38,7 @@ import {
   type PageTiles,
   type PictureTilesRequest,
   type SavedSource,
+  type SiteCatalogue,
 } from './index';
 
 const page = (
@@ -723,6 +728,75 @@ describe("listing a game's pages and a site's games", () => {
       },
     };
     expect(findGameImporter([throwing], game)).toBeNull();
+  });
+
+  it('takes several lists of games, each found by its own address', () => {
+    const second = {
+      ...demo.catalogue!,
+      address: 'http://127.0.0.1:4432/harbours',
+      label: 'All harbours of the demo map site',
+      site: 'Demo harbours',
+      matches: (url: string) => url.startsWith('http://127.0.0.1:4432/harbours'),
+    };
+    const many = asImporter({ ...demo, catalogues: () => [second] });
+    expect(cataloguesOf(many).map((c) => c.address)).toEqual([
+      site,
+      'http://127.0.0.1:4432/harbours',
+    ]);
+    expect(catalogueAt(many, 'http://127.0.0.1:4432/harbours')?.label).toBe(
+      'All harbours of the demo map site',
+    );
+    expect(catalogueAt(many, `${site}/`)?.address).toBe(site);
+    expect(findReader([many], 'http://127.0.0.1:4432/harbours')?.kind).toBe('catalogue');
+    expect(findCatalogueImporter([many], 'http://127.0.0.1:4432/harbours')).toBe(many);
+    // A list that is not one, an address listed twice, or a function that throws: left out.
+    const odd = {
+      ...demo,
+      catalogues: () =>
+        [
+          second,
+          { ...second, label: 'Twice' },
+          { address: 'ftp://x/' },
+          7,
+        ] as unknown as SiteCatalogue[],
+    };
+    expect(cataloguesOf(odd).map((c) => c.label)).toEqual([
+      demo.catalogue!.label,
+      'All harbours of the demo map site',
+    ]);
+    const throwing = {
+      ...demo,
+      catalogues: () => {
+        throw new Error('boom');
+      },
+    };
+    expect(cataloguesOf(throwing).map((c) => c.address)).toEqual([site]);
+    expect(cataloguesOf({ catalogues: () => 'no' as never })).toEqual([]);
+    // Only an importer that reads game pages may offer lists of games.
+    const { games: _games, catalogue: _catalogue, ...withoutGames } = demo;
+    expect(() => asImporter({ ...withoutGames, catalogues: () => [] })).toThrow(/catalogue/);
+  });
+
+  it('takes the reader an importer gives for one game address, when it is one', () => {
+    const reader = '() => null';
+    const given = (value: unknown) => ({
+      games: { ...demo.games!, pageReaderFor: () => value as string | null },
+    });
+    expect(gamePageReaderOf(given(reader), game)).toBe(reader);
+    expect(gamePageReaderOf(given(null), game)).toBeNull();
+    expect(gamePageReaderOf(given(''), game)).toBeNull();
+    expect(gamePageReaderOf(given(42), game)).toBeNull();
+    expect(gamePageReaderOf(given('x'.repeat(2_000_000)), game)).toBeNull();
+    expect(gamePageReaderOf(demo, game)).toBeNull();
+    const throwing = {
+      games: {
+        ...demo.games!,
+        pageReaderFor: () => {
+          throw new Error('boom');
+        },
+      },
+    };
+    expect(gamePageReaderOf(throwing, game)).toBeNull();
   });
 
   it('checks a game listing', () => {

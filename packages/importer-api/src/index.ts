@@ -63,6 +63,7 @@ import {
 import type { SiteInfo, SiteLicence } from './sites';
 
 export * from './fetching';
+export * from './gameLists';
 export * from './layoutNotes';
 export * from './pageValues';
 export * from './sitePatterns';
@@ -1264,6 +1265,13 @@ export interface GamePages {
   matches(url: string): boolean;
   /** Like {@link AtlasImporter.pageReader}, for a game page: returns what `convert` needs, or null while it is not there. */
   pageReader?: string;
+  /**
+   * Optional, like {@link AtlasImporter.pageReaderFor}, for a game page:
+   * the importer's reader of its own for one game address (a game page of
+   * a site its rules file describes, say), or null for `pageReader`. Must
+   * not throw. See {@link gamePageReaderOf}.
+   */
+  pageReaderFor?(url: string): string | null;
   /** Like {@link AtlasImporter.fetch}, for a game page; then `pageReader` is not needed. */
   fetch?: PageFetch;
   /** How long to wait for it, in seconds; the importer's own wait when absent. */
@@ -1286,6 +1294,8 @@ export interface SiteCatalogue {
   address: string;
   /** A short label for it, for example "All games on Example Maps". */
   label?: string;
+  /** The site's name, as the app says "12 games on <site>"; the importer's title when absent. */
+  site?: string;
   /** Whether `url` is the address of the list of games. Must not throw. */
   matches(url: string): boolean;
   pageReader: string;
@@ -1414,6 +1424,16 @@ export interface AtlasImporter {
   games?: GamePages;
   /** Optional: reading the site's list of games. Needs {@link games}. */
   catalogue?: SiteCatalogue;
+  /**
+   * Optional: more lists of games, for an importer that reads several
+   * sites (a general importer, one list for each site its rules files
+   * describe with one). Called each time the app lists them, after the
+   * importer's site files are applied, so it may change with them. Each is
+   * read as {@link catalogue} is, and each must have its own address; a
+   * list the app cannot use is left out. Needs {@link games}. Read them
+   * with {@link cataloguesOf}.
+   */
+  catalogues?(): readonly SiteCatalogue[];
   /**
    * Optional: `convert` may return a pack whose id is that of a pack that
    * comes with the app, to refresh it. It must keep that pack's ids, and
@@ -1571,6 +1591,7 @@ const gamePagesSchema = z
     waitSeconds: waitSchema,
     convert: z.custom<GamePages['convert']>(isFunction, 'must be a function'),
     gameAddress: z.custom<NonNullable<GamePages['gameAddress']>>(isFunction).optional(),
+    pageReaderFor: z.custom<NonNullable<GamePages['pageReaderFor']>>(isFunction).optional(),
   })
   .refine(readsSomehow, readsSomehowError)
   .refine(readsItsWindows, readsItsWindowsError);
@@ -1581,6 +1602,7 @@ const catalogueSchema = z.object({
     .max(MAX_ADDRESS_CHARS)
     .refine((text) => isAllowedPageUrl(text), 'must be a web address'),
   label: z.string().trim().min(1).max(100).optional(),
+  site: z.string().trim().min(1).max(100).optional(),
   matches: z.custom<SiteCatalogue['matches']>(isFunction, 'must be a function'),
   pageReader: readerSchema,
   waitSeconds: waitSchema,
@@ -1615,6 +1637,7 @@ export const importerSchema = z
     convert: z.custom<AtlasImporter['convert']>(isFunction, 'must be a function'),
     games: gamePagesSchema.optional(),
     catalogue: catalogueSchema.optional(),
+    catalogues: z.custom<NonNullable<AtlasImporter['catalogues']>>(isFunction).optional(),
     refreshesBundledGames: z.boolean().optional(),
     picturesWithPages: z.boolean().optional(),
     sites: z
@@ -1635,6 +1658,10 @@ export const importerSchema = z
   .refine((importer) => !importer.catalogue || importer.games, {
     message: 'an importer with a catalogue must also read game pages',
     path: ['catalogue'],
+  })
+  .refine((importer) => !importer.catalogues || importer.games, {
+    message: 'an importer with catalogues must also read game pages',
+    path: ['catalogues'],
   })
   .refine(readsSomehow, readsSomehowError)
   .refine(readsItsWindows, readsItsWindowsError);
@@ -1692,7 +1719,7 @@ export type ReaderKind = 'page' | 'game' | 'catalogue';
  * address another importer knows. Null when none recognises it.
  */
 export function findReader<
-  T extends Pick<AtlasImporter, 'matches' | 'general' | 'games' | 'catalogue'>,
+  T extends Pick<AtlasImporter, 'matches' | 'general' | 'games' | 'catalogue' | 'catalogues'>,
 >(importers: readonly T[], url: string): { importer: T; kind: ReaderKind } | null {
   if (!isAllowedPageUrl(url)) return null;
   const address = url.trim();
@@ -1703,12 +1730,7 @@ export function findReader<
       (importer) =>
         importer.games !== undefined && safely(() => importer.games!.matches(address), false),
     ],
-    [
-      'catalogue',
-      (importer) =>
-        importer.catalogue !== undefined &&
-        safely(() => importer.catalogue!.matches(address), false),
-    ],
+    ['catalogue', (importer) => catalogueAt(importer, address) !== null],
   ];
   for (const general of [false, true]) {
     for (const [kind, recognises] of kinds) {
@@ -1999,16 +2021,72 @@ export function findGameImporter<T extends Pick<AtlasImporter, 'games' | 'genera
   return recognising.find((i) => !readsAsGeneral(i, url)) ?? recognising[0] ?? null;
 }
 
-/** The first importer that recognises `url` as the address of its list of games, or null. */
-export function findCatalogueImporter<T extends Pick<AtlasImporter, 'catalogue'>>(
+/** The first importer that recognises `url` as the address of one of its lists of games, or null. */
+export function findCatalogueImporter<T extends Pick<AtlasImporter, 'catalogue' | 'catalogues'>>(
   importers: readonly T[],
   url: string,
 ): T | null {
   if (!isAllowedPageUrl(url)) return null;
+  return importers.find((i) => catalogueAt(i, url.trim()) !== null) ?? null;
+}
+
+/** Lists of games one importer may offer at most, its {@link AtlasImporter.catalogue} among them. */
+export const MAX_CATALOGUES = 50;
+
+/**
+ * An importer's lists of games: its {@link AtlasImporter.catalogue}, then
+ * those {@link AtlasImporter.catalogues} gives, each checked as a loaded
+ * importer's `catalogue` is, at most {@link MAX_CATALOGUES}, each address
+ * once (the first list with an address counts). A list that is not usable,
+ * or a `catalogues` that throws, is left out. Never throws.
+ */
+export function cataloguesOf(
+  importer: Pick<AtlasImporter, 'catalogue' | 'catalogues'>,
+): SiteCatalogue[] {
+  const given: unknown[] = importer.catalogue ? [importer.catalogue] : [];
+  if (typeof importer.catalogues === 'function') {
+    const more: unknown = safely(() => importer.catalogues!(), []);
+    if (Array.isArray(more)) given.push(...(more as unknown[]).slice(0, MAX_CATALOGUES));
+  }
+  const out: SiteCatalogue[] = [];
+  const addresses = new Set<string>();
+  for (const one of given) {
+    if (out.length >= MAX_CATALOGUES) break;
+    if (!catalogueSchema.safeParse(one).success) continue;
+    const catalogue = one as SiteCatalogue;
+    const key = pageKey(catalogue.address);
+    if (addresses.has(key)) continue;
+    addresses.add(key);
+    out.push(catalogue);
+  }
+  return out;
+}
+
+/** The list of games of an importer whose address `url` is ({@link SiteCatalogue.matches}), or null. */
+export function catalogueAt(
+  importer: Pick<AtlasImporter, 'catalogue' | 'catalogues'>,
+  url: string,
+): SiteCatalogue | null {
   return (
-    importers.find((i) => i.catalogue && safely(() => i.catalogue!.matches(url.trim()), false)) ??
-    null
+    cataloguesOf(importer).find((catalogue) => safely(() => catalogue.matches(url), false)) ?? null
   );
+}
+
+/**
+ * The reader an importer gives for one game address of its own
+ * ({@link GamePages.pageReaderFor}), when it gives one that is a reader of
+ * the allowed size; else null, for its `pageReader`.
+ */
+export function gamePageReaderOf(
+  importer: Pick<AtlasImporter, 'games'>,
+  url: string,
+): string | null {
+  const games = importer.games;
+  if (!games?.pageReaderFor) return null;
+  const given: unknown = safely(() => games.pageReaderFor!(url), null);
+  return typeof given === 'string' && given.length > 0 && given.length <= MAX_READER_CHARS
+    ? given
+    : null;
 }
 
 /**
