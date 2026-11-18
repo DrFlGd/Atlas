@@ -243,7 +243,7 @@ export type ImportPhase =
       pictures?: boolean;
       /** Its location photos are downloaded after its map images (see `mapPhotos.ts`). */
       photos?: boolean;
-      /** A game of pages built again: how its pages are filed in its contents (see {@link pagesFiling}). */
+      /** A game of pages built again: where its pages are in its contents (see {@link pagesFiling}). */
       filing?: PagesFiling;
       /** A game of pages built again: whether its pages were laid out as a browser shows them. */
       layout?: LayoutReport;
@@ -362,7 +362,14 @@ const setPhase = (phase: ImportPhase) => {
   useImport.setState({ phase });
 };
 
-export { POLL_MS, KEPT_POLL_MS, STILL_WAITING_SECONDS, waitText } from './pageWindow';
+export {
+  POLL_MS,
+  KEPT_POLL_MS,
+  STILL_WAITING_SECONDS,
+  waitText,
+  whyItWaits,
+  runWhyItWaits,
+} from './pageWindow';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -2057,27 +2064,24 @@ async function convertAndSave(
   }
 }
 
-/** How the pages of a game of pages are filed, and the name of its section of pages placed by links. */
-export interface PagesFiling extends ContentsFiling {
-  /** The title of the section of pages no list page lists ("Pages"). */
-  pagesTitle: string;
-}
+/** Where the pages of a game of pages are: in the site's menu, or outside it. */
+export type PagesFiling = ContentsFiling;
 
 /**
- * How the pages of a game of pages are filed in its contents, as Guides
- * shows them before the person's own changes (see `pageTree.ts` in the
- * core package): nothing for a pack with no section of pages placed by
- * links.
+ * Where the pages of a game of pages are in its contents, as Guides shows
+ * them before the person's own changes (see `contents.ts` in the core
+ * package): in the site's menu, or outside it (a section marked
+ * `placeByLinks`). Nothing for a pack with no section of pages outside its
+ * menu.
  */
 export function pagesFiling(pack: PackData): PagesFiling | null {
-  const loose = (pack.sections ?? []).find((section) => section.placeByLinks === true);
-  if (!loose) return null;
+  if (!(pack.sections ?? []).some((section) => section.placeByLinks === true)) return null;
   const contents = new GuideContents({
     data: pack,
     aliases: pack.manifest.idMigrations,
     homePage: pack.manifest.homePage ?? null,
   });
-  return { ...contents.filing(), pagesTitle: loose.title };
+  return contents.filing();
 }
 
 // ---------------------------------------------------------------------------

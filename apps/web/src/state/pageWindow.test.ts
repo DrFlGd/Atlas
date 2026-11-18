@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { PollResult } from '../desktop';
-import { ImportRun, RUN_PAUSE_MS, WINDOW_PAGE_PAUSE_MS, type PageOutcome } from './importRun';
+import {
+  ImportRun,
+  RUN_PAUSE_MS,
+  WINDOW_PAGE_PAUSE_MS,
+  type PageOutcome,
+  type RunState,
+} from './importRun';
 import {
   KEPT_POLL_MS,
+  MAX_NOTE_CHARS,
   POLL_MS,
   PageWindows,
+  STALE_NOTE,
+  STILL_WAITING_SECONDS,
+  noteText,
+  runWhyItWaits,
+  whyItWaits,
   type PageRead,
   type PageWaiting,
   type WindowShell,
@@ -26,6 +38,8 @@ function fakeWindow() {
   let open: { url: string; keep: boolean; polls: number } | null = null;
   const state = {
     check: new Set<string>(),
+    /** What the reader says of a page in `check`, as its note. */
+    notes: new Map<string, string>(),
     closeOn: new Set<string>(),
     /** After a move, the first poll hands over the page shown before, as a shell without its own check might. */
     lagging: false,
@@ -77,7 +91,7 @@ function fakeWindow() {
         return Promise.resolve({
           state: 'waiting',
           loading: false,
-          note: null,
+          note: state.notes.get(url) ?? null,
           attention: open.polls > 3,
         });
       }
@@ -229,9 +243,11 @@ describe('a go of pages read in a window kept for it', () => {
     const fake = fakeWindow();
     fake.state.lagging = true;
     const urls = [page('Welcome'), page('Bells'), page('Gates')];
-    const { final } = await go(fake, urls, () => true);
+    const { final, waiting } = await go(fake, urls, () => true);
     // Each page got its own data, though the first poll after each move answered with the page before.
     expect(final.pages.map((p) => (p.state.kind === 'added' ? p.state.map : null))).toEqual(urls);
+    // Meanwhile, the page waits, saying why.
+    expect(waiting.filter((state) => state.note === STALE_NOTE)).toHaveLength(2);
   });
 
   it('reads a name the site shows at the address of the page before', async () => {
@@ -424,5 +440,155 @@ describe('reading more from a page once its data is read', () => {
       `after ${page('Gates')}`,
       'close',
     ]);
+  });
+});
+
+describe('why the page window waits', () => {
+  const REASON =
+    'The page names /wiki/Saltmarsh_Bells as its own address, but the window shows /wiki/Bells.';
+
+  it('carries the reader’s reason into the run, and shows it once the window waits for the person', async () => {
+    const fake = fakeWindow();
+    fake.state.check.add(page('Bells'));
+    fake.state.notes.set(page('Bells'), REASON);
+    const windows = new PageWindows({ sleep: fake.sleep, now: fake.now, report: () => undefined });
+    const states: RunState[] = [];
+    const run = new ImportRun(
+      [page('Bells')],
+      0,
+      {
+        sleep: fake.sleep,
+        onChange: (state) => states.push(state),
+        async importPage(_index, url, update): Promise<PageOutcome> {
+          const read = await windows.read(
+            fake.shell,
+            {
+              url,
+              importer: { id: 'example-wiki' },
+              pageReader: '() => null',
+              waitSeconds: 60,
+              reading: 'map',
+              measure: null,
+              keepFor: 1,
+              onWaiting: (waiting) => {
+                update({ kind: 'open', ...waiting });
+              },
+            },
+            () => true,
+          );
+          return read.state === 'timed-out'
+            ? { kind: 'no-data', message: read.message }
+            : { kind: 'failed', message: read.state };
+        },
+      },
+      0,
+    );
+    const final = await run.run();
+    const open = states.flatMap((state) =>
+      state.pages[0]!.state.kind === 'open' ? [state.pages[0]!.state] : [],
+    );
+    // The note of the last poll is in the run's state.
+    expect(open.some((state) => state.note === REASON)).toBe(true);
+    // Not shown for a page that has just loaded and asked for nobody.
+    const early = states.find((state) => {
+      const shown = state.pages[0]!.state;
+      return shown.kind === 'open' && shown.note === REASON && shown.attention !== true;
+    })!;
+    expect(runWhyItWaits(early)).toBeNull();
+    // Shown once the window waits for the person.
+    const asked = states.find((state) => {
+      const shown = state.pages[0]!.state;
+      return shown.kind === 'open' && shown.attention === true;
+    })!;
+    expect(runWhyItWaits(asked)).toBe(`Why it waits: ${REASON}`);
+    // The failed page's row keeps it.
+    const failed = final.pages[0]!.state;
+    expect(failed.kind).toBe('failed');
+    expect(failed.kind === 'failed' && failed.message).toContain(
+      `Nothing was added. The last thing the reader said: ${REASON}`,
+    );
+    expect(runWhyItWaits(final)).toBeNull();
+  });
+
+  it('adds the last note to the message of a page that runs out of time, and reports it', async () => {
+    const fake = fakeWindow();
+    fake.state.check.add(page('Bells'));
+    fake.state.notes.set(page('Bells'), 'the page did not answer the reader within 10 seconds');
+    const reports: string[] = [];
+    const windows = new PageWindows({
+      sleep: fake.sleep,
+      now: fake.now,
+      report: (entry) => reports.push(entry.message ?? ''),
+    });
+    const read = await windows.read(
+      fake.shell,
+      {
+        url: page('Bells'),
+        importer: { id: 'example-wiki' },
+        pageReader: '() => null',
+        waitSeconds: 30,
+        reading: 'game',
+        measure: null,
+        keepFor: null,
+        onWaiting: () => undefined,
+      },
+      () => true,
+    );
+    const message =
+      'The page did not provide the list of its pages within 30 seconds. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the page load; you can try again later. Nothing was added. The last thing the reader said: The page did not answer the reader within 10 seconds.';
+    expect(read).toEqual({ state: 'timed-out', message });
+    expect(reports).toEqual([message]);
+    // Without a note, the message stays as it was.
+    const quiet = fakeWindow();
+    quiet.state.check.add(page('Gates'));
+    const plain = await new PageWindows({
+      sleep: quiet.sleep,
+      now: quiet.now,
+      report: () => undefined,
+    }).read(
+      quiet.shell,
+      {
+        url: page('Gates'),
+        importer: { id: 'example-wiki' },
+        pageReader: '() => null',
+        waitSeconds: 30,
+        reading: 'map',
+        measure: null,
+        keepFor: null,
+        onWaiting: () => undefined,
+      },
+      () => true,
+    );
+    expect(plain.state === 'timed-out' && plain.message).toMatch(/Nothing was added\.$/u);
+  });
+
+  it('shows a note as plain words on one line, at most 200 characters', () => {
+    expect(noteText(null)).toBeNull();
+    expect(noteText('  .  ')).toBeNull();
+    expect(noteText('the window does not show the page asked for yet')).toBe(
+      'The window does not show the page asked for yet',
+    );
+    expect(noteText('A frame is visible.\n<b>Bold</b>\u202e\u0007 here..')).toBe(
+      'A frame is visible. <b>Bold</b> here',
+    );
+    const long = noteText('Saltmarsh '.repeat(40))!;
+    expect(Array.from(long).length).toBeLessThanOrEqual(MAX_NOTE_CHARS);
+    expect(long.startsWith('Saltmarsh Saltmarsh')).toBe(true);
+  });
+
+  it('says why only after the still-waiting time or once the person is asked for', () => {
+    const at = 1_000_000;
+    const base = { startedAt: at, note: REASON };
+    expect(whyItWaits({ ...base, now: at + 5000 })).toBeNull();
+    expect(whyItWaits({ ...base, now: at + 5000, attention: true })).toBe(
+      `Why it waits: ${REASON}`,
+    );
+    expect(whyItWaits({ ...base, now: at + STILL_WAITING_SECONDS * 1000 })).toBe(
+      `Why it waits: ${REASON}`,
+    );
+    expect(
+      whyItWaits({ ...base, now: at + STILL_WAITING_SECONDS * 1000, measuring: true }),
+    ).toBeNull();
+    expect(whyItWaits({ startedAt: at, now: at + 60_000, note: null, attention: true })).toBeNull();
   });
 });

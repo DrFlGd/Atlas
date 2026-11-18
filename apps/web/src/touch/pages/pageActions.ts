@@ -15,7 +15,7 @@ import { indentItem, outdentItem, type ItemPath } from '../../markdownEdit/struc
 import { MAX_DEPTH, type LayoutFormName } from '@atlas/schema';
 import { notify } from '../../state/actions';
 import { guidesOf } from '../../state/guides';
-import { layoutOf, useOwnPages } from '../../state/ownPages';
+import { OUTSIDE_MENU_TITLE, shownContentsOf, useOwnPages } from '../../state/ownPages';
 import type { LoadedGame } from '../../state/store';
 import {
   changePage,
@@ -165,29 +165,47 @@ export function addLayout(form: LayoutFormName, around: boolean): void {
   });
 }
 
-/** Every section of the contents, with the sections it is in, for a choice of where a page goes. */
-export function sectionChoices(game: LoadedGame): { id: string; title: string; depth: number }[] {
-  const layout = layoutOf(game);
+/** A section a page can go to (see {@link sectionChoices}). */
+export interface SectionChoice {
+  id: string;
+  title: string;
+  depth: number;
+  /** The group of pages outside the menu, "Not in the menu". */
+  outside?: true;
+}
+
+/**
+ * Every section of the menu, with the sections it is in, for a choice of
+ * where a page goes; then, last, the group of pages outside the menu, where
+ * the pack has one (its sections of pages outside the menu are that one
+ * group, see `shownContentsFor` in core).
+ */
+export function sectionChoices(game: LoadedGame): SectionChoice[] {
+  const shown = shownContentsOf(game);
+  const layout = shown.layout;
   const { contents } = guidesOf(game);
   const titles = new Map<string, string>();
   for (const section of game.pack.data.sections ?? []) titles.set(section.id, section.title);
   for (const section of useOwnPages.getState().own.sections) titles.set(section.id, section.title);
-  const out: { id: string; title: string; depth: number }[] = [];
+  const out: SectionChoice[] = [];
   const walk = (items: readonly string[], depth: number) => {
     for (const id of items) {
       // Sections only: a layout also holds the pages put under a page, by its id.
       if (!(id in layout.sections) || parseId(id)?.kind !== 'section') continue;
+      if (id === shown.outside) continue;
       out.push({ id, title: contents.section(id)?.title ?? titles.get(id) ?? id, depth });
       walk(layout.sections[id] ?? [], depth + 1);
     }
   };
   walk(layout.top, 0);
+  if (shown.outside)
+    out.push({ id: shown.outside, title: OUTSIDE_MENU_TITLE, depth: 0, outside: true });
   return out;
 }
 
 /**
- * The pages under a page as Guides shows them, as deep as they go: each
- * page with the pages under it, a level made of a heading as its words.
+ * The pages put under a page by hand, as Guides shows them, as deep as
+ * they go: each page with the pages under it.
  */
 export function pagesUnder(game: LoadedGame, guideId: string): ListedPage[] {
   const { contents } = guidesOf(game);
@@ -198,9 +216,7 @@ export function pagesUnder(game: LoadedGame, guideId: string): ListedPage[] {
       if (entry.kind === 'section' || seen.has(at)) return [];
       seen.add(at);
       const under = depth < 16 ? walk(at, depth + 1) : [];
-      return entry.kind === 'page'
-        ? [{ id: at, title: entry.guide.title, under }]
-        : [{ title: entry.heading.title, under }];
+      return [{ id: at, title: entry.guide.title, under }];
     });
   return walk(guideId, 0);
 }

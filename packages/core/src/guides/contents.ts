@@ -1,8 +1,7 @@
-import { isOwnId, type GuideEntry, type Section } from '@atlas/schema';
+import type { GuideEntry, Section } from '@atlas/schema';
 import type { LoadedPack } from '../pack/loadedPack';
-import { guideFiling, isListPage } from './pageFiling';
-import { headingSteps } from './headingSteps';
-import { guideLinks, placePagesByLinks, type PageListing } from './pageTree';
+import { guideFiling } from './pageFiling';
+import { guideLinks } from './pageLinks';
 
 /**
  * A pack's guides as pages to browse: its contents (`sections.json`), the
@@ -12,63 +11,47 @@ import { guideLinks, placePagesByLinks, type PageListing } from './pageTree';
  * guides (walkthroughs of its lists, notes of its locations) stay where
  * they were. A pack with no contents and no map either (a game of guides
  * and lists only) is browsed as one list of all its guides, in order.
+ *
+ * The menu (the contents Guides shows beside the page) is only what the
+ * source itself gives and what the person arranged by hand: the pack's
+ * sections, in its order and nesting, and the pages the person put in a
+ * section or under a page. The app never files a page under another by
+ * reading pages. A section marked `placeByLinks` holds the pages outside
+ * the menu (a wiki's pages its own menu does not name): it is not shown,
+ * and its pages are reached by the links in pages, by search, from the
+ * home page and from "All pages".
  */
 export type ContentsEntry =
   | { kind: 'section'; section: Section; /** Pages in it, however deep. */ pages: number }
-  | { kind: 'page'; guide: GuideEntry; /** Pages under it, however deep. */ pages: number }
-  | { kind: 'heading'; heading: ContentsHeading; /** Pages in it, however deep. */ pages: number };
+  | { kind: 'page'; guide: GuideEntry; /** Pages under it, however deep. */ pages: number };
 
 /**
- * A heading of a list page shown as a level under it (see
- * `headingSteps.ts`): no page, but the pages the list page lists under
- * that heading. It opens the list page at the heading.
- */
-export interface ContentsHeading {
-  /** Its id in the contents: the list page's id, `#`, the heading's section. */
-  id: string;
-  /** The heading's words. */
-  title: string;
-  /** The list page it is a heading of. */
-  guide: GuideEntry;
-  /** The heading's section (see `sections.ts`), which the list page opens at. */
-  section: string;
-}
-
-/**
- * How the pages of the contents are filed (see {@link GuideContents.filing}):
+ * Where the pages of the contents are (see {@link GuideContents.filing}):
  * each page of the contents, the home page aside, is counted once.
  */
 export interface ContentsFiling {
   /** The pages of the contents. */
   pages: number;
-  /** Under the list page that lists them (or at the top, listed by the home page). */
-  underListPage: number;
-  /** Under a page the source itself files them under (a guide's `filedUnder`). */
-  underFiledPage: number;
-  /** In a section of the contents placed by the pack itself (a wiki's menu), or at the top by it. */
-  inSection: number;
-  /** Left in a section of pages placed by links (a wiki's "Pages"): no list page lists them. */
-  inPagesSection: number;
-  /** Under a page the person put them under. */
+  /** In the menu: in a section of it or at its top, where the pack or the person put them. */
+  inMenu: number;
+  /** In the menu, under a page the person put them under. */
   byHand: number;
+  /** Outside the menu: in a section marked `placeByLinks`, or put by hand under a page there. */
+  outsideMenu: number;
 }
 
-/** A step of the way from the top of the contents to an entry: a section, a page, or a heading of one. */
+/** A step of the way from the top of the contents to an entry: a section, or a page. */
 export type ContentsStep =
-  | { kind: 'section'; section: Section }
-  | { kind: 'page'; guide: GuideEntry }
-  | { kind: 'heading'; heading: ContentsHeading };
+  { kind: 'section'; section: Section } | { kind: 'page'; guide: GuideEntry };
 
-/** The id of an entry or a step of the contents: its section's, its page's or its heading's. */
+/** The id of an entry or a step of the contents: its section's or its page's. */
 export function entryIdOf(entry: ContentsEntry | ContentsStep): string {
-  if (entry.kind === 'section') return entry.section.id;
-  return entry.kind === 'page' ? entry.guide.id : entry.heading.id;
+  return entry.kind === 'section' ? entry.section.id : entry.guide.id;
 }
 
 /** The title of an entry or a step of the contents, as the contents shows it. */
 export function entryTitleOf(entry: ContentsEntry | ContentsStep): string {
-  if (entry.kind === 'section') return entry.section.title;
-  return entry.kind === 'page' ? entry.guide.title : entry.heading.title;
+  return entry.kind === 'section' ? entry.section.title : entry.guide.title;
 }
 
 /**
@@ -90,16 +73,10 @@ export interface GuidePages {
   aliases?: Readonly<Record<string, string>>;
   /**
    * The home page (a pack's `homePage`, a wiki's main page): shown on its
-   * own, not in the contents, and the top of the contents branches from it
-   * (see `pageTree.ts`). Not used when the guides have no such page.
+   * own, as the page the guides open on, not in the menu. Not used when the
+   * guides have no such page.
    */
   homePage?: string | null;
-  /**
-   * The person's say on list pages (an own pages file's `listPages`): by
-   * page id, `true` when it files the pages it lists whatever share of its
-   * links it lists, `false` when it files none.
-   */
-  listPages?: Readonly<Record<string, boolean>>;
 }
 
 /** The id a guide id stands for now, through `aliases` (a few steps at most). */
@@ -116,18 +93,7 @@ export function linksThrough(
   guide: GuideEntry,
   aliases: Readonly<Record<string, string>> | undefined,
 ): readonly string[] {
-  const links = guideLinks(guide);
-  if (!aliases || Object.keys(aliases).length === 0) return links;
-  const out: string[] = [];
-  const seen = new Set<string>([guide.id]);
-  for (const link of links) {
-    const id = aliasedId(aliases, link);
-    if (!seen.has(id)) {
-      seen.add(id);
-      out.push(id);
-    }
-  }
-  return out;
+  return throughAliases(guide.id, guideLinks(guide), aliases);
 }
 
 /** The pages the source files a guide under (its `filedUnder`), through `aliases`. */
@@ -141,69 +107,41 @@ export function filedUnderThrough(
 }
 
 /**
- * What a guide lists (see `pageFiling.ts`), through `aliases`, and whether
- * it is a list page. With `onlyListPage`, the listing of a page that is no
- * list page may be left out (it files nothing, see `pageTree.ts`).
+ * The pages a guide lists (its listing links, see `pageFiling.ts`), in
+ * order, through `aliases`, each once, never itself: what the arrange
+ * tool's "File the pages this page lists under it" puts under it.
  */
 export function listingThrough(
   guide: GuideEntry,
   aliases: Readonly<Record<string, string>> | undefined,
-  onlyListPage = false,
-): PageListing {
-  const filing = guideFiling(guide, onlyListPage);
-  const listPage = isListPage(filing);
-  const { headings, listedUnder } = filing;
-  if (!aliases || Object.keys(aliases).length === 0) {
-    return {
-      listing: filing.listing,
-      listPage,
-      ...(headings && listedUnder ? { headings, listedUnder } : {}),
-    };
-  }
-  const listing: string[] = [];
-  const under: number[] = [];
-  const seen = new Set<string>([guide.id]);
-  filing.listing.forEach((link, i) => {
+): readonly string[] {
+  return throughAliases(guide.id, guideFiling(guide).listing, aliases);
+}
+
+/** Guide ids through `aliases`, each once, never `self`. */
+function throughAliases(
+  self: string,
+  ids: readonly string[],
+  aliases: Readonly<Record<string, string>> | undefined,
+): readonly string[] {
+  if (!aliases || Object.keys(aliases).length === 0) return ids;
+  const out: string[] = [];
+  const seen = new Set<string>([self]);
+  for (const link of ids) {
     const id = aliasedId(aliases, link);
     if (!seen.has(id)) {
       seen.add(id);
-      listing.push(id);
-      under.push(listedUnder?.[i] ?? -1);
+      out.push(id);
     }
-  });
-  if (!headings || !listedUnder) return { listing, listPage };
-  return {
-    listing,
-    listPage,
-    headings: headings.map((heading) =>
-      heading.guide === null ? heading : { ...heading, guide: aliasedId(aliases, heading.guide) },
-    ),
-    listedUnder: under,
-  };
-}
-
-/**
- * What a guide lists, with the person's say on it (see
- * {@link GuidePages.listPages}): `true` makes it a list page whatever share
- * of its links it lists, `false` makes it list nothing; with no say, as
- * {@link listingThrough} finds.
- */
-export function listingWithSay(
-  guide: GuideEntry,
-  aliases: Readonly<Record<string, string>> | undefined,
-  onlyListPage: boolean,
-  say: boolean | undefined,
-): PageListing {
-  if (say === false) return { listing: [], listPage: false };
-  if (say === true) return { ...listingThrough(guide, aliases, false), listPage: true };
-  return listingThrough(guide, aliases, onlyListPage);
+  }
+  return out;
 }
 
 /**
  * The pack's unheaded sections (a section's `unheaded`), and a list of the
  * contents with each of them replaced by what it holds, in its place,
  * however deep (an unheaded section in an unheaded section too). A section
- * placed by links is never unheaded: it keeps its heading. A list that
+ * of pages outside the menu (`placeByLinks`) is never unheaded. A list that
  * names one twice spreads it once, where it is first.
  */
 export function spreaderOf(sections: readonly Section[]): {
@@ -241,12 +179,16 @@ export function spreaderOf(sections: readonly Section[]): {
   return { unheaded, items };
 }
 
+/** The most pages the way above a page outside the menu names (see {@link GuideContents.outsideTrail}). */
+export const OUTSIDE_TRAIL_STEPS = 6;
+
 /**
- * The contents as shown: sections that hold sections and pages, and pages
- * that hold pages. A page of a section marked `placeByLinks` is shown
- * under the list page that lists it (see `pageTree.ts`); every entry has one
- * home, its first place in the contents, top to bottom, which the way to
- * it (`trail`) follows.
+ * The contents as shown: the menu (sections that hold sections and pages,
+ * and pages that hold the pages put under them by hand), and the pages
+ * outside it. Every entry of the menu has one home, its first place in
+ * the menu, top to bottom, which the way to it (`trail`) follows. Every
+ * page the contents lists is one of its pages (`pages`), in the menu or
+ * not, so none is ever lost.
  */
 export class GuideContents {
   /** Whether the pack has guides to browse as pages: a contents, or no map but guides. */
@@ -255,41 +197,39 @@ export class GuideContents {
   readonly hasContents: boolean;
   private readonly sections: ReadonlyMap<string, Section>;
   private readonly guides: ReadonlyMap<string, GuideEntry>;
-  /** What the pack and the person list: by section id, and by page id the pages put under it. */
-  private readonly baseLists: ReadonlyMap<string, readonly string[]>;
-  private readonly baseTop: readonly string[];
-  private readonly byLinkSections: ReadonlySet<string>;
-  /** The contents as shown (see {@link shown}). */
-  private tree: { top: readonly string[]; lists: ReadonlyMap<string, readonly string[]> } | null =
-    null;
-  /** Each entry's home: the section or page of its first place, or null at the top. */
+  /**
+   * What each section holds as shown (without the sections of pages outside
+   * the menu, and the home page), and by page id the pages put under it by
+   * hand.
+   */
+  private readonly lists = new Map<string, readonly string[]>();
+  /** The top of the menu, as shown. */
+  private readonly menuTop: readonly string[];
+  /** The sections that hold the pages outside the menu (`placeByLinks`). */
+  private readonly outsideSections: ReadonlySet<string>;
+  /** Each entry of the menu's home: the section or page of its first place, or null at the top. */
   private readonly home = new Map<string, string | null>();
-  /** Every entry at its home, top to bottom. */
+  /** Every entry of the menu at its home, top to bottom. */
   private readonly inOrder: string[] = [];
+  /** The pages outside the menu, in the source's order, each followed by those put under it by hand. */
+  private readonly outsideOrder: string[] = [];
+  /** By page, the page the person first put it under. */
+  private readonly handParent = new Map<string, string>();
   /** With no contents, the guides listed at the top, in guide order. */
   private readonly loose: GuideEntry[];
-  /** Every guide the contents lists, however deep. */
+  /** Every guide the contents lists, however deep, in the menu or not. */
   private readonly listed = new Set<string>();
   private readonly pageCounts = new Map<string, number>();
-  /** The pages placed under a page by their links: by page id, that page. */
-  private byLinks: ReadonlyMap<string, string> = new Map();
-  /** Of those, the pages under a page the source files them under. */
-  private filed: ReadonlySet<string> = new Set();
   /** By page id, the pages of the contents that link to it, in contents order; when first asked. */
   private linkedTo: Map<string, string[]> | null = null;
   private readonly aliases: Readonly<Record<string, string>> | undefined;
-  /** The person's say on list pages (see {@link GuidePages.listPages}). */
-  private readonly listPages: Readonly<Record<string, boolean>> | undefined;
-  /** The home page, when the guides have it and there is a contents to branch from it. */
+  /** The home page, when the guides have it. */
   private readonly homeGuide: GuideEntry | null;
-  /** The headings of list pages shown as levels, by id (see `headingSteps.ts`). */
-  private readonly headings = new Map<string, ContentsHeading>();
 
   constructor(pack: GuidePages) {
     const sections = pack.data.sections ?? [];
     const guides = sortGuides(pack.data.guides);
     this.aliases = pack.aliases;
-    this.listPages = pack.listPages;
     this.sections = new Map(sections.map((s) => [s.id, s]));
     this.guides = new Map(guides.map((g) => [g.id, g]));
     const top = pack.top;
@@ -299,16 +239,23 @@ export class GuideContents {
       top !== undefined
         ? top.some((id) => this.sections.has(id) || this.guides.has(id))
         : this.hasContents || (!hasMap && guides.length > 0);
+    this.loose = this.browsable && !this.hasContents ? guides : [];
+    const home = pack.homePage ? this.guides.get(pack.homePage) : undefined;
+    this.homeGuide = home && this.browsable ? home : null;
+    const homeId = this.homeGuide?.id ?? null;
+    this.outsideSections = new Set(
+      sections.filter((s) => s.placeByLinks === true).map((s) => s.id),
+    );
 
     // What the pack and the person list: sections, and pages under pages. An
     // unheaded section is no entry of its own: what it holds stands in its place.
     const spread = spreaderOf(sections);
-    const lists = new Map<string, readonly string[]>();
+    const given = new Map<string, readonly string[]>();
     const listedBy = new Set<string>();
     for (const section of sections) {
-      if (lists.has(section.id) || spread.unheaded.has(section.id)) continue;
+      if (given.has(section.id) || spread.unheaded.has(section.id)) continue;
       const items = spread.items(section.items);
-      lists.set(section.id, items);
+      given.set(section.id, items);
       for (const item of items) if (this.guides.has(item)) this.listed.add(item);
     }
     for (const section of sections) {
@@ -316,26 +263,100 @@ export class GuideContents {
     }
     for (const [id, items] of Object.entries(pack.under ?? {})) {
       if (!this.guides.has(id)) continue;
-      lists.set(id, items);
-      for (const item of items) if (this.guides.has(item)) this.listed.add(item);
+      given.set(id, items);
+      for (const item of items) {
+        if (!this.guides.has(item) || item === id) continue;
+        this.listed.add(item);
+        if (!this.handParent.has(item)) this.handParent.set(item, id);
+      }
     }
-    let topIds: string[];
-    if (top !== undefined) {
-      topIds = spread
-        .items(top)
-        .filter((id) => (this.sections.has(id) && !spread.unheaded.has(id)) || this.guides.has(id));
-    } else {
-      topIds = spread.items(sections.filter((s) => !listedBy.has(s.id)).map((s) => s.id));
-    }
+    const topIds =
+      top !== undefined
+        ? spread
+            .items(top)
+            .filter(
+              (id) => (this.sections.has(id) && !spread.unheaded.has(id)) || this.guides.has(id),
+            )
+        : spread.items(sections.filter((s) => !listedBy.has(s.id)).map((s) => s.id));
     for (const id of topIds) if (this.guides.has(id)) this.listed.add(id);
-
-    this.baseTop = topIds;
-    this.baseLists = lists;
-    this.byLinkSections = new Set(sections.filter((s) => s.placeByLinks === true).map((s) => s.id));
-    this.loose = this.browsable && !this.hasContents ? guides : [];
-    const home = pack.homePage ? this.guides.get(pack.homePage) : undefined;
-    this.homeGuide = home && this.browsable ? home : null;
     if (this.homeGuide && this.hasContents) this.listed.add(this.homeGuide.id);
+
+    // As shown: the home page on its own, and no section of pages outside the menu.
+    const shown = (items: readonly string[]) =>
+      items.filter((id) => id !== homeId && !this.outsideSections.has(id));
+    for (const [id, items] of given) this.lists.set(id, shown(items));
+    this.menuTop = this.hasContents ? shown(topIds) : [];
+    if (!this.hasContents) return;
+
+    const menuCounts = this.walk(this.menuTop, this.home, this.inOrder);
+    // The pages outside the menu: those of the sections that hold them, in
+    // their order, then any other page no shown page holds (put by hand
+    // under a page that is hidden or gone), each with the pages put under it.
+    const outside = new Map<string, string | null>();
+    const held = (id: string) => {
+      const parent = this.handParent.get(id);
+      return parent !== undefined && parent !== homeId && this.listed.has(parent);
+    };
+    const free = (id: string) =>
+      this.guides.has(id) && id !== homeId && !this.home.has(id) && !outside.has(id);
+    const first: string[] = [];
+    for (const section of sections) {
+      if (!this.outsideSections.has(section.id)) continue;
+      for (const id of given.get(section.id) ?? []) if (free(id) && !held(id)) first.push(id);
+    }
+    for (const id of this.listed) if (free(id) && !held(id)) first.push(id);
+    const outsideCounts = this.walk(first, outside, this.outsideOrder);
+    // Pages put under each other by hand in a circle, and nothing else: still shown.
+    const left = [...this.listed].filter(free);
+    const leftCounts = this.walk(left, outside, this.outsideOrder);
+    for (const counts of [menuCounts, outsideCounts, leftCounts]) {
+      for (const [id, count] of counts) this.pageCounts.set(id, count);
+    }
+  }
+
+  /**
+   * Walks entries from `top` through what each holds, giving each its home
+   * (in `homes`) and its place (in `order`), top to bottom; an entry with a
+   * home already, in the menu or here, is passed. Returns how many pages
+   * each entry walked holds, theirs counted where they are at home.
+   */
+  private walk(
+    top: readonly string[],
+    homes: Map<string, string | null>,
+    order: string[],
+  ): Map<string, number> {
+    const from = order.length;
+    // Walked without recursion: a contents may be thousands deep.
+    const stack: { parent: string | null; items: readonly string[]; at: number }[] = [
+      { parent: null, items: top, at: 0 },
+    ];
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      if (frame.at >= frame.items.length) {
+        stack.pop();
+        continue;
+      }
+      const id = frame.items[frame.at++]!;
+      if (this.home.has(id) || homes.has(id) || (!this.sections.has(id) && !this.guides.has(id))) {
+        continue;
+      }
+      homes.set(id, frame.parent);
+      order.push(id);
+      const items = this.lists.get(id);
+      if (items && items.length > 0) stack.push({ parent: id, items, at: 0 });
+    }
+    // From the bottom up: an entry counts the pages it holds, and theirs where they are at home.
+    const counts = new Map<string, number>();
+    for (let i = order.length - 1; i >= from; i--) {
+      const id = order[i]!;
+      let count = 0;
+      for (const item of this.lists.get(id) ?? []) {
+        if (this.guides.has(item)) count += 1;
+        if (homes.get(item) === id) count += counts.get(item) ?? 0;
+      }
+      counts.set(id, count);
+    }
+    return counts;
   }
 
   /**
@@ -352,160 +373,17 @@ export class GuideContents {
     return this.homeGuide !== null && aliasedId(this.aliases, guideId) === this.homeGuide.id;
   }
 
-  /**
-   * The contents as shown, worked out when first asked: placing pages by
-   * their links reads every page's text, which only the Guides section needs.
-   */
-  private shown(): { top: readonly string[]; lists: ReadonlyMap<string, readonly string[]> } {
-    if (this.tree) return this.tree;
-    const shown = (id: string) => this.listed.has(id) && !isOwnId(id);
-    const tree = placePagesByLinks({
-      top: this.baseTop,
-      lists: this.baseLists,
-      isSection: (id) => this.sections.has(id),
-      isPage: (id) => this.guides.has(id),
-      byLinks: this.byLinkSections,
-      linksOf: (id) => linksThrough(this.guides.get(id)!, this.aliases),
-      // The home page files what it lists, list page or not.
-      filingOf: (id) =>
-        listingWithSay(
-          this.guides.get(id)!,
-          this.aliases,
-          id !== this.homeGuide?.id,
-          this.listPages?.[id],
-        ),
-      filedUnderOf: (id) => filedUnderThrough(this.guides.get(id)!, this.aliases),
-      leads: shown,
-      movable: shown,
-      root: this.homeGuide?.id ?? null,
-    });
-    this.tree = tree;
-    this.byLinks = tree.placed;
-    this.filed = tree.filed;
-    for (const id of tree.top) if (this.guides.has(id)) this.listed.add(id);
-    this.walk(tree.top, tree.lists);
-    if (this.addHeadingSteps(tree.lists, tree.placed, tree.filed)) {
-      // Walked again with the levels: the pages under each page stay as counted.
-      this.home.clear();
-      this.inOrder.length = 0;
-      this.pageCounts.clear();
-      this.walk(tree.top, tree.lists);
-    }
-    return tree;
-  }
-
-  /**
-   * The headings of each list page as levels under it (see
-   * `headingSteps.ts`), put in `lists`; whether any was made.
-   */
-  private addHeadingSteps(
-    lists: Map<string, string[]>,
-    placed: ReadonlyMap<string, string>,
-    filed: ReadonlySet<string>,
-  ): boolean {
-    let made = false;
-    for (const [id, items] of [...lists]) {
-      const guide = this.guides.get(id);
-      if (!guide || id === this.homeGuide?.id) continue;
-      if (!items.some((item) => placed.get(item) === id && !filed.has(item))) continue;
-      const { listing, headings, listedUnder } = listingWithSay(
-        guide,
-        this.aliases,
-        true,
-        this.listPages?.[id],
-      );
-      if (!headings || !listedUnder || headings.length === 0) continue;
-      const found = headingSteps({
-        page: id,
-        title: guide.title,
-        items,
-        grouped: (item) => placed.get(item) === id && !filed.has(item),
-        weight: (item) => 1 + (this.home.get(item) === id ? (this.pageCounts.get(item) ?? 0) : 0),
-        listing,
-        headings,
-        listedUnder,
-      });
-      if (!found) continue;
-      made = true;
-      lists.set(id, found.items);
-      for (const step of found.steps) {
-        lists.set(step.id, step.items);
-        this.headings.set(step.id, {
-          id: step.id,
-          title: step.words || guide.title,
-          guide,
-          section: step.section,
-        });
-      }
-    }
-    return made;
-  }
-
-  /** Each entry's home and place, top to bottom, and the pages under each. */
-  private walk(top: readonly string[], lists: ReadonlyMap<string, readonly string[]>): void {
-    const inOrder = this.inOrder;
-    const stack: { parent: string | null; items: readonly string[]; at: number }[] = [
-      { parent: null, items: top, at: 0 },
-    ];
-    while (stack.length > 0) {
-      const frame = stack.at(-1)!;
-      if (frame.at >= frame.items.length) {
-        stack.pop();
-        continue;
-      }
-      const id = frame.items[frame.at++]!;
-      if (
-        this.home.has(id) ||
-        (!this.sections.has(id) && !this.guides.has(id) && !this.headings.has(id))
-      ) {
-        continue;
-      }
-      this.home.set(id, frame.parent);
-      inOrder.push(id);
-      const items = lists.get(id);
-      if (items && items.length > 0) stack.push({ parent: id, items, at: 0 });
-    }
-    // From the bottom up: an entry counts the pages it holds, and theirs where they are at home.
-    for (let i = inOrder.length - 1; i >= 0; i--) {
-      const id = inOrder[i]!;
-      let count = 0;
-      for (const item of lists.get(id) ?? []) {
-        if (this.guides.has(item)) count += 1;
-        if (this.home.get(item) === id) count += this.pageCounts.get(item) ?? 0;
-      }
-      this.pageCounts.set(id, count);
-    }
-  }
-
-  /** What the top of the contents lists: its sections (or, with no contents, every page). */
+  /** What the top of the menu lists: its sections and pages (or, with no contents, every page). */
   top(): ContentsEntry[] {
     if (!this.hasContents) {
       return this.looseShown().map((guide) => ({ kind: 'page', guide, pages: 0 }));
     }
-    return this.shown()
-      .top.filter((id) => !this.isEmptied(id))
-      .flatMap((id) => this.entry(id));
+    return this.menuTop.flatMap((id) => this.entry(id));
   }
 
-  /** The ids at the top of the contents, in order: sections, and pages (see {@link GuidePages}). */
+  /** The ids at the top of the menu, in order: sections, and pages (see {@link GuidePages}). */
   topEntryIds(): readonly string[] {
-    return this.hasContents
-      ? this.shown().top.filter((id) => !this.isEmptied(id))
-      : this.looseShown().map((guide) => guide.id);
-  }
-
-  /**
-   * A section of pages placed by their links that is left with none, each
-   * shown under a page that leads to it (as every page the home page leads
-   * to is): not shown, as it holds nothing to read.
-   */
-  private isEmptied(id: string): boolean {
-    return (
-      this.byLinkSections.has(id) &&
-      (this.shown().lists.get(id) ?? []).every(
-        (item) => !this.sections.has(item) && !this.guides.has(item),
-      )
-    );
+    return this.hasContents ? this.menuTop : this.looseShown().map((guide) => guide.id);
   }
 
   /** With no contents, the guides listed at the top: every one but the home page. */
@@ -513,9 +391,20 @@ export class GuideContents {
     return this.homeGuide ? this.loose.filter((guide) => guide !== this.homeGuide) : this.loose;
   }
 
-  /** Whether a guide is one of the pages browsed here. */
+  /** Whether a guide is one of the pages browsed here, in the menu or not. */
   isPage(guideId: string): boolean {
     return this.hasContents ? this.listed.has(guideId) : this.loose.some((g) => g.id === guideId);
+  }
+
+  /** Whether an entry (a section or a page) is in the menu; the home page is on its own, not in it. */
+  isInMenu(id: string): boolean {
+    if (!this.hasContents) return this.looseShown().some((guide) => guide.id === id);
+    return this.home.has(id);
+  }
+
+  /** Whether the pack has a section of pages outside the menu (`placeByLinks`). */
+  hasPagesOutsideMenu(): boolean {
+    return this.outsideOrder.length > 0;
   }
 
   section(id: string): Section | undefined {
@@ -526,68 +415,80 @@ export class GuideContents {
     return this.guides.get(id);
   }
 
-  /** What a section or a page holds, in order; items the pack lacks are left out. */
+  /**
+   * What a section or a page holds, in order: a section's sections and
+   * pages, a page's pages put under it by hand (also for a page outside the
+   * menu, which lists them at its foot). Items the pack lacks are left out.
+   */
   items(id: string): ContentsEntry[] {
-    return (this.shown().lists.get(id) ?? [])
-      .filter((item) => !this.isEmptied(item))
-      .flatMap((item) => this.entry(item));
+    return (this.lists.get(id) ?? []).flatMap((item) => this.entry(item));
+  }
+
+  /**
+   * A section's own page, which leads it: the first entry the section shows
+   * (see {@link items}), when that is a page whose title has the same words
+   * as the section's (spaces and case aside). A source's menu has entries
+   * that are pages with pages under them; the pack writes each as a section
+   * of that title whose first item is the page, and the menu shows the
+   * section as that page. Null for any other section, for a section of
+   * pages outside the menu (`placeByLinks`), for the section that holds
+   * another game's pages (its first page is that game's home page), and for
+   * an id that is no section here.
+   */
+  leadPage(sectionId: string): GuideEntry | null {
+    const section = this.sections.get(sectionId);
+    if (!this.hasContents || !section || this.outsideSections.has(sectionId)) return null;
+    if (sectionId.endsWith(`:section:${OTHER_GAME_SECTION}`)) return null;
+    const first = this.lists.get(sectionId)?.find((id) => this.entry(id).length > 0);
+    const guide = first === undefined ? undefined : this.guides.get(first);
+    return guide && sameWords(guide.title, section.title) ? guide : null;
+  }
+
+  /**
+   * What the menu shows under an entry: what it holds (see {@link items});
+   * under a section led by its own page (see {@link leadPage}), which the
+   * menu shows as that page, the pages put under the page by hand, then
+   * the section's other entries.
+   */
+  menuItems(id: string): ContentsEntry[] {
+    const items = this.items(id);
+    const lead = this.leadPage(id);
+    return lead ? [...this.items(lead.id), ...items.slice(1)] : items;
   }
 
   /** How many entries a section or a page holds (not counting deeper ones). */
   itemCount(id: string): number {
-    return this.shown().lists.get(id)?.length ?? 0;
+    return this.lists.get(id)?.length ?? 0;
   }
 
   private entry(id: string): ContentsEntry[] {
-    this.shown();
     const pages = this.pageCounts.get(id) ?? 0;
     const section = this.sections.get(id);
     if (section) return [{ kind: 'section', section, pages }];
     const guide = this.guides.get(id);
-    if (guide) return [{ kind: 'page', guide, pages }];
-    const heading = this.headings.get(id);
-    return heading ? [{ kind: 'heading', heading, pages }] : [];
+    return guide ? [{ kind: 'page', guide, pages }] : [];
   }
 
   /**
-   * Where an entry is at home: its section, page or heading of a list
-   * page; null at the top, undefined when not listed.
+   * Where an entry of the menu is at home: its section or page; null at the
+   * top, undefined when it is not in the menu.
    */
   parentOf(id: string): string | null | undefined {
-    this.shown();
     return this.home.get(id);
   }
 
-  /** The page or section an entry is under, past the headings of a list page; null at the top. */
-  pageParentOf(id: string): string | null | undefined {
-    this.shown();
-    let at = this.home.get(id);
-    for (let hops = 0; at != null && this.headings.has(at) && hops < 64; hops++) {
-      at = this.home.get(at);
-    }
-    return at;
-  }
-
-  /** A heading of a list page shown as a level, by its id (see {@link ContentsHeading}). */
-  heading(id: string): ContentsHeading | undefined {
-    this.shown();
-    return this.headings.get(id);
-  }
-
   /**
-   * The way from the top down to an entry (a guide or a section): the
-   * sections and pages it is under, outermost first.
+   * The way from the top of the menu down to an entry (a guide or a
+   * section): the sections and pages it is under, outermost first. None
+   * for an entry outside the menu (see {@link outsideTrail}).
    */
   trail(id: string): ContentsStep[] {
-    this.shown();
     const path: ContentsStep[] = [];
     const seen = new Set<string>([id]);
     for (let at = this.home.get(id); at != null && !seen.has(at); at = this.home.get(at)) {
       seen.add(at);
       const section = this.sections.get(at);
-      const heading = section ? undefined : this.headings.get(at);
       if (section) path.push({ kind: 'section', section });
-      else if (heading) path.push({ kind: 'heading', heading });
       else {
         const guide = this.guides.get(at);
         if (!guide) break;
@@ -602,23 +503,53 @@ export class GuideContents {
     return this.trail(id).flatMap((step) => (step.kind === 'section' ? [step.section] : []));
   }
 
-  /** Whether a page is where it is because of its links (see `pageTree.ts`). */
-  placedByLinks(guideId: string): boolean {
-    this.shown();
-    return this.byLinks.has(guideId);
+  /**
+   * The pages above a page outside the menu, for the line above it,
+   * outermost first: the page the person put it under by hand, else the
+   * first page of its `filedUnder` that is a page here (through other names
+   * of pages), the source's own filing; then that page's, and so on up,
+   * never the same page twice, at most {@link OUTSIDE_TRAIL_STEPS}. It
+   * stops at the home page, which the line starts with. None for a page
+   * the source files under nothing, and for a page in the menu (see
+   * {@link trail}). Only the line above a page reads it: the menu never
+   * shows it.
+   */
+  outsideTrail(guideId: string): ContentsStep[] {
+    if (this.home.has(guideId) || !this.guides.has(guideId)) return [];
+    const path: ContentsStep[] = [];
+    const seen = new Set<string>([guideId]);
+    let at = guideId;
+    while (path.length < OUTSIDE_TRAIL_STEPS) {
+      const up = this.handParent.get(at) ?? this.filedParent(at);
+      if (up === undefined || seen.has(up) || this.isHomePage(up)) break;
+      seen.add(up);
+      path.push({ kind: 'page', guide: this.guides.get(up)! });
+      at = up;
+    }
+    return path.reverse();
+  }
+
+  /** The first page of a page's `filedUnder` that is a page here, through other names of pages. */
+  private filedParent(guideId: string): string | undefined {
+    const guide = this.guides.get(guideId);
+    if (!guide?.filedUnder) return undefined;
+    return filedUnderThrough(guide, this.aliases).find(
+      (id) => id !== guideId && this.guides.has(id) && this.isPage(id),
+    );
   }
 
   /**
-   * The pages of the contents that link to a page, in contents order, top
-   * to bottom, but the page it is under and the home page (which the way
-   * above every page leads to): "also linked from".
+   * The pages of the contents that link to a page, in contents order, the
+   * home page aside (the line above every page leads to it): "Linked from".
+   * The links of every page are read the first time it is asked.
    */
   linkedFrom(guideId: string): GuideEntry[] {
     if (!this.linkedTo) {
       const linkedTo = new Map<string, string[]>();
       for (const page of this.pages()) {
+        if (page === this.homeGuide) continue;
         for (const target of linksThrough(page, this.aliases)) {
-          if (!this.listed.has(target)) continue;
+          if (!this.isPage(target)) continue;
           const from = linkedTo.get(target);
           if (from) from.push(page.id);
           else linkedTo.set(target, [page.id]);
@@ -626,51 +557,128 @@ export class GuideContents {
       }
       this.linkedTo = linkedTo;
     }
-    const home = this.pageParentOf(guideId);
-    const homePage = this.homeGuide?.id;
-    return (this.linkedTo.get(guideId) ?? [])
-      .filter((id) => id !== home && id !== homePage)
-      .map((id) => this.guides.get(id)!);
+    return (this.linkedTo.get(aliasedId(this.aliases, guideId)) ?? []).map((id) =>
+      this.guides.get(id)!,
+    );
   }
 
-  /** How the pages of the contents are filed (see {@link ContentsFiling}). */
+  /** Where the pages of the contents are (see {@link ContentsFiling}). */
   filing(): ContentsFiling {
-    const counts: ContentsFiling = {
-      pages: 0,
-      underListPage: 0,
-      underFiledPage: 0,
-      inSection: 0,
-      inPagesSection: 0,
-      byHand: 0,
-    };
+    const counts: ContentsFiling = { pages: 0, inMenu: 0, byHand: 0, outsideMenu: 0 };
     if (!this.hasContents) return counts;
-    this.shown();
     for (const id of this.inOrder) {
-      if (!this.guides.has(id) || id === this.homeGuide?.id) continue;
+      if (!this.guides.has(id)) continue;
       counts.pages += 1;
-      const parent = this.pageParentOf(id) ?? null;
-      if (this.filed.has(id)) counts.underFiledPage += 1;
-      else if (this.byLinks.has(id)) counts.underListPage += 1;
-      else if (parent !== null && this.guides.has(parent)) counts.byHand += 1;
-      else if (parent !== null && this.byLinkSections.has(parent)) counts.inPagesSection += 1;
-      else counts.inSection += 1;
+      const parent = this.home.get(id) ?? null;
+      if (parent !== null && this.guides.has(parent)) counts.byHand += 1;
+      else counts.inMenu += 1;
+    }
+    for (const id of this.outsideOrder) {
+      if (!this.guides.has(id)) continue;
+      counts.pages += 1;
+      counts.outsideMenu += 1;
     }
     return counts;
   }
 
-  /** Every page that can be browsed, in contents order (the home page first), each once. */
+  /**
+   * Every page that can be browsed, each once: the home page first, then
+   * the menu top to bottom, then the pages outside it in the source's
+   * order.
+   */
   pages(): GuideEntry[] {
     if (!this.hasContents) {
       return this.homeGuide ? [this.homeGuide, ...this.looseShown()] : [...this.loose];
     }
-    this.shown();
     const out: GuideEntry[] = this.homeGuide ? [this.homeGuide] : [];
-    for (const id of this.inOrder) {
+    for (const id of [...this.inOrder, ...this.outsideOrder]) {
       const guide = this.guides.get(id);
       if (guide) out.push(guide);
     }
     return out;
   }
+}
+
+/** Whether two titles have the same words: spaces at the ends, runs of spaces and case aside. */
+function sameWords(a: string, b: string): boolean {
+  const words = (title: string) => title.trim().replace(/\s+/gu, ' ').toLowerCase();
+  return words(a) === words(b);
+}
+
+/**
+ * A way down the menu (see {@link GuideContents.trail}) as the menu shows
+ * it, to the entry `id`: a section led by its own page (see
+ * {@link GuideContents.leadPage}) is that page in the menu, so it is left
+ * out where the way goes on to that page, or ends at it. A way to a page
+ * that leads its section is the way to the section; a way to a page put
+ * under it by hand names the page once.
+ */
+export function withoutLedSteps(
+  contents: GuideContents,
+  steps: readonly ContentsStep[],
+  id: string,
+): ContentsStep[] {
+  return steps.filter((step, at) => {
+    if (step.kind !== 'section') return true;
+    const lead = contents.leadPage(step.section.id);
+    if (!lead) return true;
+    const next = steps[at + 1];
+    const to = next ? (next.kind === 'page' ? next.guide.id : null) : id;
+    return to !== lead.id;
+  });
+}
+
+/**
+ * A way down the menu as its rows, top down: the ids of a way's steps
+ * (see {@link GuideContents.trail}), then `id`. A page that leads the
+ * section before it is left out, as the menu shows the section as the
+ * page: the way to that page ends at its section, and the way to a page
+ * put under it by hand goes from the section to that page.
+ */
+export function menuWayOf(
+  contents: GuideContents,
+  steps: readonly ContentsStep[],
+  id: string,
+): string[] {
+  const ids = [...steps.map(entryIdOf), id];
+  return ids.filter((entry, at) => at === 0 || contents.leadPage(ids[at - 1]!)?.id !== entry);
+}
+
+/**
+ * Whether a way down the menu, as its rows (see {@link menuWayOf}), is one
+ * the menu shows and leads to the entry `id`: its first entry is one of
+ * `top`, each other is shown under the one before it (see
+ * {@link GuideContents.menuItems}), and it ends at `id` or at a section
+ * `id` leads. A way remembered when a row was pressed is checked before it
+ * is followed, since the contents may have changed since (the person
+ * arranged them, the pack was read again).
+ */
+export function isMenuWayTo(
+  contents: GuideContents,
+  top: readonly string[],
+  way: readonly string[],
+  id: string,
+): boolean {
+  const last = way.at(-1);
+  if (last === undefined || !top.includes(way[0]!)) return false;
+  if (last !== id && contents.leadPage(last)?.id !== id) return false;
+  for (let at = 1; at < way.length; at++) {
+    const next = way[at];
+    if (!contents.menuItems(way[at - 1]!).some((entry) => entryIdOf(entry) === next)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The steps of a way down the menu (see {@link menuWayOf}): its sections and pages, in order. */
+export function stepsOfWay(contents: GuideContents, way: readonly string[]): ContentsStep[] {
+  return way.flatMap((id): ContentsStep[] => {
+    const section = contents.section(id);
+    if (section) return [{ kind: 'section', section }];
+    const guide = contents.guide(id);
+    return guide ? [{ kind: 'page', guide }] : [];
+  });
 }
 
 /** Guides in their listed order: by `order`, those without one after, by title. */
@@ -734,6 +742,5 @@ export function guidesTogether(pack: GuidePages, others: readonly GuidesOfGame[]
     ...(pageTop ? { top: pageTop } : {}),
     ...(pack.under ? { under: pack.under } : {}),
     ...(pack.homePage ? { homePage: pack.homePage } : {}),
-    ...(pack.listPages ? { listPages: pack.listPages } : {}),
   };
 }

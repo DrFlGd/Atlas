@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   canGoBack,
   canGoForward,
+  currentMenuWay,
   currentPlace,
   openPlace,
   readerBack,
@@ -271,5 +272,63 @@ describe('the way the reader came', () => {
     openPlace(page('a'));
     stampSource('isle');
     expect(currentPlace()).toEqual(page('a'));
+  });
+
+  it('keeps All pages as a place of its source, where it was scrolled to', () => {
+    openPlace({ kind: 'all' });
+    stampSource('isle');
+    expect(currentPlace()).toEqual({ kind: 'all', source: 'isle' });
+    rememberScroll(4000);
+    openPlace(page('a'));
+    expect(readerBack()).toBe(true);
+    expect(currentPlace()).toEqual({ kind: 'all', source: 'isle' });
+    expect(useReader.getState().visits[useReader.getState().at]?.scroll).toBe(4000);
+    // The same again is no new visit; another source's is.
+    openPlace({ kind: 'all', source: 'isle' });
+    expect(useReader.getState().at).toBe(1);
+    openPlace({ kind: 'all', source: 'notes' });
+    expect(useReader.getState().at).toBe(2);
+  });
+});
+
+describe('the way down the menu to the row a place was opened from', () => {
+  beforeEach(() => {
+    resetReader();
+  });
+
+  it('belongs to the visit: Back and Forward show each one’s, and a place opened otherwise has none', () => {
+    openPlace(page('tide-king'), 'fresh', ['bosses', 'tide-king']);
+    expect(currentMenuWay()).toEqual(['bosses', 'tide-king']);
+    // The same page, opened from search: its first place.
+    openPlace({ kind: 'search', query: 'tide' });
+    openPlace(page('tide-king'));
+    expect(currentMenuWay()).toBeUndefined();
+    readerBack();
+    readerBack();
+    expect(currentMenuWay()).toEqual(['bosses', 'tide-king']);
+    readerForward();
+    readerForward();
+    expect(currentMenuWay()).toBeUndefined();
+  });
+
+  it('changes when another listing of the place shown is pressed, with no visit more', () => {
+    openPlace(page('tide-king'), 'fresh', ['walkthrough', 'tide-king']);
+    const visits = useReader.getState().visits.length;
+    openPlace(page('tide-king'), 'fresh', ['bosses', 'tide-king']);
+    expect(currentMenuWay()).toEqual(['bosses', 'tide-king']);
+    expect(useReader.getState().visits).toHaveLength(visits);
+    // Opened again with no way: the listing pressed is kept.
+    openPlace(page('tide-king'));
+    expect(currentMenuWay()).toEqual(['bosses', 'tide-king']);
+  });
+
+  it('is kept by a jump to a heading of the same page, and dropped by a walk to another', () => {
+    openPlace(page('tide-king'), 'fresh', ['bosses', 'tide-king']);
+    openPlace({ kind: 'page', guideId: 'tide-king', section: 'drops' });
+    expect(currentMenuWay()).toEqual(['bosses', 'tide-king']);
+    openPlace(page('reed-queen'), 'walk');
+    expect(currentMenuWay()).toBeUndefined();
+    // The walk's start keeps it, for the line above the page.
+    expect(wayCame()[0]?.menuWay).toEqual(['bosses', 'tide-king']);
   });
 });

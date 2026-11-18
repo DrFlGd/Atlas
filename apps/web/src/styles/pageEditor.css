@@ -711,11 +711,6 @@
   background: var(--atlas-accent-soft);
 }
 
-.pe-drag-spacer {
-  flex: none;
-  width: 24px;
-}
-
 /* What the ticked rows can do: over the contents, while any is ticked. */
 .pe-ticked-bar {
   position: sticky;
@@ -738,25 +733,14 @@
   font-weight: 600;
 }
 
-/* A heading of a list page shown as a level: no handle, set apart from the pages. */
-.pe-tree-name.pe-tree-level-name {
-  min-width: min-content;
+/* The group of pages outside the menu, at the end: no handle, set apart from the menu. */
+.pe-tree-outside {
+  margin-top: 8px;
+  border-top: 1px dashed var(--atlas-border-strong);
+}
+
+.pe-tree-outside .pe-tree-section-name {
   color: var(--atlas-muted);
-  font-weight: 600;
-  overflow-wrap: break-word;
-}
-
-/* In a narrow contents, the tag gives way before a level's words break. */
-.pe-tree-level .pe-tag {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pe-drop-refused {
-  outline: 2px dashed var(--atlas-danger);
 }
 
 .pe-menu-note {

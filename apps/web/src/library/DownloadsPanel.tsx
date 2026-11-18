@@ -15,7 +15,7 @@ import {
   retryJob,
   useDownloadsView,
 } from '../state/downloadsView';
-import { stopRun, useImport, type ImportPhase } from '../state/importing';
+import { runWhyItWaits, stopRun, useImport, type ImportPhase } from '../state/importing';
 import { foundText, stopReasonText, waitingForPerson, type RunState } from '../state/importRun';
 import { openSettings, setDownloadsOpen, showLibraryAdd, useLibrary } from '../state/libraryView';
 import { useAtlas } from '../state/store';
@@ -26,6 +26,12 @@ import { useAtlas } from '../state/store';
  * single queue and the run of pages being read. Every button says what it
  * does, with a sentence under each group.
  */
+
+/** ". Why it waits: …" for the page of the run the window waits on, when it has waited long enough to say; else nothing. */
+const whyText = (run: RunState) => {
+  const why = runWhyItWaits(run);
+  return why ? `. ${why.replace(/\.$/u, '')}` : '';
+};
 
 const noun = (entry: JobEntry) => (entry.kind === 'photos' ? 'photos' : 'map images');
 
@@ -73,7 +79,7 @@ export function DownloadsStrip() {
   if (run) {
     const done = runDone(run);
     const found = foundText(run);
-    text = `Reading page ${Math.min(done + 1, run.pages.length)} of ${run.pages.length}${found ? `, ${found}` : ''}${run.stopRequested ? ', stopping after this page' : ''}${waitingForPerson(run) ? '. The page window is waiting for you' : ''}${licence ? '. A page waits for you to choose the wiki’s licence' : ''}`;
+    text = `Reading page ${Math.min(done + 1, run.pages.length)} of ${run.pages.length}${found ? `, ${found}` : ''}${run.stopRequested ? ', stopping after this page' : ''}${waitingForPerson(run) ? `. The page window is waiting for you${whyText(run)}` : ''}${licence ? '. A page waits for you to choose the wiki’s licence' : ''}`;
     share = done / Math.max(1, run.pages.length);
   } else if (licence) {
     text = 'A page waits for you to choose the wiki’s licence.';

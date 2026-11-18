@@ -1,32 +1,36 @@
 import type { Page } from '@playwright/test';
 
 /**
- * A made-up wiki whose pages are placed by their links, served as a game
- * with no map: a menu of sections (Equipment, The world, Things) with a
- * few pages, and the pages nothing in the menu names in a section placed
- * by links ("Pages"). Only list pages file pages: the pages a list names
- * go under it, a link in a sentence files nothing. Everything here is
+ * A made-up wiki served as a game with no map: a menu of sections
+ * (Equipment, The world, Things, Basics) that names a few pages, and the
+ * pages it does not name in a section marked `placeByLinks` ("Pages"),
+ * outside the menu. The app files none of them under another page: they
+ * are in "All pages", and the way above one names the pages the wiki
+ * files it under (`filedUnder`), where it says. Everything here is
  * invented, its address (example.org) included.
  *
- * - Equipment › Armor › Warden Plate › Warden Helm, with Ash Mail and
- *   Iron Cap beside Warden Plate; Longblade (under Weapons) mentions
- *   Warden Plate too.
+ * - Equipment › Armor, which lists Warden Plate, Ash Mail and Iron Cap;
+ *   Warden Plate lists the warden's helm, boots and gloves. The wiki files
+ *   Warden Helm under a page not read and Warden Plate, and Warden Plate
+ *   under Armor: Example Wiki › Armor › Warden Plate › Warden Helm.
+ *   Longblade (listed by Weapons) mentions Warden Plate too.
  * - Common Ore is mentioned by sixteen pages, among them Warden Plate, and
- *   listed by Materials, which no page lists: it is under Materials, in
- *   Pages.
- * - Things › Catalogue has 450 pages under it.
- * - Stray Note is linked from nothing placed, so it stays in Pages.
+ *   listed by Materials: seventeen link to it.
+ * - Things › Catalogue lists 450 pages.
+ * - Stray Note is linked from nothing, and filed under nothing.
+ * - 1st Camp starts with a digit: All pages lists it under `#`.
  * - Basics › Gear, an index whose table names, beside each blade, the mine
  *   it is found in and the creature that drops it, under a heading that
- *   is a link to Short Blades, which lists the blades too: each blade is
- *   under Short Blades, under Gear. Gear ends with a link to Short Blades,
- *   and each blade's text links back to Gear and on to the next blade.
- *   Its headings are levels of the contents: Short Blades is under the
- *   heading "Weapons", and three charms under the heading "Charms" (Gear ›
- *   Weapons › Short Blades › Dirk); "Care" lists nothing, so is none.
+ *   is a link to Short Blades, which lists the blades too. Gear ends with
+ *   a link to Short Blades, and each blade's text links back to Gear and
+ *   on to the next blade. The wiki files Short Blades under Gear, and Dirk
+ *   under Short Blades.
  * - Basics › Field Notes lists three keepsakes (Old Map, Lost Key, Torn
- *   Page) but names more pages in its sentences, so it is no list page:
- *   the keepsakes stay in Pages until the person says it files them.
+ *   Page) and names more pages in its sentences.
+ *
+ * With `menu: false`, the wiki has no menu at all: every page is in
+ * "Pages", outside the menu, and it has no home page, so Guides has no
+ * bar and lands on All pages.
  */
 
 const g = (local: string) => `demo:guide:${local}`;
@@ -38,6 +42,22 @@ interface Guide {
   body: string;
   locationIds: string[];
   source: object;
+  filedUnder?: string[];
+}
+
+/** What the wiki files a page under (see the top of this file). */
+const FILED: Record<string, string[]> = {
+  'warden-helm': ['not-read', 'warden-plate'],
+  'warden-plate': ['armor'],
+  'short-blades': ['gear'],
+  dirk: ['short-blades'],
+};
+
+/** A page with what the wiki files it under, where it says. */
+function filed(guide: Guide): Guide {
+  const local = guide.id.slice(g('').length);
+  const under = FILED[local];
+  return under ? { ...guide, filedUnder: under.map(g) } : guide;
 }
 
 const source = (local: string) => ({
@@ -219,6 +239,7 @@ export function pageTreeGuides(): Guide[] {
       page(id, `Item ${String(i + 1).padStart(3, '0')}`, `Thing number ${i + 1}.`, []),
     ),
     page('stray-note', 'Stray Note', 'Nothing links here.', []),
+    page('first-camp', '1st Camp', 'The first camp on the way up.', []),
     page(
       'field-notes',
       'Field Notes',
@@ -229,23 +250,20 @@ export function pageTreeGuides(): Guide[] {
     ),
     ...KEEPSAKES.map(([id, name]) => page(id, name, `A keepsake: the ${name}.`, [])),
     ...gearGuides(),
-  ];
+  ].map(filed);
 }
 
-export function pageTreeSections(): object[] {
+/** The pages the menu names. */
+const IN_MENU = ['armor', 'weapons', 'bestiary', 'catalogue', 'gear', 'field-notes'].map(g);
+
+export function pageTreeSections(menu = true): object[] {
+  if (!menu) {
+    const all = pageTreeGuides().map((guide) => guide.id);
+    return [{ id: s('pages'), title: 'Pages', items: all, placeByLinks: true }];
+  }
   const loose = pageTreeGuides()
     .map((guide) => guide.id)
-    .filter(
-      (id) =>
-        ![
-          g('armor'),
-          g('weapons'),
-          g('bestiary'),
-          g('catalogue'),
-          g('gear'),
-          g('field-notes'),
-        ].includes(id) && id !== g('stray-note'),
-    );
+    .filter((id) => !IN_MENU.includes(id) && id !== g('stray-note'));
   return [
     { id: s('equipment'), title: 'Equipment', items: [g('armor'), g('weapons')] },
     { id: s('the-world'), title: 'The world', items: [g('bestiary')] },
@@ -255,8 +273,8 @@ export function pageTreeSections(): object[] {
   ];
 }
 
-/** Serves the made-up wiki as the only game. */
-export async function servePageTree(page: Page): Promise<void> {
+/** Serves the made-up wiki as the only game; with `menu: false`, with no menu at all. */
+export async function servePageTree(page: Page, { menu = true } = {}): Promise<void> {
   await page.route('**/config.json', (route) =>
     route.fulfill({ json: { packs: [{ id: 'demo', url: 'packs/tree/', title: 'Example Wiki' }] } }),
   );
@@ -278,7 +296,7 @@ export async function servePageTree(page: Page): Promise<void> {
       });
     }
     if (name === 'guides.json') return route.fulfill({ json: pageTreeGuides() });
-    if (name === 'sections.json') return route.fulfill({ json: pageTreeSections() });
+    if (name === 'sections.json') return route.fulfill({ json: pageTreeSections(menu) });
     return route.fulfill({ status: 404, body: 'not found' });
   });
 }

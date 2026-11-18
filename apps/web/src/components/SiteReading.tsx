@@ -46,6 +46,13 @@ import {
   setSiteWay,
   useWikiNotes,
 } from '../state/wikiNotes';
+import {
+  LICENCE_FIELD_LABELS,
+  LICENCE_TYPE_LABELS,
+  LICENCE_TYPE_TEXTS,
+  LICENCE_TYPES,
+  type LicenceType,
+} from '../state/licenceWords';
 import { memoryParts } from './removalText';
 
 /**
@@ -393,25 +400,6 @@ function LicenceAskCard({ ask }: { ask: LicenceAsk }) {
   );
 }
 
-/** The types of answer to the licence question, in the order shown. */
-type LicenceType = 'known' | 'permission' | 'none';
-
-const LICENCE_TYPES: readonly LicenceType[] = ['known', 'permission', 'none'];
-
-const LICENCE_TYPE_LABELS: Record<LicenceType, string> = {
-  known: 'A known licence',
-  permission: 'Fill in',
-  none: 'Blank',
-};
-
-const LICENCE_TYPE_TEXTS: Record<LicenceType, string> = {
-  known:
-    'A Creative Commons licence. Choose one only if the wiki says so itself, on a page about its copyright or in its terms.',
-  permission:
-    'What you have instead, such as permission from the site’s owner. The pages are kept for your own use.',
-  none: 'Nothing is recorded about permission, and the pages are kept for your own use.',
-};
-
 const typeOf = (licence: SiteLicence | RulesLicence | undefined): LicenceType =>
   licence?.basis === 'permission' ? 'permission' : licence?.basis === 'none' ? 'none' : 'known';
 
@@ -522,7 +510,7 @@ function LicenceForm({
         {type === 'permission' ? (
           <div className="licence-fields" data-testid="licence-fields">
             <label className="field-label" htmlFor={`${ids}-words`}>
-              What to show under each page
+              {LICENCE_FIELD_LABELS.words}
             </label>
             <input
               id={`${ids}-words`}
@@ -537,7 +525,7 @@ function LicenceForm({
             />
             <span className="muted small">A licence’s name or a sentence. This is required.</span>
             <label className="field-label" htmlFor={`${ids}-by`}>
-              Who gave it (optional)
+              {LICENCE_FIELD_LABELS.givenBy}
             </label>
             <input
               id={`${ids}-by`}
@@ -550,7 +538,7 @@ function LicenceForm({
               }}
             />
             <label className="field-label" htmlFor={`${ids}-on`}>
-              Date (optional)
+              {LICENCE_FIELD_LABELS.givenOn}
             </label>
             <input
               id={`${ids}-on`}
@@ -563,7 +551,7 @@ function LicenceForm({
               }}
             />
             <label className="field-label" htmlFor={`${ids}-terms`}>
-              Address where the terms can be read (optional)
+              {LICENCE_FIELD_LABELS.terms}
             </label>
             <input
               id={`${ids}-terms`}
@@ -583,7 +571,7 @@ function LicenceForm({
               </span>
             )}
             <label className="field-label" htmlFor={`${ids}-note`}>
-              Note (optional)
+              {LICENCE_FIELD_LABELS.note}
             </label>
             <textarea
               id={`${ids}-note`}

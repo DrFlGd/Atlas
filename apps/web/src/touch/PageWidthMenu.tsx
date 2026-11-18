@@ -1,15 +1,8 @@
-import type { PageWidth } from '@atlas/schema';
 import { useEffect, useId, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { canChangeOwnPages, choosePageWidth, pageWidthOf, useOwnPages } from '../state/ownPages';
+import { PAGE_WIDTH_NAMES as WIDTHS } from '../state/pageWidthNames';
 import type { LoadedGame } from '../state/store';
-
-/** Each width, as the menu names it and says what it is. */
-const WIDTHS: readonly { width: PageWidth; name: string; says: string }[] = [
-  { width: 'reading', name: 'Reading', says: 'A column of text, about 760 pixels wide' },
-  { width: 'wide', name: 'Wide', says: 'About 1,000 pixels, for pages laid out wider' },
-  { width: 'full', name: 'Full', says: 'As wide as the window' },
-];
 
 /**
  * "Page width" in the head of Guides, on a computer or a tablet: how wide

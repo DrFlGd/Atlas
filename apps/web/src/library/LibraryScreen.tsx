@@ -11,7 +11,7 @@ import {
   useGameFacts,
 } from '../state/gameFacts';
 import { followDownloads, useDownloadsView } from '../state/downloadsView';
-import { stopRun, updateAll, useImport } from '../state/importing';
+import { runWhyItWaits, stopRun, updateAll, useImport } from '../state/importing';
 import { foundText, waitingForPerson } from '../state/importRun';
 import {
   closeLibraryWindow,
@@ -343,6 +343,8 @@ function LibraryStrip() {
   ).length;
   const total = pages.length;
   const found = foundText(phase.run);
+  // Why the page window waits, when the page open now has waited long enough to say.
+  const why = runWhyItWaits(phase.run);
   return (
     <footer className="library-strip" data-testid="library-strip" aria-label="Now">
       <span className="library-strip-now">
@@ -350,6 +352,7 @@ function LibraryStrip() {
         {found ? `, ${found}` : ''}
         {phase.run.stopRequested ? ', stopping after this page' : ''}
         {waitingForPerson(phase.run) ? '. The page window is waiting for you' : ''}
+        {waitingForPerson(phase.run) && why ? `. ${why.replace(/\.$/u, '')}` : ''}
         {licence ? '. A page waits for you to choose the wiki’s licence' : ''}
       </span>
       <span className="meter meter-small library-strip-meter" aria-hidden="true">

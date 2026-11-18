@@ -205,7 +205,6 @@ const GUIDE_TOP = [
   { Bosses: ['Bosses', 'Warden'] },
   'Relics',
   'Trophies',
-  { 'Other pages': ['Stray'] },
 ];
 
 describe('pages and sections side by side at the top', () => {
@@ -224,6 +223,9 @@ describe('pages and sections side by side at the top', () => {
       s('side-quests'),
     ]);
     expect(contents.parentOf(g('tips'))).toBeNull();
+    // The section of pages outside the menu is not shown; its page is still one to read.
+    expect(contents.isPage(g('stray'))).toBe(true);
+    expect(contents.isInMenu(g('stray'))).toBe(false);
   });
 
   it('opens in an app before unheaded sections, with them as sections of their own', () => {
@@ -240,7 +242,6 @@ describe('pages and sections side by side at the top', () => {
       { Endings: ['Endings'] },
       { Bosses: ['Bosses', 'Warden'] },
       { Menu: ['Relics', 'Trophies'] },
-      { 'Other pages': ['Stray'] },
     ]);
   });
 
@@ -264,7 +265,6 @@ describe('pages and sections side by side at the top', () => {
       null,
       'Bosses',
       null,
-      'Other pages',
     ]);
   });
 });
@@ -289,7 +289,7 @@ describe('the person’s own arrangement over unheaded sections', () => {
     expect(shown).toContainEqual({ Bosses: ['Bosses', 'Warden', 'Tips'] });
     expect(shown).not.toContain('Tips');
     // The arrange tool sees the same.
-    const tool = shownContentsFor(pack.data, own, undefined, pack.homePage);
+    const tool = shownContentsFor(pack.data, own, pack.homePage);
     expect(tool.layout.sections[s('bosses')]).toEqual([g('bosses'), g('warden'), g('tips')]);
   });
 
@@ -318,7 +318,7 @@ describe('the person’s own arrangement over unheaded sections', () => {
   });
 });
 
-describe('a home page whose blocks the contents already holds', () => {
+describe('a home page and the menu', () => {
   const home = guide(
     'main-page',
     [
@@ -338,7 +338,7 @@ describe('a home page whose blocks the contents already holds', () => {
     guide(local, `Text of ${local}.`),
   );
 
-  it('files nothing more at the top: a page of a block left out stays among the other pages', () => {
+  it('shows the menu the importer made from the home page, and nothing of the other pages', () => {
     const sections: Section[] = [
       {
         id: s('the-isle'),
@@ -351,13 +351,11 @@ describe('a home page whose blocks the contents already holds', () => {
       data: { guides: [home, ...pages], sections, maps: [] },
       homePage: home.id,
     });
-    expect(tree(contents)).toEqual([
-      { 'The isle': ['Harbours', 'Caves', 'Forests', 'Meadows'] },
-      { 'Other pages': ['Coming Soon'] },
-    ]);
+    expect(tree(contents)).toEqual([{ 'The isle': ['Harbours', 'Caves', 'Forests', 'Meadows'] }]);
+    expect(contents.isPage(g('coming-soon'))).toBe(true);
   });
 
-  it('still leads to the top what it lists when the contents holds little of it, as before', () => {
+  it('never puts at the top what the home page lists', () => {
     const sections: Section[] = [
       { id: s('menu'), title: 'Menu', items: [g('harbours')] },
       {
@@ -371,8 +369,10 @@ describe('a home page whose blocks the contents already holds', () => {
       data: { guides: [home, ...pages], sections, maps: [] },
       homePage: home.id,
     });
-    expect(tree(contents)).toEqual([
-      { Menu: ['Harbours'] },
+    expect(tree(contents)).toEqual([{ Menu: ['Harbours'] }]);
+    expect(contents.pages().map((page) => page.title)).toEqual([
+      'Main Page',
+      'Harbours',
       'Caves',
       'Forests',
       'Meadows',

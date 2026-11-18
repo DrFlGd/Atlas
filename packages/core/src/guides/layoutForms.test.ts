@@ -6,7 +6,7 @@ import { guidePlainText } from './guideText';
 import { firstPictureIn } from './landing';
 import { savePage } from './ownPages';
 import { pageFilingIn } from './pageFiling';
-import { guideLinksIn } from './pageTree';
+import { guideLinksIn } from './pageLinks';
 
 /**
  * Every reader of page text in this package reads a page with layout

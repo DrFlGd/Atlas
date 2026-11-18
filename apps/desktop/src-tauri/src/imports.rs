@@ -61,6 +61,14 @@
 //! now. It never asks for attention; the window stays on its site as every
 //! import window does.
 //!
+//! While a page gives no data, each poll says why when it can: the reader's
+//! own reason (a reader that holds back on a page that has loaded throws
+//! it), or the shell's (the page did not answer the reader in time). The
+//! first time a reason is given for a page, it is written to the activity
+//! log with the page's origin and path, never its query (see [`WaitNotes`]).
+//! Nothing here changes when a page is read or when the person's attention
+//! is asked for.
+//!
 //! There is no import window on Android, where a second window would
 //! replace the app's screen and a private session is not available.
 
@@ -389,7 +397,11 @@ pub enum PollResult {
     Waiting {
         /// The page is still loading.
         loading: bool,
-        /// The reader's last complaint, if it threw.
+        /// Why the page gives no data, in a sentence for the person: the
+        /// reader's complaint (it threw, see [`reader_script`]), or the
+        /// shell's own reason (the page did not answer the reader in time,
+        /// the window does not show the page asked for yet). None while the
+        /// page loads, or when the reader said nothing.
         note: Option<String>,
         /// A kept window's page has loaded and given no data for a while,
         /// and the window has asked for the person's attention.
@@ -449,6 +461,101 @@ struct Session {
     /// The document the page data was last read from, by its time origin:
     /// the only one [`Imports::run_once`] runs in.
     read_origin: Option<f64>,
+    /// Why the page the window shows gives no data, as polls heard it.
+    waits: WaitNotes,
+}
+
+/// What a poll that got no data heard about why.
+#[derive(Debug)]
+enum Heard {
+    /// The importer's reader answered: with its note (it threw), or none.
+    Reader(Option<String>),
+    /// The page did not answer the reader within [`EVAL_TIMEOUT`].
+    Nothing,
+    /// The page answered, but not in the shape every answer has.
+    Unreadable,
+    /// The shell's own reason, after the reader answered.
+    Shell(&'static str),
+}
+
+/// What the shell says when the page did not answer the reader in time.
+fn unanswered_note() -> String {
+    format!(
+        "the page did not answer the reader within {} seconds",
+        EVAL_TIMEOUT.as_secs()
+    )
+}
+
+/// What the shell says when the page's answer cannot be read.
+const UNREADABLE_NOTE: &str = "the page answered the reader in a way this app cannot read";
+/// The window shows another page than the one asked for.
+const OTHER_PAGE_NOTE: &str = "the window does not show the page asked for yet";
+/// The page's data changed while it was pulled out.
+const CHANGED_NOTE: &str = "the page changed while it was read";
+/// At most this many notes of one page go to the activity log.
+const MAX_LOGGED_NOTES: usize = 4;
+
+/// A page as the activity log names it: its origin and path, never its
+/// query or fragment.
+fn page_of(url: &Url) -> String {
+    format!("{}{}", url.origin().ascii_serialization(), url.path())
+}
+
+/// Why the page a window shows gives no data, as the polls of that page
+/// heard it: the reader's last note, which a page that does not answer in
+/// time does not hide, and the notes already written to the activity log,
+/// each once per page. Nothing here touches a window, so it is tested on
+/// its own.
+#[derive(Debug, Default)]
+struct WaitNotes {
+    /// The page (its origin and path) the notes are of.
+    page: Option<String>,
+    /// The reader's note at its last answer on this page.
+    reader: Option<String>,
+    /// The notes written to the activity log for this page.
+    logged: Vec<String>,
+}
+
+impl WaitNotes {
+    /// The note for what a poll of `page` heard. On another page than the
+    /// last, nothing heard before counts. When the page did not answer, or
+    /// answered in a way that cannot be read, the reader's last note on the
+    /// page stays: it says more than the shell can.
+    fn heard(&mut self, page: Option<String>, heard: Heard) -> Option<String> {
+        if self.page != page {
+            *self = WaitNotes {
+                page,
+                ..WaitNotes::default()
+            };
+        }
+        match heard {
+            Heard::Reader(note) => {
+                self.reader.clone_from(&note);
+                note
+            }
+            Heard::Nothing => Some(self.reader.clone().unwrap_or_else(unanswered_note)),
+            Heard::Unreadable => Some(
+                self.reader
+                    .clone()
+                    .unwrap_or_else(|| UNREADABLE_NOTE.to_owned()),
+            ),
+            Heard::Shell(note) => Some(note.to_owned()),
+        }
+    }
+
+    /// The line for the activity log the first time `note` is said of this
+    /// page, at most [`MAX_LOGGED_NOTES`] of them; None after that.
+    fn log_line(&mut self, note: &str) -> Option<String> {
+        if self.logged.len() >= MAX_LOGGED_NOTES || self.logged.iter().any(|logged| logged == note)
+        {
+            return None;
+        }
+        self.logged.push(note.to_owned());
+        Some(format!(
+            "The page window is waiting on {}. Why it waits: {note}",
+            self.page.as_deref().unwrap_or("a page")
+        ))
+    }
 }
 
 /// Measuring the map's picture from the page: the page data, once read, waits here.
@@ -742,6 +849,7 @@ impl Imports {
                 keep.then(|| Visit::new(start.clone()))
             },
             read_origin: None,
+            waits: WaitNotes::default(),
         });
 
         let navigation_start = start.clone();
@@ -902,14 +1010,22 @@ impl Imports {
                 attention: false,
             };
         }
-        let answer = evaluate(&window, reader_script(&reader, &key))
-            .await
-            .and_then(|result| decode_string(&result))
-            .and_then(|text| serde_json::from_str::<ReaderAnswer>(&text).ok());
+        let answer = match evaluate(&window, reader_script(&reader, &key)).await {
+            None => {
+                let note = self.note(&window, Heard::Nothing);
+                return self.waiting(&window, loading, note);
+            }
+            Some(result) => decode_string(&result)
+                .and_then(|text| serde_json::from_str::<ReaderAnswer>(&text).ok()),
+        };
         let (length, address, origin) = match answer {
-            None => return self.waiting(&window, loading, None),
+            None => {
+                let note = self.note(&window, Heard::Unreadable);
+                return self.waiting(&window, loading, note);
+            }
             Some(ReaderAnswer::Waiting { note, origin }) => {
                 self.answered_from(origin);
+                let note = self.note(&window, Heard::Reader(note));
                 return self.waiting(&window, loading, note);
             }
             Some(ReaderAnswer::Failed { message }) => {
@@ -929,28 +1045,35 @@ impl Imports {
         };
         // A kept window's data counts only from the page asked for.
         let (address, forwarded) = if kept {
-            let mut guard = lock(&self.session);
-            let Some(visit) = guard.as_mut().and_then(|session| session.kept.as_mut()) else {
-                return PollResult::Failed {
-                    message: "No page is open.".to_owned(),
+            let checked = {
+                let mut guard = lock(&self.session);
+                let Some(visit) = guard.as_mut().and_then(|session| session.kept.as_mut()) else {
+                    return PollResult::Failed {
+                        message: "No page is open.".to_owned(),
+                    };
                 };
-            };
-            let parsed = address.as_deref().and_then(|text| Url::parse(text).ok());
-            match parsed {
-                Some(parsed)
-                    if visit.readable(Instant::now()) && visit.data_ok(&parsed, origin) =>
-                {
-                    let forwarded = !visit.address_ok(&parsed);
-                    visit.read = Some(parsed);
-                    visit.origin = origin.or(visit.origin);
-                    (address, forwarded)
+                let parsed = address.as_deref().and_then(|text| Url::parse(text).ok());
+                match parsed {
+                    Some(parsed)
+                        if visit.readable(Instant::now()) && visit.data_ok(&parsed, origin) =>
+                    {
+                        let forwarded = !visit.address_ok(&parsed);
+                        visit.read = Some(parsed);
+                        visit.origin = origin.or(visit.origin);
+                        Ok((address, forwarded))
+                    }
+                    _ => Err((!visit.readable(Instant::now()), visit.attention)),
                 }
-                _ => {
+            };
+            match checked {
+                Ok(found) => found,
+                Err((loading, attention)) => {
                     let _ = window.eval(format!("delete window[{key:?}];"));
+                    let note = self.note(&window, Heard::Shell(OTHER_PAGE_NOTE));
                     return PollResult::Waiting {
-                        loading: !visit.readable(Instant::now()),
-                        note: Some("the window does not show the page asked for yet".to_owned()),
-                        attention: visit.attention,
+                        loading,
+                        note,
+                        attention,
                     };
                 }
             }
@@ -962,7 +1085,7 @@ impl Imports {
             Err(Pulled::Changed) => {
                 return PollResult::Waiting {
                     loading,
-                    note: Some("the page changed while it was read".to_owned()),
+                    note: self.note(&window, Heard::Shell(CHANGED_NOTE)),
                     attention: false,
                 }
             }
@@ -1028,6 +1151,27 @@ impl Imports {
             .as_ref()
             .and_then(|session| session.kept.as_ref())
             .is_some_and(|visit| visit.readable(now))
+    }
+
+    /// Why the page the window shows gives no data, from what this poll
+    /// heard (see [`WaitNotes`]). The first time a note is said of a page,
+    /// it goes to the activity log, with the page's origin and path only.
+    fn note<R: Runtime>(&self, window: &WebviewWindow<R>, heard: Heard) -> Option<String> {
+        let page = window.url().ok().map(|url| page_of(&url));
+        let (note, line) = match lock(&self.session).as_mut() {
+            Some(session) => {
+                let note = session.waits.heard(page, heard);
+                let line = note
+                    .as_deref()
+                    .and_then(|note| session.waits.log_line(note));
+                (note, line)
+            }
+            None => (WaitNotes::default().heard(page, heard), None),
+        };
+        if let Some(line) = line {
+            crate::activity::info(crate::activity::Area::Import, line);
+        }
+        note
     }
 
     /// The data is not there yet. A kept window's page that has loaded and
@@ -1399,6 +1543,113 @@ mod tests {
             serde_json::to_value(Navigated::Closed).unwrap(),
             serde_json::json!("closed")
         );
+    }
+
+    #[test]
+    fn names_a_page_by_its_origin_and_path_only() {
+        assert_eq!(
+            page_of(&url(
+                "https://wiki.example.org/wiki/Old_Name?ticket=1#Tides"
+            )),
+            "https://wiki.example.org/wiki/Old_Name"
+        );
+        assert_eq!(
+            page_of(&url("http://127.0.0.1:4432/demo-maps/a")),
+            "http://127.0.0.1:4432/demo-maps/a"
+        );
+    }
+
+    #[test]
+    fn says_why_a_page_waits_and_keeps_the_readers_reason() {
+        let page = || Some("https://wiki.example.org/wiki/A".to_owned());
+        let mut waits = WaitNotes::default();
+        // The reader said nothing: no reason, and a page that does not answer gets the shell's.
+        assert_eq!(waits.heard(page(), Heard::Reader(None)), None);
+        assert_eq!(
+            waits.heard(page(), Heard::Nothing).as_deref(),
+            Some("the page did not answer the reader within 10 seconds")
+        );
+        assert_eq!(
+            waits.heard(page(), Heard::Unreadable).as_deref(),
+            Some(UNREADABLE_NOTE)
+        );
+        // The reader's reason is never hidden by a later poll the page did not answer.
+        let reason = "The page names /wiki/B as its own address, but the window shows /wiki/A.";
+        assert_eq!(
+            waits
+                .heard(page(), Heard::Reader(Some(reason.to_owned())))
+                .as_deref(),
+            Some(reason)
+        );
+        assert_eq!(waits.heard(page(), Heard::Nothing).as_deref(), Some(reason));
+        assert_eq!(
+            waits.heard(page(), Heard::Unreadable).as_deref(),
+            Some(reason)
+        );
+        // The shell's own reasons after the reader answered stand as they are.
+        assert_eq!(
+            waits
+                .heard(page(), Heard::Shell(OTHER_PAGE_NOTE))
+                .as_deref(),
+            Some(OTHER_PAGE_NOTE)
+        );
+        // Once the reader says nothing again, its reason is gone.
+        assert_eq!(waits.heard(page(), Heard::Reader(None)), None);
+        assert_eq!(
+            waits.heard(page(), Heard::Nothing).as_deref(),
+            Some("the page did not answer the reader within 10 seconds")
+        );
+        // On another page nothing said of the page before counts.
+        waits.heard(page(), Heard::Reader(Some(reason.to_owned())));
+        assert_eq!(
+            waits
+                .heard(
+                    Some("https://wiki.example.org/wiki/B".to_owned()),
+                    Heard::Nothing
+                )
+                .as_deref(),
+            Some("the page did not answer the reader within 10 seconds")
+        );
+    }
+
+    #[test]
+    fn logs_each_reason_once_per_page() {
+        let a = || Some("https://wiki.example.org/wiki/A".to_owned());
+        let mut waits = WaitNotes::default();
+        let reason = "The page’s title looks like that of a check page: \"Saltmarsh\".";
+        waits.heard(a(), Heard::Reader(Some(reason.to_owned())));
+        assert_eq!(
+            waits.log_line(reason).as_deref(),
+            Some(
+                "The page window is waiting on https://wiki.example.org/wiki/A. Why it waits: \
+                 The page’s title looks like that of a check page: \"Saltmarsh\"."
+            )
+        );
+        // Not on every poll.
+        waits.heard(a(), Heard::Reader(Some(reason.to_owned())));
+        assert_eq!(waits.log_line(reason), None);
+        // Another reason of the same page, once.
+        waits.heard(a(), Heard::Shell(OTHER_PAGE_NOTE));
+        assert!(waits.log_line(OTHER_PAGE_NOTE).is_some());
+        assert_eq!(waits.log_line(OTHER_PAGE_NOTE), None);
+        // At most a few of one page.
+        assert!(waits.log_line("one").is_some());
+        assert!(waits.log_line("two").is_some());
+        assert_eq!(waits.log_line("three"), None);
+        // The same reason of the next page, again.
+        waits.heard(
+            Some("https://wiki.example.org/wiki/B".to_owned()),
+            Heard::Reader(Some(reason.to_owned())),
+        );
+        assert!(waits
+            .log_line(reason)
+            .is_some_and(|line| line.contains("https://wiki.example.org/wiki/B.")));
+        // A page the window cannot name.
+        let mut unnamed = WaitNotes::default();
+        unnamed.heard(None, Heard::Nothing);
+        assert!(unnamed
+            .log_line(&unanswered_note())
+            .is_some_and(|line| line.starts_with("The page window is waiting on a page.")));
     }
 
     const A: &str = "https://wiki.example.org/wiki/A";

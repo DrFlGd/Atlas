@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 /**
  * The Guides section's reader: where it is (the landing page, the
- * contents, a section, a page or a search), and the places it was before
+ * contents, a section, "All pages", a page or a search), and the places it was before
  * and after, so Back and Forward return to them, each where it was
  * scrolled to. A game's guides open on the landing page: the wiki's own
  * home page, or one made from the top of the contents.
@@ -15,12 +15,21 @@ import { create } from 'zustand';
  *
  * Each visit remembers the way the reader came to it: the pages walked
  * from the place shown (a link in a page's text or a box of facts, a tile
- * of the landing page, "Also linked from", the pages under a page), back
+ * of the landing page, "Linked from", the pages under a page), back
  * to the last fresh start (the landing page, or a page opened from the
- * contents, a search, a list or the map). Walking to a page already on
+ * contents, "All pages", a search, a list or the map). Walking to a page already on
  * the way cuts it back to that page, so no page is on it twice; a jump to
  * a heading of the same page is no step. The way belongs to the visit:
  * Back and Forward show each visit's own.
+ *
+ * A visit opened from a row of the menu beside the pages remembers the
+ * way down the menu to that row (the ids of the rows from the top down,
+ * see `menuWayOf` in `@atlas/core`): a page the menu lists in several
+ * places is shown, in the menu and on the line above it, at the listing
+ * pressed. Pressing another listing of the place shown changes the way of
+ * its visit; a jump to a heading of the same page keeps it. Back and
+ * Forward show each visit's own; a place opened any other way has none,
+ * and is shown at its first place in the menu.
  */
 
 export type ReaderPlace =
@@ -32,6 +41,11 @@ export type ReaderPlace =
   | { kind: 'home'; source?: string }
   /** The contents: its top (`sectionId` null, of a source as the landing page is), or one section. */
   | { kind: 'contents'; sectionId: string | null; source?: string }
+  /**
+   * "All pages": every page of a source from A to Z (see `allPages.ts` in
+   * `@atlas/core`), of a source as the landing page is.
+   */
+  | { kind: 'all'; source?: string }
   /** A page, at its top or at one of its sections. */
   | { kind: 'page'; guideId: string; section?: string }
   | { kind: 'search'; query: string }
@@ -48,6 +62,8 @@ interface Visit {
   serial: number;
   /** The visits walked to come here, from the fresh start on (see the top of this file); none for a fresh start. */
   way?: readonly number[];
+  /** The way down the menu to the row it was opened from (see the top of this file). */
+  menuWay?: readonly string[];
 }
 
 /** How a place is opened: walked to from the place shown, or as a fresh start (see the top of this file). */
@@ -75,6 +91,10 @@ const set = useReader.setState;
 export const currentPlace = (state: ReaderState = get()): ReaderPlace =>
   state.visits[state.at]?.place ?? TOP.place;
 
+/** The way down the menu to the row the place shown was opened from, if it was (see the top of this file). */
+export const currentMenuWay = (state: ReaderState = get()): readonly string[] | undefined =>
+  state.visits[state.at]?.menuWay;
+
 export const canGoBack = (state: ReaderState) => state.at > 0;
 export const canGoForward = (state: ReaderState) => state.at < state.visits.length - 1;
 
@@ -82,7 +102,7 @@ const samePlace = (a: ReaderPlace, b: ReaderPlace) =>
   a.kind === b.kind &&
   (a.kind === 'contents'
     ? a.sectionId === (b as typeof a).sectionId && a.source === (b as typeof a).source
-    : a.kind === 'home'
+    : a.kind === 'home' || a.kind === 'all'
       ? a.source === (b as typeof a).source
       : a.kind === 'page'
         ? a.guideId === (b as typeof a).guideId && a.section === (b as typeof a).section
@@ -132,17 +152,24 @@ function wayTo(
  * Goes to a place: Forward is forgotten, and Back returns here. A search
  * typed on from a search replaces it, so Back skips the letters typed.
  * `by` says whether the reader walked there from the place shown, or
- * started afresh (see the top of this file).
+ * started afresh; `menuWay`, the way down the menu to the row it is
+ * opened from (see the top of this file).
  */
-export function openPlace(place: ReaderPlace, by: OpenedBy = 'fresh'): void {
+export function openPlace(
+  place: ReaderPlace,
+  by: OpenedBy = 'fresh',
+  menuWay?: readonly string[],
+): void {
   const { visits, at } = get();
   const here = visits[at]?.place;
   const toSection = place.kind === 'page' && place.section ? { toSection: true as const } : {};
   if (here && samePlace(here, place)) {
-    // The section shown: scrolled to again, as the reader may have moved on.
-    if (toSection.toSection) {
+    // The section shown: scrolled to again, as the reader may have moved on;
+    // another listing of it pressed in the menu: shown there.
+    const listing = menuWay && !sameWay(menuWay, visits[at]!.menuWay) ? { menuWay } : {};
+    if (toSection.toSection || listing.menuWay) {
       const next = [...visits];
-      next[at] = { ...visits[at]!, ...toSection };
+      next[at] = { ...visits[at]!, ...toSection, ...listing };
       set({ visits: next });
     }
     return;
@@ -154,21 +181,33 @@ export function openPlace(place: ReaderPlace, by: OpenedBy = 'fresh'): void {
     return;
   }
   const way = wayTo(visits, visits[at], place, by);
+  // A jump within the page shown keeps the listing it was shown at.
+  const samePage = here?.kind === 'page' && place.kind === 'page' && here.guideId === place.guideId;
+  const listing = menuWay ?? (samePage ? visits[at]!.menuWay : undefined);
   const visit: Visit = {
     place,
     scroll: 0,
     ...toSection,
     serial: nextSerial(),
     ...(way ? { way } : {}),
+    ...(listing ? { menuWay: listing } : {}),
   };
   const next = [...visits.slice(0, at + 1), visit].slice(-MAX_VISITS);
   set({ visits: next, at: next.length - 1 });
 }
 
-/** A visit on the way to the one shown: where it is in the visits kept, and its place. */
+/** Whether two ways down the menu are the same. */
+const sameWay = (a: readonly string[], b: readonly string[] | undefined) =>
+  a.length === b?.length && a.every((id, i) => id === b[i]);
+
+/**
+ * A visit on the way to the one shown: where it is in the visits kept, its
+ * place, and the way down the menu to the row it was opened from, if it was.
+ */
 export interface WayStep {
   at: number;
   place: ReaderPlace;
+  menuWay?: readonly string[];
 }
 
 /**
@@ -182,7 +221,9 @@ export function wayCame(state: ReaderState = get()): WayStep[] {
   const atOf = new Map(state.visits.map((visit, at) => [visit.serial, at]));
   return way.flatMap((serial) => {
     const at = atOf.get(serial);
-    return at === undefined || at >= state.at ? [] : [{ at, place: state.visits[at]!.place }];
+    if (at === undefined || at >= state.at) return [];
+    const { place, menuWay } = state.visits[at]!;
+    return [{ at, place, ...(menuWay ? { menuWay } : {}) }];
   });
 }
 
@@ -225,8 +266,8 @@ export function readerForward(): boolean {
 }
 
 /**
- * The landing page or the top of the contents shown names no source of
- * pages: it is of `source` from now on, so Back and Forward show it of the
+ * The landing page, the top of the contents or "All pages" shown names no
+ * source of pages: it is of `source` from now on, so Back and Forward show it of the
  * source it was shown of.
  */
 export function stampSource(source: string): void {
@@ -234,7 +275,10 @@ export function stampSource(source: string): void {
   const visit = visits[at];
   if (!visit) return;
   const { place } = visit;
-  const top = place.kind === 'home' || (place.kind === 'contents' && place.sectionId === null);
+  const top =
+    place.kind === 'home' ||
+    place.kind === 'all' ||
+    (place.kind === 'contents' && place.sectionId === null);
   if (!top || place.source !== undefined) return;
   const next = [...visits];
   next[at] = { ...visit, place: { ...place, source } };

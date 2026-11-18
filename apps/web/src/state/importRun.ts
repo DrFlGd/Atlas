@@ -154,6 +154,13 @@ export type RunPageState =
       loading: boolean;
       measuring?: boolean;
       attention?: boolean;
+      /**
+       * Why the page gives no data yet, as the shell or the importer's
+       * reader said it at the last poll (the page's own text: plain text
+       * only, see `noteText` in `pageWindow.ts`); null or left out when
+       * nothing said why.
+       */
+      note?: string | null;
     }
   /**
    * The page data is being turned into a map; `measuring` while its picture

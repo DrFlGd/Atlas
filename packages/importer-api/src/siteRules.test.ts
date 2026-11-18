@@ -1350,9 +1350,10 @@ describe('the menu section of a wiki or guide part', () => {
     expect(said(file({ ...wiki, menu: { from: 'top' } }))).toEqual([
       'Part 1, menu.from: must be one of "both", "main" or "side".',
     ]);
-    expect(fields(file({ ...wiki, menu: { from: 'side', headings: '.box-title' } }))).toEqual([
-      'parts[0].menu.headings',
-    ]);
+    // The titles of the home page's blocks are headings of its text whatever the menu comes from.
+    expect(
+      checkSiteRules(file({ ...wiki, menu: { from: 'side', headings: '.box-title' } })).ok,
+    ).toBe(true);
     expect(said(file({ ...wiki, menu: { leaveOut: ['News'], keep: [' news '] } }))).toEqual([
       'Part 1, menu.leaveOut, entry 1: is also in "keep": a heading is either left out or kept.',
     ]);

@@ -47,11 +47,24 @@ export interface StartPage {
   address: string | null;
 }
 
+/**
+ * How the file is shown: its settings as ordinary controls (`form`, from
+ * "Settings…"), or its text as JSON (`json`, from "Edit…").
+ */
+export type RulesEditorView = 'form' | 'json';
+
 /** What the editor is opened on. */
 export type RulesEditorStart =
   | { kind: 'new' }
   /** A file of the person's, by its name in the Sites folder. */
-  | { kind: 'own'; name: string; title: string; text: string; page?: StartPage }
+  | {
+      kind: 'own';
+      name: string;
+      title: string;
+      text: string;
+      page?: StartPage;
+      view?: RulesEditorView;
+    }
   /** A copy of a shipped file: its name, and the title of the importer it comes with. */
   | {
       kind: 'copy';
@@ -60,6 +73,7 @@ export type RulesEditorStart =
       importer: string;
       text: string;
       page?: StartPage;
+      view?: RulesEditorView;
     };
 
 export const useRulesEditor = create<{
@@ -79,10 +93,15 @@ export function newRulesFile(): void {
   open({ kind: 'new' });
 }
 
-/** "Edit…" on a file of the person's, and "Edit a copy…" on a shipped file, with an example page to start with. */
+/**
+ * "Edit…" on a file of the person's, and "Edit a copy…" on a shipped file,
+ * with an example page to start with; "Settings…" opens either on its
+ * settings (`view` `form`), on a copy for a shipped file as "Edit a copy…".
+ */
 export async function editRulesFile(
   entry: Pick<SiteEntry, 'key' | 'name' | 'title' | 'own' | 'importer'>,
   page?: StartPage,
+  view: RulesEditorView = 'json',
 ): Promise<void> {
   let text: string | null;
   try {
@@ -100,13 +119,14 @@ export async function editRulesFile(
   const withPage = page ? { page } : {};
   open(
     entry.own
-      ? { kind: 'own', name: entry.name, title: entry.title, text, ...withPage }
+      ? { kind: 'own', name: entry.name, title: entry.title, text, view, ...withPage }
       : {
           kind: 'copy',
           name: entry.name,
           title: entry.title,
           importer: entry.importer ?? 'an importer',
           text,
+          view,
           ...withPage,
         },
   );

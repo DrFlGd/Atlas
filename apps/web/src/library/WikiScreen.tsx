@@ -16,6 +16,7 @@ import {
   browseWiki,
   readWikiContents,
   readWikiPages,
+  runWhyItWaits,
   stopBrowse,
   stopRun,
   useImport,
@@ -144,6 +145,7 @@ export function WikiScreen({
           total: phase.run.pages.length,
           found: foundText(phase.run),
           waiting: waitingForPerson(phase.run),
+          why: runWhyItWaits(phase.run),
         }
       : null;
 
@@ -382,7 +384,7 @@ export function WikiScreen({
                       : ''
                   }.${
                     progress?.waiting
-                      ? ' The page window is waiting for you: if the page asks you to confirm you are a person, answer it there. This app does not answer it for you.'
+                      ? ` The page window is waiting for you: if the page asks you to confirm you are a person, answer it there. This app does not answer it for you.${progress.why ? ` ${progress.why}` : ''}`
                       : ''
                   } Stop ends it after the page open now.`
                 : tickedRows.length > 0
