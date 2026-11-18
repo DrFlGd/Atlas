@@ -362,7 +362,14 @@ const setPhase = (phase: ImportPhase) => {
   useImport.setState({ phase });
 };
 
-export { POLL_MS, KEPT_POLL_MS, STILL_WAITING_SECONDS, waitText } from './pageWindow';
+export {
+  POLL_MS,
+  KEPT_POLL_MS,
+  STILL_WAITING_SECONDS,
+  waitText,
+  whyItWaits,
+  runWhyItWaits,
+} from './pageWindow';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

@@ -5,6 +5,7 @@ import { filingText } from './filingText';
 import { downloadsOffered } from '../features';
 import {
   STILL_WAITING_SECONDS,
+  whyItWaits,
   browseGames,
   cancelImport,
   catalogueImporters,
@@ -588,6 +589,7 @@ export function Progress({
           Still waiting. Look at the page window: if it asks you to sign in, to confirm you are a
           person or to wait, deal with it there, or cancel. This app waits{' '}
           {left > 60 ? `about ${Math.ceil(left / 60)} more minutes` : 'less than a minute more'}.
+          <WhyItWaits waiting={phase} />
         </p>
       ) : null}
       <div className="row-actions">
@@ -837,6 +839,22 @@ function SavedPagesProgress({
   );
 }
 
+/**
+ * " Why it waits: <note>." after the words that say the page window waits,
+ * once the page has waited long enough or asked for the person (see
+ * `whyItWaits`). The note is the page's and the importer's text: shown as
+ * plain text only.
+ */
+function WhyItWaits({ waiting }: { waiting: Parameters<typeof whyItWaits>[0] }) {
+  const why = whyItWaits(waiting);
+  return why ? (
+    <>
+      {' '}
+      <span data-testid="add-map-why-it-waits">{why}</span>
+    </>
+  ) : null;
+}
+
 function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> }) {
   const elapsed = Math.max(0, Math.round((state.now - state.startedAt) / 1000));
   const left = Math.max(0, state.waitSeconds - elapsed);
@@ -861,12 +879,14 @@ function OpenPage({ state }: { state: Extract<RunPageState, { kind: 'open' }> })
           stop. This app does not answer it for you, and it did not bring the window to the front.
           It waits{' '}
           {left > 60 ? `about ${Math.ceil(left / 60)} more minutes` : 'less than a minute more'}.
+          <WhyItWaits waiting={state} />
         </span>
       ) : elapsed >= STILL_WAITING_SECONDS ? (
         <span className="download-note small" data-testid="add-map-still-waiting">
           Look at the page window: if it asks you to sign in, to confirm you are a person or to
           wait, deal with it there, or close the window to stop. This app waits{' '}
           {left > 60 ? `about ${Math.ceil(left / 60)} more minutes` : 'less than a minute more'}.
+          <WhyItWaits waiting={state} />
         </span>
       ) : null}
     </>

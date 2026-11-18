@@ -12,7 +12,11 @@
  *    {@link AtlasImporter.pageReader} in it every few seconds, until the
  *    reader returns something other than `null` or `undefined`, the person
  *    closes the window or the wait times out. The page itself is given no
- *    way to call the app.
+ *    way to call the app. A reader that holds back on a page that has
+ *    loaded may say why by throwing an `Error` whose message is one plain
+ *    sentence: the app keeps waiting just as for `null`, and shows the
+ *    first 200 characters of that sentence, as plain text, as the reason
+ *    the page window waits.
  * 3. The value the reader returned (the "page data") is capped in size,
  *    parsed as JSON and handed to {@link AtlasImporter.convert} in the app's
  *    own window, with a {@link ImportContext} for merging with earlier

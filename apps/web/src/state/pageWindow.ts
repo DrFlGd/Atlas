@@ -1,6 +1,6 @@
 import { checkPageObservations, type PageObservations } from '@atlas/importer-api';
 import type { DesktopBridge, ImportReport, PollResult } from '../desktop';
-import { RUN_PAUSE_MS, WINDOW_PAGE_PAUSE_MS } from './importRun';
+import { RUN_PAUSE_MS, WINDOW_PAGE_PAUSE_MS, type RunState } from './importRun';
 
 /**
  * Reading one page in the import window: open it (or, in a go of pages an
@@ -32,6 +32,69 @@ export const STILL_WAITING_SECONDS = 20;
 /** A wait in words: "45 seconds", "5 minutes". */
 export const waitText = (seconds: number) =>
   seconds < 120 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
+
+/** A note of a waiting page is shown at most this many characters long. */
+export const MAX_NOTE_CHARS = 200;
+
+/**
+ * A note of a waiting page (the importer's reader's or the shell's reason,
+ * made of the page's own text) as words to show: on one line, without
+ * control characters or characters that turn text around, at most
+ * {@link MAX_NOTE_CHARS} characters, beginning with a capital and without
+ * its closing full stop. Plain text only, never HTML. Null when it says
+ * nothing.
+ */
+export function noteText(note: string | null | undefined): string | null {
+  if (typeof note !== 'string') return null;
+  const line = note
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ')
+    .replace(/[\u202a-\u202e\u2066-\u2069]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  const cut = Array.from(line).slice(0, MAX_NOTE_CHARS).join('').trim();
+  const text = cut.replace(/[.\s]+$/u, '');
+  if (!text) return null;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** How a page waiting stands, as {@link whyItWaits} reads it. */
+interface WaitingShown {
+  startedAt: number;
+  now: number;
+  note?: string | null;
+  measuring?: boolean;
+  attention?: boolean;
+}
+
+/**
+ * "Why it waits: <note>.", for a page the window waits on that has asked
+ * for the person's attention, or that has waited
+ * {@link STILL_WAITING_SECONDS} or more; null before that (a page that
+ * loads as usual shows nothing new), while the map picture is measured, and
+ * when nothing said why.
+ */
+export function whyItWaits(waiting: WaitingShown): string | null {
+  if (waiting.measuring === true) return null;
+  const note = noteText(waiting.note);
+  if (!note) return null;
+  const elapsed = Math.max(0, Math.round((waiting.now - waiting.startedAt) / 1000));
+  return waiting.attention === true || elapsed >= STILL_WAITING_SECONDS
+    ? `Why it waits: ${note}.`
+    : null;
+}
+
+/** {@link whyItWaits} for the page of a run open in the window now. */
+export function runWhyItWaits(run: RunState): string | null {
+  if (run.status !== 'running') return null;
+  for (const page of run.pages) {
+    if (page.state.kind === 'open') return whyItWaits(page.state);
+  }
+  return null;
+}
+
+/** Why a kept window's page waits when the data handed over is that of the page read before. */
+export const STALE_NOTE = 'the window still shows the page read before';
 
 /** What a page is read for. */
 export type Reading = 'map' | 'game' | 'catalogue';
@@ -267,6 +330,8 @@ export class PageWindows {
 
     // Once the data is read, measuring the page has bounds of its own in the shell.
     let measuring = false;
+    // The last reason the page gave no data, for the message when the wait runs out.
+    let lastNote: string | null = null;
     for (;;) {
       await deps.sleep(keep ? KEPT_POLL_MS : POLL_MS);
       if (!current()) return { state: 'cancelled' };
@@ -274,7 +339,8 @@ export class PageWindows {
       if (!measuring && now - startedAt > waitSeconds * 1000) {
         readFrom(undefined);
         await letGo();
-        const message = `The page did not provide ${READING_NOUN[reading]} within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the ${reading === 'map' ? 'map' : 'page'} load; you can try again later. Nothing was added.`;
+        const said = noteText(lastNote);
+        const message = `The page did not provide ${READING_NOUN[reading]} within ${waitText(waitSeconds)}. If it asked you to sign in, to confirm you are a person or to wait, it may not have let the ${reading === 'map' ? 'map' : 'page'} load; you can try again later. Nothing was added.${said ? ` The last thing the reader said: ${said}.` : ''}`;
         deps.report({ importerId: importer.id, outcome: 'timed-out', message });
         return { state: 'timed-out', message };
       }
@@ -286,9 +352,10 @@ export class PageWindows {
       }
       if (!current()) return { state: 'cancelled' };
       if (result.state === 'ready' && stale(result.address, result.forwarded === true)) {
-        result = { state: 'waiting', loading: true, note: null };
+        result = { state: 'waiting', loading: true, note: STALE_NOTE };
       }
       if (result.state === 'waiting') {
+        if (typeof result.note === 'string' && result.note.trim()) lastNote = result.note;
         onWaiting({
           startedAt,
           now,
