@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Detail, PackDetails } from '../desktop';
+import { rememberDetails } from '../state/gameFacts';
 import { loadPackDetails } from '../state/packFile';
 import { useAtlas } from '../state/store';
 import { formatBytes } from './downloadFormat';
@@ -22,7 +23,9 @@ export function PackSummary({ id }: { id: string }) {
     let live = true;
     loadPackDetails(id).then(
       (loaded) => {
-        if (live) setDetails(loaded);
+        if (!live) return;
+        setDetails(loaded);
+        rememberDetails(id, loaded);
       },
       () => undefined,
     );

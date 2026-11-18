@@ -3282,3 +3282,316 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   flex-basis: 100%;
   text-align: center;
 }
+
+/* ------------------------------------------------------------------ */
+/* Games and the Library: finding a game, the view, the grouping (see `components/GameListTools.tsx`) */
+
+.games-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.games-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-bg);
+  color: var(--atlas-muted);
+}
+
+.games-find:focus-within {
+  border-color: var(--atlas-accent);
+}
+
+.games-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  outline: none;
+}
+
+.games-find-input::placeholder {
+  color: var(--atlas-muted);
+}
+
+.games-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.games-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.games-choice-label {
+  color: var(--atlas-muted);
+  font-size: 0.85rem;
+}
+
+.games-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.games-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--atlas-radius-small) - 2px);
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.games-segment:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.games-segment[aria-pressed='true'] {
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+  font-weight: 600;
+}
+
+.games-found {
+  margin: 0;
+}
+
+.games-section + .games-section {
+  margin-top: 4px;
+}
+
+.games-heading {
+  margin: 0;
+  font: inherit;
+}
+
+.games-heading-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--atlas-border);
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.games-heading-button:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.games-heading-button > .ui-icon {
+  flex: none;
+  color: var(--atlas-muted);
+}
+
+.games-heading-still {
+  cursor: default;
+}
+
+.games-heading-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.games-heading-count {
+  flex: none;
+  min-width: 1.8em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--atlas-surface-hover);
+  color: var(--atlas-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.games-select {
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+/* A game's tags, as small chips */
+
+.game-tag {
+  display: inline-block;
+  max-width: 14em;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--atlas-border);
+  border-radius: 999px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-tag-more {
+  color: var(--atlas-muted);
+}
+
+/* "Tags…": the tags of a game, by group */
+
+.tags-dialog {
+  width: min(520px, calc(100% - 24px));
+}
+
+.tags-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tags-note {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 0.9rem;
+}
+
+.tags-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+}
+
+.tags-group-name {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.tags-group-tools {
+  display: flex;
+  gap: 12px;
+}
+
+.tags-danger {
+  color: var(--atlas-danger);
+}
+
+.tags-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.tags-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 999px;
+  background: var(--atlas-surface-raised);
+  cursor: pointer;
+}
+
+.tags-option:has(input:checked) {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.tags-option > input {
+  margin: 0;
+  accent-color: var(--atlas-accent);
+}
+
+.tags-empty {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 0.85rem;
+}
+
+.tags-new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tags-input {
+  flex: 1 1 10em;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.tags-problem {
+  flex-basis: 100%;
+  color: var(--atlas-danger);
+  font-size: 0.85rem;
+}
+
+.tags-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-danger-soft);
+}
+
+.tags-confirm p {
+  margin: 0;
+}
+
+.tags-confirm-actions,
+.tags-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tags-add-group {
+  align-self: flex-start;
+}

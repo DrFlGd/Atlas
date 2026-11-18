@@ -3399,3 +3399,156 @@ button.photo-card-text {
 .touch-game-actions-wrap {
   flex-wrap: wrap;
 }
+
+/* Games: the tools above the list, the tags, and the compact view (see `GamesScreen.tsx`) */
+
+.touch-page-body .games-tools {
+  margin: 4px 0 8px;
+}
+
+.touch[data-input='touch'] .games-find-input {
+  height: 44px;
+  font-size: 16px;
+}
+
+.touch[data-input='touch'] .games-segment {
+  height: 40px;
+  padding: 0 14px;
+  font-size: 15px;
+}
+
+.touch[data-input='touch'] .games-select {
+  height: 44px;
+  font-size: 15px;
+}
+
+.touch[data-input='touch'] .games-heading-button {
+  min-height: 48px;
+  font-size: 15px;
+}
+
+.touch[data-input='touch'] .tags-option {
+  min-height: 44px;
+}
+
+.touch[data-input='touch'] .tags-input {
+  height: 44px;
+  font-size: 16px;
+}
+
+.touch-game-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.touch-compact-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.touch-compact {
+  border-bottom: 1px solid var(--atlas-surface-raised);
+}
+
+.touch-compact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+}
+
+.touch-compact-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 3px 4px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  text-align: left;
+}
+
+.touch-compact-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-compact[data-current='true'] .touch-compact-name {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.touch-compact-line {
+  overflow: hidden;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-compact-tags {
+  display: flex;
+  flex: none;
+  gap: 3px;
+  max-width: 38%;
+  overflow: hidden;
+}
+
+.touch-compact-tags .game-tag {
+  max-width: 7em;
+}
+
+.touch-compact-shown {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--atlas-accent);
+}
+
+.touch-compact-more {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 22px;
+  background: none;
+  color: var(--atlas-muted);
+}
+
+.touch-compact-more[aria-expanded='true'] {
+  background: var(--atlas-accent-soft);
+  color: var(--atlas-accent);
+}
+
+.touch-compact-actions {
+  padding: 0 0 6px 4px;
+}
+
+.touch[data-input='mouse'] .touch-compact-row,
+.touch[data-input='mouse'] .touch-compact-main {
+  min-height: 40px;
+}
+
+.touch[data-input='mouse'] .touch-compact-more {
+  width: 36px;
+  height: 36px;
+}
+
+/* A phone: the tags under the name, so the row keeps its room for the name. */
+@media (max-width: 480px) {
+  .touch-compact-tags {
+    max-width: 30%;
+  }
+}

@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useId, useState } from 'react';
 import type { GameGroup } from '@atlas/schema';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
+import { GamesListBar, GamesSections, TagChips, TagsDialog } from '../components/GameListTools';
+import { useRowWords, useGamesList } from '../state/gamesList';
 import { ShowWithAnotherForm, SourcesLine, TitleSourcesPanel } from '../components/GameTitles';
 import { UiIcon } from '../components/icons';
 import { PackSummary } from '../components/PackSummary';
@@ -9,6 +11,8 @@ import { desktop, type PackDetails } from '../desktop';
 import { copiesPickedFiles, foldersOffered, layoutChoiceOffered } from '../features';
 import { setLayout, setTheme, switchGame } from '../state/actions';
 import { openActivityLog } from '../state/activityLog';
+import type { TagGroup, TaggedRow } from '../state/gameTags';
+import { loadMissingDetails } from '../state/gameFacts';
 import { openTitle, showSource, useSourceNames, useTitleRows } from '../state/gameGroups';
 import { ownGamesOffered } from '../state/ownGames';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
@@ -19,19 +23,38 @@ import { setKeepScreenOn, setKeysOpen, useKeyHints, useTouch } from './state';
 import { GroupTitle, SwitchTrack } from './widgets';
 
 /**
- * Games: the games on this device (tap one to show it), importing a map
+ * Games: the games on this device (press one to show it), importing a map
  * pack file, each game's details and delete, then the app's settings.
  * Games shown under one title are one row (see `state/gameGroups.ts`).
+ * With two games or more, a game can be found by its name, the games shown
+ * as cards or compact rows, and listed under the person's own categories
+ * (see `components/GameListTools.tsx`).
  */
 export function GamesScreen() {
   const rows = useTitleRows();
-  const several = useAtlas((s) => s.catalog.length > 1);
-  const library = useAtlas((s) => s.library);
-  const shown = useAtlas((s) => s.game?.entry.id);
+  const games = useGamesList(rows, 'Imported from a pack file');
+  const skip = games.groupBy?.id ?? null;
+  // Grouped by what the games hold: what each holds is read once, here.
+  const byContents = skip === 'contents';
+  const catalog = useAtlas((s) => s.catalog);
+  useEffect(() => {
+    if (byContents) void loadMissingDetails(catalog.map((entry) => entry.id));
+  }, [byContents, catalog]);
   const copies = useAtlas(copiesPickedFiles);
   const folders = useAtlas(foldersOffered);
   const canImport = desktop !== null && (copies || folders);
   const canMake = useAtlas(ownGamesOffered);
+  const compact = games.view === 'compact';
+  const list = (items: TaggedRow[], label: string) =>
+    compact ? (
+      <CompactGames items={items} label={label} tagGroups={games.tagGroups} skip={skip} />
+    ) : (
+      <ul className="touch-plain-list" data-testid="game-list">
+        {items.map((item) => (
+          <CardRow key={item.id} item={item} tagGroups={games.tagGroups} skip={skip} />
+        ))}
+      </ul>
+    );
   return (
     <div className="touch-page" data-testid="games-screen">
       <header className="touch-page-head">
@@ -40,36 +63,27 @@ export function GamesScreen() {
       <div className="touch-scroll touch-page-body" data-scroll-root>
         <section aria-labelledby="games-heading">
           <GroupTitle id="games-heading">Games on this device</GroupTitle>
-          <ul className="touch-plain-list" data-testid="game-list">
-            {rows.map((row) => {
-              if (row.kind === 'title') {
-                return <TitleRow key={row.group.id} group={row.group} shownId={shown ?? null} />;
-              }
-              const { entry } = row;
-              const listed = library?.packs.find((p) => p.id === entry.id);
-              return (
-                <GameRow
-                  key={entry.id}
-                  id={entry.id}
-                  title={entry.title}
-                  current={entry.id === shown}
-                  origin={
-                    listed?.madeInApp
-                      ? 'Made in this app'
-                      : listed && !listed.bundled
-                        ? 'Imported from a pack file'
-                        : 'Comes with the app'
-                  }
-                  ownGame={canMake && listed?.madeInApp === true && listed.origin === 'maps-folder'}
-                  personalUse={listed?.personalUse === true}
-                  listed={listed !== undefined}
-                  deletable={listed?.origin === 'maps-folder' && !listed.bundled}
-                  busy={library?.busy.includes(entry.id) ?? false}
-                  groupable={several}
-                />
-              );
-            })}
-          </ul>
+          {rows.length > 1 ? (
+            <GamesListBar
+              filter={games.filter}
+              onFilter={games.setFilter}
+              view={games.view}
+              groupBy={games.groupBy}
+              tagGroups={games.tagGroups}
+              total={rows.length}
+              shown={games.shown.length}
+            />
+          ) : null}
+          <div className="touch-games" data-view={games.view} data-testid="touch-games">
+            <GamesSections
+              sections={games.sections}
+              groupBy={games.groupBy}
+              shown={games.shown}
+              folded={games.folded}
+              finding={games.finding}
+              list={list}
+            />
+          </div>
           {canMake ? <NewGameButton /> : null}
           {canImport ? (
             <>
@@ -96,35 +110,61 @@ export function GamesScreen() {
   );
 }
 
+/** What a row of a game says and offers, from what the shell lists of it. */
+function useGameRow(id: string) {
+  const library = useAtlas((s) => s.library);
+  const shown = useAtlas((s) => s.game?.entry.id ?? null);
+  const several = useAtlas((s) => s.catalog.length > 1);
+  const canMake = useAtlas(ownGamesOffered);
+  const listed = library?.packs.find((p) => p.id === id);
+  return {
+    listed,
+    current: id === shown,
+    origin: listed?.madeInApp
+      ? 'Made in this app'
+      : listed && !listed.bundled
+        ? 'Imported from a pack file'
+        : 'Comes with the app',
+    ownGame: canMake && listed?.madeInApp === true && listed.origin === 'maps-folder',
+    personalUse: listed?.personalUse === true,
+    deletable: listed?.origin === 'maps-folder' && !listed.bundled,
+    busy: library?.busy.includes(id) ?? false,
+    groupable: several,
+  };
+}
+
+/** A row of the cards view: a game, or a title with its sources. */
+const CardRow = memo(function CardRow({
+  item,
+  tagGroups,
+  skip,
+}: {
+  item: TaggedRow;
+  tagGroups: readonly TagGroup[];
+  skip: string | null;
+}) {
+  const shown = useAtlas((s) => s.game?.entry.id ?? null);
+  const { row } = item;
+  const chips = (
+    <TagChips tags={item.tags} tagGroups={tagGroups} skip={skip} className="touch-game-tags" />
+  );
+  if (row.kind === 'title') {
+    return <TitleRow group={row.group} shownId={shown} chips={chips} />;
+  }
+  return <GameRow id={row.entry.id} title={row.entry.title} chips={chips} />;
+});
+
 function GameRow({
   id,
   title,
-  current,
-  origin,
-  listed,
-  deletable,
-  busy,
-  ownGame = false,
-  personalUse = false,
-  groupable,
+  chips,
 }: {
   id: string;
   title: string;
-  current: boolean;
-  origin: string;
-  listed: boolean;
-  deletable: boolean;
-  busy: boolean;
-  /** Made in this app: maps and levels can be added, and it can be renamed. */
-  ownGame?: boolean;
-  /** Kept for personal use (see `ListedPack.personalUse`). */
-  personalUse?: boolean;
-  /** Another game is here, so it can be shown with it under one title. */
-  groupable: boolean;
+  /** The row's tags, as chips. */
+  chips: React.ReactNode;
 }) {
-  const [confirming, setConfirming] = useState(false);
-  const [details, setDetails] = useState(false);
-  const [grouping, setGrouping] = useState(false);
+  const { listed, current, origin, personalUse, busy } = useGameRow(id);
   return (
     <li className="touch-game" data-testid="game-row" data-pack={id} data-current={current}>
       <button
@@ -144,87 +184,116 @@ function GameRow({
             {busy ? ' · moving files…' : ''}
           </span>
           {listed && desktop ? <PackSummary id={id} /> : null}
+          {chips}
         </span>
         <span className="touch-row-end">
           {current ? <UiIcon name="check" size={20} strokeWidth={2.2} /> : null}
         </span>
       </button>
-      {(listed && desktop) || groupable ? (
-        <div className="touch-game-actions touch-game-actions-wrap">
-          {listed && desktop ? (
-            <button
-              type="button"
-              className="touch-text-button"
-              aria-expanded={details}
-              data-testid="pack-details-toggle"
-              onClick={() => {
-                setDetails(!details);
-              }}
-            >
-              Details
-            </button>
-          ) : null}
-          {groupable ? (
-            <button
-              type="button"
-              className="touch-text-button"
-              aria-expanded={grouping}
-              data-testid="show-with-another"
-              onClick={() => {
-                setGrouping(!grouping);
-              }}
-            >
-              Show with another game…
-            </button>
-          ) : null}
-          {deletable && !busy ? (
-            <button
-              type="button"
-              className="touch-text-button touch-text-button-danger"
-              data-testid="delete-pack"
-              onClick={() => {
-                setConfirming(true);
-              }}
-            >
-              Delete…
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {ownGame && !busy ? <OwnGameActions id={id} title={title} /> : null}
-      {details ? <GameDetails id={id} /> : null}
-      {grouping ? (
-        <div className="touch-game-confirm">
-          <ShowWithAnotherForm
-            gameId={id}
-            onClose={() => {
-              setGrouping(false);
-            }}
-          />
-        </div>
-      ) : null}
-      {confirming ? (
-        <div className="touch-game-confirm">
-          <DeletePackConfirm
-            id={id}
-            title={title}
-            onClose={() => {
-              setConfirming(false);
-            }}
-          />
-        </div>
-      ) : null}
+      <GameActions id={id} title={title} />
     </li>
   );
 }
 
 /**
- * A title with its sources on this device: a tap shows the source last
- * shown under it; Sources lists them, to show one, take one out, rename
- * the title or show them separately again.
+ * What can be done with a game, under its card or its compact row: its
+ * details, showing it with another game, its tags, and delete, each
+ * asked or shown under it.
  */
-function TitleRow({ group, shownId }: { group: GameGroup; shownId: string | null }) {
-  const [open, setOpen] = useState(false);
+function GameActions({ id, title }: { id: string; title: string }) {
+  const { listed, ownGame, deletable, busy, groupable } = useGameRow(id);
+  const [open, setOpen] = useState<'details' | 'grouping' | 'tags' | 'delete' | null>(null);
+  const toggle = (what: typeof open) => {
+    setOpen(open === what ? null : what);
+  };
+  const close = () => {
+    setOpen(null);
+  };
+  return (
+    <>
+      <div className="touch-game-actions touch-game-actions-wrap">
+        {listed && desktop ? (
+          <button
+            type="button"
+            className="touch-text-button"
+            aria-expanded={open === 'details'}
+            data-testid="pack-details-toggle"
+            onClick={() => {
+              toggle('details');
+            }}
+          >
+            Details
+          </button>
+        ) : null}
+        {groupable ? (
+          <button
+            type="button"
+            className="touch-text-button"
+            aria-expanded={open === 'grouping'}
+            data-testid="show-with-another"
+            onClick={() => {
+              toggle('grouping');
+            }}
+          >
+            Show with another game…
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="touch-text-button"
+          aria-haspopup="dialog"
+          data-testid="game-tags-open"
+          onClick={() => {
+            setOpen('tags');
+          }}
+        >
+          Tags…
+        </button>
+        {deletable && !busy ? (
+          <button
+            type="button"
+            className="touch-text-button touch-text-button-danger"
+            data-testid="delete-pack"
+            onClick={() => {
+              setOpen('delete');
+            }}
+          >
+            Delete…
+          </button>
+        ) : null}
+      </div>
+      {ownGame && !busy ? <OwnGameActions id={id} title={title} /> : null}
+      {open === 'details' ? <GameDetails id={id} /> : null}
+      {open === 'grouping' ? (
+        <div className="touch-game-confirm">
+          <ShowWithAnotherForm gameId={id} onClose={close} />
+        </div>
+      ) : null}
+      {open === 'tags' ? <TagsDialog gameId={id} title={title} onClose={close} /> : null}
+      {open === 'delete' ? (
+        <div className="touch-game-confirm">
+          <DeletePackConfirm id={id} title={title} onClose={close} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * A title with its sources on this device: pressing it shows the source
+ * last shown under it; Sources lists them, to show one, take one out,
+ * rename the title or show them separately again.
+ */
+function TitleRow({
+  group,
+  shownId,
+  chips,
+}: {
+  group: GameGroup;
+  shownId: string | null;
+  /** The row's tags, as chips. */
+  chips: React.ReactNode;
+}) {
   const names = useSourceNames(group);
   const current = group.members.some((member) => member.gameId === shownId);
   return (
@@ -249,25 +318,48 @@ function TitleRow({ group, shownId }: { group: GameGroup; shownId: string | null
               Shown: {names.get(shownId) ?? shownId}
             </span>
           ) : null}
+          {chips}
         </span>
         <span className="touch-row-end">
           {current ? <UiIcon name="check" size={20} strokeWidth={2.2} /> : null}
         </span>
       </button>
+      <TitleActions group={group} shownId={shownId} />
+    </li>
+  );
+}
+
+/** What can be done with a title: its sources, and its tags. */
+function TitleActions({ group, shownId }: { group: GameGroup; shownId: string | null }) {
+  const [open, setOpen] = useState<'sources' | 'tags' | null>(null);
+  const first = group.members[0]?.gameId ?? '';
+  return (
+    <>
       <div className="touch-game-actions">
         <button
           type="button"
           className="touch-text-button"
-          aria-expanded={open}
+          aria-expanded={open === 'sources'}
           data-testid="title-sources-toggle"
           onClick={() => {
-            setOpen(!open);
+            setOpen(open === 'sources' ? null : 'sources');
           }}
         >
           Sources…
         </button>
+        <button
+          type="button"
+          className="touch-text-button"
+          aria-haspopup="dialog"
+          data-testid="game-tags-open"
+          onClick={() => {
+            setOpen('tags');
+          }}
+        >
+          Tags…
+        </button>
       </div>
-      {open ? (
+      {open === 'sources' ? (
         <div className="touch-game-confirm">
           <TitleSourcesPanel
             group={group}
@@ -276,9 +368,150 @@ function TitleRow({ group, shownId }: { group: GameGroup; shownId: string | null
           />
         </div>
       ) : null}
-    </li>
+      {open === 'tags' ? (
+        <TagsDialog
+          gameId={first}
+          title={group.title}
+          onClose={() => {
+            setOpen(null);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
+
+/**
+ * The compact view: one short row for each game or title, with its name,
+ * where it came from, what it holds when that is known already, and its
+ * tags; More shows what the card offers under the row. Nothing is read
+ * for a row: what it holds is said once a card or the Library has read it.
+ */
+function CompactGames({
+  items,
+  label,
+  tagGroups,
+  skip,
+}: {
+  items: TaggedRow[];
+  label: string;
+  tagGroups: readonly TagGroup[];
+  skip: string | null;
+}) {
+  const shown = useAtlas((s) => s.game?.entry.id ?? null);
+  const words = useRowWords(items, 'Imported from a pack file');
+  return (
+    <ul className="touch-compact-list" aria-label={label} data-testid="game-list">
+      {items.map((item) => {
+        const { row } = item;
+        const ids = row.kind === 'title' ? row.entries.map((e) => e.id) : [row.entry.id];
+        const said = words.get(item.id);
+        return (
+          <CompactRow
+            key={item.id}
+            item={item}
+            tagGroups={tagGroups}
+            skip={skip}
+            current={shown !== null && ids.includes(shown)}
+            shownId={row.kind === 'title' && shown !== null && ids.includes(shown) ? shown : null}
+            sources={said?.sources ?? ''}
+            holds={said?.holds ?? null}
+          />
+        );
+      })}
+    </ul>
+  );
+}
+
+const CompactRow = memo(function CompactRow({
+  item,
+  tagGroups,
+  skip,
+  current,
+  shownId,
+  sources,
+  holds,
+}: {
+  item: TaggedRow;
+  tagGroups: readonly TagGroup[];
+  /** The group the games are grouped by: its tags are not repeated under its heading. */
+  skip: string | null;
+  current: boolean;
+  /** The game shown, when it is a source of this row's title. */
+  shownId: string | null;
+  sources: string;
+  holds: string | null;
+}) {
+  const [more, setMore] = useState(false);
+  const { row } = item;
+  const title = row.kind === 'title' ? row.group.title : row.entry.title;
+  const line = holds ? `${sources} · ${holds}` : sources;
+  const actionsId = useId();
+  return (
+    <li
+      className="touch-compact"
+      data-testid={row.kind === 'title' ? 'title-row' : 'game-row'}
+      data-pack={row.kind === 'game' ? row.entry.id : undefined}
+      data-group={row.kind === 'title' ? row.group.id : undefined}
+      data-current={current}
+    >
+      <div className="touch-compact-row">
+        <button
+          type="button"
+          className="touch-compact-main"
+          aria-current={current ? 'true' : undefined}
+          onClick={() => {
+            if (current) return;
+            if (row.kind === 'title') void openTitle(row.group);
+            else void switchGame(row.entry.id);
+          }}
+        >
+          <span className="touch-compact-name">
+            {title}
+            {current ? <span className="visually-hidden">, shown</span> : null}
+          </span>
+          <span className="touch-compact-line" data-testid="game-compact-line">
+            {line}
+          </span>
+        </button>
+        <TagChips
+          tags={item.tags}
+          tagGroups={tagGroups}
+          skip={skip}
+          limit={2}
+          className="touch-compact-tags"
+        />
+        {current ? (
+          <span className="touch-compact-shown" aria-hidden="true">
+            <UiIcon name="check" size={18} strokeWidth={2.2} />
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className="touch-compact-more"
+          aria-label={`More for ${title}`}
+          aria-expanded={more}
+          aria-controls={more ? actionsId : undefined}
+          data-testid="game-compact-more"
+          onClick={() => {
+            setMore(!more);
+          }}
+        >
+          <UiIcon name="more" size={20} />
+        </button>
+      </div>
+      {more ? (
+        <div className="touch-compact-actions" id={actionsId}>
+          {row.kind === 'title' ? (
+            <TitleActions group={row.group} shownId={shownId} />
+          ) : (
+            <GameActions id={row.entry.id} title={title} />
+          )}
+        </div>
+      ) : null}
+    </li>
+  );
+});
 
 /** What is known about a game, read when asked for, as the Maps dialog shows it. */
 function GameDetails({ id }: { id: string }) {
