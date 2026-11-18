@@ -102,6 +102,10 @@ const UI_PATHS = {
   pause: 'M7 4.5v11M13 4.5v11',
   // The width of a game's guide pages (PageWidthMenu.tsx): arrows apart.
   width: 'M2.5 10h15M5.5 6.5L2 10l3.5 3.5M14.5 6.5L18 10l-3.5 3.5',
+  // The contents beside a page in Guides (GuidesScreen.tsx), folded away or brought back:
+  // a bar at the left of a frame, an arrow to it or from it.
+  contentsHide: 'M2.5 4h15v12h-15zM7.5 4v12M13.5 7.5L11 10l2.5 2.5',
+  contentsShow: 'M2.5 4h15v12h-15zM7.5 4v12M11 7.5l2.5 2.5L11 12.5',
   // The larger view of a picture (PictureViewer.tsx).
   zoomIn: 'M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10zM12.2 12.2L16.5 16.5M6.5 8.5h4M8.5 6.5v4',
   zoomOut: 'M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10zM12.2 12.2L16.5 16.5M6.5 8.5h4',

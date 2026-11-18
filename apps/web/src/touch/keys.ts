@@ -29,6 +29,7 @@ export function keyList(lists: string | null): KeyHelp[] {
     { keys: ['Z'], what: 'Undo' },
     ...(lists ? [{ keys: ['C'], what: `${lists}, or back to the map` }] : []),
     { keys: ['H'], what: 'In Guides, the home page' },
+    { keys: ['B'], what: 'In Guides, hide or show the contents beside the page' },
     { keys: ['[', ']'], what: 'In a guide read in order, the previous or the next page' },
     { keys: ['Esc'], what: 'Close what is on top: a menu, search, the location, a list' },
     { keys: ['?'], what: 'This list of keys' },
