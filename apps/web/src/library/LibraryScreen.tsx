@@ -1,5 +1,8 @@
-import { useEffect } from 'react';
+import type { PackEntry, TitleRow } from '@atlas/core';
+import { memo, useEffect } from 'react';
 import { AddBox, AddFlow } from '../components/AddFlow';
+import { GamesListBar, GamesSections, TagChips } from '../components/GameListTools';
+import { useRowWords, useGamesList } from '../state/gamesList';
 import { BrowseStrip } from '../components/SiteReading';
 import { UiIcon } from '../components/icons';
 import { downloadsOffered, importsOffered } from '../features';
@@ -26,6 +29,7 @@ import {
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
 import { SourcesLine } from '../components/GameTitles';
+import type { TagGroup, TaggedRow } from '../state/gameTags';
 import { sourceToOpenNow, useTitleRows } from '../state/gameGroups';
 import { listedPages, loadWikiNotes, useWikiNotes } from '../state/wikiNotes';
 import { NewGameButton } from '../touch/OwnGames';
@@ -168,12 +172,14 @@ function AddArea() {
  */
 function GameList({ openId }: { openId: string | null }) {
   const rows = useTitleRows();
+  const games = useGamesList(rows, 'In the maps folder');
   const packs = useAtlas((s) => s.library?.packs);
   const shown = useAtlas((s) => s.game?.entry.id ?? null);
   const downloads = useAtlas(downloadsOffered);
   const facts = useGameFacts((s) => s.byId);
   const jobs = useDownloadsView((s) => s.jobs);
   const wikiNotes = useWikiNotes((s) => s.byImporter);
+  const compact = games.view === 'compact';
   // The notes on wikis' pages, for "38 of 412 pages read": read from this computer only.
   const importerIds = [
     ...new Set((packs ?? []).flatMap((pack) => (pack.imported ? [pack.imported.importerId] : []))),
@@ -183,116 +189,258 @@ function GameList({ openId }: { openId: string | null }) {
       void loadWikiNotes(importerId);
     }
   }, [importerIds]);
+  const words = useRowWords(compact ? games.items : NO_ROWS, 'In the maps folder');
+  const titleIds = (row: TitleRow<PackEntry>) =>
+    row.kind === 'title' ? row.entries.map((entry) => entry.id) : [row.entry.id];
+  const skip = games.groupBy?.id ?? null;
+  const cardList = (items: TaggedRow[]) => (
+    <ul className="library-list" data-testid="library-list">
+      {items.map(cardRow)}
+    </ul>
+  );
+  const compactList = (items: TaggedRow[], label: string) => (
+    <ul className="library-compact-list" aria-label={label} data-testid="library-list">
+      {items.map((item) => {
+        const ids = titleIds(item.row);
+        const said = words.get(item.id);
+        return (
+          <LibraryCompactRow
+            key={item.id}
+            item={item}
+            tagGroups={games.tagGroups}
+            skip={skip}
+            current={openId !== null && ids.includes(openId)}
+            shown={shown !== null && ids.includes(shown)}
+            sources={said?.sources ?? ''}
+            holds={said?.holds ?? null}
+          />
+        );
+      })}
+    </ul>
+  );
+  function cardRow(item: TaggedRow) {
+    const { row } = item;
+    const chips = (
+      <TagChips
+        tags={item.tags}
+        tagGroups={games.tagGroups}
+        skip={skip}
+        className="library-row-line library-tags"
+      />
+    );
+    if (row.kind === 'title') {
+      const { group } = row;
+      const ids = row.entries.map((entry) => entry.id);
+      return (
+        <li key={group.id}>
+          <button
+            type="button"
+            className="library-row"
+            aria-current={openId !== null && ids.includes(openId) ? 'true' : undefined}
+            data-testid="library-title"
+            data-group={group.id}
+            onClick={() => {
+              openLibraryGame(sourceToOpenNow(group) ?? ids[0]!);
+            }}
+          >
+            <span className="library-row-top">
+              <span className="library-row-title">{group.title}</span>
+              {shown !== null && ids.includes(shown) ? (
+                <span className="badge badge-done">Shown</span>
+              ) : null}
+            </span>
+            <span className="library-row-line">
+              <span className="library-kind library-kind-title">One title</span>
+              <SourcesLine group={group} className="library-status" />
+            </span>
+            {chips}
+          </button>
+        </li>
+      );
+    }
+    const { entry } = row;
+    const listed = packs?.find((p) => p.id === entry.id);
+    const own = facts[entry.id];
+    const kind = gameKind(listed, own?.details ?? null);
+    const line = statusLine({
+      kind,
+      facts: own,
+      jobs: {
+        images:
+          jobs.find((job) => job.packId === entry.id && job.kind === 'images')?.job ??
+          own?.images?.job ??
+          null,
+        photos:
+          jobs.find((job) => job.packId === entry.id && job.kind === 'photos')?.job ??
+          own?.photos?.job ??
+          null,
+      },
+      downloads: __ATLAS_DOWNLOADS__ && downloads,
+      wikiPages:
+        kind === 'wiki' && own?.details
+          ? {
+              read: own.details.contents.guides,
+              listed: listedPages(
+                listed?.imported ? wikiNotes[listed.imported.importerId] : undefined,
+                listed?.pages ?? [],
+              ),
+            }
+          : null,
+    });
+    return (
+      <li key={entry.id}>
+        <button
+          type="button"
+          className="library-row"
+          aria-current={entry.id === openId ? 'true' : undefined}
+          data-testid="library-game"
+          data-pack={entry.id}
+          onClick={() => {
+            openLibraryGame(entry.id);
+          }}
+        >
+          <span className="library-row-top">
+            <span className="library-row-title">{entry.title}</span>
+            {listed?.personalUse ? (
+              <span className="badge" data-testid="library-personal-use">
+                For personal use
+              </span>
+            ) : null}
+            {entry.id === shown ? <span className="badge badge-done">Shown</span> : null}
+          </span>
+          <span className="library-row-line">
+            <span className={`library-kind library-kind-${kind}`}>{KIND_LABEL[kind]}</span>
+            {line.text ? (
+              <span
+                className={`library-status library-status-${line.tone}`}
+                data-testid="library-status"
+              >
+                {line.text}
+              </span>
+            ) : null}
+          </span>
+          {chips}
+          {line.progress !== undefined ? (
+            <span className="meter meter-small" aria-hidden="true">
+              <span className="meter-fill" style={{ width: `${line.progress * 100}%` }} />
+            </span>
+          ) : null}
+        </button>
+      </li>
+    );
+  }
   return (
     <section className="library-list-section" aria-labelledby="library-games-heading">
       <h2 className="library-group-title" id="library-games-heading">
         Games on this computer
       </h2>
-      <ul className="library-list" data-testid="library-list">
-        {rows.map((row) => {
-          if (row.kind === 'title') {
-            const { group } = row;
-            const ids = row.entries.map((entry) => entry.id);
-            return (
-              <li key={group.id}>
-                <button
-                  type="button"
-                  className="library-row"
-                  aria-current={openId !== null && ids.includes(openId) ? 'true' : undefined}
-                  data-testid="library-title"
-                  data-group={group.id}
-                  onClick={() => {
-                    openLibraryGame(sourceToOpenNow(group) ?? ids[0]!);
-                  }}
-                >
-                  <span className="library-row-top">
-                    <span className="library-row-title">{group.title}</span>
-                    {shown !== null && ids.includes(shown) ? (
-                      <span className="badge badge-done">Shown</span>
-                    ) : null}
-                  </span>
-                  <span className="library-row-line">
-                    <span className="library-kind library-kind-title">One title</span>
-                    <SourcesLine group={group} className="library-status" />
-                  </span>
-                </button>
-              </li>
-            );
-          }
-          const { entry } = row;
-          const listed = packs?.find((p) => p.id === entry.id);
-          const own = facts[entry.id];
-          const kind = gameKind(listed, own?.details ?? null);
-          const line = statusLine({
-            kind,
-            facts: own,
-            jobs: {
-              images:
-                jobs.find((job) => job.packId === entry.id && job.kind === 'images')?.job ??
-                own?.images?.job ??
-                null,
-              photos:
-                jobs.find((job) => job.packId === entry.id && job.kind === 'photos')?.job ??
-                own?.photos?.job ??
-                null,
-            },
-            downloads: __ATLAS_DOWNLOADS__ && downloads,
-            wikiPages:
-              kind === 'wiki' && own?.details
-                ? {
-                    read: own.details.contents.guides,
-                    listed: listedPages(
-                      listed?.imported ? wikiNotes[listed.imported.importerId] : undefined,
-                      listed?.pages ?? [],
-                    ),
-                  }
-                : null,
-          });
-          return (
-            <li key={entry.id}>
-              <button
-                type="button"
-                className="library-row"
-                aria-current={entry.id === openId ? 'true' : undefined}
-                data-testid="library-game"
-                data-pack={entry.id}
-                onClick={() => {
-                  openLibraryGame(entry.id);
-                }}
-              >
-                <span className="library-row-top">
-                  <span className="library-row-title">{entry.title}</span>
-                  {listed?.personalUse ? (
-                    <span className="badge" data-testid="library-personal-use">
-                      For personal use
-                    </span>
-                  ) : null}
-                  {entry.id === shown ? <span className="badge badge-done">Shown</span> : null}
-                </span>
-                <span className="library-row-line">
-                  <span className={`library-kind library-kind-${kind}`}>{KIND_LABEL[kind]}</span>
-                  {line.text ? (
-                    <span
-                      className={`library-status library-status-${line.tone}`}
-                      data-testid="library-status"
-                    >
-                      {line.text}
-                    </span>
-                  ) : null}
-                </span>
-                {line.progress !== undefined ? (
-                  <span className="meter meter-small" aria-hidden="true">
-                    <span className="meter-fill" style={{ width: `${line.progress * 100}%` }} />
-                  </span>
-                ) : null}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      {rows.length > 1 ? (
+        <GamesListBar
+          filter={games.filter}
+          onFilter={games.setFilter}
+          view={games.view}
+          groupBy={games.groupBy}
+          tagGroups={games.tagGroups}
+          total={rows.length}
+          shown={games.shown.length}
+        />
+      ) : null}
+      <div className="library-games" data-view={games.view} data-testid="library-games">
+        <GamesSections
+          sections={games.sections}
+          groupBy={games.groupBy}
+          shown={games.shown}
+          folded={games.folded}
+          finding={games.finding}
+          list={compact ? compactList : cardList}
+        />
+      </div>
     </section>
   );
 }
+
+const NO_ROWS: TaggedRow[] = [];
+
+/**
+ * A game, or a title, as one short row: its name, where it came from and
+ * what it holds in small text, a few of its tags, and More. Drawn again only
+ * when what it shows changes.
+ */
+const LibraryCompactRow = memo(function LibraryCompactRow({
+  item,
+  tagGroups,
+  skip,
+  current,
+  shown,
+  sources,
+  holds,
+}: {
+  item: TaggedRow;
+  tagGroups: readonly TagGroup[];
+  /** The group the games are grouped by: its tags are not repeated under its heading. */
+  skip: string | null;
+  current: boolean;
+  shown: boolean;
+  sources: string;
+  holds: string | null;
+}) {
+  const { row } = item;
+  const title = row.kind === 'title' ? row.group.title : row.entry.title;
+  const open = () => {
+    if (row.kind === 'title') {
+      openLibraryGame(sourceToOpenNow(row.group) ?? row.entries[0]!.id);
+    } else openLibraryGame(row.entry.id);
+  };
+  const line = holds ? `${sources} · ${holds}` : sources;
+  return (
+    <li className="library-compact" data-current={current}>
+      <button
+        type="button"
+        className="library-compact-main"
+        aria-current={current ? 'true' : undefined}
+        data-testid={row.kind === 'title' ? 'library-title' : 'library-game'}
+        data-pack={row.kind === 'game' ? row.entry.id : undefined}
+        data-group={row.kind === 'title' ? row.group.id : undefined}
+        onClick={open}
+      >
+        <span className="library-compact-top">
+          <span className="library-compact-name">{title}</span>
+          {shown ? <span className="badge badge-done">Shown</span> : null}
+          <TagChips
+            tags={item.tags}
+            tagGroups={tagGroups}
+            skip={skip}
+            limit={2}
+            className="library-compact-tags"
+          />
+        </span>
+        <span className="library-compact-line" title={line} data-testid="library-compact-line">
+          {line}
+        </span>
+      </button>
+      <button
+        type="button"
+        className="icon-button library-compact-more"
+        aria-label={`More for ${title}`}
+        title="Opens the game here with its More menu"
+        aria-haspopup="menu"
+        data-testid="library-compact-more"
+        onClick={() => {
+          open();
+          setMoreOpen(true);
+          // The menu is beside the list: the focus goes to its first row.
+          requestAnimationFrame(() => {
+            document
+              .querySelector<HTMLElement>('[data-testid="library-more-menu"] [role="menuitem"]')
+              ?.focus();
+          });
+        }}
+      >
+        <UiIcon name="more" size={18} />
+      </button>
+    </li>
+  );
+});
 
 /** Under the list: checking every game for changes, and making a game of one's own. */
 function SideTools({ updatable }: { updatable: boolean }) {

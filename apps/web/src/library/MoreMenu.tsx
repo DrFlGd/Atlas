@@ -13,9 +13,9 @@ import { UiIcon, type UiIconName } from '../components/icons';
 /**
  * What More can ask the game pane to show in its place: a confirmation
  * before deleting, or before starting a wiki again from the beginning, or
- * choosing a game to show this one with under one title.
+ * choosing a game to show this one with under one title, or its tags.
  */
-export type MoreConfirm = 'pack' | 'images' | 'title' | 'restart';
+export type MoreConfirm = 'pack' | 'images' | 'title' | 'restart' | 'tags';
 
 /**
  * "More" on the open game: the things done less often, each with a
@@ -106,6 +106,17 @@ export function MoreMenu({
       },
     });
   }
+  rows.push({
+    id: 'game-tags',
+    icon: 'bullets',
+    title: 'Tags…',
+    text: grouped
+      ? 'Gives the title tags of your own, such as its system and genre, for each of its sources. Group by lists your games under the tags of one group.'
+      : 'Gives this game tags of your own, such as its system and genre. Group by lists your games under the tags of one group.',
+    run: () => {
+      onConfirm('tags');
+    },
+  });
   if (folders && !busy) {
     rows.push({
       id: 'export-pack',
