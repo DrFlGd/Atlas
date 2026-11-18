@@ -641,6 +641,11 @@ export const MAP_IMAGE_MARKS = ['{map}', '{shared}', '{z}', '{x}', '{y}', '{-y}'
 /** A number of a map, as a data path in each entry or as a plain number for a site with one map. */
 const pathOrInt = (max: number) => z.union([dataPath, z.int().min(0).max(max)]);
 const pixels = z.int().min(1).max(10_000_000);
+/**
+ * A side of a map's picture with `"units": "square"`: counted in sides of the
+ * square that one image covers at zoom 0, above 0 and at most the whole side.
+ */
+const squareSide = z.number().gt(0).max(1);
 
 /**
  * The image sets of a map in its data (`maps.picture.sets`): where each set's
@@ -678,7 +683,14 @@ const mapsSchema = z.strictObject({
   path: dataPath.optional(),
   id: text(200),
   name: text(200),
-  size: z.union([dataPath, z.tuple([pixels, pixels]), z.tuple([dataPath, dataPath])]).optional(),
+  size: z
+    .union([
+      dataPath,
+      z.tuple([pixels, pixels]),
+      z.tuple([squareSide, squareSide]),
+      z.tuple([dataPath, dataPath]),
+    ])
+    .optional(),
   maxZoom: pathOrInt(24).optional(),
   minZoom: pathOrInt(24).optional(),
   shared: sharedMapsSchema.optional(),
@@ -688,6 +700,8 @@ const mapsSchema = z.strictObject({
     image: address.optional(),
     images: address.optional(),
     sets: imageSetsSchema.optional(),
+    /** A data path inside one map's entry to the address of its images, as one text. */
+    pattern: dataPath.optional(),
     base: address.optional(),
     tile: z.int().min(64).max(1024).optional(),
   }),
@@ -715,6 +729,15 @@ const pageValueSchema = z.union([
 /** The forms of a value of `data.values`, by the field that names each. */
 export const PAGE_VALUE_FORMS = ['store', 'element'] as const;
 
+/**
+ * The units of a map part's positions (`position.units`): pixels of the
+ * picture; fractions of its width and height; degrees of longitude and
+ * latitude on the web's usual square of images; or sides of the square
+ * that one image covers at zoom 0 (`square`), in which `maps.size` is
+ * counted too.
+ */
+export const POSITION_UNITS = ['pixels', 'fraction', 'degrees', 'square'] as const;
+
 /** Type values one `types.found` list names at most. */
 export const MAX_FOUND_TYPES = 200;
 
@@ -727,6 +750,49 @@ const foundSchema = z.union([
   once(text(200), 'type').min(1).max(MAX_FOUND_TYPES),
   z.enum(['all', 'none']),
 ]);
+
+/**
+ * Which entries of a list of games, or which links of a game's page, are
+ * kept (`only`): those in which `path` (a data path inside one entry of the
+ * list of games) or `picture` (a selector inside one link of a game's page,
+ * whose elements' `src` is read) finds an address on one of `hosts`. Data
+ * only: a list of hosts, no condition of any other kind.
+ */
+const onlySchema = z.strictObject({
+  path: dataPath.optional(),
+  picture: selector.optional(),
+  hosts: once(host, 'host').min(1).max(5),
+});
+
+/**
+ * The site's list of games (`games`), read in the app's window: the page at
+ * `address`, the JSON of its element `element`, and in that JSON the list
+ * `path`, each entry a game with `id` (what stands for `{game}`) and `name`.
+ */
+const gamesListSchema = z.strictObject({
+  address,
+  element: selector,
+  path: dataPath,
+  id: dataPath,
+  name: dataPath,
+  only: onlySchema.optional(),
+});
+
+/**
+ * The page of one game (`gamePage`), read in the app's window: the page at
+ * `address` (with `{game}`), and its links that `links` selects whose
+ * address is a map page of the part, each one map, named by the words of
+ * `name` inside the link, or the link's own words.
+ */
+const gamePageSchema = z.strictObject({
+  address,
+  links: selector,
+  name: selector.optional(),
+  only: onlySchema.optional(),
+});
+
+export type MapGamesList = z.infer<typeof gamesListSchema>;
+export type MapGamePage = z.infer<typeof gamePageSchema>;
 
 const mapPartFields = {
   data: z.strictObject({
@@ -792,9 +858,15 @@ const mapPartFields = {
       icon: dataPath.optional(),
     }),
   }),
+  /** For a map part whose start holds {game} and {map}: the site's list of games. */
+  games: gamesListSchema.optional(),
+  /** For a map part whose start holds {game} and {map}: the page of a game, which lists its maps. */
+  gamePage: gamePageSchema.optional(),
   position: z.strictObject({
-    units: z.enum(['pixels', 'fraction', 'degrees']),
+    units: z.enum(POSITION_UNITS),
     origin: z.enum(['top-left', 'bottom-left']).optional(),
+    /** Which way `y` grows from the origin: down from `top-left`, up from `bottom-left`, unless it says. */
+    y: z.enum(['down', 'up']).optional(),
     zoom: z.int().min(0).max(24).optional(),
     area: z.enum(['world', 'located']).optional(),
   }),
@@ -1424,26 +1496,37 @@ function mapPartProblems(
     add(['data', 'values'], 'is only for "from": "values"');
   }
   const picture = maps.picture;
-  const forms = [picture.image, picture.images, picture.sets].filter((f) => f !== undefined);
+  const forms = [picture.image, picture.images, picture.sets, picture.pattern].filter(
+    (f) => f !== undefined,
+  );
   if (forms.length !== 1) {
-    add(['maps', 'picture'], 'must hold exactly one of image, images and sets');
+    add(['maps', 'picture'], 'must hold exactly one of image, images, sets and pattern');
   }
+  /** Whether the picture is images by zoom, column and row, by any of the three forms. */
+  const tiled =
+    picture.images !== undefined || picture.sets !== undefined || picture.pattern !== undefined;
   if (picture.image !== undefined) {
     add(
       ['maps', 'picture', 'image'],
       addressProblem(picture.image, pictureHosts) ??
         (/[{}]/u.test(picture.image) ? 'must be one address, without { or }' : null),
     );
-    if (picture.tile !== undefined && picture.images === undefined && picture.sets === undefined) {
-      add(['maps', 'picture', 'tile'], 'is only for images and sets');
+    if (picture.tile !== undefined && !tiled) {
+      add(['maps', 'picture', 'tile'], 'is only for images, sets and pattern');
     }
   }
   if (picture.images !== undefined) {
     add(['maps', 'picture', 'images'], mapImagesProblem(picture.images, pictureHosts));
   }
-  if (picture.images !== undefined || picture.sets !== undefined) {
+  if (picture.pattern !== undefined && maps.path === undefined) {
+    add(
+      ['maps', 'picture', 'pattern'],
+      "is read in each map's entry of the data, so it needs maps.path: for one map written in the file, write the address in images",
+    );
+  }
+  if (tiled) {
     if (picture.tile === undefined)
-      add(['maps', 'picture', 'tile'], 'is needed with images and sets');
+      add(['maps', 'picture', 'tile'], 'is needed with images, sets and pattern');
     else if ((picture.tile & (picture.tile - 1)) !== 0) {
       add(['maps', 'picture', 'tile'], 'must be a power of two, such as 256 or 512');
     }
@@ -1537,7 +1620,12 @@ function mapPartProblems(
         : "must be the map's id when maps has no path: letters, digits, _, . and -",
     );
     if (maps.size !== undefined && typeof maps.size[0] !== 'number') {
-      add(['maps', 'size'], 'must be [width, height] in pixels when maps has no path');
+      add(
+        ['maps', 'size'],
+        position.units === 'square'
+          ? 'must be [width, height] in sides of the square of images at zoom 0 when maps has no path'
+          : 'must be [width, height] in pixels when maps has no path',
+      );
     }
     if (typeof maps.maxZoom === 'string') {
       add(['maps', 'maxZoom'], 'must be a number when maps has no path');
@@ -1581,20 +1669,129 @@ function mapPartProblems(
       add(['types', 'group'], 'is needed with groups: it is the id of the group of each type');
     }
   }
-  if (position.units === 'degrees' && position.origin !== undefined) {
-    add(
-      ['position', 'origin'],
-      'is only for pixels and fraction: degrees are longitude and latitude',
-    );
+  for (const key of ['origin', 'y'] as const) {
+    if (position.units === 'degrees' && position[key] !== undefined) {
+      add(
+        ['position', key],
+        'is only for pixels, fraction and square: degrees are longitude and latitude',
+      );
+    }
   }
   if (position.units !== 'pixels' && position.zoom !== undefined) {
-    add(['position', 'zoom'], 'is only for "units": "pixels"');
+    add(
+      ['position', 'zoom'],
+      position.units === 'square'
+        ? 'is only for "units": "pixels": with "square", positions are counted in sides of the square of images at zoom 0, whatever the zoom'
+        : 'is only for "units": "pixels"',
+    );
+  }
+  // A size written in the file: whole pixels, or with "square" sides of the square at zoom 0.
+  const fixedSize =
+    Array.isArray(maps.size) && typeof maps.size[0] === 'number'
+      ? (maps.size as readonly number[])
+      : null;
+  if (fixedSize && position.units === 'square' && fixedSize.some((side) => side > 1)) {
+    add(
+      ['maps', 'size'],
+      'must be counted in sides of the square of images at zoom 0 with "units": "square": above 0 and at most 1 a side, such as [1, 0.75]',
+    );
+  }
+  if (
+    fixedSize &&
+    position.units !== 'square' &&
+    fixedSize.some((side) => !Number.isInteger(side))
+  ) {
+    add(
+      ['maps', 'size'],
+      'must be whole pixels, such as [4096, 3072]: a size counted in sides of the square of images at zoom 0 is for "units": "square"',
+    );
   }
   if (position.units !== 'degrees' && position.area !== undefined) {
     add(['position', 'area'], 'is only for "units": "degrees"');
   }
   if (located && picture.image !== undefined) {
-    add(['position', 'area'], 'is only for a picture of images, by images or sets');
+    add(['position', 'area'], 'is only for a picture of images, by images, sets or pattern');
+  }
+  problems.push(...gameListProblems(part, at, hosts));
+  return problems;
+}
+
+/**
+ * The problems of a map part's list of games (`games`) and page of a game
+ * (`gamePage`): both are for a part whose start holds `{game}` and `{map}`,
+ * read in the app's window; the list's games are game pages, so it needs
+ * `gamePage`; a game's page has `{game}` and no other piece in its address,
+ * and a list of games none.
+ */
+function gameListProblems(
+  part: RulesMapPart,
+  at: Path,
+  hosts: readonly string[],
+): SiteRulesProblem[] {
+  const problems: SiteRulesProblem[] = [];
+  const add = (path: Path, message: string | null) => {
+    if (message) problems.push({ field: fieldPath([...at, ...path]), message });
+  };
+  const { games, gamePage } = part;
+  if (games === undefined && gamePage === undefined) return problems;
+  const pieces = piecesOf(part.start).pieces;
+  const both = pieces.includes('game') && pieces.includes('map');
+  for (const [key, given] of [
+    ['games', games],
+    ['gamePage', gamePage],
+  ] as const) {
+    if (given === undefined) continue;
+    if (!both) {
+      add(
+        [key],
+        "is only for a map part whose start holds {game} and {map}: one page a map, each game's maps found from its page",
+      );
+    }
+    if (!part.reading.ways.includes('window')) {
+      add([key], 'is read in the app’s window, which reading.ways does not offer: add "window"');
+    }
+  }
+  if (games !== undefined) {
+    if (gamePage === undefined) {
+      add(['games'], 'needs gamePage: each game of the list is read from its page');
+    }
+    add(
+      ['games', 'address'],
+      addressProblem(games.address, hosts) ??
+        (/[{}]/u.test(games.address) ? 'must be one address, without { or }' : null),
+    );
+    if (!namesEvery(games.path)) {
+      add(['games', 'path'], 'must name every entry of the list of games, with [*]');
+    }
+    if (games.only?.path === undefined && games.only !== undefined) {
+      add(
+        ['games', 'only', 'path'],
+        'is needed: the data path, inside one game, of the addresses to look at',
+      );
+    }
+    if (games.only?.picture !== undefined) {
+      add(['games', 'only', 'picture'], 'is only for gamePage.only: in a list of games, use path');
+    }
+  }
+  if (gamePage !== undefined) {
+    const found = piecesOf(gamePage.address);
+    add(
+      ['gamePage', 'address'],
+      found.problem ??
+        addressProblem(gamePage.address, hosts) ??
+        (found.pieces.length !== 1 || found.pieces[0] !== 'game'
+          ? 'must hold {game}, and no other piece: the address of one game’s page, such as /maps/{game}'
+          : null),
+    );
+    if (gamePage.only?.picture === undefined && gamePage.only !== undefined) {
+      add(
+        ['gamePage', 'only', 'picture'],
+        'is needed: the selector, inside one link, of the pictures to look at',
+      );
+    }
+    if (gamePage.only?.path !== undefined) {
+      add(['gamePage', 'only', 'path'], 'is only for games.only: in a game’s page, use picture');
+    }
   }
   return problems;
 }

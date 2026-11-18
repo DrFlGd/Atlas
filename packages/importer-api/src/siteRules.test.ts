@@ -24,7 +24,9 @@ import {
   siteRulesProblemsOf,
   siteRulesWideningsOf,
   readingWidenings,
+  pageValuesSpec,
   type AtlasImporter,
+  type RulesMapPart,
   type SiteRulesProblem,
 } from './index';
 
@@ -75,8 +77,10 @@ describe('the guide', () => {
     // a map part read from values of its page, one file for every game and map of a map site,
     // a part with links to a map, a map part with facts every map shares, a part with a menu section,
     // a part that keeps the app off addresses and records a permission,
-    // and a map part of pictures listed on a page.
-    expect(blocks.length).toBe(15);
+    // a map part of pictures listed on a page,
+    // a map part with the address of its images in its data, counted in sides of the square,
+    // and a map part with the site’s list of games and the page of each game.
+    expect(blocks.length).toBe(17);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -795,6 +799,139 @@ describe('checking a file', () => {
           types: { from: 'locations', order: 'rank', groups: fromValues.types.groups },
         }).sort(),
       ).toEqual(['parts[0].types.groups', 'parts[0].types.order']);
+    });
+
+    /** A made-up part: the address of each map's images in its data, sides of the square, y up from the top. */
+    const squared = {
+      ...oneMap,
+      start: '/charts/old-harbour',
+      data: {
+        from: 'values',
+        values: { sheet: { element: 'script#chart-data', path: 'props.sheet' } },
+      },
+      maps: {
+        path: 'sheet.chart',
+        id: 'slug',
+        name: 'title',
+        size: ['width', 'height'],
+        maxZoom: 'deepest',
+        minZoom: 'shallowest',
+        picture: { pattern: 'imageAddresses[0]', tile: 256 },
+      },
+      types: { path: 'sheet.chart.layers[*]', id: 'slug', name: 'title', found: 'all' },
+      locations: {
+        path: 'sheet.chart.layers[*].pins[*]',
+        fields: { id: 'slug', type: 'layer', name: 'title', x: 'across', y: 'rise' },
+      },
+      position: { units: 'square', y: 'up' },
+      pictures: { hosts: ['tiles.example.com'] },
+      reading: { ways: ['window'] },
+    };
+    const squaredSaid = (change: Record<string, unknown>) => {
+      const result = checkSiteRules(withPart({ ...squared, ...change }));
+      return result.ok ? [] : result.problems.map(problemText);
+    };
+
+    it('takes the address of a map’s images from its data, as one text', () => {
+      expect(squaredSaid({})).toEqual([]);
+      const picture = (value: Record<string, unknown>) =>
+        squaredSaid({ maps: { ...squared.maps, picture: value } });
+      expect(picture({ pattern: 'imageAddresses[0]' })).toEqual([
+        'Part 1, maps.picture.tile: is needed with images, sets and pattern.',
+      ]);
+      expect(
+        picture({ pattern: 'imageAddresses[0]', images: '/{z}/{x}/{y}.png', tile: 256 }),
+      ).toEqual([
+        'Part 1, maps.picture: must hold exactly one of image, images, sets and pattern.',
+      ]);
+      expect(
+        picture({ pattern: 'imageAddresses[0]', base: 'https://tiles.example.com/', tile: 256 }),
+      ).toEqual(['Part 1, maps.picture.base: is only for sets.']);
+      expect(picture({ image: '/charts/whole.png', tile: 256 })).toEqual([
+        'Part 1, maps.picture.tile: is only for images, sets and pattern.',
+      ]);
+      // The pattern is read in a map's entry: a map written in the file writes its address in images.
+      expect(
+        mapFields({
+          ...oneMap,
+          maps: { ...oneMap.maps, picture: { pattern: 'tiles', tile: 256 } },
+        }),
+      ).toEqual(['parts[0].maps.picture.pattern']);
+      // The window reader keeps the field the pattern names.
+      const result = checkSiteRules(withPart(squared));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const part = (result.rules as { parts: RulesMapPart[] }).parts[0]!;
+      expect(pageValuesSpec(part)?.keep.sheet).toMatchObject({
+        chart: { imageAddresses: { '*': 1 }, width: 1, height: 1, deepest: 1, shallowest: 1 },
+      });
+    });
+
+    it('takes positions and a size in sides of the square of images, and y up from the top edge', () => {
+      expect(
+        squaredSaid({
+          maps: {
+            ...squared.maps,
+            path: undefined,
+            id: 'harbour',
+            name: 'Harbour',
+            size: [1, 0.75],
+            maxZoom: 5,
+            minZoom: 2,
+            picture: { images: 'https://tiles.example.com/{z}/{x}-{y}.webp', tile: 256 },
+          },
+        }),
+      ).toEqual([]);
+      expect(
+        squaredSaid({
+          maps: {
+            ...squared.maps,
+            path: undefined,
+            id: 'harbour',
+            name: 'Harbour',
+            size: [4096, 3072],
+            maxZoom: 5,
+            minZoom: 2,
+            picture: { images: 'https://tiles.example.com/{z}/{x}-{y}.webp', tile: 256 },
+          },
+        }),
+      ).toEqual([
+        'Part 1, maps.size: must be counted in sides of the square of images at zoom 0 with "units": "square": above 0 and at most 1 a side, such as [1, 0.75].',
+      ]);
+      expect(mapFields({ ...oneMap, maps: { ...oneMap.maps, size: [1, 0.75] } })).toEqual([
+        'parts[0].maps.size',
+      ]);
+      expect(mapFields({ ...oneMap, maps: { ...oneMap.maps, size: [0, 1] } })).toEqual([
+        'parts[0].maps.size[0]',
+      ]);
+      expect(squaredSaid({ position: { units: 'square', y: 'up', zoom: 3 } })).toEqual([
+        'Part 1, position.zoom: is only for "units": "pixels": with "square", positions are counted in sides of the square of images at zoom 0, whatever the zoom.',
+      ]);
+      expect(squaredSaid({ position: { units: 'square', area: 'located' } })).toContain(
+        'Part 1, position.area: is only for "units": "degrees".',
+      );
+      // y up or down with every origin of pixels, fraction and square; not with degrees.
+      for (const units of ['pixels', 'fraction', 'square']) {
+        for (const origin of ['top-left', 'bottom-left']) {
+          for (const y of ['up', 'down']) {
+            expect(
+              mapFields({
+                ...oneMap,
+                maps: { ...oneMap.maps, size: [1, 1] },
+                position: { units, origin, y },
+              }),
+            ).toEqual([]);
+          }
+        }
+      }
+      expect(mapFields({ ...oneMap, position: { units: 'pixels', y: 'sideways' } })).toEqual([
+        'parts[0].position.y',
+      ]);
+      expect(squaredSaid({ position: { units: 'degrees', y: 'up' } })).toEqual(
+        expect.arrayContaining([
+          'Part 1, position.y: is only for pixels, fraction and square: degrees are longitude and latitude.',
+        ]),
+      );
     });
   });
 

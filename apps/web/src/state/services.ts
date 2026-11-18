@@ -107,8 +107,13 @@ export const SETTINGS = {
    * it stays on this device: settings are never exported.
    */
   gamePins: (readerId: string) => `gamePins:${readerId}`,
-  /** A site's list of games as it was last read, kept so it need not be read each time. */
-  catalogue: (importerId: string) => `catalogue:${importerId}`,
+  /**
+   * A site's list of games as it was last read, kept so it need not be read each time: by the
+   * importer's id for its own list, and with the list's address for each list of a site an
+   * importer describes by a file.
+   */
+  catalogue: (importerId: string, address?: string) =>
+    address === undefined ? `catalogue:${importerId}` : `catalogue:${importerId}:${address}`,
   /** Pages chosen to read that a go did not reach (it was stopped, or the site refused), by game, for an importer that keeps them. */
   pageQueue: (importerId: string) => `pageQueue:${importerId}`,
   /** A wiki's contents as last read, by the page key of its address (see `wikiNotes.ts`). */

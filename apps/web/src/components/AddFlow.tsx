@@ -265,7 +265,7 @@ function Failure({ message, how }: { message: string; how?: string | undefined }
   );
 }
 
-/** "Browse a site's list of games": one button for each importer that offers one. */
+/** "Browse a site's list of games": one button for each list of games an importer offers. */
 function BrowseGames() {
   const [entries, setEntries] = useState<Awaited<ReturnType<typeof catalogueImporters>>>([]);
   useEffect(() => {
@@ -285,7 +285,7 @@ function BrowseGames() {
     <div className="library-browse" data-testid="add-map-browse">
       {entries.map((entry) => (
         <button
-          key={entry.id}
+          key={`${entry.id}\n${entry.address}`}
           type="button"
           className="library-button-row"
           data-testid="add-map-browse-games"
@@ -293,7 +293,7 @@ function BrowseGames() {
           title={entry.address}
           onClick={() => {
             showLibraryAdd();
-            void browseGames(entry.id);
+            void browseGames(entry.id, entry.address);
           }}
         >
           <UiIcon name="search" size={18} />

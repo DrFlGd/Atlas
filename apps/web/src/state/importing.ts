@@ -6,6 +6,8 @@ import {
   MAP_KIND,
   MAX_PAGE_DATA_CHARS,
   asImporter,
+  catalogueAt,
+  cataloguesOf,
   checkCatalogue,
   checkGameListing,
   checkOutcome,
@@ -18,6 +20,7 @@ import {
   isAllowedPageUrl,
   isPictureRequest,
   keptOff,
+  gamePageReaderOf,
   ownPageReaderOf,
   pageKey,
   readsInWindow,
@@ -505,8 +508,17 @@ let session = 0;
  */
 function readerFor(importer: AtlasImporter, reading: Reading, url: string) {
   const part =
-    reading === 'game' ? importer.games : reading === 'catalogue' ? importer.catalogue : null;
-  const own = reading === 'map' ? ownPageReaderOf(importer, url) : null;
+    reading === 'game'
+      ? importer.games
+      : reading === 'catalogue'
+        ? catalogueAt(importer, url)
+        : null;
+  const own =
+    reading === 'map'
+      ? ownPageReaderOf(importer, url)
+      : reading === 'game'
+        ? gamePageReaderOf(importer, url)
+        : null;
   return {
     pageReader: own ?? part?.pageReader ?? importer.pageReader ?? '() => null',
     waitSeconds: part?.waitSeconds ?? importer.waitSeconds ?? DEFAULT_WAIT_SECONDS,
@@ -2775,7 +2787,10 @@ async function convertListing(
       const returned: unknown = await item.importer.games!.convert(parse(data), context);
       return checkGameListing(returned, item.url, item.importer);
     }
-    const returned: unknown = await item.importer.catalogue!.convert(parse(data), context);
+    const catalogue = catalogueAt(item.importer, item.url);
+    if (!catalogue)
+      return { ok: false, message: 'The importer no longer offers this list of games.' };
+    const returned: unknown = await catalogue.convert(parse(data), context);
     return checkCatalogue(returned, item.url, item.importer);
   } catch (error) {
     return {
@@ -2945,12 +2960,28 @@ async function startGameAddress(url: string, importer: AtlasImporter): Promise<v
 /** The ids of the games in the maps folder, to mark them in a list of games. */
 const addedGames = () => new Set(useAtlas.getState().library?.packs.map((pack) => pack.id) ?? []);
 
-/** The list of games this app kept from the last time it read the importer's, if it can be used. */
-async function readKeptCatalogue(importer: AtlasImporter): Promise<KeptCatalogue | null> {
+/**
+ * The key a list of games is kept under: the importer's id for its own
+ * `catalogue`, and with the list's address for each of its `catalogues`.
+ */
+const catalogueKey = (importer: AtlasImporter, address: string) =>
+  SETTINGS.catalogue(
+    importer.id,
+    importer.catalogue && pageKey(importer.catalogue.address) === pageKey(address)
+      ? undefined
+      : pageKey(address),
+  );
+
+/** The list of games this app kept from the last time it read it, if it can be used. */
+async function readKeptCatalogue(
+  importer: AtlasImporter,
+  address: string,
+): Promise<KeptCatalogue | null> {
   try {
     return keptCatalogue(
-      await progressStore().getSetting(SETTINGS.catalogue(importer.id)),
+      await progressStore().getSetting(catalogueKey(importer, address)),
       importer,
+      address,
     );
   } catch {
     return null;
@@ -2973,36 +3004,40 @@ async function startCatalogue(
     setPhase({ kind: 'failed', message: listingFailure(read.run, result) });
     return;
   }
-  if (url === importer.catalogue?.address && result.games.length > 0) {
+  const catalogue = catalogueAt(importer, url);
+  if (url === catalogue?.address && result.games.length > 0) {
     const kept: KeptCatalogue = { url, readAt: new Date().toISOString(), games: result.games };
     try {
-      await progressStore().putSetting(SETTINGS.catalogue(importer.id), kept);
+      await progressStore().putSetting(catalogueKey(importer, url), kept);
     } catch {
       // Not kept: the list is read again next time.
     }
   }
   setPhase({
     kind: 'catalogue',
-    pick: newPick(importer, url, result.games, addedGames(), { ticked }),
+    pick: newPick(importer, url, result.games, addedGames(), {
+      ticked,
+      ...(catalogue?.site ? { site: catalogue.site } : {}),
+    }),
   });
 }
 
-/** The importers of this build that offer a list of games, with its label. */
+/**
+ * The lists of games the importers of this build offer, each with its
+ * label: an importer's own list, and one for each site a general importer
+ * describes with one (`catalogues`).
+ */
 export async function catalogueImporters(): Promise<
   { id: string; title: string; label: string; address: string }[]
 > {
   const importers = await loadImporters();
   return importers.flatMap((importer) =>
-    importer.catalogue
-      ? [
-          {
-            id: importer.id,
-            title: importer.title,
-            label: importer.catalogue.label ?? `Games on ${importer.title}`,
-            address: importer.catalogue.address,
-          },
-        ]
-      : [],
+    cataloguesOf(importer).map((catalogue) => ({
+      id: importer.id,
+      title: importer.title,
+      label: catalogue.label ?? `Games on ${catalogue.site ?? importer.title}`,
+      address: catalogue.address,
+    })),
   );
 }
 
@@ -3011,17 +3046,23 @@ export async function catalogueImporters(): Promise<
  * or reads it from the site when it has not been read on this device yet.
  * "Update the list" ({@link updateCatalogue}) reads it again.
  */
-export async function browseGames(importerId: string): Promise<void> {
+export async function browseGames(importerId: string, address?: string): Promise<void> {
   const importer = (await loadImporters()).find((i) => i.id === importerId);
-  if (!importer?.catalogue) return;
-  const kept = await readKeptCatalogue(importer);
+  if (!importer) return;
+  const lists = cataloguesOf(importer);
+  const catalogue = address === undefined ? lists[0] : lists.find((one) => one.address === address);
+  if (!catalogue) return;
+  const kept = await readKeptCatalogue(importer, catalogue.address);
   if (!kept) {
-    await startCatalogue(importer.catalogue.address, importer);
+    await startCatalogue(catalogue.address, importer);
     return;
   }
   setPhase({
     kind: 'catalogue',
-    pick: newPick(importer, kept.url, kept.games, addedGames(), { keptFrom: kept.readAt }),
+    pick: newPick(importer, kept.url, kept.games, addedGames(), {
+      keptFrom: kept.readAt,
+      ...(catalogue.site ? { site: catalogue.site } : {}),
+    }),
   });
 }
 

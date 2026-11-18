@@ -10,7 +10,9 @@ import {
   pageValuesConsoleLine,
   pageValuesOf,
   pageValuesReader,
+  pageValuesOfElements,
   pageValuesSpec,
+  valuesAreElements,
   type RulesMapPart,
 } from './index';
 
@@ -276,6 +278,114 @@ describe('the values of a map page, read in the window', () => {
     expect(pageValuesOf({ atlasPageValues: 2, values: {} })).toBeNull();
     expect(pageValuesOf({ fetched: [] })).toBeNull();
     expect(pageValuesOf([])).toBeNull();
+  });
+});
+
+describe('the values of a map page that are all elements, read from a saved page', () => {
+  /** A made-up part whose two values are both the JSON of elements of its page. */
+  const elements = {
+    ...PART,
+    data: {
+      from: 'values',
+      values: {
+        board: { element: 'script#board' },
+        state: { element: 'script#state', path: 'props.atlas' },
+      },
+    },
+  };
+  const texts: Record<string, string> = {
+    'script#board': JSON.stringify(page().boardData.current),
+    'script#state': JSON.stringify({
+      props: {
+        atlas: {
+          kinds: { a: { id: 'a', label: 'Shrine' } },
+          spots: [{ id: 1, kind: 'a', lng: 1, lat: 2, shots: [{ href: 'x' }] }],
+          person: 'never taken',
+        },
+      },
+    }),
+  };
+  const textOf = (selector: string) => texts[selector] ?? null;
+
+  it('take what the window reader would take from the same elements', () => {
+    const part = checked(elements);
+    expect(valuesAreElements(part)).toBe(true);
+    const saved = pageValuesOfElements(part, textOf);
+    const document = {
+      readyState: 'complete',
+      querySelector: (selector: string) =>
+        texts[selector] === undefined ? null : { textContent: texts[selector] },
+    };
+    const inWindow = run(pageValuesReader(part)!, { document, performance: { now: () => 60_000 } });
+    expect(saved).toEqual(inWindow);
+    expect(saved).toEqual({
+      atlasPageValues: 1,
+      values: {
+        board: {
+          map: { key: 'cove', title: 'Cove' },
+          sets: [{ pattern: 'cove/{z}/{x}/{y}.png', high: 5 }],
+        },
+        state: {
+          kinds: { a: { id: 'a', label: 'Shrine' } },
+          spots: [{ id: 1, kind: 'a', lng: 1, lat: 2, shots: [{ href: 'x' }] }],
+        },
+      },
+    });
+  });
+
+  it('say plainly which value is missing, and leave a long text out as the window reader does', () => {
+    const part = checked(elements);
+    expect(
+      pageValuesOfElements(part, (selector) =>
+        selector === 'script#board' ? textOf(selector) : null,
+      ),
+    ).toEqual({
+      problem: 'The saved page has no element script#state (data.values.state).',
+    });
+    expect(
+      pageValuesOfElements(part, (selector) =>
+        selector === 'script#state' ? '{nope' : textOf(selector),
+      ),
+    ).toEqual({
+      problem: 'The text of the element script#state (data.values.state) is not JSON.',
+    });
+    expect(
+      pageValuesOfElements(part, (selector) =>
+        selector === 'script#state' ? '{"props":{}}' : textOf(selector),
+      ),
+    ).toEqual({
+      problem:
+        'The path of data.values.state found nothing in the JSON of the element script#state.',
+    });
+    const long = JSON.stringify({
+      props: {
+        atlas: {
+          kinds: {},
+          spots: [{ id: 'x'.repeat(MAX_PAGE_VALUE_TEXT + 1), kind: 'a', lng: 1, lat: 2 }],
+        },
+      },
+    });
+    const got = pageValuesOfElements(part, (selector) =>
+      selector === 'script#state' ? long : textOf(selector),
+    );
+    expect(got).toMatchObject({
+      cut: 1,
+      values: { state: { spots: [{ kind: 'a', lng: 1, lat: 2 }] } },
+    });
+  });
+
+  it('are not for a part with a value of another form', () => {
+    expect(valuesAreElements(checked())).toBe(false);
+    expect(pageValuesOfElements(checked(), textOf)).toBeNull();
+    const mixed = checked({
+      ...elements,
+      data: {
+        from: 'values',
+        values: { board: { element: 'script#board' }, state: PART.data.values.state },
+      },
+    });
+    expect(valuesAreElements(mixed)).toBe(false);
+    expect(pageValuesOfElements(mixed, textOf)).toBeNull();
   });
 });
 

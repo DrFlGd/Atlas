@@ -305,10 +305,19 @@ describe('a list of games', () => {
   });
 
   it('uses a kept list only when it is whole, timed and from the list as it is now', () => {
+    /** A made-up list of games at `address`. */
+    const list = (address: string) => ({
+      address,
+      label: 'All games',
+      matches: (url: string) => url === address,
+      pageReader: '() => null',
+      convert: () => ({ ok: false, message: 'Not read in this test.' }),
+    });
     const site = {
       ...importer,
       games: { matches: (url: string) => /^https:\/\/maps\.example\.com\/[a-z-]+$/u.test(url) },
-      catalogue: { address: `${SITE}/` },
+      catalogue: list(`${SITE}/`),
+      catalogues: () => [list(`${SITE}/harbours`)],
     } as unknown as Parameters<typeof keptCatalogue>[1];
     const kept = { url: `${SITE}/`, readAt: '2026-01-02T03:04:05.000Z', games };
     expect(keptCatalogue(kept, site)).toEqual(kept);
@@ -330,5 +339,10 @@ describe('a list of games', () => {
     }
     // An importer without a list of games has none kept.
     expect(keptCatalogue(kept, importer)).toBeNull();
+    // A second list of the importer is kept under its own address, and only while the importer offers it.
+    const second = { ...kept, url: `${SITE}/harbours` };
+    expect(keptCatalogue(second, site, `${SITE}/harbours`)).toEqual(second);
+    expect(keptCatalogue(second, site)).toBeNull();
+    expect(keptCatalogue(second, { ...site, catalogues: () => [] }, `${SITE}/harbours`)).toBeNull();
   });
 });

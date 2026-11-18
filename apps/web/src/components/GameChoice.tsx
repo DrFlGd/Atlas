@@ -143,7 +143,7 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
     <section className="dialog-section" data-testid="add-map-catalogue">
       <p>
         <strong>
-          {plural(pick.games.length, 'game', 'games')} on {pick.importerTitle}.
+          {plural(pick.games.length, 'game', 'games')} on {pick.site ?? pick.importerTitle}.
         </strong>{' '}
         Tick the games to add. This app then opens the game page of each, one at a time, and lists
         their maps for you to choose from.
