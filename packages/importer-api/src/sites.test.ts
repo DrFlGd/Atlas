@@ -172,6 +172,35 @@ describe('what an importer says about a site', () => {
     expect(info('sometimes', 1000)).toEqual({ key: 'a.example', ways: ['fetch'] });
   });
 
+  it('may say which addresses its rules file keeps the app off, and a permission the site gave', () => {
+    const info = (keepOff: unknown, permission: unknown) =>
+      siteInfoOf(
+        {
+          ...wikis,
+          siteInfo: () => ({ key: 'a.example', ways: ['fetch'], keepOff, permission }) as never,
+        },
+        'https://a.example/wiki/A',
+      );
+    const permission = { from: 'The editors', on: '2026-11-02', allows: ['/private/'] };
+    expect(info(['/tools/', '/tools/', '/a*', 7], permission)).toEqual({
+      key: 'a.example',
+      ways: ['fetch'],
+      keepOff: ['/tools/'],
+      permission,
+    });
+    // A permission any part of which is not usable is left out whole: robots.txt then counts.
+    for (const wrong of [
+      { ...permission, from: ' ' },
+      { ...permission, on: '2026-02-30' },
+      { ...permission, allows: [] },
+      { ...permission, allows: ['/private/', 'private'] },
+      'yes',
+    ]) {
+      expect(info(undefined, wrong)).toEqual({ key: 'a.example', ways: ['fetch'] });
+    }
+    expect(info([], undefined)).toEqual({ key: 'a.example', ways: ['fetch'] });
+  });
+
   it('may name the hosts its pages load their files from: host names only, each once', () => {
     const hosts = (fileHosts: unknown) =>
       siteInfoOf(

@@ -27,6 +27,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from 'react';
 import { create } from 'zustand';
 import { UiIcon } from '../components/icons';
@@ -49,6 +50,7 @@ import { useAtlas, type LoadedGame } from '../state/store';
 import { AddToBuildBar, AddToBuildButton } from './AddToBuild';
 import { useAddToBuild } from './buildChoice';
 import { GuideLinksReview } from './GuideLinksReview';
+import { BAR_KEY, setGuidesBarOpen, useGuidesBar } from './guidesBar';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
 import { ContinueReading, PreviousNext, SourceSwitcher } from './GuideSources';
 import { typingOrDialog, withKey } from './keys';
@@ -95,6 +97,11 @@ import '../styles/landing.css';
  * to it. A source with nothing for the bar has none: the page takes the
  * width, the head of the reader holds the search, the switcher of sources
  * and "All pages", and a phone's "Contents" button opens "All pages".
+ *
+ * The person can fold the bar away, from the button at its top or the key
+ * B, and bring it back from the button beside "Home" (see `guidesBar.ts`):
+ * folded, the page takes the width as with no menu, and nothing of the bar
+ * is lost (the tree as it was unfolded, the listing the place shown is at).
  *
  * Above the page, the way to it: for a page in the menu, every section and
  * page it is under, each a link; for a page outside it, the pages the
@@ -145,28 +152,222 @@ function GuidesShown({ game, wide }: { game: LoadedGame; wide: boolean }) {
   useFollowSource(game, view);
   useHomeKey(view);
   const menu = hasMenu(game, view);
+  const root = useRef<HTMLDivElement>(null);
+  const bar = useBarFold(wide && menu, root);
+  // The switcher of sources leads the bar when there is one; else the search does.
+  const switcher = view.sources.length > 1 && view.shown !== undefined;
   return (
     <div
+      ref={root}
       className={`guides ${wide ? 'guides-wide' : 'guides-compact'}${menu ? '' : ' guides-no-menu'}`}
       data-testid="guides-screen"
       data-menu={menu ? 'true' : 'false'}
+      data-bar={bar.offered ? (bar.beside ? 'open' : 'folded') : undefined}
     >
-      {wide && menu ? (
-        <aside className="guides-side" aria-label="Contents" data-testid="guides-bar">
-          <SourceSwitcher game={game} view={view} />
-          <SearchField />
+      {bar.offered ? (
+        <aside
+          id={bar.id}
+          className="guides-side"
+          aria-label="Contents"
+          data-testid="guides-bar"
+          data-arrived={bar.arrived ? 'true' : undefined}
+          hidden={!bar.beside}
+        >
+          <div className="guides-side-top">
+            {switcher ? <SourceSwitcher game={game} view={view} /> : <SearchField />}
+            <BarButton bar={bar} />
+          </div>
+          {switcher ? <SearchField /> : null}
           <nav className="guides-tree touch-scroll" aria-label="Contents" data-scroll-root>
             <TreeHome game={game} view={view} />
-            <ContentsTree game={game} view={view} />
+            <ContentsTree game={game} view={view} shown={bar.beside} />
           </nav>
           <AllPagesRow game={game} view={view} />
         </aside>
       ) : wide ? null : (
         <SourceSwitcher game={game} view={view} />
       )}
-      <Reader game={game} wide={wide} view={view} menu={menu} />
+      <Reader game={game} wide={wide} view={view} menu={menu} bar={bar} />
     </div>
   );
+}
+
+/** The bar beside the page, which the person can fold away and bring back. */
+interface BarFold {
+  /** Whether there is a bar to fold: wide, for a source with a menu. */
+  offered: boolean;
+  /** Whether the bar is beside the page: offered, and not folded away. */
+  beside: boolean;
+  /** The bar's id, for the buttons that fold it and bring it back. */
+  id: string;
+  /** The person folded or brought back the bar since Guides was shown: it comes back in view gently. */
+  arrived: boolean;
+  /** Folds the bar (`false`) or brings it back, from a button: the focus goes to the other one. */
+  change: (open: boolean) => void;
+}
+
+/**
+ * The bar beside the page, folded away or not as the person chose (see
+ * `guidesBar.ts`). Folding it, or bringing it back, keeps the place read
+ * in the page where it was, though its lines are now wider or narrower;
+ * from a button, the focus goes to the button that undoes it. The key B
+ * does the same; the focus moves only when it was on a button of the two,
+ * or in the bar folded away.
+ */
+function useBarFold(offered: boolean, root: RefObject<HTMLDivElement | null>): BarFold {
+  const chosen = useGuidesBar((s) => s.open);
+  const beside = offered && chosen;
+  const id = useId();
+  const [arrived, setArrived] = useState(false);
+  // What to do once the bar is folded or back: the place read, and where the focus goes.
+  const next = useRef<{ mark: ReadingMark | null; focus: boolean } | null>(null);
+  const bodyOf = () => root.current?.querySelector<HTMLElement>('.guides-body') ?? null;
+  const change = (open: boolean, focus = true) => {
+    const body = bodyOf();
+    next.current = { mark: body ? readingMark(body) : null, focus };
+    setArrived(true);
+    setGuidesBarOpen(open);
+  };
+  useLayoutEffect(() => {
+    const step = next.current;
+    next.current = null;
+    if (!step) return;
+    const body = bodyOf();
+    if (body && step.mark) backToMark(body, step.mark);
+    if (step.focus) document.getElementById(buttonId(id, beside))?.focus();
+    // Only when the bar folds or comes back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beside]);
+  const latest = useRef(change);
+  useLayoutEffect(() => {
+    latest.current = change;
+  });
+  useEffect(() => {
+    if (!offered) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+      if (event.key.toLowerCase() !== BAR_KEY.toLowerCase() || typingOrDialog(event)) return;
+      event.preventDefault();
+      const focused = document.activeElement;
+      const onButton =
+        focused !== null &&
+        (focused.id === buttonId(id, true) || focused.id === buttonId(id, false));
+      const inBar = focused !== null && (document.getElementById(id)?.contains(focused) ?? false);
+      latest.current(!useGuidesBar.getState().open, onButton || inBar);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [offered, id]);
+  return { offered, beside, id, arrived, change };
+}
+
+/** The id of the button that folds the bar (`true`, at its top) or brings it back. */
+function buttonId(barId: string, fold: boolean): string {
+  return `${barId}-${fold ? 'hide' : 'show'}`;
+}
+
+/** At the top of the bar: the button that folds it away. */
+function BarButton({ bar }: { bar: BarFold }) {
+  const hints = useKeyHints();
+  return (
+    <button
+      id={buttonId(bar.id, true)}
+      type="button"
+      className="touch-icon-button touch-icon-button-small guides-side-fold"
+      aria-label={HIDE_BAR}
+      title={withKey(HIDE_BAR, BAR_KEY, hints)}
+      aria-keyshortcuts={BAR_KEY}
+      aria-expanded="true"
+      aria-controls={bar.id}
+      data-testid="guides-bar-hide"
+      onClick={() => {
+        bar.change(false);
+      }}
+    >
+      <UiIcon name="contentsHide" size={20} />
+    </button>
+  );
+}
+
+/** Beside "Home", while the bar is folded away: the button that brings it back. */
+function ShowBarButton({ bar }: { bar: BarFold }) {
+  const hints = useKeyHints();
+  return (
+    <button
+      id={buttonId(bar.id, false)}
+      type="button"
+      className="touch-icon-button"
+      aria-label={SHOW_BAR}
+      title={withKey(SHOW_BAR, BAR_KEY, hints)}
+      aria-keyshortcuts={BAR_KEY}
+      aria-expanded="false"
+      aria-controls={bar.id}
+      data-testid="guides-bar-show"
+      onClick={() => {
+        bar.change(true);
+      }}
+    >
+      <UiIcon name="contentsShow" size={20} />
+    </button>
+  );
+}
+
+const HIDE_BAR = 'Hide the contents';
+const SHOW_BAR = 'Show the contents';
+
+/** A place read in the page: a letter at the top of the page area, and how far below its top it stands. */
+interface ReadingMark {
+  at: Range | Element;
+  offset: number;
+}
+
+/** The top of a letter, or of an element, in the window. */
+function topOf(at: Range | Element): number | null {
+  const box = at instanceof Range ? at.getClientRects()[0] : at.getBoundingClientRect();
+  return box ? box.top : null;
+}
+
+/**
+ * The letter at the top of the page area (or the element there, where the
+ * browser cannot tell the letter), to find it again once the lines are
+ * wider or narrower. None at the very top of the page, which stays there.
+ */
+function readingMark(body: HTMLElement): ReadingMark | null {
+  if (body.scrollTop <= 0) return null;
+  const column = body.firstElementChild;
+  if (!column) return null;
+  const box = body.getBoundingClientRect();
+  const lines = column.getBoundingClientRect();
+  const x = lines.left + Math.min(48, lines.width / 3);
+  const y = box.top + 8;
+  let at: Range | Element | null = null;
+  // Not in every browser yet: the element there serves where it is not.
+  const caret = 'caretPositionFromPoint' in document ? document.caretPositionFromPoint(x, y) : null;
+  const node = caret?.offsetNode;
+  if (caret && node?.nodeType === Node.TEXT_NODE && column.contains(node)) {
+    const range = document.createRange();
+    const start = Math.min(caret.offset, (node.textContent ?? '').length - 1);
+    if (start >= 0) {
+      range.setStart(node, start);
+      range.setEnd(node, start + 1);
+      at = range;
+    }
+  }
+  if (!at) {
+    const element = document.elementFromPoint(x, y);
+    if (element && element !== column && column.contains(element)) at = element;
+  }
+  const top = at ? topOf(at) : null;
+  return at && top !== null ? { at, offset: top - box.top } : null;
+}
+
+/** Scrolls the page area so the place read stands where it stood. */
+function backToMark(body: HTMLElement, mark: ReadingMark): void {
+  const top = topOf(mark.at);
+  if (top === null) return;
+  body.scrollTop += top - body.getBoundingClientRect().top - mark.offset;
 }
 
 /** Whether the source shown has a menu, anything for the bar: else Guides shows no bar. */
@@ -261,12 +462,15 @@ function Reader({
   wide,
   view,
   menu,
+  bar,
 }: {
   game: LoadedGame;
   wide: boolean;
   view: SourceView;
   /** Whether the source shown has a menu (see {@link hasMenu}). */
   menu: boolean;
+  /** The bar beside the page, which may be folded away. */
+  bar: BarFold;
 }) {
   const reader = useReader();
   // Pages of other games, and the links, change what is shown.
@@ -339,6 +543,7 @@ function Reader({
           <UiIcon name="forward" size={20} />
         </button>
         <HomeButton game={game} view={view} />
+        {bar.offered && !bar.beside ? <ShowBarButton bar={bar} /> : null}
         <Breadcrumbs
           game={game}
           place={place}
@@ -346,8 +551,8 @@ function Reader({
           way={wayCame(reader)}
           menuWay={currentMenuWay(reader)}
         />
-        {wide && !menu ? (
-          // No bar: what it would hold, in the head.
+        {wide && !bar.beside ? (
+          // No bar, or the bar folded away: what it would hold, in the head.
           <div className="guides-head-tools" data-testid="guides-head-tools">
             <SearchField />
             <SourceSwitcher game={game} view={view} />
@@ -416,7 +621,7 @@ function Reader({
             <SearchField />
           ) : null}
           {atHome ? (
-            <Landing game={game} wide={wide} view={view} menu={menu} />
+            <Landing game={game} wide={wide} view={view} menu={menu} beside={bar.beside} />
           ) : place.kind === 'all' ? (
             <AllPages game={game} view={view} />
           ) : place.kind === 'page' ? (
@@ -425,7 +630,7 @@ function Reader({
               guide={contents.guide(place.guideId)}
               wide={wide}
               view={view}
-              menu={menu}
+              beside={bar.beside}
             />
           ) : place.kind === 'links' ? (
             <GuideLinksReview game={game} />
@@ -860,9 +1065,19 @@ function stepPlace(contents: GuideContents, step: ContentsStep): ReaderPlace {
  * A page the menu lists in several places is marked in each. The tree is
  * open along the way to the row the place shown was opened from (see
  * `reader.ts`), that row marked as here (`data-here`); a place opened any
- * other way, along the way to its first place (see `menuWayIn`).
+ * other way, along the way to its first place (see `menuWayIn`). Folded
+ * away with the bar, the tree stays as it was, only hidden.
  */
-function ContentsTree({ game, view }: { game: LoadedGame; view: SourceView }) {
+function ContentsTree({
+  game,
+  view,
+  shown,
+}: {
+  game: LoadedGame;
+  view: SourceView;
+  /** Whether the bar is in view: brought back, it shows the place's row again. */
+  shown: boolean;
+}) {
   const place = useReader(currentPlace);
   const remembered = useReader(currentMenuWay);
   const { contents } = guidesOf(game);
@@ -892,13 +1107,15 @@ function ContentsTree({ game, view }: { game: LoadedGame; view: SourceView }) {
       setToggled(new Map(toggled).set(id, open));
     },
   };
-  // The place shown is in view: the row it was opened from, else its first listing.
+  // The place shown is in view: the row it was opened from, else its first listing;
+  // also when the bar comes back from being folded away.
   useEffect(() => {
     const element = root.current;
+    if (!shown) return;
     (
       element?.querySelector('[data-here]') ?? element?.querySelector('[aria-current="page"]')
     )?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [onPath]);
+  }, [onPath, shown]);
   return (
     <div ref={root}>
       <TreeLevel tree={tree} entries={view.shown?.top ?? contents.top()} depth={0} way={[]} />
@@ -1254,11 +1471,14 @@ function Landing({
   wide,
   view,
   menu,
+  beside,
 }: {
   game: LoadedGame;
   wide: boolean;
   view: SourceView;
   menu: boolean;
+  /** Whether the bar is beside the page (see {@link useBarFold}). */
+  beside: boolean;
 }) {
   const { contents } = guidesOf(game);
   const home = view.shown ? view.shown.home : contents.homePage();
@@ -1278,7 +1498,7 @@ function Landing({
       data-source={view.shown?.gameId}
     >
       <ContinueReading game={game} view={view} />
-      <Page game={game} guide={home} wide={wide} view={view} menu={menu} home={view.name} />
+      <Page game={game} guide={home} wide={wide} view={view} beside={beside} home={view.name} />
       <LandingFoot game={game} />
     </div>
   );
@@ -1527,15 +1747,15 @@ function Page({
   guide,
   wide,
   view,
-  menu,
+  beside,
   home,
 }: {
   game: LoadedGame;
   guide: GuideEntry | undefined;
   wide: boolean;
   view: SourceView;
-  /** Whether the source shown has a menu (see {@link hasMenu}). */
-  menu: boolean;
+  /** Whether the bar is beside the page: a source with a menu, wide, the bar not folded away. */
+  beside: boolean;
   /**
    * The game's name, for the home page shown as the landing page: its
    * heading, with nothing of a page in the contents (the way to the map,
@@ -1615,7 +1835,7 @@ function Page({
           home={view.shown?.home?.id ?? null}
         />
       ) : null}
-      {home === undefined && (!wide || !menu || !guidesOf(game).contents.isInMenu(guide.id)) ? (
+      {home === undefined && (!beside || !guidesOf(game).contents.isInMenu(guide.id)) ? (
         // Beside the bar, a page in it shows the pages under it there.
         <PagesUnder game={game} guideId={guide.id} />
       ) : null}

@@ -1,6 +1,7 @@
 import {
   applySiteRules,
   cannotTryOf,
+  checkShippedSiteRules,
   checkSiteRules,
   isReaderDefaults,
   isRefusal,
@@ -312,7 +313,8 @@ const readsFile = (importer: AtlasImporter, rules: SiteRules) =>
 /** The files an importer comes with, checked: those whose form is wrong are left out. */
 function builtInFiles(importer: AtlasImporter): { name: string; rules: SiteRules }[] {
   return (importer.sites?.files ?? []).flatMap((file) => {
-    const checked = checkSiteRules(file.rules);
+    // A shipped file that carries a permission is read by no importer: only the person's may.
+    const checked = checkShippedSiteRules(file.rules);
     return checked.ok ? [{ name: file.name, rules: checked.rules }] : [];
   });
 }

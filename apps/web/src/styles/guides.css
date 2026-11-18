@@ -30,9 +30,48 @@
   flex: none;
   flex-direction: column;
   width: clamp(240px, 26vw, 320px);
-  padding: calc(var(--atlas-inset-top) + 12px) 0 var(--atlas-inset-bottom);
+  /* Its top row (44 pixels) in line with the buttons of the head of the page (see `.guides-head`). */
+  padding: calc(var(--atlas-inset-top) + 6px) 0 var(--atlas-inset-bottom);
   background: var(--atlas-surface);
   border-right: 1px solid var(--atlas-border);
+}
+
+/*
+ * The top of the bar: the switcher of sources, or the search where there is
+ * none, and the button that folds the bar away. Folded, the bar is hidden
+ * (`hidden`), and the page takes the width as with no menu.
+ */
+.guides-side-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 8px 12px;
+}
+
+.guides-side .guides-side-top > .guides-sources,
+.guides-side .guides-side-top > .guides-search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* Brought back, the bar is drawn in from its left edge; it takes its room at once, so the page moves once. */
+@media (prefers-reduced-motion: no-preference) {
+  .guides-side[data-arrived] {
+    animation: guides-side-in 160ms ease-out;
+  }
+}
+
+@keyframes guides-side-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+
+  to {
+    clip-path: inset(0);
+  }
 }
 
 .guides-tree {

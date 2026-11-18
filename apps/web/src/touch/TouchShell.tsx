@@ -44,6 +44,7 @@ import {
   LocationMapHint,
 } from './locations/LocationEditor';
 import { stopLocationEditing, useLocationEditor } from './locations/locationEditorState';
+import { loadGuidesBar } from './guidesBar';
 import { ListOnlyChip } from './ListMapChips';
 import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
@@ -359,6 +360,8 @@ function useTouchEffects(wide: boolean, room: boolean) {
 
   useEffect(() => {
     void loadKeepScreenOn();
+    // Read before Guides is shown, so a bar folded away stays so from the start.
+    void loadGuidesBar();
     // Switching to the classic layout lets the screen turn off as usual.
     return () => {
       keepScreenOn(false);

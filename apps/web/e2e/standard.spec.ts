@@ -213,6 +213,7 @@ test('the classic keys work and are shown, and Esc closes what is on top', async
     'Z',
     'C',
     'H',
+    'B',
     '[',
     ']',
     'Esc',

@@ -167,6 +167,80 @@ export function patternProblem(text: string): string | null {
   return piecesOf(text).problem;
 }
 
+/** The longest address beginning a file may hold ({@link addressBeginningProblem}). */
+export const MAX_ADDRESS_BEGINNING_CHARS = 300;
+/** Entries `reading.keepOff` and `reading.permission.allows` hold at most. */
+export const MAX_ADDRESS_BEGINNINGS = 50;
+
+/**
+ * Why `text` cannot be the beginning of addresses of a site (an entry of
+ * `reading.keepOff` or of `reading.permission.allows`), in a few plain
+ * words, or null. It is written as a `Disallow` line of a `robots.txt`
+ * without its special signs: `/`, then a path, and a query after `?` when
+ * one is meant. No `*` (nothing stands for anything else), no `$` at its
+ * end, no `#`, space or backslash, and no `?` with nothing after it.
+ */
+export function addressBeginningProblem(text: string): string | null {
+  if (!text.startsWith('/') || text.startsWith('//')) {
+    return 'must begin with a single /, such as /private/ or /tools/list.php';
+  }
+  if (text.length > MAX_ADDRESS_BEGINNING_CHARS) {
+    return `must be at most ${MAX_ADDRESS_BEGINNING_CHARS} characters`;
+  }
+  if (/[#\s\\]/u.test(text)) return 'must be an address without #, spaces or backslashes';
+  if (text.includes('*')) {
+    return 'must be the plain beginning of addresses: * stands for nothing here, as every entry already covers every address that begins with it';
+  }
+  if (text.endsWith('$')) {
+    return 'must be the plain beginning of addresses: $ marks no end here, so leave it out';
+  }
+  if (text.endsWith('?')) return 'must not end with ?: write the query after it, or leave ? out';
+  return null;
+}
+
+/** The path and query of an address as the URL parser writes them (`/wiki/Caf%C3%A9?x=1`), or null. */
+function pathAndQuery(text: string): string | null {
+  try {
+    const url = new URL(text, 'https://site.invalid/');
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether an address of a site begins with one of `beginnings`, entries of
+ * `reading.keepOff` or `reading.permission.allows` (see
+ * {@link addressBeginningProblem}), as a `Disallow` line of a `robots.txt`
+ * matches: the address's path, followed by its query when it has one
+ * (`?` and what follows), begins with the entry, character for character,
+ * upper and lower case counting. Both are first written as the URL parser
+ * writes them, so `/wiki/Café` and `/wiki/Caf%C3%A9` are the same; the
+ * address's fragment is ignored. `/` covers every address of the site.
+ * Only the path and query are looked at: which hosts the list is for is
+ * the file's to say (its site's hosts). An entry with a problem covers
+ * nothing.
+ */
+export function addressBegins(beginnings: readonly string[], address: string): boolean {
+  const at = pathAndQuery(address);
+  if (at === null) return false;
+  return beginnings.some((entry) => {
+    if (addressBeginningProblem(entry) !== null) return false;
+    const start = pathAndQuery(entry);
+    return start !== null && at.startsWith(start);
+  });
+}
+
+/**
+ * Whether two beginnings of addresses overlap: one of them covers an
+ * address the other covers too (the one is the beginning of the other).
+ */
+export function beginningsOverlap(a: string, b: string): boolean {
+  const one = pathAndQuery(a);
+  const other = pathAndQuery(b);
+  return one !== null && other !== null && (one.startsWith(other) || other.startsWith(one));
+}
+
 /**
  * Whether the path of an address matches an address pattern: the whole
  * path, upper and lower case counting, a `/` at the end of either ignored.

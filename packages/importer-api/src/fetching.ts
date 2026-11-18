@@ -12,7 +12,12 @@
  * - Every request names the app (`Atlas/<version>`) and carries no cookies
  *   and no sign-in; the app never pretends to be a browser.
  * - The site's `robots.txt` is read first, once per site in a go, and an
- *   address it does not allow for `Atlas` is never asked for.
+ *   address it does not allow for `Atlas` is never asked for, unless the
+ *   site's own permission, recorded in a file of the person's, covers it
+ *   (`SiteInfo.permission`, see {@link fetchVerdict}).
+ * - An address the site's rules file keeps the app off
+ *   (`SiteInfo.keepOff`) is never asked for, nor opened in a window, and
+ *   no permission changes that.
  * - An answer that refuses (see {@link refusalOf}) stops the whole go at
  *   once: nothing is tried again or around it. An importer that sees a
  *   page asking to confirm the reader is a person does the same, with a
@@ -21,6 +26,9 @@
  * Only an app that downloads map images can fetch pages; an importer that
  * reads this way fails plainly in one that cannot.
  */
+
+import { addressBegins } from './sitePatterns';
+import type { SiteInfo } from './sites';
 
 /** Addresses one page may need at most. */
 export const MAX_PAGE_FETCHES = 4;
@@ -259,4 +267,46 @@ export function rulesFromAnswer(
   if (answer.status >= 400) return ALLOW_ALL;
   if (answer.status >= 200 && answer.status < 300) return robotsRules(answer.text, agent);
   return DISALLOW_ALL;
+}
+
+// ---------------------------------------------------------------------------
+// What a site's rules file says of the addresses the app opens on its own
+
+/** What a site's rules file says of the addresses this app opens on its own (see `SiteInfo`). */
+export type SiteLimits = Pick<SiteInfo, 'keepOff' | 'permission'>;
+
+/**
+ * Whether the site's rules file keeps this app off `address`: it never
+ * opens it on its own, by fetching it or in its window. Matched as a
+ * `Disallow` line of a `robots.txt` matches, on its path and query (see
+ * `addressBegins`).
+ */
+export function keptOff(limits: SiteLimits | null | undefined, address: string): boolean {
+  return addressBegins(limits?.keepOff ?? [], address);
+}
+
+/**
+ * Whether this app reads `address` by itself (`fetch`), from the site's
+ * live `robots.txt` (`robots`) and what its rules file says (`limits`):
+ *
+ * - `kept-off`: the file keeps the app off it; nothing else counts.
+ * - `read`: `robots.txt` allows it.
+ * - `permission`: `robots.txt` does not allow it, and the site's
+ *   permission the file records covers it, so it is read.
+ * - `robots`: `robots.txt` does not allow it, and no permission covers
+ *   it (`permission` says whether the file records one at all).
+ *
+ * Only the reading by itself asks this; nothing here changes who the app
+ * says it is, its pause, or stopping at the first refusal.
+ */
+export function fetchVerdict(
+  robots: RobotsRules,
+  limits: SiteLimits | null | undefined,
+  address: string,
+): { verdict: 'kept-off' | 'read' | 'permission' } | { verdict: 'robots'; permission: boolean } {
+  if (keptOff(limits, address)) return { verdict: 'kept-off' };
+  if (robotsAllows(robots, address)) return { verdict: 'read' };
+  const permission = limits?.permission;
+  if (permission && addressBegins(permission.allows, address)) return { verdict: 'permission' };
+  return { verdict: 'robots', permission: permission !== undefined };
 }

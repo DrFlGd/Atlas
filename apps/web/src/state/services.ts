@@ -83,6 +83,8 @@ export const SETTINGS = {
   lastList: (gameId: string) => `lastList:${gameId}`,
   /** The source of pages Guides showed last for a game, by its game id (see `guideSources.ts`). */
   guidesSource: (gameId: string) => `guidesSource:${gameId}`,
+  /** Whether the contents beside a page in Guides is open (`false`: folded away), for every game (see `touch/guidesBar.ts`). */
+  guidesBar: 'guidesBar',
   /** The page read last in a guide read in order, by the game id of its pages (see `guideSources.ts`). */
   guideReadLast: (sourceId: string) => `guideReadLast:${sourceId}`,
   /** The type last chosen for a new location of the person's own, for the next one. */

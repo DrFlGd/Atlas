@@ -29,10 +29,14 @@
  * A file states a site's limits, and the person checks every file by hand
  * before switching it on: a file of theirs may widen what a file an
  * importer comes with says of the same site, and the importer says what it
- * widens (`ImporterSites.widens`). What is no site's to decide has no
- * field: there is none for a shorter pause than the app's own, another
- * identity, reading past `robots.txt` or a refusal, or answering a check
- * that asks whether the reader is a person.
+ * widens (`ImporterSites.widens`, with what every file widens in its
+ * `reading` section, {@link readingWidenings}). What is no site's to decide
+ * has no field: there is none for a shorter pause than the app's own,
+ * another identity, reading past a refusal, or answering a check that asks
+ * whether the reader is a person. A file may keep the app off addresses
+ * (`reading.keepOff`), and a file of the person's may record the site's
+ * own permission to read some addresses by itself where `robots.txt` does
+ * not allow them (`reading.permission`); nothing else reads past it.
  */
 
 import {
@@ -44,6 +48,10 @@ import {
 } from '@atlas/schema';
 import { z } from 'zod';
 import {
+  MAX_ADDRESS_BEGINNINGS,
+  addressBeginningProblem,
+  addressBegins,
+  beginningsOverlap,
   dataPathProblem,
   dataPathSteps,
   pagePathProblem,
@@ -53,6 +61,7 @@ import {
 } from './sitePatterns';
 import { READING_WAYS, type ReadingWay } from './fetching';
 import { CONFIRMABLE_LICENCES, MAX_NOTICE_CHARS, rulesLicenceOf, type RulesLicence } from './sites';
+import type { SiteRulesWidening } from './siteTrial';
 
 /** The value of `format` in every site rules file. */
 export const SITE_RULES_FORMAT = 'atlas-site-rules';
@@ -180,11 +189,57 @@ const builtInReader = reader.refine((name) => name !== RULES_READER, {
 /** The pause between pages a file may give (`reading.pause`), in seconds. */
 export const READING_PAUSE_SECONDS = { min: 1, max: 60 } as const;
 
-const readingSchema = z.strictObject({
+/** A list of beginnings of addresses of the site (see `addressBeginningProblem`), each once. */
+const addressBeginnings = once(
+  z.string().superRefine(checked(addressBeginningProblem)),
+  'address',
+).max(MAX_ADDRESS_BEGINNINGS);
+
+/**
+ * `reading.permission`: the record of a site's own permission for this app
+ * to read some of its addresses by itself (the way `fetch`) where its
+ * `robots.txt` does not allow them: who gave it (`from`, in the person's
+ * own words), the day it was given (`on`) and the beginnings of the
+ * addresses it covers (`allows`, matched as `keepOff` is). It lifts the
+ * live `robots.txt` for those addresses only, and nothing else: `keepOff`
+ * wins over it, and the app's identity, its pause, stopping at the first
+ * refusal, never answering a person check and never reusing a window's
+ * cookies stay as they are. Only a file of the person's carries one: a
+ * shipped file with a permission is refused ({@link checkShippedSiteRules}),
+ * and a reader's defaults have no field for it.
+ */
+const permissionSchema = z.strictObject({
+  from: text(200),
+  on: date,
+  allows: addressBeginnings.min(1),
+});
+
+export type SitePermission = z.infer<typeof permissionSchema>;
+
+/**
+ * The `reading` section of a reader's defaults: no permission, which only
+ * one site can give.
+ *
+ * `keepOff` lists the beginnings of addresses of the site this app never
+ * opens on its own (see `addressBegins`): neither when it reads the site
+ * by itself (`fetch`) nor when it steers its window (`window`). What the
+ * person opens as they browse is theirs, and is kept as any page they
+ * open. It adds to the site's live `robots.txt` and never loosens it, and
+ * no permission lifts it. A part's list takes the place of its reader's
+ * defaults' list; an empty one keeps the app off no address.
+ */
+const readingDefaultsSchema = z.strictObject({
   ways: once(z.enum(READING_WAYS as readonly [ReadingWay, ...ReadingWay[]]), 'way')
     .min(1)
     .max(READING_WAYS.length),
   pause: z.number().min(READING_PAUSE_SECONDS.min).max(READING_PAUSE_SECONDS.max).optional(),
+  keepOff: addressBeginnings.optional(),
+});
+
+/** The `reading` section of a part of a site file. */
+const readingSchema = z.strictObject({
+  ...readingDefaultsSchema.shape,
+  permission: permissionSchema.optional(),
 });
 
 /** `pictures` of a part with a built-in reader, and of a reader's defaults: its hosts only. */
@@ -804,7 +859,7 @@ function readerDefaultsFileSchemaWith<L extends z.ZodType>(licence: L) {
     version: z.literal(SITE_RULES_VERSION),
     readerDefaults: z.strictObject({
       reader: builtInReader,
-      reading: readingSchema,
+      reading: readingDefaultsSchema,
       notice: text(MAX_NOTICE_CHARS).optional(),
       pictures: pictureHostsSchema.optional(),
       licence: licence.optional(),
@@ -1001,6 +1056,20 @@ const EXPECTED: Record<string, string> = {
   record: 'an object',
 };
 
+/** What a missing field needs, by the end of its path, where more than "it is needed" helps. */
+const MISSING_WORDS: Record<string, string> = {
+  'reading.permission.from':
+    'is missing: a permission names who gave it, in your own words, such as the editors of the site',
+  'reading.permission.on':
+    'is missing: a permission names the day it was given, written as YYYY-MM-DD, such as 2026-11-16',
+  'reading.permission.allows':
+    'is missing: a permission names the beginnings of the addresses it covers, such as /archive/',
+};
+
+/** Why a reader's defaults hold no permission. */
+const PERMISSION_IN_DEFAULTS =
+  'is only for a site file of your own: a permission is given by one site, so the defaults of a reader cannot hold one';
+
 /**
  * Fields of several forms, by the end of their path, with those forms in
  * words: said whole for a value that is not a list. A list is checked
@@ -1021,17 +1090,23 @@ function problemsOf(issue: z.core.$ZodIssue, at: Path, part: boolean): SiteRules
   });
   switch (issue.code) {
     case 'invalid_type': {
-      if (issue.input === undefined) return [problem('is missing, and it is needed')];
+      if (issue.input === undefined) {
+        const said = Object.entries(MISSING_WORDS).find(([end]) => field.endsWith(end))?.[1];
+        return [problem(said ?? 'is missing, and it is needed')];
+      }
       const expected = EXPECTED[issue.expected] ?? issue.expected;
       return [problem(`must be ${expected}, not ${describeValue(issue.input)}`)];
     }
     case 'unrecognized_keys':
       return issue.keys.map((key) => {
         const elsewhere = part ? FIELDS_ELSEWHERE[key] : undefined;
+        const permission = key === 'permission' && path.at(-1) === 'reading' && !part;
         return problem(
-          elsewhere
-            ? `is a field of ${elsewhere}, not of this part`
-            : 'is not a field of this format; a file holds only the fields the guide names',
+          permission
+            ? PERMISSION_IN_DEFAULTS
+            : elsewhere
+              ? `is a field of ${elsewhere}, not of this part`
+              : 'is not a field of this format; a file holds only the fields the guide names',
           fieldPath([...path, key]),
         );
       });
@@ -1494,6 +1569,29 @@ function mapLinkProblems(
   return problems;
 }
 
+/**
+ * The problems of a part's `reading` that its fields' forms alone do not
+ * show: an entry of `permission.allows` that overlaps an entry of
+ * `keepOff`, where the one covers an address the other covers too. The
+ * app never opens a kept-off address on its own, whatever a permission
+ * says, so such an entry says two things of one address.
+ */
+function readingProblems(reading: SiteReading | undefined, at: Path): SiteRulesProblem[] {
+  const keepOff = reading?.keepOff ?? [];
+  const allows = reading?.permission?.allows ?? [];
+  const problems: SiteRulesProblem[] = [];
+  allows.forEach((allowed, index) => {
+    const kept = keepOff.find((entry) => beginningsOverlap(entry, allowed));
+    if (kept !== undefined) {
+      problems.push({
+        field: fieldPath([...at, 'permission', 'allows', index]),
+        message: `overlaps ${JSON.stringify(kept)} of keepOff: this app never opens an address it is kept off on its own, whatever a permission says, so leave the address out of one of the two lists`,
+      });
+    }
+  });
+  return problems;
+}
+
 /** The problems of a whole site file that its fields' forms alone do not show. */
 function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
   const problems: SiteRulesProblem[] = [];
@@ -1515,6 +1613,7 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
   }
   file.parts.forEach((part, index) => {
     const at = ['parts', index] as const;
+    problems.push(...readingProblems(part.reading, [...at, 'reading']));
     if (part.start !== undefined) {
       const pieces = piecesOf(part.start);
       add([...at, 'start'], pieces.problem ?? addressProblem(part.start, hosts));
@@ -1697,6 +1796,35 @@ export function checkSiteRules(value: unknown): SiteRulesCheck {
   return whole.length > 0 ? fail(whole) : { ok: true, rules: full.value };
 }
 
+/**
+ * The problems of a file an importer comes with (a shipped file) besides
+ * those of {@link checkSiteRules}: a shipped file carries no permission
+ * (`reading.permission`), which only a file of the person's records. The
+ * app checks every shipped file so, and reads by none that has a problem.
+ */
+export function shippedFileProblems(rules: SiteRules): SiteRulesProblem[] {
+  if (!isSiteFile(rules)) return [];
+  return rules.parts.flatMap((part, index) =>
+    part.reading?.permission
+      ? [
+          {
+            field: `parts[${index}].reading.permission`,
+            message:
+              'is in a shipped file, and no shipped file carries a permission: only a file of your own records one',
+          },
+        ]
+      : [],
+  );
+}
+
+/** Checks a shipped file: {@link checkSiteRules}, then {@link shippedFileProblems}. */
+export function checkShippedSiteRules(value: unknown): SiteRulesCheck {
+  const checked = checkSiteRules(value);
+  if (!checked.ok) return checked;
+  const problems = shippedFileProblems(checked.rules);
+  return problems.length > 0 ? { ok: false, problems } : checked;
+}
+
 /** A position in a text as "line L, column C", for a JSON syntax problem. */
 function lineAndColumn(text: string, index: number): string {
   const before = text.slice(0, index).split('\n');
@@ -1814,4 +1942,143 @@ export function rulesLicenceOfBlock(block: SiteRulesLicence | undefined): RulesL
   }
   if ('blank' in block) return rulesLicenceOf({ basis: 'none' });
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// What a file of the person's widens in its reading section
+
+/** Entries of a list in words: "/a", "/a or /b", "/a, /b or /c", the rest counted after a few. */
+function beginningsInWords(entries: readonly string[]): string {
+  const shown = entries.slice(0, 5);
+  const more = entries.length - shown.length;
+  const words = more > 0 ? [...shown, `${more} more`] : shown;
+  return words.length < 2
+    ? (words[0] ?? '')
+    : `${words.slice(0, -1).join(', ')} or ${words.at(-1)!}`;
+}
+
+/**
+ * The widening of a list of addresses kept off (`reading.keepOff`) against
+ * the list of a shipped file: the entries of `shipped` that `kept` no
+ * longer covers (it covers an entry when one of its own begins it), so
+ * that this app would open such addresses on its own. Null when it keeps
+ * every one. `what` says for which sites, such as "wiki.example.org".
+ */
+export function keptOffWidening(
+  field: string,
+  kept: readonly string[] | undefined,
+  shipped: readonly string[] | undefined,
+  file: string,
+  what: string,
+): SiteRulesWidening | null {
+  const lost = (shipped ?? []).filter((entry) => !addressBegins(kept ?? [], entry));
+  if (lost.length === 0) return null;
+  return {
+    field,
+    message: `lets this app open addresses that begin with ${beginningsInWords(lost)} on its own for ${what}, which the shipped file “${file}” keeps it off`,
+  };
+}
+
+/**
+ * The widening a recorded permission (`reading.permission`) makes: who
+ * gave it, when, and which addresses it lets this app read by itself
+ * where the site's `robots.txt` does not allow them.
+ */
+export function permissionWidening(field: string, permission: SitePermission): SiteRulesWidening {
+  return {
+    field,
+    message: `records a permission from ${permission.from}, given on ${permission.on}, for this app to read addresses that begin with ${beginningsInWords(permission.allows)} by itself, even where the site’s robots.txt does not allow them`,
+  };
+}
+
+/** The list a part keeps the app off: its own, else its reader's defaults' among `files`. */
+function keptOffOf(part: SitePart, files: readonly SiteRules[]): readonly string[] | undefined {
+  if (part.reading?.keepOff !== undefined) return part.reading.keepOff;
+  if (readByRules(part)) return undefined;
+  return files.find(
+    (rules): rules is ReaderDefaultsFile =>
+      isReaderDefaults(rules) && rules.readerDefaults.reader === part.reader,
+  )?.readerDefaults.reading.keepOff;
+}
+
+/**
+ * What a file of the person's widens in its `reading` sections against the
+ * files an importer comes with (`shipped`), whatever its readers: every
+ * permission it records (with who gave it, when, and the addresses), and
+ * each address a shipped file keeps this app off that it no longer does.
+ * A reader's defaults are compared with the shipped defaults of the same
+ * reader; a part of a site file with the part of the same reader of a
+ * shipped site file of the same id or of one of its hosts, else (for a
+ * built-in reader) with that reader's shipped defaults. A part that names
+ * no list of its own keeps its reader's. The app shows these with what
+ * the importer says (`ImporterSites.widens`); an importer may say more,
+ * such as for a part read by `rules` on a host one of its readers reads.
+ */
+export function readingWidenings(
+  rules: SiteRules,
+  shipped: readonly { name: string; rules: SiteRules }[],
+): SiteRulesWidening[] {
+  const files = shipped.map((file) => file.rules);
+  const defaultsFile = (reader: string) =>
+    shipped.find(
+      (file) => isReaderDefaults(file.rules) && file.rules.readerDefaults.reader === reader,
+    );
+  if (isReaderDefaults(rules)) {
+    const reader = rules.readerDefaults.reader;
+    const base = defaultsFile(reader);
+    if (!base || !isReaderDefaults(base.rules)) return [];
+    const kept = rules.readerDefaults.reading.keepOff;
+    const found = keptOffWidening(
+      kept === undefined ? 'readerDefaults.reading' : 'readerDefaults.reading.keepOff',
+      kept,
+      base.rules.readerDefaults.reading.keepOff,
+      base.name,
+      `every site the reader “${reader}” reads`,
+    );
+    return found ? [found] : [];
+  }
+  if (!isSiteFile(rules)) return [];
+  const sameSite = shipped.filter(
+    (file) =>
+      isSiteFile(file.rules) &&
+      (file.rules.site.id === rules.site.id ||
+        file.rules.site.hosts.some((host) => rules.site.hosts.includes(host))),
+  );
+  const out: SiteRulesWidening[] = [];
+  rules.parts.forEach((part, index) => {
+    const at = `parts[${index}]`;
+    const permission = part.reading?.permission;
+    if (permission) out.push(permissionWidening(`${at}.reading.permission`, permission));
+    const field =
+      part.reading?.keepOff !== undefined
+        ? `${at}.reading.keepOff`
+        : part.reading
+          ? `${at}.reading`
+          : at;
+    const kept = keptOffOf(part, files);
+    const what = rules.site.hosts.join(', ');
+    let compared = false;
+    for (const file of sameSite) {
+      if (!isSiteFile(file.rules)) continue;
+      const like =
+        file.rules.parts.find((p) => p.reader === part.reader && p.type === part.type) ??
+        file.rules.parts.find((p) => p.reader === part.reader);
+      if (!like) continue;
+      compared = true;
+      const found = keptOffWidening(field, kept, keptOffOf(like, files), file.name, what);
+      if (found) out.push(found);
+    }
+    if (compared || readByRules(part)) return;
+    const base = defaultsFile(part.reader);
+    if (!base || !isReaderDefaults(base.rules)) return;
+    const found = keptOffWidening(
+      field,
+      kept,
+      base.rules.readerDefaults.reading.keepOff,
+      base.name,
+      what,
+    );
+    if (found) out.push(found);
+  });
+  return out;
 }

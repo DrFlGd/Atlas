@@ -79,9 +79,27 @@ export interface Setting {
   /** What it is for, in a sentence, when its label does not say it all. */
   hint?: string;
   control: SettingControl;
+  /**
+   * The set of settings within its group it belongs to, shown together
+   * under a title of their own with a sentence on what they are for (the
+   * permission from a site); none for a setting that stands alone.
+   */
+  within?: SettingSet;
   /** Its value in the text; undefined when the text does not have it. */
   value: unknown;
 }
+
+/** A set of settings shown together within a group (see {@link Setting.within}). */
+export interface SettingSet {
+  title: string;
+  hint: string;
+}
+
+/** The settings of the permission a site gave (`reading.permission`), in a file of the person's. */
+export const PERMISSION_SET: SettingSet = {
+  title: 'Permission from the site',
+  hint: 'Fill this in only when the site has told you that this app may read these addresses by itself. Name who said so and when.',
+};
 
 /** A group of settings: the site, a part, a reader's defaults, or the file itself. */
 export interface FormGroup {
@@ -287,7 +305,16 @@ function alsoOf(kind: FormGroup['kind'], value: Record<string, unknown>): string
     }
     if (isObject(value.menu) && Object.hasOwn(value.menu, 'headings')) add('menu.headings');
     const reading = value.reading;
-    if (isObject(reading) && Object.keys(reading).some((k) => k !== 'ways' && k !== 'pause')) {
+    const shownReading = ['ways', 'pause', 'keepOff', ...(kind === 'part' ? ['permission'] : [])];
+    if (isObject(reading) && Object.keys(reading).some((k) => !shownReading.includes(k))) {
+      other = true;
+    }
+    if (
+      kind === 'part' &&
+      isObject(reading) &&
+      isObject(reading.permission) &&
+      Object.keys(reading.permission).some((k) => !['from', 'on', 'allows'].includes(k))
+    ) {
       other = true;
     }
   }
@@ -320,7 +347,7 @@ function partTitle(index: number, part: Record<string, unknown>): string {
 function readingSettings(
   root: unknown,
   base: FieldPath,
-  options_: { waysRequired: boolean; pages: boolean },
+  options_: { waysRequired: boolean; pages: boolean; permission: boolean },
 ): Omit<Setting, 'value'>[] {
   const at = (...rel: (string | number)[]) => {
     const path = [...base, ...rel];
@@ -342,7 +369,38 @@ function readingSettings(
       hint: `From ${READING_PAUSE_SECONDS.min} to ${READING_PAUSE_SECONDS.max} seconds. Leave it empty for the app’s own minimum. The app never pauses less than its own minimum.`,
       control: { type: 'pause', min: READING_PAUSE_SECONDS.min, max: READING_PAUSE_SECONDS.max },
     },
+    {
+      ...at('reading', 'keepOff'),
+      label: 'Addresses this app never opens on its own',
+      hint: 'The beginnings of addresses of the site, such as /private/ or /tools/list.php. The app does not open an address that begins with one, by itself or in its window, whatever the site’s robots.txt allows. A page you open as you browse is still kept.',
+      control: { type: 'list', add: 'Add an address', placeholder: '/private/' },
+    },
   ];
+  if (options_.permission) {
+    settings.push(
+      {
+        ...at('reading', 'permission', 'from'),
+        label: 'Who gave it',
+        hint: 'In your own words, such as the editors of the site, by email.',
+        control: { type: 'text', lines: false, required: false },
+        within: PERMISSION_SET,
+      },
+      {
+        ...at('reading', 'permission', 'on'),
+        label: 'When it was given',
+        hint: 'A date written as YYYY-MM-DD, such as 2026-11-16.',
+        control: { type: 'text', lines: false, required: false },
+        within: PERMISSION_SET,
+      },
+      {
+        ...at('reading', 'permission', 'allows'),
+        label: 'Addresses it lets this app read by itself',
+        hint: 'The beginnings of the addresses the site allowed, such as /archive/. The app reads them by itself even where the site’s robots.txt does not allow them, and follows robots.txt for every other address.',
+        control: { type: 'list', add: 'Add an address', placeholder: '/archive/' },
+        within: PERMISSION_SET,
+      },
+    );
+  }
   if (options_.pages) {
     const layout = valueAt(root, [...base, 'layout']);
     const hiddenIsList = isObject(layout) && Array.isArray(layout.hidden);
@@ -515,7 +573,7 @@ export function readRulesForm(text: string): RulesFormRead {
           base,
           title: reader ? `The defaults of the reader “${reader}”` : 'The defaults of the reader',
           settings: withValues(root, [
-            ...readingSettings(root, base, { waysRequired: true, pages: true }),
+            ...readingSettings(root, base, { waysRequired: true, pages: true, permission: false }),
             {
               field: 'readerDefaults.notice',
               path: [...base, 'notice'],
@@ -591,6 +649,7 @@ export function readRulesForm(text: string): RulesFormRead {
           ...readingSettings(root, base, {
             waysRequired: part.reader === RULES_READER,
             pages: part.type !== 'map',
+            permission: true,
           }),
           {
             field: `${field}.licence`,

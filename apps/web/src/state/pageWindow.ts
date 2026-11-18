@@ -1,6 +1,7 @@
-import { checkPageObservations, type PageObservations } from '@atlas/importer-api';
+import { addressBegins, checkPageObservations, type PageObservations } from '@atlas/importer-api';
 import type { DesktopBridge, ImportReport, PollResult } from '../desktop';
 import { RUN_PAUSE_MS, WINDOW_PAGE_PAUSE_MS, type RunState } from './importRun';
+import { keptOffMessage } from './siteLimits';
 
 /**
  * Reading one page in the import window: open it (or, in a go of pages an
@@ -159,6 +160,12 @@ export interface WindowRequest {
    * `measure`.
    */
   keepFor: number | null;
+  /**
+   * The beginnings of addresses the site's rules file keeps the app off
+   * (`SiteInfo.keepOff`): the window is never opened at, or moved to, an
+   * address one of them covers. Empty when the file keeps it off none.
+   */
+  keepOff: readonly string[];
   onWaiting: (waiting: PageWaiting) => void;
   /**
    * Run once the page's data has been read, while the window still shows
@@ -253,7 +260,8 @@ export class PageWindows {
   /**
    * Reads one page: opens it, or moves the window kept for the go to it,
    * and asks it for its data until it appears, the window is closed or the
-   * wait runs out. A window of its own is closed then; a kept one stays for
+   * wait runs out. An address the site's rules file keeps the app off
+   * (`keepOff`) is neither opened nor moved to: it fails with why. A window of its own is closed then; a kept one stays for
    * the next page. `current` is false once another import or a cancel took
    * over.
    */
@@ -264,6 +272,9 @@ export class PageWindows {
   ): Promise<PageRead> {
     const { deps } = this;
     const { url, pageReader, waitSeconds, reading, measure, onWaiting } = request;
+    // An address the site's rules file keeps the app off is never opened, nor moved to.
+    if (addressBegins(request.keepOff, url))
+      return { state: 'failed', message: keptOffMessage(url) };
     const importer = { id: request.importer.id, waitSeconds };
     const keepFor = measure === null ? request.keepFor : null;
     const keep = keepFor !== null;

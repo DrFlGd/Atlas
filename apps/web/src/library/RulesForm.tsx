@@ -22,6 +22,7 @@ import {
   type FormGroup,
   type RulesFormRead,
   type Setting,
+  type SettingSet,
   type ShippedSetting,
 } from '../state/rulesForm';
 import { WAY_NAMES, type ShippedRules } from '../state/siteRules';
@@ -247,29 +248,38 @@ function GroupSettings({
           ? 'The file also sets, for the site'
           : 'The file also has';
   const ways = group.settings.find((setting) => setting.control.type === 'ways');
+  const row = (setting: Setting) => (
+    <SettingRow
+      key={setting.field}
+      setting={setting}
+      problems={problems.filter((problem) => problemIsFor(setting, problem.field))}
+      shipped={compared.get(setting.field) ?? null}
+      noWays={
+        setting.control.type === 'pause' &&
+        ways?.control.type === 'ways' &&
+        !ways.control.required &&
+        waysIn(ways.value).length === 0
+      }
+      set={(value) => {
+        onChange(setInText(text, setting.path, value, group.base.length));
+      }}
+      putBack={(one) => {
+        onChange(putBackText(text, group, setting, one));
+      }}
+    />
+  );
   return (
     <fieldset className="rules-form-group" data-testid="rules-form-group" data-field={group.field}>
       <legend>{group.title}</legend>
-      {group.settings.map((setting) => (
-        <SettingRow
-          key={setting.field}
-          setting={setting}
-          problems={problems.filter((problem) => problemIsFor(setting, problem.field))}
-          shipped={compared.get(setting.field) ?? null}
-          noWays={
-            setting.control.type === 'pause' &&
-            ways?.control.type === 'ways' &&
-            !ways.control.required &&
-            waysIn(ways.value).length === 0
-          }
-          set={(value) => {
-            onChange(setInText(text, setting.path, value, group.base.length));
-          }}
-          putBack={(one) => {
-            onChange(putBackText(text, group, setting, one));
-          }}
-        />
-      ))}
+      {settingRuns(group.settings).map((run) =>
+        run.within ? (
+          <SettingSetBox key={run.settings[0]!.field} set={run.within}>
+            {run.settings.map(row)}
+          </SettingSetBox>
+        ) : (
+          run.settings.map(row)
+        ),
+      )}
       {group.also.length > 0 ? (
         <p className="muted small rules-form-also" data-testid="rules-form-also">
           {alsoWho}: {listOf(group.also)}.{' '}
@@ -278,6 +288,34 @@ function GroupSettings({
           </button>
         </p>
       ) : null}
+    </fieldset>
+  );
+}
+
+/** The settings of a group in runs: those of one set together, each other setting alone. */
+function settingRuns(
+  settings: readonly Setting[],
+): { within: SettingSet | null; settings: Setting[] }[] {
+  const runs: { within: SettingSet | null; settings: Setting[] }[] = [];
+  for (const setting of settings) {
+    const last = runs.at(-1);
+    const within = setting.within ?? null;
+    if (last && within && last.within?.title === within.title) last.settings.push(setting);
+    else runs.push({ within, settings: [setting] });
+  }
+  return runs;
+}
+
+/** A set of settings shown together, under its title, with what they are for. */
+function SettingSetBox({ set, children }: { set: SettingSet; children: React.ReactNode }) {
+  const hintId = useId();
+  return (
+    <fieldset className="rules-form-set" data-testid="rules-form-set" aria-describedby={hintId}>
+      <legend className="rules-form-label">{set.title}</legend>
+      <p id={hintId} className="muted small rules-form-hint">
+        {set.hint}
+      </p>
+      {children}
     </fieldset>
   );
 }
