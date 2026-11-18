@@ -129,6 +129,7 @@ async function go(
   urls: string[],
   kept: (url: string) => boolean,
   goId = 1,
+  keepOff: readonly string[] = [],
 ) {
   const windows = new PageWindows({ sleep: fake.sleep, now: fake.now, report: () => undefined });
   const reads: PageRead[] = [];
@@ -150,6 +151,7 @@ async function go(
             reading: 'map',
             measure: null,
             keepFor: kept(url) ? goId : null,
+            keepOff,
             onWaiting: (state) => waiting.push(state),
           },
           () => true,
@@ -166,6 +168,7 @@ async function go(
           };
         }
         if (read.state === 'closed') return { kind: 'closed', message: read.message };
+        if (read.state === 'failed') return { kind: 'failed', message: read.message };
         if (read.state === 'timed-out' || read.state === 'open-failed') {
           return { kind: 'no-data', message: read.message };
         }
@@ -184,6 +187,23 @@ async function go(
 const opened = (log: string[]) => log.filter((line) => / (open|navigate|close)/.test(line));
 
 describe('a go of pages read in a window kept for it', () => {
+  it('never opens or moves the window to an address the site’s rules file keeps it off', async () => {
+    const fake = fakeWindow();
+    const kept = `${page('Bells')}?part=2`;
+    const urls = [page('Welcome'), kept, page('Gates')];
+    const { final, reads } = await go(fake, urls, () => true, 1, ['/wiki/Bells?part=']);
+    expect(opened(fake.log).map((line) => line.replace(/^\d+ /, ''))).toEqual([
+      `open ${page('Welcome')} keep`,
+      `navigate ${page('Gates')}`,
+      'close',
+    ]);
+    expect(reads[1]).toEqual({
+      state: 'failed',
+      message: `The site's rules file keeps this app off ${kept}, so it did not open that address and did not read the page.`,
+    });
+    expect(final.pages.map((p) => p.state.kind)).toEqual(['added', 'failed', 'added']);
+  });
+
   it('opens the window once and moves it from page to page, then closes it', async () => {
     const fake = fakeWindow();
     const urls = [page('Welcome'), page('Bells'), page('Gates')];
@@ -296,6 +316,7 @@ describe('a go of pages read in a window kept for it', () => {
       reading: 'map' as const,
       measure: null,
       keepFor: 7,
+      keepOff: [],
       onWaiting,
     });
     expect(
@@ -385,6 +406,7 @@ describe('pages read in a window of their own', () => {
         reading: 'map',
         measure: '(state) => ({ done: true })',
         keepFor: 3,
+        keepOff: [],
         onWaiting: () => undefined,
       },
       () => true,
@@ -411,6 +433,7 @@ describe('reading more from a page once its data is read', () => {
           reading: 'map',
           measure: null,
           keepFor,
+          keepOff: [],
           onWaiting: () => undefined,
           afterRead,
         },
@@ -470,6 +493,7 @@ describe('why the page window waits', () => {
               reading: 'map',
               measure: null,
               keepFor: 1,
+              keepOff: [],
               onWaiting: (waiting) => {
                 update({ kind: 'open', ...waiting });
               },
@@ -530,6 +554,7 @@ describe('why the page window waits', () => {
         reading: 'game',
         measure: null,
         keepFor: null,
+        keepOff: [],
         onWaiting: () => undefined,
       },
       () => true,
@@ -555,6 +580,7 @@ describe('why the page window waits', () => {
         reading: 'map',
         measure: null,
         keepFor: null,
+        keepOff: [],
         onWaiting: () => undefined,
       },
       () => true,

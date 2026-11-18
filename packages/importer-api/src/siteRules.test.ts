@@ -7,6 +7,7 @@ import {
   NO_LICENCE_RECORDED,
   applySiteRules,
   asImporter,
+  checkShippedSiteRules,
   checkSiteRules,
   fieldInWords,
   isRefusal,
@@ -22,6 +23,7 @@ import {
   siteRulesKey,
   siteRulesProblemsOf,
   siteRulesWideningsOf,
+  readingWidenings,
   type AtlasImporter,
   type SiteRulesProblem,
 } from './index';
@@ -71,8 +73,9 @@ describe('the guide', () => {
     // The smallest file, the general reader's wiki part, the reader's defaults, the map part, the complete example.
     // And one file for every game of a site, a refusal, a part with a layout section,
     // a map part read from values of its page, one file for every game and map of a map site,
-    // a part with links to a map, a map part with facts every map shares, and a part with a menu section.
-    expect(blocks.length).toBe(13);
+    // a part with links to a map, a map part with facts every map shares, a part with a menu section,
+    // and a part that keeps the app off addresses and records a permission.
+    expect(blocks.length).toBe(14);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -1032,6 +1035,45 @@ describe('the demo importer that reads wikis by site rules files', () => {
     });
   });
 
+  it('passes on the addresses a file keeps the app off, and a permission only from a file of the person’s', () => {
+    const permission = { from: 'The harbour master', on: '2026-11-02', allows: ['/archive/'] };
+    const own = checkSiteRules({
+      format: 'atlas-site-rules',
+      version: 1,
+      site: { id: 'harbour-wiki', name: 'Harbour Wiki', hosts: ['harbour.example.net'] },
+      parts: [
+        {
+          type: 'wiki',
+          reader: 'other-wiki',
+          reading: { ways: ['fetch'], keepOff: ['/tools/'], permission },
+        },
+      ],
+    });
+    if (!own.ok) throw new Error('The file has problems.');
+    const url = 'https://harbour.example.net/wiki/Welcome';
+    applySiteRules(importer, [
+      { name: 'harbour-wiki.atlas-site.json', own: true, rules: own.rules },
+    ]);
+    expect(siteInfoOf(importer, url)).toMatchObject({ keepOff: ['/tools/'], permission });
+    // What it widens names the permission: who gave it, when and which addresses.
+    expect(siteRulesWideningsOf(importer, own.rules).map(problemText)).toContain(
+      'Part 1, reading.permission: records a permission from The harbour master, given on 2026-11-02, for this app to read addresses that begin with /archive/ by itself, even where the site’s robots.txt does not allow them.',
+    );
+    // The same file handed over as if it were shipped carries no permission to the app.
+    applySiteRules(importer, [
+      { name: 'harbour-wiki.atlas-site.json', own: false, rules: own.rules },
+    ]);
+    expect(siteInfoOf(importer, url).permission).toBeUndefined();
+    applySiteRules(
+      importer,
+      importer.sites!.files.map((file) => {
+        const checked = checkSiteRules(file.rules);
+        if (!checked.ok) throw new Error(file.name);
+        return { name: file.name, own: false, rules: checked.rules };
+      }),
+    );
+  });
+
   const builtIn = () =>
     importer.sites!.files.map((file) => {
       const checked = checkSiteRules(file.rules);
@@ -1568,5 +1610,133 @@ describe('the links to a location of a map of a wiki or guide part', () => {
       },
     };
     expect(fields(readerDefaults)).toEqual(['readerDefaults.mapLinks']);
+  });
+});
+
+describe('addresses the app keeps off, and a permission the site gave', () => {
+  const PERMISSION = {
+    from: 'The editors of Emberfall Wiki',
+    on: '2026-11-02',
+    allows: ['/private/maps/'],
+  };
+  const withReading = (reading: Record<string, unknown>) =>
+    changed((f) => {
+      f.parts = [{ type: 'wiki', reader: 'example-engine', start: '/', reading }];
+    });
+  const said = (value: unknown) => problems(value).map(problemText);
+
+  it('takes a list of address beginnings, and a permission with who, when and its addresses', () => {
+    const result = checkSiteRules(
+      withReading({ ways: ['fetch'], keepOff: ['/tools/', '/drafts/'], permission: PERMISSION }),
+    );
+    expect(result.ok ? [] : result.problems).toEqual([]);
+    // An empty list keeps the app off nothing, in place of the reader's defaults' list.
+    expect(checkSiteRules(withReading({ ways: ['fetch'], keepOff: [] })).ok).toBe(true);
+  });
+
+  it('names a bad beginning, one listed twice, and too many', () => {
+    expect(said(withReading({ ways: ['fetch'], keepOff: ['tools/', '/a*', '/b', '/b'] }))).toEqual([
+      'Part 1, reading.keepOff, entry 1: must begin with a single /, such as /private/ or /tools/list.php.',
+      'Part 1, reading.keepOff, entry 2: must be the plain beginning of addresses: * stands for nothing here, as every entry already covers every address that begins with it.',
+      'Part 1, reading.keepOff, entry 4: "/b" is listed twice; list each address once.',
+    ]);
+    const many = Array.from({ length: 51 }, (_, n) => `/p${n}/`);
+    expect(said(withReading({ ways: ['fetch'], keepOff: many }))).toEqual([
+      'Part 1, reading.keepOff: must hold at most 50 entries.',
+    ]);
+  });
+
+  it('says what a permission misses: who gave it, when, or an address', () => {
+    expect(said(withReading({ ways: ['fetch'], permission: { allows: ['/private/'] } }))).toEqual([
+      'Part 1, reading.permission.from: is missing: a permission names who gave it, in your own words, such as the editors of the site.',
+      'Part 1, reading.permission.on: is missing: a permission names the day it was given, written as YYYY-MM-DD, such as 2026-11-16.',
+    ]);
+    expect(
+      said(withReading({ ways: ['fetch'], permission: { ...PERMISSION, allows: [] } })),
+    ).toEqual(['Part 1, reading.permission.allows: must hold at least 1 entry.']);
+    expect(
+      said(withReading({ ways: ['fetch'], permission: { ...PERMISSION, on: 'last week' } })),
+    ).toEqual([
+      'Part 1, reading.permission.on: must be a date written as YYYY-MM-DD, such as 2026-11-16.',
+    ]);
+  });
+
+  it('reports an address both kept off and allowed by the permission', () => {
+    expect(
+      said(
+        withReading({
+          ways: ['fetch'],
+          keepOff: ['/private/'],
+          permission: { ...PERMISSION, allows: ['/private/maps/', '/open/'] },
+        }),
+      ),
+    ).toEqual([
+      'Part 1, reading.permission.allows, entry 1: overlaps "/private/" of keepOff: this app never opens an address it is kept off on its own, whatever a permission says, so leave the address out of one of the two lists.',
+    ]);
+  });
+
+  it('refuses a permission in a reader’s defaults, and in a shipped file', () => {
+    const defaults = {
+      format: 'atlas-site-rules',
+      version: 1,
+      readerDefaults: {
+        reader: 'example-engine',
+        reading: { ways: ['fetch'], keepOff: ['/tools/'], permission: PERMISSION },
+      },
+    };
+    expect(said(defaults)).toEqual([
+      'readerDefaults.reading.permission: is only for a site file of your own: a permission is given by one site, so the defaults of a reader cannot hold one.',
+    ]);
+    const own = withReading({ ways: ['fetch'], permission: PERMISSION });
+    expect(checkSiteRules(own).ok).toBe(true);
+    const shipped = checkShippedSiteRules(own);
+    expect(shipped.ok ? [] : shipped.problems.map(problemText)).toEqual([
+      'Part 1, reading.permission: is in a shipped file, and no shipped file carries a permission: only a file of your own records one.',
+    ]);
+    expect(checkShippedSiteRules(withReading({ ways: ['fetch'], keepOff: ['/tools/'] })).ok).toBe(
+      true,
+    );
+  });
+
+  it('says what a file of the person’s widens: an address no longer kept off, and every permission', () => {
+    const rules = (value: unknown) => {
+      const result = checkSiteRules(value);
+      if (!result.ok) throw new Error(JSON.stringify(result.problems));
+      return result.rules;
+    };
+    const shippedDefaults = {
+      format: 'atlas-site-rules',
+      version: 1,
+      readerDefaults: {
+        reader: 'example-engine',
+        reading: { ways: ['fetch'], keepOff: ['/tools/', '/drafts/'] },
+      },
+    };
+    const shipped = [
+      { name: 'example-engine.reader.atlas-site.json', rules: rules(shippedDefaults) },
+    ];
+    // The defaults put in the shipped file's place, without one of its entries.
+    const ownDefaults = structuredClone(shippedDefaults);
+    ownDefaults.readerDefaults.reading.keepOff = ['/tools/'];
+    expect(readingWidenings(rules(ownDefaults), shipped).map(problemText)).toEqual([
+      'readerDefaults.reading.keepOff: lets this app open addresses that begin with /drafts/ on its own for every site the reader “example-engine” reads, which the shipped file “example-engine.reader.atlas-site.json” keeps it off.',
+    ]);
+    // A wider entry still covers the shipped ones: nothing is widened.
+    ownDefaults.readerDefaults.reading.keepOff = ['/'];
+    expect(readingWidenings(rules(ownDefaults), shipped)).toEqual([]);
+    // A site file with a list of its own, and a permission.
+    const site = rules(
+      withReading({
+        ways: ['fetch'],
+        keepOff: [],
+        permission: { ...PERMISSION, allows: ['/private/maps/', '/private/notes/'] },
+      }),
+    );
+    expect(readingWidenings(site, shipped).map(problemText)).toEqual([
+      'Part 1, reading.permission: records a permission from The editors of Emberfall Wiki, given on 2026-11-02, for this app to read addresses that begin with /private/maps/ or /private/notes/ by itself, even where the site’s robots.txt does not allow them.',
+      'Part 1, reading.keepOff: lets this app open addresses that begin with /tools/ or /drafts/ on its own for wiki.example.org, which the shipped file “example-engine.reader.atlas-site.json” keeps it off.',
+    ]);
+    // A part that names no list keeps its reader's.
+    expect(readingWidenings(rules(withReading({ ways: ['fetch'] })), shipped)).toEqual([]);
   });
 });

@@ -17,6 +17,7 @@ import { NO_LICENCE_RECORDED, isPageWidth, type PageWidth } from '@atlas/schema'
 import { isReadingWay, readsInWindow, type ReadingWay } from './fetching';
 import type { AtlasImporter } from './index';
 import type { LayoutRead } from './siteRules';
+import { MAX_ADDRESS_BEGINNINGS, addressBeginningProblem } from './sitePatterns';
 
 /** What an importer says about the site of an address (see {@link AtlasImporter.siteInfo}). */
 export interface SiteInfo {
@@ -91,6 +92,38 @@ export interface SiteInfo {
    * out.
    */
   pageWidth?: PageWidth;
+  /**
+   * Optional: the beginnings of addresses of the site this app never opens
+   * on its own, as its site rules file says (`reading.keepOff`, see
+   * `siteRules.ts`), each written as `addressBeginningProblem` asks and
+   * matched by `addressBegins`, at most {@link MAX_ADDRESS_BEGINNINGS}. The
+   * app does not fetch such an address when it reads the site by itself,
+   * nor open it in its window, whatever `robots.txt` and a permission say.
+   * What the person opens as they browse is kept as any page. An app that
+   * does not know it leaves it out.
+   */
+  keepOff?: string[];
+  /**
+   * Optional: the site's own permission for this app to read some of its
+   * addresses by itself where its `robots.txt` does not allow them, as a
+   * file of the person's records it (`reading.permission`; no file an
+   * importer comes with carries one). When the app reads the site by
+   * itself, an address `allows` covers is read though `robots.txt` does
+   * not allow it; every other address follows `robots.txt`, and
+   * {@link keepOff} wins over it. Nothing else changes. An app that does
+   * not know it leaves it out, and follows `robots.txt` for every address.
+   */
+  permission?: RecordedPermission;
+}
+
+/** A permission a site gave, as a file of the person's records it (see {@link SiteInfo.permission}). */
+export interface RecordedPermission {
+  /** Who gave it, in the person's own words, at most 200 characters. */
+  from: string;
+  /** The day it was given, such as `2026-11-16`. */
+  on: string;
+  /** The beginnings of the addresses it covers, at least one. */
+  allows: string[];
 }
 
 /** A licence answer as a site rules file gives it: a {@link SiteLicence} without a time. */
@@ -326,8 +359,19 @@ export function siteInfoOf(
     given = null;
   }
   if (typeof given !== 'object' || given === null) return fallback;
-  const { key, ways, notice, fileHosts, pause, rulesFile, rulesLicence, layoutRead, pageWidth } =
-    given as Record<string, unknown>;
+  const {
+    key,
+    ways,
+    notice,
+    fileHosts,
+    pause,
+    rulesFile,
+    rulesLicence,
+    layoutRead,
+    pageWidth,
+    keepOff,
+    permission,
+  } = given as Record<string, unknown>;
   if (typeof key !== 'string' || key.length > MAX_SITE_KEY_CHARS || !SITE_KEY.test(key)) {
     return fallback;
   }
@@ -361,7 +405,43 @@ export function siteInfoOf(
       ? { layoutRead }
       : {}),
     ...(isPageWidth(pageWidth) ? { pageWidth } : {}),
+    ...keepOffOf(keepOff),
+    ...permissionOf(permission),
   };
+}
+
+/** The beginnings of addresses of a list that are usable, each once, at most {@link MAX_ADDRESS_BEGINNINGS}. */
+function beginningsOf(value: unknown): string[] {
+  const out: string[] = [];
+  for (const entry of Array.isArray(value) ? (value as unknown[]) : []) {
+    if (out.length >= MAX_ADDRESS_BEGINNINGS) break;
+    if (typeof entry === 'string' && addressBeginningProblem(entry) === null) {
+      if (!out.includes(entry)) out.push(entry);
+    }
+  }
+  return out;
+}
+
+/** The addresses kept off that an importer gives, as {@link SiteInfo.keepOff}; none when none is usable. */
+function keepOffOf(value: unknown): { keepOff?: string[] } {
+  const list = beginningsOf(value);
+  return list.length > 0 ? { keepOff: list } : {};
+}
+
+/**
+ * A permission an importer gives, checked: who gave it and when, and the
+ * addresses it covers, each usable. Nothing when any part of it is not
+ * (the app then follows `robots.txt` for every address).
+ */
+function permissionOf(value: unknown): { permission?: RecordedPermission } {
+  if (typeof value !== 'object' || value === null) return {};
+  const { from, on, allows } = value as Record<string, unknown>;
+  const who = trimmed(from, MAX_GIVEN_BY);
+  const when = trimmed(on, 10);
+  if (!who || !when || !isDate(when) || !Array.isArray(allows)) return {};
+  const list = beginningsOf(allows);
+  if (list.length === 0 || list.length !== allows.length) return {};
+  return { permission: { from: who, on: when, allows: list } };
 }
 
 /**

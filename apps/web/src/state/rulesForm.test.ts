@@ -1,6 +1,7 @@
 import { parseSiteRules } from '@atlas/importer-api';
 import { describe, expect, it } from 'vitest';
 import {
+  PERMISSION_SET,
   compareWithShipped,
   licenceInForm,
   licenceWith,
@@ -204,6 +205,70 @@ describe('writing one setting back into the text', () => {
       permission: 'Asked',
     });
     expect(licenceWith({ permission: 'Asked' }, 'permission', '')).toEqual({ permission: '' });
+  });
+});
+
+describe('addresses the app keeps off, and a permission from the site', () => {
+  it('offers a list of addresses for a part and for the defaults, and a permission for a part only', () => {
+    const keepOff = settingOf(SHIPPED_TEXT, 'parts[0].reading.keepOff').setting;
+    expect(keepOff.label).toBe('Addresses this app never opens on its own');
+    expect(keepOff.control).toEqual({
+      type: 'list',
+      add: 'Add an address',
+      placeholder: '/private/',
+    });
+    const permission = read(SHIPPED_TEXT)
+      .groups[1]!.settings.filter((one) => one.within === PERMISSION_SET)
+      .map((one) => [one.field, one.label]);
+    expect(permission).toEqual([
+      ['parts[0].reading.permission.from', 'Who gave it'],
+      ['parts[0].reading.permission.on', 'When it was given'],
+      ['parts[0].reading.permission.allows', 'Addresses it lets this app read by itself'],
+    ]);
+    expect(PERMISSION_SET).toEqual({
+      title: 'Permission from the site',
+      hint: 'Fill this in only when the site has told you that this app may read these addresses by itself. Name who said so and when.',
+    });
+    const defaults = read(text(DEFAULTS)).groups[0]!.settings.map((one) => one.field);
+    expect(defaults).toContain('readerDefaults.reading.keepOff');
+    expect(defaults.some((field) => field.includes('permission'))).toBe(false);
+  });
+
+  it('writes them into the file, which the checker then takes', () => {
+    let next = setInText(SHIPPED_TEXT, ['parts', 0, 'reading', 'keepOff'], ['/tools/'], 2);
+    next = setInText(next, ['parts', 0, 'reading', 'permission', 'from'], 'The editors', 2);
+    // Half filled in: the checker names what the permission still misses.
+    const half = parseSiteRules(next);
+    expect(half.ok ? [] : half.problems.map((p) => p.field)).toEqual([
+      'parts[0].reading.permission.on',
+      'parts[0].reading.permission.allows',
+    ]);
+    next = setInText(next, ['parts', 0, 'reading', 'permission', 'on'], '2026-11-02', 2);
+    next = setInText(next, ['parts', 0, 'reading', 'permission', 'allows'], ['/archive/'], 2);
+    expect(parseSiteRules(next).ok).toBe(true);
+    expect(JSON.parse(next)).toMatchObject({
+      parts: [
+        {
+          reading: {
+            ways: ['fetch', 'browse'],
+            pause: 5,
+            keepOff: ['/tools/'],
+            permission: { from: 'The editors', on: '2026-11-02', allows: ['/archive/'] },
+          },
+        },
+      ],
+    });
+    const { setting } = settingOf(next, 'parts[0].reading.permission.allows');
+    expect(valueInWords(setting, ['/archive/'], WAY_NAMES)).toBe('/archive/');
+    // Taken out field by field, the permission goes with its last field.
+    for (const key of ['from', 'on', 'allows']) {
+      next = setInText(next, ['parts', 0, 'reading', 'permission', key], undefined, 2);
+    }
+    expect((JSON.parse(next) as { parts: { reading: unknown }[] }).parts[0]!.reading).toEqual({
+      ways: ['fetch', 'browse'],
+      pause: 5,
+      keepOff: ['/tools/'],
+    });
   });
 });
 

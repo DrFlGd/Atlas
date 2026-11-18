@@ -10,6 +10,8 @@ import {
   asImporter,
   checkOutcome,
   fetchAddresses,
+  fetchVerdict,
+  keptOff,
   isFetchedPages,
   readsInWindow,
   refusalFor,
@@ -65,6 +67,49 @@ describe('robots.txt', () => {
     expect(robotsAllows(DISALLOW_ALL, 'https://example.org/anything')).toBe(false);
     const empty = rulesFromAnswer({ status: 200, text: 'User-agent: *\nDisallow:\n' });
     expect(robotsAllows(empty, 'https://example.org/anything')).toBe(true);
+  });
+});
+
+describe('what a site’s rules file says of the addresses the app opens on its own', () => {
+  const robots = robotsRules('User-agent: *\nDisallow: /private/\n');
+  const at = (path: string) => `https://wiki.example.org${path}`;
+
+  it('keeps the app off an address its list covers, whatever robots.txt allows', () => {
+    const limits = { keepOff: ['/tools/'] };
+    expect(keptOff(limits, at('/tools/list.php?from=B'))).toBe(true);
+    expect(keptOff(limits, at('/wiki/Tools'))).toBe(false);
+    expect(keptOff(undefined, at('/tools/'))).toBe(false);
+    expect(fetchVerdict(ALLOW_ALL, limits, at('/tools/list.php'))).toEqual({
+      verdict: 'kept-off',
+    });
+  });
+
+  it('reads an address robots.txt does not allow only where a recorded permission covers it', () => {
+    const permission = {
+      from: 'The editors of Emberfall Wiki',
+      on: '2026-11-02',
+      allows: ['/private/maps/'],
+    };
+    expect(fetchVerdict(robots, {}, at('/wiki/Ember'))).toEqual({ verdict: 'read' });
+    expect(fetchVerdict(robots, {}, at('/private/maps/1'))).toEqual({
+      verdict: 'robots',
+      permission: false,
+    });
+    expect(fetchVerdict(robots, { permission }, at('/private/maps/1'))).toEqual({
+      verdict: 'permission',
+    });
+    expect(fetchVerdict(robots, { permission }, at('/private/notes'))).toEqual({
+      verdict: 'robots',
+      permission: true,
+    });
+    // An address kept off stays so, permission or not.
+    expect(
+      fetchVerdict(
+        robots,
+        { permission, keepOff: ['/private/maps/old/'] },
+        at('/private/maps/old/1'),
+      ),
+    ).toEqual({ verdict: 'kept-off' });
   });
 });
 

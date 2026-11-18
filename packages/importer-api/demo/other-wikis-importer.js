@@ -30,7 +30,9 @@
  *   `../src/siteRules.ts` and the guide in `../site-rules/`): the defaults
  *   of its one reader, `other-wiki`, and a file for one made-up wiki, the
  *   Harbour Wiki, which it comes with, and any the person adds for that
- *   reader. A file can offer fewer ways, a longer pause, its own notice
+ *   reader. A file can offer fewer ways, a longer pause, addresses the
+ *   app keeps off, a permission from the site (a file of the person's
+ *   only), its own notice
  *   and an answer for the wiki's licence; the farm read only as the person
  *   browses stays so in code, whatever a file says. It also comes with a
  *   refusal file for a made-up wiki farm it never reads
@@ -204,6 +206,10 @@ function rulesOf(/** @type {string} */ host) {
       file: file.name,
       ways: reading?.ways ?? ['fetch', 'window', 'browse'],
       pause: reading?.pause,
+      // A part's list of addresses kept off, else its reader's defaults'.
+      keepOff: part.reading?.keepOff ?? base?.reading.keepOff,
+      // Only a file of the person's records a permission from the site.
+      permission: file.own ? part.reading?.permission : undefined,
       notice: rules.site.notice ?? base?.notice,
       licence: part.licence ?? rules.site.licence ?? base?.licence,
     };
@@ -214,6 +220,8 @@ function rulesOf(/** @type {string} */ host) {
     file: defaults.name,
     ways: base.reading.ways,
     pause: base.reading.pause,
+    keepOff: base.reading.keepOff,
+    permission: undefined,
     notice: base.notice,
     licence: base.licence,
   };
@@ -1394,6 +1402,8 @@ const importer = {
       ways: found.ways,
       ...(found.notice ? { notice: found.notice } : {}),
       ...(found.pause ? { pause: found.pause } : {}),
+      ...(found.keepOff && found.keepOff.length > 0 ? { keepOff: [...found.keepOff] } : {}),
+      ...(found.permission ? { permission: found.permission } : {}),
       rulesFile: found.file,
       ...(answer ? { rulesLicence: answer } : {}),
     };

@@ -11,11 +11,13 @@ import {
   checkOutcome,
   checkPictureTiles,
   fetchAddresses,
+  fetchVerdict,
   findImporter,
   findReader,
   gameAddressOf,
   isAllowedPageUrl,
   isPictureRequest,
+  keptOff,
   ownPageReaderOf,
   pageKey,
   readsInWindow,
@@ -23,7 +25,6 @@ import {
   pageTilesFit,
   refusalFor,
   refusalOf,
-  robotsAllows,
   rulesFromAnswer,
   sameSite,
   siteInfoOf,
@@ -32,6 +33,7 @@ import {
   type FetchedPage,
   type PageFetch,
   type RobotsRules,
+  type SiteLimits,
   type Catalogue,
   type GameListing,
   type ImportContext,
@@ -92,6 +94,7 @@ import {
   type PageWaiting,
   type Reading,
 } from './pageWindow';
+import { keptOffMessage, robotsStopMessage } from './siteLimits';
 import { fetchMapPhotos, listsLocationPhotos, photosWithMapOn } from './mapPhotos';
 import { openLayoutFrame } from '../layoutFrame/frame';
 import type { KeptSheetText } from '../layoutFrame/frameText';
@@ -547,6 +550,8 @@ async function readPage(
       measure,
       keepFor,
       onWaiting,
+      // The window never opens an address the site's rules file keeps it off.
+      keepOff: limitsOf(importer, url).keepOff ?? [],
       ...(afterRead ? { afterRead } : {}),
     },
     () => id === session,
@@ -607,6 +612,32 @@ let lastFetchAt = 0;
 const robotsOf = new Map<string, { session: number; rules: RobotsRules }>();
 
 /**
+ * What the rules file of each site says of the addresses this app opens on
+ * its own, by the origin of a page read: for the style sheets of its pages,
+ * which the app fetches after them (see {@link fetchSheet}).
+ */
+const limitsByOrigin = new Map<string, SiteLimits>();
+
+/**
+ * What the site of `address` says of the addresses this app opens on its
+ * own, as its importer gives it (`SiteInfo.keepOff` and
+ * `SiteInfo.permission`), noted for the site's style sheets.
+ */
+function limitsOf(importer: AtlasImporter, address: string): SiteLimits {
+  const info = siteInfoOf(importer, address);
+  const limits: SiteLimits = {
+    ...(info.keepOff ? { keepOff: info.keepOff } : {}),
+    ...(info.permission ? { permission: info.permission } : {}),
+  };
+  try {
+    limitsByOrigin.set(new URL(address).origin, limits);
+  } catch {
+    // An address that is not one is read by nothing.
+  }
+  return limits;
+}
+
+/**
  * Asks for one address as the app, after the pause between pages and at
  * least the pause after the last request; null when another go or a cancel
  * took over meanwhile.
@@ -647,11 +678,49 @@ async function robotsFor(
   return rules;
 }
 
+/** How asking for one address as the app ended (see {@link askAsApp}). */
+type AppAsk =
+  | { kind: 'answer'; answer: ShellFetchedPage }
+  | { kind: 'cancelled' }
+  /** The site's rules file keeps the app off it: nothing was asked. */
+  | { kind: 'kept-off' }
+  /** The site refused robots.txt itself. */
+  | { kind: 'refused'; refusal: string }
+  /** robots.txt does not allow it, and no permission covers it. */
+  | { kind: 'robots' };
+
+/**
+ * Asks for one address as the app, reading by itself: the one way every
+ * page and style sheet is fetched. An address the site's rules file keeps
+ * the app off is never asked for (nor its robots.txt); otherwise robots.txt
+ * first (once per site in a go), and an address it does not allow is asked
+ * for only where the site's permission the file records covers it. Then
+ * the address, after the pause.
+ */
+async function askAsApp(
+  shell: NonNullable<typeof desktop>,
+  address: string,
+  id: number,
+  limits: SiteLimits,
+): Promise<AppAsk> {
+  if (keptOff(limits, address)) return { kind: 'kept-off' };
+  const robots = await robotsFor(shell, new URL(address).origin, id);
+  if (!robots) return { kind: 'cancelled' };
+  if ('refusal' in robots) return { kind: 'refused', refusal: robots.refusal };
+  const verdict = fetchVerdict(robots, limits, address).verdict;
+  if (verdict === 'kept-off') return { kind: 'kept-off' };
+  if (verdict === 'robots') return { kind: 'robots' };
+  const answer = await fetchAsApp(shell, address, id);
+  return answer ? { kind: 'answer', answer } : { kind: 'cancelled' };
+}
+
 /**
  * Fetches the addresses an importer names for `url`, as the app, one at a
- * time: robots.txt first (once per site in a go), then each address after
- * the pause. An answer that refuses stops here, and so does an address
- * robots.txt does not allow.
+ * time ({@link askAsApp}): robots.txt first (once per site in a go), then
+ * each address after the pause. An answer that refuses stops here, and so
+ * does an address robots.txt does not allow that no permission covers. A
+ * page whose address, or an address it needs, the site's rules file keeps
+ * the app off is not read, and the go goes on.
  */
 async function fetchPage(
   shell: NonNullable<typeof desktop>,
@@ -661,6 +730,9 @@ async function fetchPage(
   id: number,
   reading: Reading,
 ): Promise<PageRead> {
+  if (keptOff(limitsOf(importer, url), url)) {
+    return { state: 'failed', message: keptOffMessage(url) };
+  }
   const named = fetchAddresses(fetcher, url);
   if (!named.ok) return { state: 'failed', message: named.message };
   const fetched: FetchedPage[] = [];
@@ -668,21 +740,17 @@ async function fetchPage(
     report({ importerId: importer.id, outcome: 'failed', message });
     return { state: 'refused', message };
   };
-  const one = (address: string) => fetchAsApp(shell, address, id);
   try {
     for (const address of named.addresses) {
-      const robots = await robotsFor(shell, new URL(address).origin, id);
-      if (!robots) return { state: 'cancelled' };
-      if ('refusal' in robots) {
-        return stop(`${robots.refusal} This app stopped and read no more pages.`);
+      const limits = limitsOf(importer, address);
+      const asked = await askAsApp(shell, address, id, limits);
+      if (asked.kind === 'cancelled') return { state: 'cancelled' };
+      if (asked.kind === 'kept-off') return { state: 'failed', message: keptOffMessage(address) };
+      if (asked.kind === 'refused') {
+        return stop(`${asked.refusal} This app stopped and read no more pages.`);
       }
-      if (!robotsAllows(robots, address)) {
-        return stop(
-          `The site's robots.txt does not allow this app to read ${address}, so it stopped and read no more pages.`,
-        );
-      }
-      const answer = await one(address);
-      if (!answer) return { state: 'cancelled' };
+      if (asked.kind === 'robots') return stop(robotsStopMessage(address, limits));
+      const answer = asked.answer;
       const refusal = refusalOf(answer.status, answer.retryAfter);
       if (refusal) return stop(`${refusal} This app stopped and read no more pages.`);
       const { retryAfter: _, ...page } = answer;
@@ -758,6 +826,8 @@ function keepStylesOf(
 ): void {
   if (!importer.styleReader || !sheets) return;
   noteGameOfSite(importer, url, packId);
+  // The style sheets the app fetches for the page follow its site's rules file.
+  limitsOf(importer, url);
   const library = shell.library;
   if (sheets.way === 'fetch') {
     const { pageData } = sheets;
@@ -855,9 +925,11 @@ async function layOutOnceSheetsCame(shell: NonNullable<typeof desktop>, id: numb
 }
 
 /**
- * Fetches one style sheet as the app fetches a page: robots.txt first
- * (once per site in a go), after the pause, and a refusal or a page in
- * place of the sheet (a check that the reader is a person) stops asking.
+ * Fetches one style sheet as the app fetches a page ({@link askAsApp}):
+ * not at all where the rules file of the site of a page read on its origin
+ * keeps the app off it, else robots.txt first (once per site in a go),
+ * after the pause, and a refusal or a page in place of the sheet (a check
+ * that the reader is a person) stops asking.
  */
 async function fetchSheet(
   shell: NonNullable<typeof desktop>,
@@ -866,12 +938,18 @@ async function fetchSheet(
 ): Promise<SheetAnswer> {
   if (!fetchesSheets()) return { kind: 'cancelled' };
   try {
-    const robots = await robotsFor(shell, new URL(address).origin, id);
-    if (!robots) return { kind: 'cancelled' };
-    if ('refusal' in robots) return { kind: 'not', reason: 'refused', stop: true };
-    if (!robotsAllows(robots, address)) return { kind: 'not', reason: 'robots' };
-    const answer = await fetchAsApp(shell, address, id);
-    if (!answer) return { kind: 'cancelled' };
+    // The limits of the site of a page read whose origin the sheet shares; none on another host.
+    const asked = await askAsApp(
+      shell,
+      address,
+      id,
+      limitsByOrigin.get(new URL(address).origin) ?? {},
+    );
+    if (asked.kind === 'cancelled') return { kind: 'cancelled' };
+    if (asked.kind === 'kept-off') return { kind: 'not', reason: 'kept-off' };
+    if (asked.kind === 'refused') return { kind: 'not', reason: 'refused', stop: true };
+    if (asked.kind === 'robots') return { kind: 'not', reason: 'robots' };
+    const answer = asked.answer;
     return sheetFromAnswer({ ...answer, refusal: refusalOf(answer.status, answer.retryAfter) });
   } catch {
     return { kind: 'not', reason: 'failed' };

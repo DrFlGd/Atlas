@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_ADDRESS_BEGINNING_CHARS,
+  addressBeginningProblem,
+  addressBegins,
+  beginningsOverlap,
   dataPathProblem,
   fillPieces,
   piecesIn,
@@ -113,5 +117,54 @@ describe('named pieces', () => {
     expect(patternPieces('/wiki/**', '/wiki/A/B')).toEqual({});
     expect(patternPieces('/{game}/*', '/lantern')).toBeNull();
     expect(patternPieces('/a.b', '/aXb')).toBeNull();
+  });
+});
+
+describe('beginnings of addresses (reading.keepOff and reading.permission.allows)', () => {
+  it('are written as a Disallow line of a robots.txt without its special signs', () => {
+    for (const good of ['/', '/private/', '/tools/list.php', '/wiki/Page?part=2']) {
+      expect(addressBeginningProblem(good), good).toBeNull();
+    }
+    for (const bad of [
+      'private/',
+      '//other.example.org/',
+      '/a*b',
+      '/a$',
+      '/a?',
+      '/a b',
+      '/a#b',
+      '/a\\b',
+      `/${'a'.repeat(MAX_ADDRESS_BEGINNING_CHARS)}`,
+    ]) {
+      expect(addressBeginningProblem(bad), bad).not.toBeNull();
+    }
+  });
+
+  it('cover an address whose path and query begin with one, upper and lower case counting', () => {
+    const list = ['/private/', '/tools/list.php'];
+    expect(addressBegins(list, 'https://wiki.example.org/private/notes')).toBe(true);
+    expect(addressBegins(list, 'https://wiki.example.org/tools/list.php?from=B')).toBe(true);
+    expect(addressBegins(list, 'https://wiki.example.org/Private/notes')).toBe(false);
+    expect(addressBegins(list, 'https://wiki.example.org/wiki/Private')).toBe(false);
+    // A query counts as a Disallow line counts it; the fragment does not.
+    expect(addressBegins(['/wiki/Page?part='], 'https://wiki.example.org/wiki/Page?part=2')).toBe(
+      true,
+    );
+    expect(addressBegins(['/wiki/Page?part='], 'https://wiki.example.org/wiki/Page#part=2')).toBe(
+      false,
+    );
+    // Written as the address parser writes them: an accent and its escaped form are the same.
+    expect(addressBegins(['/wiki/Café'], 'https://wiki.example.org/wiki/Caf%C3%A9_menu')).toBe(
+      true,
+    );
+    expect(addressBegins(['/'], 'https://wiki.example.org/anything')).toBe(true);
+    // An entry with a problem covers nothing.
+    expect(addressBegins(['/a*'], 'https://wiki.example.org/a*b')).toBe(false);
+  });
+
+  it('overlap when one begins the other', () => {
+    expect(beginningsOverlap('/private/', '/private/drafts/')).toBe(true);
+    expect(beginningsOverlap('/private/drafts/', '/private/')).toBe(true);
+    expect(beginningsOverlap('/private/', '/public/')).toBe(false);
   });
 });

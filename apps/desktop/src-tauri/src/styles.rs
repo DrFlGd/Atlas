@@ -93,6 +93,9 @@ pub enum Reason {
     OtherHost,
     /// The site's robots.txt does not allow this app to read it.
     Robots,
+    /// The site's rules file keeps this app off its address, which it
+    /// never opens on its own.
+    KeptOff,
     /// The site refused, asked to slow down, or answered with something
     /// that is not a style sheet (a page asking to confirm the reader is a
     /// person, say): no more sheets were asked for.
@@ -113,6 +116,9 @@ impl Reason {
                 "on another host than the wiki's own or the ones its importer names"
             }
             Reason::Robots => "not allowed by the site's robots.txt",
+            Reason::KeptOff => {
+                "not opened, as the site's rules file keeps this app off its address"
+            }
             Reason::Refused => "the site refused or did not answer with a style sheet",
             Reason::Failed => "the site could not be reached or did not have it",
             Reason::NotAsked => "not asked for, as the session stopped",
@@ -722,6 +728,14 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn takes_a_sheet_kept_off_by_the_site_rules_file_as_a_reason() {
+        let reason: Reason = serde_json::from_str("\"kept-off\"").unwrap();
+        assert_eq!(reason, Reason::KeptOff);
+        assert_eq!(serde_json::to_string(&reason).unwrap(), "\"kept-off\"");
+        assert!(reason.text().contains("rules file"));
     }
 
     #[test]

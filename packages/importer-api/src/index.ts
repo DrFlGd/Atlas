@@ -47,8 +47,10 @@ import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
 import type { PageLayoutRequest } from './layoutNotes';
 import {
   RULES_READER,
+  checkShippedSiteRules,
   isSiteFile,
   readByRules,
+  readingWidenings,
   type SiteRules,
   type SiteRulesProblem,
 } from './siteRules';
@@ -2114,16 +2116,34 @@ export function applySiteRules(
 
 /**
  * What a file of the person's widens against the files the importer comes
- * with ({@link ImporterSites.widens}), as the app takes it: none for an
- * importer that does not say, throws or answers in another shape.
+ * with, as the app takes it: what the importer says
+ * ({@link ImporterSites.widens}; nothing for an importer that does not say,
+ * throws or answers in another shape), and what the file's `reading`
+ * sections widen against those files whatever the importer says
+ * ({@link readingWidenings}: a permission it records, an address a shipped
+ * file keeps the app off that it no longer does), each once. None for an
+ * importer without site rules files.
  */
 export function siteRulesWideningsOf(
   importer: Pick<AtlasImporter, 'sites'>,
   rules: SiteRules,
 ): SiteRulesWidening[] {
   const sites = importer.sites;
-  if (!sites?.widens) return [];
-  return problemsFrom(safely(() => sites.widens?.(rules), []));
+  if (!sites) return [];
+  const said = sites.widens ? problemsFrom(safely(() => sites.widens?.(rules), [])) : [];
+  const shipped = safely(
+    () =>
+      sites.files.flatMap((file) => {
+        const checked = checkShippedSiteRules(file.rules);
+        return checked.ok ? [{ name: file.name, rules: checked.rules }] : [];
+      }),
+    [],
+  );
+  const seen = new Set(said.map((one) => `${one.field}\n${one.message}`));
+  const more = readingWidenings(rules, shipped).filter(
+    (one) => !seen.has(`${one.field}\n${one.message}`),
+  );
+  return [...said, ...more];
 }
 
 /**

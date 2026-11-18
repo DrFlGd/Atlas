@@ -723,6 +723,7 @@ export type StyleLeftOutReason =
   | 'other-address'
   | 'other-host'
   | 'robots'
+  | 'kept-off'
   | 'refused'
   | 'failed'
   | 'not-asked';
