@@ -168,7 +168,7 @@ export async function loadAllGameFacts(): Promise<void> {
 // ---------------------------------------------------------------------------
 // In words
 
-/** What a game is, for the list: maps, a wiki read as guides, or a game made in this app. */
+/** What a game is, for the list: maps, a wiki read as guides, or a map made in this app. */
 export type GameKind = 'maps' | 'wiki' | 'own';
 
 export const KIND_LABEL: Record<GameKind, string> = {

@@ -745,7 +745,7 @@ async function askAsApp<T = ShellFetchedPage>(
  * cut (`ImportContext.wholePicture`), in go `id`, for the page at
  * `pageUrl`: each picture asked for as every page is ({@link askAsApp}:
  * the site's rules file, `robots.txt`, the pause, the app's own name),
- * then cut by the shell as "New game" cuts a picture. `cuts` gathers the
+ * then cut by the shell as "New map from a picture" cuts a picture. `cuts` gathers the
  * names of the cuts made, so those no saved pack names are thrown away.
  */
 function wholePictures(

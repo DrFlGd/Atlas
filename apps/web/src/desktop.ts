@@ -1305,7 +1305,7 @@ export interface DesktopBridge {
      * whatever its status. Rejects when the site could not be reached.
      */
     fetchPicture(url: string): Promise<ShellFetchedPicture>;
-    /** Cuts a picture `fetchPicture` kept into map images, as "New game" does. */
+    /** Cuts a picture `fetchPicture` kept into map images, as "New map from a picture" does. */
     cutPicture(picture: string): Promise<ShellPictureCut>;
     /** Throws away kept pictures and cuts that no saved import names. */
     discardPictures(pictures: string[]): Promise<void>;

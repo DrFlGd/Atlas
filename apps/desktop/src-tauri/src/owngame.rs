@@ -1,4 +1,4 @@
-//! Games made in the app ("New game"): a game whose maps are pictures the
+//! Maps made in the app for a game ("New map from a picture"): a pack whose maps are pictures the
 //! person chose, cut into tiles (see `tiles::cut`). It is a pack in the
 //! maps folder like any other, whose manifest says `madeInApp`, with a
 //! `maps.json` and `layers.json` of its maps and their levels, and no
@@ -168,7 +168,7 @@ fn tile_folder_of(layer: &Value) -> Option<String> {
 pub fn check_made_in_app(pack: &Path) -> Result<(), String> {
     match read_head(pack) {
         Ok(head) if head.made_in_app => Ok(()),
-        Ok(_) => Err("Only a game made in Atlas can be changed this way.".to_owned()),
+        Ok(_) => Err("Only a map made in Atlas can be changed this way.".to_owned()),
         Err(reason) => Err(format!("The game cannot be read: {reason}.")),
     }
 }
@@ -235,7 +235,7 @@ pub fn delete_map(pack: &Path, map_id: &str) -> Result<String, String> {
         .to_owned();
     if maps.len() < 2 {
         return Err(format!(
-            "{name} is this game's only map, so it cannot be deleted on its own. Delete the game instead."
+            "{name} is the only map here, so it cannot be deleted on its own. Delete the whole map from the Library instead."
         ));
     }
     let of_map = |layer: &Value| layer.get("mapId").and_then(Value::as_str) == Some(map_id);
@@ -387,7 +387,7 @@ mod cutting {
         let target = maps_folder.join(&game_id);
         fs::rename(&work, &target).map_err(|error| {
             Stop::Failed(format!(
-                "Could not put the new game in the maps folder: {error}"
+                "Could not put the new map in the maps folder: {error}"
             ))
         })?;
         scrap.kept = true;

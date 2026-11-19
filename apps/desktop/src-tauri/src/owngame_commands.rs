@@ -1,7 +1,7 @@
 //! The commands for games made in the app (see `owngame.rs`) and for a
 //! person's own locations, types and areas and own guide pages of any game
 //! (see `ownlists.rs`):
-//! choosing a picture, making a game, adding a map or a level, how far a
+//! choosing a picture, making a map for a game, adding a map or a level, how far a
 //! cut is and stopping it, renaming a game and deleting one of its maps.
 //!
 //! The commands exist in every build; on Android, which has no picture
@@ -277,7 +277,7 @@ pub async fn own_game_create<R: Runtime>(
     #[cfg(not(target_os = "android"))]
     {
         let app_info = crate::commands::app_info(&app);
-        let what = format!("the new game {}", short(&title));
+        let what = format!("the new map for {}", short(&title));
         cut_job(
             Arc::clone(&library),
             jobs.inner().clone(),
@@ -396,7 +396,7 @@ pub async fn own_game_rename(
         kept_game_changed(&game_id);
         activity::info(
             Area::Library,
-            format!("Renamed the game {} to {}", short(&game_id), short(&title)),
+            format!("Renamed the map {} to {}", short(&game_id), short(&title)),
         );
         Ok(OwnGameChanged {
             added: None,

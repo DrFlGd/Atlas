@@ -65,8 +65,8 @@ export function deleteRow(kind: GameKind, grouped: boolean): { title: string; te
     };
   }
   return {
-    title: 'Delete this game',
-    text: `Deletes only this game made in this app: its folder with its maps and images.${
+    title: 'Delete this map',
+    text: `Deletes only this map made in this app: its folder with its maps and images.${
       grouped ? ' The other sources of its title stay.' : ''
     } ${asked}`,
   };
@@ -89,7 +89,7 @@ export function onlyThisText(kind: GameKind, inTitle: string | undefined): strin
       ? 'Only this wiki is deleted.'
       : kind === 'maps'
         ? 'Only these maps are deleted.'
-        : 'Only this game is deleted.';
+        : 'Only this map is deleted.';
   return inTitle
     ? `${only} It leaves the title ${inTitle}. The other sources stay under it.`
     : `${only} Your other games stay.`;

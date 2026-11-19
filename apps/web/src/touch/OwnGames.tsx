@@ -18,10 +18,13 @@ import { canWritePackFile, madePacksOffered } from '../state/madePacks';
 import { useAtlas } from '../state/store';
 
 /*
- * Games made in the app, on the Games screen of the desktop apps: "New
- * game…" (a name and the first map's picture, in one go), and for such a
- * game "Add map…", "Add level…", "Rename…" and "Delete map…". Making a map
- * from a picture shows how far it is, with Cancel, which leaves nothing.
+ * Maps made in the app for a game, on the Games screen of the desktop
+ * apps: "New map from a picture…" (the game it is for, and the first map's
+ * name and picture, in one go), and for such a map "Add map…", "Add
+ * level…", "Rename…" and "Delete map…"; in the desktop app without
+ * downloads also "Write the pack file…" and "Close without writing…".
+ * Making a map from a picture shows how far it is, with Cancel, which
+ * leaves nothing.
  */
 
 /** What the picture dialog makes. */
@@ -30,7 +33,7 @@ export type PictureDialogMode =
   | { kind: 'map'; gameId: string; title: string }
   | { kind: 'level'; gameId: string; title: string; maps: { id: string; name: string }[] };
 
-/** The New game button, and its dialog. */
+/** The "New map from a picture" button, and its dialog. */
 export function NewGameButton() {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -46,11 +49,11 @@ export function NewGameButton() {
         }}
       >
         <UiIcon name="mapPlus" size={20} />
-        New game…
+        New map from a picture…
       </button>
       <p className="touch-note">
-        Make a game of your own from a picture of its map: a large PNG, JPEG or WebP picture is cut
-        into the map’s levels of detail. Add your own locations to it with Edit locations.
+        Make a map for a game from a picture of it: a large PNG, JPEG or WebP picture is cut into
+        the map’s levels of detail. Add your own locations to it with Edit locations.
       </p>
       {open ? (
         <PictureDialog
@@ -67,13 +70,13 @@ export function NewGameButton() {
 
 const TEXT = {
   game: {
-    title: 'New game',
-    nameLabel: 'Name of the game',
-    namePlaceholder: 'My game',
-    mapLabel: 'Name of its first map',
+    title: 'New map for a game',
+    nameLabel: 'The game it is for',
+    namePlaceholder: 'Name of the game',
+    mapLabel: 'Name of the map',
     mapPlaceholder: 'World',
-    make: 'Make game',
-    lead: 'A game needs a map, so give its first map a picture now. More maps, and levels such as floors, can be added later.',
+    make: 'Make map',
+    lead: 'Name the game the map is for, then give the map a picture. More maps, and levels such as floors, can be added later.',
   },
   map: {
     title: 'Add a map',
@@ -160,7 +163,7 @@ function PictureDialog({ mode, onClose }: { mode: PictureDialogMode; onClose: ()
 
   const make = async () => {
     if (mode.kind === 'game' && !title.trim()) {
-      setProblem('Give the game a name.');
+      setProblem('Name the game the map is for.');
       return;
     }
     if (!mapName.trim()) {
@@ -405,7 +408,7 @@ function CutProgressView({
 }
 
 // ---------------------------------------------------------------------------
-// A game made in the app, on its row of the Games screen
+// A map made in the app, on its row of the Games screen
 
 /** The maps of a game, for its row: from the game shown, or none when another is. */
 function useMapsOf(gameId: string): { id: string; name: string }[] {
@@ -558,7 +561,7 @@ function RenameForm({ id, title, onClose }: { id: string; title: string; onClose
       onSubmit={(event) => {
         event.preventDefault();
         if (!name.trim()) {
-          setProblem('Give the game a name.');
+          setProblem('Give it a name.');
           return;
         }
         setWorking(true);

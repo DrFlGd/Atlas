@@ -100,10 +100,10 @@ describe('DeletePackConfirmView', () => {
     expect(wiki({ site: null })).not.toContain('remembers');
   });
 
-  it('names a game made in the app', () => {
+  it('names a map made in the app', () => {
     const shown = text(view({ kind: 'own' }));
     expect(shown).toContain('Delete My Game?');
-    expect(shown).toContain('Only this game is deleted.');
+    expect(shown).toContain('Only this map is deleted.');
   });
 
   it('shows that it is working, and a plain error', () => {
@@ -172,7 +172,7 @@ describe('the delete row of More', () => {
       text: 'Deletes only these maps: their folder with the maps, locations and images. You are asked first, and told what happens to the marks you made.',
     });
     expect(deleteRow('maps', true).text).toContain(' The other sources of their title stay. ');
-    expect(deleteRow('own', false).title).toBe('Delete this game');
+    expect(deleteRow('own', false).title).toBe('Delete this map');
     for (const kind of ['wiki', 'maps', 'own'] as const) {
       for (const grouped of [false, true]) {
         const row = deleteRow(kind, grouped);

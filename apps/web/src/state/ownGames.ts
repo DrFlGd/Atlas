@@ -12,9 +12,9 @@ import {
 import { useAtlas } from './store';
 
 /**
- * Games made in the desktop app from pictures (see `owngame.rs` in the
- * shell): a new game from its name and its first map's picture, more maps
- * and levels, renaming the game and deleting one of its maps. The shell
+ * Maps made for a game in the desktop app from pictures (see `owngame.rs`
+ * in the shell): a new one from the game it is for and its first map's
+ * picture, more maps and levels, renaming it and deleting one of its maps. The shell
  * cuts the picture into the map's tiles; this module runs its commands and
  * shows what was made.
  */
@@ -97,7 +97,7 @@ export async function renameOwnGame(gameId: string, title: string): Promise<stri
   try {
     const changed = await desktop!.ownGames.rename(gameId, title);
     await show(changed, false);
-    notify(`Renamed the game to ${title.trim()}.`);
+    notify(`Renamed the map to ${title.trim()}.`);
     return null;
   } catch (error) {
     return errorText(error);
