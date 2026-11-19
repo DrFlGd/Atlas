@@ -175,9 +175,16 @@ Treat every pack file as untrusted.
 
 ## Reading a pack file where it lies
 
-Atlas can show a pack file without importing it (see "Pack files read where they lie" in `apps/desktop/README.md`). It then makes the checks above once when it opens the file: it reads the description and the central directory (ZIP64 too), checks every entry as an import does, and keeps a table of where each entry is, without the ZIP reader. Stored entries, and byte ranges of them, are read from the file where they are; a deflated entry is unpacked whole within its size limit and checked against its checksum. The small pictures and the person's own things (`mine/`) are not served.
+Atlas can show a pack file without importing it (see "Pack files read where they lie" in `apps/desktop/README.md`). In place, the checks above are split in two:
 
-Another app may replace a pack file while Atlas has it open, by writing a `.part` file beside it and renaming that over it. Atlas compares the file's length, modified time and end of central directory record at each read and reads the new file's list of contents when they changed, so it never reads the new file at the old file's offsets. Atlas never writes into a pack file or beside it.
+- **The list of contents is checked when the file is opened.** Atlas reads the description and the central directory (ZIP64 too, from the directory alone, not a local header per entry) and checks every entry's name, type, packing and size as an import does. The description listed first must start at the very start of the file, so the description read from the start is the one the list names. The JSON files the rules need (`manifest.json`, `maps.json`, `layers.json` and `pictures.json`) are read for that.
+- **Each file's content is checked at its first read.** A JSON file must be JSON, and a status file one of its layer, as an import requires. An entry read whole must match its checksum, and its local header must name it. An entry that fails is never served, and the file is then listed as one that cannot be opened, with the import's sentence, until it changes.
+
+A byte range of a stored entry (a map image) is read from the file as it is and is not checked against the entry's checksum; the whole entry is. A deflated entry is always unpacked whole, within its size limit. The small pictures and the person's own things (`mine/`) are neither served nor read, so a file whose own things an import would refuse is still shown; the person's own things of a game read in place are Atlas's, kept in the maps folder by the game's id.
+
+When the Library looks for pack files, it keeps only what tells each file from a changed one and its description. The table of where each entry is is built again when the pack is read, and only the tables of the few packs read last are kept, with one limit on the unpacked JSON files of all of them.
+
+Another app may replace a pack file while Atlas has it open, by writing a `.part` file beside it and renaming that over it. At each read Atlas compares the file's length and modified time, its end of central directory record (with the ZIP64 locator and the ZIP64 end record when there are), and the first record of its central directory, which holds the checksum of the description. When one differs, it reads the new file's list of contents, so it never reads the new file at the old file's offsets. A file rewritten in place that keeps its length, its modified time and its description is not noticed; a pack file Atlas writes has a description of its own, which says when it was made. Atlas never writes into a pack file or beside it.
 
 ## Reading pack files from another Rust app
 
