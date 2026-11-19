@@ -177,14 +177,14 @@ Treat every pack file as untrusted.
 
 The `atlas-pack` crate, in this repository at `crates/atlas-pack`, holds what another app needs: the description's types, the format's constants, the checks above for the description and the small pictures, and bounded reads from a file. It has no app code and makes no network request. It is MIT licensed, as Atlas is.
 
-Take it as a git dependency pinned to a release tag of Atlas, so its code only changes when you change the tag:
+Take it as a git dependency pinned to a release tag of this repository that has the crate, so its code only changes when you change the tag. Put that tag in place of `TAG`:
 
 ```toml
 [dependencies]
-atlas-pack = { git = "https://github.com/DrFlGd/Atlas", tag = "v0.23.0" }
+atlas-pack = { git = "https://github.com/DrFlGd/Atlas", tag = "TAG" }
 ```
 
-The tag here is an example: use the tag of an Atlas release that has the crate, and move to a later one when you want to read a newer version of the format.
+Move to a later tag when you want to read a newer version of the format.
 
 Then read a file's description and its cover:
 
