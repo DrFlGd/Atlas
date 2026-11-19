@@ -47,10 +47,11 @@ const here = (/** @type {string} */ path) => fileURLToPath(new URL(path, import.
 /**
  * The config to merge for a custom name and identifier, or null for the
  * plain Atlas build. `platformConfig` is this system's own config
- * (`tauri.windows.conf.json`), when it has one:
- * its pack file type is registered again under a class named after the
- * identifier, so that installing or removing one app leaves the other
- * app's registration as it was. Exported for tests.
+ * (`tauri.windows.conf.json`), when it has one: the pack file type it
+ * registers is for the plain Atlas app alone, so a build with its own
+ * identifier registers none. Two apps installed side by side would
+ * otherwise each claim the file type, and the one installed last would
+ * open a pack file from the file manager. Exported for tests.
  * @param {{ name?: string, identifier?: string }} identity
  * @param {{ app: { windows: Array<Record<string, unknown>> } }} baseConfig
  * @param {{ bundle?: { fileAssociations?: Array<{ ext: string[] } & Record<string, unknown>> } } | null} [platformConfig]
@@ -83,16 +84,7 @@ export function identityConfig({ name, identifier }, baseConfig, platformConfig 
         window.label === 'main' ? { ...window, title: name } : window,
       ),
     },
-    ...(associations
-      ? {
-          bundle: {
-            fileAssociations: associations.map((association) => ({
-              ...association,
-              name: `${identifier}.${association.ext[0] ?? 'file'}`,
-            })),
-          },
-        }
-      : {}),
+    ...(associations ? { bundle: { fileAssociations: [] } } : {}),
   };
 }
 

@@ -41,7 +41,7 @@ test('a build with its own name and identifier renames the app and its window', 
   });
 });
 
-test('a build with its own identifier registers the pack file type under its own class', () => {
+test('a build with its own identifier leaves the pack file type to the plain Atlas app', () => {
   const platform = {
     bundle: {
       fileAssociations: [
@@ -54,12 +54,8 @@ test('a build with its own identifier registers the pack file type under its own
     base,
     platform,
   );
-  assert.deepEqual(config?.bundle, {
-    fileAssociations: [
-      { ext: ['atlaspack'], name: 'org.example.my-atlas.atlaspack', description: 'Pack file' },
-    ],
-  });
-  // A system with no file type of its own gets none.
+  assert.deepEqual(config?.bundle, { fileAssociations: [] });
+  // A system with no file type of its own needs nothing taken out.
   assert.equal(
     identityConfig({ name: 'My Atlas', identifier: 'org.example.my-atlas' }, base, null)?.bundle,
     undefined,

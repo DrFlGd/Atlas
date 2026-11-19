@@ -286,7 +286,9 @@ impl Follow {
         #[cfg(test)]
         self.counts.looks.fetch_add(1, Ordering::SeqCst);
         let fingerprint = Fingerprint::take(&self.library);
-        self.follow(&fingerprint);
+        // After events a folder may have gone and come back since the last
+        // look; its watch went with it, though the folders are the same.
+        self.follow(&fingerprint, self.first_change.is_some());
         if self.last.as_ref() != Some(&fingerprint) {
             if self.last.is_some() {
                 #[cfg(test)]
@@ -302,8 +304,12 @@ impl Follow {
         self.last_look = now;
     }
 
-    /// Watches the folders a fingerprint names, and no others.
-    fn follow(&mut self, fingerprint: &Fingerprint) {
+    /// Watches the folders a fingerprint names, and no others. With
+    /// `again` (Linux only), each folder watched on its own is watched
+    /// again: for a folder still there this changes nothing and loses no
+    /// event, and one that was deleted and made again gets its watch back.
+    fn follow(&mut self, fingerprint: &Fingerprint, again: bool) {
+        let again = again && cfg!(target_os = "linux");
         self.needs_looking = fingerprint.needs_looking;
         if !self.timing.watch {
             self.needs_looking = true;
@@ -360,7 +366,7 @@ impl Follow {
             kept
         });
         for (folder, below) in wanted {
-            if self.watched.contains_key(&folder) {
+            if self.watched.contains_key(&folder) && !(again && !below) {
                 continue;
             }
             let mode = if below {
@@ -371,6 +377,7 @@ impl Follow {
             if watcher.watch(&folder, mode).is_ok() {
                 self.watched.insert(folder, below);
             } else {
+                self.watched.remove(&folder);
                 self.needs_looking = true;
             }
         }
@@ -379,9 +386,10 @@ impl Follow {
 
 /// Whether a watcher's event may change the listing: in a folder Atlas
 /// reads (`folders`), a pack file's name, the settings file, or a folder
-/// that arrived or went. Never a `.part` file or a name that starts with
-/// a dot. Only the event's paths are read, and a folder's metadata only
-/// for an event that can be one.
+/// that arrived or went (one that went is known by being a folder Atlas
+/// read, since Windows does not say what was removed). Never a `.part`
+/// file or a name that starts with a dot. Only the event's paths are
+/// read, and a folder's metadata only for an event that can be one.
 fn may_change_listing(event: &Event, folders: &BTreeSet<PathBuf>) -> bool {
     let data = match event.kind {
         EventKind::Access(_) => return false,
@@ -410,7 +418,7 @@ fn may_change_listing(event: &Event, folders: &BTreeSet<PathBuf>) -> bool {
             return true;
         }
         // A change inside a file or a folder: only a pack file's counts.
-        !data && (folder || path.is_dir())
+        !data && (folder || folders.contains(path) || path.is_dir())
     })
 }
 
@@ -824,6 +832,12 @@ mod tests {
             "Gone Now"
         )));
         assert!(may_change_listing(&event(rename, "Games")));
+        // A folder Atlas read that went, as Windows tells it: nothing says
+        // it was a folder, and it is not there to be asked.
+        let read = BTreeSet::from([dir.0.clone(), dir.0.join("Was Here")]);
+        let went = event(EventKind::Remove(RemoveKind::Any), "Was Here");
+        assert!(super::may_change_listing(&went, &read));
+        assert!(!may_change_listing(&went));
 
         assert!(!may_change_listing(&event(data, "valley.atlaspack.part")));
         assert!(!may_change_listing(&event(
@@ -851,6 +865,29 @@ mod tests {
             EventKind::Remove(RemoveKind::Any),
             "notes.txt"
         )));
+    }
+
+    /// A folder deleted and made again between two looks has lost its
+    /// watch without the list of folders changing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn follows_a_folder_that_went_and_came_back_between_two_looks() {
+        let s = setup("watch-folder-back", fast(true));
+        let folder = s.library.packs_folder().join("valley");
+        let looks = s.receiver.looks();
+        fs::create_dir_all(&folder).unwrap();
+        wait_for("the look at the new folder", || s.receiver.looks() > looks);
+        let looks = s.receiver.looks();
+        fs::remove_dir(&folder).unwrap();
+        fs::create_dir(&folder).unwrap();
+        wait_for("the look after the folder came back", || {
+            s.receiver.looks() > looks
+        });
+        let bytes = pack_bytes(&s.dir.0, "Test Valley", "2026-11-10T09:00:00Z");
+        write_through_part(&folder, "valley.atlaspack", &bytes);
+        wait_for("the pack file in the folder that came back", || {
+            s.titles() == Some(vec!["Test Valley".to_owned()])
+        });
     }
 
     #[test]
