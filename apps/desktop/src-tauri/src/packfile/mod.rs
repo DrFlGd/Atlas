@@ -77,6 +77,7 @@ pub mod card;
 pub mod export;
 pub mod import;
 pub mod inplace;
+pub mod names;
 pub mod preview;
 pub mod shell;
 pub mod smaller;
