@@ -25,6 +25,12 @@
 //! - **Folder** packs live in a folder the person keeps (the maps folder, or
 //!   one they opened). They are served as they are, with no overlay; map
 //!   images downloaded for them are written into the pack folder itself.
+//! - **File** packs are pack files (`.atlaspack`) read where they lie (see
+//!   `packfile::inplace`), never changed and with no overlay. Of a pack
+//!   file, only what a pack folder holds is served: the pack's JSON files,
+//!   status files, map images with their markers, and pictures; not its
+//!   small pictures or the person's own things (`mine/`). Each request is
+//!   read from the pack file as it is at that moment.
 //!
 //! The `import/` folder of a pack (page data kept for rebuilding an imported
 //! pack) is never served.
@@ -41,7 +47,7 @@ use std::{
 use percent_encoding::percent_decode_str;
 use tauri::http::{header, Method, Request, Response, StatusCode};
 
-use crate::tiles::pyramid::is_safe_segment;
+use crate::{packfile::inplace::PackFile, tiles::pyramid::is_safe_segment};
 
 /// The URI scheme name registered with the webview.
 pub const SCHEME: &str = "atlas-pack";
@@ -66,12 +72,27 @@ pub enum PackKind {
     Bundled,
     /// A folder the person keeps; downloads go into it.
     Folder,
+    /// A pack file read where it lies; nothing is written into it or
+    /// beside it.
+    File,
+}
+
+#[derive(Clone, Debug)]
+enum Source {
+    Folder(PathBuf),
+    File(Arc<PackFile>),
 }
 
 #[derive(Clone, Debug)]
 struct Entry {
-    root: PathBuf,
+    source: Source,
     kind: PackKind,
+}
+
+/// What a request names: a file on disk, or an entry of a pack file.
+enum Target {
+    Disk(PathBuf),
+    Entry(Arc<PackFile>, String),
 }
 
 /// The pack folders the protocol may serve, keyed by pack id.
@@ -143,8 +164,28 @@ impl PackRegistry {
             .insert(
                 id.to_owned(),
                 Entry {
-                    root: canonical,
+                    source: Source::Folder(canonical),
                     kind,
+                },
+            );
+        Ok(())
+    }
+
+    /// Makes a pack file, read where it lies, available as
+    /// `<scheme URL>/<id>/`, replacing anything registered under the same
+    /// id. Only entries of a file whose description names `id` are served.
+    pub fn register_file(&self, id: &str, pack: Arc<PackFile>) -> Result<(), RegisterError> {
+        if !is_valid_pack_id(id) {
+            return Err(RegisterError::InvalidId(id.to_owned()));
+        }
+        self.roots
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                id.to_owned(),
+                Entry {
+                    source: Source::File(pack),
+                    kind: PackKind::File,
                 },
             );
         Ok(())
@@ -158,9 +199,20 @@ impl PackRegistry {
             .remove(id);
     }
 
-    /// The folder registered for a pack id.
+    /// The folder registered for a pack id; none for a pack file.
     pub fn root(&self, id: &str) -> Option<PathBuf> {
-        self.entry(id).map(|entry| entry.root)
+        self.entry(id).and_then(|entry| match entry.source {
+            Source::Folder(root) => Some(root),
+            Source::File(_) => None,
+        })
+    }
+
+    /// The pack file registered for a pack id.
+    pub fn pack_file(&self, id: &str) -> Option<Arc<PackFile>> {
+        self.entry(id).and_then(|entry| match entry.source {
+            Source::File(pack) => Some(pack),
+            Source::Folder(_) => None,
+        })
     }
 
     /// How a pack id is registered.
@@ -237,15 +289,20 @@ impl PackRegistry {
                 .expect("valid response");
         }
 
-        let file = match self.resolve(request.uri().path()) {
-            Ok(file) => file,
+        let target = match self.resolve(request.uri().path()) {
+            Ok(target) => target,
             Err(status) => return error(status),
         };
         let range = request
             .headers()
             .get(header::RANGE)
             .and_then(|value| value.to_str().ok());
-        match read_file(&file, range, method == Method::HEAD) {
+        let head = method == Method::HEAD;
+        let response = match target {
+            Target::Disk(file) => read_file(&file, range, head),
+            Target::Entry(pack, name) => read_entry(&pack, request_id(request), &name, range, head),
+        };
+        match response {
             Ok(response) => response,
             Err(err) if err.kind() == io::ErrorKind::NotFound => error(StatusCode::NOT_FOUND),
             Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR),
@@ -253,13 +310,14 @@ impl PackRegistry {
     }
 
     /// Maps a URL path to a file inside a registered pack's overlay folder
-    /// or, failing that, its pack folder.
-    fn resolve(&self, url_path: &str) -> Result<PathBuf, StatusCode> {
+    /// or, failing that, its pack folder; or to an entry of a pack file.
+    fn resolve(&self, url_path: &str) -> Result<Target, StatusCode> {
         let mut segments = url_path.strip_prefix('/').unwrap_or(url_path).split('/');
         let id = segments.next().unwrap_or_default();
-        let root = self.root(id).ok_or(StatusCode::NOT_FOUND)?;
+        let source = self.entry(id).ok_or(StatusCode::NOT_FOUND)?.source;
 
         let mut relative = PathBuf::new();
+        let mut name = String::new();
         for (index, segment) in segments.enumerate() {
             let segment = percent_decode_str(segment)
                 .decode_utf8()
@@ -272,19 +330,37 @@ impl PackRegistry {
                 return Err(StatusCode::FORBIDDEN);
             }
             relative.push(segment.as_ref());
+            if index > 0 {
+                name.push('/');
+            }
+            name.push_str(&segment);
         }
         if relative.as_os_str().is_empty() {
             return Err(StatusCode::NOT_FOUND);
         }
 
+        let root = match source {
+            Source::Folder(root) => root,
+            Source::File(pack) => return Ok(Target::Entry(pack, name)),
+        };
         if let Some(overlay) = self.overlay(id) {
             match file_inside(&overlay, &relative) {
                 Err(StatusCode::NOT_FOUND) => {}
-                found => return found,
+                found => return found.map(Target::Disk),
             }
         }
-        file_inside(&root, &relative)
+        file_inside(&root, &relative).map(Target::Disk)
     }
+}
+
+/// The pack id a request names: the first segment of its path.
+fn request_id(request: &Request<Vec<u8>>) -> &str {
+    let path = request.uri().path();
+    path.strip_prefix('/')
+        .unwrap_or(path)
+        .split('/')
+        .next()
+        .unwrap_or_default()
 }
 
 /// `root/relative` if it is a file inside `root` (a canonical path), after
@@ -370,9 +446,59 @@ fn read_file(path: &Path, range: Option<&str>, head: bool) -> io::Result<Respons
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
     let etag = format!("\"{len:x}-{modified:x}\"");
+    ranged(
+        content_type(path),
+        len,
+        etag,
+        range,
+        head,
+        |start, count| {
+            let mut body = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+            file.seek(SeekFrom::Start(start))?;
+            file.take(count).read_to_end(&mut body)?;
+            Ok(body)
+        },
+    )
+}
 
+/// Answers a request for an entry of a pack file, from the file as it is
+/// now. An entry the file does not serve, and a file that now holds
+/// another pack, are not found; a file that cannot be used is an error.
+fn read_entry(
+    pack: &PackFile,
+    id: &str,
+    name: &str,
+    range: Option<&str>,
+    head: bool,
+) -> io::Result<Response<Vec<u8>>> {
+    let opened = pack.open()?;
+    if opened.header().pack_id != id {
+        return Err(io::ErrorKind::NotFound.into());
+    }
+    let len = opened.size(name).ok_or(io::ErrorKind::NotFound)?;
+    let etag = opened.etag(name);
+    ranged(
+        content_type(Path::new(name)),
+        len,
+        etag,
+        range,
+        head,
+        |start, count| opened.read(name, start, count),
+    )
+}
+
+/// A response with the bytes of a file of `len` bytes, or of the one range
+/// a request asks for; `read` gives `count` bytes from `start`.
+fn ranged(
+    content_type: &str,
+    len: u64,
+    etag: String,
+    range: Option<&str>,
+    head: bool,
+    read: impl FnOnce(u64, u64) -> io::Result<Vec<u8>>,
+) -> io::Result<Response<Vec<u8>>> {
     let builder = Response::builder()
-        .header(header::CONTENT_TYPE, content_type(path))
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::ETAG, etag)
         .header(header::CACHE_CONTROL, "no-cache")
@@ -405,10 +531,7 @@ fn read_file(path: &Path, range: Option<&str>, head: bool) -> io::Result<Respons
     let body = if head {
         Vec::new()
     } else {
-        let mut body = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
-        file.seek(SeekFrom::Start(start))?;
-        file.take(count).read_to_end(&mut body)?;
-        body
+        read(start, count)?
     };
     Ok(builder
         .header(header::CONTENT_LENGTH, count)

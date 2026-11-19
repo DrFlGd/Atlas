@@ -75,6 +75,7 @@
 pub mod card;
 pub mod export;
 pub mod import;
+pub mod inplace;
 pub mod preview;
 pub mod shell;
 pub mod smaller;
@@ -1420,6 +1421,10 @@ pub struct PackDetails {
     pub archive: bool,
     /// The pack file it was imported from, if it was.
     pub pack_file: Option<ImportedRecord>,
+    /// The pack file it is read from where it lies, if it is: then every
+    /// other fact here is the file's description's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_from: Option<ReadFrom>,
     /// The style sheets kept from the pages it was read from (see
     /// `styles.rs`), when there are any. Never in a pack file.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1476,8 +1481,63 @@ pub fn pack_details(source: &PackSource) -> Result<PackDetails, String> {
         detail,
         images_at,
         pack_file: read_imported_record(&source.root),
+        read_from: None,
         styles: crate::styles::facts(&source.root),
     })
+}
+
+/// The pack file a listed pack is read from where it lies.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFrom {
+    pub path: String,
+    pub file_name: String,
+    pub header: Header,
+}
+
+/// The facts about a pack read from a pack file, from its description
+/// alone: nothing else of the file is read, and nothing of it is changed.
+pub fn pack_file_details(path: &Path, header: &Header) -> PackDetails {
+    let downloadable = header.images.layers.iter().any(|layer| layer.downloadable);
+    PackDetails {
+        pack: header.pack.clone(),
+        source: header.source.clone(),
+        contents: header.contents,
+        layers: header
+            .images
+            .layers
+            .iter()
+            .map(|layer| InstalledLayer {
+                id: layer.id.clone(),
+                name: layer.name.clone(),
+                map_name: layer.map_name.clone(),
+                min_zoom: layer.min_zoom,
+                max_zoom: layer.max_zoom,
+                downloadable: layer.downloadable,
+                levels: layer.levels.clone(),
+                downloaded_at: layer.downloaded_at.clone(),
+            })
+            .collect(),
+        detail: downloadable.then_some(header.images.detail),
+        images_at: header
+            .images
+            .layers
+            .iter()
+            .filter_map(|layer| layer.downloaded_at.as_deref())
+            .max_by_key(|at| iso_millis(at))
+            .map(str::to_owned),
+        archive: false,
+        pack_file: None,
+        read_from: Some(ReadFrom {
+            path: path.display().to_string(),
+            file_name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            header: header.clone(),
+        }),
+        styles: None,
+    }
 }
 
 /// The record of the pack file a pack folder was imported from.

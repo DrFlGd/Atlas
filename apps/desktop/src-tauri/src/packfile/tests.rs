@@ -2943,3 +2943,493 @@ fn refuses_small_pictures_that_are_not_listed_or_out_of_place() {
     let error = import_error(&dir.0, "png", &header, &png);
     assert!(error.contains("not the picture"), "{error}");
 }
+
+// ---------------------------------------------------------------------------
+// Pack files read where they lie
+
+mod in_place {
+    use std::{io::Read, time::SystemTime};
+
+    use tauri::http::{header, Method, Request, Response, StatusCode};
+
+    use super::*;
+    use crate::packfile::inplace::PackFile;
+
+    fn get(registry: &PackRegistry, name: &str, range: Option<&str>) -> Response<Vec<u8>> {
+        let mut request = Request::builder().uri(format!("atlas-pack://localhost/{ID}/{name}"));
+        if let Some(range) = range {
+            request = request.header(header::RANGE, range);
+        }
+        registry.respond(&request.body(Vec::new()).unwrap())
+    }
+
+    fn header_value<'a>(response: &'a Response<Vec<u8>>, name: &header::HeaderName) -> &'a str {
+        response.headers().get(name).unwrap().to_str().unwrap()
+    }
+
+    /// An entry of a pack file as the zip crate reads it.
+    fn entry_bytes(file: &Path, name: &str) -> Vec<u8> {
+        let mut archive = ZipArchive::new(fs::File::open(file).unwrap()).unwrap();
+        let mut entry = archive.by_name(name).unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn registered(file: &Path) -> PackRegistry {
+        let registry = PackRegistry::default();
+        registry
+            .register_file(ID, Arc::new(PackFile::new(file.to_path_buf())))
+            .unwrap();
+        registry
+    }
+
+    /// Why a file cannot be opened in place, and that an import of the same
+    /// file refuses it with the same words.
+    fn in_place_error(
+        dir: &Path,
+        name: &str,
+        header: &Value,
+        entries: &[(String, Vec<u8>)],
+    ) -> String {
+        let error = import_error(dir, name, header, entries);
+        let file = dir.join(format!("{name}.atlaspack"));
+        let in_place = PackFile::new(file.clone()).check().unwrap_err();
+        assert_eq!(in_place, error, "{name}: the same refusal as an import");
+        assert_ne!(
+            registered(&file)
+                .respond(
+                    &Request::builder()
+                        .uri(format!("atlas-pack://localhost/{ID}/manifest.json"))
+                        .body(Vec::new())
+                        .unwrap()
+                )
+                .status(),
+            StatusCode::OK,
+            "{name}: nothing of it is served"
+        );
+        in_place
+    }
+
+    #[test]
+    fn serves_stored_and_deflated_entries_and_ranges_of_a_pack_file() {
+        let dir = TempDir::new("inplace-serve");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let file = dir.0.join("Test Valley.atlaspack");
+        run_export(&folder_source(&pack), Detail::Full, &file).unwrap();
+        let before = fs::read(&file).unwrap();
+        let registry = registered(&file);
+        assert_eq!(registry.kind(ID), Some(crate::packs::PackKind::File));
+        assert!(registry.root(ID).is_none(), "no folder to write into");
+
+        // A deflated JSON file, whole and in part.
+        let manifest = entry_bytes(&file, "manifest.json");
+        let response = get(&registry, "manifest.json", None);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.body(), &manifest);
+        assert_eq!(
+            header_value(&response, &header::CONTENT_TYPE),
+            "application/json; charset=utf-8"
+        );
+        let response = get(&registry, "manifest.json", Some("bytes=2-9"));
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), &manifest[2..=9]);
+        // A stored map image, whole and in part, and its marker.
+        let tile = tile_a(1, 1, 0);
+        let response = get(&registry, &tile, None);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.body(), b"a1/1/0");
+        assert_eq!(header_value(&response, &header::CONTENT_TYPE), "image/png");
+        let response = get(&registry, &tile, Some("bytes=1-3"));
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"1/1");
+        assert_eq!(
+            header_value(&response, &header::CONTENT_RANGE),
+            "bytes 1-3/6"
+        );
+        assert_eq!(get(&registry, &tile, Some("bytes=-2")).body(), b"/0");
+        assert_eq!(
+            get(&registry, &tile, Some("bytes=6-")).status(),
+            StatusCode::RANGE_NOT_SATISFIABLE
+        );
+        let marker = format!("{}.404", tile_a(3, 7, 7));
+        let response = get(&registry, &marker, None);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.body().is_empty());
+        assert_eq!(
+            get(&registry, "offline-tiles/a.json", None).status(),
+            StatusCode::OK
+        );
+        // HEAD gives the length only, from the table.
+        let head = registry.respond(
+            &Request::builder()
+                .method(Method::HEAD)
+                .uri(format!("atlas-pack://localhost/{ID}/{tile}"))
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert_eq!(head.status(), StatusCode::OK);
+        assert!(head.body().is_empty());
+        assert_eq!(header_value(&head, &header::CONTENT_LENGTH), "6");
+        // Many reads at once from several threads, with no lock.
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for z in 0..=2 {
+                        for (x, y) in grid(2048, 2048, 3, z) {
+                            let body = get(&registry, &tile_a(z, x, y), None);
+                            assert_eq!(body.body(), format!("a{z}/{x}/{y}").as_bytes());
+                        }
+                    }
+                });
+            }
+        });
+
+        // What a pack folder does not hold is not served: the description,
+        // anything missing, and the page data a folder keeps.
+        for name in [HEADER_FILE, "missing.json", "tiles/a/9/9/9.png"] {
+            assert_eq!(
+                get(&registry, name, None).status(),
+                StatusCode::NOT_FOUND,
+                "{name}"
+            );
+        }
+        for name in ["import/index.json", ".atlas/lock", "tiles/%2e%2e/x"] {
+            assert_eq!(
+                get(&registry, name, None).status(),
+                StatusCode::FORBIDDEN,
+                "{name}"
+            );
+        }
+        // The file is never changed by reading it, and nothing is written
+        // beside it.
+        assert_eq!(fs::read(&file).unwrap(), before);
+        let beside: Vec<String> = fs::read_dir(&dir.0)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(beside.len(), 2, "{beside:?}");
+    }
+
+    #[test]
+    fn does_not_serve_the_small_pictures_or_the_persons_own_things() {
+        let dir = TempDir::new("inplace-mine");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let maps = dir.0.join("maps");
+        ownlists::LISTS
+            .write(&maps, ID, &own_lists_text(ID), None)
+            .unwrap();
+        let file = dir.0.join("mine.atlaspack");
+        export_mine(
+            &folder_source(&pack),
+            &file,
+            &Mine::read(&maps, ID).unwrap(),
+        )
+        .unwrap();
+        assert!(entry_names(&file).contains_key("mine/my-lists.json"));
+        let registry = registered(&file);
+        assert_eq!(
+            get(&registry, "manifest.json", None).status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            get(&registry, "mine/my-lists.json", None).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn refuses_what_an_import_refuses() {
+        let dir = TempDir::new("inplace-refuse");
+        let (header, entries) = good_file(&dir.0);
+        for (i, bad) in [
+            "../outside.json",
+            "/etc/passwd",
+            "tiles\\a\\0\\0\\0.png",
+            ".atlas/lock",
+            "import/index.json",
+            "notes.txt",
+            "tiles/a/4/0/0.png",
+            "offline-tiles/z.json",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut spoilt = entries.clone();
+            spoilt.push(((*bad).to_owned(), b"x".to_vec()));
+            let error = in_place_error(&dir.0, &format!("path-{i}"), &header, &spoilt);
+            assert!(
+                error.contains("not part of a pack") || error.contains("outside the pack"),
+                "{bad}: {error}"
+            );
+        }
+        // Too large for what it is.
+        let mut large = entries.clone();
+        large.push((format!("{}.404", tile_a(2, 0, 0)), b"not empty".to_vec()));
+        assert!(in_place_error(&dir.0, "large", &header, &large).contains("too large"));
+        // Another game inside than the description names.
+        let mut other = header.clone();
+        other["packId"] = json!("other-game");
+        let error = in_place_error(&dir.0, "other", &other, &entries);
+        assert!(
+            error.contains("not the one its description names"),
+            "{error}"
+        );
+        // A newer version of the format, with the app that made it.
+        let mut newer = header.clone();
+        newer["version"] = json!(VERSION + 1);
+        newer["exportedBy"] = json!({"name": "Atlas", "version": "0.99.0", "platform": "windows"});
+        let error = in_place_error(&dir.0, "newer", &newer, &entries);
+        assert!(
+            error.contains("Atlas 0.99.0") && error.contains("newer"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn refuses_a_file_that_is_not_a_whole_pack_file() {
+        let dir = TempDir::new("inplace-broken");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let file = dir.0.join("whole.atlaspack");
+        run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+        let bytes = fs::read(&file).unwrap();
+        // Text, an empty file, and a file cut short: its description is
+        // there, its list of contents is not.
+        let text = dir.0.join("text.atlaspack");
+        fs::write(&text, "hello").unwrap();
+        let empty = dir.0.join("empty.atlaspack");
+        fs::write(&empty, "").unwrap();
+        let cut = dir.0.join("cut.atlaspack");
+        fs::write(&cut, &bytes[..bytes.len() / 2]).unwrap();
+        for broken in [&text, &empty, &cut] {
+            let error = PackFile::new(broken.clone()).check().unwrap_err();
+            assert!(
+                error.contains("not an Atlas pack file") || error.contains("damaged"),
+                "{}: {error}",
+                broken.display()
+            );
+            let response = get(&registered(broken), "manifest.json", None);
+            assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let missing = PackFile::new(dir.0.join("missing.atlaspack"));
+        assert!(missing.check().unwrap_err().contains("cannot be found"));
+    }
+
+    /// Writes `entries` after the description with ZIP64 records: the
+    /// sizes and offsets in ZIP64 extra fields of every entry.
+    fn write_zip64_file(path: &Path, header: &Value, entries: &[(String, Vec<u8>)]) {
+        let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
+        let stored = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Stored)
+            .large_file(true);
+        let deflated = SimpleFileOptions::default().large_file(true);
+        zip.start_file(HEADER_FILE, deflated).unwrap();
+        zip.write_all(serde_json::to_string(header).unwrap().as_bytes())
+            .unwrap();
+        for (name, bytes) in entries {
+            let json = name.ends_with(".json");
+            zip.start_file(name.as_str(), if json { deflated } else { stored })
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn reads_a_zip64_pack_file() {
+        let dir = TempDir::new("inplace-zip64");
+        let (header, mut entries) = good_file(&dir.0);
+        // Every entry with ZIP64 fields.
+        let file = dir.0.join("large-fields.atlaspack");
+        write_zip64_file(&file, &header, &entries);
+        let registry = registered(&file);
+        assert_eq!(
+            get(&registry, &tile_a(1, 0, 1), Some("bytes=0-1")).body(),
+            b"a1"
+        );
+        assert_eq!(
+            get(&registry, "maps.json", None).body(),
+            &entry_bytes(&file, "maps.json")
+        );
+
+        // More entries than the classic end record counts: a layer whose
+        // top level has 260 x 260 images, and a ZIP64 end record.
+        let side = 256 * 260;
+        for (name, list) in [("maps.json", true), ("layers.json", false)] {
+            let at = entries.iter().position(|(n, _)| n == name).unwrap();
+            let mut value: Value = serde_json::from_slice(&entries[at].1).unwrap();
+            value.as_array_mut().unwrap().push(if list {
+                json!({"id": format!("{ID}:map:wide"), "name": "Wide Plain", "width": side, "height": side})
+            } else {
+                json!({"id": format!("{ID}:layer:w"), "mapId": format!("{ID}:map:wide"), "name": "Surface",
+                       "minZoom": 9, "maxZoom": 9, "tileSize": 256,
+                       "tiles": {"type": "xyz", "url": "tiles/w/{z}/{x}/{y}.png"}})
+            });
+            entries[at].1 = serde_json::to_vec(&value).unwrap();
+        }
+        let many = 65_600;
+        for i in 0..many {
+            let (x, y) = (i % 260, i / 260);
+            entries.push((
+                format!("tiles/w/9/{x}/{y}.png"),
+                format!("w{x}/{y}").into_bytes(),
+            ));
+        }
+        let file = dir.0.join("many.atlaspack");
+        let mut zip = ZipWriter::new(fs::File::create(&file).unwrap());
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zip.start_file(HEADER_FILE, SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(serde_json::to_string(&header).unwrap().as_bytes())
+            .unwrap();
+        for (name, bytes) in &entries {
+            let options = if name.ends_with(".json") {
+                SimpleFileOptions::default()
+            } else {
+                stored
+            };
+            zip.start_file(name.as_str(), options).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+        let bytes = fs::read(&file).unwrap();
+        assert!(
+            bytes.windows(4).any(|w| w == [0x50, 0x4b, 0x06, 0x06]),
+            "a ZIP64 end record"
+        );
+        drop(bytes);
+        let registry = registered(&file);
+        // The last entry, after the first 65,535.
+        assert_eq!(
+            get(&registry, "tiles/w/9/79/252.png", None).body(),
+            b"w79/252"
+        );
+        assert_eq!(
+            get(&registry, "tiles/w/9/7/3.png", Some("bytes=1-")).body(),
+            b"7/3"
+        );
+        assert_eq!(
+            get(&registry, "tiles/w/9/80/252.png", None).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    /// Exports the pack folder to `<file>.part` and renames that over
+    /// `file`, as another app replaces a pack file.
+    fn replace(pack: &Path, file: &Path) {
+        let part = file.with_extension("atlaspack.part");
+        run_export(&folder_source(pack), Detail::Full, &part).unwrap();
+        fs::rename(&part, file).unwrap();
+    }
+
+    #[test]
+    fn reads_a_pack_file_replaced_under_it_from_the_new_file() {
+        let dir = TempDir::new("inplace-replace");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let file = dir.0.join("valley.atlaspack");
+        run_export(&folder_source(&pack), Detail::Full, &file).unwrap();
+        let registry = registered(&file);
+        let tile = tile_a(1, 0, 0);
+        assert_eq!(get(&registry, &tile, None).body(), b"a1/0/0");
+        let version = |registry: &PackRegistry| {
+            let body = get(registry, "manifest.json", None);
+            assert_eq!(body.status(), StatusCode::OK);
+            serde_json::from_slice::<Value>(body.body()).unwrap()["packVersion"].clone()
+        };
+        assert_eq!(version(&registry), json!("1.0.0"));
+        #[cfg(unix)]
+        let old = registry.pack_file(ID).unwrap().open().unwrap();
+
+        // A newer pack, with another image and longer files, renamed over it.
+        write_pack_files(&pack, "1.0.1");
+        put(&pack.join(&tile), b"new image of a1/0/0");
+        put_json(
+            &pack.join("locations.json"),
+            &json!([{"id": "x1"}, {"id": "x2"}, {"id": "x3"}]),
+        );
+        replace(&pack, &file);
+        assert_eq!(version(&registry), json!("1.0.1"));
+        assert_eq!(get(&registry, &tile, None).body(), b"new image of a1/0/0");
+        assert_eq!(get(&registry, &tile, Some("bytes=4-8")).body(), b"image");
+        // A request that opened the old file before is answered from the
+        // old file, whole: never the new file's bytes at the old places.
+        #[cfg(unix)]
+        {
+            assert_eq!(old.read(&tile, 0, 6).unwrap(), b"a1/0/0");
+            assert_eq!(old.header().pack_version, "1.0.0");
+        }
+
+        // A broken file renamed over it: an error, not a panic, and not the
+        // last good file's table.
+        let broken = dir.0.join("broken.part");
+        fs::write(&broken, b"PK\x03\x04 not a whole archive").unwrap();
+        fs::rename(&broken, &file).unwrap();
+        assert_eq!(
+            get(&registry, &tile, None).status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        // Good again.
+        write_pack_files(&pack, "1.0.2");
+        replace(&pack, &file);
+        assert_eq!(version(&registry), json!("1.0.2"));
+    }
+
+    #[test]
+    fn notices_a_file_changed_in_place_with_its_length_and_time_kept() {
+        let dir = TempDir::new("inplace-same-length");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let file = dir.0.join("valley.atlaspack");
+        run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+        let registry = registered(&file);
+        assert_eq!(
+            get(&registry, "manifest.json", None).status(),
+            StatusCode::OK
+        );
+        // Where the central directory starts, in the end record, moved by
+        // one: same length, and the same modified time put back.
+        let modified: SystemTime = fs::metadata(&file).unwrap().modified().unwrap();
+        let mut bytes = fs::read(&file).unwrap();
+        let end = bytes.len() - 22;
+        assert_eq!(bytes[end..end + 4], [0x50, 0x4b, 0x05, 0x06]);
+        bytes[end + 16] = bytes[end + 16].wrapping_add(1);
+        fs::write(&file, &bytes).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), modified);
+        assert_eq!(
+            get(&registry, "manifest.json", None).status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the table of the file as it was is not used"
+        );
+    }
+
+    #[test]
+    fn serves_only_a_file_of_the_registered_game() {
+        let dir = TempDir::new("inplace-other-id");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let file = dir.0.join("valley.atlaspack");
+        run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+        let registry = PackRegistry::default();
+        registry
+            .register_file("another-game", Arc::new(PackFile::new(file.clone())))
+            .unwrap();
+        let response = registry.respond(
+            &Request::builder()
+                .uri("atlas-pack://localhost/another-game/manifest.json")
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+}

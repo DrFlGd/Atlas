@@ -341,6 +341,10 @@ fn read_entry<R: Read + io::Seek>(
     Ok(bytes)
 }
 
+/// Reads an entry of a pack file by its name, at most a number of bytes;
+/// `None` when the file has no such entry.
+pub(crate) type ReadByName<'a> = dyn FnMut(&str, u64) -> Result<Option<Vec<u8>>, Stop> + 'a;
+
 /// What a pack file may hold: the rules every entry after the description
 /// is checked against, from the description and the pack's own files
 /// (`manifest.json`, `maps.json`, `layers.json` and `pictures.json`). An
@@ -360,10 +364,7 @@ impl Rules {
     /// Reads the rules of a pack file with this description. `read` gives
     /// the bytes of an entry by its name, at most `cap` of them, or `None`
     /// when the file has no such entry.
-    pub(crate) fn read(
-        header: &Header,
-        read: &mut dyn FnMut(&str, u64) -> Result<Option<Vec<u8>>, Stop>,
-    ) -> Result<Self, Stop> {
+    pub(crate) fn read(header: &Header, read: &mut ReadByName<'_>) -> Result<Self, Stop> {
         let manifest = read(MANIFEST_FILE, MAX_MANIFEST_BYTES)?
             .ok_or_else(|| refuse("This pack file has no manifest.json."))?;
         let manifest: Value = serde_json::from_slice(&manifest)
@@ -595,10 +596,13 @@ fn check_entries<R: Read + io::Seek>(
     if archive.name_for_index(0).and_then(Result::ok).as_deref() != Some(HEADER_FILE) {
         return Err(refuse(NOT_A_PACK_FILE));
     }
-    let rules = Rules::read(header, &mut |name, cap| match archive.index_for_name(name) {
-        Some(index) => read_entry(archive, index, name, cap).map(Some),
-        None => Ok(None),
-    })?;
+    let rules = Rules::read(
+        header,
+        &mut |name, cap| match archive.index_for_name(name) {
+            Some(index) => read_entry(archive, index, name, cap).map(Some),
+            None => Ok(None),
+        },
+    )?;
 
     let mut entries = Vec::new();
     let mut mine = Mine::default();
@@ -672,13 +676,11 @@ fn check_entries<R: Read + io::Seek>(
         let json = match kind {
             Kind::PackFile | Kind::Status(_) => {
                 let data = read_entry(archive, index, &name, size)?;
-                let value: Value = serde_json::from_slice(&data).map_err(|_| {
-                    refuse(format!("{shown} in this pack file is not valid JSON."))
-                })?;
+                let value: Value = serde_json::from_slice(&data)
+                    .map_err(|_| refuse(format!("{shown} in this pack file is not valid JSON.")))?;
                 if let Kind::Status(layer) = kind {
                     let usable = serde_json::from_value::<LayerStatus>(value).is_ok_and(|status| {
-                        status.format == STATUS_FORMAT
-                            && status.layer_id == rules.layers[layer].id
+                        status.format == STATUS_FORMAT && status.layer_id == rules.layers[layer].id
                     });
                     if !usable {
                         return Err(refuse(format!(
