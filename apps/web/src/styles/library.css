@@ -392,6 +392,38 @@
   margin-top: 8px;
 }
 
+/* Settings, Keep packs up to date: each game with its state. */
+.kept-packs-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kept-packs-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--atlas-border);
+  overflow-wrap: anywhere;
+}
+
+.kept-packs-row p {
+  margin: 2px 0 0;
+}
+
+.kept-packs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+/* The Library's line while a pack is written into that folder. */
+.kept-packs-line {
+  margin: 0;
+  padding: 4px 16px;
+  border-top: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+}
+
 .sites-trial-address label {
   display: block;
   margin-bottom: 6px;

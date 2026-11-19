@@ -1,6 +1,7 @@
 import { useAtlas } from '../state/store';
 import { ProgressTools } from '../touch/DesktopTools';
 import { Settings } from '../touch/GamesScreen';
+import { KeptPacks } from './KeptPacks';
 import { OldFolders } from './OldFolders';
 import { SitesSettings } from './SitesSettings';
 import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './StorageSettings';
@@ -36,6 +37,7 @@ export function SettingsScreen({ general }: { general: boolean }) {
         <OldFolders />
         <DownloadSpeed />
         {__ATLAS_DOWNLOADS__ ? <SitesSettings /> : null}
+        {__ATLAS_DOWNLOADS__ ? <KeptPacks /> : null}
         <ActivityLogSetting />
         <p className="muted small app-version" data-testid="app-version">
           {app?.name ?? 'Atlas'}
