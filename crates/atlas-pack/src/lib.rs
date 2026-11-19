@@ -13,7 +13,10 @@
 //! on disk or of any stream read in order: the description
 //! ([`read_header`], [`read_header_from`]) and one small picture by its
 //! entry name ([`read_preview`], [`read_preview_from`]). It has no app code
-//! and makes no network request. The Atlas app writes and imports pack files
+//! and makes no network request. A file that is not read is refused with a
+//! [`Refusal`]: a sentence to show, and its kind, so an app can add its own
+//! advice (a newer format needs a newer version of the app that reads it,
+//! whichever app that is). The Atlas app writes and imports pack files
 //! with these same types. See `docs/pack-file-format.md` in the Atlas
 //! repository for the format.
 
@@ -23,6 +26,8 @@ mod read;
 mod tests;
 
 pub use read::{read_header, read_header_from, read_preview, read_preview_from};
+
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -67,6 +72,19 @@ pub const MAX_PREVIEW_BYTES: u64 = 512 << 10;
 pub const MAX_PREVIEWS: usize = 1024;
 /// The longest name of a small picture, without `preview/` and `.jpg`.
 pub const MAX_PREVIEW_NAME: usize = 80;
+
+/// Whether `id` can be a pack's id (`packId`): 1 to 64 characters of lower
+/// case letters, digits, `-` and `_`, starting with a letter or a digit.
+/// It names the pack in addresses and file names, and a pack is known by
+/// it, so a description with another id, or none, is refused.
+pub fn is_pack_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
+        && id.len() <= 64
+}
 
 /// Whether `name` is an entry name a small picture may have:
 /// `preview/<name>.jpg`, the name 1 to [`MAX_PREVIEW_NAME`] characters of
@@ -411,12 +429,93 @@ pub struct LayerFacts {
 
 const NOT_A_PACK_FILE: &str = "This file is not an Atlas pack file.";
 
-/// Reads a description from its JSON text: refuses another format, and a
-/// newer version with a message naming the app that wrote it. The names of
-/// small pictures that are not safe entry names (see [`is_preview_name`])
-/// are left out, so a reader never meets one.
-pub fn parse_header(text: &str) -> Result<Header, String> {
-    let not_ours = || NOT_A_PACK_FILE.to_owned();
+/// What kind of refusal a [`Refusal`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RefusalKind {
+    /// The file is not a pack file at all.
+    NotAPackFile,
+    /// The file was made in a newer version of the format than this crate
+    /// reads: the app that uses the crate needs a newer version of itself.
+    NewerFormat,
+    /// The file is a pack file, but its description or its small pictures
+    /// are damaged or cannot be used.
+    Damaged,
+    /// The file could not be opened.
+    CannotOpen,
+    /// The file has no small picture of the name asked for.
+    NoSuchPicture,
+}
+
+/// Why a pack file, or a small picture of one, is not read. Shown as it is
+/// (`Display`, or `String::from`), it is one or two plain sentences. An app
+/// that wants to give its own advice shows [`Refusal::what`] and adds to it
+/// by [`Refusal::kind`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    kind: RefusalKind,
+    what: String,
+    advice: Option<&'static str>,
+}
+
+/// The advice this crate gives for a file in a newer format. It names no
+/// app, as the app that reads the file is the one to renew.
+const NEWER_FORMAT_ADVICE: &str = "A newer version of this app is needed to open it.";
+
+impl Refusal {
+    fn new(kind: RefusalKind, what: impl Into<String>) -> Self {
+        Self {
+            kind,
+            what: what.into(),
+            advice: None,
+        }
+    }
+
+    fn not_a_pack_file() -> Self {
+        Self::new(RefusalKind::NotAPackFile, NOT_A_PACK_FILE)
+    }
+
+    fn damaged(what: impl Into<String>) -> Self {
+        Self::new(RefusalKind::Damaged, what)
+    }
+
+    /// What kind of refusal this is.
+    pub fn kind(&self) -> RefusalKind {
+        self.kind
+    }
+
+    /// What is wrong, in one sentence, without this crate's advice.
+    pub fn what(&self) -> &str {
+        &self.what
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.what)?;
+        if let Some(advice) = self.advice {
+            write!(f, " {advice}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+impl From<Refusal> for String {
+    fn from(refusal: Refusal) -> Self {
+        refusal.to_string()
+    }
+}
+
+/// Reads a description from its JSON text: refuses another format, a
+/// newer version with a message naming the app that wrote it, and a
+/// description without the fields every pack file has, or with a pack id
+/// that cannot be one (see [`is_pack_id`]). The names of small pictures
+/// that are not safe entry names (see [`is_preview_name`]) are left out,
+/// so a reader never meets one.
+pub fn parse_header(text: &str) -> Result<Header, Refusal> {
+    let not_ours = Refusal::not_a_pack_file;
     let value: Value =
         serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| not_ours())?;
     if value.get("format").and_then(Value::as_str) != Some(FORMAT) {
@@ -433,17 +532,27 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
             .and_then(|by| by.get("version"))
             .and_then(Value::as_str)
             .unwrap_or("a newer version");
-        return Err(format!(
-            "This pack file was made by {} {} in a newer format (version {version}). Install a newer version of Atlas to open it.",
-            clean(name),
-            clean(app_version)
-        ));
+        return Err(Refusal {
+            kind: RefusalKind::NewerFormat,
+            what: format!(
+                "This pack file was made by {} {} in a newer format (version {version}).",
+                clean(name),
+                clean(app_version)
+            ),
+            advice: Some(NEWER_FORMAT_ADVICE),
+        });
     }
     if version < u64::from(VERSION_WITHOUT_MINE) {
         return Err(not_ours());
     }
-    let mut header: Header = serde_json::from_value(value)
-        .map_err(|error| format!("This pack file's description is damaged: {error}."))?;
+    let mut header: Header = serde_json::from_value(value).map_err(|error| {
+        Refusal::damaged(format!("This pack file's description is damaged: {error}."))
+    })?;
+    if !is_pack_id(&header.pack_id) {
+        return Err(Refusal::damaged(
+            "This pack file names a game id that cannot be used.",
+        ));
+    }
     for map in &mut header.maps {
         if map
             .preview

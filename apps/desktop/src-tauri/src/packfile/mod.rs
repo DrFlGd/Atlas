@@ -108,13 +108,33 @@ use crate::{
 /// reading a description, from the `atlas-pack` crate (`crates/atlas-pack`),
 /// which other apps use to show pack files without unpacking them.
 pub use atlas_pack::{
-    is_preview_name, parse_header, AppInfo, Counts, Detail, GameFacts, GuideFacts, GuideType,
-    Header, ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, PackFacts, PageFacts,
-    SourceFacts, SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS,
-    MAX_PREVIEW_BYTES, PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
+    is_preview_name, AppInfo, Counts, Detail, GameFacts, GuideFacts, GuideType, Header,
+    ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, PackFacts, PageFacts, SourceFacts,
+    SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES,
+    PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
     VERSION_WITH_NOTES, VERSION_WITH_PAGES, VERSION_WITH_PHOTOS, VERSION_WITH_PREVIEWS,
     VERSION_WITH_TITLE,
 };
+
+/// A refusal of the `atlas-pack` crate in this app's words. The crate
+/// names no app, as other apps read pack files with it: for a file in a
+/// newer format it only says a newer version of the app is needed, and
+/// here that app is Atlas.
+pub fn refusal_text(refusal: &atlas_pack::Refusal) -> String {
+    match refusal.kind() {
+        atlas_pack::RefusalKind::NewerFormat => format!(
+            "{} Install a newer version of Atlas to open it.",
+            refusal.what()
+        ),
+        _ => refusal.to_string(),
+    }
+}
+
+/// Reads a description from its JSON text (see the `atlas-pack` crate),
+/// with a refusal in this app's words.
+pub fn parse_header(text: &str) -> Result<Header, String> {
+    atlas_pack::parse_header(text).map_err(|refusal| refusal_text(&refusal))
+}
 
 /// In a pack folder's `.atlas/`: the header of the file the pack was
 /// imported from, with when that was. Not exported and not served.

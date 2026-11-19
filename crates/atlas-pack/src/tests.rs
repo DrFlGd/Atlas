@@ -173,10 +173,18 @@ fn refuses_a_newer_version_and_what_is_no_pack_file() {
     newer["exportedBy"] =
         json!({"name": "Atlas\u{202e}", "version": "9.1.0\nx", "platform": "linux"});
     let error = parse_header(&newer.to_string()).unwrap_err();
+    // The kind lets an app give its own advice after what is wrong; shown
+    // as it is, the sentence names no app to renew.
+    assert_eq!(error.kind(), RefusalKind::NewerFormat);
     assert_eq!(
-        error,
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 8). Install a newer version of Atlas to open it."
+        error.what(),
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 8)."
     );
+    assert_eq!(
+        error.to_string(),
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 8). A newer version of this app is needed to open it."
+    );
+    assert_eq!(String::from(error.clone()), error.to_string());
     for (key, value) in [
         ("format", json!("atlas-progress")),
         ("version", json!(0)),
@@ -185,17 +193,87 @@ fn refuses_a_newer_version_and_what_is_no_pack_file() {
         let mut other = header_v7();
         other[key] = value;
         assert_eq!(
-            parse_header(&other.to_string()).unwrap_err(),
+            parse_header(&other.to_string()).unwrap_err().to_string(),
             NOT_A_PACK_FILE,
             "{key}"
         );
     }
-    assert_eq!(parse_header("not json").unwrap_err(), NOT_A_PACK_FILE);
+    assert_eq!(
+        parse_header("not json").unwrap_err().to_string(),
+        NOT_A_PACK_FILE
+    );
     let mut damaged = header_v7();
     damaged["maps"] = json!("East Field");
     assert!(parse_header(&damaged.to_string())
         .unwrap_err()
+        .to_string()
         .contains("damaged"));
+    assert_eq!(
+        parse_header("not json").unwrap_err().kind(),
+        RefusalKind::NotAPackFile
+    );
+}
+
+#[test]
+fn refuses_a_description_without_what_every_pack_file_has() {
+    // The fields a pack file has had since version 1 are always there: a
+    // description without one of them is damaged, in every version.
+    for field in [
+        "packId",
+        "title",
+        "packVersion",
+        "detail",
+        "exportedAt",
+        "exportedBy",
+        "pack",
+        "source",
+        "contents",
+        "images",
+        "files",
+        "bytes",
+    ] {
+        for mut header in [header_v6(), header_v7()] {
+            header.as_object_mut().unwrap().remove(field);
+            let error = parse_header(&header.to_string()).unwrap_err();
+            assert_eq!(error.kind(), RefusalKind::Damaged, "{field}");
+            assert!(error.to_string().contains("damaged"), "{field}: {error}");
+        }
+    }
+    // The fields added since are optional.
+    for field in ["game", "personalUse", "maps", "guides", "cover", "mine"] {
+        let mut header = header_v7();
+        header.as_object_mut().unwrap().remove(field);
+        assert!(parse_header(&header.to_string()).is_ok(), "{field}");
+    }
+}
+
+#[test]
+fn refuses_a_pack_id_that_cannot_be_one() {
+    for good in ["test-valley", "0", "a_b-c9", &"a".repeat(64)] {
+        assert!(is_pack_id(good), "{good}");
+    }
+    for bad in [
+        "",
+        "Test-Valley",
+        "-valley",
+        "_valley",
+        "test valley",
+        "test/valley",
+        "..",
+        "t\u{e9}st",
+        &"a".repeat(65),
+    ] {
+        assert!(!is_pack_id(bad), "{bad:?}");
+        let mut header = header_v7();
+        header["packId"] = json!(bad);
+        let error = parse_header(&header.to_string()).unwrap_err();
+        assert_eq!(error.kind(), RefusalKind::Damaged, "{bad:?}");
+        assert_eq!(
+            error.to_string(),
+            "This pack file names a game id that cannot be used.",
+            "{bad:?}"
+        );
+    }
 }
 
 #[test]
@@ -284,6 +362,8 @@ fn refuses_hostile_files() {
     let header = text(&header_v7());
     let no_such = |file: &Path, name: &str| {
         let error = read_preview(file, name).unwrap_err();
+        assert_eq!(error.kind(), RefusalKind::NoSuchPicture, "{name}");
+        let error = error.to_string();
         assert!(error.contains("no small picture"), "{name}: {error}");
     };
 
@@ -292,7 +372,10 @@ fn refuses_hostile_files() {
     let mut padded = header.clone();
     padded.resize(MAX_HEADER_BYTES as usize + 1, b' ');
     write_file(&large, &padded, &[]);
-    assert_eq!(read_header(&large).unwrap_err(), NOT_A_PACK_FILE);
+    assert_eq!(
+        read_header(&large).unwrap_err().to_string(),
+        NOT_A_PACK_FILE
+    );
     let second = dir.0.join("second.atlaspack");
     {
         let mut zip = ZipWriter::new(fs::File::create(&second).unwrap());
@@ -304,12 +387,19 @@ fn refuses_hostile_files() {
         zip.write_all(&header).unwrap();
         zip.finish().unwrap();
     }
-    assert_eq!(read_header(&second).unwrap_err(), NOT_A_PACK_FILE);
+    assert_eq!(
+        read_header(&second).unwrap_err().to_string(),
+        NOT_A_PACK_FILE
+    );
     let text_file = dir.0.join("text.atlaspack");
     fs::write(&text_file, "hello").unwrap();
-    assert_eq!(read_header(&text_file).unwrap_err(), NOT_A_PACK_FILE);
+    assert_eq!(
+        read_header(&text_file).unwrap_err().to_string(),
+        NOT_A_PACK_FILE
+    );
     assert!(read_header(&dir.0.join("missing.atlaspack"))
         .unwrap_err()
+        .to_string()
         .contains("Could not open"));
 
     // A small picture the description does not list, an unsafe name, and
@@ -343,18 +433,21 @@ fn refuses_hostile_files() {
     );
     assert!(read_preview(&unsafe_name, "preview/west.jpg")
         .unwrap_err()
-        .contains("does not read"));
+        .to_string()
+        .contains("cannot be read"));
     let too_large = dir.0.join("too-large.atlaspack");
     let mut big = JPEG.to_vec();
     big.resize(MAX_PREVIEW_BYTES as usize + 1, 0);
     write_file(&too_large, &header, &[("preview/east.jpg", &big)]);
     assert!(read_preview(&too_large, "preview/east.jpg")
         .unwrap_err()
-        .contains("does not read"));
+        .to_string()
+        .contains("cannot be read"));
     let not_jpeg = dir.0.join("not-jpeg.atlaspack");
     write_file(&not_jpeg, &header, &[("preview/east.jpg", b"\x89PNG\r\n")]);
     assert!(read_preview(&not_jpeg, "preview/east.jpg")
         .unwrap_err()
+        .to_string()
         .contains("not a JPEG"));
     // A newer file is refused before any small picture is read.
     let mut newer = header_v7();
@@ -363,5 +456,6 @@ fn refuses_hostile_files() {
     write_file(&newer_file, &text(&newer), &[("preview/east.jpg", JPEG)]);
     assert!(read_preview(&newer_file, "preview/east.jpg")
         .unwrap_err()
+        .to_string()
         .contains("newer format"));
 }

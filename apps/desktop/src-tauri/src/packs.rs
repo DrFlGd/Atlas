@@ -53,13 +53,10 @@ use crate::{packfile::inplace::PackFile, tiles::pyramid::is_safe_segment};
 pub const SCHEME: &str = "atlas-pack";
 
 /// Pack ids name a registered folder in URLs, so they are kept URL-safe.
+/// The rule is the pack file format's (see the `atlas-pack` crate), so an
+/// id a pack file may carry is one the protocol serves.
 pub fn is_valid_pack_id(id: &str) -> bool {
-    let mut chars = id.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
-        && id.len() <= 64
+    atlas_pack::is_pack_id(id)
 }
 
 /// A pack's folder that is never served: page data kept with an imported pack.

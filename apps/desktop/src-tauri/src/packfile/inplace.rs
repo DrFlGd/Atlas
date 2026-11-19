@@ -546,7 +546,7 @@ impl Table {
     fn build(file: &File, stamp: Stamp, marks: &mut Option<Marks>) -> Result<Self, Fault> {
         let content = |reason: &str| Fault::Content(reason.to_owned());
         let mut at = At::new(file, 0, stamp.len);
-        let header = match atlas_pack::read_header_from(&mut at) {
+        let header = match super::import::read_header_from(&mut at) {
             Ok(header) => header,
             Err(reason) => {
                 return Err(at.os_error.take().map_or(Fault::Content(reason), Fault::Io))

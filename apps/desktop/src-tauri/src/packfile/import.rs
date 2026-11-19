@@ -26,10 +26,10 @@ use serde_json::Value;
 use zip::ZipArchive;
 
 use super::{
-    is_picture_path, is_preview_name, parse_layers, space, Header, ImportedRecord, LayerInfo, Mine,
-    Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_MINE_PICTURE_BYTES,
-    MAX_PICTURE_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES, MINE_ENTRIES, MINE_PICTURES_DIR,
-    PICTURES_FILE, VERSION_WITH_PREVIEWS,
+    is_picture_path, is_preview_name, parse_layers, refusal_text, space, Header, ImportedRecord,
+    LayerInfo, Mine, Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD,
+    MAX_MINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES, MINE_ENTRIES,
+    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITH_PREVIEWS,
 };
 use crate::{
     library::{packs_in, PackLock, MAX_PACK_BYTES, MAX_PACK_FILE_BYTES, META_DIR, PACK_FILES},
@@ -75,10 +75,17 @@ pub struct Imported {
 }
 
 /// Reads a pack file's header, its first entry, without reading the rest
-/// of the file (see the `atlas-pack` crate); [`read_header_from`] reads it
-/// from the start of a file being read in order, such as one Android's
-/// picker opened, which may not be able to seek.
-pub use atlas_pack::{read_header, read_header_from};
+/// of the file (see the `atlas-pack` crate), with a refusal in this app's
+/// words (see [`refusal_text`]).
+pub fn read_header(file: &Path) -> Result<Header, String> {
+    atlas_pack::read_header(file).map_err(|refusal| refusal_text(&refusal))
+}
+
+/// [`read_header`] from the start of a file being read in order, such as
+/// one Android's picker opened, which may not be able to seek.
+pub fn read_header_from(file: impl Read) -> Result<Header, String> {
+    atlas_pack::read_header_from(file).map_err(|refusal| refusal_text(&refusal))
+}
 
 /// The existing folder of a pack id in the maps folder, if any: one whose
 /// manifest names it (whatever the folder is called), else `<id>` itself
