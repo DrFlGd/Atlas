@@ -12,6 +12,8 @@ export const SCHEMA_VERSION = 2;
 
 /** The longest section another name of a page may lead to (`idSections` of the manifest). */
 export const MAX_ID_SECTION_LENGTH = 200;
+/** The longest site name a manifest's `source.site` may have. */
+export const MAX_SITE_NAME_LENGTH = 200;
 /** The most pages a guide's `filedUnder` names (see the guide entry). */
 export const MAX_FILED_UNDER = 20;
 
@@ -280,6 +282,14 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
         importedAt: isoTime,
       }),
     ),
+    /**
+     * The name of the site the pages were read from, as the importer shows
+     * it to the person (such as the name a site rules file gives), so that
+     * an app can name the site without guessing from the importer or the
+     * addresses. Informational: nothing depends on it. Added without a
+     * schema version change; apps before it drop it when reading.
+     */
+    site: descriptive(z.string().trim().min(1).max(MAX_SITE_NAME_LENGTH)),
   });
 
   /** The map images of one layer that are in the pack folder, as last recorded. */

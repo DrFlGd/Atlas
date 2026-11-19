@@ -614,6 +614,8 @@ export interface PackFacts {
 /** Where a pack's data came from: web pages read by an importer, the app, or not recorded. */
 export interface SourceFacts {
   kind: 'web-pages' | 'app' | 'unknown';
+  /** The name of the site its pages were read from, as its guide pages name it (pack files only). */
+  name?: string;
   importer?: { id: string; title: string };
   pages?: { url: string; mapId?: string; importedAt?: string }[];
   newestPageAt?: string;
@@ -654,6 +656,8 @@ export interface PackFileHeader {
   version: number;
   packId: string;
   title: string;
+  /** The game: the title it is shown under with other games when the file carries one, and its system. */
+  game?: { title: string; system?: string };
   packVersion: string;
   detail: Detail;
   exportedAt: string;
@@ -665,6 +669,14 @@ export interface PackFileHeader {
   /** Entries after the header, and their size unpacked. */
   files: number;
   bytes: number;
+  /** The pack is kept for the person's own use (its manifest's `personalUse`); only ever true. */
+  personalUse?: true;
+  /** Each map, with the entry name of its small picture when the file holds one (version 7). */
+  maps?: PackFileMap[];
+  /** The pack's pages, as one guide or one wiki (`other`: a type of a newer file). */
+  guides?: { title: string; type: 'guide' | 'wiki' | 'other'; pages: number }[];
+  /** The entry name of the small picture to show for the file. */
+  cover?: string;
   /** The person's own lists, locations, types and areas the file carries (version 2). */
   mine?: {
     lists: number;
@@ -681,6 +693,17 @@ export interface PackFileHeader {
     /** The title the game is shown under with other games (version 6). */
     group?: boolean;
   };
+}
+
+/** One map in a pack file's description. */
+export interface PackFileMap {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  locations: number;
+  /** `preview/<name>.jpg`, right after the description. */
+  preview?: string;
 }
 
 /** What is known about an installed pack, as a pack file would say. */

@@ -26,9 +26,10 @@ use serde_json::Value;
 use zip::ZipArchive;
 
 use super::{
-    is_picture_path, parse_header, parse_layers, space, Header, ImportedRecord, LayerInfo, Mine,
-    Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_HEADER_BYTES,
-    MAX_MINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MINE_ENTRIES, MINE_PICTURES_DIR, PICTURES_FILE,
+    is_picture_path, is_preview_name, parse_layers, space, Header, ImportedRecord, LayerInfo, Mine,
+    Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD, MAX_MINE_PICTURE_BYTES,
+    MAX_PICTURE_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES, MINE_ENTRIES, MINE_PICTURES_DIR,
+    PICTURES_FILE, VERSION_WITH_PREVIEWS,
 };
 use crate::{
     library::{packs_in, PackLock, MAX_PACK_BYTES, MAX_PACK_FILE_BYTES, META_DIR, PACK_FILES},
@@ -73,34 +74,11 @@ pub struct Imported {
     pub mine: Mine,
 }
 
-/// Reads a pack file's header, its first entry, without reading the
-/// rest of the file. Refuses a file that is not a pack file, and one
-/// made in a newer version of the format, with a message that names the
-/// app that made it.
-pub fn read_header(file: &Path) -> Result<Header, String> {
-    let opened = File::open(file).map_err(|error| format!("Could not open the file: {error}"))?;
-    read_header_from(opened)
-}
-
-/// [`read_header`] from the start of a file being read in order, such as
-/// one Android's picker opened, which may not be able to seek: only the
-/// first entry is read.
-pub fn read_header_from(file: impl Read) -> Result<Header, String> {
-    let mut reader = BufReader::new(file);
-    let mut entry = match zip::read::read_zipfile_from_stream(&mut reader) {
-        Ok(Some(entry)) => entry,
-        _ => return Err(NOT_A_PACK_FILE.to_owned()),
-    };
-    if entry.name().ok().as_deref() != Some(HEADER_FILE) || entry.size() > MAX_HEADER_BYTES {
-        return Err(NOT_A_PACK_FILE.to_owned());
-    }
-    let mut text = String::new();
-    (&mut entry)
-        .take(MAX_HEADER_BYTES)
-        .read_to_string(&mut text)
-        .map_err(|_| NOT_A_PACK_FILE.to_owned())?;
-    parse_header(&text)
-}
+/// Reads a pack file's header, its first entry, without reading the rest
+/// of the file (see the `atlas-pack` crate); [`read_header_from`] reads it
+/// from the start of a file being read in order, such as one Android's
+/// picker opened, which may not be able to seek.
+pub use atlas_pack::{read_header, read_header_from};
 
 /// The existing folder of a pack id in the maps folder, if any: one whose
 /// manifest names it (whatever the folder is called), else `<id>` itself
@@ -202,7 +180,7 @@ pub(crate) fn import_with(
     let order = |kind: &Kind| match kind {
         Kind::Image | Kind::Marker | Kind::Picture => 0,
         Kind::Status(_) => 1,
-        Kind::PackFile | Kind::Mine(_) | Kind::MinePicture => 2,
+        Kind::PackFile | Kind::Mine(_) | Kind::MinePicture | Kind::Preview => 2,
     };
     let mut entries: Vec<&Checked> = checked.entries.iter().collect();
     entries.sort_by_key(|entry| (order(&entry.kind), entry.name == MANIFEST_FILE));
@@ -313,6 +291,8 @@ enum Kind {
     Marker,
     /// A picture that `pictures.json` lists.
     Picture,
+    /// A small picture of a map that the header lists (`preview/<name>.jpg`).
+    Preview,
 }
 
 struct Checked {
@@ -428,6 +408,13 @@ fn check_entries<R: Read + io::Seek>(
     } else {
         HashSet::new()
     };
+    // The small pictures of the maps the header lists, the only ones it may
+    // hold, and only from the version that has them.
+    let previews: HashSet<&str> = if header.version >= VERSION_WITH_PREVIEWS {
+        header.previews().into_iter().collect()
+    } else {
+        HashSet::new()
+    };
     if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
         return Err(refuse(
             "The game in this pack file keeps its map images in one archive file, which a pack file does not carry.",
@@ -448,6 +435,7 @@ fn check_entries<R: Read + io::Seek>(
     let mut entries = Vec::new();
     let mut mine = Mine::default();
     let mut mine_picture_bytes: u64 = 0;
+    let mut preview_count: usize = 0;
     let mut seen: HashSet<String> = HashSet::new();
     let mut json_bytes: u64 = 0;
     let mut bytes: u64 = 0;
@@ -485,7 +473,7 @@ fn check_entries<R: Read + io::Seek>(
                 }
                 continue;
             }
-            let kind = classify(&name, &layers, &templates, &pictures).ok_or_else(|| {
+            let kind = classify(&name, &layers, &templates, &pictures, &previews).ok_or_else(|| {
                 refuse(format!(
                     "This pack file holds a file that is not part of a pack ({shown}), so it was not imported."
                 ))
@@ -511,6 +499,27 @@ fn check_entries<R: Read + io::Seek>(
                 ))
             })?;
             *mine.slot(own) = Some(text);
+            continue;
+        }
+        if kind == Kind::Preview {
+            // Right after the header, so another app reads them from the
+            // start of the file; checked, and not written anywhere.
+            let shown = crate::activity::clean(&name);
+            if index != preview_count + 1 || preview_count >= MAX_PREVIEWS {
+                return Err(refuse(format!(
+                    "This pack file holds a small picture of a map out of its place ({shown}), so it was not imported."
+                )));
+            }
+            preview_count += 1;
+            if size > MAX_PREVIEW_BYTES {
+                return Err(refuse(format!("{shown} in this pack file is too large.")));
+            }
+            let data = read_entry(archive, index, &name, MAX_PREVIEW_BYTES)?;
+            if !data.starts_with(&[0xff, 0xd8, 0xff]) {
+                return Err(refuse(format!(
+                    "{shown} in this pack file is not the picture it says it is."
+                )));
+            }
             continue;
         }
         if kind == Kind::MinePicture {
@@ -540,7 +549,7 @@ fn check_entries<R: Read + io::Seek>(
             continue;
         }
         let too_large = match kind {
-            Kind::Mine(_) | Kind::MinePicture => unreachable!("taken above"),
+            Kind::Mine(_) | Kind::MinePicture | Kind::Preview => unreachable!("taken above"),
             Kind::PackFile => size > MAX_PACK_FILE_BYTES as u64,
             Kind::Status(_) => size > MAX_STATUS_BYTES,
             Kind::Image => size > MAX_IMAGE_BYTES,
@@ -579,7 +588,12 @@ fn check_entries<R: Read + io::Seek>(
                 }
                 Some(data)
             }
-            Kind::Image | Kind::Marker | Kind::Picture | Kind::Mine(_) | Kind::MinePicture => None,
+            Kind::Image
+            | Kind::Marker
+            | Kind::Picture
+            | Kind::Mine(_)
+            | Kind::MinePicture
+            | Kind::Preview => None,
         };
         bytes = bytes.saturating_add(size);
         entries.push(Checked {
@@ -603,11 +617,15 @@ fn classify(
     layers: &[LayerInfo],
     templates: &[Template],
     pictures: &HashSet<String>,
+    previews: &HashSet<&str>,
 ) -> Option<Kind> {
     // A plain relative path: no `..`, nothing absolute, no drive letter, no
     // hidden segment (`.atlas`), no `\`.
     if name.starts_with('/') || relative_path(name).is_none() {
         return None;
+    }
+    if is_preview_name(name) && previews.contains(name) {
+        return Some(Kind::Preview);
     }
     if PACK_FILES.contains(&name) {
         return Some(Kind::PackFile);

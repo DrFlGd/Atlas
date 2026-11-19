@@ -2741,6 +2741,7 @@ mod tests {
             comes_with_app: false,
             own_use_pictures: false,
             smaller_pictures: false,
+            group: None,
         })
         .unwrap();
         assert_eq!((details.contents.maps, details.contents.guides), (0, 1));

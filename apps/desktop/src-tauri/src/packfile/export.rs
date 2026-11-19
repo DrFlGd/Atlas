@@ -11,10 +11,13 @@ use serde_json::{json, Value};
 use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 
 use super::{
-    analyse, count_contents, describe_pack, pack_file_entries, plan_images, refusal,
-    shared_pictures, smaller, unavailable, AppInfo, DirCache, Entry, EntryData, Header,
+    analyse,
+    card::{read_card, site_name},
+    count_contents, describe_pack, pack_file_entries, plan_images,
+    preview::make_previews,
+    refusal, shared_pictures, smaller, unavailable, AppInfo, DirCache, Entry, EntryData, Header,
     ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
-    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE,
+    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
 };
 use crate::{
     library::PackLock,
@@ -63,7 +66,8 @@ pub fn export(
 }
 
 /// [`export`], with a person's own lists, locations and types of the game
-/// when `mine` has any: then the file is version 2 (see the module).
+/// when `mine` has any: then the file is version 2 or later (see the
+/// module). A file with small pictures of its maps is version 7.
 pub fn export_with_mine(
     source: &PackSource,
     app: &AppInfo,
@@ -97,10 +101,29 @@ pub fn export_with_mine(
             "The map images for this level of detail are not all downloaded. {reason}"
         )));
     }
-    let (pack, source_facts) = describe_pack(&source.root, source.comes_with_app)?;
+    let (pack, mut source_facts) = describe_pack(&source.root, source.comes_with_app)?;
     let mut images = DirCache::new(&source.images);
     let mut shipped = (source.images != source.root).then(|| DirCache::new(&source.root));
     let (image_entries, layer_facts) = plan_images(&analysis, detail, &mut images, &mut shipped);
+
+    // What a card for the file shows, and a small picture of each map drawn
+    // from its images in the file; they go right after the header.
+    let group = source.group.as_deref().or(mine.group.as_deref());
+    let card = read_card(&source.root, &pack.title, group);
+    let mut maps = card.maps;
+    let previews = make_previews(
+        &analysis,
+        &layer_facts,
+        &maps,
+        &mut images,
+        &mut shipped,
+        cancelled,
+    )?;
+    for preview in &previews {
+        maps[preview.map].preview = Some(preview.name.clone());
+    }
+    let cover = maps.iter().find_map(|map| map.preview.clone());
+    source_facts.name = site_name(card.site_name, &source_facts);
 
     let exported_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -122,7 +145,15 @@ pub fn export_with_mine(
             );
         }
     }
-    let mut entries: Vec<Entry> = Vec::new();
+    let mut entries: Vec<Entry> = previews
+        .into_iter()
+        .map(|preview| Entry {
+            name: preview.name,
+            size: preview.bytes.len() as u64,
+            data: EntryData::Bytes(preview.bytes),
+        })
+        .collect();
+    let with_previews = !entries.is_empty();
     for entry in pack_file_entries(&source.root)? {
         if entry.name == PICTURES_FILE {
             if let Some(pictures) = &pictures {
@@ -186,22 +217,34 @@ pub fn export_with_mine(
         });
     }
 
+    let carried = if mine_facts.is_some() {
+        mine.version()
+    } else {
+        VERSION_WITHOUT_MINE
+    };
     let header = Header {
         format: FORMAT.to_owned(),
-        version: if mine_facts.is_some() {
-            mine.version()
+        // The lowest version that holds what the file carries, so an older
+        // app reads every file it can.
+        version: if with_previews {
+            carried.max(VERSION_WITH_PREVIEWS)
         } else {
-            VERSION_WITHOUT_MINE
+            carried
         },
         pack_id: source.pack_id.clone(),
         title: pack.title.clone(),
+        game: Some(card.game),
         pack_version: pack.pack_version.clone(),
         detail,
         exported_at: exported_at.clone(),
         exported_by: app.clone(),
         pack,
+        personal_use: card.personal_use,
         source: source_facts,
         contents: count_contents(&source.root),
+        maps,
+        guides: card.guides,
+        cover,
         images: ImagesFacts {
             detail,
             files: layer_facts.iter().map(|layer| layer.files).sum(),

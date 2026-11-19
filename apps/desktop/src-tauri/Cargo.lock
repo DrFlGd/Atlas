@@ -217,6 +217,7 @@ dependencies = [
 name = "atlas-desktop"
 version = "0.22.0"
 dependencies = [
+ "atlas-pack",
  "flate2",
  "httpdate",
  "image",
@@ -237,6 +238,15 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
+name = "atlas-pack"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "zip",
 ]
 

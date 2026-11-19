@@ -36,6 +36,7 @@
 
 import {
   GAME_ID_PATTERN,
+  MAX_SITE_NAME_LENGTH,
   checkPackIntegrity,
   idOf,
   isAllowedRemoteUrl,
@@ -1094,6 +1095,17 @@ export interface ImportSuccess {
    * `pack` (see {@link cutPicturesOf}).
    */
   cutPictures?: CutPictureUse[];
+  /**
+   * Optional: the name of the site the page was read from, as the importer
+   * shows it to the person (for a site described by a site rules file, the
+   * file's `name`). The app records it as the pack manifest's
+   * `source.site`, so a pack names its site without the app guessing from
+   * the importer or the addresses. Kept as {@link siteNameOf} gives it, and
+   * left out when that gives none: the name recorded before is then kept.
+   * Apps that do not know this field leave it out, and an importer that
+   * leaves it out works as before.
+   */
+  site?: string;
   /** The whole pack after the import, including maps from earlier imports. */
   pack: PackData;
   summary: ImportSummary;
@@ -1794,6 +1806,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     pictureFiles: z.unknown().optional(),
     // Checked against the pack, entry by entry (`cutPicturesOf`).
     cutPictures: z.unknown().optional(),
+    // Kept when it is a name (`siteNameOf`).
+    site: z.unknown().optional(),
     pack: z.unknown(),
     summary: summarySchema,
   }),
@@ -1862,6 +1876,22 @@ export function writtenAgainLinks(value: unknown, pageUrl?: string): WrittenAgai
     });
   }
   return kept;
+}
+
+/**
+ * The name of a site as the app keeps it (see {@link ImportSuccess.site}):
+ * one line, with line breaks as spaces and other control characters left
+ * out, trimmed, of 1 to {@link MAX_SITE_NAME_LENGTH} characters as the
+ * manifest schema counts them; else null.
+ */
+export function siteNameOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const name = value
+    .replace(/[\r\n\t]+/g, ' ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .trim();
+  return name.length > 0 && name.length <= MAX_SITE_NAME_LENGTH ? name : null;
 }
 
 /**
@@ -1944,8 +1974,10 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
     pictureFiles: files,
     pageAddress: arrived,
     cutPictures: cuts,
+    site: siteGiven,
     ...rest
   } = success;
+  const site = siteNameOf(siteGiven);
   const pageAddress = ownAddress(arrived, pageUrl);
   // Links are kept as links of the page where it is.
   const links = pageLinks(given, pageAddress ?? pageUrl);
@@ -1955,6 +1987,7 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   return {
     ...rest,
     ...(cutPictures.length > 0 ? { cutPictures } : {}),
+    ...(site ? { site } : {}),
     ...(pageAddress ? { pageAddress } : {}),
     ...(links.length > 0 ? { links } : {}),
     ...(writtenAgain.length > 0 ? { writtenAgain } : {}),

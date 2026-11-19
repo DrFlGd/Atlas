@@ -245,6 +245,7 @@ fn folder_source(dir: &Path) -> PackSource {
         comes_with_app: false,
         own_use_pictures: false,
         smaller_pictures: false,
+        group: None,
     }
 }
 
@@ -615,6 +616,7 @@ fn exports_images_from_the_overlay_of_a_pack_that_comes_with_the_app() {
         comes_with_app: true,
         own_use_pictures: false,
         smaller_pictures: false,
+        group: None,
     };
     let options = export_options(&source).unwrap();
     assert!(options.exportable);
@@ -1563,6 +1565,61 @@ fn exports_the_own_files_beside_the_game() {
 }
 
 #[test]
+fn the_game_goes_by_its_group_title_with_or_without_own_files() {
+    let dir = TempDir::new("packfile-group-title");
+    let (library, registry) = library_with(&dir.0, Vec::new());
+    let maps = library.maps_folder();
+    write_pack(&maps.join(ID), "1.0.0");
+    library.scan();
+    crate::gamegroups::write(
+        &maps,
+        &format!(
+            r#"{{"format":"atlas-game-groups","version":1,"groups":[{{"id":"g","title":"Isles","members":[{{"gameId":"other"}},{{"gameId":"{ID}"}}]}}]}}"#
+        ),
+        None,
+    )
+    .unwrap();
+    let downloads = crate::downloads::for_tests(&registry, dir.0.join("data"));
+    let export = |name: &str, include: bool| {
+        shell::export_pack_with_mine(
+            &library,
+            &downloads,
+            ID,
+            &app(),
+            Detail::Overview,
+            &dir.0.join(name),
+            include,
+            false,
+            false,
+            &mut |_| {},
+            &|| false,
+        )
+        .unwrap()
+    };
+    // Without the person's own files the title still names the game, but
+    // the group, with the other games' ids, stays out of the file.
+    let without = export("without.atlaspack", false);
+    assert_eq!(without.header.game.unwrap().title, "Isles");
+    assert_eq!(without.header.mine, None);
+    assert_eq!(without.header.version, VERSION_WITHOUT_MINE);
+    assert!(!entry_names(&dir.0.join("without.atlaspack")).contains_key("mine/game-group.json"));
+    // With them, the same title, and the group goes in.
+    let with = export("with.atlaspack", true);
+    assert_eq!(with.header.game.unwrap().title, "Isles");
+    assert_eq!(with.header.version, VERSION_WITH_TITLE);
+    assert!(entry_names(&dir.0.join("with.atlaspack")).contains_key("mine/game-group.json"));
+    // Out of the group, the pack's own title.
+    crate::gamegroups::write(
+        &maps,
+        r#"{"format":"atlas-game-groups","version":1,"groups":[]}"#,
+        None,
+    )
+    .unwrap();
+    let alone = export("alone.atlaspack", false);
+    assert_eq!(alone.header.game.unwrap().title, "Test Valley");
+}
+
+#[test]
 fn carries_own_photos_and_guide_links_when_asked() {
     let dir = TempDir::new("packfile-mine-photos");
     let pack = dir.0.join("pack");
@@ -1712,11 +1769,11 @@ fn carries_the_title_of_the_game_as_version_6() {
     let mine = Mine::read(&maps, ID).unwrap();
     let group = mine.group.clone().unwrap();
     assert!(group.contains("\"format\": \"atlas-game-group\""));
-    assert_eq!(mine.version(), VERSION);
+    assert_eq!(mine.version(), VERSION_WITH_TITLE);
     let file = dir.0.join("group.atlaspack");
     let exported = export_mine(&source, &file, &mine).unwrap();
     // Only an app that knows titles reads it.
-    assert_eq!(exported.header.version, VERSION);
+    assert_eq!(exported.header.version, VERSION_WITH_TITLE);
     assert!(exported.header.mine.unwrap().group);
     assert!(entry_names(&file).contains_key("mine/game-group.json"));
     let imported = run_import(&file, &dir.0.join("maps-there")).unwrap();
@@ -2369,4 +2426,520 @@ fn cancelling_while_pictures_are_made_smaller_leaves_nothing() {
     // Cancelled while the pictures were made smaller, before anything was written.
     assert_eq!(asked.get(), 1);
     assert!(!file.exists() && !part_path(&file).exists());
+}
+
+// ---------------------------------------------------------------------------
+// What another app shows of a file: the card and the small pictures (version 7)
+
+/// The entries of a file after the header, in order, with their bytes.
+#[cfg(not(target_os = "android"))]
+fn entries_of(file: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut archive = ZipArchive::new(fs::File::open(file).unwrap()).unwrap();
+    (1..archive.len())
+        .map(|i| {
+            let mut entry = archive.by_index(i).unwrap();
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+            (entry.name().unwrap().into_owned(), bytes)
+        })
+        .collect()
+}
+
+/// A pack whose East Field has real images at level 1 (512 pixels a side,
+/// 2 x 2 tiles), and whose locations name their maps. West Ridge's images
+/// are no pictures, so it has no small picture.
+#[cfg(not(target_os = "android"))]
+fn write_picture_pack(dir: &Path) {
+    use super::smaller::tests::{encoded, photo};
+    use image::ImageFormat;
+    write_pack(dir, "1.2.0");
+    for (x, y) in grid(2048, 2048, 3, 1) {
+        put(
+            &dir.join(tile_a(1, x, y)),
+            &encoded(&photo(256, 256, x == y), ImageFormat::Png),
+        );
+    }
+    put_json(
+        &dir.join("locations.json"),
+        &json!([{"id": "x1", "mapId": format!("{ID}:map:east")}, {"id": "x2", "mapId": format!("{ID}:map:east")},
+                {"id": "x3", "mapId": format!("{ID}:map:west")}]),
+    );
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn writes_small_pictures_of_the_maps_first_as_version_7() {
+    use super::smaller::tests::read;
+    use image::ImageFormat;
+    let dir = TempDir::new("packfile-previews");
+    let pack = dir.0.join("pack");
+    write_picture_pack(&pack);
+    let file = dir.0.join("valley.atlaspack");
+    let header = run_export(&folder_source(&pack), Detail::Overview, &file)
+        .unwrap()
+        .header;
+    assert_eq!(header.version, VERSION_WITH_PREVIEWS);
+    assert_eq!(
+        header.maps,
+        [
+            MapFacts {
+                id: format!("{ID}:map:east"),
+                name: "East Field".into(),
+                width: 2048,
+                height: 2048,
+                locations: 2,
+                preview: Some("preview/east.jpg".into()),
+            },
+            // Its images are not pictures: no small picture, and no failure.
+            MapFacts {
+                id: format!("{ID}:map:west"),
+                name: "West Ridge".into(),
+                width: 1024,
+                height: 512,
+                locations: 1,
+                preview: None,
+            },
+        ]
+    );
+    assert_eq!(header.cover.as_deref(), Some("preview/east.jpg"));
+
+    // Right after the header, stored, a JPEG of 512 pixels at most.
+    let entries = entries_of(&file);
+    assert_eq!(entries[0].0, "preview/east.jpg");
+    assert!(entries[1..]
+        .iter()
+        .all(|(name, _)| !name.starts_with("preview/")));
+    let preview = &entries[0].1;
+    assert!(preview.len() as u64 <= MAX_PREVIEW_BYTES);
+    assert_eq!(read(preview), (ImageFormat::Jpeg, 512, 512));
+    {
+        let mut archive = ZipArchive::new(fs::File::open(&file).unwrap()).unwrap();
+        assert_eq!(
+            archive.by_name("preview/east.jpg").unwrap().compression(),
+            CompressionMethod::Stored
+        );
+    }
+    assert_eq!(header.files as usize, entries.len());
+    assert_eq!(
+        header.bytes,
+        entries.iter().map(|(_, b)| b.len() as u64).sum::<u64>()
+    );
+
+    // Another app reads the description and the picture with the crate.
+    assert_eq!(atlas_pack::read_header(&file).unwrap(), header);
+    assert_eq!(
+        &atlas_pack::read_preview(&file, "preview/east.jpg").unwrap(),
+        preview
+    );
+
+    // Imported: the game is there, its small pictures are not.
+    let maps = dir.0.join("maps");
+    let imported = run_import(&file, &maps).unwrap();
+    let files = files_under(&imported.folder);
+    assert!(
+        files.keys().all(|name| !name.contains("preview")),
+        "{files:?}"
+    );
+    assert_eq!(imported.header, header);
+    assert!(hidden_entries(&maps).is_empty());
+
+    // A file with own lists and small pictures is version 7 too.
+    let mine = Mine {
+        lists: Some(own_lists_text(ID)),
+        ..Mine::default()
+    };
+    let with_mine = dir.0.join("mine.atlaspack");
+    let exported = export_mine(&folder_source(&pack), &with_mine, &mine).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_PREVIEWS);
+    assert_eq!(entry_names(&with_mine).len(), entries.len() + 2);
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn a_file_without_a_picture_of_a_map_stays_at_its_version() {
+    let dir = TempDir::new("packfile-no-previews");
+    // The test pack's images are not pictures: no small picture is made.
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let file = dir.0.join("valley.atlaspack");
+    let header = run_export(&folder_source(&pack), Detail::Overview, &file)
+        .unwrap()
+        .header;
+    assert_eq!(header.version, VERSION_WITHOUT_MINE);
+    assert!(header.maps.iter().all(|map| map.preview.is_none()));
+    assert_eq!(header.cover, None);
+    assert!(entry_names(&file)
+        .keys()
+        .all(|name| !name.starts_with("preview/")));
+    let raw = json_entry(&file, HEADER_FILE);
+    assert!(raw.get("cover").is_none());
+    assert!(raw["maps"][0].get("preview").is_none());
+}
+
+#[test]
+fn the_description_says_what_a_card_shows() {
+    let dir = TempDir::new("packfile-card");
+    // A game of maps: its own title, no system, no pages of its own.
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let file = dir.0.join("valley.atlaspack");
+    let header = run_export(&folder_source(&pack), Detail::Overview, &file)
+        .unwrap()
+        .header;
+    assert_eq!(
+        header.game,
+        Some(GameFacts {
+            title: "Test Valley".into(),
+            system: None
+        })
+    );
+    assert!(!header.personal_use && header.guides.is_empty());
+    // Its site goes by the address of the first page read (see
+    // `the_site_is_named_by_the_manifest_then_the_pages_then_the_address`).
+    assert_eq!(header.source.name.as_deref(), Some("127.0.0.1"));
+    let raw = json_entry(&file, HEADER_FILE);
+    assert_eq!(raw["game"], json!({"title": "Test Valley"}));
+    for key in ["personalUse", "guides"] {
+        assert!(raw.get(key).is_none(), "{key}");
+    }
+    assert_eq!(raw["source"]["name"], "127.0.0.1");
+    assert_eq!(raw["maps"][1]["name"], "West Ridge");
+
+    // A game of pages read in order, kept for the person's own use.
+    let pages = dir.0.join("pages");
+    write_pages_pack(&pages);
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(pages.join(MANIFEST_FILE)).unwrap()).unwrap();
+    manifest["system"] = json!(" Saltbox 64 ");
+    manifest["personalUse"] = json!(true);
+    manifest["pagesInOrder"] = json!(true);
+    manifest["homePage"] = json!(format!("{ID}:guide:home"));
+    put_json(&pages.join(MANIFEST_FILE), &manifest);
+    let source = |site: &str| {
+        json!({"url": "https://wiki.example.com/x", "site": site,
+        "license": {"name": "CC BY-SA 4.0"}, "readAt": "2026-11-13"})
+    };
+    put_json(
+        &pages.join("guides.json"),
+        &json!([
+            {"id": format!("{ID}:guide:home"), "title": "Home", "body": "x", "locationIds": [], "source": source("Example Wiki")},
+            {"id": format!("{ID}:guide:start"), "title": "Start", "body": "x", "locationIds": [], "source": source("Example Wiki")},
+            {"id": format!("{ID}:guide:more"), "title": "More", "body": "x", "locationIds": [], "source": source("Other Wiki")},
+            {"id": format!("{ID}:guide:loose"), "title": "Not listed", "body": "x", "locationIds": []}
+        ]),
+    );
+    put_json(
+        &pages.join("sections.json"),
+        &json!([
+            {"id": format!("{ID}:section:basics"), "title": "Basics",
+             "items": [format!("{ID}:guide:start"), format!("{ID}:section:more"), format!("{ID}:guide:gone")]},
+            {"id": format!("{ID}:section:more"), "title": "More", "items": [format!("{ID}:guide:more"), format!("{ID}:guide:start")]}
+        ]),
+    );
+    let file = dir.0.join("pages.atlaspack");
+    let header = run_export(&folder_source(&pages), Detail::Overview, &file)
+        .unwrap()
+        .header;
+    assert_eq!(header.version, VERSION_WITHOUT_MINE, "no small pictures");
+    assert_eq!(
+        header.game,
+        Some(GameFacts {
+            title: "Test Pages".into(),
+            system: Some("Saltbox 64".into())
+        })
+    );
+    assert!(header.personal_use);
+    assert!(header.maps.is_empty() && header.cover.is_none());
+    // The pages the contents list, however deep, and the home page.
+    assert_eq!(
+        header.guides,
+        [GuideFacts {
+            title: "Test Pages".into(),
+            guide_type: GuideType::Guide,
+            pages: 3
+        }]
+    );
+    assert_eq!(header.source.name.as_deref(), Some("Example Wiki"));
+    let raw = json_entry(&file, HEADER_FILE);
+    assert_eq!(raw["personalUse"], true);
+    assert_eq!(
+        raw["guides"],
+        json!([{"title": "Test Pages", "type": "guide", "pages": 3}])
+    );
+    assert_eq!(raw["source"]["name"], "Example Wiki");
+    assert!(raw.get("maps").is_none() && raw.get("cover").is_none());
+
+    // Read as a collection, without a contents and with no map: a wiki of
+    // all its guides.
+    manifest.as_object_mut().unwrap().remove("pagesInOrder");
+    put_json(&pages.join(MANIFEST_FILE), &manifest);
+    fs::remove_file(pages.join("sections.json")).unwrap();
+    let header = run_export(
+        &folder_source(&pages),
+        Detail::Overview,
+        &dir.0.join("wiki.atlaspack"),
+    )
+    .unwrap()
+    .header;
+    assert_eq!(header.guides[0].guide_type, GuideType::Wiki);
+    assert_eq!(header.guides[0].pages, 4);
+}
+
+#[test]
+fn the_site_is_named_by_the_manifest_then_the_pages_then_the_address() {
+    let dir = TempDir::new("packfile-site-name");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    // Only the pages the manifest records: none from the page data.
+    fs::remove_dir_all(pack.join("import")).unwrap();
+    let mut manifest = manifest("1.0.0");
+    let importer = json!({"id": "demo-maps", "title": "Demo map site"});
+    manifest["source"] = json!({"importer": importer, "pages": [
+        {"url": "https://www.maps.example.org/test-valley/east", "importedAt": "2026-11-10T09:00:00.000Z"},
+        {"url": "https://other.example.net/test-valley/west", "importedAt": "2026-11-11T09:00:00.000Z"}
+    ]});
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    let mut runs = 0;
+    let mut name = || {
+        runs += 1;
+        run_export(
+            &folder_source(&pack),
+            Detail::Overview,
+            &dir.0.join(format!("{runs}.atlaspack")),
+        )
+        .unwrap()
+        .header
+        .source
+        .name
+    };
+    // Last: the host of the first page it records, without `www.`.
+    assert_eq!(name().as_deref(), Some("maps.example.org"));
+    // Before that: the site its guide pages name most.
+    let guide = |id: &str, site: &str| {
+        json!({"id": format!("{ID}:guide:{id}"), "title": id, "body": "x", "locationIds": [],
+               "source": {"url": "https://wiki.example.com/x", "site": site,
+                          "license": {"name": "CC BY-SA 4.0"}, "readAt": "2026-11-13"}})
+    };
+    put_json(
+        &pack.join("guides.json"),
+        &json!([
+            guide("a", "Example Map Wiki"),
+            guide("b", "Example Map Wiki"),
+            guide("c", "Other Wiki")
+        ]),
+    );
+    assert_eq!(name().as_deref(), Some("Example Map Wiki"));
+    // First: the name the manifest records for the site.
+    manifest["source"]["site"] = json!(" Example Maps ");
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name().as_deref(), Some("Example Maps"));
+    // A name that is no name is passed over.
+    manifest["source"]["site"] = json!("   ");
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name().as_deref(), Some("Example Map Wiki"));
+    // Never the importer's title: with no page, no guide and no name, none.
+    fs::remove_file(pack.join("guides.json")).unwrap();
+    manifest["source"] = json!({"importer": importer, "pages": []});
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name(), None);
+    // And none for a pack not read from a site.
+    manifest.as_object_mut().unwrap().remove("source");
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name(), None);
+}
+
+#[test]
+fn the_address_of_a_page_names_its_site_by_its_host() {
+    use super::card::site_name;
+    let facts = |kind: SourceKind, urls: &[&str]| SourceFacts {
+        kind,
+        pages: urls
+            .iter()
+            .map(|url| PageFacts {
+                url: (*url).to_owned(),
+                ..PageFacts::default()
+            })
+            .collect(),
+        ..SourceFacts::default()
+    };
+    let web = |urls: &[&str]| site_name(None, &facts(SourceKind::WebPages, urls));
+    assert_eq!(
+        web(&["https://WWW.Maps.Example.org:8443/a?b#c"]).as_deref(),
+        Some("maps.example.org")
+    );
+    assert_eq!(
+        web(&["https://wwwmaps.example.org/a"]).as_deref(),
+        Some("wwwmaps.example.org")
+    );
+    assert_eq!(
+        web(&["http://guides.example.net/", "https://maps.example.org/"]).as_deref(),
+        Some("guides.example.net")
+    );
+    assert_eq!(web(&["not an address"]), None);
+    assert_eq!(web(&[]), None);
+    // A name already found is kept, and only a pack read from pages has a host.
+    assert_eq!(
+        site_name(
+            Some("Example Maps".into()),
+            &facts(SourceKind::WebPages, &["https://maps.example.org/"])
+        )
+        .as_deref(),
+        Some("Example Maps")
+    );
+    assert_eq!(
+        site_name(
+            None,
+            &facts(SourceKind::App, &["https://maps.example.org/"])
+        ),
+        None
+    );
+}
+
+#[test]
+fn the_game_goes_by_the_title_the_file_carries() {
+    let dir = TempDir::new("packfile-card-title");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let group = format!(
+        r#"{{"format":"atlas-game-group","version":1,"gameId":"{ID}","updatedAt":"2026-11-14T10:00:00Z","title":" Isles ","members":[{{"gameId":"other"}},{{"gameId":"{ID}"}}]}}"#
+    );
+    let mine = Mine {
+        group: Some(group),
+        ..Mine::default()
+    };
+    let exported = export_mine(&folder_source(&pack), &dir.0.join("g.atlaspack"), &mine).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_TITLE);
+    assert_eq!(exported.header.game.unwrap().title, "Isles");
+    // Without it, the pack's own title.
+    let plain = run_export(
+        &folder_source(&pack),
+        Detail::Overview,
+        &dir.0.join("p.atlaspack"),
+    )
+    .unwrap();
+    assert_eq!(plain.header.game.unwrap().title, "Test Valley");
+}
+
+#[test]
+fn names_and_levels_of_small_pictures() {
+    use super::preview::{preview_level, preview_name};
+    let mut taken = std::collections::HashSet::new();
+    for (id, name) in [
+        ("test-valley:map:east", "preview/east.jpg"),
+        ("test-valley:map:East", "preview/east-2.jpg"),
+        (
+            "test-valley:map:West Ridge (2)",
+            "preview/west-ridge--2-.jpg",
+        ),
+        ("test-valley:map:...", "preview/map.jpg"),
+        ("test-valley:map:_x", "preview/x.jpg"),
+        ("test-valley:map:../../up", "preview/up.jpg"),
+    ] {
+        let made = preview_name(id, &mut taken);
+        assert_eq!(made, name, "{id}");
+        assert!(is_preview_name(&made));
+    }
+    let long = preview_name(&format!("g:map:{}", "a".repeat(300)), &mut taken);
+    assert!(is_preview_name(&long), "{long}");
+
+    let layers = parse_layers(
+        &json!([{"id": "g:map:big", "name": "Big", "width": 20_000, "height": 10_000}]).to_string(),
+        &json!([{"id": "g:layer:a", "mapId": "g:map:big", "name": "A", "minZoom": 0, "maxZoom": 7, "tileSize": 256,
+                 "tiles": {"type": "xyz", "url": "tiles/a/{z}/{x}/{y}.png"}}])
+        .to_string(),
+    )
+    .unwrap();
+    let layer = &layers[0];
+    assert_eq!(layer.map_id, "g:map:big");
+    // Level 2 is 625 pixels wide: the lowest at least 512.
+    assert_eq!(preview_level(layer, &[0, 1, 2, 3, 4, 5, 6, 7]), Some(2));
+    // Only lower levels in the file: the most detailed of them.
+    assert_eq!(preview_level(layer, &[0, 1]), Some(1));
+    // Levels of too many tiles are never drawn.
+    assert_eq!(preview_level(layer, &[6, 7]), None);
+}
+
+#[test]
+fn imports_a_version_6_file() {
+    let dir = TempDir::new("packfile-version-6");
+    let (mut header, entries) = good_file(&dir.0);
+    header["version"] = json!(VERSION_WITH_TITLE);
+    let file = dir.0.join("six.atlaspack");
+    let borrowed: Vec<(&str, &[u8])> = entries
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    write_file(&file, &header, &borrowed);
+    assert_eq!(read_header(&file).unwrap().version, 6);
+    assert!(run_import(&file, &dir.0.join("maps")).is_ok());
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn refuses_small_pictures_that_are_not_listed_or_out_of_place() {
+    let dir = TempDir::new("packfile-previews-refused");
+    let pack = dir.0.join("pack");
+    write_picture_pack(&pack);
+    let file = dir.0.join("valley.atlaspack");
+    run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+    let header = json_entry(&file, HEADER_FILE);
+    let entries = entries_of(&file);
+    let jpeg = entries[0].1.clone();
+    // Written again by hand as it is, it imports.
+    let sound = dir.0.join("sound.atlaspack");
+    let borrowed: Vec<(&str, &[u8])> = entries
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    write_file(&sound, &header, &borrowed);
+    assert!(run_import(&sound, &dir.0.join("maps-sound")).is_ok());
+
+    // One the header does not list, and one with a name no small picture has.
+    for (i, name) in [
+        "preview/west.jpg",
+        "preview/../east.jpg",
+        "preview/East.jpg",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut spoilt = entries.clone();
+        spoilt.insert(1, (name.to_owned(), jpeg.clone()));
+        let error = import_error(&dir.0, &format!("unlisted-{i}"), &header, &spoilt);
+        assert!(
+            error.contains("not part of a pack") || error.contains("outside the pack"),
+            "{name}: {error}"
+        );
+    }
+    // A header that lists an unsafe name: the name is dropped, so the entry
+    // has no place.
+    let mut unsafe_header = header.clone();
+    unsafe_header["maps"][1]["preview"] = json!("preview/../../evil.jpg");
+    let mut spoilt = entries.clone();
+    spoilt.insert(1, ("preview/../../evil.jpg".to_owned(), jpeg.clone()));
+    let error = import_error(&dir.0, "unsafe", &unsafe_header, &spoilt);
+    assert!(
+        error.contains("not part of a pack") || error.contains("outside the pack"),
+        "{error}"
+    );
+    // Listed, but in a file of a version without small pictures.
+    let mut older = header.clone();
+    older["version"] = json!(VERSION_WITH_TITLE);
+    let error = import_error(&dir.0, "older", &older, &entries);
+    assert!(error.contains("not part of a pack"), "{error}");
+    // Listed, but not right after the header.
+    let mut moved = entries.clone();
+    let first = moved.remove(0);
+    moved.push(first);
+    let error = import_error(&dir.0, "moved", &header, &moved);
+    assert!(error.contains("out of its place"), "{error}");
+    // Too large, and not a JPEG.
+    let mut large = entries.clone();
+    large[0].1.resize(MAX_PREVIEW_BYTES as usize + 1, 0);
+    let error = import_error(&dir.0, "large", &header, &large);
+    assert!(error.contains("too large"), "{error}");
+    let mut png = entries.clone();
+    png[0].1 = b"\x89PNG\r\n\x1a\n".to_vec();
+    let error = import_error(&dir.0, "png", &header, &png);
+    assert!(error.contains("not the picture"), "{error}");
 }

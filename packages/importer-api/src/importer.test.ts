@@ -31,6 +31,7 @@ import {
   pageMeasureStep,
   pageTilesFit,
   sameSite,
+  siteNameOf,
   tileAddressReader,
   type AtlasImporter,
   type ImportContext,
@@ -170,6 +171,23 @@ describe('the demo importer', () => {
     ]);
     expect(again.ok && again.summary.refreshed).toBe(true);
     expect(again.ok && again.pack.locations.map((l) => l.id)).toContain('test-valley:loc:east-1');
+  });
+
+  it('keeps the name of the site an importer gives, and works without one', async () => {
+    const outcome = await demo.convert(page('east'), context());
+    // An importer that gives none, as before.
+    const plain = checkOutcome(outcome);
+    expect(plain.ok && 'site' in plain).toBe(false);
+    const withSite = (site: unknown) => checkOutcome({ ...outcome, site });
+    const named = withSite('  Example\nMaps\u202e ');
+    expect(named.ok && named.site).toBe('Example Maps');
+    // One that is not a name is left out; the import still goes ahead.
+    for (const odd of [42, '', '   ', 'x'.repeat(201), null]) {
+      const kept = withSite(odd);
+      expect(kept.ok).toBe(true);
+      expect(kept.ok && 'site' in kept).toBe(false);
+    }
+    expect(siteNameOf('x'.repeat(200))).toHaveLength(200);
   });
 
   it('explains data in the wrong shape and bundled games', async () => {

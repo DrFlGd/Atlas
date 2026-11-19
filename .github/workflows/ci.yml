@@ -105,7 +105,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri -> target
+          workspaces: |
+            apps/desktop/src-tauri -> target
+            crates/atlas-pack -> target
 
       - run: pnpm install --frozen-lockfile
 
@@ -119,6 +121,16 @@ jobs:
           cargo clippy --all-targets --locked --features downloads -- -D warnings
           cargo test --locked
           cargo test --locked --features downloads
+
+      # The pack file crate that the shell and other apps use, on its own:
+      # the shell builds it as a path dependency, but its format check, lint
+      # and tests run only here.
+      - name: Pack file crate format, lint and unit tests
+        working-directory: crates/atlas-pack
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
 
       # The default build: a viewer without map image downloads. Also builds
       # the web app and the demo pack. No signing keys are set.

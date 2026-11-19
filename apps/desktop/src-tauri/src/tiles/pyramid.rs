@@ -165,30 +165,9 @@ struct MapDef {
     height: u32,
 }
 
-/// How much of the pyramid to download.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum Detail {
-    /// Two levels short of the top: a quick download, blurry close up.
-    Overview,
-    /// One level short of the top: about a quarter of the full download.
-    Standard,
-    /// Every level.
-    Full,
-}
-
-impl Detail {
-    pub const ALL: [Detail; 3] = [Detail::Overview, Detail::Standard, Detail::Full];
-
-    /// Levels left out at the top of each layer.
-    pub fn levels_short(self) -> u8 {
-        match self {
-            Detail::Overview => 2,
-            Detail::Standard => 1,
-            Detail::Full => 0,
-        }
-    }
-}
+/// How much of the pyramid to download (the same choice says how much a
+/// pack file holds; see the `atlas-pack` crate).
+pub use atlas_pack::Detail;
 
 /// A layer whose tiles can be downloaded.
 #[derive(Clone, Debug)]

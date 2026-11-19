@@ -17,7 +17,11 @@ export interface PackDescription {
   /** When the pack's content last changed. */
   updated: string;
   writtenBy: WrittenBy;
-  /** Where an imported pack came from; leave out for packs built by hand or by a tool. */
+  /**
+   * Where an imported pack came from; leave out for packs built by hand or
+   * by a tool. Without a `site`, the site's name the previous manifest
+   * records is kept.
+   */
   source?: PackSource;
   /** Image summaries to keep, by layer id (for example from the previous manifest). */
   images?: ReadonlyMap<string, LayerImages>;
@@ -104,6 +108,8 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
   const previous = data.manifest;
   const created =
     info.created ?? (previous.schemaVersion === 2 ? previous.created : undefined) ?? info.updated;
+  const site =
+    info.source?.site ?? (previous.schemaVersion === 2 ? previous.source?.site : undefined);
   return {
     schemaVersion: SCHEMA_VERSION,
     gameId: previous.gameId,
@@ -122,7 +128,15 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
     created,
     updated: info.updated,
     writtenBy: info.writtenBy,
-    ...(info.source ? { source: info.source } : {}),
+    ...(info.source
+      ? {
+          source: {
+            importer: info.source.importer,
+            pages: info.source.pages,
+            ...(site ? { site } : {}),
+          },
+        }
+      : {}),
     contents: describeContents(data, info.images ?? recordedImages(previous)),
     ...(isForPersonalUse(data) ? { personalUse: true as const } : {}),
     ...(previous.schemaVersion === 2 && previous.system ? { system: previous.system } : {}),
