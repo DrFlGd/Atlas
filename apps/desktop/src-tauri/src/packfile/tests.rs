@@ -26,9 +26,9 @@ use crate::{
     tiles::store::tests::TempDir,
 };
 
-const ID: &str = "test-valley";
+pub(crate) const ID: &str = "test-valley";
 
-fn app() -> AppInfo {
+pub(crate) fn app() -> AppInfo {
     AppInfo {
         name: "Atlas".into(),
         version: "0.3.5".into(),
@@ -36,12 +36,12 @@ fn app() -> AppInfo {
     }
 }
 
-fn put(path: &Path, bytes: &[u8]) {
+pub(crate) fn put(path: &Path, bytes: &[u8]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
 }
 
-fn put_json(path: &Path, value: &Value) {
+pub(crate) fn put_json(path: &Path, value: &Value) {
     put(
         path,
         serde_json::to_string_pretty(value).unwrap().as_bytes(),
@@ -211,7 +211,7 @@ fn write_shipped_images(root: &Path) {
 
 /// A pack folder as the maps folder keeps it, with its images, page data
 /// and the app's own files.
-fn write_pack(dir: &Path, version: &str) {
+pub(crate) fn write_pack(dir: &Path, version: &str) {
     write_pack_files(dir, version);
     write_images(dir);
     write_shipped_images(dir);
@@ -1190,7 +1190,7 @@ fn reads_iso_times() {
 // ---------------------------------------------------------------------------
 // The maps library's rules
 
-fn library_with(dir: &Path, bundled: Vec<BundledPack>) -> (Library, PackRegistry) {
+pub(crate) fn library_with(dir: &Path, bundled: Vec<BundledPack>) -> (Library, PackRegistry) {
     let registry = PackRegistry::default();
     let library = Library::new(
         SettingsFile::new(dir.join("shared")),

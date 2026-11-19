@@ -27,6 +27,9 @@ pub mod gamegroups;
 // A person's links between guide pages and the map, beside the game's folder.
 pub mod guidelinks;
 mod imports;
+// Keeping packs up to date in a folder (the app with downloads only).
+#[cfg(feature = "downloads")]
+mod keep;
 pub mod library;
 pub mod manifest;
 // The folder maps and wikis a reader no longer uses, offered for removal.
@@ -227,6 +230,13 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         sites::commands::sites_remove,
         sites::commands::sites_switch,
         sites::commands::sites_save,
+        keep::commands::kept_packs_status,
+        keep::commands::kept_packs_choose_folder,
+        keep::commands::kept_packs_set,
+        keep::commands::kept_packs_write_all,
+        keep::commands::kept_packs_write_again,
+        keep::commands::kept_packs_cancel,
+        keep::commands::kept_packs_reveal,
     ];
     #[cfg(not(feature = "downloads"))]
     viewer_commands![]
@@ -335,14 +345,19 @@ pub fn run() {
             }
             #[cfg(feature = "downloads")]
             let downloads = {
-                let manager = DownloadManager::new(app_data, registry).with_shared_folder(&shared);
+                let manager =
+                    DownloadManager::new(app_data.clone(), registry).with_shared_folder(&shared);
                 manager.set_download_settings(&library.settings().read().downloads);
                 let manager = Arc::new(manager);
                 app.manage(Arc::clone(&manager));
                 Downloads::new(manager)
             };
             #[cfg(not(feature = "downloads"))]
-            let downloads = Downloads::new(registry, app_data);
+            let downloads = Downloads::new(registry, app_data.clone());
+            // Packs kept up to date in a folder, written on a thread of
+            // their own once each change is finished.
+            #[cfg(feature = "downloads")]
+            start_keeper(app, &app_data, &shared, &library, &downloads);
             app.manage(downloads);
             app.manage(Arc::new(saves::for_app(app)));
             app.manage(Arc::new(gamefiles::for_app(app)));
@@ -379,6 +394,49 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running the Atlas desktop shell");
+}
+
+/// Starts keeping packs up to date in the folder the person chose (see
+/// `keep`), and tells the main window of each change of its state.
+#[cfg(feature = "downloads")]
+fn start_keeper(
+    app: &App,
+    app_data: &std::path::Path,
+    shared: &std::path::Path,
+    library: &Arc<Library>,
+    downloads: &Downloads,
+) {
+    use tauri::Emitter as _;
+    let probe_app = app.handle().clone();
+    let probe_downloads = downloads.clone();
+    let tell_app = app.handle().clone();
+    let keeper = keep::Keeper::start(keep::Parts {
+        app_data: app_data.to_path_buf(),
+        shared_dir: shared.to_path_buf(),
+        library: Arc::clone(library),
+        downloads: downloads.clone(),
+        app: commands::app_info(app.handle()),
+        timing: keep::Timing::default(),
+        probe: Box::new(move || keep::Activity {
+            downloads: probe_downloads.active_packs().into_iter().collect(),
+            import_window: probe_app
+                .try_state::<imports::Imports>()
+                .is_some_and(|imports| imports.is_open()),
+            view_saving: probe_app
+                .try_state::<pageview::PageViews>()
+                .and_then(|views| {
+                    let status = views.status();
+                    (status.open && status.saving)
+                        .then_some(status.pack_id)
+                        .flatten()
+                }),
+        }),
+        tell: Box::new(move |status| {
+            let _ = tell_app.emit_to(MAIN_WINDOW, keep::CHANGED_EVENT, status);
+        }),
+    });
+    keeper.install();
+    app.manage(keeper);
 }
 
 /// Android start-up: moves map packs from the maps folder of version 0.3.5
