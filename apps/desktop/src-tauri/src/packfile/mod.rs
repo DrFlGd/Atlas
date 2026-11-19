@@ -75,6 +75,7 @@
 pub mod card;
 pub mod export;
 pub mod import;
+pub mod inplace;
 pub mod preview;
 pub mod shell;
 pub mod smaller;
@@ -107,13 +108,33 @@ use crate::{
 /// reading a description, from the `atlas-pack` crate (`crates/atlas-pack`),
 /// which other apps use to show pack files without unpacking them.
 pub use atlas_pack::{
-    is_preview_name, parse_header, AppInfo, Counts, Detail, GameFacts, GuideFacts, GuideType,
-    Header, ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, PackFacts, PageFacts,
-    SourceFacts, SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS,
-    MAX_PREVIEW_BYTES, PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
+    is_preview_name, AppInfo, Counts, Detail, GameFacts, GuideFacts, GuideType, Header,
+    ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, PackFacts, PageFacts, SourceFacts,
+    SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES,
+    PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
     VERSION_WITH_NOTES, VERSION_WITH_PAGES, VERSION_WITH_PHOTOS, VERSION_WITH_PREVIEWS,
     VERSION_WITH_TITLE,
 };
+
+/// A refusal of the `atlas-pack` crate in this app's words. The crate
+/// names no app, as other apps read pack files with it: for a file in a
+/// newer format it only says a newer version of the app is needed, and
+/// here that app is Atlas.
+pub fn refusal_text(refusal: &atlas_pack::Refusal) -> String {
+    match refusal.kind() {
+        atlas_pack::RefusalKind::NewerFormat => format!(
+            "{} Install a newer version of Atlas to open it.",
+            refusal.what()
+        ),
+        _ => refusal.to_string(),
+    }
+}
+
+/// Reads a description from its JSON text (see the `atlas-pack` crate),
+/// with a refusal in this app's words.
+pub fn parse_header(text: &str) -> Result<Header, String> {
+    atlas_pack::parse_header(text).map_err(|refusal| refusal_text(&refusal))
+}
 
 /// In a pack folder's `.atlas/`: the header of the file the pack was
 /// imported from, with when that was. Not exported and not served.
@@ -1420,6 +1441,10 @@ pub struct PackDetails {
     pub archive: bool,
     /// The pack file it was imported from, if it was.
     pub pack_file: Option<ImportedRecord>,
+    /// The pack file it is read from where it lies, if it is: then every
+    /// other fact here is the file's description's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_from: Option<ReadFrom>,
     /// The style sheets kept from the pages it was read from (see
     /// `styles.rs`), when there are any. Never in a pack file.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1476,8 +1501,63 @@ pub fn pack_details(source: &PackSource) -> Result<PackDetails, String> {
         detail,
         images_at,
         pack_file: read_imported_record(&source.root),
+        read_from: None,
         styles: crate::styles::facts(&source.root),
     })
+}
+
+/// The pack file a listed pack is read from where it lies.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFrom {
+    pub path: String,
+    pub file_name: String,
+    pub header: Header,
+}
+
+/// The facts about a pack read from a pack file, from its description
+/// alone: nothing else of the file is read, and nothing of it is changed.
+pub fn pack_file_details(path: &Path, header: &Header) -> PackDetails {
+    let downloadable = header.images.layers.iter().any(|layer| layer.downloadable);
+    PackDetails {
+        pack: header.pack.clone(),
+        source: header.source.clone(),
+        contents: header.contents,
+        layers: header
+            .images
+            .layers
+            .iter()
+            .map(|layer| InstalledLayer {
+                id: layer.id.clone(),
+                name: layer.name.clone(),
+                map_name: layer.map_name.clone(),
+                min_zoom: layer.min_zoom,
+                max_zoom: layer.max_zoom,
+                downloadable: layer.downloadable,
+                levels: layer.levels.clone(),
+                downloaded_at: layer.downloaded_at.clone(),
+            })
+            .collect(),
+        detail: downloadable.then_some(header.images.detail),
+        images_at: header
+            .images
+            .layers
+            .iter()
+            .filter_map(|layer| layer.downloaded_at.as_deref())
+            .max_by_key(|at| iso_millis(at))
+            .map(str::to_owned),
+        archive: false,
+        pack_file: None,
+        read_from: Some(ReadFrom {
+            path: path.display().to_string(),
+            file_name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            header: header.clone(),
+        }),
+        styles: None,
+    }
 }
 
 /// The record of the pack file a pack folder was imported from.

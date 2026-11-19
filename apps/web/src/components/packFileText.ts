@@ -129,7 +129,7 @@ export type Freshness =
   | { verdict: 'file-newer' | 'installed-newer'; basis: 'pages'; file: string; installed: string }
   | { verdict: 'file-newer' | 'installed-newer'; basis: 'version'; file: string; installed: string }
   | { verdict: 'file-newer' | 'installed-newer'; basis: 'dates'; file: string; installed: string }
-  | { verdict: 'same'; basis: 'same-file' | 'same-data' }
+  | { verdict: 'same'; basis: 'same-file' | 'read-from' | 'same-data' }
   | { verdict: 'unknown' };
 
 const time = (iso: string | null | undefined) => (iso ? Date.parse(iso) : Number.NaN);
@@ -151,7 +151,13 @@ function latest(dates: (string | null | undefined)[]): string | null {
  * installed game. Dates that are not recorded are never guessed.
  */
 export function compareWithInstalled(header: PackFileHeader, installed: PackDetails): Freshness {
-  if (installed.packFile?.header.exportedAt === header.exportedAt) {
+  // The file the installed game is read from where it lies.
+  if (installed.readFrom?.header.exportedAt === header.exportedAt) {
+    return { verdict: 'same', basis: 'read-from' };
+  }
+  // The file the installed game was imported from, or is read from.
+  const installedFile = installed.packFile ?? installed.readFrom ?? null;
+  if (installedFile?.header.exportedAt === header.exportedAt) {
     return { verdict: 'same', basis: 'same-file' };
   }
   const filePages = header.source.newestPageAt;
@@ -178,7 +184,7 @@ export function compareWithInstalled(header: PackFileHeader, installed: PackDeta
     installed.pack.updated,
     installed.pack.created,
     installed.imagesAt,
-    installed.packFile?.header.exportedAt,
+    installedFile?.header.exportedAt,
   ]);
   if (changed && !Number.isNaN(time(header.exportedAt))) {
     return {
@@ -200,9 +206,13 @@ export function freshnessText(
     case 'unknown':
       return 'Atlas cannot tell which is newer: neither records when its data was read.';
     case 'same':
-      return freshness.basis === 'same-file'
-        ? 'The installed game was imported from this same file.'
-        : 'Both hold data read from the game’s pages at the same time, in the same version.';
+      if (freshness.basis === 'same-file') {
+        return 'The installed game was imported from this same file.';
+      }
+      if (freshness.basis === 'read-from') {
+        return 'The game shown now is read from this same file where it lies. Importing it puts a copy into the maps folder, where Atlas can change it.';
+      }
+      return 'Both hold data read from the game’s pages at the same time, in the same version.';
     default:
       break;
   }

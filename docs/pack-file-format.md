@@ -22,13 +22,13 @@ Every entry has the time the file was made, in UTC.
 
 ## The description
 
-`atlaspack.json` is JSON in UTF-8. Every date is ISO 8601 in UTC. A field marked optional may be missing, and a file made before the field existed never has it. A reader must ignore fields it does not know.
+`atlaspack.json` is JSON in UTF-8. Every date is ISO 8601 in UTC. A field marked optional may be missing, and a file made before the field existed never has it. Every other field is in every pack file, whatever its version, and a reader refuses a description without one as damaged. A reader must ignore fields it does not know.
 
 | Field            | What it holds                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `format`         | Always `atlas-pack-file`.                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `version`        | The version of the format (see "Versions").                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `packId`         | The pack's id, such as `test-valley`.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `packId`         | The pack's id, such as `test-valley`: 1 to 64 lower case letters, digits, `-` and `_`, starting with a letter or a digit. A pack is known by it, so a description with another id, or none, is refused.                                                                                                                                                                                                                                        |
 | `title`          | The pack's own title.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `game`           | Optional. `title`: the title the game is shown under with other games when the person grouped it with others, whether or not the file carries that group (`mine/game-group.json` goes in only when they chose to include their own things); otherwise the pack's own title. So two packs of one game, read from two sites and grouped, give the same `title`. `system`: optional, the system the game is for, as the pack's manifest names it. |
 | `packVersion`    | The pack's version.                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -166,12 +166,26 @@ Treat every pack file as untrusted.
 
 - Read the description from the first entry only, and at most 4 MB of it. Refuse the file when the first entry is not `atlaspack.json`.
 - Refuse the file when `format` is not `atlas-pack-file`, when `version` is below 1, or when `version` is newer than the newest one you know.
+- Refuse the file when its description lacks a field that is not optional, or when `packId` is not a pack id as described above.
 - Read only the entries the description or the pack's own files name. Refuse any other entry.
 - Take an entry name only when it is a plain relative path: no `..`, no `/` at the start, no drive letter, no `\`, and no segment that starts with `.`. Refuse two entries whose names differ only by case, and refuse symbolic links.
 - Take a small picture only when its name is a safe `preview/<name>.jpg` name, the description lists it, it comes right after the description, it is at most 512 KB, and it starts as a JPEG does. Stop looking for small pictures at the first entry that is not one.
 - Read every entry with a limit on its size, and check that its size is the one the archive says.
 - Read only stored or deflated entries.
 - Never load anything from a web address because a file names it.
+
+## Reading a pack file where it lies
+
+Atlas can show a pack file without importing it (see "Pack files read where they lie" in `apps/desktop/README.md`). In place, the checks above are split in two:
+
+- **The list of contents is checked when the file is opened.** Atlas reads the description and the central directory (ZIP64 too, from the directory alone, not a local header per entry) and checks every entry's name, type, packing and size as an import does. The description listed first must start at the very start of the file, so the description read from the start is the one the list names. The JSON files the rules need (`manifest.json`, `maps.json`, `layers.json` and `pictures.json`) are read for that.
+- **Each file's content is checked at its first read.** A JSON file must be JSON, and a status file one of its layer, as an import requires. An entry read whole must match its checksum, and its local header must name it. An entry that fails is never served, and the file is then listed as one that cannot be opened, with the import's sentence, until it changes.
+
+A byte range of a stored entry (a map image) is read from the file as it is and is not checked against the entry's checksum; the whole entry is. A deflated entry is always unpacked whole, within its size limit. The small pictures and the person's own things (`mine/`) are neither served nor read, so a file whose own things an import would refuse is still shown; the person's own things of a game read in place are Atlas's, kept in the maps folder by the game's id.
+
+When the Library looks for pack files, it keeps only what tells each file from a changed one and its description. The table of where each entry is is built again when the pack is read, and only the tables of the few packs read last are kept, with one limit on the unpacked JSON files of all of them.
+
+Another app may replace a pack file while Atlas has it open, by writing a `.part` file beside it and renaming that over it. At each read Atlas compares the file's length and modified time, its end of central directory record (with the ZIP64 locator and the ZIP64 end record when there are), and the first record of its central directory, which holds the checksum of the description. When one differs, it reads the new file's list of contents, so it never reads the new file at the old file's offsets. A file rewritten in place that keeps its length, its modified time and its description is not noticed; a pack file Atlas writes has a description of its own, which says when it was made. Atlas never writes into a pack file or beside it.
 
 ## Reading pack files from another Rust app
 
@@ -208,5 +222,6 @@ fn card(file: &Path) -> Result<(), String> {
 
 - `read_header(path)` and `read_header_from(reader)` read the description from the first entry, at most `MAX_HEADER_BYTES`, and check it with `parse_header`.
 - `read_preview(path, name)` and `read_preview_from(reader, name)` read one small picture the description lists, at most `MAX_PREVIEW_BYTES`, from the entries right after the description.
-- `parse_header(text)` checks a description's text: its format and version, and it leaves out the names of small pictures that are not safe.
+- `parse_header(text)` checks a description's text: its format and version, the fields every pack file has and its pack id (`is_pack_id`), and it leaves out the names of small pictures that are not safe.
+- Each of them refuses with a `Refusal`: one or two plain sentences to show as they are (`to_string()`, or `?` into a `String`), and a `kind()`: `NotAPackFile`, `NewerFormat`, `Damaged`, `CannotOpen` or `NoSuchPicture`. The sentences name no app to install. For `NewerFormat`, `what()` says which app and version made the file, and the advice after it is only "A newer version of this app is needed to open it.": an app that wants to name itself shows `what()` and adds its own sentence, as Atlas does.
 - Both reads go through the file in order from its start. They also work on a stream that cannot seek, and on a file whose end is missing.

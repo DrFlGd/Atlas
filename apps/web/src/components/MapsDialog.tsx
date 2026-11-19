@@ -214,6 +214,7 @@ const ORIGIN: Record<ListedPack['origin'], string> = {
   bundled: 'Comes with the app',
   'maps-folder': 'Maps folder',
   location: 'Added folder',
+  'packs-folder': 'Packs folder',
 };
 
 function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; busy: boolean }) {
@@ -226,6 +227,7 @@ function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; bu
         <PackTitle title={pack.title} active={active} />
         <span className="muted small">
           {ORIGIN[pack.origin]}
+          {pack.packFile ? ' · read from its pack file' : ''}
           {pack.bundled ? ' · comes with the app' : ''}
           {busy ? ' · moving files from an older version…' : ''}
         </span>

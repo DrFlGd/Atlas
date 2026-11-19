@@ -73,6 +73,19 @@ pub fn default_maps_folder(shared: &Path) -> PathBuf {
     }
 }
 
+/// The folder of pack files (`.atlaspack`) Atlas reads where they lie:
+/// `Packs` beside the default maps folder (`packs` on Linux, as `maps`
+/// is), whichever maps folder is chosen. Another app may put pack files
+/// there; Atlas never changes, moves or deletes them.
+pub fn default_packs_folder(shared: &Path) -> PathBuf {
+    let name = if cfg!(target_os = "linux") {
+        "packs"
+    } else {
+        "Packs"
+    };
+    default_maps_folder(shared).with_file_name(name)
+}
+
 /// The folder Android never backs up, in the app's data folder.
 const NO_BACKUP_DIR: &str = "no_backup";
 

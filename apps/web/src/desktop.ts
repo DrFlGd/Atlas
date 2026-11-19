@@ -389,8 +389,11 @@ export interface SitesListing {
   switches: SiteSwitches;
 }
 
-/** Where a listed pack comes from. */
-export type PackOrigin = 'bundled' | 'maps-folder' | 'location';
+/**
+ * Where a listed pack comes from. `packs-folder` is a pack file in the
+ * packs folder, read where it lies (see {@link ListedPack.packFile}).
+ */
+export type PackOrigin = 'bundled' | 'maps-folder' | 'location' | 'packs-folder';
 
 export interface ListedPack {
   id: string;
@@ -420,6 +423,19 @@ export interface ListedPack {
    * manifest names none, or from an older shell.
    */
   system?: string;
+  /**
+   * The pack is read from a pack file (.atlaspack) where it lies, and
+   * `path` is the file's. Atlas never changes, moves or deletes a pack
+   * file: nothing is downloaded, edited, exported or deleted for it.
+   * Absent (an older shell) counts as false.
+   */
+  packFile?: boolean;
+}
+
+/** A pack file the shell found and cannot use, with why. */
+export interface UnreadablePackFile {
+  path: string;
+  reason: string;
 }
 
 /** A pack that is not shown because another with the same id is. */
@@ -444,8 +460,12 @@ export interface LocationInfo {
 /** Every pack the app can show, and where they come from. */
 export interface Listing {
   mapsFolder: { path: string; isDefault: boolean; exists: boolean };
+  /** The folder of pack files read where they lie; absent from an older shell. */
+  packsFolder?: { path: string; exists: boolean };
   packs: ListedPack[];
   hidden: HiddenPack[];
+  /** Pack files found that cannot be used; absent from an older shell. */
+  unreadable?: UnreadablePackFile[];
   locations: LocationInfo[];
   /** Packs whose files are being moved, for example from an older version. */
   busy: string[];
@@ -587,6 +607,7 @@ export interface ImagesDeleted {
 
 export type RevealTarget =
   | { kind: 'maps-folder' }
+  | { kind: 'packs-folder' }
   | { kind: 'pack'; id: string }
   | { kind: 'location'; path: string }
   | { kind: 'log-folder' };
@@ -729,6 +750,11 @@ export interface PackDetails {
   archive: boolean;
   /** The pack file it was imported from. */
   packFile: { importedAt: string; fileName: string; header: PackFileHeader } | null;
+  /**
+   * The pack file it is read from where it lies, if it is: every other fact
+   * here is then the file's description's.
+   */
+  readFrom?: { path: string; fileName: string; header: PackFileHeader };
   /**
    * The style sheets kept from the pages it was read from (`library.keepStyles`),
    * when there are any: distinct sheets, their bytes, and sheets noted as not kept.

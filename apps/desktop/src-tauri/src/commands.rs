@@ -1010,6 +1010,8 @@ pub async fn library_apply_maps_folder(
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RevealTarget {
     MapsFolder,
+    /// The folder of pack files read where they lie.
+    PacksFolder,
     Pack {
         id: String,
     },
@@ -1020,8 +1022,9 @@ pub enum RevealTarget {
     LogFolder,
 }
 
-/// Opens the maps folder, a pack's folder or a remembered location in the
-/// system's file manager. Only those: the web app cannot name another path.
+/// Opens the maps folder, the packs folder, a pack's folder (the folder
+/// that holds a pack file) or a remembered location in the system's file
+/// manager. Only those: the web app cannot name another path.
 #[tauri::command]
 pub fn library_reveal<R: Runtime>(
     app: AppHandle<R>,
@@ -1036,8 +1039,20 @@ pub fn library_reveal<R: Runtime>(
                 .map_err(|error| format!("Cannot create the maps folder: {error}"))?;
             folder
         }
+        RevealTarget::PacksFolder => {
+            let folder = library.packs_folder();
+            fs::create_dir_all(&folder)
+                .map_err(|error| format!("Cannot create the packs folder: {error}"))?;
+            folder
+        }
+        // A pack read from a pack file: the folder that holds the file.
         RevealTarget::Pack { id } => library
             .pack_folder(&id)
+            .or_else(|| {
+                library
+                    .pack_file(&id)
+                    .and_then(|file| file.parent().map(std::path::Path::to_path_buf))
+            })
             .ok_or_else(|| "That pack has no folder.".to_owned())?,
         RevealTarget::Location { path } => library
             .known_location(&path)
@@ -1362,6 +1377,7 @@ pub async fn library_keep_styles(
 ) -> Result<crate::styles::StylesList, String> {
     let library = Arc::clone(&library);
     blocking(move || {
+        library.check_changeable(&pack_id)?;
         let Some(dir) = library.pack_folder(&pack_id) else {
             return Err("The game is not in the Library.".to_owned());
         };

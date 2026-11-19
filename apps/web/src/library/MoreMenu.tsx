@@ -64,11 +64,14 @@ export function MoreMenu({
   // A session of reading pages, or a game built again, is going: nothing is started again meanwhile.
   const reading = useImport((s) => sessionGoing(s.phase) || s.licenceAsk !== null);
   const source = listed?.pages?.[0]?.url ?? listed?.url ?? null;
+  // Read from a pack file where it lies: Atlas never changes the file, so
+  // nothing that would change the game's own files is offered.
+  const packFile = listed?.packFile === true;
   const close = () => {
     setMoreOpen(false);
   };
   const rows: MoreRow[] = [];
-  if (updatable && !busy && !checkOnCard) {
+  if (updatable && !busy && !checkOnCard && !packFile) {
     rows.push({
       id: 'update-pack',
       icon: 'search',
@@ -77,7 +80,7 @@ export function MoreMenu({
       run: () => void updateGame(id),
     });
   }
-  if (listed?.imported && canRebuild && imports && !busy) {
+  if (listed?.imported && canRebuild && imports && !busy && !packFile) {
     rows.push({
       id: 'rebuild-pack',
       icon: 'layers',
@@ -117,7 +120,7 @@ export function MoreMenu({
       onConfirm('tags');
     },
   });
-  if (folders && !busy) {
+  if (folders && !busy && !packFile) {
     rows.push({
       id: 'export-pack',
       icon: 'download',
@@ -144,14 +147,16 @@ export function MoreMenu({
     rows.push({
       id: 'open-pack-folder',
       icon: 'folder',
-      title: 'Open its folder',
-      text: 'Shows the folder this game is kept in, in your file manager.',
+      title: packFile ? 'Open the folder of its pack file' : 'Open its folder',
+      text: packFile
+        ? 'Shows the folder that holds the pack file this map, wiki or guide is read from, in your file manager.'
+        : 'Shows the folder this game is kept in, in your file manager.',
       run: () => {
         reveal({ kind: 'pack', id });
       },
     });
   }
-  if (listed?.path && folders && !busy) {
+  if (listed?.path && folders && !busy && !packFile) {
     rows.push({
       id: 'delete-images',
       icon: 'trash',
@@ -194,7 +199,14 @@ export function MoreMenu({
       aria-label={`More for ${title}`}
       data-testid="library-more-menu"
     >
-      {rows.length === 0 ? (
+      {packFile ? (
+        <p className="muted small library-more-empty" data-testid="pack-file-note">
+          This map, wiki or guide is read from its pack file, and Atlas never changes a pack file.
+          So it cannot be exported, deleted or refreshed here, and no map images are downloaded for
+          it. To change it, import the pack file first with Import a pack file. Your lists, notes
+          and found marks are kept by Atlas, not in the file.
+        </p>
+      ) : rows.length === 0 ? (
         <p className="muted small library-more-empty">
           Nothing else can be done with this game here: it comes with the app.
         </p>

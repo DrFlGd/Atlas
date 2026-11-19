@@ -206,10 +206,19 @@ pub struct PagesInfo {
     pub save_note: Option<String>,
 }
 
-fn pages_info(registry: &PackRegistry, pack_id: &str) -> Result<PagesInfo, String> {
-    let root = registry
+/// The folder of a listed pack, whose manifest records its pages. A pack
+/// read from a pack file has none here.
+fn pack_root(registry: &PackRegistry, pack_id: &str) -> Result<PathBuf, String> {
+    if registry.kind(pack_id) == Some(PackKind::File) {
+        return Err(crate::library::PACK_FILE_NO_PAGES.to_owned());
+    }
+    registry
         .root(pack_id)
-        .ok_or_else(|| "That map pack is not there any more.".to_owned())?;
+        .ok_or_else(|| "That map pack is not there any more.".to_owned())
+}
+
+fn pages_info(registry: &PackRegistry, pack_id: &str) -> Result<PagesInfo, String> {
+    let root = pack_root(registry, pack_id)?;
     let pages = recorded_pages(&root);
     let save_note = if registry.kind(pack_id) != Some(PackKind::Folder) {
         Some("Map images can only be saved into a map pack in a folder you keep.".to_owned())
@@ -787,9 +796,7 @@ impl PageViews {
         url: &str,
         save: bool,
     ) -> Result<(), String> {
-        let root = registry
-            .root(pack_id)
-            .ok_or_else(|| "That map pack is not there any more.".to_owned())?;
+        let root = pack_root(registry, pack_id)?;
         let start = recorded_url(&root, url)
             .ok_or_else(|| "Only pages this map pack was made from can be opened.".to_owned())?;
         let saving = if save {
@@ -1260,11 +1267,28 @@ pub async fn view_open_in_browser<R: Runtime>(
     pack_id: String,
     url: String,
 ) -> Result<(), String> {
-    let root = registry
-        .root(&pack_id)
-        .ok_or_else(|| "That map pack is not there any more.".to_owned())?;
-    let url = recorded_url(&root, &url)
-        .ok_or_else(|| "Only pages this map pack was made from can be opened.".to_owned())?;
+    let registry = registry.inner().clone();
+    // Reading a pack file or a pack folder's records is not done on the
+    // async runtime.
+    let url = crate::commands::blocking(move || {
+        let only = || "Only pages this map pack was made from can be opened.".to_owned();
+        // A pack file records its pages in its description.
+        if let Some(pack) = registry.pack_file(&pack_id) {
+            let checked = pack.check()?;
+            let wanted = allowed_page_url(&url).ok_or_else(only)?;
+            checked
+                .header()
+                .source
+                .pages
+                .iter()
+                .any(|page| page.url == wanted.as_str())
+                .then_some(wanted)
+                .ok_or_else(only)
+        } else {
+            recorded_url(&pack_root(&registry, &pack_id)?, &url).ok_or_else(only)
+        }
+    })
+    .await?;
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|error| format!("Could not open the page: {error}"))

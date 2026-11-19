@@ -22,16 +22,38 @@
 //! are not followed, and the web app validates each pack in full with the
 //! pack schema before showing it.
 //!
+//! - **Pack files** (`.atlaspack`) are read where they lie, without an
+//!   import and without a second copy (see `packfile::inplace`): those in
+//!   the packs folder (`Packs` beside the default maps folder, see
+//!   `settings::default_packs_folder`, created when missing) and those in
+//!   the folders of packs the person added, sub-folders included (another
+//!   app keeps them as `<game>/<game> - <site>.atlaspack`), but not in a
+//!   folder whose name begins with a dot, inside a pack folder, or in the
+//!   maps folder. A file whose name ends in `.part` is never one. Nothing
+//!   is ever written into or beside a pack file, and Atlas never changes,
+//!   moves, renames or deletes one: the person's own things of its game
+//!   (lists, locations, pages, notes, photos, guide links) are kept in the
+//!   maps folder by the game's id, as for a pack folder, and found marks in
+//!   the web app's storage. A pack file is listed from its description,
+//!   after its list of contents passed the checks an import makes; one
+//!   that cannot be used is listed with the reason.
+//!
 //! When two folders hold packs with the same id, one is shown: a bundled
 //! pack first, then the maps folder, then locations in the order they were
-//! added. The others are listed as hidden, with the reason.
+//! added, then pack files. Of two pack files with the same id, the one
+//! whose pack was changed last (`pack.updated` in its description) is
+//! shown, then the one made last (`exportedAt`), then the first by path; a
+//! date that is missing or unreadable counts as older than any. A pack
+//! folder always wins over a pack file, so a folder the person keeps, and
+//! can change, is never hidden by a file. The others are listed as hidden,
+//! with the reason.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File},
     io,
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use serde::{Deserialize, Serialize};
@@ -40,12 +62,41 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::{update_images, ImagesUpdate};
 use crate::{
     activity::{self, Area},
-    manifest::{read_head, version_key, write_atomic, ManifestHead, SourcePage, MANIFEST_FILE},
+    manifest::{
+        head_of_header, read_head, version_key, write_atomic, ManifestHead, SourcePage,
+        MANIFEST_FILE,
+    },
+    packfile::{
+        inplace::{PackFile, Pool},
+        iso_millis, EXTENSION,
+    },
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
     removal::{self, FileOps, ImagesCount, ImagesDeleted, PackDeleted},
-    settings::{default_maps_folder, Location, LocationKind, SettingsFile, SharedSettings},
+    settings::{
+        default_maps_folder, default_packs_folder, Location, LocationKind, SettingsFile,
+        SharedSettings,
+    },
     tiles::images::ImagesLocation,
 };
+
+/// Why a pack read from a pack file cannot be changed, in the person's
+/// words: what the editors, downloads and the other changes say for one.
+pub const PACK_FILE_UNCHANGED: &str = "This map, wiki or guide is read from a pack file, and Atlas never changes a pack file. To change it, import the pack file first with Import a pack file.";
+
+/// Why map images and photos are not downloaded for a pack read from a
+/// pack file.
+pub const PACK_FILE_NO_DOWNLOADS: &str = "Map images and photos cannot be downloaded for a map that is read from a pack file, because Atlas never changes a pack file. To download them, import the pack file first with Import a pack file.";
+/// Why a pack read from a pack file is not exported.
+pub const PACK_FILE_NO_EXPORT: &str = "This map, wiki or guide is read from a pack file already, so it is not exported again. To pass it on, copy the pack file itself.";
+/// Why the pages a pack read from a pack file was made from are not opened.
+pub const PACK_FILE_NO_PAGES: &str = "The pages of a map that is read from a pack file cannot be opened here. To open them, import the pack file first with Import a pack file.";
+
+/// How deep sub-folders are looked into for pack files.
+const PACK_FILE_DEPTH: usize = 4;
+/// The most pack files one folder gives; more are left out.
+const MAX_PACK_FILES: usize = 1000;
+/// The most folder entries one look for pack files reads.
+const MAX_FOLDER_ENTRIES: usize = 100_000;
 
 /// The shell's own files inside a pack folder; never served.
 pub const META_DIR: &str = ".atlas";
@@ -162,6 +213,8 @@ pub enum Origin {
     Bundled,
     MapsFolder,
     Location,
+    /// A pack file in the packs folder.
+    PacksFolder,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -194,6 +247,25 @@ pub struct ListedPack {
     /// `system`); left out when it names none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
+    /// The pack is read from a pack file where it lies (`path` is the
+    /// file's), which Atlas never changes.
+    pub pack_file: bool,
+}
+
+/// A pack file found that cannot be used, with why.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnreadablePackFile {
+    pub path: String,
+    pub reason: String,
+}
+
+/// The folder of pack files Atlas reads where they lie.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PacksFolderInfo {
+    pub path: String,
+    pub exists: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -242,8 +314,11 @@ pub struct MapsFolderInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Listing {
     pub maps_folder: MapsFolderInfo,
+    pub packs_folder: PacksFolderInfo,
     pub packs: Vec<ListedPack>,
     pub hidden: Vec<HiddenPack>,
+    /// Pack files that were found but cannot be used.
+    pub unreadable: Vec<UnreadablePackFile>,
     pub locations: Vec<LocationInfo>,
     /// Packs whose files are being moved, for example from version 0.2.0.
     pub busy: Vec<String>,
@@ -428,6 +503,11 @@ pub struct Library {
     pending_folder: Mutex<Option<PathBuf>>,
     /// The last scan summary written to the activity log.
     logged_scan: Mutex<String>,
+    /// The pack files the last scan found, by path, with what is known of
+    /// each, so a file that did not change is not read again.
+    pack_files: Mutex<HashMap<PathBuf, Arc<PackFile>>>,
+    /// The tables and unpacked files kept of the pack files read last.
+    pack_file_pool: Arc<Pool>,
     /// How files are removed; tests act out files that are in use.
     file_ops: FileOps,
     /// What measuring imported maps' pictures learnt, seeded into a pack's
@@ -451,6 +531,8 @@ impl Library {
             busy: Mutex::new(HashSet::new()),
             pending_folder: Mutex::new(None),
             logged_scan: Mutex::new(String::new()),
+            pack_files: Mutex::new(HashMap::new()),
+            pack_file_pool: Pool::shared(),
             file_ops: FileOps::default(),
             #[cfg(feature = "downloads")]
             picture_cache: None,
@@ -464,6 +546,11 @@ impl Library {
     pub fn with_picture_cache(mut self, cache: crate::tiles::measure::PictureCache) -> Self {
         self.picture_cache = Some(cache);
         self
+    }
+
+    #[cfg(test)]
+    pub fn pack_file_pool(&self) -> &Pool {
+        &self.pack_file_pool
     }
 
     #[cfg(test)]
@@ -483,6 +570,12 @@ impl Library {
     /// The maps folder in use.
     pub fn maps_folder(&self) -> PathBuf {
         Self::maps_folder_of(&self.settings.read(), self.settings.dir())
+    }
+
+    /// The folder of pack files read where they lie (see
+    /// `settings::default_packs_folder`).
+    pub fn packs_folder(&self) -> PathBuf {
+        default_packs_folder(self.settings.dir())
     }
 
     fn maps_folder_of(settings: &SharedSettings, shared: &Path) -> PathBuf {
@@ -524,7 +617,12 @@ impl Library {
                         );
                     })
                     .is_ok();
-            if !installed && self.registry.kind(&pack.id) != Some(PackKind::Folder) {
+            if !installed
+                && !matches!(
+                    self.registry.kind(&pack.id),
+                    Some(PackKind::Folder | PackKind::File)
+                )
+            {
                 if let Err(error) = self.registry.register(&pack.id, &pack.path) {
                     activity::warn(
                         Area::Library,
@@ -640,6 +738,22 @@ impl Library {
     pub fn scan(&self) -> Listing {
         let settings = self.settings.read();
         let maps_folder = Self::maps_folder_of(&settings, self.settings.dir());
+        let packs_folder = self.packs_folder();
+        if let Err(error) = fs::create_dir_all(&packs_folder) {
+            activity::warn(
+                Area::Library,
+                format!(
+                    "Could not create the packs folder {}: {error}",
+                    packs_folder.display()
+                ),
+            );
+        }
+        let mut pack_files = FileScan {
+            known: lock(&self.pack_files).clone(),
+            pool: Arc::clone(&self.pack_file_pool),
+            maps_folder: maps_folder.canonicalize().ok(),
+            ..FileScan::default()
+        };
         let mut shown: Vec<ListedPack> = Vec::new();
         let mut hidden: Vec<HiddenPack> = Vec::new();
         let mut seen: BTreeMap<String, String> = BTreeMap::new();
@@ -677,23 +791,7 @@ impl Library {
             }
             seen.insert(head.id.clone(), path.clone());
             folders.insert(head.id.clone(), dir.to_path_buf());
-            shown.push(ListedPack {
-                url: pack_url(&head.id),
-                bundled: self.is_bundled(&head.id),
-                imported: head.importer.map(|(id, title)| ImportedFrom {
-                    importer_id: id,
-                    importer_title: title,
-                }),
-                id: head.id,
-                title: head.title,
-                origin,
-                path: Some(path),
-                pack_version: head.pack_version,
-                pages: head.pages,
-                made_in_app: head.made_in_app,
-                personal_use: head.personal_use,
-                system: head.system,
-            });
+            shown.push(self.listed_pack(head, origin, path, false));
             true
         };
 
@@ -733,7 +831,8 @@ impl Library {
                 },
                 LocationKind::Folder => {
                     let (packs, _) = packs_in(&path);
-                    if packs.is_empty() {
+                    let files = pack_files.look(&path, Origin::Location);
+                    if packs.is_empty() && files.is_empty() {
                         info.state = LocationState::NoPacks;
                         info.message = Some("There are no map packs in this folder.".to_owned());
                     }
@@ -741,29 +840,80 @@ impl Library {
                         info.packs.push(head.id.clone());
                         consider(&dir, head, Origin::Location);
                     }
+                    info.packs.extend(files);
                 }
             }
             locations.push(info);
         }
 
-        for id in self.registry.ids(PackKind::Folder) {
-            if !folders.contains_key(&id) {
-                self.registry.unregister(&id);
+        // Pack files come after every pack folder; of two with one id, the
+        // one whose pack was changed last, then the one made last.
+        pack_files.look(&packs_folder, Origin::PacksFolder);
+        let mut found = std::mem::take(&mut pack_files.found);
+        found.sort_by(|a, b| {
+            a.head
+                .id
+                .cmp(&b.head.id)
+                .then_with(|| (b.updated, b.exported).cmp(&(a.updated, a.exported)))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        let mut files: BTreeMap<String, Arc<PackFile>> = BTreeMap::new();
+        for file in found {
+            let path = file.path.display().to_string();
+            if let Some(source) = seen.get(&file.head.id) {
+                hidden.push(HiddenPack {
+                    reason: if files.contains_key(&file.head.id) {
+                        format!(
+                            "Another pack file of the same game ({}) is shown, from {source}. Of two pack files with the same id, the one whose pack was changed last is shown.",
+                            file.head.id
+                        )
+                    } else {
+                        format!(
+                            "A pack with the same id ({}) is already shown, from {source}. Only one pack with an id is shown at a time.",
+                            file.head.id
+                        )
+                    },
+                    id: file.head.id,
+                    title: file.head.title,
+                    path,
+                });
+                continue;
+            }
+            seen.insert(file.head.id.clone(), path.clone());
+            files.insert(file.head.id.clone(), file.pack);
+            shown.push(self.listed_pack(file.head, file.origin, path, true));
+        }
+
+        for kind in [PackKind::Folder, PackKind::File] {
+            for id in self.registry.ids(kind) {
+                if !folders.contains_key(&id) && !files.contains_key(&id) {
+                    self.registry.unregister(&id);
+                }
             }
         }
         shown.retain(|pack| {
-            let dir = &folders[&pack.id];
-            match self.registry.register_folder(&pack.id, dir) {
+            let registered = if pack.pack_file {
+                self.registry
+                    .register_file(&pack.id, Arc::clone(&files[&pack.id]))
+            } else {
+                self.registry.register_folder(&pack.id, &folders[&pack.id])
+            };
+            match registered {
                 Ok(()) => true,
                 Err(error) => {
                     activity::warn(
                         Area::Library,
-                        format!("Cannot serve {}: {error}", dir.display()),
+                        format!(
+                            "Cannot serve {}: {error}",
+                            pack.path.as_deref().unwrap_or_default()
+                        ),
                     );
                     false
                 }
             }
         });
+        let unreadable = std::mem::take(&mut pack_files.unreadable);
+        *lock(&self.pack_files) = pack_files.kept;
         // A bundled pack whose copy in the maps folder has gone is served
         // from the app again.
         for pack in &self.bundled {
@@ -774,17 +924,50 @@ impl Library {
 
         let mut busy: Vec<String> = lock(&self.busy).iter().cloned().collect();
         busy.sort();
-        self.log_scan(&maps_folder, &shown, &hidden, &locations);
+        self.log_scan(&maps_folder, &shown, &hidden, &locations, &unreadable);
         Listing {
             maps_folder: MapsFolderInfo {
                 path: maps_folder.display().to_string(),
                 is_default: settings.maps_folder.is_none(),
                 exists: maps_folder.is_dir(),
             },
+            packs_folder: PacksFolderInfo {
+                path: packs_folder.display().to_string(),
+                exists: packs_folder.is_dir(),
+            },
             packs: shown,
             hidden,
+            unreadable,
             locations,
             busy,
+        }
+    }
+
+    /// What the Library lists of a pack shown from `path`.
+    fn listed_pack(
+        &self,
+        head: ManifestHead,
+        origin: Origin,
+        path: String,
+        pack_file: bool,
+    ) -> ListedPack {
+        ListedPack {
+            url: pack_url(&head.id),
+            bundled: self.is_bundled(&head.id),
+            imported: head.importer.map(|(id, title)| ImportedFrom {
+                importer_id: id,
+                importer_title: title,
+            }),
+            id: head.id,
+            title: head.title,
+            origin,
+            path: Some(path),
+            pack_version: head.pack_version,
+            pages: head.pages,
+            made_in_app: head.made_in_app,
+            personal_use: head.personal_use,
+            system: head.system,
+            pack_file,
         }
     }
 
@@ -796,6 +979,7 @@ impl Library {
         shown: &[ListedPack],
         hidden: &[HiddenPack],
         locations: &[LocationInfo],
+        unreadable: &[UnreadablePackFile],
     ) {
         let mut summary = format!(
             "Maps library: maps folder {}{} | shown: {}",
@@ -821,6 +1005,12 @@ impl Library {
                 pack.id, pack.path, pack.reason
             ));
         }
+        for file in unreadable {
+            summary.push_str(&format!(
+                " | pack file {} cannot be used: {}",
+                file.path, file.reason
+            ));
+        }
         for location in locations
             .iter()
             .filter(|location| location.state != LocationState::Ok)
@@ -844,6 +1034,23 @@ impl Library {
             .flatten()
     }
 
+    /// The pack file a registered pack is read from.
+    pub fn pack_file(&self, id: &str) -> Option<PathBuf> {
+        self.registry
+            .pack_file(id)
+            .map(|pack| pack.path().to_path_buf())
+    }
+
+    /// Refuses, with the reason, to change a pack that is read from a pack
+    /// file: the editors, downloads, deletes and the other changes of a
+    /// pack's own files ask this first.
+    pub fn check_changeable(&self, id: &str) -> Result<(), String> {
+        if self.registry.kind(id) == Some(PackKind::File) {
+            return Err(PACK_FILE_UNCHANGED.to_owned());
+        }
+        Ok(())
+    }
+
     /// Whether a registered pack folder is inside the maps folder.
     fn in_maps_folder(&self, dir: &Path) -> bool {
         let maps = self.maps_folder().canonicalize();
@@ -855,8 +1062,13 @@ impl Library {
 
     /// Remembers a pack folder the person opened.
     pub fn add_pack_location(&self, path: &Path) -> Result<String, String> {
-        let head = read_head(path)
-            .map_err(|reason| format!("That folder is not a map pack: {reason}."))?;
+        let head = read_head(path).map_err(|reason| {
+            if pack_files_in(path, None).files.is_empty() {
+                format!("That folder is not a map pack: {reason}.")
+            } else {
+                "That folder holds pack files rather than one map pack. Use \u{201c}Add a folder of games\u{201d} for it.".to_owned()
+            }
+        })?;
         self.remember(path, LocationKind::Pack)?;
         activity::info(
             Area::Library,
@@ -874,19 +1086,22 @@ impl Library {
             );
         }
         let (packs, _) = packs_in(path);
-        if packs.is_empty() {
+        let maps_folder = self.maps_folder().canonicalize().ok();
+        let files = pack_files_in(path, maps_folder.as_deref()).files;
+        if packs.is_empty() && files.is_empty() {
             return Err("There are no map packs in that folder.".to_owned());
         }
         self.remember(path, LocationKind::Folder)?;
         activity::info(
             Area::Library,
             format!(
-                "Added the folder of packs {} ({} packs)",
+                "Added the folder of packs {} ({} pack folders, {} pack files)",
                 path.display(),
-                packs.len()
+                packs.len(),
+                files.len()
             ),
         );
-        Ok(packs.len())
+        Ok(packs.len() + files.len())
     }
 
     fn remember(&self, path: &Path, kind: LocationKind) -> Result<(), String> {
@@ -937,6 +1152,9 @@ impl Library {
         let current = self.maps_folder();
         if path == current {
             return Err("That is the maps folder already.".to_owned());
+        }
+        if overlap(path, &self.packs_folder()) {
+            return Err("That folder is the packs folder, is inside it or holds it. Atlas reads pack files there and never writes into it, so choose another folder for your maps.".to_owned());
         }
         if path.starts_with(&current) {
             return Err("Choose a folder outside the current maps folder.".to_owned());
@@ -1628,6 +1846,8 @@ impl Library {
                         Err(_) => continue,
                     },
                     PackKind::Bundled => None,
+                    // Not looked at: nothing is downloaded for a pack file.
+                    PackKind::File => continue,
                 };
                 self.settle_images(&id, &dir, &roots, Area::Library);
             }
@@ -1636,7 +1856,7 @@ impl Library {
 
     /// Whether a pack id is listed (registered to be served).
     pub fn is_listed(&self, id: &str) -> bool {
-        self.registry.root(id).is_some()
+        self.registry.kind(id).is_some()
     }
 
     pub fn check_not_moving(&self, id: &str) -> Result<(), String> {
@@ -1649,6 +1869,9 @@ impl Library {
     /// The folder of a pack that may be deleted from disk: one in the maps
     /// folder that does not come with the app and is not being moved.
     pub fn check_deletable(&self, id: &str) -> Result<PathBuf, String> {
+        if self.registry.kind(id) == Some(PackKind::File) {
+            return Err("This map, wiki or guide is read from a pack file, and Atlas never deletes a pack file. To take it out of the list, delete or move the pack file yourself, or remove the folder it is in from the list.".to_owned());
+        }
         let dir = self
             .pack_folder(id)
             .ok_or_else(|| "There is no such pack in the maps folder.".to_owned())?;
@@ -1955,6 +2178,282 @@ pub fn packs_in(dir: &Path) -> (Vec<(PathBuf, ManifestHead)>, Vec<PathBuf>) {
         }
     }
     (packs, others)
+}
+
+/// The pack files a look into a folder found, and what it left out.
+#[derive(Debug, Default)]
+pub struct PackFilesIn {
+    /// Sorted.
+    pub files: Vec<PathBuf>,
+    /// A line for each limit that left something out, or for a folder not
+    /// read, with the folder or file it concerns.
+    pub notes: Vec<UnreadablePackFile>,
+}
+
+/// The pack files (`.atlaspack`) in `dir` and its sub-folders: not in a
+/// folder whose name begins with a dot, inside a pack folder, or in or
+/// inside `maps_folder` (its real path), and not through a symbolic link;
+/// a file whose name ends in `.part` is never one. Each folder is read
+/// whole and in the order of its names before a limit cuts anything, so
+/// what is left out does not depend on the order the system lists files
+/// in: at most [`MAX_FOLDER_ENTRIES`] files and folders are read, at most
+/// [`MAX_PACK_FILES`] pack files taken, and [`PACK_FILE_DEPTH`] folders
+/// down. Each limit that cut something gives a note.
+pub fn pack_files_in(dir: &Path, maps_folder: Option<&Path>) -> PackFilesIn {
+    struct Walk<'a> {
+        maps_folder: Option<&'a Path>,
+        read: usize,
+        stopped: bool,
+        /// Folders whose sub-folders were too deep to read.
+        deeper: Vec<PathBuf>,
+        found: PackFilesIn,
+    }
+    impl Walk<'_> {
+        fn note(&mut self, path: &Path, reason: String) {
+            self.found.notes.push(UnreadablePackFile {
+                path: path.display().to_string(),
+                reason,
+            });
+        }
+
+        fn folder(&mut self, dir: &Path, depth: usize) {
+            if self.stopped {
+                return;
+            }
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            let mut listed = Vec::new();
+            for entry in entries.flatten() {
+                self.read += 1;
+                if self.read > MAX_FOLDER_ENTRIES {
+                    self.stopped = true;
+                    self.note(
+                        dir,
+                        format!(
+                            "Atlas reads at most {} files and folders when it looks for pack files in one folder, so it did not look in this folder or in the folders after it.",
+                            grouped(MAX_FOLDER_ENTRIES)
+                        ),
+                    );
+                    return;
+                }
+                listed.push(entry);
+            }
+            listed.sort_by_key(fs::DirEntry::file_name);
+            let mut folders = Vec::new();
+            for entry in listed {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.starts_with('.') {
+                    continue;
+                }
+                // Not followed when it is a link.
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                let path = entry.path();
+                if kind.is_dir() {
+                    let is_maps_folder = self
+                        .maps_folder
+                        .is_some_and(|maps| path.canonicalize().is_ok_and(|it| it == maps));
+                    if !is_maps_folder && !path.join(MANIFEST_FILE).is_file() {
+                        folders.push(path);
+                    }
+                } else if kind.is_file()
+                    && name.ends_with(&format!(".{EXTENSION}"))
+                    && !name.ends_with(".part")
+                {
+                    if self.found.files.len() >= MAX_PACK_FILES {
+                        self.stopped = true;
+                        self.note(
+                            &path,
+                            format!(
+                                "Atlas reads at most {} pack files in one folder and its sub-folders, so this pack file and the ones after it, in the order of their names, are not read.",
+                                grouped(MAX_PACK_FILES)
+                            ),
+                        );
+                        return;
+                    }
+                    self.found.files.push(path);
+                }
+            }
+            if folders.is_empty() {
+                return;
+            }
+            if depth >= PACK_FILE_DEPTH {
+                self.deeper.push(dir.to_path_buf());
+                return;
+            }
+            for folder in folders {
+                self.folder(&folder, depth + 1);
+            }
+        }
+    }
+
+    let mut walk = Walk {
+        maps_folder,
+        read: 0,
+        stopped: false,
+        deeper: Vec::new(),
+        found: PackFilesIn::default(),
+    };
+    if dir.join(MANIFEST_FILE).is_file() {
+        return walk.found;
+    }
+    let real = real_path(dir);
+    if maps_folder.is_some_and(|maps| real.starts_with(maps)) {
+        walk.note(
+            dir,
+            "This folder is the maps folder or a folder inside it, which holds map packs that Atlas changes, so Atlas does not read pack files in it.".to_owned(),
+        );
+        return walk.found;
+    }
+    walk.folder(dir, 0);
+    if let Some(first) = walk.deeper.first().cloned() {
+        let others = walk.deeper.len() - 1;
+        let mut reason = format!(
+            "Atlas looks for pack files at most {PACK_FILE_DEPTH} folders down, so the folders inside this folder are not read."
+        );
+        if others > 0 {
+            reason.push_str(&format!(
+                " The same is true of {others} other {}.",
+                if others == 1 { "folder" } else { "folders" }
+            ));
+        }
+        walk.note(&first, reason);
+    }
+    walk.found.files.sort();
+    walk.found
+}
+
+/// A count with a comma between each three digits, as people read it.
+fn grouped(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// A folder's real path. When it does not exist yet, the real path of the
+/// nearest folder above it that does, with the rest as it is written: so a
+/// folder still to be made compares with one that exists (on Windows a
+/// real path is written another way than the one a person or the system
+/// gives, with long names and a prefix).
+fn real_path(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(mut real) = at.canonicalize() {
+            real.extend(rest.iter().rev());
+            return real;
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                at = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// Whether two folders are the same or one is inside the other, by their
+/// real paths (see [`real_path`]); without regard to case on Windows,
+/// where two names that differ only by case are one folder.
+fn overlap(a: &Path, b: &Path) -> bool {
+    let real = |path: &Path| {
+        let real = real_path(path);
+        if cfg!(windows) {
+            PathBuf::from(real.to_string_lossy().to_lowercase())
+        } else {
+            real
+        }
+    };
+    let (a, b) = (real(a), real(b));
+    a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// What one scan learns of the pack files it finds.
+#[derive(Default)]
+struct FileScan {
+    /// What the last scan knew, by path.
+    known: HashMap<PathBuf, Arc<PackFile>>,
+    /// The pool of the Library's pack files.
+    pool: Arc<Pool>,
+    /// What this scan found, by path, for the next one.
+    kept: HashMap<PathBuf, Arc<PackFile>>,
+    /// Files already looked at, by their real path, so a file in two
+    /// folders that overlap counts once.
+    seen: HashSet<PathBuf>,
+    /// The maps folder's real path, which holds pack folders only.
+    maps_folder: Option<PathBuf>,
+    found: Vec<FoundFile>,
+    unreadable: Vec<UnreadablePackFile>,
+}
+
+/// A usable pack file.
+struct FoundFile {
+    path: PathBuf,
+    origin: Origin,
+    pack: Arc<PackFile>,
+    head: ManifestHead,
+    /// When its pack was last changed, and when the file was made, in
+    /// milliseconds; none when missing or unreadable.
+    updated: Option<i64>,
+    exported: Option<i64>,
+}
+
+impl FileScan {
+    /// Looks at the pack files in `dir`; the ids of those that can be used.
+    fn look(&mut self, dir: &Path, origin: Origin) -> Vec<String> {
+        let mut ids = Vec::new();
+        let found = pack_files_in(dir, self.maps_folder.as_deref());
+        self.unreadable.extend(found.notes);
+        for path in found.files {
+            let real = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !self.seen.insert(real) {
+                continue;
+            }
+            let pack =
+                self.known.get(&path).cloned().unwrap_or_else(|| {
+                    Arc::new(PackFile::new(path.clone(), Arc::clone(&self.pool)))
+                });
+            self.kept.insert(path.clone(), Arc::clone(&pack));
+            let checked = pack.check().and_then(|checked| {
+                let header = checked.header();
+                let head = head_of_header(header).map_err(|reason| {
+                    format!("This pack file's description cannot be used: {reason}.")
+                })?;
+                Ok((
+                    head,
+                    header.pack.updated.as_deref().and_then(iso_millis),
+                    iso_millis(&header.exported_at),
+                ))
+            });
+            match checked {
+                Ok((head, updated, exported)) => {
+                    ids.push(head.id.clone());
+                    self.found.push(FoundFile {
+                        path,
+                        origin,
+                        pack,
+                        head,
+                        updated,
+                        exported,
+                    });
+                }
+                Err(reason) => self.unreadable.push(UnreadablePackFile {
+                    path: path.display().to_string(),
+                    reason,
+                }),
+            }
+        }
+        ids
+    }
 }
 
 fn read_import_index(dir: &Path) -> Option<ImportIndex> {
@@ -3509,6 +4008,521 @@ mod tests {
             .maps_folder()
             .join("valley/manifest.json")
             .exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // Pack files read where they lie
+
+    use crate::packfile::inplace::testing as pack_file;
+
+    /// Writes a made-up pack file of a game with no map.
+    fn write_pack_file(path: &Path, id: &str, title: &str, updated: &str, exported_at: &str) {
+        pack_file::write(path, &pack_file::header(id, title, updated, exported_at));
+    }
+
+    fn served(registry: &PackRegistry, id: &str, name: &str) -> Vec<u8> {
+        let request = tauri::http::Request::builder()
+            .uri(format!("atlas-pack://localhost/{id}/{name}"))
+            .body(Vec::new())
+            .unwrap();
+        let response = registry.respond(&request);
+        assert_eq!(response.status(), 200, "{id}/{name}");
+        response.into_body()
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn lists_pack_files_in_the_packs_folder_and_its_sub_folders() {
+        let s = setup("library-pack-files", Vec::new());
+        let packs = s.library.packs_folder();
+        assert_eq!(
+            packs.file_name().unwrap(),
+            if cfg!(target_os = "linux") {
+                "packs"
+            } else {
+                "Packs"
+            }
+        );
+        assert_eq!(packs.parent(), s.library.maps_folder().parent());
+        // Kept as another app keeps them: a folder per game.
+        // Joined part by part, so its text is the one the system writes.
+        let valley = packs
+            .join("Example Game")
+            .join("Example Game - Example Site.atlaspack");
+        write_pack_file(
+            &valley,
+            "example-game",
+            "Example Game",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        // Being written by another app, in a hidden folder, and through a
+        // link: none is read.
+        write_pack_file(
+            &packs.join("Example Game/Other.atlaspack.part"),
+            "part-game",
+            "Part",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        write_pack_file(
+            &packs.join(".cache/hidden.atlaspack"),
+            "hidden-game",
+            "Hidden",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        write_pack_file(
+            &packs.join("Example Game/.hidden.atlaspack"),
+            "dot-game",
+            "Dot",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        #[cfg(unix)]
+        {
+            let elsewhere = s.dir.0.join("elsewhere");
+            write_pack_file(
+                &elsewhere.join("linked.atlaspack"),
+                "linked-game",
+                "Linked",
+                "2026-11-10T09:00:00Z",
+                "2026-11-11T09:00:00Z",
+            );
+            std::os::unix::fs::symlink(&elsewhere, packs.join("link")).unwrap();
+        }
+        // One that is not a pack file, and one from a newer Atlas: listed
+        // with the reason.
+        fs::write(packs.join("notes.atlaspack"), "hello").unwrap();
+        let mut newer = pack_file::header(
+            "newer-game",
+            "Newer",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        newer["version"] = serde_json::json!(crate::packfile::VERSION + 1);
+        newer["exportedBy"]["version"] = serde_json::json!("0.99.0");
+        pack_file::write(&packs.join("Newer/Newer.atlaspack"), &newer);
+        let before = fs::read(&valley).unwrap();
+
+        let listing = s.library.scan();
+        assert_eq!(ids(&listing), ["example-game"]);
+        let listed = &listing.packs[0];
+        assert_eq!(listed.origin, Origin::PacksFolder);
+        assert!(listed.pack_file);
+        assert_eq!(listed.title, "Example Game");
+        assert_eq!(
+            listed.path.as_deref(),
+            Some(valley.display().to_string().as_str())
+        );
+        assert_eq!(listing.packs_folder.path, packs.display().to_string());
+        assert!(listing.packs_folder.exists);
+        assert_eq!(s.registry.kind("example-game"), Some(PackKind::File));
+        assert_eq!(s.library.pack_file("example-game"), Some(valley.clone()));
+        assert!(s.library.pack_folder("example-game").is_none());
+        assert!(s.library.is_listed("example-game"));
+        assert!(served(&s.registry, "example-game", "locations.json").starts_with(b"[{"));
+        let reasons: Vec<(&str, &str)> = listing
+            .unreadable
+            .iter()
+            .map(|file| (file.path.as_str(), file.reason.as_str()))
+            .collect();
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+        assert!(reasons[0].0.ends_with("Newer.atlaspack"));
+        assert!(reasons[0].1.contains("Atlas 0.99.0"), "{reasons:?}");
+        assert!(reasons[1].0.ends_with("notes.atlaspack"));
+        assert!(
+            reasons[1].1.contains("not an Atlas pack file"),
+            "{reasons:?}"
+        );
+
+        // Nothing is written into or beside a pack file, and it is never
+        // changed, renamed or deleted.
+        assert_eq!(
+            files_in(valley.parent().unwrap()),
+            [
+                ".hidden.atlaspack",
+                "Example Game - Example Site.atlaspack",
+                "Other.atlaspack.part"
+            ]
+        );
+        assert_eq!(fs::read(&valley).unwrap(), before);
+        assert_eq!(
+            s.library.check_changeable("example-game").unwrap_err(),
+            PACK_FILE_UNCHANGED
+        );
+        assert!(s
+            .library
+            .delete_pack("example-game")
+            .unwrap_err()
+            .contains("never deletes a pack file"));
+        assert!(valley.exists());
+
+        // Gone: no longer listed or served.
+        fs::remove_file(&valley).unwrap();
+        let listing = s.library.scan();
+        assert!(listing.packs.is_empty());
+        assert!(s.registry.kind("example-game").is_none());
+    }
+
+    #[test]
+    fn keeps_no_table_of_the_pack_files_a_scan_only_checks() {
+        use crate::packfile::inplace::OPEN_TABLES;
+        let s = setup("library-pack-file-tables", Vec::new());
+        let packs = s.library.packs_folder();
+        let count = OPEN_TABLES + 2;
+        for index in 0..count {
+            let id = format!("game-{index}");
+            let header = pack_file::header(
+                &id,
+                "Example Game",
+                "2026-11-10T09:00:00Z",
+                "2026-11-11T09:00:00Z",
+            );
+            pack_file::write(&packs.join(format!("{id}.atlaspack")), &header);
+        }
+        // One whose JSON file unpacks to megabytes from a few kilobytes.
+        let mut header = pack_file::header(
+            "spaces-game",
+            "Example Game",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        header["contents"] = serde_json::json!({});
+        let spaces = packs.join("spaces.atlaspack");
+        pack_file::write_with(
+            &spaces,
+            &header,
+            &[("pictures.json", {
+                let mut text = " ".repeat(8 << 20);
+                text.push_str("[]");
+                text
+            })],
+        );
+        assert!(fs::metadata(&spaces).unwrap().len() < 100_000);
+
+        let listing = s.library.scan();
+        assert_eq!(listing.packs.len(), count + 1, "{:?}", listing.unreadable);
+        let pool = s.library.pack_file_pool();
+        assert_eq!(pool.held_tables(), 0, "a scan keeps no table");
+        assert_eq!(pool.held_bytes(), 0, "nor anything it unpacked");
+        let pack = |index: usize| s.registry.pack_file(&format!("game-{index}")).unwrap();
+        assert!((0..count).all(|index| !pack(index).holds_table()));
+        assert!(!s.registry.pack_file("spaces-game").unwrap().holds_table());
+
+        // Reading keeps the tables of the packs read last only.
+        for index in 0..count {
+            served(&s.registry, &format!("game-{index}"), "manifest.json");
+            assert_eq!(pool.held_tables(), (index + 1).min(OPEN_TABLES));
+        }
+        for index in 0..count {
+            assert_eq!(
+                pack(index).holds_table(),
+                index >= count - OPEN_TABLES,
+                "game-{index}"
+            );
+        }
+        let manifest = served(&s.registry, "game-0", "manifest.json").len();
+        assert!(pack(0).holds_table());
+        assert!(!pack(count - OPEN_TABLES).holds_table(), "the oldest went");
+        assert_eq!(pool.held_tables(), OPEN_TABLES);
+        // Only what the tables held unpacked: a manifest each, a few bytes
+        // longer for an id of two figures.
+        assert!(pool.held_bytes() <= OPEN_TABLES * (manifest + 8));
+        // A scan does not keep the tables of the packs read.
+        s.library.scan();
+        assert_eq!(pool.held_tables(), OPEN_TABLES);
+    }
+
+    #[test]
+    fn says_what_a_limit_left_out_of_a_look_for_pack_files() {
+        let dir = TempDir::new("library-pack-file-limits");
+        let root = dir.0.join("games");
+        // More pack files than are read, made in reverse order: the ones
+        // left out are the last by name, whatever order they are listed in.
+        fs::create_dir_all(&root).unwrap();
+        for index in (0..=MAX_PACK_FILES).rev() {
+            fs::write(root.join(format!("p{index:04}.atlaspack")), "").unwrap();
+        }
+        let found = pack_files_in(&root, None);
+        assert_eq!(found.files.len(), MAX_PACK_FILES);
+        assert!(found.files[MAX_PACK_FILES - 1].ends_with("p0999.atlaspack"));
+        assert_eq!(found.notes.len(), 1, "{:?}", found.notes);
+        assert!(found.notes[0].path.ends_with("p1000.atlaspack"));
+        assert!(
+            found.notes[0].reason.contains("at most 1,000 pack files"),
+            "{:?}",
+            found.notes
+        );
+
+        // Too deep: the folder whose folders are not read is named.
+        let deep = dir.0.join("deep");
+        let fourth = deep.join("a").join("b").join("c").join("d");
+        write_pack_file(
+            &fourth.join("e/too-deep.atlaspack"),
+            "deep-game",
+            "Deep",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        write_pack_file(
+            &fourth.join("shallow.atlaspack"),
+            "shallow-game",
+            "Shallow",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        let found = pack_files_in(&deep, None);
+        assert_eq!(found.files, [fourth.join("shallow.atlaspack")]);
+        assert_eq!(found.notes.len(), 1, "{:?}", found.notes);
+        assert_eq!(found.notes[0].path, fourth.display().to_string());
+        assert!(found.notes[0].reason.contains("at most 4 folders down"));
+    }
+
+    #[test]
+    fn never_reads_pack_files_in_the_maps_folder() {
+        let s = setup("library-pack-files-maps-folder", Vec::new());
+        let packs = s.library.packs_folder();
+        write_pack_file(
+            &packs.join("game.atlaspack"),
+            "example-game",
+            "Example Game",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        // Neither the packs folder, a folder inside it, nor one that holds
+        // it can be the maps folder.
+        for path in [
+            packs.clone(),
+            packs.join("sub"),
+            packs.parent().unwrap().to_path_buf(),
+        ] {
+            let error = s.library.propose_maps_folder(&path).unwrap_err();
+            assert!(
+                error.contains("packs folder"),
+                "{}: {error}",
+                path.display()
+            );
+        }
+        // A maps folder that is the packs folder already (chosen before):
+        // no pack file is read from it, and the Library says why.
+        s.library
+            .settings()
+            .update(|settings| settings.maps_folder = Some(packs.display().to_string()))
+            .unwrap();
+        let listing = s.library.scan();
+        assert!(listing.packs.is_empty(), "{:?}", listing.packs);
+        assert_eq!(listing.unreadable.len(), 1, "{:?}", listing.unreadable);
+        assert_eq!(listing.unreadable[0].path, packs.display().to_string());
+        assert!(listing.unreadable[0].reason.contains("maps folder"));
+        // An added folder of games inside the maps folder is not walked.
+        let inside = packs.join("Inside");
+        write_pack_file(
+            &inside.join("inside.atlaspack"),
+            "inside-game",
+            "Inside",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        assert!(s.library.add_folder_location(&inside).is_err());
+    }
+
+    #[test]
+    fn reads_pack_files_in_a_folder_of_packs_beside_pack_folders() {
+        let s = setup("library-pack-files-location", Vec::new());
+        let usb = s.dir.0.join("USB drive");
+        write_pack(&usb.join("Island"), "island", "Island", "1.0.0");
+        // A pack folder is not looked into for pack files.
+        write_pack_file(
+            &usb.join("Island/inside.atlaspack"),
+            "inside-game",
+            "Inside",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        write_pack_file(
+            &usb.join("Games/Example Game/Example Game - Example Site.atlaspack"),
+            "example-game",
+            "Example Game",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        write_pack_file(
+            &usb.join(".git/stored.atlaspack"),
+            "stored-game",
+            "Stored",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        assert_eq!(s.library.add_folder_location(&usb).unwrap(), 2);
+        // A folder of pack files only is a folder of packs too, and not a
+        // pack itself.
+        let only_files = s.dir.0.join("Only files");
+        write_pack_file(
+            &only_files.join("Example Game/Lone.atlaspack"),
+            "lone-game",
+            "Lone",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        assert!(s
+            .library
+            .add_pack_location(&only_files)
+            .unwrap_err()
+            .contains("Add a folder of games"));
+        assert_eq!(s.library.add_folder_location(&only_files).unwrap(), 1);
+
+        let listing = s.library.scan();
+        assert_eq!(ids(&listing), ["island", "example-game", "lone-game"]);
+        assert_eq!(listing.packs[1].origin, Origin::Location);
+        assert!(listing.packs[1].pack_file);
+        assert!(!listing.packs[0].pack_file);
+        assert_eq!(listing.locations[0].packs, ["island", "example-game"]);
+        assert_eq!(listing.locations[1].packs, ["lone-game"]);
+        // The folder pack is served as before.
+        assert_eq!(s.registry.kind("island"), Some(PackKind::Folder));
+        assert_eq!(
+            s.registry.root("island").unwrap(),
+            usb.join("Island").canonicalize().unwrap()
+        );
+        assert!(served(&s.registry, "island", MANIFEST_FILE).starts_with(b"{"));
+        assert!(served(&s.registry, "example-game", MANIFEST_FILE).starts_with(b"{"));
+        // Forgetting the folder takes its pack files out of the list and
+        // deletes nothing.
+        s.library
+            .remove_location(&usb.display().to_string())
+            .unwrap();
+        assert_eq!(ids(&s.library.scan()), ["lone-game"]);
+        assert!(usb
+            .join("Games/Example Game/Example Game - Example Site.atlaspack")
+            .exists());
+    }
+
+    #[test]
+    fn shows_one_pack_file_of_a_game_by_when_its_pack_changed() {
+        let s = setup("library-pack-files-same-id", Vec::new());
+        let packs = s.library.packs_folder();
+        let older = packs.join("a/older.atlaspack");
+        let newer = packs.join("b/newer.atlaspack");
+        write_pack_file(
+            &older,
+            "example-game",
+            "Old Title",
+            "2026-11-01T09:00:00Z",
+            "2026-11-15T09:00:00Z",
+        );
+        write_pack_file(
+            &newer,
+            "example-game",
+            "New Title",
+            "2026-11-10T09:00:00.000Z",
+            "2026-11-11T09:00:00Z",
+        );
+        for _ in 0..3 {
+            let listing = s.library.scan();
+            assert_eq!(listing.packs.len(), 1);
+            assert_eq!(listing.packs[0].title, "New Title", "the pack changed last");
+            assert_eq!(listing.hidden.len(), 1);
+            assert_eq!(listing.hidden[0].title, "Old Title");
+            assert!(listing.hidden[0].reason.contains("changed last"));
+            assert_eq!(s.library.pack_file("example-game"), Some(newer.clone()));
+        }
+        // The same pack changed at the same time: the file made last.
+        write_pack_file(
+            &older,
+            "example-game",
+            "Made Later",
+            "2026-11-10T09:00:00Z",
+            "2026-11-15T09:00:00Z",
+        );
+        assert_eq!(s.library.scan().packs[0].title, "Made Later");
+        // The same in every way: the first by path, every time.
+        write_pack_file(
+            &older,
+            "example-game",
+            "First By Path",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        for _ in 0..2 {
+            assert_eq!(s.library.scan().packs[0].title, "First By Path");
+        }
+
+        // A pack folder of the game wins over every pack file.
+        write_pack(
+            &s.library.maps_folder().join("example-game"),
+            "example-game",
+            "Folder",
+            "0.1.0",
+        );
+        let listing = s.library.scan();
+        assert_eq!(ids(&listing), ["example-game"]);
+        assert_eq!(listing.packs[0].title, "Folder");
+        assert!(!listing.packs[0].pack_file);
+        assert_eq!(listing.hidden.len(), 2);
+        assert_eq!(s.registry.kind("example-game"), Some(PackKind::Folder));
+        // Gone again: the pack file is shown.
+        fs::remove_dir_all(s.library.maps_folder().join("example-game")).unwrap();
+        assert!(s.library.scan().packs[0].pack_file);
+        assert_eq!(s.registry.kind("example-game"), Some(PackKind::File));
+    }
+
+    #[test]
+    fn keeps_the_persons_own_things_of_a_pack_file_apart_through_a_newer_file() {
+        let s = setup("library-pack-files-own", Vec::new());
+        let packs = s.library.packs_folder();
+        let file = packs.join("Example Game.atlaspack");
+        write_pack_file(
+            &file,
+            "example-game",
+            "Example Game",
+            "2026-11-01T09:00:00Z",
+            "2026-11-02T09:00:00Z",
+        );
+        s.library.scan();
+        // What the web app writes for the game: in the maps folder, by the
+        // game's id, as for a pack folder.
+        let maps = s.library.maps_folder();
+        let lists =
+            serde_json::json!({"format": "atlas-own-lists", "version": 1, "gameId": "example-game",
+            "updatedAt": "2026-11-12T09:00:00Z", "lists": []})
+            .to_string();
+        crate::ownlists::LISTS
+            .write(&maps, "example-game", &lists, None)
+            .unwrap();
+        assert!(maps.join("example-game.my-lists.json").is_file());
+        assert_eq!(files_in(&packs), ["Example Game.atlaspack"]);
+
+        // A newer file of the game put in its place by another app.
+        let part = packs.join("Example Game.atlaspack.part");
+        write_pack_file(
+            &part,
+            "example-game",
+            "Example Game",
+            "2026-11-20T09:00:00Z",
+            "2026-11-21T09:00:00Z",
+        );
+        assert_eq!(ids(&s.library.scan()), ["example-game"]);
+        fs::rename(&part, &file).unwrap();
+        let listing = s.library.scan();
+        assert_eq!(ids(&listing), ["example-game"]);
+        assert_eq!(
+            crate::ownlists::LISTS
+                .read(&maps, "example-game")
+                .unwrap()
+                .as_deref(),
+            Some(lists.as_str())
+        );
+        assert_eq!(files_in(&packs), ["Example Game.atlaspack"]);
     }
 
     #[test]

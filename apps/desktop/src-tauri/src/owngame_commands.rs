@@ -192,6 +192,7 @@ pub struct OwnGameChanged {
 
 /// The folder of a game made in the app, listed in the maps folder.
 fn own_game_folder(library: &Library, game_id: &str) -> Result<PathBuf, String> {
+    library.check_changeable(game_id)?;
     library.check_not_moving(game_id)?;
     let folder = library.pack_folder(game_id).ok_or_else(|| {
         "That game is not in the list any more. Refresh the list and try again.".to_owned()
