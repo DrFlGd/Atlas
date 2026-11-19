@@ -437,6 +437,14 @@ function installPackShell() {
               }
             : null,
         });
+      case 'library_old_folders':
+        // The settings of an app without downloads: no old folders here.
+        return Promise.resolve({
+          mapsFolder: '/maps',
+          siteReader: false,
+          folders: [],
+          madeHere: [],
+        });
       default:
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(`Unknown command ${command}`);
