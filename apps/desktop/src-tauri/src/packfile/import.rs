@@ -280,7 +280,7 @@ fn write_new(target: &Path, data: &mut dyn Read, size: u64) -> io::Result<()> {
 // Checking the entries
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     PackFile,
     /// One of a person's own files (`mine/`), by its place in [`MINE_ENTRIES`].
     Mine(usize),
@@ -341,104 +341,268 @@ fn read_entry<R: Read + io::Seek>(
     Ok(bytes)
 }
 
+/// What a pack file may hold: the rules every entry after the description
+/// is checked against, from the description and the pack's own files
+/// (`manifest.json`, `maps.json`, `layers.json` and `pictures.json`). An
+/// import and a pack file opened where it lies (see `inplace.rs`) check
+/// with the same rules.
+pub(crate) struct Rules {
+    /// The pack's tile layers.
+    pub(crate) layers: Vec<LayerInfo>,
+    templates: Vec<Template>,
+    /// The pictures `pictures.json` lists, the only ones it may hold.
+    pictures: HashSet<String>,
+    /// The small pictures the description lists, the only ones it may hold.
+    previews: HashSet<String>,
+}
+
+impl Rules {
+    /// Reads the rules of a pack file with this description. `read` gives
+    /// the bytes of an entry by its name, at most `cap` of them, or `None`
+    /// when the file has no such entry.
+    pub(crate) fn read(
+        header: &Header,
+        read: &mut dyn FnMut(&str, u64) -> Result<Option<Vec<u8>>, Stop>,
+    ) -> Result<Self, Stop> {
+        let manifest = read(MANIFEST_FILE, MAX_MANIFEST_BYTES)?
+            .ok_or_else(|| refuse("This pack file has no manifest.json."))?;
+        let manifest: Value = serde_json::from_slice(&manifest)
+            .map_err(|_| refuse("The manifest.json in this pack file is not valid JSON."))?;
+        if !matches!(
+            manifest.get("schemaVersion").and_then(Value::as_u64),
+            Some(1 | 2)
+        ) {
+            return Err(refuse(
+                "The game in this pack file uses a pack format this app does not read. Install a newer version of Atlas to open it.",
+            ));
+        }
+        let game_id = manifest.get("gameId").and_then(Value::as_str);
+        if game_id != Some(header.pack_id.as_str()) {
+            return Err(refuse(
+                "The game inside this pack file is not the one its description names.",
+            ));
+        }
+        let mut text_of = |name: &str| -> Result<Option<String>, Stop> {
+            match read(name, MAX_PACK_FILE_BYTES as u64)? {
+                None => Ok(None),
+                Some(bytes) => String::from_utf8(bytes)
+                    .map(Some)
+                    .map_err(|_| refuse(format!("The {name} in this pack file is not text."))),
+            }
+        };
+        let missing = |name: &str| refuse(format!("This pack file has no {name}."));
+        // A game with no map has neither file.
+        let layers = match (text_of("maps.json")?, text_of("layers.json")?) {
+            (None, None) => Vec::new(),
+            (Some(maps), Some(layers_text)) => parse_layers(&maps, &layers_text).map_err(refuse)?,
+            (None, Some(_)) => return Err(missing("maps.json")),
+            (Some(_), None) => return Err(missing("layers.json")),
+        };
+        // The pictures it lists, the only ones it may hold.
+        let pictures: HashSet<String> = match text_of(PICTURES_FILE)? {
+            Some(text) => {
+                let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
+                    refuse(format!(
+                        "The {PICTURES_FILE} in this pack file is not a list."
+                    ))
+                })?;
+                list.iter()
+                    .filter_map(|picture| picture.get("file").and_then(Value::as_str))
+                    .filter(|file| is_picture_path(file))
+                    .map(str::to_owned)
+                    .collect()
+            }
+            None => HashSet::new(),
+        };
+        // The small pictures of the maps the header lists, the only ones it
+        // may hold, and only from the version that has them.
+        let previews: HashSet<String> = if header.version >= VERSION_WITH_PREVIEWS {
+            header.previews().into_iter().map(str::to_owned).collect()
+        } else {
+            HashSet::new()
+        };
+        if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
+            return Err(refuse(
+                "The game in this pack file keeps its map images in one archive file, which a pack file does not carry.",
+            ));
+        }
+        let templates: Vec<Template> = layers
+            .iter()
+            .map(|layer| {
+                Template::compile(&layer.url).ok_or_else(|| {
+                    refuse(format!(
+                        "The layer {} in this pack file names its map images in a way Atlas cannot check.",
+                        crate::activity::clean(&layer.label())
+                    ))
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            layers,
+            templates,
+            pictures,
+            previews,
+        })
+    }
+}
+
+/// One entry of a pack file, as its archive's list of contents says.
+pub(crate) struct EntryFacts<'a> {
+    /// Its place in the archive; the description is 0.
+    pub(crate) index: usize,
+    pub(crate) name: &'a str,
+    /// Its size unpacked.
+    pub(crate) size: u64,
+    pub(crate) symlink: bool,
+    pub(crate) dir: bool,
+    pub(crate) compression: zip::CompressionMethod,
+}
+
+/// What the entries checked so far hold, for the limits on all of them.
+#[derive(Default)]
+pub(crate) struct Tally {
+    /// Their names in lower case: no two may differ only by case.
+    seen: HashSet<String>,
+    previews: usize,
+    mine_pictures: usize,
+    mine_picture_bytes: u64,
+    json_bytes: u64,
+    /// The bytes of what an import writes into the pack folder.
+    pub(crate) bytes: u64,
+}
+
+/// The number of entries a pack file may have, the description included.
+pub(crate) fn check_count(count: usize) -> Result<(), Stop> {
+    if count == 0 || count > MAX_ENTRIES {
+        return Err(refuse(NOT_A_PACK_FILE));
+    }
+    Ok(())
+}
+
+/// Checks one entry after the description against the rules and the
+/// limits: its name, what it is, how it is packed, its size, and that no
+/// other entry has its name. `None` for a folder entry, which holds
+/// nothing. The contents of the person's own files, the small pictures and
+/// the JSON files are the caller's to read and check.
+pub(crate) fn check_entry(
+    rules: &Rules,
+    tally: &mut Tally,
+    entry: &EntryFacts<'_>,
+) -> Result<Option<Kind>, Stop> {
+    let name = entry.name;
+    let size = entry.size;
+    let shown = crate::activity::clean(name);
+    if entry.symlink {
+        return Err(refuse(format!(
+            "This pack file holds a link ({shown}), which a pack never has."
+        )));
+    }
+    if !matches!(
+        entry.compression,
+        zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
+    ) {
+        return Err(refuse(format!(
+            "{shown} in this pack file is packed in a way Atlas does not read."
+        )));
+    }
+    if entry.dir {
+        // Folders are made as needed; a folder entry must still be a safe
+        // path.
+        let trimmed = name.trim_end_matches('/');
+        if relative_path(trimmed).is_none() || name.starts_with('/') {
+            return Err(refuse(format!(
+                "This pack file holds a file outside the pack ({shown})."
+            )));
+        }
+        return Ok(None);
+    }
+    let kind = classify(
+        name,
+        &rules.layers,
+        &rules.templates,
+        &rules.pictures,
+        &rules.previews,
+    )
+    .ok_or_else(|| {
+        refuse(format!(
+            "This pack file holds a file that is not part of a pack ({shown}), so it was not imported."
+        ))
+    })?;
+    if !tally.seen.insert(name.to_lowercase()) {
+        return Err(refuse(format!("This pack file holds {shown} twice.")));
+    }
+    let too_large = || refuse(format!("{shown} in this pack file is too large."));
+    match kind {
+        Kind::Mine(_) => {
+            if size > MAX_OWN_LISTS_BYTES as u64 {
+                return Err(too_large());
+            }
+        }
+        Kind::Preview => {
+            // Right after the header, so another app reads them from the
+            // start of the file.
+            if entry.index != tally.previews + 1 || tally.previews >= MAX_PREVIEWS {
+                return Err(refuse(format!(
+                    "This pack file holds a small picture of a map out of its place ({shown}), so it was not imported."
+                )));
+            }
+            tally.previews += 1;
+            if size > MAX_PREVIEW_BYTES {
+                return Err(too_large());
+            }
+        }
+        Kind::MinePicture => {
+            if tally.mine_pictures >= ownpictures::MAX_OWN_PICTURES {
+                return Err(refuse("This pack file holds too many photos."));
+            }
+            tally.mine_pictures += 1;
+            tally.mine_picture_bytes = tally.mine_picture_bytes.saturating_add(size);
+            if size > ownpictures::MAX_OWN_PICTURE_BYTES as u64
+                || tally.mine_picture_bytes > MAX_MINE_PICTURE_BYTES
+            {
+                return Err(too_large());
+            }
+        }
+        Kind::PackFile | Kind::Status(_) | Kind::Image | Kind::Marker | Kind::Picture => {
+            let limit = match kind {
+                Kind::PackFile => MAX_PACK_FILE_BYTES as u64,
+                Kind::Status(_) => MAX_STATUS_BYTES,
+                Kind::Image => MAX_IMAGE_BYTES,
+                Kind::Marker => 0,
+                _ => MAX_PICTURE_BYTES,
+            };
+            if size > limit {
+                return Err(too_large());
+            }
+            if matches!(kind, Kind::PackFile | Kind::Status(_)) {
+                tally.json_bytes += size;
+                if tally.json_bytes > MAX_PACK_BYTES as u64 {
+                    return Err(refuse("The game in this pack file is too large."));
+                }
+            }
+            tally.bytes = tally.bytes.saturating_add(size);
+        }
+    }
+    Ok(Some(kind))
+}
+
 fn check_entries<R: Read + io::Seek>(
     archive: &mut ZipArchive<R>,
     header: &Header,
 ) -> Result<CheckedFile, Stop> {
     let count = archive.len();
-    if count == 0 || count > MAX_ENTRIES {
-        return Err(refuse(NOT_A_PACK_FILE));
-    }
+    check_count(count)?;
     if archive.name_for_index(0).and_then(Result::ok).as_deref() != Some(HEADER_FILE) {
         return Err(refuse(NOT_A_PACK_FILE));
     }
-    let index_of = |archive: &ZipArchive<R>, name: &str| archive.index_for_name(name);
-    let manifest_index = index_of(archive, MANIFEST_FILE)
-        .ok_or_else(|| refuse("This pack file has no manifest.json."))?;
-    let manifest = read_entry(archive, manifest_index, MANIFEST_FILE, MAX_MANIFEST_BYTES)?;
-    let manifest: Value = serde_json::from_slice(&manifest)
-        .map_err(|_| refuse("The manifest.json in this pack file is not valid JSON."))?;
-    if !matches!(
-        manifest.get("schemaVersion").and_then(Value::as_u64),
-        Some(1 | 2)
-    ) {
-        return Err(refuse(
-            "The game in this pack file uses a pack format this app does not read. Install a newer version of Atlas to open it.",
-        ));
-    }
-    let game_id = manifest.get("gameId").and_then(Value::as_str);
-    if game_id != Some(header.pack_id.as_str()) {
-        return Err(refuse(
-            "The game inside this pack file is not the one its description names.",
-        ));
-    }
-    let text_of = |archive: &mut ZipArchive<R>, name: &str| -> Result<String, Stop> {
-        let index = index_of(archive, name)
-            .ok_or_else(|| refuse(format!("This pack file has no {name}.")))?;
-        String::from_utf8(read_entry(
-            archive,
-            index,
-            name,
-            MAX_PACK_FILE_BYTES as u64,
-        )?)
-        .map_err(|_| refuse(format!("The {name} in this pack file is not text.")))
-    };
-    // A game with no map has neither file.
-    let layers =
-        if index_of(archive, "maps.json").is_none() && index_of(archive, "layers.json").is_none() {
-            Vec::new()
-        } else {
-            let maps = text_of(archive, "maps.json")?;
-            let layers_text = text_of(archive, "layers.json")?;
-            parse_layers(&maps, &layers_text).map_err(refuse)?
-        };
-    // The pictures it lists, the only ones it may hold.
-    let pictures: HashSet<String> = if index_of(archive, PICTURES_FILE).is_some() {
-        let text = text_of(archive, PICTURES_FILE)?;
-        let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
-            refuse(format!(
-                "The {PICTURES_FILE} in this pack file is not a list."
-            ))
-        })?;
-        list.iter()
-            .filter_map(|picture| picture.get("file").and_then(Value::as_str))
-            .filter(|file| is_picture_path(file))
-            .map(str::to_owned)
-            .collect()
-    } else {
-        HashSet::new()
-    };
-    // The small pictures of the maps the header lists, the only ones it may
-    // hold, and only from the version that has them.
-    let previews: HashSet<&str> = if header.version >= VERSION_WITH_PREVIEWS {
-        header.previews().into_iter().collect()
-    } else {
-        HashSet::new()
-    };
-    if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
-        return Err(refuse(
-            "The game in this pack file keeps its map images in one archive file, which a pack file does not carry.",
-        ));
-    }
-    let templates: Vec<Template> = layers
-        .iter()
-        .map(|layer| {
-            Template::compile(&layer.url).ok_or_else(|| {
-                refuse(format!(
-                    "The layer {} in this pack file names its map images in a way Atlas cannot check.",
-                    crate::activity::clean(&layer.label())
-                ))
-            })
-        })
-        .collect::<Result<_, _>>()?;
+    let rules = Rules::read(header, &mut |name, cap| match archive.index_for_name(name) {
+        Some(index) => read_entry(archive, index, name, cap).map(Some),
+        None => Ok(None),
+    })?;
 
     let mut entries = Vec::new();
     let mut mine = Mine::default();
-    let mut mine_picture_bytes: u64 = 0;
-    let mut preview_count: usize = 0;
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut json_bytes: u64 = 0;
-    let mut bytes: u64 = 0;
+    let mut tally = Tally::default();
     for index in 1..count {
         let (name, size, kind) = {
             let entry = archive
@@ -448,154 +612,84 @@ fn check_entries<R: Read + io::Seek>(
                 .name()
                 .map_err(|_| refuse("This pack file holds a file with an unreadable name."))?
                 .into_owned();
-            let shown = crate::activity::clean(&name);
-            if entry.is_symlink() {
-                return Err(refuse(format!(
-                    "This pack file holds a link ({shown}), which a pack never has."
-                )));
+            let facts = EntryFacts {
+                index,
+                name: &name,
+                size: entry.size(),
+                symlink: entry.is_symlink(),
+                dir: entry.is_dir(),
+                compression: entry.compression(),
+            };
+            let Some(kind) = check_entry(&rules, &mut tally, &facts)? else {
+                continue;
+            };
+            (name, entry.size(), kind)
+        };
+        let shown = crate::activity::clean(&name);
+        match kind {
+            Kind::Mine(which) => {
+                let (_, own) = MINE_ENTRIES[which];
+                let data = read_entry(archive, index, &name, MAX_OWN_LISTS_BYTES as u64)?;
+                let text = String::from_utf8(data)
+                    .map_err(|_| refuse(format!("{shown} in this pack file is not text.")))?;
+                own.check(&header.pack_id, &text).map_err(|_| {
+                    refuse(format!(
+                        "{shown} in this pack file is not this game's {}.",
+                        own.what
+                    ))
+                })?;
+                *mine.slot(own) = Some(text);
+                continue;
             }
-            if !matches!(
-                entry.compression(),
-                zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
-            ) {
-                return Err(refuse(format!(
-                    "{shown} in this pack file is packed in a way Atlas does not read."
-                )));
-            }
-            if entry.is_dir() {
-                // Folders are made as needed; a folder entry must still be
-                // a safe path.
-                let trimmed = name.trim_end_matches('/');
-                if relative_path(trimmed).is_none() || name.starts_with('/') {
+            Kind::Preview => {
+                // Checked, and not written anywhere.
+                let data = read_entry(archive, index, &name, MAX_PREVIEW_BYTES)?;
+                if !data.starts_with(&[0xff, 0xd8, 0xff]) {
                     return Err(refuse(format!(
-                        "This pack file holds a file outside the pack ({shown})."
+                        "{shown} in this pack file is not the picture it says it is."
                     )));
                 }
                 continue;
             }
-            let kind = classify(&name, &layers, &templates, &pictures, &previews).ok_or_else(|| {
-                refuse(format!(
-                    "This pack file holds a file that is not part of a pack ({shown}), so it was not imported."
-                ))
-            })?;
-            (name, entry.size(), kind)
-        };
-        if !seen.insert(name.to_lowercase()) {
-            return Err(refuse(format!(
-                "This pack file holds {} twice.",
-                crate::activity::clean(&name)
-            )));
-        }
-        if let Kind::Mine(which) = kind {
-            let (_, own) = MINE_ENTRIES[which];
-            let shown = crate::activity::clean(&name);
-            let data = read_entry(archive, index, &name, MAX_OWN_LISTS_BYTES as u64)?;
-            let text = String::from_utf8(data)
-                .map_err(|_| refuse(format!("{shown} in this pack file is not text.")))?;
-            own.check(&header.pack_id, &text).map_err(|_| {
-                refuse(format!(
-                    "{shown} in this pack file is not this game's {}.",
-                    own.what
-                ))
-            })?;
-            *mine.slot(own) = Some(text);
-            continue;
-        }
-        if kind == Kind::Preview {
-            // Right after the header, so another app reads them from the
-            // start of the file; checked, and not written anywhere.
-            let shown = crate::activity::clean(&name);
-            if index != preview_count + 1 || preview_count >= MAX_PREVIEWS {
-                return Err(refuse(format!(
-                    "This pack file holds a small picture of a map out of its place ({shown}), so it was not imported."
-                )));
+            Kind::MinePicture => {
+                let file = name[MINE_PICTURES_DIR.len()..].to_owned();
+                let data = read_entry(
+                    archive,
+                    index,
+                    &name,
+                    ownpictures::MAX_OWN_PICTURE_BYTES as u64,
+                )?;
+                if !ownpictures::bytes_match_name(&file, &data) {
+                    return Err(refuse(format!(
+                        "{shown} in this pack file is not the picture it says it is."
+                    )));
+                }
+                mine.pictures.push((file, data));
+                continue;
             }
-            preview_count += 1;
-            if size > MAX_PREVIEW_BYTES {
-                return Err(refuse(format!("{shown} in this pack file is too large.")));
-            }
-            let data = read_entry(archive, index, &name, MAX_PREVIEW_BYTES)?;
-            if !data.starts_with(&[0xff, 0xd8, 0xff]) {
-                return Err(refuse(format!(
-                    "{shown} in this pack file is not the picture it says it is."
-                )));
-            }
-            continue;
-        }
-        if kind == Kind::MinePicture {
-            let shown = crate::activity::clean(&name);
-            let file = name[MINE_PICTURES_DIR.len()..].to_owned();
-            if mine.pictures.len() >= ownpictures::MAX_OWN_PICTURES {
-                return Err(refuse("This pack file holds too many photos."));
-            }
-            mine_picture_bytes = mine_picture_bytes.saturating_add(size);
-            if size > ownpictures::MAX_OWN_PICTURE_BYTES as u64
-                || mine_picture_bytes > MAX_MINE_PICTURE_BYTES
-            {
-                return Err(refuse(format!("{shown} in this pack file is too large.")));
-            }
-            let data = read_entry(
-                archive,
-                index,
-                &name,
-                ownpictures::MAX_OWN_PICTURE_BYTES as u64,
-            )?;
-            if !ownpictures::bytes_match_name(&file, &data) {
-                return Err(refuse(format!(
-                    "{shown} in this pack file is not the picture it says it is."
-                )));
-            }
-            mine.pictures.push((file, data));
-            continue;
-        }
-        let too_large = match kind {
-            Kind::Mine(_) | Kind::MinePicture | Kind::Preview => unreachable!("taken above"),
-            Kind::PackFile => size > MAX_PACK_FILE_BYTES as u64,
-            Kind::Status(_) => size > MAX_STATUS_BYTES,
-            Kind::Image => size > MAX_IMAGE_BYTES,
-            Kind::Marker => size > 0,
-            Kind::Picture => size > MAX_PICTURE_BYTES,
-        };
-        if too_large {
-            return Err(refuse(format!(
-                "{} in this pack file is too large.",
-                crate::activity::clean(&name)
-            )));
+            Kind::PackFile | Kind::Status(_) | Kind::Image | Kind::Marker | Kind::Picture => {}
         }
         let json = match kind {
             Kind::PackFile | Kind::Status(_) => {
-                json_bytes += size;
-                if json_bytes > MAX_PACK_BYTES as u64 {
-                    return Err(refuse("The game in this pack file is too large."));
-                }
                 let data = read_entry(archive, index, &name, size)?;
                 let value: Value = serde_json::from_slice(&data).map_err(|_| {
-                    refuse(format!(
-                        "{} in this pack file is not valid JSON.",
-                        crate::activity::clean(&name)
-                    ))
+                    refuse(format!("{shown} in this pack file is not valid JSON."))
                 })?;
                 if let Kind::Status(layer) = kind {
                     let usable = serde_json::from_value::<LayerStatus>(value).is_ok_and(|status| {
-                        status.format == STATUS_FORMAT && status.layer_id == layers[layer].id
+                        status.format == STATUS_FORMAT
+                            && status.layer_id == rules.layers[layer].id
                     });
                     if !usable {
                         return Err(refuse(format!(
-                            "{} in this pack file is not a usable status file.",
-                            crate::activity::clean(&name)
+                            "{shown} in this pack file is not a usable status file."
                         )));
                     }
                 }
                 Some(data)
             }
-            Kind::Image
-            | Kind::Marker
-            | Kind::Picture
-            | Kind::Mine(_)
-            | Kind::MinePicture
-            | Kind::Preview => None,
+            _ => None,
         };
-        bytes = bytes.saturating_add(size);
         entries.push(Checked {
             index,
             name,
@@ -606,7 +700,7 @@ fn check_entries<R: Read + io::Seek>(
     }
     Ok(CheckedFile {
         entries,
-        bytes,
+        bytes: tally.bytes,
         mine,
     })
 }
@@ -617,7 +711,7 @@ fn classify(
     layers: &[LayerInfo],
     templates: &[Template],
     pictures: &HashSet<String>,
-    previews: &HashSet<&str>,
+    previews: &HashSet<String>,
 ) -> Option<Kind> {
     // A plain relative path: no `..`, nothing absolute, no drive letter, no
     // hidden segment (`.atlas`), no `\`.
