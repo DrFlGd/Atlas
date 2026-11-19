@@ -1,6 +1,6 @@
 # The Atlas pack file format
 
-A pack file (`.atlaspack`) holds a map, wiki or guide for a game in one file: the pack folder of one game, its map images up to a chosen level of detail, and the pictures its pages show. Atlas writes one with **Export** and reads one with **Import map pack file**. Another app can show a card for a pack file and pass it on without unpacking it. This page says what is in the file and how to read it safely.
+A pack file (`.atlaspack`) holds a map, wiki or guide for a game in one file: the pack folder of one game, its map images up to a chosen level of detail, and the pictures its pages show. Atlas writes one with **Export** and reads one where it lies, or takes it in with **Import map pack file** (the desktop app without downloads copies it into its packs folder with **Add a pack file** instead and reads it there). Another app can show a card for a pack file and pass it on without unpacking it. This page says what is in the file and how to read it safely.
 
 Every name in the examples is made up.
 
@@ -182,6 +182,8 @@ Atlas can show a pack file without importing it (see "Pack files read where they
 - **Each file's content is checked at its first read.** A JSON file must be JSON, and a status file one of its layer, as an import requires. An entry read whole must match its checksum, and its local header must name it. An entry that fails is never served, and the file is then listed as one that cannot be opened, with the import's sentence, until it changes.
 
 A byte range of a stored entry (a map image) is read from the file as it is and is not checked against the entry's checksum; the whole entry is. A deflated entry is always unpacked whole, within its size limit. The small pictures and the person's own things (`mine/`) are neither served nor read, so a file whose own things an import would refuse is still shown; the person's own things of a game read in place are Atlas's, kept in the maps folder by the game's id.
+
+When the desktop app without downloads adds a pack file to its packs folder (see "Adding a pack file in the app without downloads" in `apps/desktop/README.md`), the copy is checked whole once before it gets its name, as an import checks a file: every entry's name, type and size, every entry read to its end against its checksum, and the manifest's id against the description's. The person's own things in the file are then taken in as an import takes them. The file itself is never changed.
 
 When the Library looks for pack files, it keeps only what tells each file from a changed one and its description. The table of where each entry is is built again when the pack is read, and only the tables of the few packs read last are kept, with one limit on the unpacked JSON files of all of them.
 
