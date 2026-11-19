@@ -47,7 +47,7 @@ const here = (/** @type {string} */ path) => fileURLToPath(new URL(path, import.
 /**
  * The config to merge for a custom name and identifier, or null for the
  * plain Atlas build. `platformConfig` is this system's own config
- * (`tauri.windows.conf.json`, `tauri.linux.conf.json`), when it has one:
+ * (`tauri.windows.conf.json`), when it has one:
  * its pack file type is registered again under a class named after the
  * identifier, so that installing or removing one app leaves the other
  * app's registration as it was. Exported for tests.
