@@ -267,6 +267,9 @@ pub async fn game_groups_write(
                 format!("Kept a copy of the titles of the games as {name} before saving them"),
             );
         }
+        // The title a game is shown under goes into its pack's description.
+        #[cfg(feature = "downloads")]
+        crate::keep::changed_all();
         Ok(kept)
     })
     .await
