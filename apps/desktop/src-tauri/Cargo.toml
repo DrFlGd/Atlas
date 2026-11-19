@@ -71,6 +71,10 @@ tauri-plugin-fs = "2.7.1"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 png = "0.18.1"
+# One Atlas at a time: a second start (a pack file opened from the file
+# manager) hands its arguments to the one running and ends (Apache-2.0 OR
+# MIT, the Tauri 2 plugin).
+tauri-plugin-single-instance = "2.5.5"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

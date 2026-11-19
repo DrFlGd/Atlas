@@ -41,6 +41,31 @@ test('a build with its own name and identifier renames the app and its window', 
   });
 });
 
+test('a build with its own identifier registers the pack file type under its own class', () => {
+  const platform = {
+    bundle: {
+      fileAssociations: [
+        { ext: ['atlaspack'], name: 'dev.atlas.desktop.atlaspack', description: 'Pack file' },
+      ],
+    },
+  };
+  const config = identityConfig(
+    { name: 'My Atlas', identifier: 'org.example.my-atlas' },
+    base,
+    platform,
+  );
+  assert.deepEqual(config?.bundle, {
+    fileAssociations: [
+      { ext: ['atlaspack'], name: 'org.example.my-atlas.atlaspack', description: 'Pack file' },
+    ],
+  });
+  // A system with no file type of its own gets none.
+  assert.equal(
+    identityConfig({ name: 'My Atlas', identifier: 'org.example.my-atlas' }, base, null)?.bundle,
+    undefined,
+  );
+});
+
 test('unusable names and identifiers are refused', () => {
   assert.throws(() => identityConfig({ name: 'Only a name' }, base), /both/);
   assert.throws(() => identityConfig({ identifier: 'org.example.x' }, base), /both/);

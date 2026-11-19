@@ -1,0 +1,13 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "fileAssociations": [
+      {
+        "ext": ["atlaspack"],
+        "name": "dev.atlas.desktop.atlaspack",
+        "description": "Atlas pack file",
+        "role": "Viewer"
+      }
+    ]
+  }
+}
