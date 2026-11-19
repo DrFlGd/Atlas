@@ -11,6 +11,8 @@ import {
   eventListener,
   externalLink,
   packFolderOf,
+  showRequestFrom,
+  type BackgroundState,
   type Listing,
 } from './desktop';
 
@@ -596,5 +598,88 @@ describe('old folders', () => {
       ['library_old_folder_size', { folder: 'Test Valley' }],
       ['library_remove_old_folders', { folders: [{ folder: 'Test Valley', id: 'test-valley' }] }],
     ]);
+  });
+});
+
+describe('Atlas in the background', () => {
+  it('reads and changes its settings through their commands', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    await bridge.background.state();
+    await bridge.background.set('keepRunning', true);
+    await bridge.background.setHotkey({
+      code: 'KeyM',
+      ctrl: true,
+      alt: true,
+      shift: false,
+      win: false,
+    });
+    await bridge.background.pauseHotkey(true);
+    expect(await bridge.background.takeShow()).toBeNull();
+    expect(calls).toEqual([
+      ['background_state', undefined],
+      ['background_set', { setting: 'keepRunning', on: true }],
+      [
+        'background_set_hotkey',
+        { keys: { code: 'KeyM', ctrl: true, alt: true, shift: false, win: false } },
+      ],
+      ['background_pause_hotkey', { paused: true }],
+      ['background_take_show', undefined],
+    ]);
+  });
+
+  it('takes a game asked for only in its shape, and nothing from a shell without the command', async () => {
+    expect(showRequestFrom({ packs: ['keep'], groups: [] })).toEqual({
+      packs: ['keep'],
+      groups: [],
+    });
+    expect(
+      showRequestFrom({
+        packs: ['keep', 'keep-wiki'],
+        groups: [{ id: 'g', members: ['keep-wiki', 'keep'] }, { id: 5 }, 'x'],
+      }),
+    ).toEqual({
+      packs: ['keep', 'keep-wiki'],
+      groups: [{ id: 'g', members: ['keep-wiki', 'keep'] }],
+    });
+    for (const value of [
+      null,
+      undefined,
+      'keep',
+      { packs: [] },
+      { packs: [5] },
+      { packs: 'keep' },
+    ]) {
+      expect(showRequestFrom(value)).toBeNull();
+    }
+    expect(showRequestFrom({ packs: ['keep'] })).toEqual({ packs: ['keep'], groups: [] });
+    const failing = createBridge(() => Promise.reject(new Error('Unknown command')));
+    expect(await failing.background.takeShow()).toBeNull();
+  });
+
+  it('hears a game asked for and settings changed from the tray', async () => {
+    const handlers = new Map<string, (payload: unknown) => void>();
+    const bridge = createBridge(
+      () => Promise.resolve(null),
+      (event, handler) => {
+        handlers.set(event, handler);
+        return Promise.resolve(() => undefined);
+      },
+    );
+    const states: BackgroundState[] = [];
+    let asked = 0;
+    await bridge.events.backgroundChanged((state) => states.push(state));
+    await bridge.events.showRequested(() => {
+      asked += 1;
+    });
+    expect([...handlers.keys()]).toEqual(['background-changed', 'show-requested']);
+    const state = { keepRunning: true, onTop: true } as unknown as BackgroundState;
+    handlers.get('background-changed')!(state);
+    handlers.get('show-requested')!(null);
+    expect(states).toEqual([state]);
+    expect(asked).toBe(1);
   });
 });

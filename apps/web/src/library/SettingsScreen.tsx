@@ -1,4 +1,5 @@
 import { useAtlas } from '../state/store';
+import { BackgroundSettings } from './BackgroundSettings';
 import { ProgressTools } from '../touch/DesktopTools';
 import { Settings } from '../touch/GamesScreen';
 import { KeptPacks } from './KeptPacks';
@@ -9,7 +10,8 @@ import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './Stor
 /**
  * Settings, in the desktop app: the app's own (theme, layout, keys) where
  * the layout has no other place for them, where maps are saved, map packs
- * in other folders, how fast downloads go and the activity log. In the
+ * in other folders, Atlas in the background (on Windows), how fast
+ * downloads go and the activity log. In the
  * standard layout it is a section of its own; in the classic layout, the
  * Library's Settings.
  */
@@ -35,6 +37,7 @@ export function SettingsScreen({ general }: { general: boolean }) {
         <MapsFolder />
         <Locations />
         <OldFolders />
+        <BackgroundSettings />
         <DownloadSpeed />
         {__ATLAS_DOWNLOADS__ ? <SitesSettings /> : null}
         {__ATLAS_DOWNLOADS__ ? <KeptPacks /> : null}

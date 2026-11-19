@@ -114,3 +114,14 @@ export function readsPackFilesOnly(state: Pick<AtlasState, 'app'>): boolean {
   const app = state.app;
   return app !== null && app.platform !== 'android' && app.folders !== false && !app.downloads;
 }
+
+/**
+ * Whether Settings has "Atlas in the background" (keep running with an
+ * icon in the notification area, a hotkey, staying above other windows,
+ * starting with Windows): in the desktop app without downloads, where its
+ * shell says it works (on Windows for now). Guarded with
+ * `!__ATLAS_DOWNLOADS__` too, so the app with downloads leaves it out.
+ */
+export function backgroundOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return !__ATLAS_DOWNLOADS__ && readsPackFilesOnly(state) && state.app?.background === true;
+}

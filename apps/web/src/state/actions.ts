@@ -36,6 +36,7 @@ import { catalogFrom, openedOutcome } from './library';
 import { loadMapImages } from './mapImages';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
 import { packWithOwn, readOwnLocationsOf } from './ownLocations';
+import { takeShown } from './showRequests';
 import { useAtlas, type AtlasState, type PaneName, type Theme, type UndoEntry } from './store';
 
 const get = useAtlas.getState;
@@ -123,8 +124,14 @@ export async function boot(initialView: HashView | null): Promise<void> {
     set({ catalog });
     const savedPack = await store.getSetting(SETTINGS.activePack);
     const openedEntry = opened?.show ? catalog.find((p) => p.id === opened.show) : undefined;
-    const entry = openedEntry ?? catalog.find((p) => p.id === savedPack) ?? catalog[0]!;
-    const loaded = await loadGame(entry, openedEntry ? null : initialView);
+    // A game another program asked for at the start (`--show-pack`, `--show-game`).
+    const asked = desktop
+      ? await takeShown(typeof savedPack === 'string' ? savedPack : null)
+      : null;
+    const askedEntry = asked ? catalog.find((p) => p.id === asked) : undefined;
+    const entry =
+      openedEntry ?? askedEntry ?? catalog.find((p) => p.id === savedPack) ?? catalog[0]!;
+    const loaded = await loadGame(entry, openedEntry || askedEntry ? null : initialView);
     // A pack in a folder can be broken or gone; show another rather than stopping.
     const other = catalog.find((p) => p.id !== entry.id);
     if (!loaded && other) {
