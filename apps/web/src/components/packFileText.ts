@@ -225,17 +225,51 @@ export function freshnessText(
   }
 }
 
-/** Where a pack's data came from, in words. */
+/** Where a pack's data came from, in words, with the site's name when a pack file gives it. */
 export function sourceText(source: SourceFacts): string {
   if (source.kind === 'app') return 'Comes with the Atlas app.';
   if (source.kind === 'web-pages') {
     const pages = source.pages?.length ?? 0;
+    const on = source.name ? ` of ${source.name}` : '';
     const from = source.importer ? ` with ${source.importer.title}` : '';
     return pages > 0
-      ? `Read from ${pages} web page${pages === 1 ? '' : 's'}${from}.`
-      : `Read from web pages${from}.`;
+      ? `Read from ${pages} web page${pages === 1 ? '' : 's'}${on}${from}.`
+      : `Read from web pages${on}${from}.`;
   }
   return 'Where its data came from is not recorded.';
+}
+
+/** The most map names {@link holdsNamesText} gives before it counts the rest. */
+const MOST_NAMES = 8;
+
+/** Words joined as a list: "A", "A and B", "A, B and C". */
+function joined(words: readonly string[]): string {
+  if (words.length < 2) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]!}`;
+}
+
+/**
+ * The maps and pages a pack file names, in words: "It holds the maps East
+ * Field and West Ridge, and the wiki Test Pages of 24 pages." At most
+ * eight maps are named, then the rest counted. Null for a file whose
+ * description names none (one made before Atlas named them).
+ */
+export function holdsNamesText(header: Pick<PackFileHeader, 'maps' | 'guides'>): string | null {
+  const parts: string[] = [];
+  const maps = (header.maps ?? []).map((map) => map.name.trim()).filter((name) => name !== '');
+  if (maps.length > 0) {
+    const named = maps.slice(0, MOST_NAMES);
+    const rest = maps.length - named.length;
+    const names =
+      rest > 0 ? `${named.join(', ')} and ${count(rest, 'other', 'others')}` : joined(named);
+    parts.push(`${maps.length === 1 ? 'the map' : 'the maps'} ${names}`);
+  }
+  for (const guide of header.guides ?? []) {
+    const type = guide.type === 'guide' || guide.type === 'wiki' ? guide.type : 'pages';
+    parts.push(`the ${type} ${guide.title} of ${count(guide.pages, 'page', 'pages')}`);
+  }
+  if (parts.length === 0) return null;
+  return `It holds ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]!}` : parts[0]!}.`;
 }
 
 /** The map images a file holds, in words. */

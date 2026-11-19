@@ -32,6 +32,7 @@ import {
   DETAIL_LABELS,
   exportHolds,
   freshnessText,
+  holdsNamesText,
   imagesDownloadedAt,
   imagesText,
   installedImagesText,
@@ -637,6 +638,7 @@ function ExportResult({ result, pictures }: { result: PackFileExported; pictures
 function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boolean) => void }) {
   const { header, installed } = file;
   const kind = packKind(header.contents);
+  const names = holdsNamesText(header);
   const freshness = installed?.details ? compareWithInstalled(header, installed.details) : null;
   const older = freshness?.verdict === 'installed-newer';
   const [confirmOlder, setConfirmOlder] = useState(false);
@@ -711,6 +713,11 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
         {header.pack.gamePatch ? ` (game patch ${header.pack.gamePatch})` : ''}:{' '}
         {contentsText(header.contents)}.{kind === 'map' ? ` ${imagesText(header)}` : ''}
       </p>
+      {names ? (
+        <p className="download-note" data-testid="import-names">
+          {names}
+        </p>
+      ) : null}
       <p className="download-note">
         {sourceText(header.source)} Made with {header.exportedBy.name} {header.exportedBy.version}{' '}
         on <When iso={header.exportedAt} />.

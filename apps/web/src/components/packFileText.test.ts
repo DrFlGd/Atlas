@@ -6,6 +6,7 @@ import {
   contentsText,
   exportHolds,
   freshnessText,
+  holdsNamesText,
   imagesDownloadedAt,
   imagesText,
   installedImagesText,
@@ -216,6 +217,9 @@ describe('pack file facts in words', () => {
     expect(sourceText(header().source)).toBe('Read from 1 web page with Demo map site.');
     expect(sourceText({ kind: 'app' })).toBe('Comes with the Atlas app.');
     expect(sourceText({ kind: 'unknown' })).toBe('Where its data came from is not recorded.');
+    expect(sourceText({ ...header().source, name: 'Example Wiki' })).toBe(
+      'Read from 1 web page of Example Wiki with Demo map site.',
+    );
   });
 
   it('says how many downloaded photos a file would carry, and to keep such a file', () => {
@@ -354,6 +358,46 @@ describe('a pack file of a game with no map (a wiki)', () => {
     );
     expect(wikisApartText(['First Wiki', 'Second Wiki'])).toMatch(
       /^The wikis First Wiki and Second Wiki, .* are not in this file: export each by itself/,
+    );
+  });
+});
+
+describe('the maps and pages a pack file names', () => {
+  const map = (name: string) => ({
+    id: `test-valley:map:${name}`,
+    name,
+    width: 1,
+    height: 1,
+    locations: 0,
+  });
+
+  it('names nothing for a file made before they were named', () => {
+    expect(holdsNamesText(header())).toBeNull();
+    expect(holdsNamesText({ maps: [], guides: [] })).toBeNull();
+  });
+
+  it('names the maps, then the pages as a guide or a wiki', () => {
+    expect(holdsNamesText({ maps: [map('East Field')] })).toBe('It holds the map East Field.');
+    expect(
+      holdsNamesText({
+        maps: [map('East Field'), map('West Ridge'), map('Cave')],
+        guides: [{ title: 'Test Valley', type: 'wiki', pages: 24 }],
+      }),
+    ).toBe(
+      'It holds the maps East Field, West Ridge and Cave, and the wiki Test Valley of 24 pages.',
+    );
+    expect(holdsNamesText({ guides: [{ title: 'Test Pages', type: 'guide', pages: 1 }] })).toBe(
+      'It holds the guide Test Pages of 1 page.',
+    );
+    expect(holdsNamesText({ guides: [{ title: 'Test Pages', type: 'other', pages: 2 }] })).toBe(
+      'It holds the pages Test Pages of 2 pages.',
+    );
+  });
+
+  it('counts the maps after the eighth', () => {
+    const maps = Array.from({ length: 10 }, (_, i) => map(`Floor ${i + 1}`));
+    expect(holdsNamesText({ maps })).toBe(
+      'It holds the maps Floor 1, Floor 2, Floor 3, Floor 4, Floor 5, Floor 6, Floor 7, Floor 8 and 2 others.',
     );
   });
 });
