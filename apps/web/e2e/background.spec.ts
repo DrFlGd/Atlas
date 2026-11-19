@@ -59,7 +59,11 @@ test('turns each setting on and off, each off at first and with its sentence', a
       'Keep Atlas running when its window is closed',
       'Closing the window hides it, and Atlas keeps running with its icon in the notification area',
     ],
-    ['hotkey', 'Hotkey', 'Press these keys in any program, a game too, to bring Atlas forward'],
+    [
+      'hotkey',
+      'Hotkey',
+      'Press these keys in any program, a game too, or a controller button mapped to them',
+    ],
     [
       'onTop',
       'Stay above other windows',

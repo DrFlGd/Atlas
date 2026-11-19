@@ -16,12 +16,12 @@ import { useAtlas } from './store';
  * for is shown here too (see `showRequests.ts`).
  */
 
-/** The help of each switch, one sentence each.  */
+/** The help of each switch, one sentence each. */
 export const BACKGROUND_HELP = {
   keepRunning:
     'Closing the window hides it, and Atlas keeps running with its icon in the notification area, where a press on the icon shows or hides the window.',
   hotkey:
-    'Press these keys in any program, a game too, to bring Atlas forward, and press them again while Atlas is in front to put it away.',
+    'Press these keys in any program, a game too, or a controller button mapped to them, to bring Atlas forward, and press them again while Atlas is in front to put it away.',
   onTop:
     'The window stays above other windows, such as a game in a borderless window, but a game in exclusive full screen covers every window, so set the game to borderless or windowed.',
   startWithSystem:
