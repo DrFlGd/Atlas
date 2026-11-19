@@ -52,6 +52,15 @@ fn opens_a_pack_file_from_another_folder_and_remembers_it() {
     assert_eq!(listing.packs.len(), 1);
     assert_eq!(listing.packs[0].origin, Origin::OpenedFile);
     assert!(listing.packs[0].pack_file);
+    let version = listing.packs[0].file_version.unwrap();
+    assert_eq!(
+        version.changed,
+        crate::packfile::iso_millis("2026-11-10T09:00:00Z")
+    );
+    assert_eq!(
+        version.made,
+        crate::packfile::iso_millis("2026-11-12T09:00:00Z")
+    );
     assert_eq!(listing.opened_files.len(), 1);
     assert_eq!(listing.opened_files[0].pack.as_deref(), Some("test-valley"));
     assert!(!listing.opened_files[0].missing);

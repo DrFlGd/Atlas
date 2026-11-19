@@ -257,6 +257,20 @@ pub struct ListedPack {
     /// The pack is read from a pack file where it lies (`path` is the
     /// file's), which Atlas never changes.
     pub pack_file: bool,
+    /// For a pack read from a pack file, what tells this version of the
+    /// file from another: when its pack was changed last and when the
+    /// file was made, as its description says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_version: Option<FileVersion>,
+}
+
+/// When a pack file's pack was changed last and when the file was made,
+/// in milliseconds since 1970; none when its description does not say.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileVersion {
+    pub changed: Option<i64>,
+    pub made: Option<i64>,
 }
 
 /// A pack file found that cannot be used, with why.
@@ -960,7 +974,14 @@ impl Library {
             }
             seen.insert(file.head.id.clone(), path.clone());
             files.insert(file.head.id.clone(), file.pack);
-            shown.push(self.listed_pack(file.head, file.origin, path, true));
+            let version = FileVersion {
+                changed: file.updated,
+                made: file.exported,
+            };
+            shown.push(ListedPack {
+                file_version: Some(version),
+                ..self.listed_pack(file.head, file.origin, path, true)
+            });
         }
 
         for kind in [PackKind::Folder, PackKind::File] {
@@ -1097,6 +1118,7 @@ impl Library {
             personal_use: head.personal_use,
             system: head.system,
             pack_file,
+            file_version: None,
         }
     }
 
