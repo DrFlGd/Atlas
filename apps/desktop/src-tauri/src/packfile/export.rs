@@ -15,13 +15,14 @@ use super::{
     card::{read_card, site_name},
     count_contents, describe_pack, pack_file_entries, plan_images,
     preview::make_previews,
-    refusal, shared_pictures, smaller, unavailable, AppInfo, DirCache, Entry, EntryData, Header,
-    ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
+    refusal, shared_pictures, smaller, space, unavailable, AppInfo, DirCache, Entry, EntryData,
+    Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
     MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
 };
 use crate::{
     library::PackLock,
     manifest::{civil, rfc3339, MANIFEST_FILE},
+    packfile::import::SPACE_MARGIN,
     tiles::{pyramid::Detail, status::status_for},
 };
 
@@ -36,6 +37,9 @@ pub struct Exported {
 
 /// The suffix of the file being written; it is renamed into place when complete.
 pub const PART_SUFFIX: &str = ".part";
+
+/// How the refusal of a file the drive has no room for begins.
+pub const NO_ROOM: &str = "There is not enough room on the drive";
 
 /// Exports a pack to a pack file at `destination`, at `detail`.
 ///
@@ -77,6 +81,61 @@ pub fn export_with_mine(
     progress: &mut dyn FnMut(Progress),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Exported, Stop> {
+    let part = part_path(destination);
+    let (size, header) = write_part(
+        source,
+        app,
+        detail,
+        &part,
+        mine,
+        PartOptions::default(),
+        progress,
+        cancelled,
+    )?;
+    if let Err(error) = fs::rename(&part, destination) {
+        let _ = fs::remove_file(&part);
+        return Err(Stop::Failed(format!(
+            "Could not save {}: {error}",
+            destination.display()
+        )));
+    }
+    Ok(Exported {
+        path: destination.to_path_buf(),
+        size,
+        header,
+    })
+}
+
+/// How [`write_part`] writes a file, besides what the Export dialog offers.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PartOptions {
+    /// Write the file even when the images of the detail are not all
+    /// downloaded: every image of its levels that is on disk goes in, and
+    /// the description, the status files and the manifest name only the
+    /// levels recorded complete (see [`keep_recorded_levels`]). For a pack
+    /// kept up to date in a folder, which is written again when more
+    /// images arrive.
+    pub partial: bool,
+    /// Refuse before anything is written when the drive of the file has
+    /// less room than the file's entries and a margin (see `space.rs`).
+    pub check_space: bool,
+}
+
+/// Writes a pack file to `part`, everything [`export_with_mine`] does but
+/// the rename: the caller checks the file and renames it. On failure or
+/// cancel the part file is removed and nothing else is left. Returns the
+/// file's size on disk and its description.
+#[allow(clippy::too_many_arguments)]
+pub fn write_part(
+    source: &PackSource,
+    app: &AppInfo,
+    detail: Detail,
+    part: &Path,
+    mine: &Mine,
+    options: PartOptions,
+    progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(u64, Header), Stop> {
     let mine_facts = if mine.is_empty() {
         None
     } else {
@@ -96,7 +155,7 @@ pub fn export_with_mine(
     if let Some(reason) = refusal(&analysis) {
         return Err(Stop::Failed(reason));
     }
-    if let Some(reason) = unavailable(&analysis, detail) {
+    if let Some(reason) = unavailable(&analysis, detail).filter(|_| !options.partial) {
         return Err(Stop::Failed(format!(
             "The map images for this level of detail are not all downloaded. {reason}"
         )));
@@ -104,7 +163,11 @@ pub fn export_with_mine(
     let (pack, mut source_facts) = describe_pack(&source.root, source.comes_with_app)?;
     let mut images = DirCache::new(&source.images);
     let mut shipped = (source.images != source.root).then(|| DirCache::new(&source.root));
-    let (image_entries, layer_facts) = plan_images(&analysis, detail, &mut images, &mut shipped);
+    let (image_entries, mut layer_facts) =
+        plan_images(&analysis, detail, &mut images, &mut shipped);
+    if options.partial {
+        keep_recorded_levels(&analysis, &mut layer_facts);
+    }
 
     // What a card for the file shows, and a small picture of each map drawn
     // from its images in the file; they go right after the header.
@@ -258,34 +321,52 @@ pub fn export_with_mine(
     let mut header_bytes = serde_json::to_vec_pretty(&header).expect("the header serialises");
     header_bytes.push(b'\n');
 
-    let part = part_path(destination);
+    if options.check_space {
+        let needed = header.bytes + header_bytes.len() as u64 + SPACE_MARGIN;
+        let folder = part.parent().unwrap_or(part);
+        if let Some(free) = space::available(folder) {
+            if free < needed {
+                return Err(Stop::Failed(format!(
+                    "{NO_ROOM} that holds {} for this pack file: it needs about {}, and {} is free.",
+                    folder.display(),
+                    space::describe(needed),
+                    space::describe(free)
+                )));
+            }
+        }
+    }
     let written = write_file(
-        &part,
+        part,
         &header_bytes,
         &entries,
         zip_time(exported_secs),
         progress,
         cancelled,
     );
-    let size = match written {
-        Ok(size) => size,
+    match written {
+        Ok(size) => Ok((size, header)),
         Err(stop) => {
-            let _ = fs::remove_file(&part);
-            return Err(stop);
+            let _ = fs::remove_file(part);
+            Err(stop)
         }
-    };
-    if let Err(error) = fs::rename(&part, destination) {
-        let _ = fs::remove_file(&part);
-        return Err(Stop::Failed(format!(
-            "Could not save {}: {error}",
-            destination.display()
-        )));
     }
-    Ok(Exported {
-        path: destination.to_path_buf(),
-        size,
-        header,
-    })
+}
+
+/// Cuts each downloadable layer's levels down to those its status file
+/// records complete, for a file written with images missing: the file
+/// still carries every image of the other levels that is on disk, so an
+/// app with downloads skips them, but neither the description nor the
+/// status file nor the manifest says such a level is there.
+fn keep_recorded_levels(analysis: &super::Analysis, layers: &mut [LayerFacts]) {
+    for facts in layers.iter_mut().filter(|facts| facts.downloadable) {
+        let recorded = analysis
+            .statuses
+            .get(&facts.id)
+            .map(|status| status.levels.clone())
+            .unwrap_or_default();
+        facts.levels.retain(|z| recorded.contains(z));
+        facts.full = facts.levels.last() == Some(&facts.max_zoom);
+    }
 }
 
 /// `<destination>.part`.
