@@ -45,7 +45,7 @@ pub mod commands;
 pub mod store;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::{
     fs,

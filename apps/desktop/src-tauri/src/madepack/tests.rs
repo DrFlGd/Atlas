@@ -33,7 +33,7 @@ use crate::{
 
 const GAME: &str = "ruined-keep";
 
-fn own_locations(game: &str, names: &[&str]) -> String {
+pub(crate) fn own_locations(game: &str, names: &[&str]) -> String {
     let locations: Vec<_> = names
         .iter()
         .enumerate()
@@ -50,7 +50,7 @@ fn own_locations(game: &str, names: &[&str]) -> String {
     .to_string()
 }
 
-fn own_lists(game: &str) -> String {
+pub(crate) fn own_lists(game: &str) -> String {
     json!({"format": "atlas-own-lists", "version": 1, "gameId": game, "updatedAt": "2026-11-12T09:00:00Z",
            "lists": [{"checklist": {"id": format!("{game}:checklist:own.gates")}}, {"checklist": {"id": format!("{game}:checklist:own.halls")}}]})
     .to_string()

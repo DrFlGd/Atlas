@@ -39,7 +39,7 @@ const GAMES = [
     state: 'left-out',
     path: null,
     writtenAt: null,
-    reason: 'It was made in Atlas. Games made in Atlas are not written yet.',
+    reason: 'It was imported from a pack file, so its pack file is the one to keep.',
     extraCopies: [],
   },
 ];
@@ -81,7 +81,7 @@ test('turns on with a folder chosen in the dialog, lists each game and writes on
   await expect(row(page, 'test-valley')).toContainText('Up to date');
   await expect(row(page, 'test-valley')).toContainText('Test Valley - Example Site.atlaspack');
   await expect(row(page, 'example-site')).toContainText('Left out');
-  await expect(row(page, 'example-site')).toContainText('made in Atlas');
+  await expect(row(page, 'example-site')).toContainText('imported from a pack file');
   await expect(row(page, 'example-game')).toContainText('Not in the folder');
 
   await row(page, 'example-game').getByTestId('kept-pack-write-again').click();

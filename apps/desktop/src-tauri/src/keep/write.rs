@@ -3,8 +3,9 @@
 //! The pack file is written beside its target as
 //! `<name>.atlas-importer.part`, at full detail with every map image on
 //! this computer and the photos kept for the person's own use when the game
-//! has them, never with the person's own things (`mine/`); there must be
-//! room for it first. The finished file is checked as an import checks a
+//! has them; with the person's own things (`mine/`) for a map made in the
+//! app here and never for another game (the caller says which); there must
+//! be room for it first. The finished file is checked as an import checks a
 //! file (`import::check_whole`): the description and its id, every entry's
 //! name, type and size, every entry read to its end against its checksum,
 //! and the game in its manifest. Only then, and only when `ready` agrees
@@ -49,8 +50,10 @@ pub struct Done {
 
 /// Writes `source` as a pack file at `target` (see the module). `ready` is
 /// asked just before the rename; an error from it stops the write.
+#[allow(clippy::too_many_arguments)]
 pub fn write_pack(
     source: &PackSource,
+    mine: &Mine,
     app: &AppInfo,
     target: &Path,
     progress: &mut dyn FnMut(Phase, Progress),
@@ -59,7 +62,7 @@ pub fn write_pack(
     rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<Done, Stop> {
     let part = part_of(target);
-    let result = write_and_check(source, app, &part, progress, cancelled).and_then(|done| {
+    let result = write_and_check(source, mine, app, &part, progress, cancelled).and_then(|done| {
         ready()?;
         rename_with_retries(&part, target, rename)?;
         Ok(done)
@@ -72,6 +75,7 @@ pub fn write_pack(
 
 fn write_and_check(
     source: &PackSource,
+    mine: &Mine,
     app: &AppInfo,
     part: &Path,
     progress: &mut dyn FnMut(Phase, Progress),
@@ -82,7 +86,7 @@ fn write_and_check(
         app,
         Detail::Full,
         part,
-        &Mine::default(),
+        mine,
         PartOptions {
             partial: true,
             check_space: true,
@@ -97,7 +101,7 @@ fn write_and_check(
                 "The pack file written did not pass the check, so it was not used: {reason}"
             )),
         })?;
-    if checked.header.pack_id != source.pack_id || !checked.mine.is_empty() {
+    if checked.header.pack_id != source.pack_id || checked.mine.is_empty() != mine.is_empty() {
         return Err(Stop::Failed(
             "The pack file written is not the one meant, so it was not used.".to_owned(),
         ));
