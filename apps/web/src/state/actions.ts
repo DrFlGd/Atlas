@@ -32,7 +32,7 @@ import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
 import { desktop } from '../desktop';
 import { forgetRequestedUi, parseLayout, sessionStore, type Layout } from '../touch/uiMode';
 import type { HashView } from '../viewHash';
-import { catalogFrom } from './library';
+import { catalogFrom, openedOutcome } from './library';
 import { loadMapImages } from './mapImages';
 import { SETTINGS, clock, openProgressStore, progressStore } from './services';
 import { packWithOwn, readOwnLocationsOf } from './ownLocations';
@@ -103,23 +103,28 @@ export async function boot(initialView: HashView | null): Promise<void> {
     });
     let catalog = await loadCatalog(config);
     set({ bundledCatalog: catalog });
+    // A pack file the app was started with, from the file manager.
+    let opened: ReturnType<typeof openedOutcome> = null;
     if (desktop) {
       // The packs that come with the app, then those in the maps folder and
       // the folders the person added. Without a listing, the first ones only.
-      const [app, listing] = await Promise.all([
+      const [app, listing, taken] = await Promise.all([
         desktop.info().catch(() => null),
         desktop.library.list().catch((error: unknown) => {
           console.error(error);
           return null;
         }),
+        desktop.library.takeOpened(),
       ]);
       catalog = catalogFrom(catalog, listing);
       set({ app, library: listing });
+      opened = openedOutcome(taken);
     }
     set({ catalog });
     const savedPack = await store.getSetting(SETTINGS.activePack);
-    const entry = catalog.find((p) => p.id === savedPack) ?? catalog[0]!;
-    const loaded = await loadGame(entry, initialView);
+    const openedEntry = opened?.show ? catalog.find((p) => p.id === opened.show) : undefined;
+    const entry = openedEntry ?? catalog.find((p) => p.id === savedPack) ?? catalog[0]!;
+    const loaded = await loadGame(entry, openedEntry ? null : initialView);
     // A pack in a folder can be broken or gone; show another rather than stopping.
     const other = catalog.find((p) => p.id !== entry.id);
     if (!loaded && other) {
@@ -130,6 +135,8 @@ export async function boot(initialView: HashView | null): Promise<void> {
         'error',
       );
     }
+    // Unless the game it shows could not be opened, which was said above.
+    if (opened && (loaded || !opened.show)) notify(opened.text, opened.problem ? 'error' : 'info');
     if (!persistent) {
       notify(
         'This browser does not allow saving data, so progress lasts only until the page closes.',

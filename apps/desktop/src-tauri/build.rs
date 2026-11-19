@@ -89,6 +89,8 @@ const COMMANDS: &[&str] = &[
     "own_pictures_delete",
     "own_pictures_delete_all",
     "own_picture_pick",
+    "library_take_opened",
+    "library_forget_pack_file",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

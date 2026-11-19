@@ -391,9 +391,12 @@ export interface SitesListing {
 
 /**
  * Where a listed pack comes from. `packs-folder` is a pack file in the
- * packs folder, read where it lies (see {@link ListedPack.packFile}).
+ * packs folder, read where it lies (see {@link ListedPack.packFile});
+ * `opened-file` a single pack file the person opened from the file
+ * manager, kept in the list of pack files opened (see
+ * {@link Listing.openedFiles}).
  */
-export type PackOrigin = 'bundled' | 'maps-folder' | 'location' | 'packs-folder';
+export type PackOrigin = 'bundled' | 'maps-folder' | 'location' | 'packs-folder' | 'opened-file';
 
 export interface ListedPack {
   id: string;
@@ -430,6 +433,55 @@ export interface ListedPack {
    * Absent (an older shell) counts as false.
    */
   packFile?: boolean;
+  /**
+   * For a pack read from a pack file, what tells this version of the file
+   * from another: when its pack was changed last and when the file was
+   * made, in milliseconds since 1970 (null when its description does not
+   * say). Absent from an older shell.
+   */
+  fileVersion?: { changed: number | null; made: number | null };
+}
+
+/** A single pack file the person opened from the file manager. */
+export interface OpenedFileInfo {
+  path: string;
+  /** Its folder cannot be found either, as on a drive that is not connected. */
+  missing: boolean;
+  /** The id of the pack it holds; null when it cannot be used. */
+  pack: string | null;
+}
+
+/** What opening a pack file from the file manager came to. */
+export interface PackFileOpened {
+  path: string;
+  /** The id of the game to show for it; null when it could not be used. */
+  show: string | null;
+  /** It is in the list of pack files opened. */
+  remembered: boolean;
+  /** Something went wrong; the message says what. */
+  problem: boolean;
+  message: string;
+}
+
+/**
+ * What opening pack files came to, from the shell's answer: only entries
+ * of the shape above are taken, and any other answer (a shell without the
+ * command may answer with nothing) is no pack file opened. Exported for
+ * tests.
+ */
+export function openedFrom(answer: unknown): PackFileOpened[] {
+  if (!Array.isArray(answer)) return [];
+  return answer.filter((entry: unknown): entry is PackFileOpened => {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const { path, show, remembered, problem, message } = entry as Record<string, unknown>;
+    return (
+      typeof path === 'string' &&
+      (show === null || typeof show === 'string') &&
+      typeof remembered === 'boolean' &&
+      typeof problem === 'boolean' &&
+      typeof message === 'string'
+    );
+  });
 }
 
 /** A pack file the shell found and cannot use, with why. */
@@ -467,8 +519,15 @@ export interface Listing {
   /** Pack files found that cannot be used; absent from an older shell. */
   unreadable?: UnreadablePackFile[];
   locations: LocationInfo[];
+  /** The single pack files the person opened; absent from an older shell. */
+  openedFiles?: OpenedFileInfo[];
   /** Packs whose files are being moved, for example from an older version. */
   busy: string[];
+  /**
+   * Grows when a listing differs from the one before, so one that arrives
+   * late is told from a newer one. Absent from an older shell.
+   */
+  serial?: number;
 }
 
 /** A maps folder the person picked, before it is used. */
@@ -1061,6 +1120,13 @@ export interface DesktopBridge {
     reveal(target: RevealTarget): Promise<void>;
     /** Deletes a pack from the maps folder, stopping its download first. */
     deletePack(id: string): Promise<PackDeleted>;
+    /**
+     * What opening pack files from the file manager came to since the last
+     * time this was asked, oldest first. Empty from a shell without it.
+     */
+    takeOpened(): Promise<PackFileOpened[]>;
+    /** Takes a pack file off the list of pack files opened; the file stays. */
+    forgetPackFile(path: string): Promise<void>;
     /** How many map images were downloaded for a pack. */
     imagesInfo(id: string): Promise<ImagesInfo>;
     /** Deletes a pack's downloaded map images only, stopping its download first. */
@@ -1284,6 +1350,16 @@ export interface DesktopBridge {
     /** Asks for a file and reads it. Null when the dialog was closed. */
     open(): Promise<{ name: string; contents: string } | null>;
   };
+  /**
+   * The shell's events. Each resolves to a function that stops listening;
+   * outside the shell, or without events, nothing ever comes.
+   */
+  events: {
+    /** The Library's listing changed by itself: a pack file arrived, changed or went. */
+    libraryChanged(handler: (listing: Listing) => void): Promise<() => void>;
+    /** A pack file was opened from the file manager; take it with `library.takeOpened`. */
+    packFileOpened(handler: () => void): Promise<() => void>;
+  };
   /** Pack files (`.atlaspack`): one game in one file, for another device. */
   packFiles: {
     /** What can be exported of a pack, and how large each detail is. */
@@ -1328,6 +1404,12 @@ export interface DesktopBridge {
 }
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+/** Listens to one of the shell's events; resolves to a function that stops. */
+export type Listen = (event: string, handler: (payload: unknown) => void) => Promise<() => void>;
+
+/** No events: in a browser, and in tests that do not need them. */
+const noEvents: Listen = () => Promise.resolve(() => undefined);
 
 /**
  * The download commands of a build without downloads, which never calls
@@ -1377,7 +1459,7 @@ function noSites(): DesktopBridge['sites'] {
 }
 
 /** Builds the bridge over an `invoke` function. Exported for tests. */
-export function createBridge(invoke: Invoke): DesktopBridge {
+export function createBridge(invoke: Invoke, listen: Listen = noEvents): DesktopBridge {
   const call = <T>(command: string, args?: Record<string, unknown>) =>
     invoke(command, args).catch((error: unknown) => {
       // Commands reject with a plain sentence.
@@ -1424,6 +1506,8 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       applyMapsFolder: (movePacks) => call('library_apply_maps_folder', { movePacks }),
       reveal: (target) => call('library_reveal', { target }),
       deletePack: (id) => call('library_delete_pack', { id }),
+      takeOpened: () => call<unknown>('library_take_opened').then(openedFrom, () => []),
+      forgetPackFile: (path) => call('library_forget_pack_file', { path }),
       imagesInfo: (id) => call('library_images_info', { id }),
       deleteImages: (id) => call('library_delete_images', { id }),
       importSources: (packId, importerId) => call('library_import_sources', { packId, importerId }),
@@ -1559,6 +1643,16 @@ export function createBridge(invoke: Invoke): DesktopBridge {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),
       open: () => call('list_file_open'),
     },
+    events: {
+      libraryChanged: (handler) =>
+        listen('library-changed', (payload) => {
+          handler(payload as Listing);
+        }),
+      packFileOpened: (handler) =>
+        listen('pack-file-opened', () => {
+          handler();
+        }),
+    },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
       export: (id, detail, progress, includeMine, includePhotos, smallerPictures) =>
@@ -1593,12 +1687,53 @@ function bytesOf(value: unknown): Uint8Array {
   throw new Error('The desktop app sent something that is not a file.');
 }
 
+interface TauriInternals {
+  invoke?: unknown;
+  transformCallback?: unknown;
+}
+
+/**
+ * Listening to the shell's events as Tauri's own event module does: the
+ * handler is registered as a callback, and the shell's event plugin is
+ * asked to call it for the event. The shell grants only listening and
+ * stopping (see the shell's `capabilities/main.json`). Exported for tests.
+ */
+export function eventListener(internals: TauriInternals, invoke: Invoke): Listen {
+  const register = internals.transformCallback;
+  if (typeof register !== 'function') return noEvents;
+  return async (event, handler) => {
+    const callback = (
+      register as (
+        this: TauriInternals,
+        callback: (message: { payload: unknown }) => void,
+      ) => number
+    ).call(internals, (message) => {
+      handler(message.payload);
+    });
+    const eventId = await invoke('plugin:event|listen', {
+      event,
+      target: { kind: 'Any' },
+      handler: callback,
+    });
+    return () => {
+      const plugin = (
+        globalThis as {
+          __TAURI_EVENT_PLUGIN_INTERNALS__?: {
+            unregisterListener?: (event: string, id: unknown) => void;
+          };
+        }
+      ).__TAURI_EVENT_PLUGIN_INTERNALS__;
+      plugin?.unregisterListener?.(event, eventId);
+      invoke('plugin:event|unlisten', { event, eventId }).catch(() => undefined);
+    };
+  };
+}
+
 function detect(): DesktopBridge | null {
-  const internals = (globalThis as { __TAURI_INTERNALS__?: { invoke?: unknown } })
-    .__TAURI_INTERNALS__;
-  if (typeof internals?.invoke !== 'function') return null;
+  const internals = (globalThis as { __TAURI_INTERNALS__?: TauriInternals }).__TAURI_INTERNALS__;
+  if (!internals || typeof internals.invoke !== 'function') return null;
   const invoke = internals.invoke.bind(internals) as Invoke;
-  return createBridge(invoke);
+  return createBridge(invoke, eventListener(internals, invoke));
 }
 
 /** The desktop shell's commands, or null in a browser. */

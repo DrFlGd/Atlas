@@ -46,11 +46,17 @@ const here = (/** @type {string} */ path) => fileURLToPath(new URL(path, import.
 
 /**
  * The config to merge for a custom name and identifier, or null for the
- * plain Atlas build. Exported for tests.
+ * plain Atlas build. `platformConfig` is this system's own config
+ * (`tauri.windows.conf.json`), when it has one: the pack file type it
+ * registers is for the plain Atlas app alone, so a build with its own
+ * identifier registers none. Two apps installed side by side would
+ * otherwise each claim the file type, and the one installed last would
+ * open a pack file from the file manager. Exported for tests.
  * @param {{ name?: string, identifier?: string }} identity
  * @param {{ app: { windows: Array<Record<string, unknown>> } }} baseConfig
+ * @param {{ bundle?: { fileAssociations?: Array<{ ext: string[] } & Record<string, unknown>> } } | null} [platformConfig]
  */
-export function identityConfig({ name, identifier }, baseConfig) {
+export function identityConfig({ name, identifier }, baseConfig, platformConfig = null) {
   if (!name && !identifier) return null;
   if (!name || !identifier) {
     throw new Error('Set both ATLAS_APP_NAME and ATLAS_APP_IDENTIFIER, or neither.');
@@ -68,6 +74,7 @@ export function identityConfig({ name, identifier }, baseConfig) {
       'ATLAS_APP_IDENTIFIER must differ from the plain Atlas app (dev.atlas.desktop).',
     );
   }
+  const associations = platformConfig?.bundle?.fileAssociations;
   return {
     productName: name,
     identifier,
@@ -77,7 +84,21 @@ export function identityConfig({ name, identifier }, baseConfig) {
         window.label === 'main' ? { ...window, title: name } : window,
       ),
     },
+    ...(associations ? { bundle: { fileAssociations: [] } } : {}),
   };
+}
+
+/**
+ * This system's own Tauri config, which Tauri merges by itself, or null.
+ * @param {string} platform
+ */
+async function platformConfigOf(platform) {
+  const file = { win32: 'windows', linux: 'linux', darwin: 'macos' }[platform];
+  if (!file) return null;
+  return readFile(here(`../src-tauri/tauri.${file}.conf.json`), 'utf8').then(
+    (text) => JSON.parse(text),
+    () => null,
+  );
 }
 
 /**
@@ -219,6 +240,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === 'a
       identifier: process.env.ATLAS_APP_IDENTIFIER?.trim(),
     },
     base,
+    await platformConfigOf(process.platform),
   );
   const downloads = downloadsEnabled(process.env.ATLAS_ENABLE_DOWNLOADS);
   // A file rather than a JSON argument, which Windows shells would mangle.

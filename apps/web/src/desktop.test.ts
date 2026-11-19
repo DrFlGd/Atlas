@@ -5,7 +5,14 @@ import {
   formatDuration,
   roughDuration,
 } from './components/downloadFormat';
-import { createBridge, desktop, externalLink, packFolderOf } from './desktop';
+import {
+  createBridge,
+  desktop,
+  eventListener,
+  externalLink,
+  packFolderOf,
+  type Listing,
+} from './desktop';
 
 describe('desktop bridge', () => {
   it('is absent in a browser', () => {
@@ -398,6 +405,126 @@ describe('desktop bridge', () => {
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
     const bridge = createBridge(() => Promise.reject('This pack is not downloading.'));
     await expect(bridge.tiles.resume('demo')).rejects.toThrow('This pack is not downloading.');
+  });
+});
+
+describe('pack files that arrive', () => {
+  it('takes what opening pack files came to, and takes one off the list', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(command === 'library_take_opened' ? [] : null);
+    });
+    expect(await bridge.library.takeOpened()).toEqual([]);
+    await bridge.library.forgetPackFile('/files/example.atlaspack');
+    expect(calls).toEqual([
+      ['library_take_opened', undefined],
+      ['library_forget_pack_file', { path: '/files/example.atlaspack' }],
+    ]);
+  });
+
+  it('takes nothing from a shell without the command', async () => {
+    const bridge = createBridge(() => Promise.reject(new Error('Command not found.')));
+    expect(await bridge.library.takeOpened()).toEqual([]);
+  });
+
+  it('takes nothing from an answer that is not a list, and only whole entries from one that is', async () => {
+    const opened = {
+      path: '/files/example.atlaspack',
+      show: 'test-valley',
+      remembered: true,
+      problem: false,
+      message: 'Showing Test Valley from example.atlaspack.',
+    };
+    for (const answer of [null, undefined, 'none', 3, { length: 1 }]) {
+      const bridge = createBridge(() => Promise.resolve(answer));
+      expect(await bridge.library.takeOpened()).toEqual([]);
+    }
+    const bridge = createBridge(() =>
+      Promise.resolve([opened, null, 'text', { ...opened, show: 4 }, { path: '/files/x' }]),
+    );
+    expect(await bridge.library.takeOpened()).toEqual([opened]);
+  });
+
+  it('hears the two events of the shell, with their payload', async () => {
+    const handlers = new Map<string, (payload: unknown) => void>();
+    const stopped: string[] = [];
+    const bridge = createBridge(
+      () => Promise.resolve(null),
+      (event, handler) => {
+        handlers.set(event, handler);
+        return Promise.resolve(() => {
+          stopped.push(event);
+        });
+      },
+    );
+    const listings: Listing[] = [];
+    let opened = 0;
+    const stopChanged = await bridge.events.libraryChanged((listing) => listings.push(listing));
+    const stopOpened = await bridge.events.packFileOpened(() => {
+      opened += 1;
+    });
+    expect([...handlers.keys()]).toEqual(['library-changed', 'pack-file-opened']);
+    const listing = { packs: [], serial: 4 } as unknown as Listing;
+    handlers.get('library-changed')!(listing);
+    handlers.get('pack-file-opened')!(null);
+    expect(listings).toEqual([listing]);
+    expect(opened).toBe(1);
+    stopChanged();
+    stopOpened();
+    expect(stopped).toEqual(['library-changed', 'pack-file-opened']);
+  });
+
+  it('hears nothing without events, as in a browser', async () => {
+    const bridge = createBridge(() => Promise.resolve(null));
+    const stop = await bridge.events.libraryChanged(() => {
+      throw new Error('Nothing comes without events.');
+    });
+    stop();
+  });
+
+  it('listens as the shell event plugin expects, and stops listening', async () => {
+    const calls: [string, unknown][] = [];
+    const callbacks: ((message: { event: string; id: number; payload: unknown }) => void)[] = [];
+    const internals = {
+      invoke: null,
+      transformCallback(
+        callback: (message: { event: string; id: number; payload: unknown }) => void,
+      ) {
+        // Tauri's own registers it on itself.
+        expect(this).toBe(internals);
+        callbacks.push(callback);
+        return 41;
+      },
+    };
+    const unregistered: [string, unknown][] = [];
+    (globalThis as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: (event: string, id: unknown) => unregistered.push([event, id]),
+    };
+    try {
+      const listen = eventListener(internals, (command, args) => {
+        calls.push([command, args]);
+        return Promise.resolve(command === 'plugin:event|listen' ? 7 : null);
+      });
+      const payloads: unknown[] = [];
+      const stop = await listen('library-changed', (payload) => payloads.push(payload));
+      expect(calls).toEqual([
+        ['plugin:event|listen', { event: 'library-changed', target: { kind: 'Any' }, handler: 41 }],
+      ]);
+      callbacks[0]!({ event: 'library-changed', id: 7, payload: { serial: 2 } });
+      expect(payloads).toEqual([{ serial: 2 }]);
+      stop();
+      expect(unregistered).toEqual([['library-changed', 7]]);
+      expect(calls[1]).toEqual(['plugin:event|unlisten', { event: 'library-changed', eventId: 7 }]);
+    } finally {
+      delete (globalThis as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__;
+    }
+  });
+
+  it('hears nothing where the shell cannot register a callback', async () => {
+    const listen = eventListener({}, () => Promise.reject(new Error('Not called.')));
+    const stop = await listen('library-changed', () => undefined);
+    stop();
   });
 });
 

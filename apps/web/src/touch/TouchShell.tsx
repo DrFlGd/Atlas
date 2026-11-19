@@ -5,6 +5,7 @@ import { ActivityLogDialog } from '../components/ActivityLogDialog';
 import { PictureViewer } from '../components/PictureViewer';
 import { UiIcon, type UiIconName } from '../components/icons';
 import { MapPageStatus } from '../components/MapPageStatus';
+import { PackArrivalNote } from '../components/PackArrivalNote';
 import { MapPane, type TouchMapOptions } from '../components/MapPane';
 import { MapsDialog } from '../components/MapsDialog';
 import { ProfileDialog } from '../components/ProfileDialog';
@@ -248,6 +249,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
       {placeShown ? <PlaceSheet wide={wide} /> : null}
       {wide && editorMode !== 'edit' && !locating && !page ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
+      <PackArrivalNote />
       <TouchToast wide={wide} />
       <ProfileDialog />
       {saveDialogOpen ? (

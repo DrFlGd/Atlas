@@ -3552,3 +3552,9 @@ button.photo-card-text {
     max-width: 30%;
   }
 }
+
+/* The note that another version of the game's pack file arrived sits
+   above the bar at the bottom. */
+.touch[data-arrangement='compact'] .pack-arrival {
+  bottom: calc(var(--touch-bar) + 12px);
+}

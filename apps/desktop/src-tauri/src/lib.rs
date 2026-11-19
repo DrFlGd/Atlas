@@ -44,6 +44,9 @@ mod pageview;
 pub mod picked;
 #[cfg(feature = "downloads")]
 mod picturecuts;
+// Pack files opened from the file manager or a second start, and noticed
+// as they arrive, change or go.
+pub mod receive;
 mod removal;
 pub mod saves;
 pub mod settings;
@@ -168,6 +171,8 @@ macro_rules! viewer_commands {
             ownpictures::own_pictures_delete,
             ownpictures::own_pictures_delete_all,
             ownpictures::own_picture_pick,
+            receive::library_take_opened,
+            receive::library_forget_pack_file,
             $($more)*
         ]
     };
@@ -230,14 +235,23 @@ pub fn run() {
     let registry = PackRegistry::default();
     let protocol_registry = registry.clone();
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // One Atlas at a time on a desktop: a second start (a pack file opened
+    // from the file manager) hands its arguments over and ends. Registered
+    // first, so a second start does nothing else before it ends.
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        receive::second_start(app, args, cwd);
+    }));
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(registry)
         .manage(imports::Imports::default())
         .manage(commands::PackFileJobs::default())
         .manage(commands::PickedPackFiles::default())
-        .manage(owngame_commands::CutJobs::default());
+        .manage(owngame_commands::CutJobs::default())
+        .manage(Arc::new(receive::Opened::default()));
     // On Android, files the system's dialogs give as `content://` addresses
     // are opened through the fs plugin, from Rust only: no capability grants
     // the web app any of its commands.
@@ -297,6 +311,13 @@ pub fn run() {
             let library = library.with_picture_cache(tiles::measure::PictureCache::new(&app_data));
             let library = Arc::new(library);
             library.start();
+            // The pack file Atlas was started with, and the folders of pack
+            // files followed from now on.
+            #[cfg(not(target_os = "android"))]
+            {
+                receive::open_at_start(app.handle(), &library);
+                receive::follow(app.handle(), Arc::clone(&library));
+            }
             #[cfg(feature = "downloads")]
             let downloads = {
                 let manager = DownloadManager::new(app_data, registry).with_shared_folder(&shared);
@@ -517,7 +538,7 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
     };
     let navigation_app = app.handle().clone();
     let new_window_app = app.handle().clone();
-    WebviewWindowBuilder::from_config(app.handle(), &config)?
+    let window = WebviewWindowBuilder::from_config(app.handle(), &config)?
         .on_navigation(move |url| {
             if is_app_url(url, dev_url.as_ref()) {
                 return true;
@@ -532,6 +553,19 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
             NewWindowResponse::Deny
         })
         .build()?;
+    // The window getting the focus looks for pack files that arrived
+    // meanwhile (see `receive::watch`).
+    #[cfg(not(target_os = "android"))]
+    {
+        let focus_app = app.handle().clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(focused) = event {
+                receive::focus_changed(&focus_app, *focused);
+            }
+        });
+    }
+    #[cfg(target_os = "android")]
+    drop(window);
     Ok(())
 }
 

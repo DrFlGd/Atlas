@@ -1,5 +1,12 @@
 import type { PackEntry } from '@atlas/core';
-import { desktop, type FolderChoice, type Listing, type RevealTarget } from '../desktop';
+import {
+  desktop,
+  type FolderChoice,
+  type ListedPack,
+  type Listing,
+  type PackFileOpened,
+  type RevealTarget,
+} from '../desktop';
 import { loadGame, notify } from './actions';
 import { useAtlas } from './store';
 
@@ -45,15 +52,77 @@ export async function refreshLibrary(): Promise<Listing | null> {
   return listing;
 }
 
-/** Takes in a listing; if the shown game has gone, shows the first one left. */
-export function applyListing(listing: Listing): void {
+/**
+ * Whether `listing` is older than `shown`: the shell numbers its listings
+ * (`serial`), and one that arrives after a newer one is left out. A
+ * listing without a number (an older shell) is never older.
+ */
+export function olderListing(listing: Listing, shown: Listing | null): boolean {
+  return (
+    listing.serial !== undefined && shown?.serial !== undefined && listing.serial < shown.serial
+  );
+}
+
+/**
+ * What to say when the game shown is not listed any more: for one read
+ * from a pack file, that its file can no longer be read (with the reason
+ * the listing gives) or cannot be found; for any other, that it is no
+ * longer available. `other` is the game shown in its place. Exported for
+ * tests.
+ */
+export function goneText(
+  title: string,
+  was: ListedPack | undefined,
+  listing: Listing,
+  other: string,
+): string {
+  if (!was?.packFile || !was.path) {
+    return `${title} is no longer available, so ${other} is shown.`;
+  }
+  const unreadable = listing.unreadable?.find((file) => file.path === was.path);
+  if (unreadable) {
+    return `The pack file of ${title} can no longer be read, so it is not shown. ${unreadable.reason}`;
+  }
+  return `The pack file of ${title} cannot be found any more. It may have been moved, renamed or deleted, or be on a drive that is not connected, so ${title} is not shown.`;
+}
+
+/**
+ * The game to show for what opening pack files from the file manager came
+ * to, and what to say: the last one opened, and how many before it.
+ */
+export function openedOutcome(
+  opened: readonly PackFileOpened[],
+): { show: string | null; text: string; problem: boolean } | null {
+  const last = opened.at(-1);
+  if (!last) return null;
+  const earlier = opened.length - 1;
+  const more =
+    earlier > 0
+      ? ` ${earlier === 1 ? 'One more pack file was' : `${earlier} more pack files were`} opened before it.`
+      : '';
+  return { show: last.show, text: `${last.message}${more}`, problem: last.problem };
+}
+
+/**
+ * Takes in a listing, unless a newer one was taken already (`older`); if
+ * the shown game has gone, says so and shows the first one left (`gone`).
+ */
+export function applyListing(listing: Listing): 'taken' | 'older' | 'gone' {
+  const previous = get().library;
+  if (olderListing(listing, previous)) return 'older';
   const catalog = catalogFrom(get().bundledCatalog, listing);
   set({ library: listing, catalog });
   const current = get().game?.entry;
   if (current && !catalog.some((p) => p.id === current.id) && catalog[0]) {
-    notify(`${current.title} is no longer available, so ${catalog[0].title} is shown.`);
+    const was = previous?.packs.find((pack) => pack.id === current.id);
+    notify(
+      goneText(current.title, was, listing, catalog[0].title),
+      was?.packFile ? 'error' : 'info',
+    );
     void loadGame(catalog[0]);
+    return 'gone';
   }
+  return 'taken';
 }
 
 /** The Android app's Maps dialog. */
@@ -103,6 +172,15 @@ export async function addPacksFolder(): Promise<void> {
         ? 'Remembered the folder. It has no map packs yet.'
         : `Remembered the folder with ${count} map pack${count === 1 ? '' : 's'}.`,
     );
+  });
+}
+
+/** Takes a pack file off the list of pack files opened. The file is left alone. */
+export async function forgetPackFile(path: string): Promise<void> {
+  await run(async () => {
+    await desktop!.library.forgetPackFile(path);
+    await refreshLibrary();
+    notify('Removed from the list. The pack file was not deleted.');
   });
 }
 

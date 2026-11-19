@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { FolderChoice, LocationInfo } from '../desktop';
+import type { FolderChoice, LocationInfo, OpenedFileInfo } from '../desktop';
 import { downloadsOffered } from '../features';
 import { notify } from '../state/actions';
 import { loadDownloadSettings } from '../state/downloads';
@@ -7,6 +7,7 @@ import {
   addPacksFolder,
   applyMapsFolder,
   chooseMapsFolder,
+  forgetPackFile,
   openPackFolder,
   refreshLibrary,
   removeLocation,
@@ -148,6 +149,7 @@ const LOCATION_STATE: Record<LocationInfo['state'], string> = {
 /** Map packs kept elsewhere: added folders, and the packs that are not shown. */
 export function Locations() {
   const library = useAtlas((s) => s.library);
+  const following = useAtlas((s) => s.app?.platform !== 'android');
   if (!library) return null;
   return (
     <section
@@ -246,8 +248,11 @@ export function Locations() {
         </button>
       </div>
       <p className="muted small">
-        Look again reads every folder again, for games another Atlas app added meanwhile.
+        {following
+          ? 'Atlas notices by itself when a pack file arrives, changes or goes in these folders. On a network drive or a removable drive, Atlas looks when you come back to its window and every half minute while you use it. Look again reads every folder again at once.'
+          : 'Look again reads every folder again, for games another Atlas app added meanwhile.'}
       </p>
+      <OpenedFiles files={library.openedFiles ?? []} />
       {library.packsFolder ? (
         <div data-testid="packs-folder">
           <p className="muted small">
@@ -298,6 +303,54 @@ export function Locations() {
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The single pack files the person opened from the file manager, read
+ * where they are: each with Remove from list, and Not found while it
+ * cannot be found (as on a drive that is not connected).
+ */
+function OpenedFiles({ files }: { files: readonly OpenedFileInfo[] }) {
+  if (files.length === 0) return null;
+  return (
+    <div data-testid="opened-pack-files">
+      <h3 className="settings-subtitle">Pack files you opened</h3>
+      <p className="muted small">
+        Pack files you opened from the file manager are read where they are, without copying them.
+        One leaves this list when you remove it here, or when it is deleted or moved. While its
+        drive is not connected, it stays listed as not found. Remove from list deletes no files.
+      </p>
+      <ul className="profile-list" data-testid="opened-file-list">
+        {files.map((file) => (
+          <li
+            key={file.path}
+            className="profile-row pack-row"
+            data-testid="opened-file-row"
+            data-state={file.missing ? 'missing' : 'ok'}
+          >
+            <div className="pack-info">
+              <span className="path">{file.path}</span>
+              {file.missing ? (
+                <span className="muted small">
+                  <span className="badge badge-warn">Not found</span>
+                </span>
+              ) : null}
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="button button-small"
+                  data-testid="forget-pack-file"
+                  onClick={() => void forgetPackFile(file.path)}
+                >
+                  Remove from list
+                </button>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
