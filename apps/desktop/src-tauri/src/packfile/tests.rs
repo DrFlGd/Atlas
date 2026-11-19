@@ -1271,7 +1271,9 @@ fn imports_into_the_maps_folder_and_asks_before_replacing() {
     assert_eq!(listing.packs.len(), 1);
 
     let info = shell::inspect(&library, &downloads, &file).unwrap();
-    assert!(info.replaces);
+    // A reader adds the file beside the folder instead, and replaces nothing.
+    assert_eq!(info.replaces, !crate::library::READER);
+    assert_eq!(info.adds.is_some(), crate::library::READER);
     let installed = info.installed.unwrap();
     let details = installed.details.unwrap();
     assert_eq!(details.detail, Some(Detail::Overview));
@@ -3942,4 +3944,238 @@ mod in_place {
         );
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Adding a pack file on a reader: a copy in the packs folder
+
+/// A library whose shared folder is `<dir>/shared`, with nothing else.
+fn reader_library(dir: &Path) -> Library {
+    Library::new(
+        SettingsFile::new(dir.join("shared")),
+        PackRegistry::default(),
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+/// A pack file of the test game with images and the person's own lists,
+/// somewhere else than the packs folder.
+fn file_to_add(dir: &Path, name: &str, mine: &Mine) -> PathBuf {
+    let pack = dir.join("source-pack");
+    if !pack.exists() {
+        write_pack(&pack, "1.0.0");
+    }
+    let file = dir.join("Downloads").join(name);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    export_mine(&folder_source(&pack), &file, mine).unwrap();
+    file
+}
+
+fn run_add(library: &Library, file: &Path) -> Result<add::Added, Stop> {
+    let mut last = Progress::default();
+    let result = add::add_with(
+        library,
+        file,
+        &|_| None,
+        &[],
+        &mut |done| last = done,
+        &|| false,
+    );
+    if result.is_ok() {
+        assert_eq!(last.entries_done, last.entries_total);
+        assert_eq!(last.bytes_done, last.bytes_total);
+    }
+    result
+}
+
+/// The names in a folder, sorted.
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+#[test]
+fn adds_a_pack_file_as_a_file_in_the_packs_folder() {
+    let dir = TempDir::new("packfile-add");
+    let library = reader_library(&dir.0);
+    let mine = Mine {
+        lists: Some(own_lists_text(ID)),
+        ..Mine::default()
+    };
+    let file = file_to_add(&dir.0, "Test Valley.atlaspack", &mine);
+    let bytes = fs::read(&file).unwrap();
+    let packs = library.packs_folder();
+
+    // Before: copied under its own name, shown, nothing else to say.
+    let header = read_header(&file).unwrap();
+    let info = add::info(&library, &file, &header).unwrap();
+    assert!(info.copy && !info.renamed);
+    assert_eq!(info.file_name, "Test Valley.atlaspack");
+    assert_eq!(info.note, None);
+
+    let added = run_add(&library, &file).unwrap();
+    assert!(added.copied);
+    assert_eq!(added.path, packs.join("Test Valley.atlaspack"));
+    assert_eq!(added.title, "Test Valley");
+    assert_eq!(added.mine, mine);
+    // The copy is the file, byte for byte; the file chosen stays as it was.
+    assert_eq!(fs::read(&added.path).unwrap(), bytes);
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert_eq!(names_in(&packs), ["Test Valley.atlaspack"]);
+    // Nothing is unpacked into the maps folder.
+    assert!(names_in(&library.maps_folder()).is_empty());
+    let listing = library.scan();
+    let shown = listing.packs.iter().find(|pack| pack.id == ID).unwrap();
+    assert!(shown.pack_file);
+    assert_eq!(shown.path.as_deref(), Some(added.path.to_str().unwrap()));
+
+    // The same file again: nothing is copied.
+    let info = add::info(&library, &file, &header).unwrap();
+    assert!(!info.copy && !info.renamed);
+    let again = run_add(&library, &file).unwrap();
+    assert!(!again.copied);
+    assert_eq!(again.path, added.path);
+    assert_eq!(again.mine, mine);
+    assert_eq!(names_in(&packs), ["Test Valley.atlaspack"]);
+
+    // The file in the packs folder itself: nothing is copied.
+    let there = run_add(&library, &added.path).unwrap();
+    assert!(!there.copied);
+    assert_eq!(names_in(&packs), ["Test Valley.atlaspack"]);
+}
+
+#[test]
+fn never_replaces_another_file_of_the_same_name_and_says_which_is_shown() {
+    let dir = TempDir::new("packfile-add-name");
+    let library = reader_library(&dir.0);
+    let packs = library.packs_folder();
+    fs::create_dir_all(&packs).unwrap();
+    // Another game's file under the name the new one has.
+    let other = packs.join("Test Valley.atlaspack");
+    crate::packfile::inplace::testing::write(
+        &other,
+        &crate::packfile::inplace::testing::header(
+            "other-game",
+            "Other Game",
+            "2026-11-01T00:00:00Z",
+            "2026-11-01T00:00:00Z",
+        ),
+    );
+    let before = fs::read(&other).unwrap();
+    let file = file_to_add(&dir.0, "Test Valley.atlaspack", &Mine::default());
+    let header = read_header(&file).unwrap();
+    let info = add::info(&library, &file, &header).unwrap();
+    assert!(info.copy && info.renamed);
+    assert_eq!(info.file_name, "Test Valley (2).atlaspack");
+    let added = run_add(&library, &file).unwrap();
+    assert_eq!(added.path, packs.join("Test Valley (2).atlaspack"));
+    assert_eq!(fs::read(&other).unwrap(), before);
+    assert_eq!(
+        names_in(&packs),
+        ["Test Valley (2).atlaspack", "Test Valley.atlaspack"]
+    );
+
+    // A folder of the same game in the maps folder is shown before it.
+    let folder = library.maps_folder().join(ID);
+    write_pack_files(&folder, "1.0.0");
+    let listing = library.scan();
+    let note = add::note(&library, &listing, &header, &added.path, false).unwrap();
+    assert!(note.contains("is shown from its folder"), "{note}");
+    fs::remove_dir_all(&folder).unwrap();
+
+    // A newer export of the game is shown in place of the older one,
+    // which stays.
+    let newer = dir.0.join("newer");
+    write_pack(&newer, "1.0.0");
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(newer.join("manifest.json")).unwrap()).unwrap();
+    manifest["updated"] = json!("2026-11-18T10:00:00.000Z");
+    put_json(&newer.join("manifest.json"), &manifest);
+    let newer_file = dir.0.join("Downloads").join("Test Valley newer.atlaspack");
+    run_export(&folder_source(&newer), Detail::Overview, &newer_file).unwrap();
+    let listing = library.scan();
+    let newer_header = read_header(&newer_file).unwrap();
+    let target = packs.join("Test Valley newer.atlaspack");
+    let note = add::note(&library, &listing, &newer_header, &target, true).unwrap();
+    assert!(note.starts_with("It is shown in place of"), "{note}");
+    run_add(&library, &newer_file).unwrap();
+    let listing = library.scan();
+    let shown = listing.packs.iter().find(|pack| pack.id == ID).unwrap();
+    assert_eq!(shown.path.as_deref(), Some(target.to_str().unwrap()));
+    assert!(packs.join("Test Valley (2).atlaspack").exists());
+    let note = add::note(&library, &listing, &header, &added.path, false).unwrap();
+    assert!(
+        note.starts_with("Another pack file of the same game"),
+        "{note}"
+    );
+}
+
+#[test]
+fn leaves_nothing_in_the_packs_folder_when_adding_stops() {
+    let dir = TempDir::new("packfile-add-stops");
+    let library = reader_library(&dir.0);
+    let packs = library.packs_folder();
+    let file = file_to_add(&dir.0, "Test Valley.atlaspack", &Mine::default());
+
+    // Cancelled while copying.
+    let calls = Cell::new(0);
+    let result = add::add_with(
+        &library,
+        &file,
+        &|_| None,
+        &[],
+        &mut |_| calls.set(calls.get() + 1),
+        &|| calls.get() > 1,
+    );
+    assert_eq!(result.unwrap_err(), Stop::Cancelled);
+    assert!(names_in(&packs).is_empty());
+
+    // Cancelled while checking the copy.
+    let checking = Cell::new(false);
+    let result = add::add_with(
+        &library,
+        &file,
+        &|_| None,
+        &[],
+        &mut |done| checking.set(done.entries_total > 0),
+        &|| checking.get(),
+    );
+    assert_eq!(result.unwrap_err(), Stop::Cancelled);
+    assert!(names_in(&packs).is_empty());
+
+    // No room on the drive.
+    let error = add::add_with(&library, &file, &|_| Some(1000), &[], &mut |_| {}, &|| {
+        false
+    })
+    .unwrap_err();
+    assert!(
+        error.message().contains("not enough free space"),
+        "{error:?}"
+    );
+    assert!(names_in(&packs).is_empty());
+
+    // A map image whose bytes do not match its checksum: refused as an
+    // import refuses it.
+    let mut bytes = fs::read(&file).unwrap();
+    let image = b"a1/0/0";
+    let at = bytes
+        .windows(image.len())
+        .position(|window| window == image)
+        .unwrap();
+    bytes[at + 5] = b'9';
+    let damaged = dir.0.join("Downloads").join("Damaged.atlaspack");
+    fs::write(&damaged, &bytes).unwrap();
+    let error = run_add(&library, &damaged).unwrap_err();
+    assert!(error.message().contains("damaged"), "{error:?}");
+    assert!(names_in(&packs).is_empty());
+    assert!(names_in(&library.maps_folder()).is_empty());
 }

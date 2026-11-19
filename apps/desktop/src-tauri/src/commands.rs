@@ -2012,6 +2012,59 @@ pub struct PackFileImported {
     game_group: Option<String>,
     /// Their own photos: each file's name and bytes in base64.
     own_pictures: Vec<OwnPictureFile>,
+    /// On a reader, the pack file added to the packs folder rather than
+    /// unpacked (see `packfile::add`).
+    added: Option<AddedFile>,
+}
+
+/// A pack file added to the packs folder, on a reader.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddedFile {
+    /// The file in the packs folder.
+    path: String,
+    file_name: String,
+    /// It was copied there now; otherwise it was there already.
+    copied: bool,
+    /// It is the pack shown for its game.
+    shown: bool,
+    /// Which pack of the game is shown instead, and why.
+    note: Option<String>,
+}
+
+impl PackFileImported {
+    fn new(
+        pack_id: String,
+        title: String,
+        replaced: bool,
+        header: packfile::Header,
+        listing: Listing,
+        mine: packfile::Mine,
+        added: Option<AddedFile>,
+    ) -> Self {
+        Self {
+            pack_id,
+            title,
+            replaced,
+            header,
+            listing,
+            own_lists: mine.lists,
+            own_locations: mine.locations,
+            guide_links: mine.guide_links,
+            own_pages: mine.pages,
+            own_notes: mine.notes,
+            game_group: mine.group,
+            own_pictures: mine
+                .pictures
+                .iter()
+                .map(|(file, bytes)| OwnPictureFile {
+                    file: file.clone(),
+                    data: crate::ownpictures::to_base64(bytes),
+                })
+                .collect(),
+            added,
+        }
+    }
 }
 
 /// One of a person's own photos a pack file carried.
@@ -2023,8 +2076,10 @@ pub struct OwnPictureFile {
 
 /// Imports the pack file at `path` (a `.atlaspack` file) into the maps
 /// folder, replacing the game with the same id there only with `replace`,
-/// and lists the packs again. `packfile_progress` reports how far it is and
-/// `packfile_cancel` stops it.
+/// and lists the packs again. On a reader (see `library::READER`) it adds
+/// the file to the packs folder instead, a file still (see
+/// `packfile::add`), and `replace` is not used. `packfile_progress` reports
+/// how far it is and `packfile_cancel` stops it.
 #[tauri::command]
 pub async fn packfile_import(
     library: LibraryState<'_>,
@@ -2054,6 +2109,9 @@ async fn import_pack_file(
         let path = path.clone();
         blocking(move || packfile::import::read_header(&path)).await?
     };
+    if crate::library::READER {
+        return add_pack_file(library, jobs, path, header).await;
+    }
     let turn = jobs.begin("import", &header.pack_id, &header.title)?;
     blocking(move || {
         activity::info(
@@ -2114,28 +2172,122 @@ async fn import_pack_file(
                 }
             ),
         );
-        Ok(PackFileImported {
-            pack_id: imported.pack_id,
-            title: imported.title,
-            replaced: imported.replaced,
-            header: imported.header,
-            listing: library.scan(),
-            own_lists: imported.mine.lists,
-            own_locations: imported.mine.locations,
-            guide_links: imported.mine.guide_links,
-            own_pages: imported.mine.pages,
-            own_notes: imported.mine.notes,
-            game_group: imported.mine.group,
-            own_pictures: imported
-                .mine
-                .pictures
-                .iter()
-                .map(|(file, bytes)| OwnPictureFile {
-                    file: file.clone(),
-                    data: crate::ownpictures::to_base64(bytes),
-                })
-                .collect(),
-        })
+        Ok(PackFileImported::new(
+            imported.pack_id,
+            imported.title,
+            imported.replaced,
+            imported.header,
+            library.scan(),
+            imported.mine,
+            None,
+        ))
+    })
+    .await
+}
+
+/// Adds the pack file at `path` to the packs folder, on a reader, and
+/// lists the packs again: see `packfile::add`.
+async fn add_pack_file(
+    library: Arc<Library>,
+    jobs: PackFileJobs,
+    path: PathBuf,
+    header: packfile::Header,
+) -> Result<PackFileImported, String> {
+    let turn = jobs.begin("add", &header.pack_id, &header.title)?;
+    blocking(move || {
+        activity::info(
+            Area::Library,
+            format!(
+                "Adding the pack file {} to the packs folder: {} version {}, {} detail, exported {} by {} {}",
+                path.display(),
+                short(&header.pack_id),
+                short(&header.pack_version),
+                packfile::detail_name(header.detail),
+                short(&header.exported_at),
+                short(&header.exported_by.name),
+                short(&header.exported_by.version)
+            ),
+        );
+        let result = packfile::shell::add_pack_file(
+            &library,
+            &path,
+            &mut |done| turn.update(done),
+            &|| turn.cancelled(),
+        );
+        let added = match result {
+            Ok(added) => added,
+            Err(Stop::Cancelled) => {
+                activity::info(
+                    Area::Library,
+                    format!(
+                        "Cancelled adding {}; nothing was added",
+                        short(&header.pack_id)
+                    ),
+                );
+                return Err("Cancelled. Nothing was added.".to_owned());
+            }
+            Err(Stop::Failed(error)) => {
+                activity::warn(
+                    Area::Library,
+                    format!("Could not add the pack file {}: {error}", path.display()),
+                );
+                return Err(error);
+            }
+        };
+        let listing = library.scan();
+        let shown = listing.packs.iter().any(|pack| {
+            pack.id == added.pack_id
+                && pack.pack_file
+                && pack
+                    .path
+                    .as_deref()
+                    .is_some_and(|shown| crate::library::same_path(std::path::Path::new(shown), &added.path))
+        });
+        let note = if shown {
+            None
+        } else {
+            packfile::add::note(&library, &listing, &added.header, &added.path, false).or_else(
+                || {
+                    listing
+                        .unreadable
+                        .iter()
+                        .find(|file| {
+                            crate::library::same_path(std::path::Path::new(&file.path), &added.path)
+                        })
+                        .map(|file| file.reason.clone())
+                },
+            )
+        };
+        activity::info(
+            Area::Library,
+            format!(
+                "{} {} as {}{}",
+                if added.copied {
+                    "Copied the pack file of"
+                } else {
+                    "The packs folder has the pack file of"
+                },
+                short(&added.pack_id),
+                added.path.display(),
+                if shown { " (shown)" } else { " (not shown)" }
+            ),
+        );
+        let file = AddedFile {
+            path: added.path.display().to_string(),
+            file_name: file_name(&added.path),
+            copied: added.copied,
+            shown,
+            note,
+        };
+        Ok(PackFileImported::new(
+            added.pack_id,
+            added.title,
+            false,
+            added.header,
+            listing,
+            added.mine,
+            Some(file),
+        ))
     })
     .await
 }

@@ -79,9 +79,25 @@ use crate::{
     tiles::images::ImagesLocation,
 };
 
+/// A reader: the desktop app without downloads. It reads maps, wikis and
+/// guides from pack files where they lie and keeps no folder of them:
+/// adding a pack file copies it into the packs folder rather than
+/// unpacking it into the maps folder (see `packfile::add`), and it offers
+/// the folder maps and wikis it no longer uses for removal (see
+/// `oldfolders.rs`). The app with downloads, which reads sites and keeps
+/// each map and wiki as a working folder, and the Android app keep
+/// unpacking pack files into the maps folder.
+pub const READER: bool = cfg!(all(desktop, not(feature = "downloads")));
+
 /// Why a pack read from a pack file cannot be changed, in the person's
 /// words: what the editors, downloads and the other changes say for one.
-pub const PACK_FILE_UNCHANGED: &str = "This map, wiki or guide is read from a pack file, and Atlas never changes a pack file. To change it, import the pack file first with Import a pack file.";
+/// Only an app that unpacks pack files into folders says how to change
+/// one.
+pub const PACK_FILE_UNCHANGED: &str = if READER {
+    "This map, wiki or guide is read from a pack file, and Atlas never changes a pack file."
+} else {
+    "This map, wiki or guide is read from a pack file, and Atlas never changes a pack file. To change it, import the pack file first with Import a pack file."
+};
 
 /// Why map images and photos are not downloaded for a pack read from a
 /// pack file.
@@ -2157,13 +2173,25 @@ impl Library {
     /// next start (see `removal.rs`).
     pub fn delete_pack(&self, id: &str) -> Result<PackDeleted, String> {
         let dir = self.check_deletable(id)?;
+        self.delete_folder(&dir, id)
+    }
+
+    /// Deletes the pack folder `dir`, directly inside the maps folder, of
+    /// the pack `id`, under its lock (see `removal::delete_pack_folder`):
+    /// what [`Library::delete_pack`] and the removal of old folders (see
+    /// `oldfolders.rs`) do once they have checked it may go. The pack stops
+    /// being served when it is the folder shown for its id. Blocking.
+    pub fn delete_folder(&self, dir: &Path, id: &str) -> Result<PackDeleted, String> {
         let maps = dir
             .parent()
             .ok_or_else(|| "There is no such pack in the maps folder.".to_owned())?
             .to_path_buf();
-        let lock = PackLock::acquire(&dir)?;
-        removal::delete_pack_folder(&self.file_ops, &maps, &dir, id, lock, || {
-            self.registry.unregister(id);
+        let lock = PackLock::acquire(dir)?;
+        let shown = self.pack_folder(id).is_some_and(|root| root == dir);
+        removal::delete_pack_folder(&self.file_ops, &maps, dir, id, lock, || {
+            if shown {
+                self.registry.unregister(id);
+            }
         })
     }
 
@@ -2628,20 +2656,35 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
+/// A path's real path (see [`real_path`]), in lower case on Windows, where
+/// two names that differ only by case are one file: to compare two paths.
+fn comparable(path: &Path) -> PathBuf {
+    let real = real_path(path);
+    if cfg!(windows) {
+        PathBuf::from(real.to_string_lossy().to_lowercase())
+    } else {
+        real
+    }
+}
+
 /// Whether two folders are the same or one is inside the other, by their
 /// real paths (see [`real_path`]); without regard to case on Windows,
 /// where two names that differ only by case are one folder.
 fn overlap(a: &Path, b: &Path) -> bool {
-    let real = |path: &Path| {
-        let real = real_path(path);
-        if cfg!(windows) {
-            PathBuf::from(real.to_string_lossy().to_lowercase())
-        } else {
-            real
-        }
-    };
-    let (a, b) = (real(a), real(b));
+    let (a, b) = (comparable(a), comparable(b));
     a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// Whether `path` is `folder` or inside it, by their real paths; without
+/// regard to case on Windows.
+pub fn is_inside(path: &Path, folder: &Path) -> bool {
+    comparable(path).starts_with(comparable(folder))
+}
+
+/// Whether two paths name the same file or folder, by their real paths;
+/// without regard to case on Windows.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    comparable(a) == comparable(b)
 }
 
 /// What one scan learns of the pack files it finds.

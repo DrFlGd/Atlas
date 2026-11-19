@@ -124,6 +124,12 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
     }
     let text =
         fs::read_to_string(&path).map_err(|error| format!("cannot read manifest.json: {error}"))?;
+    head_of_text(&text)
+}
+
+/// The identifying fields of a manifest's text, checked as [`read_head`]
+/// checks a pack folder's: for a manifest read from a pack file.
+pub fn head_of_text(text: &str) -> Result<ManifestHead, String> {
     let raw: RawHead = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|error| format!("its manifest.json is not a pack manifest: {error}"))?;
     if !matches!(raw.schema_version, 1 | 2) {
