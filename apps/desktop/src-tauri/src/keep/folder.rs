@@ -151,17 +151,17 @@ pub fn look(folder: &Path, cache: &mut HeaderCache) -> Found {
                     continue;
                 }
                 // A link is not followed: its own type, not its target's.
-                let Ok(kind) = entry.file_type() else {
+                let Ok(file_type) = entry.file_type() else {
                     continue;
                 };
                 let path = entry.path();
-                if kind.is_dir() {
+                if file_type.is_dir() {
                     if !path.join(MANIFEST_FILE).exists() {
                         folders.push(path);
                     }
-                } else if kind.is_file() && name.ends_with(PART_ENDING) {
+                } else if file_type.is_file() && name.ends_with(PART_ENDING) {
                     self.found.parts.push(path);
-                } else if kind.is_file() && is_pack_name(&name) {
+                } else if file_type.is_file() && is_pack_name(&name) {
                     let count: usize = self.found.copies.values().map(Vec::len).sum();
                     if count >= MAX_PACK_FILES {
                         self.found.incomplete = true;

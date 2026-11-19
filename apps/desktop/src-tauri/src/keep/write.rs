@@ -121,7 +121,7 @@ fn rename_with_retries(
                 Some(wait) => thread::sleep(*wait),
                 None => {
                     return Err(Stop::Failed(format!(
-                        "The pack file could not take the place of {}: {error}. Another program may hold it open; it is tried again at the next check.",
+                        "The pack file could not replace {}: {error}. Another program may hold it open; it is tried again at the next check.",
                         target.display()
                     )))
                 }

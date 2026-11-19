@@ -521,6 +521,7 @@ impl World {
                     tick: Duration::from_millis(20),
                     quiet: Duration::from_millis(100),
                     start_delay: Duration::ZERO,
+                    retry: Duration::from_millis(300),
                 },
                 probe,
                 tell,
@@ -757,7 +758,15 @@ fn a_missing_folder_writes_nothing_and_says_so_once() {
         world.keeper.write_all();
     });
     assert_eq!(status.problem, Some(problem));
+    assert_eq!(status.notice, Some(notice.clone()));
+
+    // Once the folder is there again, the packs are written by themselves.
+    fs::create_dir_all(&gone).unwrap();
+    let status = world.wait("written once the folder is back", |status| {
+        status.problem.is_none() && World::row(status).state == RowState::UpToDate
+    });
     assert_eq!(status.notice, Some(notice));
+    assert!(world.record().packs.contains_key(ID));
 
     // The maps folder, or one inside it, is refused too.
     let inside = world.library.maps_folder().join("Maps and Guides");

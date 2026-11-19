@@ -108,6 +108,9 @@ pub struct Timing {
     pub quiet: Duration,
     /// The check at the start waits this long, so the app starts first.
     pub start_delay: Duration,
+    /// After a run that failed as a whole (the folder cannot be found, the
+    /// drive is full), every game is checked again this long after.
+    pub retry: Duration,
 }
 
 impl Default for Timing {
@@ -116,6 +119,7 @@ impl Default for Timing {
             tick: Duration::from_secs(2),
             quiet: Duration::from_secs(30),
             start_delay: Duration::from_secs(15),
+            retry: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -160,7 +164,7 @@ pub struct Writing {
     pub phase: &'static str,
     pub bytes_done: u64,
     pub bytes_total: u64,
-    /// Its place among the packs of this run, from 1, and how many.
+    /// Its number among the packs of this run, from 1, and how many.
     pub number: usize,
     pub count: usize,
 }
@@ -265,7 +269,7 @@ fn left_out(library: &Library, dir: &Path, head: &ManifestHead) -> Option<&'stat
     }
 }
 
-/// How a finished file takes its target's place.
+/// How a finished file replaces its target.
 type Rename = Box<dyn Fn(&Path, &Path) -> std::io::Result<()> + Send + Sync>;
 
 /// What the keeper shares between its thread and the commands.
@@ -279,7 +283,7 @@ struct Inner {
     timing: Timing,
     probe: Box<dyn Fn() -> Activity + Send + Sync>,
     tell: Box<dyn Fn(&Status) + Send + Sync>,
-    /// How a finished file takes its target's place (tests act out a file
+    /// How a finished file replaces its target (tests act out a file
     /// held open).
     rename: Rename,
     /// The person asked to stop, or the setting went off.
@@ -824,6 +828,10 @@ impl Loop {
             .filter(|problem| self.last_problem.as_ref() != Some(*problem))
             .cloned();
         self.last_problem.clone_from(&problem);
+        if problem.is_some() && self.due.is_none() {
+            // The folder may be there again, or the drive have room, later.
+            self.due = Some(Instant::now() + inner.timing.retry);
+        }
         inner.update(|state| {
             state.running = false;
             state.writing = None;
@@ -1379,9 +1387,9 @@ impl Loop {
         }
     }
 
-    /// Where a pack goes: in place of the copy it replaces; for a new one,
+    /// Where a pack goes: over the copy it replaces; for a new one,
     /// a free name in `No game yet` (made when missing), or for one written
-    /// again by hand, its last place when that folder is still there.
+    /// again by hand, where it last lay when that folder is still there.
     fn target_of(&self, item: &Item) -> Result<PathBuf, String> {
         match &item.target {
             Target::Replace(copy) => Ok(copy.path.clone()),
