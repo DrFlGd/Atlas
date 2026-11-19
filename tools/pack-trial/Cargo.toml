@@ -1,0 +1,24 @@
+[package]
+name = "atlas-pack-trial"
+version = "0.1.0"
+description = "Timing trial: reading a large Atlas pack file where it lies"
+edition = "2021"
+license = "MIT"
+rust-version = "1.90"
+publish = false
+
+# A separate crate, not a test of apps/desktop/src-tauri: it needs no system
+# libraries and no Tauri build, so a runner compiles it in a minute. The
+# `zip` line is the app's own (apps/desktop/src-tauri/Cargo.toml), and
+# Cargo.lock pins the same zip, flate2 and zlib-rs versions the app's lock
+# file has, so the ZIP code timed here is the code the app runs.
+[dependencies]
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# The app's release profile, so the timings are of code built the same way.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

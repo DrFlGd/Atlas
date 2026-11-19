@@ -1,0 +1,86 @@
+# Timing trial T1: can Atlas read a large pack file where it lies, without
+# unpacking it? Writes a made-up pack file (pseudo-random map images, made-up
+# JSON) on each runner and times opening it and reading images from it in
+# several ways. The program is tools/pack-trial (see its src/main.rs), a
+# small crate with the app's own zip dependency line: it needs no system
+# libraries and no Tauri build. Results go to the job log and the run's
+# summary page.
+#
+# Started by hand only, from the Actions tab ("Pack file timing trial",
+# "Run workflow"). It never runs on pushes or pull requests.
+
+name: Pack file timing trial
+
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: Number of map images in the made-up pack file
+        required: true
+        default: '50000'
+        type: string
+      image_kb:
+        description: Average size of one map image, in KB
+        required: true
+        default: '20'
+        type: string
+      zip64:
+        description: Also time a pack file over 4 GB with over 65,535 entries (ZIP64)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pack-trial-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  trial:
+    name: Pack file timing trial (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: tools/pack-trial
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/pack-trial -> target
+
+      - name: Build the trial program (release)
+        run: cargo build --release --locked
+
+      - name: Free disk space in the temporary folder
+        run: df -h "$RUNNER_TEMP"
+
+      - name: Time a pack file of the chosen size
+        env:
+          PACK_TRIAL_IMAGES: ${{ inputs.images }}
+          PACK_TRIAL_IMAGE_KB: ${{ inputs.image_kb }}
+          PACK_TRIAL_DIR: ${{ runner.temp }}
+        run: cargo run --release --locked
+
+      # 220,000 images of about 20 KB: about 4.3 GB. Opening the archive anew
+      # for each read is timed with 200 reads only, as each open reads the
+      # whole central directory.
+      - name: Time a pack file over 4 GB (ZIP64)
+        if: inputs.zip64
+        env:
+          PACK_TRIAL_ZIP64: '1'
+          PACK_TRIAL_REOPEN_READS: '200'
+          PACK_TRIAL_DIR: ${{ runner.temp }}
+        run: cargo run --release --locked
