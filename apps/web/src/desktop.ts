@@ -2004,7 +2004,7 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
 export function mineOfferFrom(value: unknown): MineOffer | null {
   if (typeof value !== 'object' || value === null) return null;
   const offer = value as Partial<MineOffer>;
-  const facts = offer.facts as Partial<MineFacts> | undefined;
+  const facts = offer.facts as Partial<MineFacts> | null | undefined;
   if (
     typeof offer.id !== 'string' ||
     typeof offer.title !== 'string' ||

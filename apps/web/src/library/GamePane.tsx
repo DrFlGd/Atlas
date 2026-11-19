@@ -295,7 +295,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
                 Made in this app from pictures. Add map makes another map from a picture; Add level
                 adds a level to a map of the one shown; Rename changes its name; Delete map deletes
                 one of its maps after asking which.
-                {madePacks && listed?.madeHere
+                {madePacks && listed.madeHere
                   ? ' Write the pack file makes it one pack file, read like any other, and removes its folder after asking.'
                   : ''}
               </p>
