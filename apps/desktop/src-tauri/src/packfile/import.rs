@@ -341,9 +341,27 @@ fn read_entry<R: Read + io::Seek>(
     Ok(bytes)
 }
 
-/// Reads an entry of a pack file by its name, at most a number of bytes;
-/// `None` when the file has no such entry.
-pub(crate) type ReadByName<'a> = dyn FnMut(&str, u64) -> Result<Option<Vec<u8>>, Stop> + 'a;
+/// The entries of a pack file, by name, as the rules read them.
+pub(crate) trait PackEntries {
+    /// Whether the file has an entry of this name.
+    fn has(&mut self, name: &str) -> bool;
+    /// The bytes of an entry it has, at most `cap` of them.
+    fn read(&mut self, name: &str, cap: u64) -> Result<Vec<u8>, Stop>;
+}
+
+/// The entries of an archive being imported.
+struct ArchiveEntries<'a, R>(&'a mut ZipArchive<R>);
+
+impl<R: Read + io::Seek> PackEntries for ArchiveEntries<'_, R> {
+    fn has(&mut self, name: &str) -> bool {
+        self.0.index_for_name(name).is_some()
+    }
+
+    fn read(&mut self, name: &str, cap: u64) -> Result<Vec<u8>, Stop> {
+        let index = self.0.index_for_name(name).ok_or_else(|| damaged(name))?;
+        read_entry(self.0, index, name, cap)
+    }
+}
 
 /// What a pack file may hold: the rules every entry after the description
 /// is checked against, from the description and the pack's own files
@@ -361,12 +379,13 @@ pub(crate) struct Rules {
 }
 
 impl Rules {
-    /// Reads the rules of a pack file with this description. `read` gives
-    /// the bytes of an entry by its name, at most `cap` of them, or `None`
-    /// when the file has no such entry.
-    pub(crate) fn read(header: &Header, read: &mut ReadByName<'_>) -> Result<Self, Stop> {
-        let manifest = read(MANIFEST_FILE, MAX_MANIFEST_BYTES)?
-            .ok_or_else(|| refuse("This pack file has no manifest.json."))?;
+    /// Reads the rules of a pack file with this description from its
+    /// entries, refusing in the order an import always has.
+    pub(crate) fn read(header: &Header, entries: &mut dyn PackEntries) -> Result<Self, Stop> {
+        if !entries.has(MANIFEST_FILE) {
+            return Err(refuse("This pack file has no manifest.json."));
+        }
+        let manifest = entries.read(MANIFEST_FILE, MAX_MANIFEST_BYTES)?;
         let manifest: Value = serde_json::from_slice(&manifest)
             .map_err(|_| refuse("The manifest.json in this pack file is not valid JSON."))?;
         if !matches!(
@@ -383,37 +402,36 @@ impl Rules {
                 "The game inside this pack file is not the one its description names.",
             ));
         }
-        let mut text_of = |name: &str| -> Result<Option<String>, Stop> {
-            match read(name, MAX_PACK_FILE_BYTES as u64)? {
-                None => Ok(None),
-                Some(bytes) => String::from_utf8(bytes)
-                    .map(Some)
-                    .map_err(|_| refuse(format!("The {name} in this pack file is not text."))),
+        let text_of = |entries: &mut dyn PackEntries, name: &str| -> Result<String, Stop> {
+            if !entries.has(name) {
+                return Err(refuse(format!("This pack file has no {name}.")));
             }
+            String::from_utf8(entries.read(name, MAX_PACK_FILE_BYTES as u64)?)
+                .map_err(|_| refuse(format!("The {name} in this pack file is not text.")))
         };
-        let missing = |name: &str| refuse(format!("This pack file has no {name}."));
         // A game with no map has neither file.
-        let layers = match (text_of("maps.json")?, text_of("layers.json")?) {
-            (None, None) => Vec::new(),
-            (Some(maps), Some(layers_text)) => parse_layers(&maps, &layers_text).map_err(refuse)?,
-            (None, Some(_)) => return Err(missing("maps.json")),
-            (Some(_), None) => return Err(missing("layers.json")),
+        let layers = if !entries.has("maps.json") && !entries.has("layers.json") {
+            Vec::new()
+        } else {
+            let maps = text_of(entries, "maps.json")?;
+            let layers_text = text_of(entries, "layers.json")?;
+            parse_layers(&maps, &layers_text).map_err(refuse)?
         };
         // The pictures it lists, the only ones it may hold.
-        let pictures: HashSet<String> = match text_of(PICTURES_FILE)? {
-            Some(text) => {
-                let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
-                    refuse(format!(
-                        "The {PICTURES_FILE} in this pack file is not a list."
-                    ))
-                })?;
-                list.iter()
-                    .filter_map(|picture| picture.get("file").and_then(Value::as_str))
-                    .filter(|file| is_picture_path(file))
-                    .map(str::to_owned)
-                    .collect()
-            }
-            None => HashSet::new(),
+        let pictures: HashSet<String> = if entries.has(PICTURES_FILE) {
+            let text = text_of(entries, PICTURES_FILE)?;
+            let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
+                refuse(format!(
+                    "The {PICTURES_FILE} in this pack file is not a list."
+                ))
+            })?;
+            list.iter()
+                .filter_map(|picture| picture.get("file").and_then(Value::as_str))
+                .filter(|file| is_picture_path(file))
+                .map(str::to_owned)
+                .collect()
+        } else {
+            HashSet::new()
         };
         // The small pictures of the maps the header lists, the only ones it
         // may hold, and only from the version that has them.
@@ -596,13 +614,7 @@ fn check_entries<R: Read + io::Seek>(
     if archive.name_for_index(0).and_then(Result::ok).as_deref() != Some(HEADER_FILE) {
         return Err(refuse(NOT_A_PACK_FILE));
     }
-    let rules = Rules::read(
-        header,
-        &mut |name, cap| match archive.index_for_name(name) {
-            Some(index) => read_entry(archive, index, name, cap).map(Some),
-            None => Ok(None),
-        },
-    )?;
+    let rules = Rules::read(header, &mut ArchiveEntries(archive))?;
 
     let mut entries = Vec::new();
     let mut mine = Mine::default();
@@ -676,18 +688,11 @@ fn check_entries<R: Read + io::Seek>(
         let json = match kind {
             Kind::PackFile | Kind::Status(_) => {
                 let data = read_entry(archive, index, &name, size)?;
-                let value: Value = serde_json::from_slice(&data)
-                    .map_err(|_| refuse(format!("{shown} in this pack file is not valid JSON.")))?;
-                if let Kind::Status(layer) = kind {
-                    let usable = serde_json::from_value::<LayerStatus>(value).is_ok_and(|status| {
-                        status.format == STATUS_FORMAT && status.layer_id == rules.layers[layer].id
-                    });
-                    if !usable {
-                        return Err(refuse(format!(
-                            "{shown} in this pack file is not a usable status file."
-                        )));
-                    }
-                }
+                let layer = match kind {
+                    Kind::Status(layer) => Some(rules.layers[layer].id.as_str()),
+                    _ => None,
+                };
+                check_json(&name, &data, layer)?;
                 Some(data)
             }
             _ => None,
@@ -705,6 +710,25 @@ fn check_entries<R: Read + io::Seek>(
         bytes: tally.bytes,
         mine,
     })
+}
+
+/// Checks the content of one of the pack's JSON files, or of the status
+/// file of the layer `status_of` names: valid JSON, and a status file in
+/// its format for that layer.
+pub(crate) fn check_json(name: &str, data: &[u8], status_of: Option<&str>) -> Result<(), Stop> {
+    let shown = crate::activity::clean(name);
+    let value: Value = serde_json::from_slice(data)
+        .map_err(|_| refuse(format!("{shown} in this pack file is not valid JSON.")))?;
+    if let Some(layer_id) = status_of {
+        let usable = serde_json::from_value::<LayerStatus>(value)
+            .is_ok_and(|status| status.format == STATUS_FORMAT && status.layer_id == layer_id);
+        if !usable {
+            return Err(refuse(format!(
+                "{shown} in this pack file is not a usable status file."
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// What an entry is, or none when it has no place in a map pack.

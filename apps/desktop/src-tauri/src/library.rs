@@ -66,7 +66,10 @@ use crate::{
         head_of_header, read_head, version_key, write_atomic, ManifestHead, SourcePage,
         MANIFEST_FILE,
     },
-    packfile::{inplace::PackFile, iso_millis, EXTENSION},
+    packfile::{
+        inplace::{PackFile, Pool},
+        iso_millis, EXTENSION,
+    },
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
     removal::{self, FileOps, ImagesCount, ImagesDeleted, PackDeleted},
     settings::{
@@ -503,6 +506,8 @@ pub struct Library {
     /// The pack files the last scan found, by path, with what is known of
     /// each, so a file that did not change is not read again.
     pack_files: Mutex<HashMap<PathBuf, Arc<PackFile>>>,
+    /// The tables and unpacked files kept of the pack files read last.
+    pack_file_pool: Arc<Pool>,
     /// How files are removed; tests act out files that are in use.
     file_ops: FileOps,
     /// What measuring imported maps' pictures learnt, seeded into a pack's
@@ -527,6 +532,7 @@ impl Library {
             pending_folder: Mutex::new(None),
             logged_scan: Mutex::new(String::new()),
             pack_files: Mutex::new(HashMap::new()),
+            pack_file_pool: Pool::shared(),
             file_ops: FileOps::default(),
             #[cfg(feature = "downloads")]
             picture_cache: None,
@@ -540,6 +546,11 @@ impl Library {
     pub fn with_picture_cache(mut self, cache: crate::tiles::measure::PictureCache) -> Self {
         self.picture_cache = Some(cache);
         self
+    }
+
+    #[cfg(test)]
+    pub fn pack_file_pool(&self) -> &Pool {
+        &self.pack_file_pool
     }
 
     #[cfg(test)]
@@ -739,6 +750,7 @@ impl Library {
         }
         let mut pack_files = FileScan {
             known: lock(&self.pack_files).clone(),
+            pool: Arc::clone(&self.pack_file_pool),
             maps_folder: maps_folder.canonicalize().ok(),
             ..FileScan::default()
         };
@@ -2234,6 +2246,8 @@ pub fn pack_files_in(dir: &Path, skip: Option<&Path>) -> Vec<PathBuf> {
 struct FileScan {
     /// What the last scan knew, by path.
     known: HashMap<PathBuf, Arc<PackFile>>,
+    /// The pool of the Library's pack files.
+    pool: Arc<Pool>,
     /// What this scan found, by path, for the next one.
     kept: HashMap<PathBuf, Arc<PackFile>>,
     /// Files already looked at, by their real path, so a file in two
@@ -2266,14 +2280,13 @@ impl FileScan {
             if !self.seen.insert(real) {
                 continue;
             }
-            let pack = self
-                .known
-                .get(&path)
-                .cloned()
-                .unwrap_or_else(|| Arc::new(PackFile::new(path.clone())));
+            let pack =
+                self.known.get(&path).cloned().unwrap_or_else(|| {
+                    Arc::new(PackFile::new(path.clone(), Arc::clone(&self.pool)))
+                });
             self.kept.insert(path.clone(), Arc::clone(&pack));
-            let checked = pack.check().and_then(|table| {
-                let header = table.header();
+            let checked = pack.check().and_then(|checked| {
+                let header = checked.header();
                 let head = head_of_header(header).map_err(|reason| {
                     format!("This pack file's description cannot be used: {reason}.")
                 })?;
@@ -4018,6 +4031,73 @@ mod tests {
         let listing = s.library.scan();
         assert!(listing.packs.is_empty());
         assert!(s.registry.kind("example-game").is_none());
+    }
+
+    #[test]
+    fn keeps_no_table_of_the_pack_files_a_scan_only_checks() {
+        use crate::packfile::inplace::OPEN_TABLES;
+        let s = setup("library-pack-file-tables", Vec::new());
+        let packs = s.library.packs_folder();
+        let count = OPEN_TABLES + 2;
+        for index in 0..count {
+            let id = format!("game-{index}");
+            let header = pack_file::header(
+                &id,
+                "Example Game",
+                "2026-11-10T09:00:00Z",
+                "2026-11-11T09:00:00Z",
+            );
+            pack_file::write(&packs.join(format!("{id}.atlaspack")), &header);
+        }
+        // One whose JSON file unpacks to megabytes from a few kilobytes.
+        let mut header = pack_file::header(
+            "spaces-game",
+            "Example Game",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        header["contents"] = serde_json::json!({});
+        let spaces = packs.join("spaces.atlaspack");
+        pack_file::write_with(
+            &spaces,
+            &header,
+            &[("pictures.json", {
+                let mut text = " ".repeat(8 << 20);
+                text.push_str("[]");
+                text
+            })],
+        );
+        assert!(fs::metadata(&spaces).unwrap().len() < 100_000);
+
+        let listing = s.library.scan();
+        assert_eq!(listing.packs.len(), count + 1, "{:?}", listing.unreadable);
+        let pool = s.library.pack_file_pool();
+        assert_eq!(pool.held_tables(), 0, "a scan keeps no table");
+        assert_eq!(pool.held_bytes(), 0, "nor anything it unpacked");
+        let pack = |index: usize| s.registry.pack_file(&format!("game-{index}")).unwrap();
+        assert!((0..count).all(|index| !pack(index).holds_table()));
+        assert!(!s.registry.pack_file("spaces-game").unwrap().holds_table());
+
+        // Reading keeps the tables of the packs read last only.
+        for index in 0..count {
+            served(&s.registry, &format!("game-{index}"), "manifest.json");
+            assert_eq!(pool.held_tables(), (index + 1).min(OPEN_TABLES));
+        }
+        for index in 0..count {
+            assert_eq!(
+                pack(index).holds_table(),
+                index >= count - OPEN_TABLES,
+                "game-{index}"
+            );
+        }
+        let manifest = served(&s.registry, "game-0", "manifest.json").len();
+        assert!(pack(0).holds_table());
+        assert!(!pack(count - OPEN_TABLES).holds_table(), "the oldest went");
+        assert_eq!(pool.held_tables(), OPEN_TABLES);
+        assert!(pool.held_bytes() <= OPEN_TABLES * manifest);
+        // A scan does not keep the tables of the packs read.
+        s.library.scan();
+        assert_eq!(pool.held_tables(), OPEN_TABLES);
     }
 
     #[test]

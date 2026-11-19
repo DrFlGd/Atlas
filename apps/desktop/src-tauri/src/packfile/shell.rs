@@ -59,8 +59,8 @@ pub fn source_for(
 /// For a pack read from a pack file, the facts of its description.
 pub fn details(library: &Library, downloads: &Downloads, id: &str) -> Result<PackDetails, String> {
     if let Some(pack) = library.registry().pack_file(id) {
-        let table = pack.check()?;
-        return Ok(pack_file_details(pack.path(), table.header()));
+        let checked = pack.check()?;
+        return Ok(pack_file_details(pack.path(), checked.header()));
     }
     pack_details(&source_for(library, downloads, id)?)
 }
