@@ -2299,7 +2299,7 @@ pub fn pack_files_in(dir: &Path, maps_folder: Option<&Path>) -> PackFilesIn {
     if dir.join(MANIFEST_FILE).is_file() {
         return walk.found;
     }
-    let real = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let real = real_path(dir);
     if maps_folder.is_some_and(|maps| real.starts_with(maps)) {
         walk.note(
             dir,
@@ -2338,10 +2338,41 @@ fn grouped(count: usize) -> String {
     out
 }
 
+/// A folder's real path. When it does not exist yet, the real path of the
+/// nearest folder above it that does, with the rest as it is written: so a
+/// folder still to be made compares with one that exists (on Windows a
+/// real path is written another way than the one a person or the system
+/// gives, with long names and a prefix).
+fn real_path(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(mut real) = at.canonicalize() {
+            real.extend(rest.iter().rev());
+            return real;
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                at = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
 /// Whether two folders are the same or one is inside the other, by their
-/// real paths (as they are written when one does not exist yet).
+/// real paths (see [`real_path`]); without regard to case on Windows,
+/// where two names that differ only by case are one folder.
 fn overlap(a: &Path, b: &Path) -> bool {
-    let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let real = |path: &Path| {
+        let real = real_path(path);
+        if cfg!(windows) {
+            PathBuf::from(real.to_string_lossy().to_lowercase())
+        } else {
+            real
+        }
+    };
     let (a, b) = (real(a), real(b));
     a.starts_with(&b) || b.starts_with(&a)
 }
@@ -4023,7 +4054,10 @@ mod tests {
         );
         assert_eq!(packs.parent(), s.library.maps_folder().parent());
         // Kept as another app keeps them: a folder per game.
-        let valley = packs.join("Example Game/Example Game - Example Site.atlaspack");
+        // Joined part by part, so its text is the one the system writes.
+        let valley = packs
+            .join("Example Game")
+            .join("Example Game - Example Site.atlaspack");
         write_pack_file(
             &valley,
             "example-game",
@@ -4232,7 +4266,7 @@ mod tests {
 
         // Too deep: the folder whose folders are not read is named.
         let deep = dir.0.join("deep");
-        let fourth = deep.join("a/b/c/d");
+        let fourth = deep.join("a").join("b").join("c").join("d");
         write_pack_file(
             &fourth.join("e/too-deep.atlaspack"),
             "deep-game",
