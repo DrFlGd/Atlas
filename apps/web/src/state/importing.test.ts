@@ -1,6 +1,7 @@
 import { packDataSchema, MANIFEST_FILE, PACK_COLLECTIONS, COLLECTION_NAMES } from '@atlas/schema';
 import { describe, expect, it } from 'vitest';
-import { packFiles, pagesFiling, unrecognisedMessage } from './importing';
+import { makeFixturePack } from '@atlas/schema/testing';
+import { packFiles, packSource, pagesFiling, unrecognisedMessage } from './importing';
 
 describe('import messages', () => {
   it('explains addresses that cannot be imported', () => {
@@ -117,5 +118,57 @@ describe('pagesFiling', () => {
   it('never files a page under the page the site files it under', () => {
     // The site files the vale under the rules, a page of the menu: it stays outside the menu.
     expect(pagesFiling(pack(true, true))).toEqual(pagesFiling(pack(true)));
+  });
+});
+
+describe('packSource', () => {
+  const importer = { id: 'example-maps', title: 'Example importer' };
+  const current = {
+    key: 'east',
+    url: 'https://maps.example.org/east',
+    mapId: 'test-valley:map:east',
+    importedAt: '2026-11-12T10:00:00Z',
+  };
+  const stored = [
+    {
+      key: 'west',
+      url: 'https://maps.example.org/west',
+      importedAt: '2026-11-11T10:00:00Z',
+      mapId: null,
+    },
+  ];
+  const before = (site?: string) => ({
+    ...makeFixturePack().manifest,
+    schemaVersion: 2 as const,
+    source: { importer, pages: [], ...(site ? { site } : {}) },
+  });
+
+  it('records every page, and the site the importer names', () => {
+    const source = packSource(importer, stored, current, { given: 'Example Maps' });
+    expect(source).toEqual({
+      importer,
+      pages: [
+        { url: 'https://maps.example.org/west', importedAt: '2026-11-11T10:00:00Z' },
+        {
+          url: 'https://maps.example.org/east',
+          mapId: 'test-valley:map:east',
+          importedAt: '2026-11-12T10:00:00Z',
+        },
+      ],
+      site: 'Example Maps',
+    });
+    // The importer's name wins over the one recorded before.
+    expect(
+      packSource(importer, stored, current, { given: 'Maps Two', before: before('Example Maps') })
+        .site,
+    ).toBe('Maps Two');
+  });
+
+  it('keeps the site recorded before, and never takes the importer for it', () => {
+    expect(packSource(importer, stored, current, { before: before('Example Maps') }).site).toBe(
+      'Example Maps',
+    );
+    expect('site' in packSource(importer, stored, current, { before: before() })).toBe(false);
+    expect('site' in packSource(importer, stored, current)).toBe(false);
   });
 });

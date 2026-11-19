@@ -1954,11 +1954,17 @@ export function importerStoppedMessage(error: unknown): string {
   return `The importer stopped with an error, so nothing was added: ${errorText(error)}`;
 }
 
-/** The `source` block of the manifest: every page the pack was made from. */
-function packSource(
-  importer: AtlasImporter,
+/**
+ * The `source` block of the manifest: every page the pack was made from,
+ * and the name of the site they were read from: the one the importer gives
+ * for this page (`ImportSuccess.site`), else the one the pack's manifest
+ * had `before`; none when neither has one.
+ */
+export function packSource(
+  importer: Pick<AtlasImporter, 'id' | 'title'>,
   stored: readonly StoredPage[],
   current: { key: string; url: string; mapId: string | undefined; importedAt: string },
+  site: { given?: string | undefined; before?: PackData['manifest'] | undefined } = {},
 ): PackSource {
   const pages = stored
     .filter((source) => source.key !== current.key)
@@ -1972,7 +1978,13 @@ function packSource(
     ...(current.mapId ? { mapId: current.mapId } : {}),
     importedAt: current.importedAt,
   });
-  return { importer: { id: importer.id, title: importer.title }, pages };
+  const name =
+    site.given ?? (site.before?.schemaVersion === 2 ? site.before.source?.site : undefined);
+  return {
+    importer: { id: importer.id, title: importer.title },
+    pages,
+    ...(name ? { site: name } : {}),
+  };
 }
 
 /** The pack's files as JSON text, with a manifest that describes it. */
@@ -2213,12 +2225,17 @@ async function convertPage(
         : {}),
       updated: rebuilt ? new Date().toISOString() : page.importedAt,
       writtenBy: { name: app?.name ?? 'Atlas', version: app?.version ?? '0.0.0' },
-      source: packSource(importer, stored, {
-        key: outcome.sourceKey,
-        url: page.url,
-        mapId: outcome.mapId,
-        importedAt: page.importedAt,
-      }),
+      source: packSource(
+        importer,
+        stored,
+        {
+          key: outcome.sourceKey,
+          url: page.url,
+          mapId: outcome.mapId,
+          importedAt: page.importedAt,
+        },
+        { given: outcome.site, before: existing?.manifest },
+      ),
       images: existing ? recordedImages(existing.manifest) : new Map(),
     });
     let listing: Listing;

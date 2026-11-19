@@ -37,7 +37,7 @@ Every entry has the time the file was made, in UTC.
 | `exportedBy`     | The app that made it: `name`, `version` and `platform`.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `pack`           | What the pack's manifest says of itself: `id`, `title`, `packVersion`, `gamePatch`, `schemaVersion`, `attribution`, and optionally `created`, `updated` and `writtenBy`.                                                                                                                                                                                                                                                                       |
 | `personalUse`    | Optional, only ever `true`: the pack's manifest says it is kept for the person's own use. A file with it is not to be passed on to others.                                                                                                                                                                                                                                                                                                     |
-| `source`         | Where the data came from. `kind` is `web-pages`, `app` or `unknown`. Optional: `name`, the name of the site the pages were read from, as the pack's guide pages name it; `importer` (`id` and `title`); `pages`, each page read with `url`, `mapId` and `importedAt`; `newestPageAt` and `oldestPageAt`.                                                                                                                                       |
+| `source`         | Where the data came from. `kind` is `web-pages`, `app` or `unknown`. Optional: `name`, the name of the site the pages were read from (see below); `importer` (`id` and `title`); `pages`, each page read with `url`, `mapId` and `importedAt`; `newestPageAt` and `oldestPageAt`.                                                                                                                                                              |
 | `contents`       | Counts: `maps`, `layers`, `locations`, `categories`, `regions`, `checklists` and `guides`.                                                                                                                                                                                                                                                                                                                                                     |
 | `maps`           | Optional. One entry per map, in the order of the pack's `maps.json`: `id`, `name`, `width` and `height` of its most detailed image in pixels, `locations` (how many the pack has on it), and `preview`, the entry name of its small picture when the file holds one.                                                                                                                                                                           |
 | `guides`         | Optional. The pack's pages, with `title`, `type` and `pages`. `type` is `guide` for pages read in order (the manifest's `pagesInOrder`) and `wiki` for pages read as a collection. A pack's pages are one source of pages, so there is one entry at most. A game of maps whose pages are only the notes of its locations has none.                                                                                                             |
@@ -114,6 +114,16 @@ An example, for a made-up game:
   "bytes": 245760
 }
 ```
+
+### The site's name
+
+`source.name` is the first of these that the pack has:
+
+1. The name its manifest records for the site (`source.site`), which the importer that read the pages gives: the site's name as it shows it to the person, such as the `name` of a site rules file.
+2. The site its guide pages name most (each page's `source.site`), the first of those named as often.
+3. For a pack read from web pages (`kind` `web-pages`), the host of the first page it records (`source.pages`), without a leading `www.`, such as `maps.example.org`.
+
+It is absent when the pack has none of these. The importer's `title` is never taken for it: one importer can read many sites.
 
 ## Small pictures
 

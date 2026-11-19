@@ -117,6 +117,58 @@ describe('pack descriptions (manifest version 2)', () => {
     expect(odd.schemaVersion === 2 && odd.system).toBeUndefined();
   });
 
+  it('keeps the name of the site the pages were read from, and drops one that cannot be read', () => {
+    const pack = makeFixturePack();
+    const importer = { id: 'example', title: 'Example importer' };
+    const page = (url: string) => ({ url, importedAt: '2026-11-10T00:00:00Z' });
+    const first = describePack(pack, {
+      updated: '2026-11-10T12:00:00Z',
+      writtenBy,
+      source: { importer, pages: [page('https://maps.example.org/a')], site: 'Example Maps' },
+    });
+    expect(first.source).toEqual({
+      importer,
+      pages: [page('https://maps.example.org/a')],
+      site: 'Example Maps',
+    });
+    expect(Object.keys(first.source!)).toEqual(['importer', 'pages', 'site']);
+    expect(packDataSchema.safeParse({ ...pack, manifest: first }).success).toBe(true);
+    // A later page with no site's name keeps the one recorded.
+    const pages = [page('https://maps.example.org/a'), page('https://maps.example.org/b')];
+    const kept = describePack(
+      { ...pack, manifest: first },
+      { updated: '2026-11-11T12:00:00Z', writtenBy, source: { importer, pages } },
+    );
+    expect(kept.source).toEqual({ importer, pages, site: 'Example Maps' });
+    // A new name replaces it.
+    const renamed = describePack(
+      { ...pack, manifest: kept },
+      { updated: '2026-11-12T12:00:00Z', writtenBy, source: { importer, pages, site: 'Maps Two' } },
+    );
+    expect(renamed.source?.site).toBe('Maps Two');
+    // None recorded, none given: none made up.
+    const none = describePack(pack, {
+      updated: '2026-11-10T12:00:00Z',
+      writtenBy,
+      source: { importer, pages },
+    });
+    expect(none.source && 'site' in none.source).toBe(false);
+    // A name that is not one is dropped when read, and the rest is kept.
+    for (const odd of [64, '   ', 'x'.repeat(201)]) {
+      const read = manifestSchema.parse({ ...first, source: { ...first.source, site: odd } });
+      expect(read.schemaVersion === 2 && read.source).toEqual({
+        importer,
+        pages: [page('https://maps.example.org/a')],
+      });
+    }
+    // Trimmed when read.
+    const spaced = manifestSchema.parse({
+      ...first,
+      source: { ...first.source, site: ' Example ' },
+    });
+    expect(spaced.schemaVersion === 2 && spaced.source?.site).toBe('Example');
+  });
+
   it('still reads version 1 manifests, without descriptive fields', () => {
     const { manifest } = makeFixturePack();
     expect(manifest.schemaVersion).toBe(1);

@@ -11,10 +11,13 @@ use serde_json::{json, Value};
 use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 
 use super::{
-    analyse, card::read_card, count_contents, describe_pack, pack_file_entries, plan_images,
-    preview::make_previews, refusal, shared_pictures, smaller, unavailable, AppInfo, DirCache,
-    Entry, EntryData, Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT,
-    HEADER_FILE, MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
+    analyse,
+    card::{read_card, site_name},
+    count_contents, describe_pack, pack_file_entries, plan_images,
+    preview::make_previews,
+    refusal, shared_pictures, smaller, unavailable, AppInfo, DirCache, Entry, EntryData, Header,
+    ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
+    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
 };
 use crate::{
     library::PackLock,
@@ -120,7 +123,7 @@ pub fn export_with_mine(
         maps[preview.map].preview = Some(preview.name.clone());
     }
     let cover = maps.iter().find_map(|map| map.preview.clone());
-    source_facts.name = card.site_name;
+    source_facts.name = site_name(card.site_name, &source_facts);
 
     let exported_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -1,7 +1,8 @@
 //! What a pack file's description says so another app can show a card for
 //! the file without unpacking it: the game's title and system, whether the
 //! game is kept for the person's own use, its maps, its pages as a guide or
-//! a wiki, and the name of the site its pages were read from. Everything is
+//! a wiki, and the name of the site its pages were read from (see
+//! [`site_name`]). Everything is
 //! read from the pack's own files, and what they do not say is left out.
 //! A file that cannot be read here only makes the description say less: it
 //! never stops an export.
@@ -11,7 +12,9 @@ use std::{collections::HashMap, fs, path::Path};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 
-use super::{read_json_capped, GameFacts, GuideFacts, GuideType, MapFacts, RawMap};
+use super::{
+    read_json_capped, GameFacts, GuideFacts, GuideType, MapFacts, RawMap, SourceFacts, SourceKind,
+};
 use crate::{
     library::MAX_PACK_FILE_BYTES,
     manifest::{MANIFEST_FILE, MAX_MANIFEST_BYTES},
@@ -30,7 +33,9 @@ pub struct Card {
     /// Each map, without its small picture (see `preview`).
     pub maps: Vec<MapFacts>,
     pub guides: Vec<GuideFacts>,
-    /// The site its pages were read from, as they name it.
+    /// The site its pages were read from, as the manifest names it
+    /// (`source.site`), else as its guide pages name it most; see
+    /// [`site_name`] for the whole rule.
     pub site_name: Option<String>,
 }
 
@@ -58,7 +63,13 @@ pub fn read_card(root: &Path, pack_title: &str, group: Option<&str>) -> Card {
         })
         .unwrap_or_else(|| pack_title.to_owned());
     let maps = map_facts(root);
-    let (guides, site_name) = guide_facts(root, &manifest, pack_title, !maps.is_empty());
+    let (guides, guides_site) = guide_facts(root, &manifest, pack_title, !maps.is_empty());
+    let site_name = manifest
+        .get("source")
+        .and_then(|source| source.get("site"))
+        .and_then(Value::as_str)
+        .and_then(|site| one_line(site, MAX_NAME_CHARS))
+        .or(guides_site);
     Card {
         game: GameFacts {
             title,
@@ -69,6 +80,24 @@ pub fn read_card(root: &Path, pack_title: &str, group: Option<&str>) -> Card {
         guides,
         site_name,
     }
+}
+
+/// The name of the site a pack was read from, as its description gives it
+/// (`source.name`): the one its card found (the manifest's `source.site`,
+/// else the site its guide pages name most), else, for a pack read from
+/// web pages, the host of the first page it records, without a leading
+/// `www.`; none when there is none of these. The importer's title is never
+/// taken for it: one importer can read many sites.
+pub fn site_name(card_site: Option<String>, source: &SourceFacts) -> Option<String> {
+    card_site.or_else(|| {
+        if source.kind != SourceKind::WebPages {
+            return None;
+        }
+        let url = tauri::Url::parse(&source.pages.first()?.url).ok()?;
+        let host = url.host_str()?;
+        let host = host.strip_prefix("www.").unwrap_or(host);
+        one_line(host, MAX_NAME_CHARS)
+    })
 }
 
 /// A text from a pack as one line: trimmed, line breaks as spaces, other

@@ -2594,13 +2594,15 @@ fn the_description_says_what_a_card_shows() {
         })
     );
     assert!(!header.personal_use && header.guides.is_empty());
-    assert_eq!(header.source.name, None, "no site's name is made up");
+    // Its site goes by the address of the first page read (see
+    // `the_site_is_named_by_the_manifest_then_the_pages_then_the_address`).
+    assert_eq!(header.source.name.as_deref(), Some("127.0.0.1"));
     let raw = json_entry(&file, HEADER_FILE);
     assert_eq!(raw["game"], json!({"title": "Test Valley"}));
     for key in ["personalUse", "guides"] {
         assert!(raw.get(key).is_none(), "{key}");
     }
-    assert!(raw["source"].get("name").is_none());
+    assert_eq!(raw["source"]["name"], "127.0.0.1");
     assert_eq!(raw["maps"][1]["name"], "West Ridge");
 
     // A game of pages read in order, kept for the person's own use.
@@ -2681,6 +2683,116 @@ fn the_description_says_what_a_card_shows() {
     .header;
     assert_eq!(header.guides[0].guide_type, GuideType::Wiki);
     assert_eq!(header.guides[0].pages, 4);
+}
+
+#[test]
+fn the_site_is_named_by_the_manifest_then_the_pages_then_the_address() {
+    let dir = TempDir::new("packfile-site-name");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    // Only the pages the manifest records: none from the page data.
+    fs::remove_dir_all(pack.join("import")).unwrap();
+    let mut manifest = manifest("1.0.0");
+    let importer = json!({"id": "demo-maps", "title": "Demo map site"});
+    manifest["source"] = json!({"importer": importer, "pages": [
+        {"url": "https://www.maps.example.org/test-valley/east", "importedAt": "2026-11-10T09:00:00.000Z"},
+        {"url": "https://other.example.net/test-valley/west", "importedAt": "2026-11-11T09:00:00.000Z"}
+    ]});
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    let mut runs = 0;
+    let mut name = || {
+        runs += 1;
+        run_export(
+            &folder_source(&pack),
+            Detail::Overview,
+            &dir.0.join(format!("{runs}.atlaspack")),
+        )
+        .unwrap()
+        .header
+        .source
+        .name
+    };
+    // Last: the host of the first page it records, without `www.`.
+    assert_eq!(name().as_deref(), Some("maps.example.org"));
+    // Before that: the site its guide pages name most.
+    let guide = |id: &str, site: &str| {
+        json!({"id": format!("{ID}:guide:{id}"), "title": id, "body": "x", "locationIds": [],
+               "source": {"url": "https://wiki.example.com/x", "site": site,
+                          "license": {"name": "CC BY-SA 4.0"}, "readAt": "2026-11-13"}})
+    };
+    put_json(
+        &pack.join("guides.json"),
+        &json!([
+            guide("a", "Example Map Wiki"),
+            guide("b", "Example Map Wiki"),
+            guide("c", "Other Wiki")
+        ]),
+    );
+    assert_eq!(name().as_deref(), Some("Example Map Wiki"));
+    // First: the name the manifest records for the site.
+    manifest["source"]["site"] = json!(" Example Maps ");
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name().as_deref(), Some("Example Maps"));
+    // A name that is no name is passed over.
+    manifest["source"]["site"] = json!("   ");
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name().as_deref(), Some("Example Map Wiki"));
+    // Never the importer's title: with no page, no guide and no name, none.
+    fs::remove_file(pack.join("guides.json")).unwrap();
+    manifest["source"] = json!({"importer": importer, "pages": []});
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name(), None);
+    // And none for a pack not read from a site.
+    manifest.as_object_mut().unwrap().remove("source");
+    put_json(&pack.join(MANIFEST_FILE), &manifest);
+    assert_eq!(name(), None);
+}
+
+#[test]
+fn the_address_of_a_page_names_its_site_by_its_host() {
+    use super::card::site_name;
+    let facts = |kind: SourceKind, urls: &[&str]| SourceFacts {
+        kind,
+        pages: urls
+            .iter()
+            .map(|url| PageFacts {
+                url: (*url).to_owned(),
+                ..PageFacts::default()
+            })
+            .collect(),
+        ..SourceFacts::default()
+    };
+    let web = |urls: &[&str]| site_name(None, &facts(SourceKind::WebPages, urls));
+    assert_eq!(
+        web(&["https://WWW.Maps.Example.org:8443/a?b#c"]).as_deref(),
+        Some("maps.example.org")
+    );
+    assert_eq!(
+        web(&["https://wwwmaps.example.org/a"]).as_deref(),
+        Some("wwwmaps.example.org")
+    );
+    assert_eq!(
+        web(&["http://guides.example.net/", "https://maps.example.org/"]).as_deref(),
+        Some("guides.example.net")
+    );
+    assert_eq!(web(&["not an address"]), None);
+    assert_eq!(web(&[]), None);
+    // A name already found is kept, and only a pack read from pages has a host.
+    assert_eq!(
+        site_name(
+            Some("Example Maps".into()),
+            &facts(SourceKind::WebPages, &["https://maps.example.org/"])
+        )
+        .as_deref(),
+        Some("Example Maps")
+    );
+    assert_eq!(
+        site_name(
+            None,
+            &facts(SourceKind::App, &["https://maps.example.org/"])
+        ),
+        None
+    );
 }
 
 #[test]

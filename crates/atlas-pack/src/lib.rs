@@ -257,9 +257,11 @@ pub enum SourceKind {
 #[serde(rename_all = "camelCase")]
 pub struct SourceFacts {
     pub kind: SourceKind,
-    /// The name of the site the pages were read from, as the pack records
-    /// it (the site its guide pages name). Absent when the pack records no
-    /// site's name.
+    /// The name of the site the pages were read from: the name the pack's
+    /// manifest records (`source.site`), else the site its guide pages name
+    /// most, else, for a pack read from web pages, the host of the first
+    /// page it records without a leading `www.`. Never the importer's
+    /// title. Absent when there is none of these.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
