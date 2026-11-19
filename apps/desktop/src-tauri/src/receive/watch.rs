@@ -451,7 +451,7 @@ impl Mark {
 }
 
 impl Fingerprint {
-    /// The state of every place the Library reads pack files and folders
+    /// The state of everything the Library reads pack files and folders
     /// from: the settings file, the pack folders of the maps folder by
     /// name, the pack files of the packs folder and the added folders of
     /// games and the pack folders directly in them, the added pack
