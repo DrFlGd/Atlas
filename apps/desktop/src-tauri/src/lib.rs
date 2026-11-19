@@ -311,9 +311,13 @@ pub fn run() {
             let library = library.with_picture_cache(tiles::measure::PictureCache::new(&app_data));
             let library = Arc::new(library);
             library.start();
-            // The pack file Atlas was started with.
+            // The pack file Atlas was started with, and the folders of pack
+            // files followed from now on.
             #[cfg(not(target_os = "android"))]
-            receive::open_at_start(app.handle(), &library);
+            {
+                receive::open_at_start(app.handle(), &library);
+                receive::follow(app.handle(), Arc::clone(&library));
+            }
             #[cfg(feature = "downloads")]
             let downloads = {
                 let manager = DownloadManager::new(app_data, registry).with_shared_folder(&shared);
@@ -534,7 +538,7 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
     };
     let navigation_app = app.handle().clone();
     let new_window_app = app.handle().clone();
-    WebviewWindowBuilder::from_config(app.handle(), &config)?
+    let window = WebviewWindowBuilder::from_config(app.handle(), &config)?
         .on_navigation(move |url| {
             if is_app_url(url, dev_url.as_ref()) {
                 return true;
@@ -549,6 +553,19 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
             NewWindowResponse::Deny
         })
         .build()?;
+    // The window getting the focus looks for pack files that arrived
+    // meanwhile (see `receive::watch`).
+    #[cfg(not(target_os = "android"))]
+    {
+        let focus_app = app.handle().clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(focused) = event {
+                receive::focus_changed(&focus_app, *focused);
+            }
+        });
+    }
+    #[cfg(target_os = "android")]
+    drop(window);
     Ok(())
 }
 

@@ -24,8 +24,12 @@
 
 #[cfg(not(target_os = "android"))]
 pub mod args;
+#[cfg(not(target_os = "android"))]
+mod drives;
 #[cfg(test)]
 mod tests;
+#[cfg(not(target_os = "android"))]
+pub mod watch;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -79,7 +83,7 @@ pub async fn library_forget_pack_file(
 }
 
 #[cfg(not(target_os = "android"))]
-pub use desktop::{open_at_start, second_start};
+pub use desktop::{focus_changed, follow, open_at_start, second_start};
 
 #[cfg(not(target_os = "android"))]
 mod desktop {
@@ -93,7 +97,8 @@ mod desktop {
 
     use super::{
         args::{self, StartRequest},
-        Opened, PACK_FILE_OPENED,
+        watch::{Receiver, Timing},
+        Opened, LIBRARY_CHANGED, PACK_FILE_OPENED,
     };
     use crate::{
         activity::{self, Area},
@@ -132,6 +137,9 @@ mod desktop {
             let library = Arc::clone(&library);
             if open(&app, &library, request, "started again") {
                 let _ = app.emit_to(MAIN_WINDOW, PACK_FILE_OPENED, ());
+                if let Some(receiver) = app.try_state::<Arc<Receiver>>() {
+                    receiver.look();
+                }
             }
         });
     }
@@ -162,5 +170,22 @@ mod desktop {
             queue.push(opened);
         }
         true
+    }
+
+    /// Starts following the folders the Library reads; a listing that
+    /// changed goes to the window.
+    pub fn follow<R: Runtime>(app: &AppHandle<R>, library: Arc<Library>) {
+        let handle = app.clone();
+        let receiver = Receiver::start(library, Timing::default(), move |listing| {
+            let _ = handle.emit_to(MAIN_WINDOW, LIBRARY_CHANGED, listing);
+        });
+        app.manage(Arc::new(receiver));
+    }
+
+    /// The window got or lost the focus.
+    pub fn focus_changed<R: Runtime>(app: &AppHandle<R>, focused: bool) {
+        if let Some(receiver) = app.try_state::<Arc<Receiver>>() {
+            receiver.focused(focused);
+        }
     }
 }

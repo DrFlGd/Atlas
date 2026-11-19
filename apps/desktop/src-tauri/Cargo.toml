@@ -75,6 +75,9 @@ png = "0.18.1"
 # manager) hands its arguments to the one running and ends (Apache-2.0 OR
 # MIT, the Tauri 2 plugin).
 tauri-plugin-single-instance = "2.5.5"
+# Noticing pack files that arrive, change or go in the folders Atlas reads
+# (src/receive/watch.rs), with a look that needs no events as well (CC0-1.0).
+notify = "8.2.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
