@@ -52,6 +52,10 @@ pub fn images_location(
     app_data: &Path,
     pack_id: &str,
 ) -> Result<ImagesLocation, String> {
+    // Nothing is downloaded for a pack read from a pack file.
+    if registry.kind(pack_id) == Some(PackKind::File) {
+        return Err(crate::library::PACK_FILE_NO_DOWNLOADS.to_owned());
+    }
     let root = registry
         .root(pack_id)
         .ok_or_else(|| format!("There is no installed pack called {pack_id:?}."))?;

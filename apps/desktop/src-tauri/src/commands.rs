@@ -1036,8 +1036,14 @@ pub fn library_reveal<R: Runtime>(
                 .map_err(|error| format!("Cannot create the maps folder: {error}"))?;
             folder
         }
+        // A pack read from a pack file: the folder that holds the file.
         RevealTarget::Pack { id } => library
             .pack_folder(&id)
+            .or_else(|| {
+                library
+                    .pack_file(&id)
+                    .and_then(|file| file.parent().map(std::path::Path::to_path_buf))
+            })
             .ok_or_else(|| "That pack has no folder.".to_owned())?,
         RevealTarget::Location { path } => library
             .known_location(&path)
@@ -1362,6 +1368,7 @@ pub async fn library_keep_styles(
 ) -> Result<crate::styles::StylesList, String> {
     let library = Arc::clone(&library);
     blocking(move || {
+        library.check_changeable(&pack_id)?;
         let Some(dir) = library.pack_folder(&pack_id) else {
             return Err("The game is not in the Library.".to_owned());
         };

@@ -165,6 +165,47 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
     })
 }
 
+/// The identifying fields of a pack file's description (see the
+/// `atlas-pack` crate), checked as [`read_head`] checks a manifest's: what
+/// the Library lists for a pack file it reads where it lies. The
+/// description does not say whether the game was made in the app, which
+/// only a pack in the maps folder can be changed as.
+pub fn head_of_header(header: &atlas_pack::Header) -> Result<ManifestHead, String> {
+    if !is_valid_pack_id(&header.pack_id) {
+        return Err(format!("its pack id {:?} is not usable", header.pack_id));
+    }
+    let title = header.title.trim();
+    if title.is_empty() || title.chars().count() > 200 {
+        return Err("its title is empty or too long".to_owned());
+    }
+    let pages: Vec<Value> = header
+        .source
+        .pages
+        .iter()
+        .filter_map(|page| serde_json::to_value(page).ok())
+        .collect();
+    Ok(ManifestHead {
+        id: header.pack_id.clone(),
+        title: title.to_owned(),
+        pack_version: header.pack_version.clone(),
+        importer: header
+            .source
+            .importer
+            .as_ref()
+            .map(|importer| (importer.id.clone(), importer.title.clone())),
+        pages: source_pages(&pages),
+        made_in_app: false,
+        personal_use: header.personal_use,
+        system: header
+            .game
+            .as_ref()
+            .and_then(|game| game.system.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && name.chars().count() <= MAX_SYSTEM_CHARS)
+            .map(str::to_owned),
+    })
+}
+
 /// Compares two `major.minor.patch` versions; anything else compares as 0.0.0.
 pub fn version_key(version: &str) -> (u64, u64, u64) {
     let core = version.split(['-', '+']).next().unwrap_or_default();

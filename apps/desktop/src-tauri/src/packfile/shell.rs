@@ -9,11 +9,12 @@ use serde::Serialize;
 use super::{
     export::{export_with_mine, Exported},
     import::{existing_folder, import, read_header, Imported},
-    pack_details, AppInfo, Header, Mine, PackDetails, PackSource, Progress, Stop, EXTENSION,
+    pack_details, pack_file_details, AppInfo, Header, Mine, PackDetails, PackSource, Progress,
+    Stop, EXTENSION,
 };
 use crate::{
     downloads::Downloads,
-    library::{Library, Origin},
+    library::{Library, Origin, PACK_FILE_NO_EXPORT},
     manifest::{read_head, version_key},
     packs::PackKind,
     tiles::pyramid::Detail,
@@ -29,6 +30,10 @@ pub fn source_for(
     id: &str,
 ) -> Result<PackSource, String> {
     let registry = library.registry();
+    // A pack file is not read as a folder, and not exported again.
+    if registry.kind(id) == Some(PackKind::File) {
+        return Err(PACK_FILE_NO_EXPORT.to_owned());
+    }
     let root = registry.root(id).ok_or_else(|| {
         "That game is not in the list any more. Refresh the list and try again.".to_owned()
     })?;
@@ -51,7 +56,12 @@ pub fn source_for(
 }
 
 /// The facts about a listed pack, for the Maps dialog.
+/// For a pack read from a pack file, the facts of its description.
 pub fn details(library: &Library, downloads: &Downloads, id: &str) -> Result<PackDetails, String> {
+    if let Some(pack) = library.registry().pack_file(id) {
+        let table = pack.check()?;
+        return Ok(pack_file_details(pack.path(), table.header()));
+    }
     pack_details(&source_for(library, downloads, id)?)
 }
 

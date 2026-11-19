@@ -553,6 +553,9 @@ impl DownloadManager {
     }
 
     fn store(&self, pack_id: &str) -> Result<TileStore, String> {
+        if self.registry.kind(pack_id) == Some(PackKind::File) {
+            return Err(crate::library::PACK_FILE_NO_DOWNLOADS.to_owned());
+        }
         let root = self
             .registry
             .root(pack_id)
