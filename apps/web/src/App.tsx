@@ -7,6 +7,7 @@ import { UiIcon } from './components/icons';
 import { MapPageStatus } from './components/MapPageStatus';
 import { MapPane } from './components/MapPane';
 import { MapsDialog } from './components/MapsDialog';
+import { PackArrivalNote } from './components/PackArrivalNote';
 import { PictureViewer } from './components/PictureViewer';
 import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
@@ -20,6 +21,7 @@ import { loadGameGroups } from './state/gameGroups';
 import { hasMap } from './state/guides';
 import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
 import { useLibrary } from './state/libraryView';
+import { followArrivals } from './state/packArrivals';
 import { loadOwnNotes } from './state/ownNotes';
 import { loadOwnPages } from './state/ownPages';
 import { loadOwnLists } from './state/ownLists';
@@ -74,8 +76,13 @@ export function App() {
   useEffect(() => {
     useAtlas.setState({ uiRequest: requestedUi(window.location.search, sessionStore()) });
     const stopSaves = initSaves();
+    // Before the start, so a pack file opened meanwhile is not missed.
+    const stopArrivals = followArrivals();
     void boot(parseViewHash(window.location.hash));
-    return stopSaves;
+    return () => {
+      stopSaves();
+      stopArrivals();
+    };
   }, []);
 
   // The person's own lists of the game, read when the game opens.
@@ -206,6 +213,7 @@ function Shell() {
       <SidePane name="details" title="Details">
         <DetailsPane />
       </SidePane>
+      <PackArrivalNote />
       <Toast />
       <ProfileDialog />
       {saveDialogOpen ? (

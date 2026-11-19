@@ -1926,6 +1926,31 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   color: #ffffff;
 }
 
+/* The note that another version of the pack file of the game shown
+   arrived (components/PackArrivalNote.tsx): quiet, in a corner, below
+   the notices. */
+.pack-arrival {
+  position: fixed;
+  z-index: 1450;
+  left: calc(16px + var(--atlas-inset-left, 0px));
+  bottom: calc(16px + var(--atlas-inset-bottom, 0px));
+  width: min(360px, calc(100% - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  box-shadow: var(--atlas-shadow);
+}
+
+.pack-arrival p {
+  margin: 0 0 8px;
+}
+
+.pack-arrival .pack-arrival-text {
+  font-weight: 600;
+}
+
 /* ------------------------------------------------------------------ */
 /* Profile dialog */
 

@@ -122,9 +122,11 @@ function useGameRow(id: string) {
     current: id === shown,
     origin: listed?.madeInApp
       ? 'Made in this app'
-      : listed && !listed.bundled
-        ? 'Imported from a pack file'
-        : 'Comes with the app',
+      : listed?.origin === 'opened-file'
+        ? 'Read from a pack file you opened'
+        : listed && !listed.bundled
+          ? 'Imported from a pack file'
+          : 'Comes with the app',
     ownGame: canMake && listed?.madeInApp === true && listed.origin === 'maps-folder',
     personalUse: listed?.personalUse === true,
     deletable: listed?.origin === 'maps-folder' && !listed.bundled,

@@ -215,6 +215,7 @@ const ORIGIN: Record<ListedPack['origin'], string> = {
   'maps-folder': 'Maps folder',
   location: 'Added folder',
   'packs-folder': 'Packs folder',
+  'opened-file': 'Pack file you opened',
 };
 
 function PackRow({ pack, active, busy }: { pack: ListedPack; active: boolean; busy: boolean }) {
