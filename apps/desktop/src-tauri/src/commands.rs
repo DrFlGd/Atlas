@@ -1773,8 +1773,9 @@ pub async fn packfile_export<R: Runtime>(
     .await
 }
 
-/// Asks for a pack file to import and says what is in it and what
-/// importing it would do. `None` when the person closes the dialog.
+/// Asks for a pack file to import (on a reader, to add to the packs
+/// folder) and says what is in it and what importing or adding it would
+/// do. `None` when the person closes the dialog.
 #[tauri::command]
 pub async fn packfile_pick<R: Runtime>(
     window: WebviewWindow<R>,
@@ -1782,8 +1783,12 @@ pub async fn packfile_pick<R: Runtime>(
     downloads: DownloadsState<'_>,
 ) -> Result<Option<packfile::shell::FileInfo>, String> {
     desktop_only()?;
-    let dialog = file_dialog(&window, "Import pack file")
-        .add_filter("Atlas pack file", &[packfile::EXTENSION]);
+    let title = if crate::library::READER {
+        "Add pack file"
+    } else {
+        "Import pack file"
+    };
+    let dialog = file_dialog(&window, title).add_filter("Atlas pack file", &[packfile::EXTENSION]);
     let Some(path) = chosen_path(|done| dialog.pick_file(done)).await? else {
         return Ok(None);
     };

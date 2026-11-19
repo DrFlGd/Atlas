@@ -1,5 +1,5 @@
 import type { ListedPack } from '../desktop';
-import { downloadsOffered, foldersOffered, importsOffered } from '../features';
+import { downloadsOffered, foldersOffered, importsOffered, readsPackFilesOnly } from '../features';
 import { deleteRow } from '../components/removalText';
 import type { GameKind } from '../state/gameFacts';
 import { rebuildPack, sessionGoing, updateGame, useImport } from '../state/importing';
@@ -57,6 +57,8 @@ export function MoreMenu({
   const folders = useAtlas(foldersOffered);
   const imports = useAtlas(importsOffered);
   const downloads = useAtlas(downloadsOffered);
+  // The desktop app without downloads keeps an added pack file a file.
+  const reader = useAtlas(readsPackFilesOnly);
   const canRebuild = useAtlas((s) =>
     s.config?.importers.some((i) => i.id === listed?.imported?.importerId),
   );
@@ -138,8 +140,10 @@ export function MoreMenu({
     rows.push({
       id: 'import-pack-file',
       icon: 'upload',
-      title: 'Import a pack file…',
-      text: 'Adds a game or a wiki from a pack file (.atlaspack) exported by Atlas on another computer. This game is not changed.',
+      title: reader ? 'Add a pack file…' : 'Import a pack file…',
+      text: reader
+        ? 'Copies a pack file (.atlaspack) exported by Atlas into the packs folder, where Atlas reads it. This game is not changed.'
+        : 'Adds a game or a wiki from a pack file (.atlaspack) exported by Atlas on another computer. This game is not changed.',
       run: () => void pickPackFile(),
     });
   }
@@ -203,8 +207,8 @@ export function MoreMenu({
         <p className="muted small library-more-empty" data-testid="pack-file-note">
           This map, wiki or guide is read from its pack file, and Atlas never changes a pack file.
           So it cannot be exported, deleted or refreshed here, and no map images are downloaded for
-          it. To change it, import the pack file first with Import a pack file. Your lists, notes
-          and found marks are kept by Atlas, not in the file.
+          it.{reader ? '' : ' To change it, import the pack file first with Import a pack file.'}{' '}
+          Your lists, notes and found marks are kept by Atlas, not in the file.
         </p>
       ) : rows.length === 0 ? (
         <p className="muted small library-more-empty">

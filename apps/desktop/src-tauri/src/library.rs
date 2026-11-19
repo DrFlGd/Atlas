@@ -101,11 +101,19 @@ pub const PACK_FILE_UNCHANGED: &str = if READER {
 
 /// Why map images and photos are not downloaded for a pack read from a
 /// pack file.
-pub const PACK_FILE_NO_DOWNLOADS: &str = "Map images and photos cannot be downloaded for a map that is read from a pack file, because Atlas never changes a pack file. To download them, import the pack file first with Import a pack file.";
+pub const PACK_FILE_NO_DOWNLOADS: &str = if READER {
+    "Map images and photos cannot be downloaded for a map that is read from a pack file, because Atlas never changes a pack file."
+} else {
+    "Map images and photos cannot be downloaded for a map that is read from a pack file, because Atlas never changes a pack file. To download them, import the pack file first with Import a pack file."
+};
 /// Why a pack read from a pack file is not exported.
 pub const PACK_FILE_NO_EXPORT: &str = "This map, wiki or guide is read from a pack file already, so it is not exported again. To pass it on, copy the pack file itself.";
 /// Why the pages a pack read from a pack file was made from are not opened.
-pub const PACK_FILE_NO_PAGES: &str = "The pages of a map that is read from a pack file cannot be opened here. To open them, import the pack file first with Import a pack file.";
+pub const PACK_FILE_NO_PAGES: &str = if READER {
+    "The pages of a map that is read from a pack file cannot be opened here."
+} else {
+    "The pages of a map that is read from a pack file cannot be opened here. To open them, import the pack file first with Import a pack file."
+};
 
 /// Why a pack file in the maps folder is not read, even one the person
 /// opened.

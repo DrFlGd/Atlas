@@ -5,7 +5,7 @@ import { GamesListBar, GamesSections, TagChips } from '../components/GameListToo
 import { useRowWords, useGamesList } from '../state/gamesList';
 import { BrowseStrip } from '../components/SiteReading';
 import { UiIcon } from '../components/icons';
-import { downloadsOffered, importsOffered } from '../features';
+import { downloadsOffered, importsOffered, readsPackFilesOnly } from '../features';
 import {
   gameKind,
   KIND_LABEL,
@@ -26,7 +26,9 @@ import {
   useLibrary,
   useOpenGameId,
 } from '../state/libraryView';
+import { reveal } from '../state/library';
 import { ownGamesOffered } from '../state/ownGames';
+import { pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
 import { SourcesLine } from '../components/GameTitles';
 import type { TagGroup, TaggedRow } from '../state/gameTags';
@@ -57,6 +59,7 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
 
   const downloads = useAtlas(downloadsOffered);
   const downloadsOpen = useLibrary((s) => s.downloads);
+  const reader = useAtlas(readsPackFilesOnly);
 
   useEffect(() => {
     void loadAllGameFacts();
@@ -142,7 +145,12 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
           ) : openId ? (
             <GamePane key={openId} id={openId} updatable={updatable.has(openId)} />
           ) : (
-            <p className="muted library-empty">Choose a game on the left.</p>
+            <p className="muted library-empty" data-testid="library-empty">
+              Choose a game on the left.
+              {reader
+                ? ' To add a map, wiki or guide for a game, add its pack file (.atlaspack) with Add a pack file, put the file into the packs folder, or open it from your file manager.'
+                : ''}
+            </p>
           )}
         </main>
       </div>
@@ -158,12 +166,55 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
   );
 }
 
-/** "Add a map or a wiki", where this app has importers. */
+/**
+ * "Add a map or a wiki", where this app has importers; in the desktop app
+ * without downloads, first the pack files it reads its games from.
+ */
 function AddArea() {
   const importers = useAtlas((s) => s.config?.importers.length ?? 0);
   const imports = useAtlas(importsOffered);
-  if (importers === 0 || !imports) return null;
-  return <AddBox />;
+  const reader = useAtlas(readsPackFilesOnly);
+  return (
+    <>
+      {reader ? <PackFilesBox /> : null}
+      {importers > 0 && imports ? <AddBox /> : null}
+    </>
+  );
+}
+
+/**
+ * Where the maps, wikis and guides of the desktop app without downloads
+ * come from: pack files, in the packs folder, opened from the file
+ * manager or added with Add a pack file (copied into the packs folder).
+ */
+function PackFilesBox() {
+  return (
+    <div className="library-side-tools-block" data-testid="library-pack-files">
+      <button
+        type="button"
+        className="button button-block"
+        data-testid="add-pack-file"
+        onClick={() => void pickPackFile()}
+      >
+        Add a pack file…
+      </button>
+      <button
+        type="button"
+        className="button button-block"
+        data-testid="open-packs-folder"
+        onClick={() => {
+          reveal({ kind: 'packs-folder' });
+        }}
+      >
+        Open packs folder
+      </button>
+      <p className="muted small">
+        Maps, wikis and guides for a game come in pack files (.atlaspack). Atlas reads every pack
+        file in the packs folder, and one you open from your file manager. Add a pack file copies
+        one into the packs folder.
+      </p>
+    </div>
+  );
 }
 
 /**

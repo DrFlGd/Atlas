@@ -319,6 +319,9 @@ export function sourceTag(
   if (listed.imported) return siteOf(listed.pages) ?? folderWords;
   if (listed.bundled || listed.origin === 'bundled') return 'Comes with the app';
   if (listed.origin === 'location') return 'In a folder you added';
+  if (listed.origin === 'packs-folder' || listed.origin === 'opened-file') {
+    return 'From a pack file';
+  }
   return folderWords;
 }
 

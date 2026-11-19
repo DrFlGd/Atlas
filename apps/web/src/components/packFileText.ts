@@ -197,29 +197,36 @@ export function compareWithInstalled(header: PackFileHeader, installed: PackDeta
   return { verdict: 'unknown' };
 }
 
-/** One sentence on which is newer; `date` writes a date (local time in the dialog). */
+/**
+ * One sentence on which is newer; `date` writes a date (local time in the
+ * dialog). With `shown`, for a file added on a reader, it compares the file
+ * with the game shown now, which adding the file leaves as it is.
+ */
 export function freshnessText(
   freshness: Freshness,
   date: (iso: string) => string = localDate,
+  shown = false,
 ): string {
+  const game = shown ? 'the game shown now' : 'the installed game';
+  const Game = shown ? 'The game shown now' : 'The installed game';
   switch (freshness.verdict) {
     case 'unknown':
       return 'Atlas cannot tell which is newer: neither records when its data was read.';
     case 'same':
       if (freshness.basis === 'same-file') {
-        return 'The installed game was imported from this same file.';
+        return `${Game} was imported from this same file.`;
       }
       if (freshness.basis === 'read-from') {
-        return 'The game shown now is read from this same file where it lies. Importing it puts a copy into the maps folder, where Atlas can change it.';
+        return shown
+          ? 'The game shown now is read from this same file where it lies.'
+          : 'The game shown now is read from this same file where it lies. Importing it puts a copy into the maps folder, where Atlas can change it.';
       }
       return 'Both hold data read from the game’s pages at the same time, in the same version.';
     default:
       break;
   }
   const newer = freshness.verdict === 'file-newer';
-  const [subject, other] = newer
-    ? ['This file', 'the installed game']
-    : ['The installed game', 'this file'];
+  const [subject, other] = newer ? ['This file', game] : [Game, 'this file'];
   const [mine, theirs] = newer
     ? [freshness.file, freshness.installed]
     : [freshness.installed, freshness.file];
@@ -230,8 +237,8 @@ export function freshnessText(
       return `${subject} is newer: it is version ${mine} of the game’s pack, ${other} has version ${theirs}.`;
     case 'dates':
       return newer
-        ? `This file is probably newer: it was made on ${date(mine)}, after the installed game last changed (${date(theirs)}).`
-        : `The installed game is probably newer: it last changed on ${date(mine)}, after this file was made (${date(theirs)}).`;
+        ? `This file is probably newer: it was made on ${date(mine)}, after ${game} last changed (${date(theirs)}).`
+        : `${Game} is probably newer: it last changed on ${date(mine)}, after this file was made (${date(theirs)}).`;
   }
 }
 
