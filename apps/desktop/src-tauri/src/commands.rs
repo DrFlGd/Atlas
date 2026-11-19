@@ -1150,6 +1150,67 @@ async fn delete_pack(
     Ok(deleted)
 }
 
+/// The folder maps, wikis and guides in the maps folder that a reader no
+/// longer uses (see `oldfolders.rs`), without their sizes. Refused in an
+/// app that is not a reader.
+#[tauri::command]
+pub async fn library_old_folders(
+    library: LibraryState<'_>,
+) -> Result<crate::oldfolders::OldFolders, String> {
+    crate::oldfolders::check_reader()?;
+    let library = Arc::clone(&library);
+    blocking(move || Ok(crate::oldfolders::list(&library))).await
+}
+
+/// How much room one folder of the maps folder takes, by its name in the
+/// list of old folders: counted off the async runtime, within a limit of
+/// files and of time.
+#[tauri::command]
+pub async fn library_old_folder_size(
+    library: LibraryState<'_>,
+    folder: String,
+) -> Result<crate::oldfolders::FolderSize, String> {
+    crate::oldfolders::check_reader()?;
+    let library = Arc::clone(&library);
+    blocking(move || crate::oldfolders::size_of(&library, &folder)).await
+}
+
+/// What removing old folders came to, and the packs listed after it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OldFoldersRemoved {
+    removed: Vec<crate::oldfolders::OldFolderRemoved>,
+    listing: Listing,
+}
+
+/// Removes old folders the person confirmed, each with the delete of a
+/// pack folder, then lists the packs again: a game whose folder went and
+/// whose pack file is there is then shown from the pack file.
+#[tauri::command]
+pub async fn library_remove_old_folders(
+    library: LibraryState<'_>,
+    downloads: DownloadsState<'_>,
+    folders: Vec<crate::oldfolders::OldFolderRef>,
+) -> Result<OldFoldersRemoved, String> {
+    crate::oldfolders::check_reader()?;
+    if folders.is_empty() || folders.len() > 10_000 {
+        return Err("Choose the folders to remove.".to_owned());
+    }
+    let library = Arc::clone(&library);
+    let downloads = downloads.inner().clone();
+    blocking(move || {
+        let removed = crate::oldfolders::remove(&library, &folders, &|id| downloads.is_active(id));
+        for done in removed.iter().filter(|done| done.removed) {
+            downloads.forget(&done.id);
+        }
+        Ok(OldFoldersRemoved {
+            removed,
+            listing: library.scan(),
+        })
+    })
+    .await
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImagesInfo {
