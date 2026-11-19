@@ -180,7 +180,7 @@ export interface MineRestored {
 }
 
 /** Adds the own lists, locations, types, photos and guide links a file carried to the person's, where they keep them. */
-async function restoreMine(imported: PackFileImported): Promise<MineRestored | null> {
+export async function restoreMine(imported: PackFileImported): Promise<MineRestored | null> {
   const pictures = imported.ownPictures ?? [];
   if (
     !imported.ownLists &&

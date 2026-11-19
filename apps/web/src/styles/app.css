@@ -1951,6 +1951,31 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   font-weight: 600;
 }
 
+/* The offer of the own things a pack file of a made map carries. */
+.made-pack-offer {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+}
+
+.pack-arrival .made-pack-offer {
+  margin: 4px 0 10px;
+}
+
+.made-pack-offer .made-pack-offer-text {
+  margin: 0 0 8px;
+}
+
+.made-pack-offer .row-actions,
+.made-pack-offer .own-game-form-row {
+  align-items: center;
+}
+
+.made-pack-offer-dismiss {
+  margin-left: auto;
+}
+
 /* ------------------------------------------------------------------ */
 /* Profile dialog */
 

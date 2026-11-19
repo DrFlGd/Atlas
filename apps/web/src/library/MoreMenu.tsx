@@ -4,6 +4,7 @@ import { deleteRow } from '../components/removalText';
 import type { GameKind } from '../state/gameFacts';
 import { rebuildPack, sessionGoing, updateGame, useImport } from '../state/importing';
 import { reveal } from '../state/library';
+import { canOpenForEditing, canWritePackFile, madePacksOffered } from '../state/madePacks';
 import { setMoreOpen } from '../state/libraryView';
 import { openExport, pickPackFile } from '../state/packFile';
 import { openPageInBrowser } from '../state/pageView';
@@ -13,9 +14,12 @@ import { UiIcon, type UiIconName } from '../components/icons';
 /**
  * What More can ask the game pane to show in its place: a confirmation
  * before deleting, or before starting a wiki again from the beginning, or
- * choosing a game to show this one with under one title, or its tags.
+ * choosing a game to show this one with under one title, or its tags; for
+ * a map made here, the confirmation before writing its pack file, opening
+ * it for editing or closing it without writing.
  */
-export type MoreConfirm = 'pack' | 'images' | 'title' | 'restart' | 'tags';
+export type MoreConfirm =
+  'pack' | 'images' | 'title' | 'restart' | 'tags' | 'write' | 'open' | 'close';
 
 /**
  * "More" on the open game: the things done less often, each with a
@@ -59,6 +63,8 @@ export function MoreMenu({
   const downloads = useAtlas(downloadsOffered);
   // The desktop app without downloads keeps an added pack file a file.
   const reader = useAtlas(readsPackFilesOnly);
+  // Maps made here become pack files (the desktop app without downloads).
+  const madePacks = useAtlas(madePacksOffered);
   const canRebuild = useAtlas((s) =>
     s.config?.importers.some((i) => i.id === listed?.imported?.importerId),
   );
@@ -73,6 +79,42 @@ export function MoreMenu({
     setMoreOpen(false);
   };
   const rows: MoreRow[] = [];
+  const madeFile = madePacks && canOpenForEditing(listed);
+  const editing = madePacks && canWritePackFile(listed) && listed?.editing !== undefined;
+  if (madePacks && canWritePackFile(listed) && !busy) {
+    rows.push({
+      id: 'write-pack-file',
+      icon: 'download',
+      title: 'Write the pack file…',
+      text: 'Writes this map with your own locations, lists and notes of it as one pack file, checks it, then removes its folder from the maps folder. You are asked first.',
+      run: () => {
+        onConfirm('write');
+      },
+    });
+  }
+  if (editing && !busy) {
+    rows.push({
+      id: 'close-editing',
+      icon: 'undo',
+      title: 'Close without writing…',
+      text: 'Removes the folder this map was opened into, and leaves its pack file as it was. You are asked first.',
+      danger: true,
+      run: () => {
+        onConfirm('close');
+      },
+    });
+  }
+  if (madeFile && !busy) {
+    rows.push({
+      id: 'open-editing',
+      icon: 'pencil',
+      title: 'Open for editing…',
+      text: 'Unpacks this map from its pack file into a folder in the maps folder, where you can change it. The pack file stays as it is until you write it again. You are asked first.',
+      run: () => {
+        onConfirm('open');
+      },
+    });
+  }
   if (updatable && !busy && !checkOnCard && !packFile) {
     rows.push({
       id: 'update-pack',
@@ -172,7 +214,8 @@ export function MoreMenu({
       },
     });
   }
-  const deletable = listed?.origin === 'maps-folder' && !listed.bundled && !busy;
+  // A map open for editing is closed without writing instead: its pack file is the map.
+  const deletable = listed?.origin === 'maps-folder' && !listed.bundled && !busy && !editing;
   if (deletable && kind === 'wiki' && wikiStart && imports && !reading) {
     rows.push({
       id: 'restart-wiki',
@@ -203,7 +246,14 @@ export function MoreMenu({
       aria-label={`More for ${title}`}
       data-testid="library-more-menu"
     >
-      {packFile ? (
+      {packFile && madeFile ? (
+        <p className="muted small library-more-empty" data-testid="pack-file-note">
+          This map is read from its pack file, and Atlas never changes a pack file by itself. So it
+          cannot be exported, deleted or refreshed here, and no map images are downloaded for it.
+          Open for editing unpacks it into a folder where you can change it. Your lists, notes and
+          found marks are kept by Atlas, not in the file.
+        </p>
+      ) : packFile ? (
         <p className="muted small library-more-empty" data-testid="pack-file-note">
           This map, wiki or guide is read from its pack file, and Atlas never changes a pack file.
           So it cannot be exported, deleted or refreshed here, and no map images are downloaded for

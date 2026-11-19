@@ -2,6 +2,12 @@ import { siteOf } from '@atlas/core';
 import { useEffect, useId, useState } from 'react';
 import { DeleteImagesConfirm } from '../components/DeleteImagesConfirm';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
+import {
+  CloseEditingConfirm,
+  MineOfferLine,
+  OpenForEditingConfirm,
+  WritePackFileConfirm,
+} from '../components/MadePackConfirm';
 import { RestartWikiConfirm } from '../components/RestartWikiConfirm';
 import {
   SameTitleOfferCard,
@@ -45,6 +51,7 @@ import {
   showGame,
   useLibrary,
 } from '../state/libraryView';
+import { canOpenForEditing, editingText, madePacksOffered } from '../state/madePacks';
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
 import { showSection } from '../touch/state';
@@ -63,7 +70,9 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
  * ("Added with Example Wiki from wiki.fenmoor.example").
  */
 function originText(listed: ListedPack | undefined): string {
-  if (listed?.madeInApp) return 'Made in this app';
+  if (listed?.madeInApp) {
+    return listed.packFile ? 'Made in Atlas, read from its pack file' : 'Made in this app';
+  }
   if (listed?.imported) {
     const site = siteOf(listed.pages);
     return `Added with ${listed.imported.importerTitle}${site ? ` from ${site}` : ''}`;
@@ -96,6 +105,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const more = useLibrary((s) => s.more);
   const [confirming, setConfirming] = useState<MoreConfirm | null>(null);
   const canMake = useAtlas(ownGamesOffered);
+  const madePacks = useAtlas(madePacksOffered);
   const group = useTitleOf(id);
   const { tags, tagGroups } = useTagsOfGame(id);
   const several = useAtlas((s) => s.catalog.length > 1);
@@ -127,6 +137,9 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const kind = gameKind(listed, details);
   const shown = shownId === id;
   const ownGame = canMake && listed?.madeInApp === true && listed.origin === 'maps-folder';
+  // A map made in the app, read from its pack file: it can be opened for editing.
+  const madeFile = madePacks && canOpenForEditing(listed);
+  const editing = madePacks ? editingText(listed) : null;
   const busy = library?.busy.includes(id) ?? false;
   const contents = details
     ? details.contents.maps === 0
@@ -247,7 +260,14 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
             <DeleteImagesConfirm id={id} title={title} onClose={close} />
           ) : confirming === 'title' ? (
             <ShowWithAnotherForm gameId={id} onClose={close} />
+          ) : confirming === 'write' ? (
+            <WritePackFileConfirm id={id} onClose={close} />
+          ) : confirming === 'open' ? (
+            <OpenForEditingConfirm id={id} onClose={close} />
+          ) : confirming === 'close' ? (
+            <CloseEditingConfirm id={id} onClose={close} />
           ) : null}
+          <MineOfferLine id={id} />
           <SameTitleOfferCard gameId={id} />
           {group ? <TitleCard id={id} /> : null}
           <ContentsCard
@@ -265,13 +285,42 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
           ) : null}
           {kind !== 'wiki' && shown ? <WikiCard /> : null}
           {ownGame && !busy ? (
-            <Card icon="pencil" title="Your game" testId="library-own-card">
+            <Card icon="pencil" title="Your map" testId="library-own-card">
+              {editing ? (
+                <p className="library-card-state" data-testid="library-editing">
+                  {editing}
+                </p>
+              ) : null}
               <p className="library-card-state">
-                Made in this app from pictures of its maps. Add map makes another map from a
-                picture; Add level adds a level to a map of the game shown; Rename changes its name;
-                Delete map deletes one of its maps after asking which.
+                Made in this app from pictures. Add map makes another map from a picture; Add level
+                adds a level to a map of the one shown; Rename changes its name; Delete map deletes
+                one of its maps after asking which.
+                {madePacks && listed?.madeHere
+                  ? ' Write the pack file makes it one pack file, read like any other, and removes its folder after asking.'
+                  : ''}
               </p>
-              <OwnGameActions id={id} title={title} />
+              <OwnGameActions id={id} title={title} place="pane" />
+            </Card>
+          ) : null}
+          {madeFile && !busy ? (
+            <Card icon="pencil" title="Your map, in its pack file" testId="library-made-file-card">
+              <p className="library-card-state">
+                Made in this app. Atlas reads it from its pack file and never changes the file by
+                itself. Open for editing unpacks it into a folder in the maps folder, where you can
+                change it; Write the pack file then writes the file again.
+              </p>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="button"
+                  data-testid="open-editing"
+                  onClick={() => {
+                    setConfirming('open');
+                  }}
+                >
+                  Open for editing…
+                </button>
+              </div>
             </Card>
           ) : null}
           {details ? (

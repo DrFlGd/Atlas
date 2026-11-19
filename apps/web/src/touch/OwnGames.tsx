@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { formatBytes } from '../components/downloadFormat';
+import { CloseEditingConfirm, WritePackFileConfirm } from '../components/MadePackConfirm';
 import type { CutJobProgress, PickedPicture } from '../desktop';
 import { numberFormat } from '../state/derived';
 import {
@@ -13,6 +14,7 @@ import {
   pickMapPicture,
   renameOwnGame,
 } from '../state/ownGames';
+import { canWritePackFile, madePacksOffered } from '../state/madePacks';
 import { useAtlas } from '../state/store';
 
 /*
@@ -415,12 +417,26 @@ function useMapsOf(gameId: string): { id: string; name: string }[] {
 const EMPTY_MAPS: { id: string; name: string }[] = [];
 
 /** The forms under a game's actions: one is open at a time. */
-type OwnForm = 'map' | 'level' | 'rename' | 'delete-map';
+type OwnForm = 'map' | 'level' | 'rename' | 'delete-map' | 'write' | 'close';
 
-export function OwnGameActions({ id, title }: { id: string; title: string }) {
+export function OwnGameActions({
+  id,
+  title,
+  place = 'touch',
+}: {
+  id: string;
+  title: string;
+  /** Where they are: the Library's card, or a row of the Games screen. */
+  place?: 'pane' | 'touch';
+}) {
   const [open, setOpen] = useState<OwnForm | null>(null);
   const maps = useMapsOf(id);
   const shown = useAtlas((s) => s.game?.entry.id === id);
+  const listed = useAtlas((s) => s.library?.packs.find((pack) => pack.id === id));
+  // On the desktop app without downloads, a map made here becomes a pack file.
+  const packs = useAtlas(madePacksOffered);
+  const writable = packs && canWritePackFile(listed);
+  const editing = writable && listed?.editing !== undefined;
   // A form closes itself only: one that ends its work late (a rename reads
   // the game again first) must not close the form opened after it.
   const closing = (form: OwnForm) => () => {
@@ -475,6 +491,32 @@ export function OwnGameActions({ id, title }: { id: string; title: string }) {
             Delete map…
           </button>
         ) : null}
+        {writable ? (
+          <button
+            type="button"
+            className="touch-text-button"
+            aria-expanded={open === 'write'}
+            data-testid="write-pack-file"
+            onClick={() => {
+              setOpen(open === 'write' ? null : 'write');
+            }}
+          >
+            Write the pack file…
+          </button>
+        ) : null}
+        {editing ? (
+          <button
+            type="button"
+            className="touch-text-button touch-text-button-danger"
+            aria-expanded={open === 'close'}
+            data-testid="close-editing"
+            onClick={() => {
+              setOpen(open === 'close' ? null : 'close');
+            }}
+          >
+            Close without writing…
+          </button>
+        ) : null}
       </div>
       {open === 'map' || open === 'level' ? (
         <PictureDialog
@@ -489,6 +531,12 @@ export function OwnGameActions({ id, title }: { id: string; title: string }) {
       {open === 'rename' ? <RenameForm id={id} title={title} onClose={closing('rename')} /> : null}
       {open === 'delete-map' ? (
         <DeleteMapConfirm id={id} maps={maps} onClose={closing('delete-map')} />
+      ) : null}
+      {open === 'write' ? (
+        <WritePackFileConfirm id={id} place={place} onClose={closing('write')} />
+      ) : null}
+      {open === 'close' ? (
+        <CloseEditingConfirm id={id} place={place} onClose={closing('close')} />
       ) : null}
     </>
   );
