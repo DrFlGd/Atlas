@@ -283,8 +283,6 @@ impl Follow {
     /// Takes a fingerprint, follows the folders it names, and scans when
     /// it changed; tells the listing when the scan's differs.
     fn look(&mut self, now: Instant) {
-        #[cfg(test)]
-        self.counts.looks.fetch_add(1, Ordering::SeqCst);
         let fingerprint = Fingerprint::take(&self.library);
         // After events a folder may have gone and come back since the last
         // look; its watch went with it, though the folders are the same.
@@ -302,6 +300,12 @@ impl Follow {
         self.first_change = None;
         self.last_change = None;
         self.last_look = now;
+        // Counted once it is done: a test that waits for the first look
+        // must not change a folder or the settings while that look is
+        // still taking its fingerprint, or the change is part of what the
+        // look learns and nothing is noticed after it.
+        #[cfg(test)]
+        self.counts.looks.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Watches the folders a fingerprint names, and no others. With

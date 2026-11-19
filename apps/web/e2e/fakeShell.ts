@@ -221,6 +221,25 @@ export interface MockShell {
     /** The commands called, in order. */
     calls: string[];
   };
+  /**
+   * Settings, "Atlas in the background" (the app without downloads on
+   * Windows), as the shell's `background` module answers it.
+   */
+  background: {
+    /** What `background_state` answers (`BackgroundState`). */
+    state: {
+      keepRunning: boolean;
+      onTop: boolean;
+      hotkey: { on: boolean; keys: string; offered: string; problem: string | null };
+      startWithSystem: { on: boolean | null; problem: string | null };
+    };
+    /** Combinations another program uses: the system does not take them. */
+    taken: string[];
+    /** Writing the entry that starts Atlas with Windows fails with this, if set. */
+    startFails: string | null;
+    /** The commands called with their arguments, in order. */
+    calls: { command: string; args: Record<string, unknown> }[];
+  };
 }
 
 /** The state of the kept packs, as the shell sends it. */
@@ -250,12 +269,14 @@ function installFakeShell({
   wiki,
   others,
   listed,
+  background,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
   wiki: WikiSite | null;
   others: Record<string, WikiSite>;
   listed: Record<string, unknown>[];
+  background: boolean;
 }) {
   const shell: MockShell = {
     events: [],
@@ -286,6 +307,17 @@ function installFakeShell({
       },
       pick: null,
       games: [],
+      calls: [],
+    },
+    background: {
+      state: {
+        keepRunning: false,
+        onTop: false,
+        hotkey: { on: false, keys: 'Ctrl+Alt+M', offered: 'Ctrl+Alt+M', problem: null },
+        startWithSystem: { on: false, problem: null },
+      },
+      taken: [],
+      startFails: null,
       calls: [],
     },
   };
@@ -486,10 +518,86 @@ function installFakeShell({
     const picture = site?.pages[slug]?.picture;
     return picture ? { ...data, shown: [{ alt: picture, type: 'image/png', data: PNG }] } : data;
   };
+  /**
+   * "Atlas in the background", as the shell's `background` module answers
+   * it: the same sentences for what this stand-in refuses. Not offered: the
+   * shell's answer of an app that does not offer it.
+   */
+  const answerBackground = (command: string, args: Record<string, unknown>) => {
+    const kept = shell.background;
+    kept.calls.push({ command, args });
+    // Tauri rejects with the command's error value, a string.
+    /* eslint-disable @typescript-eslint/only-throw-error */
+    if (!background) throw 'Atlas runs in the background only on Windows for now.';
+    const state = kept.state;
+    const taken = (keys: string) =>
+      `Another program uses ${keys} already, so Atlas cannot. Choose another combination.`;
+    if (command === 'background_set') {
+      const on = args.on === true;
+      switch (args.setting) {
+        case 'keepRunning':
+          state.keepRunning = on;
+          break;
+        case 'onTop':
+          state.onTop = on;
+          break;
+        case 'hotkey':
+          if (on && kept.taken.includes(state.hotkey.keys)) throw taken(state.hotkey.keys);
+          state.hotkey.on = on;
+          state.hotkey.problem = null;
+          break;
+        case 'startWithSystem':
+          if (kept.startFails) throw kept.startFails;
+          state.startWithSystem.on = on;
+          break;
+        default:
+          throw 'Atlas has no such setting.';
+      }
+    }
+    if (command === 'background_set_hotkey') {
+      const press = args.keys as {
+        code: string;
+        ctrl: boolean;
+        alt: boolean;
+        shift: boolean;
+        win: boolean;
+      };
+      const key = /^Key([A-Z])$|^Digit(\d)$|^(F\d{1,2})$/.exec(press.code);
+      if (!key)
+        throw 'Atlas cannot use this key for the hotkey. Press a letter, a digit or a function key with it.';
+      if (!press.ctrl && !press.alt && !press.shift && !press.win) {
+        throw 'Press at least one of Ctrl, Alt, Shift or the Windows key together with one other key.';
+      }
+      const keys = [
+        press.ctrl ? 'Ctrl+' : '',
+        press.alt ? 'Alt+' : '',
+        press.shift ? 'Shift+' : '',
+        press.win ? 'Win+' : '',
+        key[1] ?? key[2] ?? key[3],
+      ].join('');
+      if (keys === 'Alt+F4') throw 'Windows keeps Alt+F4 for itself. Choose another combination.';
+      if (state.hotkey.on && kept.taken.includes(keys)) throw taken(keys);
+      state.hotkey.keys = keys;
+    }
+    /* eslint-enable @typescript-eslint/only-throw-error */
+    return structuredClone(state);
+  };
   const invoke = async (command: string, args: Record<string, unknown> = {}) => {
     switch (command) {
       case 'desktop_info':
-        return { name: 'Atlas', version: '0.0.0', platform: 'test', downloads, sites: downloads };
+        return {
+          name: 'Atlas',
+          version: '0.0.0',
+          platform: 'test',
+          downloads,
+          sites: downloads,
+          ...(background ? { background: true } : {}),
+        };
+      case 'background_state':
+      case 'background_set':
+      case 'background_set_hotkey':
+      case 'background_pause_hotkey':
+        return answerBackground(command, args);
       case 'sites_list':
         return {
           folder: '/maps/Sites',
@@ -834,12 +942,15 @@ export async function setUp(
     wiki = null,
     others = null,
     listed = [],
+    background = false,
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
     others?: Record<string, WikiSite> | null;
     /** Packs the shell lists from the start, as it lists packs in the maps folder (`ListedPack`). */
     listed?: Record<string, unknown>[];
+    /** The shell offers "Atlas in the background" (the app without downloads on Windows). */
+    background?: boolean;
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -916,10 +1027,20 @@ export async function setUp(
     wiki,
     others: others ?? {},
     listed,
+    background,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
 }
+
+/** Changes the stand-in of "Atlas in the background" (see {@link MockShell.background}). */
+export const setBackground = (
+  page: Page,
+  change: { taken?: string[]; startFails?: string | null },
+) =>
+  page.evaluate((change) => {
+    Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell.background, change);
+  }, change);
 
 export const mock = (page: Page) =>
   page.evaluate(() => (window as unknown as { __mockShell: MockShell }).__mockShell);

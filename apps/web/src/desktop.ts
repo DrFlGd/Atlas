@@ -362,6 +362,59 @@ export interface DesktopInfo {
    * false.
    */
   sites?: boolean;
+  /**
+   * Settings has "Atlas in the background" (`background`): in the desktop
+   * app without downloads, on Windows. Absent counts as false.
+   */
+  background?: boolean;
+}
+
+/**
+ * The settings of "Atlas in the background", with what the system says
+ * (see the shell's `background` module).
+ */
+export interface BackgroundState {
+  /** "Keep Atlas running when its window is closed". */
+  keepRunning: boolean;
+  /** "Stay above other windows". */
+  onTop: boolean;
+  hotkey: {
+    on: boolean;
+    /** The combination, as a person reads it: "Ctrl+Alt+M". */
+    keys: string;
+    /** The combination offered. */
+    offered: string;
+    /** Why the hotkey does nothing now, if it does not. */
+    problem: string | null;
+  };
+  /** "Start Atlas when Windows starts", as the system says. */
+  startWithSystem: {
+    /** Null when it could not be read. */
+    on: boolean | null;
+    problem: string | null;
+  };
+}
+
+/** A switch of "Atlas in the background", as the shell names it. */
+export type BackgroundSetting = 'keepRunning' | 'hotkey' | 'onTop' | 'startWithSystem';
+
+/** The keys the person pressed for the hotkey. */
+export interface KeyPress {
+  /** `KeyboardEvent.code`. */
+  code: string;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  /** The Windows key (`metaKey`). */
+  win: boolean;
+}
+
+/** A game another program asked Atlas to show (`--show-pack`, `--show-game`). */
+export interface ShowRequest {
+  /** The games it names, in the Library's order. */
+  packs: string[];
+  /** The person's titles that hold several of them, each with those games in its order. */
+  groups: { id: string; members: string[] }[];
 }
 
 /** One file of the Sites folder: its text, or why the shell could not read it. */
@@ -1611,6 +1664,23 @@ export interface DesktopBridge {
     /** Notes they were added, or are not wanted, so they are not offered again. */
     mineChoose(id: string, exportedAt: string, added: boolean): Promise<void>;
   };
+  /**
+   * Atlas in the background, in the desktop app without downloads on
+   * Windows (see the shell's `background` module); other apps answer each
+   * with why not. `takeShow` is in the app without downloads on every
+   * desktop, and answers null elsewhere.
+   */
+  background: {
+    state(): Promise<BackgroundState>;
+    /** Switches one setting; the settings after it, or why not (nothing changed then). */
+    set(setting: BackgroundSetting, on: boolean): Promise<BackgroundState>;
+    /** Sets the hotkey's keys; refused with a sentence, keeping the old ones. */
+    setHotkey(keys: KeyPress): Promise<BackgroundState>;
+    /** The hotkey does nothing while the person presses new keys. */
+    pauseHotkey(paused: boolean): Promise<BackgroundState>;
+    /** The game another program asked for, if not taken yet. */
+    takeShow(): Promise<ShowRequest | null>;
+  };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
     /** Asks where to save, then saves. Null when the dialog was closed. */
@@ -1629,6 +1699,10 @@ export interface DesktopBridge {
     packFileOpened(handler: () => void): Promise<() => void>;
     /** The state of the kept packs changed (only in a build with downloads). */
     keptPacksChanged(handler: (status: KeptPacksStatus) => void): Promise<() => void>;
+    /** The settings of Atlas in the background changed from the tray. */
+    backgroundChanged(handler: (state: BackgroundState) => void): Promise<() => void>;
+    /** Another program asked to show a game; take it with `background.takeShow`. */
+    showRequested(handler: () => void): Promise<() => void>;
   };
   /** Pack files (`.atlaspack`): one game in one file, for another device. */
   packFiles: {
@@ -1952,6 +2026,13 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       mineChoose: (id, exportedAt, added) =>
         call('made_pack_mine_choose', { id, exportedAt, added }),
     },
+    background: {
+      state: () => call('background_state'),
+      set: (setting, on) => call('background_set', { setting, on }),
+      setHotkey: (keys) => call('background_set_hotkey', { keys }),
+      pauseHotkey: (paused) => call('background_pause_hotkey', { paused }),
+      takeShow: () => call<unknown>('background_take_show').then(showRequestFrom, () => null),
+    },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),
       open: () => call('list_file_open'),
@@ -1971,6 +2052,14 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
               handler(payload as KeptPacksStatus);
             })
           : noEvents('kept-packs-changed', () => undefined),
+      backgroundChanged: (handler) =>
+        listen('background-changed', (payload) => {
+          handler(payload as BackgroundState);
+        }),
+      showRequested: (handler) =>
+        listen('show-requested', () => {
+          handler();
+        }),
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
@@ -2020,6 +2109,27 @@ export function mineOfferFrom(value: unknown): MineOffer | null {
     return null;
   }
   return offer as MineOffer;
+}
+
+/**
+ * A game asked for from the shell's answer: only one of the shape of
+ * {@link ShowRequest} naming at least one game is taken; anything else
+ * (none, or a shell without the command answering with nothing) is no
+ * request. Exported for tests.
+ */
+export function showRequestFrom(value: unknown): ShowRequest | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { packs, groups } = value as { packs?: unknown; groups?: unknown };
+  const strings = (list: unknown): list is string[] =>
+    Array.isArray(list) && list.every((item) => typeof item === 'string');
+  if (!strings(packs) || packs.length === 0) return null;
+  const found: ShowRequest['groups'] = [];
+  for (const group of Array.isArray(groups) ? (groups as unknown[]) : []) {
+    if (typeof group !== 'object' || group === null) continue;
+    const { id, members } = group as { id?: unknown; members?: unknown };
+    if (typeof id === 'string' && strings(members)) found.push({ id, members });
+  }
+  return { packs, groups: found };
 }
 
 /** The bytes of a command that answers with raw bytes (an ArrayBuffer; a number array in older shells). */

@@ -175,7 +175,7 @@ export async function receiveOpened(): Promise<void> {
 }
 
 /** Resolves once the first game is shown (the app has started). */
-function started(): Promise<void> {
+export function started(): Promise<void> {
   if (get().game) return Promise.resolve();
   return new Promise((resolve) => {
     const stop = useAtlas.subscribe((state) => {

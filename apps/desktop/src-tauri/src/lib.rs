@@ -20,6 +20,10 @@
 //! (see `android_storage`, `picked.rs` and the progress file commands).
 
 pub mod activity;
+// Atlas in the background: the tray, a hotkey, the window kept above
+// others and its place, starting with the system, and the start options of
+// another program (the app without downloads).
+pub mod background;
 mod commands;
 mod downloads;
 pub mod gamefiles;
@@ -179,6 +183,11 @@ macro_rules! viewer_commands {
             ownpictures::own_picture_pick,
             receive::library_take_opened,
             receive::library_forget_pack_file,
+            background::background_state,
+            background::background_set,
+            background::background_set_hotkey,
+            background::background_pause_hotkey,
+            background::background_take_show,
             commands::library_old_folders,
             commands::library_old_folder_size,
             commands::library_remove_old_folders,
@@ -267,6 +276,14 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
         receive::second_start(app, args, cwd);
     }));
+    // The hotkey of Atlas in the background, only where it is offered:
+    // elsewhere the system's hotkeys are never touched.
+    #[cfg(not(target_os = "android"))]
+    let builder = if background::OFFERED {
+        builder.plugin(background::shell::hotkey_plugin())
+    } else {
+        builder
+    };
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -275,7 +292,8 @@ pub fn run() {
         .manage(commands::PackFileJobs::default())
         .manage(commands::PickedPackFiles::default())
         .manage(owngame_commands::CutJobs::default())
-        .manage(Arc::new(receive::Opened::default()));
+        .manage(Arc::new(receive::Opened::default()))
+        .manage(Arc::new(background::Shows::default()));
     // On Android, files the system's dialogs give as `content://` addresses
     // are opened through the fs plugin, from Rust only: no capability grants
     // the web app any of its commands.
@@ -348,10 +366,11 @@ pub fn run() {
             // The pack file Atlas was started with, and the folders of pack
             // files followed from now on.
             #[cfg(not(target_os = "android"))]
-            {
-                receive::open_at_start(app.handle(), &library);
+            let start_background = {
+                let background = receive::open_at_start(app.handle(), &library);
                 receive::follow(app.handle(), Arc::clone(&library));
-            }
+                background
+            };
             #[cfg(feature = "downloads")]
             let downloads = {
                 let manager =
@@ -401,7 +420,12 @@ pub fn run() {
                     );
                 }
             });
-            create_main_window(app)?;
+            // How the window starts, and where (see `background`).
+            #[cfg(not(target_os = "android"))]
+            let start = background::shell::prepare(app, &app_data, start_background);
+            #[cfg(target_os = "android")]
+            let start = ();
+            create_main_window(app, start)?;
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -604,10 +628,19 @@ fn bundled_packs(app: &App) -> Vec<BundledPack> {
     packs
 }
 
+/// How the main window starts, and where (see `background::shell::prepare`).
+#[cfg(not(target_os = "android"))]
+type WindowStart = (
+    background::decide::FirstWindow,
+    Option<background::place::WindowPlace>,
+);
+#[cfg(target_os = "android")]
+type WindowStart = ();
+
 /// Creates the window declared in `tauri.conf.json` (which has `create:
 /// false`), adding a navigation guard that keeps the webview on the app and
 /// sends web links to the system browser.
-fn create_main_window(app: &App) -> tauri::Result<()> {
+fn create_main_window(app: &App, start: WindowStart) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -623,7 +656,12 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
     };
     let navigation_app = app.handle().clone();
     let new_window_app = app.handle().clone();
-    let window = WebviewWindowBuilder::from_config(app.handle(), &config)?
+    let builder = WebviewWindowBuilder::from_config(app.handle(), &config)?;
+    #[cfg(not(target_os = "android"))]
+    let builder = background::shell::build_window(builder, start.0, start.1.as_ref());
+    #[cfg(target_os = "android")]
+    let () = start;
+    let window = builder
         .on_navigation(move |url| {
             if is_app_url(url, dev_url.as_ref()) {
                 return true;
@@ -639,15 +677,19 @@ fn create_main_window(app: &App) -> tauri::Result<()> {
         })
         .build()?;
     // The window getting the focus looks for pack files that arrived
-    // meanwhile (see `receive::watch`).
+    // meanwhile (see `receive::watch`). Closing it, and where it is, are
+    // for Atlas in the background.
     #[cfg(not(target_os = "android"))]
     {
         let focus_app = app.handle().clone();
+        let events_window = window.clone();
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::Focused(focused) = event {
                 receive::focus_changed(&focus_app, *focused);
             }
+            background::shell::window_event(&focus_app, &events_window, event);
         });
+        background::shell::start(app.handle(), &window, start.0, start.1);
     }
     #[cfg(target_os = "android")]
     drop(window);

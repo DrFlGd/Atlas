@@ -78,6 +78,20 @@ tauri-plugin-single-instance = "2.5.5"
 # Noticing pack files that arrive, change or go in the folders Atlas reads
 # (src/receive/watch.rs), with a look that needs no events as well (CC0-1.0).
 notify = "8.2.2"
+# Atlas in the background (src/background/, the app without downloads, on
+# Windows): the icon in the notification area, through Tauri's own tray
+# (Apache-2.0 OR MIT, the same crate as above with one more feature).
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+# The hotkey that brings Atlas forward, registered with the system only
+# while it is switched on (Apache-2.0 OR MIT, the Tauri 2 plugin). Used from
+# Rust only: no capability grants the web app any of its commands.
+tauri-plugin-global-shortcut = "2.4.1"
+# "Start Atlas when Windows starts": the entry in the current user's list of
+# programs started with Windows (MIT). The crate the Tauri 2 autostart
+# plugin is made of, used directly: the plugin writes the list of every user
+# when Atlas runs as administrator and leaves the program's path without
+# quotes, and it has no setting for either.
+auto-launch = "0.6.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

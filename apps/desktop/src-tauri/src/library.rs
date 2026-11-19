@@ -296,6 +296,11 @@ pub struct ListedPack {
     /// from.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editing: Option<crate::madepack::EditingFacts>,
+    /// The title the game is shown under, as its pack file says, when that
+    /// is not its own title (see `ManifestHead::game_title`). Only the
+    /// shell uses it, to find a game by its title (see `background`).
+    #[serde(skip)]
+    pub game_title: Option<String>,
 }
 
 /// When a pack file's pack was changed last and when the file was made,
@@ -1169,6 +1174,7 @@ impl Library {
             file_version: None,
             made_here: false,
             editing: None,
+            game_title: head.game_title,
         }
     }
 

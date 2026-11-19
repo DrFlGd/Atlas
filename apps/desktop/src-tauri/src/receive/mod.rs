@@ -13,7 +13,9 @@
 //! - **One Atlas at a time.** A second start hands its arguments to the
 //!   Atlas running (`tauri-plugin-single-instance`), which comes to the
 //!   front and shows the pack file, and the second start ends (see
-//!   [`second_start`]).
+//!   [`second_start`]). The start options of another program
+//!   (`--show-pack`, `--show-game`, `--background`, see `args.rs` and
+//!   `background`) work there too.
 //! - **Noticing what arrives, changes or goes** in the folders Atlas reads
 //!   (see `watch.rs`); a listing that changed is sent to the web app as
 //!   [`LIBRARY_CHANGED`].
@@ -102,39 +104,65 @@ mod desktop {
     };
     use crate::{
         activity::{self, Area},
+        background::{
+            self,
+            decide::{self, WindowAction},
+            shell, Shows, SHOW_REQUESTED,
+        },
         library::Library,
         MAIN_WINDOW,
     };
 
     /// Start-up: the pack file Atlas was started with, if any, read before
-    /// the window is made; the web app takes it at its start.
-    pub fn open_at_start<R: Runtime>(app: &AppHandle<R>, library: &Library) {
+    /// the window is made; the web app takes it at its start. A game asked
+    /// for by another program waits for it in the same way (see
+    /// `background`). Whether the start asked for the background.
+    pub fn open_at_start<R: Runtime>(app: &AppHandle<R>, library: &Library) -> bool {
         let cwd = std::env::current_dir().unwrap_or_default();
-        open(
-            app,
-            library,
-            args::read(std::env::args_os(), &cwd),
-            "started",
-        );
+        let request = args::read(std::env::args_os(), &cwd, crate::library::READER);
+        let background = request.background;
+        if let Some(show) = &request.show {
+            if let Some(found) = background::find_show(library, show) {
+                if let Some(shows) = app.try_state::<Arc<Shows>>() {
+                    shows.put(found);
+                }
+            }
+        }
+        open(app, library, request, "started");
+        background
     }
 
     /// A second start handed over its arguments and the folder it was
     /// started from: brings the window to the front and shows the pack
-    /// file they name, on a thread of its own (the second start waits for
-    /// this to return). Anything else in them is left out.
+    /// file or the game they name, on a thread of its own (the second start
+    /// waits for this to return). Anything else in them is left out. With
+    /// `--background`, or a game Atlas does not have, the window stays as
+    /// it is.
     pub fn second_start<R: Runtime>(app: &AppHandle<R>, args: Vec<String>, cwd: String) {
-        if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+        let request = args::read(
+            args.into_iter().map(OsString::from),
+            &PathBuf::from(cwd),
+            crate::library::READER,
+        );
+        // At once, as it always was, unless the game to show is looked for first.
+        if request.show.is_none() && !request.background {
+            shell::act(app, WindowAction::BringForward);
         }
         let app = app.clone();
         std::thread::spawn(move || {
-            let request = args::read(args.into_iter().map(OsString::from), &PathBuf::from(cwd));
             let Some(library) = app.try_state::<Arc<Library>>() else {
                 return;
             };
             let library = Arc::clone(&library);
+            if let Some(show) = &request.show {
+                let found = background::find_show(&library, show);
+                let nothing = found.is_none();
+                if let (Some(found), Some(shows)) = (found, app.try_state::<Arc<Shows>>()) {
+                    shows.put(found);
+                    let _ = app.emit_to(MAIN_WINDOW, SHOW_REQUESTED, ());
+                }
+                shell::act(&app, decide::on_second_start(request.background, nothing));
+            }
             if open(&app, &library, request, "started again") {
                 let _ = app.emit_to(MAIN_WINDOW, PACK_FILE_OPENED, ());
                 if let Some(receiver) = app.try_state::<Arc<Receiver>>() {
