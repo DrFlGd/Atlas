@@ -245,6 +245,7 @@ fn folder_source(dir: &Path) -> PackSource {
         comes_with_app: false,
         own_use_pictures: false,
         smaller_pictures: false,
+        group: None,
     }
 }
 
@@ -615,6 +616,7 @@ fn exports_images_from_the_overlay_of_a_pack_that_comes_with_the_app() {
         comes_with_app: true,
         own_use_pictures: false,
         smaller_pictures: false,
+        group: None,
     };
     let options = export_options(&source).unwrap();
     assert!(options.exportable);
@@ -1560,6 +1562,61 @@ fn exports_the_own_files_beside_the_game() {
     let without = export("without.atlaspack", false);
     assert_eq!(without.header.mine, None);
     assert_eq!(without.header.version, VERSION_WITHOUT_MINE);
+}
+
+#[test]
+fn the_game_goes_by_its_group_title_with_or_without_own_files() {
+    let dir = TempDir::new("packfile-group-title");
+    let (library, registry) = library_with(&dir.0, Vec::new());
+    let maps = library.maps_folder();
+    write_pack(&maps.join(ID), "1.0.0");
+    library.scan();
+    crate::gamegroups::write(
+        &maps,
+        &format!(
+            r#"{{"format":"atlas-game-groups","version":1,"groups":[{{"id":"g","title":"Isles","members":[{{"gameId":"other"}},{{"gameId":"{ID}"}}]}}]}}"#
+        ),
+        None,
+    )
+    .unwrap();
+    let downloads = crate::downloads::for_tests(&registry, dir.0.join("data"));
+    let export = |name: &str, include: bool| {
+        shell::export_pack_with_mine(
+            &library,
+            &downloads,
+            ID,
+            &app(),
+            Detail::Overview,
+            &dir.0.join(name),
+            include,
+            false,
+            false,
+            &mut |_| {},
+            &|| false,
+        )
+        .unwrap()
+    };
+    // Without the person's own files the title still names the game, but
+    // the group, with the other games' ids, stays out of the file.
+    let without = export("without.atlaspack", false);
+    assert_eq!(without.header.game.unwrap().title, "Isles");
+    assert_eq!(without.header.mine, None);
+    assert_eq!(without.header.version, VERSION_WITHOUT_MINE);
+    assert!(!entry_names(&dir.0.join("without.atlaspack")).contains_key("mine/game-group.json"));
+    // With them, the same title, and the group goes in.
+    let with = export("with.atlaspack", true);
+    assert_eq!(with.header.game.unwrap().title, "Isles");
+    assert_eq!(with.header.version, VERSION_WITH_TITLE);
+    assert!(entry_names(&dir.0.join("with.atlaspack")).contains_key("mine/game-group.json"));
+    // Out of the group, the pack's own title.
+    crate::gamegroups::write(
+        &maps,
+        r#"{"format":"atlas-game-groups","version":1,"groups":[]}"#,
+        None,
+    )
+    .unwrap();
+    let alone = export("alone.atlaspack", false);
+    assert_eq!(alone.header.game.unwrap().title, "Test Valley");
 }
 
 #[test]

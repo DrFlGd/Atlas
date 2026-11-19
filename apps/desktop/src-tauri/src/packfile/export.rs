@@ -105,7 +105,8 @@ pub fn export_with_mine(
 
     // What a card for the file shows, and a small picture of each map drawn
     // from its images in the file; they go right after the header.
-    let card = read_card(&source.root, &pack.title, mine.group.as_deref());
+    let group = source.group.as_deref().or(mine.group.as_deref());
+    let card = read_card(&source.root, &pack.title, group);
     let mut maps = card.maps;
     let previews = make_previews(
         &analysis,

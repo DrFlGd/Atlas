@@ -207,8 +207,10 @@ impl Header {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GameFacts {
-    /// The title the game is shown under with other games, when the file
-    /// carries that title; otherwise the pack's own title.
+    /// The title the game is shown under with other games when it is in a
+    /// group, whether or not the file carries that group
+    /// (`mine/game-group.json`); otherwise the pack's own title. Two packs
+    /// of one game, read from two sites and grouped, give the same title.
     pub title: String,
     /// The system the game is for, as the pack's manifest names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]

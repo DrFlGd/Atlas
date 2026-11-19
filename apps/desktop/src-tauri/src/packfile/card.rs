@@ -36,7 +36,8 @@ pub struct Card {
 
 /// The card of the pack in `root`, whose own title is `pack_title`. With
 /// `group`, the text of the title the game is shown under with other games
-/// that the file carries (`mine/game-group.json`), the game goes by that
+/// (`gamegroups::carried`, whether or not the file carries it as
+/// `mine/game-group.json`), the game goes by that
 /// title.
 pub fn read_card(root: &Path, pack_title: &str, group: Option<&str>) -> Card {
     let manifest =

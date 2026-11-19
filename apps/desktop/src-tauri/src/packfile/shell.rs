@@ -44,6 +44,7 @@ pub fn source_for(
         comes_with_app: library.is_bundled(id),
         own_use_pictures: false,
         smaller_pictures: false,
+        group: None,
         root,
         images,
     })
@@ -102,9 +103,16 @@ pub fn export_pack_with_mine(
     progress: &mut dyn FnMut(Progress),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Exported, Stop> {
+    // The title of the game's group names the game in the description
+    // whether or not its file goes in too; one that cannot be read only
+    // leaves the pack's own title there.
+    let group = crate::gamegroups::carried(&library.maps_folder(), id)
+        .ok()
+        .flatten();
     let source = PackSource {
         own_use_pictures,
         smaller_pictures,
+        group,
         ..source_for(library, downloads, id)?
     };
     if downloads.is_active(id) {

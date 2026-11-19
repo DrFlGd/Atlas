@@ -1033,6 +1033,11 @@ pub struct PackSource {
     /// The person chose "Pictures in the file: Smaller": the pictures it
     /// carries are made smaller as they are written (see [`smaller`]).
     pub smaller_pictures: bool,
+    /// The title the game is shown under with other games, when it is in a
+    /// group: the text `gamegroups::carried` gives, read whether or not the
+    /// person's own files go in the file, as the description's game title
+    /// (see `card`). It is written under `mine/` only with those files.
+    pub group: Option<String>,
 }
 
 /// One entry of the file.

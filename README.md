@@ -362,7 +362,7 @@ The titles are kept beside the games, not in them: in the desktop app as the fil
 
 A title has 2 to 20 games and a name of at most 200 characters, and a game is under one title at most; there are at most 1,000 titles. A game that is not on this device is kept in its title and not shown (the title says how many are away), and a title with one game here shows as that game. Deleting a game takes it out of its title. A pack's id never changes (its folder, its profiles and the person's own files are kept under it), so a title names games by id and needs no `idMigrations`. The file is written strictly and read tolerantly: unknown fields are ignored, a title or game that cannot be read is left out (and a copy of the file is kept before it is next written), and a file a newer Atlas wrote is shown and not changed.
 
-A map pack file exported with **Include my lists, locations, types and photos** carries the game's title as `mine/game-group.json` (`{ "format": "atlas-game-group", "version": 1, "gameId", "updatedAt", "title", "members" }`), as version 6 of the format; importing it adds the title, or puts the game under the title already here that holds one of its games.
+A map pack file exported with **Include my lists, locations, types and photos** carries the game's title as `mine/game-group.json` (`{ "format": "atlas-game-group", "version": 1, "gameId", "updatedAt", "title", "members" }`), as version 6 of the format; importing it adds the title, or puts the game under the title already here that holds one of its games. Every map pack file of a game under a title names the game by that title in its description (`game.title`), ticked or not; only the group itself, with the other games' ids, waits for the tick.
 
 ## The demo pack
 
