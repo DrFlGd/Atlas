@@ -23,6 +23,13 @@
 //! folder's listing carries each file's length and time, so this asks the
 //! drive for nothing more; elsewhere it asks for each file's metadata.
 //!
+//! For a map made in the app, whose pack carries the person's own things
+//! (`mine/`), their files beside the folder in the maps folder count too:
+//! each of `<id>.my-lists.json`, `<id>.my-locations.json`,
+//! `<id>.guide-links.json`, `<id>.my-pages.json` and `<id>.my-notes.json`
+//! that is a file, and every file in `<id>.my-pictures/`, with its name,
+//! length and modified time.
+//!
 //! An unchanged game gives the same fingerprint every time; any file added,
 //! removed, rewritten or renamed in it gives another one.
 
@@ -32,7 +39,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::packs::IMPORT_DIR;
+use crate::{
+    gamegroups,
+    packfile::MINE_ENTRIES,
+    packs::{is_valid_pack_id, IMPORT_DIR},
+};
 
 /// The most files and folders one fingerprint lists.
 pub const MAX_ENTRIES: u64 = 4_000_000;
@@ -79,9 +90,18 @@ fn millis(time: SystemTime) -> i64 {
     })
 }
 
+/// The person's own files of a game whose pack carries them: the maps
+/// folder they lie in, and the game's id.
+#[derive(Clone, Copy, Debug)]
+pub struct Own<'a> {
+    pub maps_folder: &'a Path,
+    pub game_id: &'a str,
+}
+
 /// Takes the fingerprint of the game folder `root`, with `extra` (the
-/// title it is shown under with other games, when grouped) folded in.
-pub fn take(root: &Path, extra: Option<&str>) -> Fingerprint {
+/// title it is shown under with other games, when grouped) and, with
+/// `own`, the person's own files of it folded in.
+pub fn take(root: &Path, extra: Option<&str>, own: Option<Own<'_>>) -> Fingerprint {
     struct Walk {
         sum: u64,
         mixed: u64,
@@ -93,6 +113,74 @@ pub fn take(root: &Path, extra: Option<&str>) -> Fingerprint {
         complete: bool,
     }
     impl Walk {
+        /// Counts one file, by its path in the fingerprint.
+        fn file(&mut self, path: &str, metadata: &fs::Metadata) {
+            let modified = metadata.modified().map_or(0, millis);
+            let mut hash = fnv(FNV_OFFSET, path.as_bytes());
+            hash = fnv(hash, &metadata.len().to_le_bytes());
+            hash = fnv(hash, &modified.to_le_bytes());
+            // Order does not matter: a sum and a mix of each file's hash.
+            self.sum = self.sum.wrapping_add(hash);
+            self.mixed ^= hash.rotate_left(17).wrapping_mul(FNV_PRIME);
+            self.files += 1;
+            self.changed_at = self.changed_at.max(modified);
+        }
+
+        /// The person's own files beside the folder (see the module).
+        fn own(&mut self, own: Own<'_>) {
+            if !is_valid_pack_id(own.game_id) {
+                self.complete = false;
+                return;
+            }
+            for (entry, kind) in MINE_ENTRIES {
+                // The title it is shown under is `extra`, not a file of its own.
+                if kind.suffix == gamegroups::CARRIED.suffix {
+                    continue;
+                }
+                let path = own
+                    .maps_folder
+                    .join(format!("{}{}", own.game_id, kind.suffix));
+                // Never through a link.
+                if let Ok(metadata) = fs::symlink_metadata(&path) {
+                    if metadata.is_file() {
+                        self.file(entry, &metadata);
+                    }
+                }
+            }
+            let pictures = own.maps_folder.join(format!(
+                "{}{}",
+                own.game_id,
+                crate::ownpictures::PICTURES_SUFFIX
+            ));
+            let is_folder = fs::symlink_metadata(&pictures).is_ok_and(|metadata| metadata.is_dir());
+            if !is_folder {
+                return;
+            }
+            let Ok(entries) = fs::read_dir(&pictures) else {
+                self.complete = false;
+                return;
+            };
+            for entry in entries.flatten() {
+                self.entries += 1;
+                if self.entries > MAX_ENTRIES {
+                    self.complete = false;
+                    return;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') || name.ends_with(".part") {
+                    continue;
+                }
+                if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                    continue;
+                }
+                let Ok(metadata) = entry.metadata() else {
+                    self.complete = false;
+                    continue;
+                };
+                self.file(&format!("mine/pictures/{name}"), &metadata);
+            }
+        }
+
         fn folder(&mut self, dir: &Path, relative: &str, depth: usize) {
             let Ok(entries) = fs::read_dir(dir) else {
                 // A folder that cannot be listed is not known to be unchanged.
@@ -131,15 +219,7 @@ pub fn take(root: &Path, extra: Option<&str>) -> Fingerprint {
                         self.complete = false;
                         continue;
                     };
-                    let modified = metadata.modified().map_or(0, millis);
-                    let mut hash = fnv(FNV_OFFSET, path.as_bytes());
-                    hash = fnv(hash, &metadata.len().to_le_bytes());
-                    hash = fnv(hash, &modified.to_le_bytes());
-                    // Order does not matter: a sum and a mix of each file's hash.
-                    self.sum = self.sum.wrapping_add(hash);
-                    self.mixed ^= hash.rotate_left(17).wrapping_mul(FNV_PRIME);
-                    self.files += 1;
-                    self.changed_at = self.changed_at.max(modified);
+                    self.file(&path, &metadata);
                     if !path.starts_with("pictures/") && is_image(&name) {
                         self.images += 1;
                         self.image_bytes += metadata.len();
@@ -159,6 +239,9 @@ pub fn take(root: &Path, extra: Option<&str>) -> Fingerprint {
         complete: true,
     };
     walk.folder(root, "", 0);
+    if let Some(own) = own {
+        walk.own(own);
+    }
     let mut hash = fnv(FNV_OFFSET, &walk.sum.to_le_bytes());
     hash = fnv(hash, &walk.mixed.to_le_bytes());
     hash = fnv(hash, &walk.files.to_le_bytes());

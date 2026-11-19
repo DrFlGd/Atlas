@@ -4,15 +4,18 @@
 //!
 //! The person chooses one folder once (another app's folder of maps and
 //! guides, or any folder; by default the packs folder). From then on each
-//! map and wiki read from a site on this computer (a game folder in the
-//! maps folder, see [`candidates`]) has a pack file in that folder, written
-//! again where it lies when the game changed:
+//! map and wiki read from a site on this computer, each map made in the app
+//! here, and each map Map Maker put in the maps folder (a game folder in
+//! the maps folder, see [`candidates`]) has a pack file in that folder,
+//! written again where it lies when the game changed. Only the pack of a
+//! map made in the app carries the person's own things of it (`mine/`):
 //!
 //! - **When.** "Write all packs now"; by itself once a change to a game is
 //!   finished (a page saved by a session or an update of the game, a
 //!   download of its map images or photos, saving images from its map
 //!   page, its downloaded images deleted, its title under one title
-//!   changed); and a check at each start, then daily or weekly as the
+//!   changed; for a map made in the app, a map or level added, renamed or
+//!   deleted, or the person's own things of it saved); and a check at each start, then daily or weekly as the
 //!   person picks. A change counts as finished when nothing has touched the
 //!   game for a quiet time ([`Timing::quiet`]) and nothing is still working
 //!   on it: no download of it is queued, running or paused, its files are
@@ -73,12 +76,13 @@ use crate::{
     downloads::Downloads,
     library::{is_inside, packs_in, same_path, Library},
     manifest::{now_rfc3339, ManifestHead},
-    oldfolders::{is_made_here, read_from_pages_here},
+    manifest::{MANIFEST_FILE, MAX_MANIFEST_BYTES},
+    oldfolders::{is_made_in_folder, read_from_pages_here},
     packfile::{
         card::{read_card, site_name},
         describe_pack,
         export::NO_ROOM,
-        iso_millis, read_imported_record, AppInfo, PackSource, Stop,
+        iso_millis, read_imported_record, read_json_capped, AppInfo, Mine, PackSource, Stop,
     },
     settings::default_packs_folder,
 };
@@ -220,53 +224,95 @@ pub struct Candidate {
     pub title: String,
     pub dir: PathBuf,
     pub left_out: Option<&'static str>,
+    /// Where the game came from, which says what its pack carries.
+    pub from: GameSource,
 }
+
+/// Where a game that gets a pack came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameSource {
+    /// Read from a site on this computer: its pack never carries the
+    /// person's own things.
+    Site,
+    /// Made in the app here: its pack carries the person's own things of
+    /// it (`mine/`), and its name names no site.
+    MadeHere,
+    /// Put in the maps folder by Map Maker: no own things, no site.
+    MapMaker,
+}
+
+/// The name Map Maker writes in the manifest of each folder it makes
+/// (`writtenBy.name`); it replaces only a folder that carries it.
+pub const MAP_MAKER: &str = "Atlas Map Maker";
 
 /// Why a game in the maps folder gets no pack.
 const BUNDLED: &str = "It comes with the app.";
 const NOT_SHOWN: &str = "Another folder of the same game is shown instead.";
-const MADE_HERE: &str = "It was made in Atlas. Games made in Atlas are not written yet.";
 const FROM_PACK_FILE: &str =
     "It was imported from a pack file, so its pack file is the one to keep.";
-const NOT_READ_HERE: &str = "It was not read from a site on this computer.";
+const NOT_READ_HERE: &str =
+    "It was not read from a site on this computer, made in Atlas here, or made by Map Maker.";
 const ARCHIVE: &str = "Its map images are one large archive file, which a pack file cannot carry.";
 
 /// The games of the maps folder: those read from sites on this computer,
-/// and the others with why they are left out (a game that comes with the
-/// app, one made in the app, one imported from a pack file, one that
-/// names no site). Pack files and the folders the person added are not
-/// listed: they are not this app's to write.
+/// made in the app here or put there by Map Maker, and the others with why
+/// they are left out (a game that comes with the app, one imported from a
+/// pack file, one that is none of these). Pack files and the folders the
+/// person added are not listed: they are not this app's to write.
 pub fn candidates(library: &Library) -> Vec<Candidate> {
     let mut found = Vec::new();
     for (dir, head) in packs_in(&library.maps_folder()).0 {
-        let left_out = left_out(library, &dir, &head);
+        let (left_out, from) = match sort(library, &dir, &head) {
+            Ok(from) => (None, from),
+            Err(reason) => (Some(reason), GameSource::Site),
+        };
         found.push(Candidate {
             id: head.id,
             title: head.title,
             dir,
             left_out,
+            from,
         });
     }
     found
 }
 
-fn left_out(library: &Library, dir: &Path, head: &ManifestHead) -> Option<&'static str> {
+/// Where a game came from, or why it gets no pack. A folder imported from a
+/// pack file (an opened one too) gets none: its pack file is the one to
+/// keep. A game read from a site never counts as made here, whatever its
+/// manifest says, so its pack never carries the person's own things.
+fn sort(library: &Library, dir: &Path, head: &ManifestHead) -> Result<GameSource, &'static str> {
     if library.is_bundled(&head.id) {
-        Some(BUNDLED)
+        Err(BUNDLED)
     } else if !library
         .pack_folder(&head.id)
         .is_some_and(|shown| same_path(&shown, dir))
     {
-        Some(NOT_SHOWN)
-    } else if is_made_here(dir, head) {
-        Some(MADE_HERE)
+        Err(NOT_SHOWN)
     } else if read_imported_record(dir).is_some() {
-        Some(FROM_PACK_FILE)
-    } else if !read_from_pages_here(dir, head) {
-        Some(NOT_READ_HERE)
+        Err(FROM_PACK_FILE)
+    } else if read_from_pages_here(dir, head) {
+        Ok(GameSource::Site)
+    } else if is_made_in_folder(dir, head) {
+        Ok(GameSource::MadeHere)
+    } else if is_map_maker_folder(dir) {
+        Ok(GameSource::MapMaker)
     } else {
-        None
+        Err(NOT_READ_HERE)
     }
+}
+
+/// Whether Map Maker made the folder: its manifest names it as the writer
+/// (`writtenBy.name`), the very mark Map Maker itself goes by before it
+/// replaces a folder.
+pub fn is_map_maker_folder(dir: &Path) -> bool {
+    read_json_capped(&dir.join(MANIFEST_FILE), MAX_MANIFEST_BYTES).is_ok_and(|manifest| {
+        manifest
+            .get("writtenBy")
+            .and_then(|writer| writer.get("name"))
+            .and_then(serde_json::Value::as_str)
+            == Some(MAP_MAKER)
+    })
 }
 
 /// How a finished file replaces its target.
@@ -1170,7 +1216,14 @@ impl Loop {
                 return Ok(());
             }
         };
-        let source = match self.source_of(&id) {
+        let source = match self.source_of(&id).and_then(|source| {
+            let mine = if item.game.from == GameSource::MadeHere {
+                Mine::read(&inner.library.maps_folder(), &id)?
+            } else {
+                Mine::default()
+            };
+            Ok((source, mine))
+        }) {
             Ok(source) => source,
             Err(reason) => {
                 inner.set_row(Row {
@@ -1254,8 +1307,10 @@ impl Loop {
             Ok(())
         };
         let title = item.game.title.clone();
+        let (source, mine) = source;
         let result = write_pack(
             &source,
+            &mine,
             &inner.app,
             &target,
             &mut |phase, progress| {
@@ -1476,7 +1531,11 @@ impl GameFacts {
             .ok()
             .flatten();
         let card = read_card(&game.dir, &pack.title, group.as_deref());
-        let site = site_name(card.site_name, &source);
+        // A map made here or by Map Maker is of no site.
+        let site = match game.from {
+            GameSource::Site => site_name(card.site_name, &source),
+            GameSource::MadeHere | GameSource::MapMaker => None,
+        };
         Ok(Self {
             updated: pack.updated.as_deref().and_then(iso_millis),
             stem: folder::stem_from(
@@ -1491,12 +1550,18 @@ impl GameFacts {
 }
 
 impl Fingerprint {
-    /// The fingerprint of a game, with the title it is shown under.
+    /// The fingerprint of a game, with the title it is shown under and, for
+    /// a map made here, the person's own files of it.
     fn of(game: &Candidate, library: &Library) -> Self {
-        let group = crate::gamegroups::carried(&library.maps_folder(), &game.id)
+        let maps_folder = library.maps_folder();
+        let group = crate::gamegroups::carried(&maps_folder, &game.id)
             .ok()
             .flatten();
-        fingerprint::take(&game.dir, group.as_deref())
+        let own = (game.from == GameSource::MadeHere).then_some(fingerprint::Own {
+            maps_folder: &maps_folder,
+            game_id: &game.id,
+        });
+        fingerprint::take(&game.dir, group.as_deref(), own)
     }
 }
 

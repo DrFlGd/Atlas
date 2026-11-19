@@ -393,3 +393,34 @@ export function stylesText(styles: PackDetails['styles']): string | null {
     styles.leftOut === 1 ? '1 more was' : `${numberFormat.format(styles.leftOut)} more were`;
   return `${text} ${more} not kept; the activity log says why.`;
 }
+
+/** "2 lists, 5 locations and 1 type" of a person's own, as a file carries them. */
+export function mineText(mine: {
+  lists: number;
+  locations: number;
+  types: number;
+  areas: number;
+  photos?: number;
+  guideLinks?: boolean;
+  pages?: number;
+  sections?: number;
+  notes?: number;
+  group?: boolean;
+}): string {
+  const count = (n: number, one: string, many: string) =>
+    n === 1 ? `1 ${one}` : `${n.toLocaleString('en')} ${many}`;
+  const parts = [
+    mine.lists > 0 ? count(mine.lists, 'list', 'lists') : null,
+    mine.locations > 0 ? count(mine.locations, 'location', 'locations') : null,
+    mine.types > 0 ? count(mine.types, 'type', 'types') : null,
+    mine.areas > 0 ? count(mine.areas, 'area', 'areas') : null,
+    (mine.photos ?? 0) > 0 ? count(mine.photos ?? 0, 'photo', 'photos') : null,
+    mine.guideLinks ? 'guide links' : null,
+    (mine.pages ?? 0) > 0 ? count(mine.pages ?? 0, 'page', 'pages') : null,
+    (mine.sections ?? 0) > 0 ? count(mine.sections ?? 0, 'section', 'sections') : null,
+    (mine.notes ?? 0) > 0 ? count(mine.notes ?? 0, 'note', 'notes') : null,
+    mine.group ? 'the title it shares with other games' : null,
+  ].filter((part): part is string => part !== null);
+  if (parts.length === 0) return 'lists, locations and types (none)';
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;
+}

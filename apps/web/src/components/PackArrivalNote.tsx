@@ -7,12 +7,15 @@ import {
   useArrival,
 } from '../state/packArrivals';
 import { UiIcon } from './icons';
+import { MineOfferLine } from './MadePackConfirm';
 
 /**
  * A quiet note in a corner of the window when another version of the pack
  * file of the game shown arrived (see `state/packArrivals.ts`): what came,
  * a button that loads it and what loading it keeps. The person reads on
- * undisturbed until they press it; "Not now" puts the note away.
+ * undisturbed until they press it; "Not now" puts the note away. For a map
+ * made in the app whose file carries its maker's own things, the line that
+ * offers them, with its own button.
  */
 export function PackArrivalNote() {
   const note = useArrival((s) => s.note);
@@ -27,6 +30,7 @@ export function PackArrivalNote() {
     >
       <p className="pack-arrival-text">{arrivalText(note)}</p>
       <p className="muted small">{ARRIVAL_KEEPS}</p>
+      <MineOfferLine id={note.id} />
       <div className="row-actions">
         <button
           type="button"

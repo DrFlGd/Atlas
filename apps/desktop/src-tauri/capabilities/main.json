@@ -96,6 +96,14 @@
     "allow-library-old-folders",
     "allow-library-old-folder-size",
     "allow-library-remove-old-folders",
+    "allow-made-pack-plan",
+    "allow-made-pack-write",
+    "allow-made-pack-open-plan",
+    "allow-made-pack-open",
+    "allow-made-pack-close",
+    "allow-made-pack-mine-offer",
+    "allow-made-pack-mine-take",
+    "allow-made-pack-mine-choose",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

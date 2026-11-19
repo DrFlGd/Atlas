@@ -440,6 +440,17 @@ export interface ListedPack {
    * say). Absent from an older shell.
    */
   fileVersion?: { changed: number | null; made: number | null };
+  /**
+   * In the desktop app without downloads: a map made in the app whose
+   * folder was made on this computer, or opened for editing here, so
+   * "Write the pack file" is offered. Absent counts as false.
+   */
+  madeHere?: boolean;
+  /**
+   * A map opened for editing from its pack file: the file it came from,
+   * which "Write the pack file" writes again. Absent otherwise.
+   */
+  editing?: { path: string; fileName: string };
 }
 
 /** A single pack file the person opened from the file manager. */
@@ -1053,6 +1064,69 @@ export interface CutJobProgress {
   cancelling: boolean;
 }
 
+/** The person's own things a pack file carries, counted (see {@link PackFileHeader.mine}). */
+export type MineFacts = NonNullable<PackFileHeader['mine']>;
+
+/** What "Write the pack file" would do for a map made here, before anything is written. */
+export interface MadePackPlan {
+  id: string;
+  title: string;
+  /** The map's working folder. */
+  folder: string;
+  /** The pack file written, its name and the folder it goes in. */
+  target: string;
+  fileName: string;
+  targetFolder: string;
+  /** A pack file is there, and is written over. */
+  replaces: boolean;
+  /** It is the file the map was opened from. */
+  openedFrom: boolean;
+  /** The file there is newer than the one opened: why, in words. Written over only on Replace. */
+  newer: string | null;
+  /** The working folder is removed once the file is written and checked. */
+  removesFolder: boolean;
+  /** The person's own things that go in the file. */
+  mine: MineFacts | null;
+}
+
+/** A map made here, written as a pack file. */
+export interface MadePackWritten {
+  id: string;
+  path: string;
+  fileName: string;
+  size: number;
+  header: PackFileHeader;
+  folderRemoved: boolean;
+  /** Every file of the folder went; otherwise some go at the next start. */
+  folderComplete: boolean;
+  /** What else to know, such as why the folder was kept. */
+  note: string | null;
+  listing: Listing;
+}
+
+/** What "Open for editing" would do for a map read from its pack file. */
+export interface MadePackOpenPlan {
+  id: string;
+  title: string;
+  /** The pack file, and its name. */
+  path: string;
+  fileName: string;
+  /** The working folder it is unpacked into. */
+  folder: string;
+  /** The own things the file carries that this computer does not have yet: they are added. */
+  mine: MineFacts | null;
+}
+
+/** The own things a pack file of a map made in the app carries, offered to the person. */
+export interface MineOffer {
+  id: string;
+  title: string;
+  path: string;
+  /** The version of the file offered from. */
+  exportedAt: string;
+  facts: MineFacts;
+}
+
 /** What a change to a game made in the app gives back. */
 export interface OwnGameChanged {
   /** What was added: the game's id, and the map and level made. */
@@ -1079,7 +1153,7 @@ export interface PackFileProgress {
    * `add`: a pack file copied into the packs folder (counted in bytes,
    * with no files) and then checked (counted in files).
    */
-  kind: 'export' | 'import' | 'copy' | 'add';
+  kind: 'export' | 'import' | 'copy' | 'add' | 'write' | 'open';
   packId: string;
   title: string;
   entriesDone: number;
@@ -1231,7 +1305,7 @@ export interface DesktopBridge {
      * whatever its status. Rejects when the site could not be reached.
      */
     fetchPicture(url: string): Promise<ShellFetchedPicture>;
-    /** Cuts a picture `fetchPicture` kept into map images, as "New game" does. */
+    /** Cuts a picture `fetchPicture` kept into map images, as "New map from a picture" does. */
     cutPicture(picture: string): Promise<ShellPictureCut>;
     /** Throws away kept pictures and cuts that no saved import names. */
     discardPictures(pictures: string[]): Promise<void>;
@@ -1513,6 +1587,29 @@ export interface DesktopBridge {
     cancel(): Promise<void>;
     rename(gameId: string, title: string): Promise<OwnGameChanged>;
     deleteMap(gameId: string, mapId: string): Promise<OwnGameChanged>;
+  };
+  /**
+   * Maps made here becoming pack files, in the desktop app without
+   * downloads (see the shell's `madepack` module). Other builds answer
+   * each with why not.
+   */
+  madePacks: {
+    /** What "Write the pack file" would do. */
+    plan(id: string): Promise<MadePackPlan>;
+    /** Writes the pack file, then removes the working folder; with `replaceNewer`, over a newer file. */
+    write(id: string, replaceNewer: boolean): Promise<MadePackWritten>;
+    /** What "Open for editing" would do. */
+    openPlan(id: string): Promise<MadePackOpenPlan>;
+    /** Unpacks the pack file into a working folder; gives back what an import gives. */
+    open(id: string): Promise<PackFileImported>;
+    /** Removes the working folder of a map opened for editing; its pack file stays. */
+    close(id: string): Promise<Listing>;
+    /** The own things the pack file a map is read from carries, when they are offered. */
+    mineOffer(id: string): Promise<MineOffer | null>;
+    /** Reads the own things of that version of the file, in the shape an import gives them. */
+    mineTake(id: string, exportedAt: string): Promise<PackFileImported>;
+    /** Notes they were added, or are not wanted, so they are not offered again. */
+    mineChoose(id: string, exportedAt: string, added: boolean): Promise<void>;
   };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
@@ -1844,6 +1941,17 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       rename: (gameId, title) => call('own_game_rename', { gameId, title }),
       deleteMap: (gameId, mapId) => call('own_game_delete_map', { gameId, mapId }),
     },
+    madePacks: {
+      plan: (id) => call('made_pack_plan', { id }),
+      write: (id, replaceNewer) => call('made_pack_write', { id, replaceNewer }),
+      openPlan: (id) => call('made_pack_open_plan', { id }),
+      open: (id) => call('made_pack_open', { id }),
+      close: (id) => call('made_pack_close', { id }),
+      mineOffer: (id) => call<unknown>('made_pack_mine_offer', { id }).then(mineOfferFrom),
+      mineTake: (id, exportedAt) => call('made_pack_mine_take', { id, exportedAt }),
+      mineChoose: (id, exportedAt, added) =>
+        call('made_pack_mine_choose', { id, exportedAt, added }),
+    },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),
       open: () => call('list_file_open'),
@@ -1886,6 +1994,32 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       details: (id) => call('library_pack_details', { id }),
     },
   };
+}
+
+/**
+ * An offer of own things from the shell's answer: only one of the shape of
+ * {@link MineOffer} is taken; anything else (none, or a shell without the
+ * command answering with nothing) is no offer. Exported for tests.
+ */
+export function mineOfferFrom(value: unknown): MineOffer | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const offer = value as Partial<MineOffer>;
+  const facts = offer.facts as Partial<MineFacts> | null | undefined;
+  if (
+    typeof offer.id !== 'string' ||
+    typeof offer.title !== 'string' ||
+    typeof offer.path !== 'string' ||
+    typeof offer.exportedAt !== 'string' ||
+    typeof facts !== 'object' ||
+    facts === null ||
+    typeof facts.lists !== 'number' ||
+    typeof facts.locations !== 'number' ||
+    typeof facts.types !== 'number' ||
+    typeof facts.areas !== 'number'
+  ) {
+    return null;
+  }
+  return offer as MineOffer;
 }
 
 /** The bytes of a command that answers with raw bytes (an ArrayBuffer; a number array in older shells). */

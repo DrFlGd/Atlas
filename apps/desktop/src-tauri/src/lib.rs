@@ -33,6 +33,7 @@ mod keep;
 pub mod library;
 pub mod manifest;
 // The folder maps and wikis a reader no longer uses, offered for removal.
+pub mod madepack;
 pub mod oldfolders;
 pub mod owngame;
 mod owngame_commands;
@@ -181,6 +182,14 @@ macro_rules! viewer_commands {
             commands::library_old_folders,
             commands::library_old_folder_size,
             commands::library_remove_old_folders,
+            madepack::commands::made_pack_plan,
+            madepack::commands::made_pack_write,
+            madepack::commands::made_pack_open_plan,
+            madepack::commands::made_pack_open,
+            madepack::commands::made_pack_close,
+            madepack::commands::made_pack_mine_offer,
+            madepack::commands::made_pack_mine_take,
+            madepack::commands::made_pack_mine_choose,
             $($more)*
         ]
     };
@@ -359,6 +368,9 @@ pub fn run() {
             #[cfg(feature = "downloads")]
             start_keeper(app, &app_data, &shared, &library, &downloads);
             app.manage(downloads);
+            // What this computer remembers of the pack files of maps made
+            // here (see `madepack`).
+            app.manage(Arc::new(madepack::store::Store::new(&app_data)));
             app.manage(Arc::new(saves::for_app(app)));
             app.manage(Arc::new(gamefiles::for_app(app)));
             app.manage(Arc::clone(&library));

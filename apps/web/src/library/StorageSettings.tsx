@@ -43,7 +43,7 @@ export function MapsFolder() {
             ? 'Maps you add and map images you download are saved here. '
             : 'Map images you download are saved here. '
           : reader
-            ? 'The games you make in Atlas are saved here, and the maps in it are shown. Maps, wikis and guides from pack files are read from the packs folder instead (see Games in other folders below). '
+            ? 'A map you make in Atlas is kept here while you work on it, and the maps in it are shown. Maps, wikis and guides from pack files are read from the packs folder instead (see Games in other folders below). '
             : importers > 0
               ? 'Maps you add are saved here, and the maps in it are shown. '
               : 'The maps in this folder are shown. '}

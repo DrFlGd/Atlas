@@ -541,6 +541,7 @@ pub async fn own_lists_write(
                 format!("Kept a copy of the lists of {game_id} as {name} before saving them"),
             );
         }
+        kept_game_changed(&game_id);
         Ok(kept)
     })
     .await
@@ -555,6 +556,7 @@ pub async fn own_lists_delete(library: LibraryState<'_>, game_id: String) -> Res
     blocking(move || {
         let deleted = ownlists::delete(&maps, &game_id)?;
         if deleted {
+            kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the lists of {game_id}, as asked with the game"),
@@ -563,6 +565,15 @@ pub async fn own_lists_delete(library: LibraryState<'_>, game_id: String) -> Res
         Ok(deleted)
     })
     .await
+}
+
+/// Tells the keeper of packs that a game or the person's own things of it
+/// changed (the app with downloads only; nothing otherwise).
+pub(crate) fn kept_game_changed(id: &str) {
+    #[cfg(feature = "downloads")]
+    crate::keep::changed(id);
+    #[cfg(not(feature = "downloads"))]
+    let _ = id;
 }
 
 #[cfg(feature = "downloads")]
@@ -1511,7 +1522,7 @@ pub struct PackFileProgress {
 }
 
 /// Clears the job when the work ends, however it ends.
-struct PackFileTurn {
+pub(crate) struct PackFileTurn {
     jobs: PackFileJobs,
     cancel: Arc<AtomicBool>,
 }
@@ -1529,7 +1540,7 @@ fn lock_jobs(jobs: &PackFileJobs) -> std::sync::MutexGuard<'_, Option<PackFileJo
 }
 
 impl PackFileJobs {
-    fn begin(
+    pub(crate) fn begin(
         &self,
         kind: &'static str,
         pack_id: &str,
@@ -1561,18 +1572,18 @@ impl PackFileJobs {
 }
 
 impl PackFileTurn {
-    fn update(&self, progress: Progress) {
+    pub(crate) fn update(&self, progress: Progress) {
         if let Some(job) = lock_jobs(&self.jobs).as_mut() {
             job.progress.progress = progress;
         }
     }
 
-    fn cancelled(&self) -> bool {
+    pub(crate) fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
 }
 
-type PackFileJobsState<'a> = State<'a, PackFileJobs>;
+pub(crate) type PackFileJobsState<'a> = State<'a, PackFileJobs>;
 
 pub(crate) fn app_info<R: Runtime>(app: &AppHandle<R>) -> AppInfo {
     AppInfo {
@@ -2117,7 +2128,7 @@ pub struct AddedFile {
 }
 
 impl PackFileImported {
-    fn new(
+    pub(crate) fn new(
         pack_id: String,
         title: String,
         replaced: bool,

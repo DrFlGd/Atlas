@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useState } from 'react';
 import type { GameGroup } from '@atlas/schema';
 import { DeletePackConfirm } from '../components/DeletePackConfirm';
+import { MineOfferLine, OpenForEditingConfirm } from '../components/MadePackConfirm';
 import { GamesListBar, GamesSections, TagChips, TagsDialog } from '../components/GameListTools';
 import { useRowWords, useGamesList } from '../state/gamesList';
 import { ShowWithAnotherForm, SourcesLine, TitleSourcesPanel } from '../components/GameTitles';
@@ -20,6 +21,7 @@ import type { TagGroup, TaggedRow } from '../state/gameTags';
 import { loadMissingDetails } from '../state/gameFacts';
 import { openTitle, showSource, useSourceNames, useTitleRows } from '../state/gameGroups';
 import { reveal } from '../state/library';
+import { canOpenForEditing, editingText, madePacksOffered } from '../state/madePacks';
 import { ownGamesOffered } from '../state/ownGames';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
@@ -153,12 +155,15 @@ function useGameRow(id: string) {
   const shown = useAtlas((s) => s.game?.entry.id ?? null);
   const several = useAtlas((s) => s.catalog.length > 1);
   const canMake = useAtlas(ownGamesOffered);
+  const madePacks = useAtlas(madePacksOffered);
   const listed = library?.packs.find((p) => p.id === id);
   return {
     listed,
     current: id === shown,
     origin: listed?.madeInApp
-      ? 'Made in this app'
+      ? listed.packFile
+        ? 'Made in Atlas, read from its pack file'
+        : 'Made in this app'
       : listed?.origin === 'opened-file'
         ? 'Read from a pack file you opened'
         : listed?.origin === 'packs-folder'
@@ -169,8 +174,13 @@ function useGameRow(id: string) {
               ? 'Imported from a pack file'
               : 'Comes with the app',
     ownGame: canMake && listed?.madeInApp === true && listed.origin === 'maps-folder',
+    // A map made in the app, read from its pack file: it can be opened for editing.
+    madeFile: madePacks && canOpenForEditing(listed),
+    editing: madePacks ? editingText(listed) : null,
     personalUse: listed?.personalUse === true,
-    deletable: listed?.origin === 'maps-folder' && !listed.bundled,
+    // A map open for editing is closed without writing instead (see its own actions).
+    deletable:
+      listed?.origin === 'maps-folder' && !listed.bundled && !(madePacks && listed.editing),
     busy: library?.busy.includes(id) ?? false,
     groupable: several,
   };
@@ -244,8 +254,10 @@ function GameRow({
  * asked or shown under it.
  */
 function GameActions({ id, title }: { id: string; title: string }) {
-  const { listed, ownGame, deletable, busy, groupable } = useGameRow(id);
-  const [open, setOpen] = useState<'details' | 'grouping' | 'tags' | 'delete' | null>(null);
+  const { listed, ownGame, madeFile, editing, deletable, busy, groupable } = useGameRow(id);
+  const [open, setOpen] = useState<
+    'details' | 'grouping' | 'tags' | 'delete' | 'open-editing' | null
+  >(null);
   const toggle = (what: typeof open) => {
     setOpen(open === what ? null : what);
   };
@@ -292,6 +304,19 @@ function GameActions({ id, title }: { id: string; title: string }) {
         >
           Tags…
         </button>
+        {madeFile && !busy ? (
+          <button
+            type="button"
+            className="touch-text-button"
+            aria-expanded={open === 'open-editing'}
+            data-testid="open-editing"
+            onClick={() => {
+              toggle('open-editing');
+            }}
+          >
+            Open for editing…
+          </button>
+        ) : null}
         {deletable && !busy ? (
           <button
             type="button"
@@ -305,7 +330,16 @@ function GameActions({ id, title }: { id: string; title: string }) {
           </button>
         ) : null}
       </div>
+      {editing && ownGame ? (
+        <p className="touch-note" data-testid="game-editing">
+          {editing}
+        </p>
+      ) : null}
       {ownGame && !busy ? <OwnGameActions id={id} title={title} /> : null}
+      {open === 'open-editing' ? (
+        <OpenForEditingConfirm id={id} place="touch" onClose={close} />
+      ) : null}
+      <MineOfferLine id={id} place="touch" />
       {open === 'details' ? <GameDetails id={id} /> : null}
       {open === 'grouping' ? (
         <div className="touch-game-confirm">

@@ -16,7 +16,9 @@ jobs:
   check:
     name: Lint, typecheck, test and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The browser tests alone take about 15 minutes; 20 cut a run short
+    # that had failed nothing.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 

@@ -308,12 +308,20 @@ pub struct Checked {
     stamp: Stamp,
     marks: Marks,
     header: Header,
+    /// Its manifest says the game was made in the app (`madeInApp`), which
+    /// the description does not say.
+    made_in_app: bool,
 }
 
 impl Checked {
     /// The pack file's description.
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    /// Whether its manifest says the game was made in the app.
+    pub fn made_in_app(&self) -> bool {
+        self.made_in_app
     }
 }
 
@@ -635,6 +643,7 @@ impl Table {
                 stamp,
                 marks: found,
                 header,
+                made_in_app: false,
             }),
             directory_start,
             entries,
@@ -659,6 +668,10 @@ impl Table {
             }
         };
         table.layer_ids = rules.layers.iter().map(|layer| layer.id.clone()).collect();
+        // Not shared yet while the table is built.
+        if let Some(checked) = Arc::get_mut(&mut table.checked) {
+            checked.made_in_app = rules.made_in_app;
+        }
         let mut tally = Tally::default();
         for (index, entry) in raw.iter().enumerate().skip(1) {
             let facts = EntryFacts {

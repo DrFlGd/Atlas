@@ -180,7 +180,7 @@ export function statusLine(status: KeptPacksStatus): string {
   const checked = status.lastCheckAt ? ` Last checked ${whenText(status.lastCheckAt)}.` : '';
   if (parts.length === 0) {
     return status.lastCheckAt
-      ? `No map or wiki read from a site on this computer has a pack to keep.${checked}`
+      ? `No map read from a site on this computer, made in Atlas here or made by Map Maker has a pack to keep.${checked}`
       : 'The folder is checked in a moment.';
   }
   return `${parts.join(', ')}.${checked}`;

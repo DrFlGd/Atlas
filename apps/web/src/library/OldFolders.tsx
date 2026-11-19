@@ -269,13 +269,14 @@ function OldFoldersSection() {
                   }}
                 />
                 <span>
-                  Also list the games made in Atlas on this computer
+                  Also list the maps made in Atlas on this computer
                   <span id={madeHereId} className="muted small pack-file-hint">
                     {listing.madeHere.length === 1
-                      ? '1 game was'
-                      : `${listing.madeHere.length} games were`}{' '}
-                    made here from pictures. Its folder is the game itself, so it is never removed
-                    with Remove all listed.
+                      ? '1 map was'
+                      : `${listing.madeHere.length} maps were`}{' '}
+                    made here from pictures. Each folder is the map itself, so it is never removed
+                    with Remove all listed. Write the pack file, in the Library, makes it one pack
+                    file and then removes its folder.
                   </span>
                 </span>
               </label>

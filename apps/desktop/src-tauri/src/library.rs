@@ -286,6 +286,16 @@ pub struct ListedPack {
     /// file was made, as its description says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_version: Option<FileVersion>,
+    /// A map made in the app whose folder in the maps folder is its working
+    /// folder on this computer: made here, or opened for editing from its
+    /// pack file (see `oldfolders::is_made_here`). On a reader it can be
+    /// written as a pack file (see `madepack`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub made_here: bool,
+    /// For a working folder opened for editing, the pack file it was opened
+    /// from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editing: Option<crate::madepack::EditingFacts>,
 }
 
 /// When a pack file's pack was changed last and when the file was made,
@@ -906,7 +916,21 @@ impl Library {
             }
             seen.insert(head.id.clone(), path.clone());
             folders.insert(head.id.clone(), dir.to_path_buf());
-            shown.push(self.listed_pack(head, origin, path, false));
+            let (made_here, editing) = if origin == Origin::MapsFolder && head.made_in_app {
+                (
+                    crate::oldfolders::is_made_here(dir, &head),
+                    crate::madepack::read_editing_record(dir)
+                        .as_ref()
+                        .map(crate::madepack::EditingFacts::from),
+                )
+            } else {
+                (false, None)
+            };
+            shown.push(ListedPack {
+                made_here,
+                editing,
+                ..self.listed_pack(head, origin, path, false)
+            });
             true
         };
 
@@ -1143,6 +1167,8 @@ impl Library {
             system: head.system,
             pack_file,
             file_version: None,
+            made_here: false,
+            editing: None,
         }
     }
 
@@ -2779,9 +2805,11 @@ impl FileScan {
         self.kept.insert(path.clone(), Arc::clone(&pack));
         let checked = pack.check().and_then(|checked| {
             let header = checked.header();
-            let head = head_of_header(header).map_err(|reason| {
+            let mut head = head_of_header(header).map_err(|reason| {
                 format!("This pack file's description cannot be used: {reason}.")
             })?;
+            // The description does not say it; the manifest checked with it does.
+            head.made_in_app = checked.made_in_app();
             Ok((
                 head,
                 header.pack.updated.as_deref().and_then(iso_millis),

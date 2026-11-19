@@ -77,6 +77,7 @@ pub mod card;
 pub mod export;
 pub mod import;
 pub mod inplace;
+pub mod names;
 pub mod preview;
 pub mod shell;
 pub mod smaller;
@@ -768,7 +769,7 @@ pub fn shared_pictures(
 }
 
 /// Reads a JSON file of at most `cap` bytes.
-fn read_json_capped(path: &Path, cap: u64) -> Result<Value, String> {
+pub(crate) fn read_json_capped(path: &Path, cap: u64) -> Result<Value, String> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())

@@ -495,7 +495,7 @@ const LibraryCompactRow = memo(function LibraryCompactRow({
   );
 });
 
-/** Under the list: checking every game for changes, and making a game of one's own. */
+/** Under the list: checking every game for changes, and making a map for a game from a picture. */
 function SideTools({ updatable }: { updatable: boolean }) {
   const canMake = useAtlas(ownGamesOffered);
   if (!updatable && !canMake) return null;

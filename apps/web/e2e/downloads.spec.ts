@@ -495,6 +495,21 @@ function installFakeShell(downloads: boolean) {
           games: [],
           serial: 1,
         });
+      case 'made_pack_mine_offer':
+        // The app with downloads keeps no maps made here as pack files: never an offer.
+        return Promise.resolve(null);
+      case 'made_pack_plan':
+      case 'made_pack_write':
+      case 'made_pack_open_plan':
+      case 'made_pack_open':
+      case 'made_pack_close':
+      case 'made_pack_mine_take':
+      case 'made_pack_mine_choose':
+        // As the shell answers in a build with downloads.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        return Promise.reject(
+          'This app keeps the maps made in it as folders in the maps folder, so it writes no pack file of them and opens none for editing.',
+        );
       default:
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(`Unknown command ${command}`);

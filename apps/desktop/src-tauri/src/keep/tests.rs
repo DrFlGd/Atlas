@@ -20,7 +20,7 @@ use super::{
     folder::{self, Copy, HeaderCache, NEW_PACKS_FOLDER, PART_ENDING},
     plan::{decide, Action, Game},
     store::{Record, Schedule, Setting, Store, Written},
-    Activity, Keeper, Parts, RowState, Status, Timing, MADE_HERE,
+    Activity, Keeper, Parts, RowState, Status, Timing, NOT_READ_HERE,
 };
 use crate::{
     library::Library,
@@ -134,17 +134,17 @@ fn the_fingerprint_changes_with_the_game_and_only_then() {
     let dir = TempDir::new("keep-fingerprint");
     let game = dir.0.join(ID);
     write_pack(&game, "1.0.0");
-    let first = fingerprint::take(&game, None);
+    let first = fingerprint::take(&game, None, None);
     assert!(first.complete);
     assert_eq!(first.hash.len(), 16);
     assert!(first.images > 0);
-    assert_eq!(fingerprint::take(&game, None), first);
+    assert_eq!(fingerprint::take(&game, None, None), first);
 
     // Page data, the app's own files and unfinished files do not count.
     put(&game.join("import").join("west-ridge.json"), b"{}");
     put(&game.join(".atlas").join("download-job.json"), b"{\"a\":1}");
     put(&game.join("tiles").join("a").join("9.png.part"), b"part");
-    assert_eq!(fingerprint::take(&game, None).hash, first.hash);
+    assert_eq!(fingerprint::take(&game, None, None).hash, first.hash);
 
     // A new image, a file rewritten, or another title shown, does.
     put(
@@ -156,19 +156,56 @@ fn the_fingerprint_changes_with_the_game_and_only_then() {
             .join("9.png"),
         b"new",
     );
-    let more = fingerprint::take(&game, None);
+    let more = fingerprint::take(&game, None, None);
     assert_ne!(more.hash, first.hash);
     assert_eq!(more.images, first.images + 1);
     put_json(&game.join("locations.json"), &json!([{"id": "x1"}]));
-    let rewritten = fingerprint::take(&game, None);
+    let rewritten = fingerprint::take(&game, None, None);
     assert_ne!(rewritten.hash, more.hash);
     assert_ne!(
-        fingerprint::take(&game, Some("Example Game")).hash,
+        fingerprint::take(&game, Some("Example Game"), None).hash,
         rewritten.hash
     );
 
     // A folder that cannot be read gives an incomplete fingerprint.
-    assert!(!fingerprint::take(&dir.0.join("missing"), None).complete);
+    assert!(!fingerprint::take(&dir.0.join("missing"), None, None).complete);
+}
+
+#[test]
+fn the_fingerprint_of_a_map_made_here_covers_the_persons_own_files() {
+    let dir = TempDir::new("keep-fingerprint-own");
+    let maps = dir.0.join("maps");
+    let game = maps.join(ID);
+    write_pack(&game, "1.0.0");
+    let own = Some(fingerprint::Own {
+        maps_folder: &maps,
+        game_id: ID,
+    });
+    let plain = fingerprint::take(&game, None, None);
+    let without = fingerprint::take(&game, None, own);
+    assert!(without.complete);
+    assert_eq!(without, plain);
+    // Own files of another game, and other files beside it, do not count.
+    put(&maps.join("example-game.my-locations.json"), b"{}");
+    put(&maps.join(format!("{ID}.notes.txt")), b"x");
+    assert_eq!(fingerprint::take(&game, None, own), without);
+
+    put(&maps.join(format!("{ID}.my-locations.json")), b"{}");
+    let located = fingerprint::take(&game, None, own);
+    assert_ne!(located.hash, without.hash);
+    // Without `own` (a game read from a site), they never count.
+    assert_eq!(fingerprint::take(&game, None, None).hash, plain.hash);
+    put(&maps.join(format!("{ID}.my-locations.json")), b"{\"a\":1}");
+    let rewritten = fingerprint::take(&game, None, own);
+    assert_ne!(rewritten.hash, located.hash);
+    put(
+        &maps.join(format!("{ID}.my-pictures")).join("own.a.jpg"),
+        b"photo",
+    );
+    let pictured = fingerprint::take(&game, None, own);
+    assert_ne!(pictured.hash, rewritten.hash);
+    fs::remove_file(maps.join(format!("{ID}.my-pictures")).join("own.a.jpg")).unwrap();
+    assert_eq!(fingerprint::take(&game, None, own).hash, rewritten.hash);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,14 +484,15 @@ impl World {
         let library = Arc::new(library);
         let game = library.maps_folder().join(ID);
         write_pack(&game, "1.0.0");
-        // A game made in the app gets no pack.
+        // A game neither read from a site, made here nor made by Map Maker
+        // gets no pack.
         put_json(
             &library
                 .maps_folder()
                 .join("example-game")
                 .join("manifest.json"),
             &json!({"schemaVersion": 2, "gameId": "example-game", "title": "Example Game",
-                    "packVersion": "1.0.0", "madeInApp": true}),
+                    "packVersion": "1.0.0"}),
         );
         library.scan();
         let repo = dir.0.join("Maps and Guides");
@@ -640,14 +678,14 @@ fn writes_a_new_pack_and_keeps_it_where_the_person_puts_it() {
     assert_eq!(record.packs[ID].path, first);
     assert_eq!(record.folder.as_deref(), Some(world.repo.as_path()));
 
-    // A game made in the app is listed with why it gets no pack.
-    let made = status
+    // A game that is none of those is listed with why it gets no pack.
+    let other = status
         .games
         .iter()
         .find(|row| row.id == "example-game")
         .unwrap();
-    assert_eq!(made.state, RowState::LeftOut);
-    assert_eq!(made.reason.as_deref(), Some(MADE_HERE));
+    assert_eq!(other.state, RowState::LeftOut);
+    assert_eq!(other.reason.as_deref(), Some(NOT_READ_HERE));
 
     // The person moves and renames it: it is known where it lies now, and
     // not written again.
@@ -813,7 +851,7 @@ fn waits_for_a_change_to_finish() {
                 .iter()
                 .any(|(_, reason)| reason.as_deref() == Some(super::CHANGED))
     });
-    let fingerprint = fingerprint::take(&world.game, None);
+    let fingerprint = fingerprint::take(&world.game, None, None);
     assert_eq!(
         world.record().packs[ID].fingerprint,
         fingerprint.hash,
@@ -866,4 +904,130 @@ fn turned_off_it_writes_nothing() {
     assert!(status.games.is_empty());
     assert!(world.files().0.is_empty());
     assert!(!world.data.join(super::store::RECORD_FILE).exists());
+}
+
+#[test]
+fn writes_a_map_made_here_with_its_own_things_and_others_without() {
+    use crate::{
+        madepack::tests::{own_lists, own_locations},
+        owngame::{create_game, Cutting},
+        ownlists::{LISTS, LOCATIONS},
+    };
+    let world = World::new("keep-made");
+    let maps = world.library.maps_folder();
+    // A map made here from a picture, with three locations and two lists
+    // of the person's own.
+    let picture = world.dir.0.join("courtyard.png");
+    image::RgbImage::from_fn(300, 200, |x, y| image::Rgb([x as u8, y as u8, 90]))
+        .save(&picture)
+        .unwrap();
+    let mut progress = |_| {};
+    let made = create_game(
+        &maps,
+        "Ruined Keep",
+        "Courtyard",
+        &picture,
+        &app(),
+        |_| false,
+        &mut Cutting {
+            progress: &mut progress,
+            cancelled: &|| false,
+        },
+    )
+    .unwrap()
+    .game_id;
+    let locations = |names: &[&str]| own_locations(&made, names);
+    LOCATIONS
+        .write(
+            &maps,
+            &made,
+            &locations(&["North gate", "Well", "Tower"]),
+            None,
+        )
+        .unwrap();
+    LISTS.write(&maps, &made, &own_lists(&made), None).unwrap();
+    // A map Map Maker put in the maps folder, with own things the person
+    // added: its pack carries none of them.
+    let maker = maps.join("cave-maps");
+    put_json(
+        &maker.join("manifest.json"),
+        &json!({"schemaVersion": 2, "gameId": "cave-maps", "title": "Cave Maps", "packVersion": "1.0.0",
+                "writtenBy": {"name": super::MAP_MAKER, "version": "0.4.0"}}),
+    );
+    LOCATIONS
+        .write(
+            &maps,
+            "cave-maps",
+            &own_locations("cave-maps", &["Pool"]),
+            None,
+        )
+        .unwrap();
+    // The site game has own things too: its pack never carries them.
+    LOCATIONS
+        .write(&maps, ID, &own_locations(ID, &["Old mill"]), None)
+        .unwrap();
+    world.library.scan();
+
+    let status = world.turn_on(&world.repo);
+    let row_of = |status: &Status, id: &str| {
+        status
+            .games
+            .iter()
+            .find(|row| row.id == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("no row for {id}: {status:#?}"))
+    };
+    for id in [ID, made.as_str(), "cave-maps"] {
+        assert_eq!(
+            row_of(&status, id).state,
+            RowState::UpToDate,
+            "{id}: {status:#?}"
+        );
+    }
+    let header_of = |id: &str| {
+        let path = PathBuf::from(row_of(&status, id).path.unwrap());
+        (read_header(&path).unwrap(), path)
+    };
+    let (made_header, made_path) = header_of(&made);
+    let mine = made_header
+        .mine
+        .expect("the made map's pack carries its own things");
+    assert_eq!((mine.locations, mine.lists), (3, 2));
+    let made_name = made_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(made_name, "Ruined Keep.atlaspack");
+    assert_eq!(
+        made_path.parent(),
+        Some(world.repo.join(NEW_PACKS_FOLDER).as_path())
+    );
+    let (maker_header, maker_path) = header_of("cave-maps");
+    assert!(maker_header.mine.is_none());
+    assert_eq!(
+        maker_path.file_name().unwrap().to_string_lossy(),
+        "Cave Maps.atlaspack"
+    );
+    assert!(header_of(ID).0.mine.is_none());
+
+    // A change to the person's own things of the made map writes its pack
+    // again; the others stay as they were.
+    let before = world.record();
+    LOCATIONS
+        .write(&maps, &made, &locations(&["North gate", "Well"]), None)
+        .unwrap();
+    world.after_run(|| world.keeper.changed(&made));
+    let status = world.wait("the made map written again", |status| {
+        row_of(status, &made).state == RowState::UpToDate
+    });
+    let after = world.record();
+    assert_ne!(
+        after.packs[&made].fingerprint, before.packs[&made].fingerprint,
+        "{status:#?}"
+    );
+    assert_eq!(after.packs[&made].path, made_path);
+    assert_eq!(read_header(&made_path).unwrap().mine.unwrap().locations, 2);
+    assert_eq!(after.packs["cave-maps"], before.packs["cave-maps"]);
+    assert_eq!(after.packs[ID], before.packs[ID]);
 }

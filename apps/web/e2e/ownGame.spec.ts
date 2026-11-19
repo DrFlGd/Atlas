@@ -3,10 +3,11 @@ import { expect, test } from './layout';
 import { collectErrors, libraryMore } from './helpers';
 
 /**
- * A game of one's own in the desktop app: "New game…" on the Games screen
- * (a name, the first map's name and a picture, cut with Cancel and then
- * made), Edit locations on it, "Add map…", "Rename…", "Delete map…", and
- * deleting the game, which offers to delete one's own locations too. A
+ * A map made for a game in the desktop app: "New map from a picture…" on
+ * the Games screen (the game it is for, the map's name and a picture, cut
+ * with Cancel and then made), Edit locations on it, "Add map…", "Rename…",
+ * "Delete map…", and deleting it, which offers to delete one's own
+ * locations too. A
  * stand-in shell answers the commands; the game's files are served by the
  * test. The cutting itself is covered by the shell's own tests.
  */
@@ -261,7 +262,7 @@ const picture = (name: string, width: number, height: number, problem: string | 
   problem,
 });
 
-test('New game from a picture, Edit locations on it, add a map, rename, delete', async ({
+test('New map from a picture, Edit locations on it, add a map, rename, delete', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -275,7 +276,7 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
 
-  // New game, in the Library.
+  // New map from a picture, in the Library.
   await page.getByTestId('section-library').click();
   await page.getByTestId('new-game').click();
   const dialog = page.getByTestId('picture-dialog');
@@ -385,7 +386,7 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
   await row.getByTestId('delete-map').click();
   await expect(page.getByTestId('delete-map-confirm')).toBeVisible();
   renamedGameRead();
-  await expect(page.getByTestId('toast')).toContainText('Renamed the game to Cloud Isles of Ash.');
+  await expect(page.getByTestId('toast')).toContainText('Renamed the map to Cloud Isles of Ash.');
   await expect(page.getByTestId('delete-map-confirm')).toBeVisible();
   await page.getByTestId('delete-map-choice').selectOption({ label: 'Sea caves' });
   game.maps.pop();
@@ -398,7 +399,7 @@ test('New game from a picture, Edit locations on it, add a map, rename, delete',
     mapId: 'cloud-isles:map:sea-caves',
   });
 
-  // Deleting the game offers to delete one's own locations and types too.
+  // Deleting it offers to delete one's own locations and types too.
   await libraryMore(page, 'delete-pack');
   await page.getByTestId('delete-pack-locations').check();
   await page.getByTestId('confirm-delete-pack').click();

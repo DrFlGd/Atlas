@@ -804,6 +804,19 @@ function installFakeShell({
       case 'library_old_folders':
         // The settings of an app without downloads: no old folders here.
         return { mapsFolder: '/maps', siteReader: false, folders: [], madeHere: [] };
+      case 'made_pack_mine_offer':
+        // No pack file of a map made in the app here: never an offer.
+        return null;
+      case 'made_pack_plan':
+      case 'made_pack_write':
+      case 'made_pack_open_plan':
+      case 'made_pack_open':
+      case 'made_pack_close':
+      case 'made_pack_mine_take':
+      case 'made_pack_mine_choose':
+        // Tauri rejects with the command's error value, a string.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'This stand-in shell writes no pack files.';
       default:
         // Tauri rejects with the command's error value, a string.
         // eslint-disable-next-line @typescript-eslint/only-throw-error

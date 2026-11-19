@@ -139,6 +139,20 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.23.0
+
+          Maps, wikis and guides now come as pack files (.atlaspack), and Atlas reads each one as it is.
+
+          - **Pack files are read where they lie.** Atlas no longer unpacks a pack file into a folder. It reads every pack file in the packs folder, %LOCALAPPDATA%\\Atlas\\Packs, and in the folders you added. **Add a pack file…** copies a file into the packs folder. You can also put files there yourself.
+          - **Pack files that arrive.** A pack file that is put in the packs folder, or changed there, while Atlas is open is shown without a restart, with a notice. A file Atlas cannot open is listed with the reason.
+          - **Open a pack file from Windows.** Windows now opens an .atlaspack file with Atlas. Only one Atlas runs at a time: a file opened while Atlas is open is shown in the window you have.
+          - **Old folders.** A game kept as a folder by an older version is still shown, before a pack file of the same game. **Settings**, then **Old folders**, lists these folders with their sizes and removes them after asking. Nothing is listed on a computer that also has Atlas Importer.
+          - **A map you make is a pack file too.** **New game…** is now **New map from a picture…**. A map you make is kept in a folder while you work on it. **Write the pack file…** writes it as one pack file with your own locations, lists and notes of it, checks the file, and then removes the folder. **Open for editing…** unpacks it again when you want to change it, and **Close without writing…** leaves the file as it was.
+          - **The maker's locations.** A pack file of a map made in Atlas on another computer carries the maker's locations and lists. Atlas offers them with one button, **Add them to yours**, and never adds them by itself.
+          - **Older versions.** Pack files from older versions still open. A pack file written by this version cannot be opened by an older Atlas, which says so.
+
+          This version has passed the automatic checks only. No person has tried it in a real Windows window yet.
+
           ## New in 0.22.0
 
           Nothing changes in what you see in this release. The viewer keeps the same version number as the Importer, which gains a new map source.

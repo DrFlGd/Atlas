@@ -6,7 +6,7 @@
 //! one request ([`fetch_picture`], as `pagefetch.rs` does: the app's own
 //! name, no cookies, redirects on the same site only), keeps the picture in
 //! a hidden folder of the maps folder, and cuts it into map images with the
-//! cutter of "New game" (`tiles::cut`, [`cut_picture`]). The cut stays there
+//! cutter of "New map from a picture" (`tiles::cut`, [`cut_picture`]). The cut stays there
 //! until the import that names it is saved, which moves it into the pack
 //! (`Library::save_import`), or is thrown away ([`discard`]); the folder is
 //! cleared at the next start in any case, as every `.importing-` folder is

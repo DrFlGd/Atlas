@@ -192,6 +192,11 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.23.0
+
+          - **Opens the newer pack files.** Atlas and Atlas Importer 0.23.0 write pack files with a fuller description: the game's title and system, the name of the source, and the name and a small picture of each map. This version opens them with **Import pack file…** as before. An older Atlas on a phone cannot open them, and says so.
+          - **Pack files are still unpacked here.** On Windows, Atlas now reads a pack file where it lies. On a phone or tablet that comes in a later version.
+
           ## New in 0.22.0
 
           Nothing changes in what you see in this release. The viewer keeps the same version number as the Importer, which gains a new map source.
