@@ -428,6 +428,24 @@ describe('pack files that arrive', () => {
     expect(await bridge.library.takeOpened()).toEqual([]);
   });
 
+  it('takes nothing from an answer that is not a list, and only whole entries from one that is', async () => {
+    const opened = {
+      path: '/files/example.atlaspack',
+      show: 'test-valley',
+      remembered: true,
+      problem: false,
+      message: 'Showing Test Valley from example.atlaspack.',
+    };
+    for (const answer of [null, undefined, 'none', 3, { length: 1 }]) {
+      const bridge = createBridge(() => Promise.resolve(answer));
+      expect(await bridge.library.takeOpened()).toEqual([]);
+    }
+    const bridge = createBridge(() =>
+      Promise.resolve([opened, null, 'text', { ...opened, show: 4 }, { path: '/files/x' }]),
+    );
+    expect(await bridge.library.takeOpened()).toEqual([opened]);
+  });
+
   it('hears the two events of the shell, with their payload', async () => {
     const handlers = new Map<string, (payload: unknown) => void>();
     const stopped: string[] = [];

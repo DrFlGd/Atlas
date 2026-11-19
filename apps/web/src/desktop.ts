@@ -463,6 +463,27 @@ export interface PackFileOpened {
   message: string;
 }
 
+/**
+ * What opening pack files came to, from the shell's answer: only entries
+ * of the shape above are taken, and any other answer (a shell without the
+ * command may answer with nothing) is no pack file opened. Exported for
+ * tests.
+ */
+export function openedFrom(answer: unknown): PackFileOpened[] {
+  if (!Array.isArray(answer)) return [];
+  return answer.filter((entry: unknown): entry is PackFileOpened => {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const { path, show, remembered, problem, message } = entry as Record<string, unknown>;
+    return (
+      typeof path === 'string' &&
+      (show === null || typeof show === 'string') &&
+      typeof remembered === 'boolean' &&
+      typeof problem === 'boolean' &&
+      typeof message === 'string'
+    );
+  });
+}
+
 /** A pack file the shell found and cannot use, with why. */
 export interface UnreadablePackFile {
   path: string;
@@ -1485,7 +1506,7 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       applyMapsFolder: (movePacks) => call('library_apply_maps_folder', { movePacks }),
       reveal: (target) => call('library_reveal', { target }),
       deletePack: (id) => call('library_delete_pack', { id }),
-      takeOpened: () => call<PackFileOpened[]>('library_take_opened').catch(() => []),
+      takeOpened: () => call<unknown>('library_take_opened').then(openedFrom, () => []),
       forgetPackFile: (path) => call('library_forget_pack_file', { path }),
       imagesInfo: (id) => call('library_images_info', { id }),
       deleteImages: (id) => call('library_delete_images', { id }),
