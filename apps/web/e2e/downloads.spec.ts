@@ -479,6 +479,22 @@ function installFakeShell(downloads: boolean) {
       case 'view_close':
         shell.view.open = false;
         return Promise.resolve(viewStatus());
+      case 'kept_packs_status':
+        // Keeping packs up to date is off here.
+        return Promise.resolve({
+          on: false,
+          folder: '/maps/packs',
+          folderIsDefault: true,
+          folderChosen: false,
+          schedule: 'start',
+          running: false,
+          writing: null,
+          lastCheckAt: null,
+          problem: null,
+          notice: null,
+          games: [],
+          serial: 1,
+        });
       default:
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(`Unknown command ${command}`);

@@ -210,6 +210,33 @@ export interface MockShell {
     /** What the person saved with "Save the guide…" and "Save the schema…". */
     saved: { what: string; contents: string }[];
   };
+  /** Settings, "Keep packs for Game Repo up to date" (a build with downloads). */
+  keptPacks: {
+    /** What `kept_packs_status` answers (`KeptPacksStatus`). */
+    status: KeptPacksState;
+    /** The folder the person chooses in the next folder dialog, or null (they close it). */
+    pick: string | null;
+    /** The games listed once it is on. */
+    games: Record<string, unknown>[];
+    /** The commands called, in order. */
+    calls: string[];
+  };
+}
+
+/** The state of the kept packs, as the shell sends it. */
+interface KeptPacksState {
+  on: boolean;
+  folder: string;
+  folderIsDefault: boolean;
+  folderChosen: boolean;
+  schedule: string;
+  running: boolean;
+  writing: null;
+  lastCheckAt: string | null;
+  problem: string | null;
+  notice: null;
+  games: Record<string, unknown>[];
+  serial: number;
 }
 
 /**
@@ -242,6 +269,33 @@ function installFakeShell({
     styleTexts: {},
     reports: [],
     sites: { files: {}, switches: { on: {}, off: [] }, pick: null, page: null, saved: [] },
+    keptPacks: {
+      status: {
+        on: false,
+        folder: '/maps/packs',
+        folderIsDefault: true,
+        folderChosen: false,
+        schedule: 'start',
+        running: false,
+        writing: null,
+        lastCheckAt: null,
+        problem: null,
+        notice: null,
+        games: [],
+        serial: 1,
+      },
+      pick: null,
+      games: [],
+      calls: [],
+    },
+  };
+  /** The kept packs' state after a change: listed when on, with a new serial. */
+  const keptPacks = () => {
+    const kept = shell.keptPacks;
+    kept.status.serial += 1;
+    kept.status.games = kept.status.on ? kept.games : [];
+    kept.status.lastCheckAt = kept.status.on ? '2026-11-12T10:00:00Z' : kept.status.lastCheckAt;
+    return structuredClone(kept.status);
   };
   (window as unknown as { __mockShell: MockShell }).__mockShell = shell;
   const write = (
@@ -711,6 +765,42 @@ function installFakeShell({
           downloading: false,
         };
       }
+      case 'kept_packs_status':
+        shell.keptPacks.calls.push(command);
+        return structuredClone(shell.keptPacks.status);
+      case 'kept_packs_choose_folder': {
+        const kept = shell.keptPacks;
+        kept.calls.push(command);
+        if (!kept.pick) return null;
+        Object.assign(kept.status, {
+          on: true,
+          folder: kept.pick,
+          folderIsDefault: false,
+          folderChosen: true,
+        });
+        return keptPacks();
+      }
+      case 'kept_packs_set': {
+        const choice = args.choice as { on: boolean; schedule: string };
+        shell.keptPacks.calls.push(`${command} ${choice.on ? 'on' : 'off'} ${choice.schedule}`);
+        Object.assign(shell.keptPacks.status, choice);
+        return keptPacks();
+      }
+      case 'kept_packs_write_again': {
+        const kept = shell.keptPacks;
+        kept.calls.push(`${command} ${String(args.id)}`);
+        kept.games = kept.games.map((game) =>
+          game.id === args.id ? { ...game, state: 'up-to-date', reason: null } : game,
+        );
+        return keptPacks();
+      }
+      case 'kept_packs_write_all':
+      case 'kept_packs_cancel':
+        shell.keptPacks.calls.push(command);
+        return keptPacks();
+      case 'kept_packs_reveal':
+        shell.keptPacks.calls.push(command);
+        return null;
       case 'library_old_folders':
         // The settings of an app without downloads: no old folders here.
         return { mapsFolder: '/maps', siteReader: false, folders: [], madeHere: [] };
@@ -859,6 +949,15 @@ export const pickSavedPage = (page: Page, saved: { name: string; text: string })
   page.evaluate((saved) => {
     (window as unknown as { __mockShell: MockShell }).__mockShell.sites.page = saved;
   }, saved);
+
+/** The folder the person chooses in the next folder dialog of the kept packs, and the games listed. */
+export const setKeptPacks = (
+  page: Page,
+  kept: { pick: string | null; games: Record<string, unknown>[] },
+) =>
+  page.evaluate((kept) => {
+    Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell.keptPacks, kept);
+  }, kept);
 
 export const setMock = (
   page: Page,
