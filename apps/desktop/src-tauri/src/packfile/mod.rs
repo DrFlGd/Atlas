@@ -10,7 +10,12 @@
 //! - first, `atlaspack.json`, the [`Header`]: what the file is, which game,
 //!   which detail, when and by which app it was made, and where the game's
 //!   data came from, so a person can tell whether a file is out of date
-//!   without opening it;
+//!   without opening it; and what another app needs to show a card for the
+//!   file (the game's title and system, its maps and pages, see [`card`]);
+//! - right after it, a small picture of each map (`preview/<name>.jpg`, see
+//!   [`preview`]), when the file holds images of the map to draw it from;
+//!   such a file is version 7 of the format, one without stays at the
+//!   version of what else it carries;
 //! - the pack's JSON files (`manifest.json`, `maps.json`, `layers.json` and
 //!   the rest of [`PACK_FILES`]);
 //! - the map images of every folder layer, at the paths the layer's own
@@ -61,9 +66,16 @@
 //!
 //! Images are stored as they are (they are compressed already), JSON is
 //! deflated.
+//!
+//! The description's types, its checks and reading it (and a small
+//! picture) from a file are in the `atlas-pack` crate (`crates/atlas-pack`),
+//! so another app reads pack files with the same code; see
+//! `docs/pack-file-format.md`.
 
+pub mod card;
 pub mod export;
 pub mod import;
+pub mod preview;
 pub mod shell;
 pub mod smaller;
 pub mod space;
@@ -86,45 +98,26 @@ use crate::{
     ownpictures,
     removal::is_real_dir,
     tiles::{
-        pyramid::{fill_template, is_safe_segment, level_grid, relative_path, Detail, LayerPlan},
+        pyramid::{fill_template, is_safe_segment, level_grid, relative_path, LayerPlan},
         status::{LayerStatus, STATUS_DIR, STATUS_FORMAT},
     },
 };
 
-/// `format` of the header.
-pub const FORMAT: &str = "atlas-pack-file";
-/// The newest version of the format this app reads and writes. Version 2
-/// adds a person's own lists, locations and types ([`Mine`]); version 3
-/// their photos and links between guide pages and the map; version 4 their
-/// own guide pages; version 5 their notes on the game's locations, and
-/// links of a guide page to one location alone (guide links version 2);
-/// version 6 the title the game is shown under with other games.
-pub const VERSION: u32 = 6;
-/// The version of a file with a person's notes, or a guide page linked to
-/// one location alone, but no title, which an app from before version 6
-/// reads too.
-pub const VERSION_WITH_NOTES: u32 = 5;
-/// The version of a file with a person's own pages but no notes, which an
-/// app from before version 5 reads too.
-pub const VERSION_WITH_PAGES: u32 = 4;
-/// The version of a file with a person's photos or guide links but no own
-/// pages, which an app from before version 4 reads too.
-pub const VERSION_WITH_PHOTOS: u32 = 3;
-/// The version of a file with a person's own lists, locations and types
-/// only, which an app from before version 3 reads too.
-pub const VERSION_WITH_MINE: u32 = 2;
-/// The version of a file without a person's own lists, locations and types,
-/// which every app with pack files reads.
-pub const VERSION_WITHOUT_MINE: u32 = 1;
-/// The header, the file's first entry.
-pub const HEADER_FILE: &str = "atlaspack.json";
-/// The file name extension, without the dot.
-pub const EXTENSION: &str = "atlaspack";
+/// The description's types, the format's versions and constants, and
+/// reading a description, from the `atlas-pack` crate (`crates/atlas-pack`),
+/// which other apps use to show pack files without unpacking them.
+pub use atlas_pack::{
+    is_preview_name, parse_header, AppInfo, Counts, Detail, GameFacts, GuideFacts, GuideType,
+    Header, ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, PackFacts, PageFacts,
+    SourceFacts, SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS,
+    MAX_PREVIEW_BYTES, PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
+    VERSION_WITH_NOTES, VERSION_WITH_PAGES, VERSION_WITH_PHOTOS, VERSION_WITH_PREVIEWS,
+    VERSION_WITH_TITLE,
+};
+
 /// In a pack folder's `.atlas/`: the header of the file the pack was
 /// imported from, with when that was. Not exported and not served.
 pub const IMPORTED_RECORD: &str = "pack-file.json";
-/// Headers larger than this are not read.
-pub const MAX_HEADER_BYTES: u64 = 4 << 20;
 
 /// Why an export or import did not finish.
 #[derive(Debug, PartialEq, Eq)]
@@ -165,152 +158,6 @@ pub struct Progress {
     /// [`smaller::make_smaller`]); both 0 otherwise.
     pub pictures_done: u64,
     pub pictures_total: u64,
-}
-
-/// The app that wrote a file.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AppInfo {
-    pub name: String,
-    pub version: String,
-    /// `windows`, `linux`, `macos`, `android`, …
-    #[serde(default)]
-    pub platform: String,
-}
-
-// ---------------------------------------------------------------------------
-// The header
-
-/// `atlaspack.json`: what a pack file holds, readable without
-/// unpacking anything else. Every date is ISO 8601 in UTC.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Header {
-    pub format: String,
-    pub version: u32,
-    pub pack_id: String,
-    pub title: String,
-    pub pack_version: String,
-    pub detail: Detail,
-    pub exported_at: String,
-    pub exported_by: AppInfo,
-    pub pack: PackFacts,
-    pub source: SourceFacts,
-    pub contents: Counts,
-    pub images: ImagesFacts,
-    /// Entries after the header, and their size unpacked.
-    pub files: u64,
-    pub bytes: u64,
-    /// How many of a person's own records the file carries, when it carries
-    /// them (version 2).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mine: Option<MineFacts>,
-}
-
-/// The pack itself, from its manifest.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PackFacts {
-    pub id: String,
-    pub title: String,
-    pub pack_version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_patch: Option<String>,
-    pub schema_version: u32,
-    #[serde(default)]
-    pub attribution: Vec<Value>,
-    /// When the pack was first written and last changed, if its manifest
-    /// says (version 2).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated: Option<String>,
-    /// The tool or app that wrote the pack's files, as its manifest says.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub written_by: Option<Value>,
-}
-
-/// Where the game's data came from.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum SourceKind {
-    /// Made from web pages with an importer ("Add a map").
-    WebPages,
-    /// The pack comes with the app that wrote the file.
-    App,
-    /// Nothing is recorded.
-    #[default]
-    Unknown,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SourceFacts {
-    pub kind: SourceKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub importer: Option<ImporterFacts>,
-    /// Each page the pack was made from, with when it was read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pages: Vec<PageFacts>,
-    /// The latest and earliest time a page was read.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub newest_page_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub oldest_page_at: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ImporterFacts {
-    pub id: String,
-    pub title: String,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PageFacts {
-    pub url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub map_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imported_at: Option<String>,
-}
-
-/// How much is in the pack.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Counts {
-    pub maps: u64,
-    pub layers: u64,
-    pub locations: u64,
-    pub categories: u64,
-    pub regions: u64,
-    pub checklists: u64,
-    pub guides: u64,
-}
-
-/// How many of a person's own records a file carries.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct MineFacts {
-    pub lists: u64,
-    pub locations: u64,
-    pub types: u64,
-    pub areas: u64,
-    /// Their own photos (see `ownpictures`).
-    pub photos: u64,
-    /// Whether their links between guide pages and the map are in it.
-    pub guide_links: bool,
-    /// Their own guide pages, and the pack's pages they changed or hid
-    /// (version 4).
-    pub pages: u64,
-    /// Their own sections of the guide pages.
-    pub sections: u64,
-    /// Their notes on the game's locations (version 5).
-    pub notes: u64,
-    /// Whether the title the game is shown under with other games is in it
-    /// (version 6).
-    pub group: bool,
 }
 
 /// The entries of a person's own files, and which file each is.
@@ -392,7 +239,7 @@ impl Mine {
     /// with own pages, 3 with photos or guide links, 2 otherwise.
     pub fn version(&self) -> u32 {
         if self.group.is_some() {
-            VERSION
+            VERSION_WITH_TITLE
         } else if self.notes.is_some()
             || self.guide_links.as_deref().is_some_and(links_one_location)
         {
@@ -498,41 +345,6 @@ fn links_one_location(text: &str) -> bool {
         .is_some_and(|version| version >= 2)
 }
 
-/// The map images in the file.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ImagesFacts {
-    pub detail: Detail,
-    pub files: u64,
-    pub bytes: u64,
-    pub layers: Vec<LayerFacts>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct LayerFacts {
-    pub id: String,
-    pub name: String,
-    pub map_name: String,
-    pub min_zoom: u8,
-    pub max_zoom: u8,
-    /// The pyramid levels included.
-    pub levels: Vec<u8>,
-    pub files: u64,
-    pub bytes: u64,
-    /// Every level up to the detail's top is included.
-    pub complete: bool,
-    /// Every level of the layer is included (nothing left out at the top).
-    pub full: bool,
-    /// Its images can be downloaded from a remote source, so the detail
-    /// limits it. A layer whose images all came with the pack is included
-    /// whole at every detail.
-    pub downloadable: bool,
-    /// When its images were last downloaded (its status file's time).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub downloaded_at: Option<String>,
-}
-
 /// What `.atlas/pack-file.json` keeps about the file a pack was imported from.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -540,39 +352,6 @@ pub struct ImportedRecord {
     pub imported_at: String,
     pub file_name: String,
     pub header: Header,
-}
-
-/// Reads a header from its JSON text: refuses another format, and a newer
-/// version with a message naming the app that wrote it.
-pub fn parse_header(text: &str) -> Result<Header, String> {
-    let not_ours = || "This file is not an Atlas pack file.".to_owned();
-    let value: Value =
-        serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| not_ours())?;
-    if value.get("format").and_then(Value::as_str) != Some(FORMAT) {
-        return Err(not_ours());
-    }
-    let version = value.get("version").and_then(Value::as_u64).unwrap_or(0);
-    if version > u64::from(VERSION) {
-        let by = value.get("exportedBy");
-        let name = by
-            .and_then(|by| by.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or("Atlas");
-        let app_version = by
-            .and_then(|by| by.get("version"))
-            .and_then(Value::as_str)
-            .unwrap_or("a newer version");
-        return Err(format!(
-            "This pack file was made by {} {} in a newer format (version {version}). Install a newer version of Atlas to open it.",
-            crate::activity::clean(name),
-            crate::activity::clean(app_version)
-        ));
-    }
-    if version < u64::from(VERSION_WITHOUT_MINE) {
-        return Err(not_ours());
-    }
-    serde_json::from_value(value)
-        .map_err(|error| format!("This pack file's description is damaged: {error}."))
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +483,8 @@ fn describe_manifest(
         pack,
         SourceFacts {
             kind,
+            // The site's name comes from the guide pages (see `card`).
+            name: None,
             importer,
             pages,
             newest_page_at: newest,
@@ -1002,6 +783,7 @@ pub struct LayerInfo {
     pub id: String,
     pub local_id: String,
     pub name: String,
+    pub map_id: String,
     pub map_name: String,
     pub kind: TileKind,
     /// The tile URL template, relative to the pack root.
@@ -1111,6 +893,7 @@ pub fn parse_layers(maps_json: &str, layers_json: &str) -> Result<Vec<LayerInfo>
             id: layer.id,
             local_id,
             name: layer.name,
+            map_id: layer.map_id,
             map_name: map.name.clone(),
             kind,
             url,

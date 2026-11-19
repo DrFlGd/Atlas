@@ -41,6 +41,9 @@ lz4_flex = { version = "0.14", default-features = false, features = ["std", "saf
 # Pack files (`.atlaspack`, see src/packfile.rs): ZIP with deflate only,
 # through the flate2 already in the build. No encryption, no other methods.
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# What a pack file's description is and how it is read, shared with other
+# apps that show pack files without unpacking them (MIT, in this repository).
+atlas-pack = { path = "../../../crates/atlas-pack" }
 # Map image downloads (the `downloads` feature only). rustls with the ring
 # provider and the system's certificate store; no cookies, no compression
 # negotiation.
