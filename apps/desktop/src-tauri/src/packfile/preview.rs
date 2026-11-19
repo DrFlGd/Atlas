@@ -22,8 +22,8 @@
 use std::collections::HashSet;
 
 use super::{
-    Analysis, DirCache, LayerFacts, LayerInfo, MapFacts, Stop, TileKind, MAX_PREVIEWS,
-    MAX_PREVIEW_BYTES, PREVIEW_DIR, PREVIEW_SIDE,
+    Analysis, DirCache, LayerFacts, LayerInfo, MapFacts, Stop, TileKind, MAX_PREVIEWS, PREVIEW_DIR,
+    PREVIEW_SIDE,
 };
 
 /// The most tiles drawn for one small picture.
@@ -184,6 +184,7 @@ fn tile_files(
 }
 
 /// The longest side `side` at most, the shape kept, at least one pixel.
+#[cfg(not(target_os = "android"))]
 fn fitted(width: u64, height: u64, side: u64) -> (u32, u32) {
     let longest = width.max(height).max(1);
     if longest <= side {
@@ -202,6 +203,8 @@ fn draw(layer: &LayerInfo, z: u8, tiles: &[(u64, u64, std::path::PathBuf)]) -> O
         ImageReader, Limits, Rgba, RgbaImage,
     };
     use std::io::Cursor;
+
+    use super::MAX_PREVIEW_BYTES;
 
     if tiles.is_empty() {
         return None;

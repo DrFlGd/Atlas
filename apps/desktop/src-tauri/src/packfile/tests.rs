@@ -2375,6 +2375,7 @@ fn cancelling_while_pictures_are_made_smaller_leaves_nothing() {
 // What another app shows of a file: the card and the small pictures (version 7)
 
 /// The entries of a file after the header, in order, with their bytes.
+#[cfg(not(target_os = "android"))]
 fn entries_of(file: &Path) -> Vec<(String, Vec<u8>)> {
     let mut archive = ZipArchive::new(fs::File::open(file).unwrap()).unwrap();
     (1..archive.len())
