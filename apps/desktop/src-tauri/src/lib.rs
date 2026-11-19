@@ -44,6 +44,9 @@ mod pageview;
 pub mod picked;
 #[cfg(feature = "downloads")]
 mod picturecuts;
+// Pack files opened from the file manager or a second start, and noticed
+// as they arrive, change or go.
+pub mod receive;
 mod removal;
 pub mod saves;
 pub mod settings;

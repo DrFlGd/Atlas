@@ -91,6 +91,10 @@ pub const PACK_FILE_NO_EXPORT: &str = "This map, wiki or guide is read from a pa
 /// Why the pages a pack read from a pack file was made from are not opened.
 pub const PACK_FILE_NO_PAGES: &str = "The pages of a map that is read from a pack file cannot be opened here. To open them, import the pack file first with Import a pack file.";
 
+/// Why a pack file in the maps folder is not read, even one the person
+/// opened.
+pub const IN_MAPS_FOLDER: &str = "This pack file is in the maps folder, which holds map packs that Atlas changes, so Atlas does not read pack files there. Move it to the packs folder or another folder to open it.";
+
 /// How deep sub-folders are looked into for pack files.
 const PACK_FILE_DEPTH: usize = 4;
 /// The most pack files one folder gives; more are left out.
@@ -215,6 +219,9 @@ pub enum Origin {
     Location,
     /// A pack file in the packs folder.
     PacksFolder,
+    /// A single pack file the person opened, from a folder Atlas does not
+    /// read otherwise (see [`Library::open_pack_file`]).
+    OpenedFile,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -320,8 +327,44 @@ pub struct Listing {
     /// Pack files that were found but cannot be used.
     pub unreadable: Vec<UnreadablePackFile>,
     pub locations: Vec<LocationInfo>,
+    /// The single pack files the person opened, as the settings keep them.
+    pub opened_files: Vec<OpenedFileInfo>,
     /// Packs whose files are being moved, for example from version 0.2.0.
     pub busy: Vec<String>,
+    /// Grows each time a scan finds something other than the scan before
+    /// it, so a listing that arrives late is told from a newer one.
+    pub serial: u64,
+}
+
+/// A single pack file the person opened, and whether it is there.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenedFileInfo {
+    pub path: String,
+    /// The file cannot be found because its folder cannot (for example a
+    /// drive that is not connected). A file whose folder is there and
+    /// which is not leaves the list instead.
+    pub missing: bool,
+    /// The id of the pack it holds, shown or not; none when it cannot be
+    /// used (it is listed with the reason among the unreadable files).
+    pub pack: Option<String>,
+}
+
+/// What opening one pack file came to, for the person: the pack it holds
+/// and whether it is shown, in a plain sentence.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PackFileOpened {
+    /// The file, as it was given.
+    pub path: String,
+    /// The id of the pack shown for it: its own, or that of the pack with
+    /// the same id shown instead. None when it could not be used.
+    pub show: Option<String>,
+    /// It was added to the settings' list of single pack files.
+    pub remembered: bool,
+    /// Something went wrong: the sentence says what.
+    pub problem: bool,
+    pub message: String,
 }
 
 /// A maps folder the person picked and has not confirmed yet.
@@ -506,6 +549,15 @@ pub struct Library {
     /// The pack files the last scan found, by path, with what is known of
     /// each, so a file that did not change is not read again.
     pack_files: Mutex<HashMap<PathBuf, Arc<PackFile>>>,
+    /// The real paths of the pack files the last scan found in the packs
+    /// folder and the added folders, to tell whether a file opened is one
+    /// of them.
+    read_in_folders: Mutex<HashSet<PathBuf>>,
+    /// Held through a scan, so scans follow one another and their serials
+    /// keep the order in which they looked.
+    scanning: Mutex<()>,
+    /// The last scan's listing, as JSON without its serial, and its serial.
+    last_listing: Mutex<(String, u64)>,
     /// The tables and unpacked files kept of the pack files read last.
     pack_file_pool: Arc<Pool>,
     /// How files are removed; tests act out files that are in use.
@@ -532,6 +584,9 @@ impl Library {
             pending_folder: Mutex::new(None),
             logged_scan: Mutex::new(String::new()),
             pack_files: Mutex::new(HashMap::new()),
+            read_in_folders: Mutex::new(HashSet::new()),
+            scanning: Mutex::new(()),
+            last_listing: Mutex::new((String::new(), 0)),
             pack_file_pool: Pool::shared(),
             file_ops: FileOps::default(),
             #[cfg(feature = "downloads")]
@@ -734,8 +789,30 @@ impl Library {
     }
 
     /// Lists every pack folder, registers the shown ones and forgets packs
-    /// whose folders are gone.
+    /// whose folders are gone. One scan at a time; the listing's serial
+    /// grows when it differs from the scan before.
     pub fn scan(&self) -> Listing {
+        let _scanning = lock(&self.scanning);
+        let mut listing = self.look_everywhere();
+        let text = serde_json::to_string(&listing).unwrap_or_default();
+        let mut last = lock(&self.last_listing);
+        if last.0 != text {
+            *last = (text, last.1 + 1);
+        }
+        listing.serial = last.1;
+        listing
+    }
+
+    /// Scans, and gives the listing only when it differs from the last
+    /// scan's, whoever asked for that one.
+    pub fn scan_changed(&self) -> Option<Listing> {
+        let before = lock(&self.last_listing).1;
+        let listing = self.scan();
+        (listing.serial != before).then_some(listing)
+    }
+
+    /// The scan itself: see [`Library::scan`].
+    fn look_everywhere(&self) -> Listing {
         let settings = self.settings.read();
         let maps_folder = Self::maps_folder_of(&settings, self.settings.dir());
         let packs_folder = self.packs_folder();
@@ -849,6 +926,8 @@ impl Library {
         // Pack files come after every pack folder; of two with one id, the
         // one whose pack was changed last, then the one made last.
         pack_files.look(&packs_folder, Origin::PacksFolder);
+        *lock(&self.read_in_folders) = pack_files.seen.clone();
+        let opened_files = self.look_at_opened_files(&settings, &mut pack_files);
         let mut found = std::mem::take(&mut pack_files.found);
         found.sort_by(|a, b| {
             a.head
@@ -939,8 +1018,58 @@ impl Library {
             hidden,
             unreadable,
             locations,
+            opened_files,
             busy,
+            serial: 0,
         }
+    }
+
+    /// Looks at the single pack files the person opened: each is read as a
+    /// pack file of a folder is, unless a folder's look found it already.
+    /// A file whose folder is there but which is not (deleted, moved or
+    /// renamed) leaves the list; one whose folder cannot be found either
+    /// (a drive that is not connected) stays and is listed as missing.
+    fn look_at_opened_files(
+        &self,
+        settings: &SharedSettings,
+        pack_files: &mut FileScan,
+    ) -> Vec<OpenedFileInfo> {
+        let mut infos = Vec::new();
+        let mut gone = Vec::new();
+        for text in &settings.pack_files {
+            let path = PathBuf::from(text);
+            let mut info = OpenedFileInfo {
+                path: text.clone(),
+                missing: false,
+                pack: None,
+            };
+            match fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if path.parent().is_some_and(Path::is_dir) {
+                        gone.push(text.clone());
+                        continue;
+                    }
+                    info.missing = true;
+                }
+                _ => info.pack = pack_files.look_file(&path, Origin::OpenedFile),
+            }
+            infos.push(info);
+        }
+        if !gone.is_empty() {
+            let kept = self.settings.update(|settings| {
+                settings.pack_files.retain(|file| !gone.contains(file));
+            });
+            if let Err(error) = kept {
+                activity::warn(Area::Library, error);
+            }
+            for file in gone {
+                activity::info(
+                    Area::Library,
+                    format!("The pack file {file} is not there any more, so it left the list of pack files opened"),
+                );
+            }
+        }
+        infos
     }
 
     /// What the Library lists of a pack shown from `path`.
@@ -1136,6 +1265,118 @@ impl Library {
             .iter()
             .find(|location| location.path == path)
             .map(|location| PathBuf::from(&location.path))
+    }
+
+    // -----------------------------------------------------------------------
+    // Single pack files
+
+    /// Shows a pack file the person opened (from the file manager, or as
+    /// the path Atlas was started with), read where it lies and never
+    /// copied. A file in the packs folder or an added folder is read as
+    /// theirs; any other is remembered in the settings' list of single
+    /// pack files, so it is listed at the next start too. `path` is an
+    /// existing file with the pack file extension (see `receive::args`).
+    /// What came of it, in a plain sentence.
+    pub fn open_pack_file(&self, path: &Path) -> PackFileOpened {
+        let given = path.display().to_string();
+        let name = path
+            .file_name()
+            .map_or_else(|| given.clone(), |name| name.to_string_lossy().into_owned());
+        let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let same = |text: &str| Path::new(text).canonicalize().is_ok_and(|it| it == real);
+        let problem = |message: String| PackFileOpened {
+            path: given.clone(),
+            show: None,
+            remembered: false,
+            problem: true,
+            message,
+        };
+        let maps = self.maps_folder().canonicalize().ok();
+        if maps.is_some_and(|maps| real.starts_with(maps)) {
+            return problem(format!("Atlas does not open {name}. {IN_MAPS_FOLDER}"));
+        }
+        let mut listing = self.scan();
+        let in_folder = lock(&self.read_in_folders).contains(&real);
+        let remembered = !in_folder;
+        if remembered
+            && !self
+                .settings
+                .read()
+                .pack_files
+                .iter()
+                .any(|file| same(file))
+        {
+            let text = given.clone();
+            if let Err(error) = self.settings.update(|settings| {
+                settings.pack_files.retain(|file| *file != text);
+                settings.pack_files.push(text);
+            }) {
+                return problem(format!("Atlas could not open {name}. {error}."));
+            }
+            activity::info(
+                Area::Library,
+                format!("Added the pack file {given} to the list of pack files opened"),
+            );
+            listing = self.scan();
+        }
+        let kept = if remembered {
+            " Atlas reads it where it is, without copying it, and lists it in the Library until you remove it from the list in the settings, or the file is deleted or moved."
+        } else {
+            " It is in a folder Atlas reads, so Atlas reads it where it is, without copying it."
+        };
+        let shown = listing
+            .packs
+            .iter()
+            .find(|pack| pack.pack_file && pack.path.as_deref().is_some_and(same));
+        if let Some(pack) = shown {
+            return PackFileOpened {
+                path: given,
+                show: Some(pack.id.clone()),
+                remembered,
+                problem: false,
+                message: format!("Showing {} from {name}.{kept}", pack.title),
+            };
+        }
+        if let Some(hidden) = listing.hidden.iter().find(|pack| same(&pack.path)) {
+            let other = listing.packs.iter().any(|pack| pack.id == hidden.id);
+            return PackFileOpened {
+                path: given,
+                show: other.then(|| hidden.id.clone()),
+                remembered,
+                problem: false,
+                message: format!(
+                    "{name} holds {}, but the one shown is read from another file or folder. {}{kept}",
+                    hidden.title, hidden.reason
+                ),
+            };
+        }
+        let reason = listing
+            .unreadable
+            .iter()
+            .find(|file| same(&file.path))
+            .map_or(
+                "Atlas did not find it among the pack files it reads.",
+                |file| file.reason.as_str(),
+            );
+        PackFileOpened {
+            remembered,
+            ..problem(format!("Atlas could not open {name}. {reason}"))
+        }
+    }
+
+    /// Takes a pack file off the settings' list of single pack files. The
+    /// file is left as it is.
+    pub fn forget_pack_file(&self, path: &str) -> Result<(), String> {
+        self.settings.update(|settings| {
+            settings.pack_files.retain(|file| file != path);
+        })?;
+        activity::info(
+            Area::Library,
+            format!(
+                "Took the pack file {path} off the list of pack files opened (no file deleted)"
+            ),
+        );
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -2188,6 +2429,9 @@ pub struct PackFilesIn {
     /// A line for each limit that left something out, or for a folder not
     /// read, with the folder or file it concerns.
     pub notes: Vec<UnreadablePackFile>,
+    /// Every folder whose entries were read, `dir` first: those to watch
+    /// for pack files that arrive.
+    pub folders: Vec<PathBuf>,
 }
 
 /// The pack files (`.atlaspack`) in `dir` and its sub-folders: not in a
@@ -2223,6 +2467,7 @@ pub fn pack_files_in(dir: &Path, maps_folder: Option<&Path>) -> PackFilesIn {
             let Ok(entries) = fs::read_dir(dir) else {
                 return;
             };
+            self.found.folders.push(dir.to_path_buf());
             let mut listed = Vec::new();
             for entry in entries.flatten() {
                 self.read += 1;
@@ -2410,49 +2655,87 @@ struct FoundFile {
 impl FileScan {
     /// Looks at the pack files in `dir`; the ids of those that can be used.
     fn look(&mut self, dir: &Path, origin: Origin) -> Vec<String> {
-        let mut ids = Vec::new();
         let found = pack_files_in(dir, self.maps_folder.as_deref());
         self.unreadable.extend(found.notes);
-        for path in found.files {
-            let real = path.canonicalize().unwrap_or_else(|_| path.clone());
-            if !self.seen.insert(real) {
-                continue;
-            }
-            let pack =
-                self.known.get(&path).cloned().unwrap_or_else(|| {
-                    Arc::new(PackFile::new(path.clone(), Arc::clone(&self.pool)))
-                });
-            self.kept.insert(path.clone(), Arc::clone(&pack));
-            let checked = pack.check().and_then(|checked| {
-                let header = checked.header();
-                let head = head_of_header(header).map_err(|reason| {
-                    format!("This pack file's description cannot be used: {reason}.")
-                })?;
-                Ok((
-                    head,
-                    header.pack.updated.as_deref().and_then(iso_millis),
-                    iso_millis(&header.exported_at),
-                ))
+        found
+            .files
+            .into_iter()
+            .filter_map(|path| self.take(path, origin))
+            .collect()
+    }
+
+    /// Looks at one pack file the person opened: the id of its pack when
+    /// it can be used. A file a folder's look found already counts once,
+    /// as that folder's; one in the maps folder is not read.
+    fn look_file(&mut self, path: &Path, origin: Origin) -> Option<String> {
+        let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if self.seen.contains(&real) {
+            return self
+                .found
+                .iter()
+                .find(|file| file.path.canonicalize().is_ok_and(|it| it == real))
+                .map(|file| file.head.id.clone());
+        }
+        if self
+            .maps_folder
+            .as_ref()
+            .is_some_and(|maps| real.starts_with(maps))
+        {
+            self.seen.insert(real);
+            self.unreadable.push(UnreadablePackFile {
+                path: path.display().to_string(),
+                reason: IN_MAPS_FOLDER.to_owned(),
             });
-            match checked {
-                Ok((head, updated, exported)) => {
-                    ids.push(head.id.clone());
-                    self.found.push(FoundFile {
-                        path,
-                        origin,
-                        pack,
-                        head,
-                        updated,
-                        exported,
-                    });
-                }
-                Err(reason) => self.unreadable.push(UnreadablePackFile {
+            return None;
+        }
+        self.take(path.to_path_buf(), origin)
+    }
+
+    /// Reads one pack file's description, unless it was looked at in this
+    /// scan already: the id of its pack when it can be used.
+    fn take(&mut self, path: PathBuf, origin: Origin) -> Option<String> {
+        let real = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !self.seen.insert(real) {
+            return None;
+        }
+        let pack = self
+            .known
+            .get(&path)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(PackFile::new(path.clone(), Arc::clone(&self.pool))));
+        self.kept.insert(path.clone(), Arc::clone(&pack));
+        let checked = pack.check().and_then(|checked| {
+            let header = checked.header();
+            let head = head_of_header(header).map_err(|reason| {
+                format!("This pack file's description cannot be used: {reason}.")
+            })?;
+            Ok((
+                head,
+                header.pack.updated.as_deref().and_then(iso_millis),
+                iso_millis(&header.exported_at),
+            ))
+        });
+        match checked {
+            Ok((head, updated, exported)) => {
+                let id = head.id.clone();
+                self.found.push(FoundFile {
+                    path,
+                    origin,
+                    pack,
+                    head,
+                    updated,
+                    exported,
+                });
+                Some(id)
+            }
+            Err(reason) => {
+                self.unreadable.push(UnreadablePackFile {
                     path: path.display().to_string(),
                     reason,
-                }),
+                });
+                None
             }
         }
-        ids
     }
 }
 

@@ -17,6 +17,7 @@
 //! { "format": "atlas-settings", "version": 1,
 //!   "mapsFolder": null,
 //!   "locations": [{ "path": "E:\\Maps\\My Game", "kind": "pack" }],
+//!   "packFiles": ["E:\\Shared\\Test Valley.atlaspack"],
 //!   "downloads": { "parallel": 2, "pauseMs": 250,
 //!                  "requestsPerMinute": null, "kilobytesPerSecond": null } }
 //! ```
@@ -43,6 +44,8 @@ const SETTINGS_FILE: &str = "settings.json";
 const MAX_SETTINGS_BYTES: u64 = 1 << 20;
 /// Remembered locations beyond this are dropped, oldest first.
 const MAX_LOCATIONS: usize = 100;
+/// Remembered pack files beyond this are dropped, oldest first.
+const MAX_PACK_FILES: usize = 100;
 
 /// The folder shared by the Atlas apps, under the platform's local data folder.
 pub fn shared_dir(local_data: &Path) -> PathBuf {
@@ -240,6 +243,13 @@ pub struct SharedSettings {
     pub maps_folder: Option<String>,
     #[serde(default)]
     pub locations: Vec<Location>,
+    /// Single pack files (`.atlaspack`) the person opened from a folder
+    /// Atlas does not read otherwise (from the file manager, or as the
+    /// path Atlas was started with), oldest first. Each is read where it
+    /// lies, as the pack files of the packs folder are. An app that does
+    /// not know this list leaves it out when it writes the file.
+    #[serde(default)]
+    pub pack_files: Vec<String>,
     #[serde(default)]
     pub downloads: DownloadSettings,
 }
@@ -251,6 +261,7 @@ impl Default for SharedSettings {
             version: SETTINGS_VERSION,
             maps_folder: None,
             locations: Vec::new(),
+            pack_files: Vec::new(),
             downloads: DownloadSettings::default(),
         }
     }
@@ -334,6 +345,10 @@ impl SettingsFile {
             let extra = settings.locations.len() - MAX_LOCATIONS;
             settings.locations.drain(..extra);
         }
+        if settings.pack_files.len() > MAX_PACK_FILES {
+            let extra = settings.pack_files.len() - MAX_PACK_FILES;
+            settings.pack_files.drain(..extra);
+        }
         self.write(&settings)
             .map_err(|error| format!("Could not save the settings: {error}"))?;
         Ok(settings)
@@ -378,6 +393,32 @@ mod tests {
         assert_eq!(read.maps_folder.as_deref(), Some("/maps"));
         assert_eq!(read.locations.len(), 1);
         assert!(!dir.0.join("shared/settings.json.part").exists());
+    }
+
+    #[test]
+    fn keeps_the_pack_files_opened_through_other_changes() {
+        let dir = TempDir::new("settings-pack-files");
+        let file = SettingsFile::new(dir.0.clone());
+        file.update(|s| s.pack_files.push("/shared/valley.atlaspack".into()))
+            .unwrap();
+        // Another change keeps the list; a file written before the list
+        // existed reads as an empty one.
+        file.update(|s| s.maps_folder = Some("/maps".into()))
+            .unwrap();
+        assert_eq!(file.read().pack_files, ["/shared/valley.atlaspack"]);
+        assert!(fs::read_to_string(file.path())
+            .unwrap()
+            .contains("\"packFiles\""));
+        fs::write(file.path(), br#"{"format":"atlas-settings","version":1}"#).unwrap();
+        assert!(file.read().pack_files.is_empty());
+        // At most 100, the oldest dropped first.
+        file.update(|s| {
+            s.pack_files = (0..105).map(|n| format!("/files/{n}.atlaspack")).collect();
+        })
+        .unwrap();
+        let kept = file.read().pack_files;
+        assert_eq!(kept.len(), 100);
+        assert_eq!(kept[0], "/files/5.atlaspack");
     }
 
     #[test]
