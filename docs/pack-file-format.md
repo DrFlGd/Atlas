@@ -173,6 +173,12 @@ Treat every pack file as untrusted.
 - Read only stored or deflated entries.
 - Never load anything from a web address because a file names it.
 
+## Reading a pack file where it lies
+
+Atlas can show a pack file without importing it (see "Pack files read where they lie" in `apps/desktop/README.md`). It then makes the checks above once when it opens the file: it reads the description and the central directory (ZIP64 too), checks every entry as an import does, and keeps a table of where each entry is, without the ZIP reader. Stored entries, and byte ranges of them, are read from the file where they are; a deflated entry is unpacked whole within its size limit and checked against its checksum. The small pictures and the person's own things (`mine/`) are not served.
+
+Another app may replace a pack file while Atlas has it open, by writing a `.part` file beside it and renaming that over it. Atlas compares the file's length, modified time and end of central directory record at each read and reads the new file's list of contents when they changed, so it never reads the new file at the old file's offsets. Atlas never writes into a pack file or beside it.
+
 ## Reading pack files from another Rust app
 
 The `atlas-pack` crate, in this repository at `crates/atlas-pack`, holds what another app needs: the description's types, the format's constants, the checks above for the description and the small pictures, and bounded reads from a file. It has no app code and makes no network request. It is MIT licensed, as Atlas is.
