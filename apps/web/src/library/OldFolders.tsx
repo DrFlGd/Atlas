@@ -168,8 +168,9 @@ function OldFoldersSection() {
     <section className="settings-group" aria-label="Old folders" data-testid="settings-old-folders">
       <h2 className="settings-group-title">Old folders</h2>
       <p className="muted small">
-        Atlas now reads every map, wiki and guide for a game from its pack file, and no longer uses
-        the folders of them in the maps folder. Nothing in them is converted. They can be removed to
+        Atlas now keeps each map, wiki and guide for a game as a pack file and makes no new folders
+        in the maps folder. The folders from earlier versions are still shown, and a folder is shown
+        before a pack file of the same game. Nothing in them is converted. They can be removed to
         free space; each is removed only when you confirm. Your own lists, locations, notes, photos
         and guide links for a game are kept beside its folder and stay, and so do your found marks.
       </p>
