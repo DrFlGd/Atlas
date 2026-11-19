@@ -146,17 +146,18 @@ describe('which is newer, a pack file or the installed game', () => {
     expect(freshnessText(verdict, iso)).toMatch(/^The installed game is newer: its data was read/);
   });
 
-  it('knows the file a game is read from where it lies as the same file', () => {
+  it('says when the game shown is read from the same file where it lies', () => {
     const file = header();
     const readFrom = {
       path: '/packs/Test Valley.atlaspack',
       fileName: 'Test Valley.atlaspack',
       header: file,
     };
-    expect(compareWithInstalled(file, installed({ readFrom }))).toMatchObject({
-      verdict: 'same',
-      basis: 'same-file',
-    });
+    const freshness = compareWithInstalled(file, installed({ readFrom }));
+    expect(freshness).toMatchObject({ verdict: 'same', basis: 'read-from' });
+    expect(freshnessText(freshness)).toBe(
+      'The game shown now is read from this same file where it lies. Importing it puts a copy into the maps folder, where Atlas can change it.',
+    );
   });
 
   it('then by pack version', () => {
