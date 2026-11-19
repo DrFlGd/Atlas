@@ -44,7 +44,9 @@
 pub mod commands;
 pub mod store;
 
-#[cfg(test)]
+// As the tests of `owngame`: a map is made from a picture, which Android
+// has no code for.
+#[cfg(all(test, not(target_os = "android")))]
 pub(crate) mod tests;
 
 use std::{
