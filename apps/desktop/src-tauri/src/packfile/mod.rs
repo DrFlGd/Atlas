@@ -1574,4 +1574,4 @@ pub fn read_imported_record(root: &Path) -> Option<ImportedRecord> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

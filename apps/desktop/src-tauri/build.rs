@@ -139,6 +139,13 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "sites_remove",
     "sites_switch",
     "sites_save",
+    "kept_packs_status",
+    "kept_packs_choose_folder",
+    "kept_packs_set",
+    "kept_packs_write_all",
+    "kept_packs_write_again",
+    "kept_packs_cancel",
+    "kept_packs_reveal",
 ];
 
 /// Where tauri-build writes a permission file per command.

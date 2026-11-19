@@ -586,6 +586,8 @@ pub async fn tiles_start(
     pack_id: String,
     detail: Detail,
 ) -> Result<Snapshot, String> {
+    // A short job may end between two looks of the keeper of packs.
+    crate::keep::changed(&pack_id);
     manager.start(&pack_id, detail)
 }
 
@@ -651,6 +653,7 @@ pub async fn import_fetch<R: Runtime>(
     if window.label() != crate::MAIN_WINDOW {
         return Err("Only the app's own window can read pages.".to_owned());
     }
+    crate::keep::reading();
     crate::pagefetch::fetch_page(&url).await
 }
 
@@ -674,6 +677,7 @@ pub async fn import_fetch_picture<R: Runtime>(
     if window.label() != crate::MAIN_WINDOW {
         return Err("Only the app's own window can read pages.".to_owned());
     }
+    crate::keep::reading();
     let cuts = picture_cuts(&library);
     crate::picturecuts::fetch_picture(&url, &cuts).await
 }
@@ -752,6 +756,7 @@ pub async fn photos_plan(
 #[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn photos_start(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    crate::keep::changed(&pack_id);
     manager.start_photos(&pack_id)
 }
 
@@ -760,6 +765,7 @@ pub async fn photos_start(manager: Manager<'_>, pack_id: String) -> Result<Snaps
 #[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn photos_start_again(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    crate::keep::changed(&pack_id);
     let manager = Arc::clone(&manager);
     // Looks at every photo's file.
     tokio::task::spawn_blocking(move || manager.start_photos_again(&pack_id))
@@ -1002,7 +1008,11 @@ pub async fn library_apply_maps_folder(
 ) -> Result<Vec<String>, String> {
     let busy = downloads.active_packs();
     let library = Arc::clone(&library);
-    blocking(move || library.apply_maps_folder(move_packs, &busy)).await
+    let applied = blocking(move || library.apply_maps_folder(move_packs, &busy)).await;
+    // The games to keep packs of are in another folder now.
+    #[cfg(feature = "downloads")]
+    crate::keep::changed_all();
+    applied
 }
 
 /// What to show in the system's file manager.
@@ -1288,6 +1298,8 @@ async fn delete_images(
         }
     };
     downloads.forget(&id);
+    #[cfg(feature = "downloads")]
+    crate::keep::changed(&id);
     activity::info(
         Area::Library,
         format!(
@@ -1386,6 +1398,12 @@ pub async fn library_save_import(
     .await;
     if photos_again {
         downloads.start_photos(&pack_id);
+    }
+    // A page saved: the pack kept in a folder is written once the session
+    // is over.
+    #[cfg(feature = "downloads")]
+    if saved.is_ok() {
+        crate::keep::changed(&pack_id);
     }
     saved
 }
@@ -2221,6 +2239,8 @@ async fn import_pack_file(
                 return Err(error);
             }
         };
+        #[cfg(feature = "downloads")]
+        crate::keep::changed(&imported.pack_id);
         if imported.replaced {
             // Its old download record went with the old folder.
             downloads.forget(&imported.pack_id);
@@ -2405,6 +2425,8 @@ pub async fn import_open<R: Runtime>(
     browse: Option<bool>,
 ) -> Result<(), String> {
     desktop_only()?;
+    #[cfg(feature = "downloads")]
+    crate::keep::reading();
     *lock_poll() = None;
     let keep = keep.unwrap_or(false);
     let browse = browse.unwrap_or(false);
@@ -2470,6 +2492,8 @@ pub async fn import_navigate<R: Runtime>(
     wait_seconds: Option<u32>,
 ) -> Result<Navigated, String> {
     desktop_only()?;
+    #[cfg(feature = "downloads")]
+    crate::keep::reading();
     *lock_poll() = None;
     let importer = importer_id
         .as_deref()

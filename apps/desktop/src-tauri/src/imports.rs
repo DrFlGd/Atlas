@@ -1295,6 +1295,12 @@ impl Imports {
         Ok(data.filter(|data| serde_json::from_str::<serde::de::IgnoredAny>(data).is_ok()))
     }
 
+    /// Whether an import window is open: a session is reading pages.
+    #[cfg_attr(not(feature = "downloads"), allow(dead_code))]
+    pub fn is_open(&self) -> bool {
+        lock(&self.session).is_some()
+    }
+
     /// Closes the import window, if it is open.
     pub fn close<R: Runtime>(&self, app: &AppHandle<R>) {
         lock(&self.session).take();

@@ -37,6 +37,7 @@ import { listedPages, loadWikiNotes, useWikiNotes } from '../state/wikiNotes';
 import { NewGameButton } from '../touch/OwnGames';
 import { GamePane } from './GamePane';
 import { DownloadsPanel, DownloadsStrip } from './DownloadsPanel';
+import { KeptPacksLine } from './KeptPacks';
 import { SettingsScreen } from './SettingsScreen';
 import { useUpdatable } from './updatable';
 import '../styles/library.css';
@@ -157,6 +158,7 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
       {__ATLAS_DOWNLOADS__ && downloads ? (
         <>
           {downloadsOpen ? <DownloadsPanel /> : null}
+          <KeptPacksLine />
           <DownloadsStrip />
         </>
       ) : (

@@ -22,6 +22,7 @@ import { hasMap } from './state/guides';
 import { loadGuideLinks, lookForGuideGames } from './state/guideLinks';
 import { useLibrary } from './state/libraryView';
 import { followArrivals } from './state/packArrivals';
+import { followKeptPacks } from './state/keptPacks';
 import { loadOwnNotes } from './state/ownNotes';
 import { loadOwnPages } from './state/ownPages';
 import { loadOwnLists } from './state/ownLists';
@@ -78,10 +79,13 @@ export function App() {
     const stopSaves = initSaves();
     // Before the start, so a pack file opened meanwhile is not missed.
     const stopArrivals = followArrivals();
+    // The notice of a run of the kept packs that failed comes wherever the person is.
+    const stopKeptPacks = followKeptPacks();
     void boot(parseViewHash(window.location.hash));
     return () => {
       stopSaves();
       stopArrivals();
+      stopKeptPacks();
     };
   }, []);
 
