@@ -61,7 +61,10 @@ export function closePackFileDialog(): void {
   discardPickedCopy();
 }
 
-/** Asks for a pack file and shows what importing it would do. */
+/**
+ * Asks for a pack file and shows what importing it would do; in the desktop
+ * app without downloads, what adding it to the packs folder would do.
+ */
 export async function pickPackFile(): Promise<void> {
   try {
     const file = await desktop!.packFiles.pick();
@@ -272,8 +275,10 @@ async function restoreMine(imported: PackFileImported): Promise<MineRestored | n
 }
 
 /**
- * Imports a pack file, then lists the packs again and shows the game:
- * from its new files, when it replaced the game shown.
+ * Imports a pack file (in the desktop app without downloads: copies it into
+ * the packs folder, where it stays a file), takes in the person's own
+ * records it carries, then lists the packs again and shows the game: from
+ * its new files, when it replaced the game shown.
  */
 export async function importPackFile(
   file: PackFileInfo,

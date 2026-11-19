@@ -1,6 +1,7 @@
 import { useAtlas } from '../state/store';
 import { ProgressTools } from '../touch/DesktopTools';
 import { Settings } from '../touch/GamesScreen';
+import { OldFolders } from './OldFolders';
 import { SitesSettings } from './SitesSettings';
 import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './StorageSettings';
 
@@ -32,6 +33,7 @@ export function SettingsScreen({ general }: { general: boolean }) {
         ) : null}
         <MapsFolder />
         <Locations />
+        <OldFolders />
         <DownloadSpeed />
         {__ATLAS_DOWNLOADS__ ? <SitesSettings /> : null}
         <ActivityLogSetting />

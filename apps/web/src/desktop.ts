@@ -924,6 +924,40 @@ export interface PackFileInfo {
   replaces: boolean;
   /** Why it cannot be imported here. */
   blocked: string | null;
+  /**
+   * In the desktop app without downloads, what adding the file does: it is
+   * copied into the packs folder and read there, never unpacked, so it
+   * replaces nothing. Absent where pack files are imported into the maps
+   * folder (the app with downloads, the Android app, an older shell).
+   */
+  adds?: PackFileAdds | null;
+}
+
+/** What adding a pack file to the packs folder does, before anything is written. */
+export interface PackFileAdds {
+  /** The packs folder. */
+  folder: string;
+  /** The name the file has in the packs folder once added. */
+  fileName: string;
+  /** It is copied there; otherwise it is there already. */
+  copy: boolean;
+  /** Another file has its own name there, so the copy is called `fileName`. */
+  renamed: boolean;
+  /** Which pack of the same game is shown once it is added, when that is not simply this file. */
+  note: string | null;
+}
+
+/** A pack file added to the packs folder. */
+export interface PackFileAdded {
+  /** The file in the packs folder. */
+  path: string;
+  fileName: string;
+  /** It was copied there now; otherwise it was there already. */
+  copied: boolean;
+  /** It is the pack shown for its game. */
+  shown: boolean;
+  /** Which pack of the game is shown instead, and why. */
+  note: string | null;
 }
 
 export interface PackFileImported {
@@ -946,6 +980,49 @@ export interface PackFileImported {
   gameGroup?: string | null;
   /** The person's own photos the file carried: their file names and bytes in base64. */
   ownPictures?: { file: string; data: string }[] | null;
+  /** The pack file was added to the packs folder rather than imported (see {@link PackFileInfo.adds}). */
+  added?: PackFileAdded | null;
+}
+
+/** A folder map, wiki or guide in the maps folder that the app no longer uses. */
+export interface OldFolder {
+  /** The folder's name in the maps folder: what a removal names. */
+  folder: string;
+  path: string;
+  id: string;
+  title: string;
+  /** The pack file of the same game that is shown once the folder is gone, if any. */
+  packFile: string | null;
+}
+
+/** The old folders of the maps folder, in the desktop app without downloads. */
+export interface OldFolders {
+  mapsFolder: string;
+  /** Another app that reads sites uses this maps folder: nothing is offered. */
+  siteReader: boolean;
+  folders: OldFolder[];
+  /** Games made in the app on this computer, offered apart. */
+  madeHere: OldFolder[];
+}
+
+/** How much room a folder takes; not complete when a limit stopped the count. */
+export interface FolderSize {
+  bytes: number;
+  files: number;
+  complete: boolean;
+}
+
+/** What removing old folders came to, and the games listed after it. */
+export interface OldFoldersRemoved {
+  removed: {
+    folder: string;
+    id: string;
+    removed: boolean;
+    /** Every file went; otherwise some go at the next start. */
+    complete: boolean;
+    problem: string | null;
+  }[];
+  listing: Listing;
 }
 
 /** A picture chosen for a map, and whether it can be one. */
@@ -997,8 +1074,12 @@ export interface PickedPackFile {
 
 /** How far the pack file being saved, imported or copied into the app is. */
 export interface PackFileProgress {
-  /** `copy`: a picked file copied into the app, counted in bytes only. */
-  kind: 'export' | 'import' | 'copy';
+  /**
+   * `copy`: a picked file copied into the app, counted in bytes only.
+   * `add`: a pack file copied into the packs folder (counted in bytes,
+   * with no files) and then checked (counted in files).
+   */
+  kind: 'export' | 'import' | 'copy' | 'add';
   packId: string;
   title: string;
   entriesDone: number;
@@ -1127,6 +1208,12 @@ export interface DesktopBridge {
     takeOpened(): Promise<PackFileOpened[]>;
     /** Takes a pack file off the list of pack files opened; the file stays. */
     forgetPackFile(path: string): Promise<void>;
+    /** The old folder maps and wikis of the maps folder (the desktop app without downloads). */
+    oldFolders(): Promise<OldFolders>;
+    /** How much room one old folder takes, by its name. */
+    oldFolderSize(folder: string): Promise<FolderSize>;
+    /** Removes the old folders named, then lists the games again. */
+    removeOldFolders(folders: { folder: string; id: string }[]): Promise<OldFoldersRemoved>;
     /** How many map images were downloaded for a pack. */
     imagesInfo(id: string): Promise<ImagesInfo>;
     /** Deletes a pack's downloaded map images only, stopping its download first. */
@@ -1394,7 +1481,11 @@ export interface DesktopBridge {
     copyPicked(): Promise<string>;
     /** Android: deletes a copy made by {@link copyPicked}. */
     discardCopy(path: string): Promise<void>;
-    /** Imports the file at `path`, replacing the game with the same id only with `replace`. */
+    /**
+     * Imports the file at `path`, replacing the game with the same id only
+     * with `replace`; in the desktop app without downloads, adds it to the
+     * packs folder instead (see {@link PackFileInfo.adds}).
+     */
     import(path: string, replace: boolean): Promise<PackFileImported>;
     progress(): Promise<PackFileProgress | null>;
     cancel(): Promise<void>;
@@ -1508,6 +1599,9 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       deletePack: (id) => call('library_delete_pack', { id }),
       takeOpened: () => call<unknown>('library_take_opened').then(openedFrom, () => []),
       forgetPackFile: (path) => call('library_forget_pack_file', { path }),
+      oldFolders: () => call('library_old_folders'),
+      oldFolderSize: (folder) => call('library_old_folder_size', { folder }),
+      removeOldFolders: (folders) => call('library_remove_old_folders', { folders }),
       imagesInfo: (id) => call('library_images_info', { id }),
       deleteImages: (id) => call('library_delete_images', { id }),
       importSources: (packId, importerId) => call('library_import_sources', { packId, importerId }),

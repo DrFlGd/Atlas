@@ -165,6 +165,12 @@ describe('the tags the app fills in', () => {
       'In a folder you added',
     );
     expect(sourceTag(listed('d'), 'Imported from a pack file')).toBe('Imported from a pack file');
+    expect(sourceTag(listed('f', { origin: 'packs-folder' }), 'In the maps folder')).toBe(
+      'From a pack file',
+    );
+    expect(sourceTag(listed('g', { origin: 'opened-file' }), 'In the maps folder')).toBe(
+      'From a pack file',
+    );
     expect(sourceTag(listed('e', { bundled: true, origin: 'bundled' }), 'x')).toBe(
       'Comes with the app',
     );

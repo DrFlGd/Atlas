@@ -99,3 +99,18 @@ export function layoutChoiceOffered(state: Pick<AtlasState, 'app'>): boolean {
 export function sitesOffered(state: Pick<AtlasState, 'app'>): boolean {
   return __ATLAS_DOWNLOADS__ && state.app?.sites === true;
 }
+
+/**
+ * Whether the app reads maps, wikis and guides for games from pack files
+ * only and keeps no folder of them: the desktop app without downloads.
+ * There, adding a pack file copies it into the packs folder, where it is
+ * read as it is; the Library starts from pack files; and the settings
+ * offer the old folder maps and wikis of the maps folder for removal (see
+ * `library/OldFolders.tsx`, guarded with `!__ATLAS_DOWNLOADS__` too). The
+ * app with downloads, which reads sites, and the Android app import pack
+ * files into the maps folder.
+ */
+export function readsPackFilesOnly(state: Pick<AtlasState, 'app'>): boolean {
+  const app = state.app;
+  return app !== null && app.platform !== 'android' && app.folders !== false && !app.downloads;
+}

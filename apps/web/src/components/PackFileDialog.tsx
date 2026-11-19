@@ -4,6 +4,7 @@ import {
   type ContentCounts,
   type Detail,
   type PackDetails,
+  type PackFileAdds,
   type PackFileExported,
   type PackFileHeader,
   type PackFileInfo,
@@ -21,6 +22,7 @@ import {
   loadExportOptions,
   loadPackDetails,
   packFileProgress,
+  type MineRestored,
 } from '../state/packFile';
 import { useAtlas } from '../state/store';
 import { formatBytes } from './downloadFormat';
@@ -78,6 +80,8 @@ const DETAIL_DESCRIPTIONS: Record<Detail, string> = {
 /**
  * "Export to a file…" and "Import a pack file…", in the desktop app: one game in one
  * `.atlaspack` file, to copy to another computer or to Atlas for Android.
+ * In the desktop app without downloads, "Add a pack file…" instead: the
+ * file is copied into the packs folder and read there, and stays a file.
  * A game with a map goes with the map images chosen; a game of pages and
  * pictures with no map (a wiki) goes with its pages, and the dialog speaks
  * of pages and pictures and offers no detail. Shown over the Maps dialog.
@@ -118,7 +122,11 @@ export function PackFileDialog() {
         <div className="dialog-body">
           <header className="dialog-head">
             <h2 id={titleId}>
-              {state.kind === 'export' ? `Export ${state.title}` : 'Import a pack file'}
+              {state.kind === 'export'
+                ? `Export ${state.title}`
+                : state.kind === 'import' && state.file.adds
+                  ? 'Add a pack file'
+                  : 'Import a pack file'}
             </h2>
             <button
               type="button"
@@ -139,6 +147,13 @@ export function PackFileDialog() {
             />
           ) : state.kind === 'copy' ? (
             <CopyView picked={state.picked} setBusy={setBusy} />
+          ) : state.file.adds ? (
+            <AddView
+              key={state.file.path}
+              file={state.file}
+              adds={state.file.adds}
+              setBusy={setBusy}
+            />
           ) : (
             <ImportView key={state.file.path} file={state.file} setBusy={setBusy} />
           )}
@@ -171,9 +186,14 @@ function useJobProgress(): PackFileProgress | null {
   return progress;
 }
 
-/** Shown while a file is being written, read or (on Android) copied into the app. */
+/**
+ * Shown while a file is being written, read, added to the packs folder or
+ * (on Android) copied into the app. Adding copies the file (counted in
+ * bytes) and then checks the copy (counted in files).
+ */
 function JobProgress({ verb }: { verb: string }) {
   const progress = useJobProgress();
+  const adding = progress?.kind === 'add';
   // Pictures made smaller before anything is written: counted by pictures.
   const shrinking =
     progress !== null && progress.entriesTotal === 0 && (progress.picturesTotal ?? 0) > 0;
@@ -188,9 +208,9 @@ function JobProgress({ verb }: { verb: string }) {
           {shrinking
             ? `Making the pictures smaller: ${pictureCount(done)} of ${pictureCount(total)}`
             : progress && progress.entriesTotal > 0
-              ? `${progress.entriesDone.toLocaleString('en')} of ${progress.entriesTotal.toLocaleString('en')} files · ${formatBytes(done)} of ${formatBytes(total)}`
-              : progress?.kind === 'copy' && total > 0
-                ? `${formatBytes(done)} of ${formatBytes(total)}`
+              ? `${adding ? 'Checking the copy: ' : ''}${progress.entriesDone.toLocaleString('en')} of ${progress.entriesTotal.toLocaleString('en')} files · ${formatBytes(done)} of ${formatBytes(total)}`
+              : (progress?.kind === 'copy' || adding) && total > 0
+                ? `${adding ? 'Copying: ' : ''}${formatBytes(done)} of ${formatBytes(total)}`
                 : 'Starting…'}
         </span>
       </span>
@@ -638,7 +658,6 @@ function ExportResult({ result, pictures }: { result: PackFileExported; pictures
 function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boolean) => void }) {
   const { header, installed } = file;
   const kind = packKind(header.contents);
-  const names = holdsNamesText(header);
   const freshness = installed?.details ? compareWithInstalled(header, installed.details) : null;
   const older = freshness?.verdict === 'installed-newer';
   const [confirmOlder, setConfirmOlder] = useState(false);
@@ -672,29 +691,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
               : ' Your progress is kept.'
             : ''}
         </p>
-        {result.mine ? (
-          <p className="download-note" data-testid="import-mine">
-            {result.mine.lists +
-              result.mine.locations +
-              result.mine.types +
-              result.mine.areas +
-              result.mine.photos +
-              result.mine.pages +
-              result.mine.sections +
-              result.mine.notes +
-              (result.mine.guideLinks ? 1 : 0) >
-            0
-              ? `Your own ${mineText(result.mine)} from the file were added to yours.`
-              : ''}
-            {result.mine.title ? (
-              <span data-testid="import-title">
-                {' '}
-                It is shown under the title {result.mine.title} with its other sources.
-              </span>
-            ) : null}
-            {result.mine.problem ? ` ${result.mine.problem}` : ''}
-          </p>
-        ) : null}
+        {result.mine ? <MineNote mine={result.mine} /> : null}
         <div className="row-actions">
           <button type="button" className="button button-primary" onClick={closePackFileDialog}>
             Done
@@ -705,30 +702,7 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
   }
   return (
     <div className="download-body">
-      <p className="path" data-testid="import-file">
-        {file.fileName} <span className="muted">({formatBytes(file.size)})</span>
-      </p>
-      <p data-testid="import-summary">
-        <strong>{header.title}</strong>, version {header.packVersion}
-        {header.pack.gamePatch ? ` (game patch ${header.pack.gamePatch})` : ''}:{' '}
-        {contentsText(header.contents)}.{kind === 'map' ? ` ${imagesText(header)}` : ''}
-      </p>
-      {names ? (
-        <p className="download-note" data-testid="import-names">
-          {names}
-        </p>
-      ) : null}
-      <p className="download-note">
-        {sourceText(header.source)} Made with {header.exportedBy.name} {header.exportedBy.version}{' '}
-        on <When iso={header.exportedAt} />.
-      </p>
-      <DatesLine header={header} />
-      {header.mine ? (
-        <p className="download-note" data-testid="import-has-mine">
-          It also holds someone’s own {mineText(header.mine)}. They are added to yours for this
-          game; one with the same name and id as one of yours replaces it.
-        </p>
-      ) : null}
+      <FileSummary file={file} />
       {installed ? (
         <>
           <Compare
@@ -830,17 +804,231 @@ function ImportView({ file, setBusy }: { file: PackFileInfo; setBusy: (busy: boo
   );
 }
 
+/** What a pack file holds, who made it and when, before it is imported or added. */
+function FileSummary({ file }: { file: PackFileInfo }) {
+  const { header } = file;
+  const kind = packKind(header.contents);
+  const names = holdsNamesText(header);
+  return (
+    <>
+      <p className="path" data-testid="import-file">
+        {file.fileName} <span className="muted">({formatBytes(file.size)})</span>
+      </p>
+      <p data-testid="import-summary">
+        <strong>{header.title}</strong>, version {header.packVersion}
+        {header.pack.gamePatch ? ` (game patch ${header.pack.gamePatch})` : ''}:{' '}
+        {contentsText(header.contents)}.{kind === 'map' ? ` ${imagesText(header)}` : ''}
+      </p>
+      {names ? (
+        <p className="download-note" data-testid="import-names">
+          {names}
+        </p>
+      ) : null}
+      <p className="download-note">
+        {sourceText(header.source)} Made with {header.exportedBy.name} {header.exportedBy.version}{' '}
+        on <When iso={header.exportedAt} />.
+      </p>
+      <DatesLine header={header} />
+      {header.mine ? (
+        <p className="download-note" data-testid="import-has-mine">
+          It also holds someone’s own {mineText(header.mine)}. They are added to yours for this
+          game; one with the same name and id as one of yours replaces it.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** What of the person's own things in a file was added to theirs. */
+function MineNote({ mine }: { mine: MineRestored }) {
+  const count =
+    mine.lists +
+    mine.locations +
+    mine.types +
+    mine.areas +
+    mine.photos +
+    mine.pages +
+    mine.sections +
+    mine.notes +
+    (mine.guideLinks ? 1 : 0);
+  return (
+    <p className="download-note" data-testid="import-mine">
+      {count > 0 ? `Your own ${mineText(mine)} from the file were added to yours.` : ''}
+      {mine.title ? (
+        <span data-testid="import-title">
+          {' '}
+          It is shown under the title {mine.title} with its other sources.
+        </span>
+      ) : null}
+      {mine.problem ? ` ${mine.problem}` : ''}
+    </p>
+  );
+}
+
+/**
+ * A reader (the desktop app without downloads): the pack file is copied
+ * into the packs folder, unless it is there already, checked there and
+ * read from there. It replaces nothing: when another pack of the same game
+ * is there, the one changed last is shown, and a folder of the game is
+ * shown before any pack file.
+ */
+function AddView({
+  file,
+  adds,
+  setBusy,
+}: {
+  file: PackFileInfo;
+  adds: PackFileAdds;
+  setBusy: (busy: boolean) => void;
+}) {
+  const { header, installed } = file;
+  const kind = packKind(header.contents);
+  const freshness = installed?.details ? compareWithInstalled(header, installed.details) : null;
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof importPackFile>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = () => {
+    setError(null);
+    setRunning(true);
+    setBusy(true);
+    importPackFile(file, false)
+      .then(setResult, (reason: unknown) => {
+        setError(errorText(reason));
+      })
+      .finally(() => {
+        setRunning(false);
+        setBusy(false);
+      });
+  };
+
+  if (result) {
+    const added = result.added;
+    return (
+      <div className="download-body">
+        <p data-testid="add-result">
+          {added?.copied ? (
+            <>
+              Added <strong>{result.title}</strong> to the packs folder as {added.fileName}.
+            </>
+          ) : (
+            <>
+              <strong>{result.title}</strong> is read from the packs folder.
+            </>
+          )}
+          {added?.shown ? ' It is shown now.' : added?.note ? ` ${added.note}` : ''}
+        </p>
+        {added ? <p className="path">{added.path}</p> : null}
+        {result.mine ? <MineNote mine={result.mine} /> : null}
+        <div className="row-actions">
+          <button type="button" className="button button-primary" onClick={closePackFileDialog}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="download-body">
+      <FileSummary file={file} />
+      <p className="download-note" data-testid="add-where">
+        {adds.copy ? (
+          <>
+            It is copied into the packs folder, <span className="path-inline">{adds.folder}</span>,
+            and read from there; the file you chose is left as it is.
+            {adds.renamed
+              ? ` Another file there is named ${file.fileName}, so the copy is named ${adds.fileName}.`
+              : ''}
+          </>
+        ) : (
+          <>
+            It is in the packs folder already, as {adds.fileName}, so nothing is copied. Atlas reads
+            it there.
+          </>
+        )}
+      </p>
+      {installed ? (
+        <>
+          <Compare
+            header={header}
+            installed={installed.details}
+            title={installed.title}
+            kind={kind}
+            now="shown now"
+          />
+          {freshness ? (
+            <p
+              className="download-note"
+              data-testid="import-verdict"
+              data-verdict={freshness.verdict}
+            >
+              {freshnessText(freshness, undefined, true)}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {adds.note ? (
+        <p className="download-note" data-testid="add-note">
+          {adds.note}
+        </p>
+      ) : null}
+      {installed ? (
+        <p className="download-note" data-testid="add-kept">
+          Adding it changes nothing in the game shown now, and{' '}
+          {kind === 'map' ? 'your found marks are kept.' : 'your progress is kept.'}
+        </p>
+      ) : null}
+      {file.blocked ? (
+        <p className="download-error" data-testid="import-blocked">
+          {file.blocked}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="download-error" role="alert" data-testid="pack-file-error">
+          {error}
+        </p>
+      ) : null}
+      {running ? (
+        <JobProgress verb={adds.copy ? 'Adding' : 'Reading'} />
+      ) : file.blocked ? (
+        <div className="row-actions">
+          <button type="button" className="button" onClick={closePackFileDialog}>
+            Close
+          </button>
+        </div>
+      ) : (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="button button-primary"
+            data-testid="import-start"
+            onClick={start}
+          >
+            {adds.copy ? 'Add' : 'Read it'}
+          </button>
+          <button type="button" className="button" onClick={closePackFileDialog}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The file and the installed game side by side; for a file of pages, without map images. */
 function Compare({
   header,
   installed,
   title,
   kind,
+  now = 'installed now',
 }: {
   header: PackFileHeader;
   installed: PackDetails | null;
   title: string;
   kind: PackKind;
+  /** How the column of the game there now is headed, after its title. */
+  now?: string;
 }) {
   const date = (iso: string | null | undefined) => (iso ? <When iso={iso} /> : 'Not recorded');
   const fileImages = imagesDownloadedAt(header);
@@ -903,7 +1091,9 @@ function Compare({
             <span className="visually-hidden">What</span>
           </th>
           <th scope="col">In this file</th>
-          <th scope="col">{title}, installed now</th>
+          <th scope="col">
+            {title}, {now}
+          </th>
         </tr>
       </thead>
       <tbody>

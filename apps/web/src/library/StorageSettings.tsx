@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FolderChoice, LocationInfo, OpenedFileInfo } from '../desktop';
-import { downloadsOffered } from '../features';
+import { downloadsOffered, readsPackFilesOnly } from '../features';
 import { notify } from '../state/actions';
 import { loadDownloadSettings } from '../state/downloads';
 import {
@@ -16,6 +16,7 @@ import {
 import { useAtlas } from '../state/store';
 import { DownloadSettingsSection } from '../components/DownloadSettings';
 import { openActivityLog } from '../state/activityLog';
+import { pickPackFile } from '../state/packFile';
 
 /**
  * The settings that were in the Maps dialog: where maps are kept, map
@@ -28,6 +29,7 @@ export function MapsFolder() {
   const library = useAtlas((s) => s.library);
   const importers = useAtlas((s) => s.config?.importers.length ?? 0);
   const downloads = useAtlas(downloadsOffered);
+  const reader = useAtlas(readsPackFilesOnly);
   const [choice, setChoice] = useState<FolderChoice | null>(null);
   const [working, setWorking] = useState(false);
   if (!library) return null;
@@ -40,9 +42,11 @@ export function MapsFolder() {
           ? importers > 0
             ? 'Maps you add and map images you download are saved here. '
             : 'Map images you download are saved here. '
-          : importers > 0
-            ? 'Maps you add are saved here, and the maps in it are shown. '
-            : 'The maps in this folder are shown. '}
+          : reader
+            ? 'The games you make in Atlas are saved here, and the maps in it are shown. Maps, wikis and guides from pack files are read from the packs folder instead (see Games in other folders below). '
+            : importers > 0
+              ? 'Maps you add are saved here, and the maps in it are shown. '
+              : 'The maps in this folder are shown. '}
         Every Atlas app on this computer uses the same folder.
       </p>
       <p className="path" data-testid="maps-folder-path">
@@ -149,6 +153,7 @@ const LOCATION_STATE: Record<LocationInfo['state'], string> = {
 /** Map packs kept elsewhere: added folders, and the packs that are not shown. */
 export function Locations() {
   const library = useAtlas((s) => s.library);
+  const reader = useAtlas(readsPackFilesOnly);
   const following = useAtlas((s) => s.app?.platform !== 'android');
   if (!library) return null;
   return (
@@ -258,10 +263,23 @@ export function Locations() {
           <p className="muted small">
             Pack files (.atlaspack) in the packs folder, and in the folders you added with Add a
             folder of games, are read where they are, without importing them. Atlas never changes,
-            moves or deletes a pack file. Packs folder:{' '}
-            <span className="path-inline">{library.packsFolder.path}</span>
+            moves or deletes a pack file.
+            {reader
+              ? ' Add a pack file copies one into the packs folder; you can also put pack files there yourself, or open one from your file manager.'
+              : ''}{' '}
+            Packs folder: <span className="path-inline">{library.packsFolder.path}</span>
           </p>
           <div className="row-actions wrap">
+            {reader ? (
+              <button
+                type="button"
+                className="button"
+                data-testid="settings-add-pack-file"
+                onClick={() => void pickPackFile()}
+              >
+                Add a pack file…
+              </button>
+            ) : null}
             <button
               type="button"
               className="button"

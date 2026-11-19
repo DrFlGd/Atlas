@@ -711,6 +711,9 @@ function installFakeShell({
           downloading: false,
         };
       }
+      case 'library_old_folders':
+        // The settings of an app without downloads: no old folders here.
+        return { mapsFolder: '/maps', siteReader: false, folders: [], madeHere: [] };
       default:
         // Tauri rejects with the command's error value, a string.
         // eslint-disable-next-line @typescript-eslint/only-throw-error

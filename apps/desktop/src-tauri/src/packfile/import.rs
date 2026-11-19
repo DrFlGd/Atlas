@@ -262,6 +262,92 @@ pub(crate) fn import_with(
     })
 }
 
+/// What [`check_whole`] found a pack file to hold.
+#[derive(Clone, Debug)]
+pub struct CheckedWhole {
+    pub header: Header,
+    /// The pack's own title, from its manifest.
+    pub title: String,
+    /// The person's own things the file carries, checked to be this
+    /// game's, as an import gives them (see [`Imported::mine`]).
+    pub mine: Mine,
+}
+
+/// Checks a whole pack file exactly as [`import`] checks it, without
+/// writing anything: the description, every entry's name, type, packing
+/// and size, the JSON files and the person's own things as they are read,
+/// every other entry read to its end against its size and checksum, and
+/// the game in its manifest. For a pack file kept where it is rather than
+/// unpacked (see `packfile::add`).
+///
+/// `progress` is told after each entry; `cancelled` is asked between
+/// entries.
+pub fn check_whole(
+    file: &Path,
+    progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<CheckedWhole, Stop> {
+    let header = read_header(file)?;
+    if !is_valid_pack_id(&header.pack_id) {
+        return Err(Stop::Failed(
+            "This pack file names a game id that Atlas cannot use.".to_owned(),
+        ));
+    }
+    let opened = File::open(file).map_err(|error| format!("Could not open the file: {error}"))?;
+    let mut archive = ZipArchive::new(BufReader::new(opened))
+        .map_err(|_| "This pack file is damaged: its list of contents cannot be read.")
+        .map_err(str::to_owned)?;
+    let checked = check_entries(&mut archive, &header)?;
+    let mut done = Progress {
+        entries_done: 0,
+        entries_total: checked.entries.len() as u64,
+        bytes_done: 0,
+        bytes_total: checked.bytes,
+        ..Progress::default()
+    };
+    let mut manifest = None;
+    for entry in &checked.entries {
+        if cancelled() {
+            return Err(Stop::Cancelled);
+        }
+        match &entry.json {
+            Some(bytes) => {
+                if entry.name == MANIFEST_FILE {
+                    manifest = Some(String::from_utf8_lossy(bytes).into_owned());
+                }
+            }
+            None => {
+                // Read to its end, as an import writes it: the archive
+                // checks the checksum there.
+                let mut zipped = archive
+                    .by_index(entry.index)
+                    .map_err(|_| damaged(&entry.name))?;
+                let read = io::copy(&mut (&mut zipped).take(entry.size + 1), &mut io::sink())
+                    .map_err(|_| damaged(&entry.name))?;
+                if read != entry.size {
+                    return Err(damaged(&entry.name));
+                }
+            }
+        }
+        done.entries_done += 1;
+        done.bytes_done += entry.size;
+        progress(done);
+    }
+    let manifest = manifest.ok_or_else(|| refuse("This pack file has no manifest.json."))?;
+    let head = crate::manifest::head_of_text(&manifest)
+        .map_err(|reason| format!("The game in this pack file cannot be used: {reason}."))?;
+    if head.id != header.pack_id {
+        return Err(Stop::Failed(
+            "The game inside this pack file is not the one its description names.".to_owned(),
+        ));
+    }
+    Ok(CheckedWhole {
+        header,
+        title: head.title,
+        mine: checked.mine,
+    })
+}
+
 fn damaged(name: &str) -> Stop {
     Stop::Failed(format!(
         "This pack file is damaged: {} cannot be read in full.",

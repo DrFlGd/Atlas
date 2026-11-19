@@ -8,12 +8,18 @@ import { UiIcon } from '../components/icons';
 import { PackSummary } from '../components/PackSummary';
 import { PackDetailsView } from '../components/PackFacts';
 import { desktop, type PackDetails } from '../desktop';
-import { copiesPickedFiles, foldersOffered, layoutChoiceOffered } from '../features';
+import {
+  copiesPickedFiles,
+  foldersOffered,
+  layoutChoiceOffered,
+  readsPackFilesOnly,
+} from '../features';
 import { setLayout, setTheme, switchGame } from '../state/actions';
 import { openActivityLog } from '../state/activityLog';
 import type { TagGroup, TaggedRow } from '../state/gameTags';
 import { loadMissingDetails } from '../state/gameFacts';
 import { openTitle, showSource, useSourceNames, useTitleRows } from '../state/gameGroups';
+import { reveal } from '../state/library';
 import { ownGamesOffered } from '../state/ownGames';
 import { importPickedPackFile, loadPackDetails, pickPackFile } from '../state/packFile';
 import { useAtlas } from '../state/store';
@@ -24,7 +30,8 @@ import { GroupTitle, SwitchTrack } from './widgets';
 
 /**
  * Games: the games on this device (press one to show it), importing a map
- * pack file, each game's details and delete, then the app's settings.
+ * pack file (in the desktop app without downloads, adding one to the packs
+ * folder), each game's details and delete, then the app's settings.
  * Games shown under one title are one row (see `state/gameGroups.ts`).
  * With two games or more, a game can be found by its name, the games shown
  * as cards or compact rows, and listed under the person's own categories
@@ -32,7 +39,11 @@ import { GroupTitle, SwitchTrack } from './widgets';
  */
 export function GamesScreen() {
   const rows = useTitleRows();
-  const games = useGamesList(rows, 'Imported from a pack file');
+  const copies = useAtlas(copiesPickedFiles);
+  const folders = useAtlas(foldersOffered);
+  // The desktop app without downloads keeps an added pack file a file.
+  const reader = useAtlas(readsPackFilesOnly);
+  const games = useGamesList(rows, reader ? 'In the maps folder' : 'Imported from a pack file');
   const skip = games.groupBy?.id ?? null;
   // Grouped by what the games hold: what each holds is read once, here.
   const byContents = skip === 'contents';
@@ -40,8 +51,6 @@ export function GamesScreen() {
   useEffect(() => {
     if (byContents) void loadMissingDetails(catalog.map((entry) => entry.id));
   }, [byContents, catalog]);
-  const copies = useAtlas(copiesPickedFiles);
-  const folders = useAtlas(foldersOffered);
   const canImport = desktop !== null && (copies || folders);
   const canMake = useAtlas(ownGamesOffered);
   const compact = games.view === 'compact';
@@ -85,7 +94,35 @@ export function GamesScreen() {
             />
           </div>
           {canMake ? <NewGameButton /> : null}
-          {canImport ? (
+          {canImport && reader ? (
+            <>
+              <button
+                type="button"
+                className="touch-button touch-button-primary touch-button-block"
+                data-testid="import-pack-file"
+                onClick={() => void pickPackFile()}
+              >
+                <UiIcon name="upload" size={20} />
+                Add a pack file…
+              </button>
+              <button
+                type="button"
+                className="touch-button touch-button-block"
+                data-testid="open-packs-folder"
+                onClick={() => {
+                  reveal({ kind: 'packs-folder' });
+                }}
+              >
+                <UiIcon name="folder" size={20} />
+                Open packs folder
+              </button>
+              <p className="touch-note">
+                Maps, wikis and guides come in pack files (.atlaspack). Add a pack file copies one
+                into the packs folder, and Atlas reads every pack file there. You can also put pack
+                files into the packs folder yourself, or open one from your file manager.
+              </p>
+            </>
+          ) : canImport ? (
             <>
               <button
                 type="button"
@@ -124,9 +161,13 @@ function useGameRow(id: string) {
       ? 'Made in this app'
       : listed?.origin === 'opened-file'
         ? 'Read from a pack file you opened'
-        : listed && !listed.bundled
-          ? 'Imported from a pack file'
-          : 'Comes with the app',
+        : listed?.origin === 'packs-folder'
+          ? 'Read from a pack file in the packs folder'
+          : listed?.packFile
+            ? 'Read from a pack file in a folder you added'
+            : listed && !listed.bundled
+              ? 'Imported from a pack file'
+              : 'Comes with the app',
     ownGame: canMake && listed?.madeInApp === true && listed.origin === 'maps-folder',
     personalUse: listed?.personalUse === true,
     deletable: listed?.origin === 'maps-folder' && !listed.bundled,

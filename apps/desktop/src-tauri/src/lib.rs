@@ -29,6 +29,8 @@ pub mod guidelinks;
 mod imports;
 pub mod library;
 pub mod manifest;
+// The folder maps and wikis a reader no longer uses, offered for removal.
+pub mod oldfolders;
 pub mod owngame;
 mod owngame_commands;
 pub mod ownlists;
@@ -173,6 +175,9 @@ macro_rules! viewer_commands {
             ownpictures::own_picture_pick,
             receive::library_take_opened,
             receive::library_forget_pack_file,
+            commands::library_old_folders,
+            commands::library_old_folder_size,
+            commands::library_remove_old_folders,
             $($more)*
         ]
     };
@@ -310,6 +315,16 @@ pub fn run() {
             #[cfg(feature = "downloads")]
             let library = library.with_picture_cache(tiles::measure::PictureCache::new(&app_data));
             let library = Arc::new(library);
+            // An app that reads sites keeps its maps and wikis as working
+            // folders in the shared maps folder: it says so in the shared
+            // settings, so a reader on this computer offers none of them for
+            // removal (see `oldfolders.rs`).
+            #[cfg(feature = "downloads")]
+            if let Err(error) = library.settings().update(|settings| {
+                settings.site_reader_started_at = Some(manifest::now_rfc3339());
+            }) {
+                activity::warn(Area::Library, error);
+            }
             library.start();
             // The pack file Atlas was started with, and the folders of pack
             // files followed from now on.

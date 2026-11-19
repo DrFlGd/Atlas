@@ -72,6 +72,7 @@
 //! so another app reads pack files with the same code; see
 //! `docs/pack-file-format.md`.
 
+pub mod add;
 pub mod card;
 pub mod export;
 pub mod import;

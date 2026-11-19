@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::{
+    add::{self, AddInfo},
     export::{export_with_mine, Exported},
     import::{existing_folder, import, read_header, Imported},
     pack_details, pack_file_details, AppInfo, Header, Mine, PackDetails, PackSource, Progress,
@@ -14,7 +15,7 @@ use super::{
 };
 use crate::{
     downloads::Downloads,
-    library::{Library, Origin, PACK_FILE_NO_EXPORT},
+    library::{Library, Origin, PACK_FILE_NO_EXPORT, READER},
     manifest::{read_head, version_key},
     packs::PackKind,
     tiles::pyramid::Detail,
@@ -160,6 +161,10 @@ pub struct FileInfo {
     pub replaces: bool,
     /// Why this file cannot be imported here, in plain words.
     pub blocked: Option<String>,
+    /// On a reader (see `library::READER`), what adding the file to the
+    /// packs folder would do: there it is kept a file, never unpacked, so
+    /// it replaces nothing.
+    pub adds: Option<AddInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -214,9 +219,13 @@ pub fn inspect(library: &Library, downloads: &Downloads, path: &Path) -> Result<
             details: details(library, downloads, &id).ok(),
         })
     });
-    let (replaces, blocked) = match check_import(library, downloads, &header) {
-        Ok(existing) => (existing.is_some(), None),
-        Err(reason) => (false, Some(reason)),
+    let (replaces, blocked, adds) = if READER {
+        (false, None, Some(add::info(library, path, &header)?))
+    } else {
+        match check_import(library, downloads, &header) {
+            Ok(existing) => (existing.is_some(), None, None),
+            Err(reason) => (false, Some(reason), None),
+        }
     };
     Ok(FileInfo {
         path: path.display().to_string(),
@@ -229,6 +238,7 @@ pub fn inspect(library: &Library, downloads: &Downloads, path: &Path) -> Result<
         installed,
         replaces,
         blocked,
+        adds,
     })
 }
 
@@ -295,4 +305,16 @@ pub fn import_pack_file(
         )));
     }
     import(path, &library.maps_folder(), progress, cancelled)
+}
+
+/// Adds a pack file on a reader: a copy in the packs folder, read where
+/// it lies; see [`add::add`].
+pub fn add_pack_file(
+    library: &Library,
+    path: &Path,
+    progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<add::Added, Stop> {
+    checked_path(path)?;
+    add::add(library, path, progress, cancelled)
 }

@@ -252,6 +252,15 @@ pub struct SharedSettings {
     pub pack_files: Vec<String>,
     #[serde(default)]
     pub downloads: DownloadSettings,
+    /// When an app that reads sites (a build with downloads) last started
+    /// on this computer, in RFC 3339. Such an app keeps each map and wiki
+    /// as a working folder in the maps folder, which every Atlas app on the
+    /// computer shares, so a reader then offers none of the folders there
+    /// for removal (see `oldfolders.rs`). Written by that app at each
+    /// start; an app that does not know it leaves it out when it writes the
+    /// file, until that app starts again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_reader_started_at: Option<String>,
 }
 
 impl Default for SharedSettings {
@@ -263,6 +272,7 @@ impl Default for SharedSettings {
             locations: Vec::new(),
             pack_files: Vec::new(),
             downloads: DownloadSettings::default(),
+            site_reader_started_at: None,
         }
     }
 }

@@ -544,3 +544,21 @@ describe('download figures', () => {
     expect(downloadPercent({ done: 0, total: 0 })).toBe(100);
   });
 });
+
+describe('old folders', () => {
+  it('lists, measures and removes old folders through their commands', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    await bridge.library.oldFolders();
+    await bridge.library.oldFolderSize('Test Valley');
+    await bridge.library.removeOldFolders([{ folder: 'Test Valley', id: 'test-valley' }]);
+    expect(calls).toEqual([
+      ['library_old_folders', undefined],
+      ['library_old_folder_size', { folder: 'Test Valley' }],
+      ['library_remove_old_folders', { folders: [{ folder: 'Test Valley', id: 'test-valley' }] }],
+    ]);
+  });
+});
