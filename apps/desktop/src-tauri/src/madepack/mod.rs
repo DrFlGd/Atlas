@@ -880,10 +880,20 @@ pub fn note_choice(store: &Store, id: &str, exported_at: &str, added: bool) -> R
     )
 }
 
-/// Checks the app is a reader; see `oldfolders::check_reader`.
+/// Checks the app is a reader (see `library::READER`); the others answer
+/// why not.
 pub fn check_reader() -> Result<(), String> {
-    crate::oldfolders::check_reader()
+    if crate::library::READER {
+        Ok(())
+    } else if cfg!(desktop) {
+        Err(NOT_IN_THIS_APP.to_owned())
+    } else {
+        Err(crate::commands::NOT_ON_THIS_DEVICE.to_owned())
+    }
 }
+
+/// What the app with downloads answers.
+const NOT_IN_THIS_APP: &str = "This app keeps the maps made in it as folders in the maps folder, so it writes no pack file of them and opens none for editing.";
 
 /// What a write, an open or a close tells the activity log of a failure.
 pub fn log_failure(what: &str, id: &str, problem: &str) {
