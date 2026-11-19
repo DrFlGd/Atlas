@@ -53,7 +53,7 @@ test('turns each setting on and off, each off at first and with its sentence', a
   await setUp(page, false, { background: true });
   const section = await openBackground(page);
   await expect(section.getByRole('heading')).toHaveText('Atlas in the background');
-  for (const [setting, label, help] of [
+  const rows: [string, string, string][] = [
     [
       'keepRunning',
       'Keep Atlas running when its window is closed',
@@ -70,7 +70,8 @@ test('turns each setting on and off, each off at first and with its sentence', a
       'Start Atlas when Windows starts',
       'Atlas starts without coming to the front when you sign in to Windows, for your user only.',
     ],
-  ]) {
+  ];
+  for (const [setting, label, help] of rows) {
     const row = page.getByTestId(`background-${setting}`);
     await expect(row).toContainText(label);
     await expect(row).toContainText(help);
