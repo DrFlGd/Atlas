@@ -15,10 +15,11 @@
 //!   of the maps folder is one, or the shared settings or the Sites folder
 //!   show that such an app uses this computer's maps folder (see
 //!   [`site_reader_here`]), nothing at all is offered.
-//! - A game **made in the app on this computer** (its manifest says
+//! - A map **made in the app on this computer** (its manifest says
 //!   `madeInApp`, and it was not imported from a pack file, which leaves
-//!   `.atlas/pack-file.json`) is listed apart (`made_here`), for the web
-//!   app to show only when asked, and never in "Remove all listed".
+//!   `.atlas/pack-file.json`, or it is a working folder opened for editing
+//!   from its pack file, see `madepack`) is listed apart (`made_here`), for
+//!   the web app to show only when asked, and never in "Remove all listed".
 //!
 //! Removing one uses the delete of a pack folder (`Library::delete_folder`,
 //! `removal::delete_pack_folder`): renamed to a hidden name and removed,
@@ -38,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     activity::{self, Area},
     library::{is_inside, packs_in, same_path, Library, Listing, JOB_FILE, META_DIR},
+    madepack::read_editing_record,
     manifest::{read_head, ManifestHead},
     packfile::{read_imported_record, EXTENSION},
     packs::IMPORT_DIR,
@@ -170,8 +172,17 @@ fn read_from_pages(dir: &Path, head: &ManifestHead) -> bool {
 }
 
 /// Whether the game was made in the app on this computer: its manifest
-/// says `madeInApp` and it was not imported from a pack file.
+/// says `madeInApp` and it was not imported from a pack file, or it is a
+/// working folder opened for editing from its pack file here (it has a
+/// record of that file, `.atlas/editing.json`, see `madepack`).
 pub fn is_made_here(dir: &Path, head: &ManifestHead) -> bool {
+    head.made_in_app && (read_imported_record(dir).is_none() || read_editing_record(dir).is_some())
+}
+
+/// Whether the game was made in the app in this very folder: its manifest
+/// says `madeInApp` and it was neither imported from a pack file nor
+/// opened for editing from one.
+pub fn is_made_in_folder(dir: &Path, head: &ManifestHead) -> bool {
     head.made_in_app && read_imported_record(dir).is_none()
 }
 
