@@ -224,6 +224,7 @@ pub async fn guide_links_write(
                 format!("Kept a copy of the guide links of {game_id} as {name} before saving them"),
             );
         }
+        crate::commands::kept_game_changed(&game_id);
         Ok(kept)
     })
     .await
@@ -241,6 +242,7 @@ pub async fn guide_links_delete(
     blocking(move || {
         let deleted = delete(&maps, &game_id)?;
         if deleted {
+            crate::commands::kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the guide links of {game_id}, as asked with the game"),

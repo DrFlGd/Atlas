@@ -358,7 +358,9 @@ pub async fn own_pictures_write(
     let maps = library.maps_folder();
     blocking(move || {
         let bytes = from_base64(&data).ok_or_else(|| "That photo could not be read.".to_owned())?;
-        write(&maps, &game_id, &file, &bytes)
+        write(&maps, &game_id, &file, &bytes)?;
+        crate::commands::kept_game_changed(&game_id);
+        Ok(())
     })
     .await
 }
@@ -383,7 +385,14 @@ pub async fn own_pictures_delete(
 ) -> Result<usize, String> {
     desktop_only()?;
     let maps = library.maps_folder();
-    blocking(move || delete(&maps, &game_id, &files)).await
+    blocking(move || {
+        let deleted = delete(&maps, &game_id, &files)?;
+        if deleted > 0 {
+            crate::commands::kept_game_changed(&game_id);
+        }
+        Ok(deleted)
+    })
+    .await
 }
 
 /// Deletes every photo of a game, when the person asks for it as they
@@ -398,6 +407,7 @@ pub async fn own_pictures_delete_all(
     blocking(move || {
         let deleted = delete_all(&maps, &game_id)?;
         if deleted {
+            crate::commands::kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the photos of {game_id}, as asked with the game"),

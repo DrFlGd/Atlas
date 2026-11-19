@@ -541,6 +541,7 @@ pub async fn own_lists_write(
                 format!("Kept a copy of the lists of {game_id} as {name} before saving them"),
             );
         }
+        kept_game_changed(&game_id);
         Ok(kept)
     })
     .await
@@ -555,6 +556,7 @@ pub async fn own_lists_delete(library: LibraryState<'_>, game_id: String) -> Res
     blocking(move || {
         let deleted = ownlists::delete(&maps, &game_id)?;
         if deleted {
+            kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the lists of {game_id}, as asked with the game"),
@@ -563,6 +565,15 @@ pub async fn own_lists_delete(library: LibraryState<'_>, game_id: String) -> Res
         Ok(deleted)
     })
     .await
+}
+
+/// Tells the keeper of packs that a game or the person's own things of it
+/// changed (the app with downloads only; nothing otherwise).
+pub(crate) fn kept_game_changed(id: &str) {
+    #[cfg(feature = "downloads")]
+    crate::keep::changed(id);
+    #[cfg(not(feature = "downloads"))]
+    let _ = id;
 }
 
 #[cfg(feature = "downloads")]

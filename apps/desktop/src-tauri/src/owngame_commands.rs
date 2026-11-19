@@ -21,7 +21,7 @@ use tauri::{AppHandle, Runtime, State, WebviewWindow};
 
 use crate::{
     activity::{self, Area},
-    commands::{blocking, desktop_only, short, LibraryState},
+    commands::{blocking, desktop_only, kept_game_changed, short, LibraryState},
     library::{Library, Listing},
     owngame::{self, Added},
     ownlists::{OwnFile, LOCATIONS, NOTES, PAGES},
@@ -234,6 +234,7 @@ async fn cut_job(
                     Area::Library,
                     format!("Made {what}: {}", short(&added.layer_id)),
                 );
+                kept_game_changed(&added.game_id);
                 Ok(OwnGameChanged {
                     added: Some(added),
                     listing: library.scan(),
@@ -392,6 +393,7 @@ pub async fn own_game_rename(
     let library = Arc::clone(&library);
     blocking(move || {
         let title = owngame::rename_game(&folder, &title)?;
+        kept_game_changed(&game_id);
         activity::info(
             Area::Library,
             format!("Renamed the game {} to {}", short(&game_id), short(&title)),
@@ -416,6 +418,7 @@ pub async fn own_game_delete_map(
     let library = Arc::clone(&library);
     blocking(move || {
         let name = owngame::delete_map(&folder, &map_id)?;
+        kept_game_changed(&game_id);
         activity::info(
             Area::Library,
             format!("Deleted the map {} of {}", short(&name), short(&game_id)),
@@ -457,6 +460,7 @@ pub async fn own_locations_write(
     let maps = library.maps_folder();
     blocking(move || {
         let kept = LOCATIONS.write(&maps, &game_id, &contents, keep_copy.as_deref())?;
+        kept_game_changed(&game_id);
         if let Some(name) = &kept {
             activity::info(
                 Area::Library,
@@ -482,6 +486,7 @@ pub async fn own_locations_delete(
     blocking(move || {
         let deleted = LOCATIONS.delete(&maps, &game_id)?;
         if deleted {
+            kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the own locations of {game_id}, as asked with the game"),
@@ -505,6 +510,7 @@ fn write_own_file(
     keep_copy: Option<&str>,
 ) -> Result<Option<String>, String> {
     let kept = kind.write(maps, game_id, contents, keep_copy)?;
+    kept_game_changed(game_id);
     if let Some(name) = &kept {
         activity::info(
             Area::Library,
@@ -554,6 +560,7 @@ pub async fn own_pages_delete(library: LibraryState<'_>, game_id: String) -> Res
     blocking(move || {
         let deleted = PAGES.delete(&maps, &game_id)?;
         if deleted {
+            kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the own pages of {game_id}, as asked with the game"),
@@ -600,6 +607,7 @@ pub async fn own_notes_delete(library: LibraryState<'_>, game_id: String) -> Res
     blocking(move || {
         let deleted = NOTES.delete(&maps, &game_id)?;
         if deleted {
+            kept_game_changed(&game_id);
             activity::info(
                 Area::Library,
                 format!("Deleted the own notes of {game_id}, as asked with the game"),
