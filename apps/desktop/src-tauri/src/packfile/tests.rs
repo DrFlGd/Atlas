@@ -3313,7 +3313,7 @@ mod in_place {
         run_export(&folder_source(&pack), Detail::Overview, &first).unwrap();
         let manifest = entry_bytes(&first, "manifest.json");
         // Two tables, and room for one manifest in all.
-        let pool = Arc::new(Pool::with_limits(2, manifest.len() * 3 / 2));
+        let pool = Arc::new(Pool::with_limits(2, usize::MAX, manifest.len() * 3 / 2));
         let files: Vec<PackFile> = (0..3)
             .map(|index| {
                 let file = dir.0.join(format!("copy-{index}.atlaspack"));
@@ -3351,6 +3351,49 @@ mod in_place {
         // And is built again when it is read again.
         assert_eq!(read(&files[0]), manifest);
         assert!(files[0].holds_table() && !files[1].holds_table());
+    }
+
+    #[test]
+    fn keeps_the_tables_of_small_pack_files_and_lets_a_large_one_push_them_out() {
+        let dir = TempDir::new("inplace-pool-entries");
+        let pack = dir.0.join("pack");
+        write_pack(&pack, "1.0.0");
+        let first = dir.0.join("first.atlaspack");
+        run_export(&folder_source(&pack), Detail::Overview, &first).unwrap();
+        let entries = zip::ZipArchive::new(fs::File::open(&first).unwrap())
+            .unwrap()
+            .len();
+        let read = |file: &PackFile| {
+            let opened = file.open().unwrap();
+            let len = opened.size("manifest.json").unwrap();
+            opened.read("manifest.json", 0, len).unwrap();
+        };
+        let files = |pool: &Arc<Pool>, name: &str| -> Vec<PackFile> {
+            (0..3)
+                .map(|index| {
+                    let file = dir.0.join(format!("{name}-{index}.atlaspack"));
+                    fs::copy(&first, &file).unwrap();
+                    PackFile::new(file, Arc::clone(pool))
+                })
+                .collect()
+        };
+
+        // Room for the entries of three such files: all three stay.
+        let roomy = Arc::new(Pool::with_limits(8, entries * 3, usize::MAX));
+        let small = files(&roomy, "small");
+        small.iter().for_each(read);
+        assert_eq!(roomy.held_tables(), 3);
+
+        // Room for less than two: each one read pushes out the one before,
+        // and the one read last stays although it is over the budget alone.
+        let tight = Arc::new(Pool::with_limits(8, entries / 2, usize::MAX));
+        let large = files(&tight, "large");
+        for (index, file) in large.iter().enumerate() {
+            read(file);
+            assert_eq!(tight.held_tables(), 1);
+            assert!(file.holds_table());
+            assert!(index == 0 || !large[index - 1].holds_table());
+        }
     }
 
     #[test]

@@ -19,8 +19,9 @@
 //! tells the file apart from a changed one, and its description. The table
 //! of contents (entry name to where its local header is, its stored and
 //! unpacked length, its packing and its checksum) is built again when the
-//! pack is read, and only the tables of the few packs read last are kept
-//! ([`OPEN_TABLES`]), with one budget for unpacked JSON files across all
+//! pack is read, and only the tables of the packs read last are kept, up
+//! to a number of tables and of entries in all ([`OPEN_TABLES`],
+//! [`OPEN_ENTRIES`]), with one budget for unpacked JSON files across all
 //! of them ([`CACHE_BYTES`]); see [`Pool`]. Nothing the checks read is
 //! kept.
 //!
@@ -71,8 +72,13 @@ use super::{
 };
 use crate::packs::is_valid_pack_id;
 
-/// The tables of contents kept, of the pack files read last.
-pub const OPEN_TABLES: usize = 4;
+/// The most tables of contents kept, of the pack files read last.
+pub const OPEN_TABLES: usize = 24;
+/// The most entries in the tables kept, in all (about 120 bytes each): a
+/// game's small packs stay open side by side, and a pack of many map
+/// images pushes out the ones read before it. The table of the pack file
+/// read last is kept whatever its size.
+pub const OPEN_ENTRIES: usize = 400_000;
 /// Unpacked JSON files kept in memory, in bytes, for all pack files
 /// together. A file that does not fit is unpacked again at each read.
 pub const CACHE_BYTES: usize = 64 << 20;
@@ -99,11 +105,13 @@ const ZIP64_END_RECORD_LEN: usize = 56;
 static NEXT_TABLE: AtomicU64 = AtomicU64::new(1);
 
 /// The tables of contents and unpacked files kept for the pack files of
-/// one Library: the tables of the [`OPEN_TABLES`] pack files read last,
+/// one Library: the tables of the pack files read last (at most
+/// [`OPEN_TABLES`], with [`OPEN_ENTRIES`] entries in all),
 /// and their unpacked JSON files within one budget.
 #[derive(Debug)]
 pub struct Pool {
     max_tables: usize,
+    max_entries: usize,
     max_bytes: usize,
     held: Mutex<Held>,
 }
@@ -119,7 +127,7 @@ struct Held {
 
 impl Default for Pool {
     fn default() -> Self {
-        Self::with_limits(OPEN_TABLES, CACHE_BYTES)
+        Self::with_limits(OPEN_TABLES, OPEN_ENTRIES, CACHE_BYTES)
     }
 }
 
@@ -129,10 +137,12 @@ impl Pool {
         Arc::new(Self::default())
     }
 
-    /// A pool of at most `max_tables` tables and `max_bytes` unpacked bytes.
-    pub fn with_limits(max_tables: usize, max_bytes: usize) -> Self {
+    /// A pool of at most `max_tables` tables with `max_entries` entries in
+    /// all, and `max_bytes` unpacked bytes.
+    pub fn with_limits(max_tables: usize, max_entries: usize, max_bytes: usize) -> Self {
         Self {
             max_tables,
+            max_entries,
             max_bytes,
             held: Mutex::new(Held::default()),
         }
@@ -151,10 +161,7 @@ impl Pool {
             return;
         }
         held.tables.push_back(Arc::clone(table));
-        while held.tables.len() > self.max_tables {
-            let old = held.tables.pop_front().expect("more than none");
-            held.forget_cache(old.id);
-        }
+        held.trim(self.max_tables, self.max_entries);
     }
 
     /// Lets go of a table and its unpacked files.
@@ -200,6 +207,21 @@ impl Pool {
 }
 
 impl Held {
+    /// Lets go of the tables read longest ago while there are too many, or
+    /// too many entries in all; the one read last stays.
+    fn trim(&mut self, max_tables: usize, max_entries: usize) {
+        loop {
+            let entries: usize = self.tables.iter().map(|table| table.entries.len()).sum();
+            let over =
+                self.tables.len() > max_tables || (self.tables.len() > 1 && entries > max_entries);
+            if !over {
+                return;
+            }
+            let old = self.tables.pop_front().expect("more than none");
+            self.forget_cache(old.id);
+        }
+    }
+
     fn forget_cache(&mut self, id: u64) {
         let mut freed = 0;
         self.cache.retain(|(table, _), bytes| {

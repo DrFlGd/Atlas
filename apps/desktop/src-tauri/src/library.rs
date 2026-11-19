@@ -4201,7 +4201,9 @@ mod tests {
         assert!(pack(0).holds_table());
         assert!(!pack(count - OPEN_TABLES).holds_table(), "the oldest went");
         assert_eq!(pool.held_tables(), OPEN_TABLES);
-        assert!(pool.held_bytes() <= OPEN_TABLES * manifest);
+        // Only what the tables held unpacked: a manifest each, a few bytes
+        // longer for an id of two figures.
+        assert!(pool.held_bytes() <= OPEN_TABLES * (manifest + 8));
         // A scan does not keep the tables of the packs read.
         s.library.scan();
         assert_eq!(pool.held_tables(), OPEN_TABLES);
