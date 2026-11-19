@@ -41,6 +41,10 @@ pub struct ManifestHead {
     /// The system the game is for, such as a console (`system`), when the
     /// manifest names one: trimmed, at most [`MAX_SYSTEM_CHARS`] characters.
     pub system: Option<String>,
+    /// The title the game is shown under, as a pack file's description
+    /// says (`game.title`) when it differs from the pack's own title:
+    /// trimmed, at most 200 characters. None for a pack folder.
+    pub game_title: Option<String>,
 }
 
 /// The longest system name a listing carries; a longer one is left out.
@@ -168,6 +172,7 @@ pub fn head_of_text(text: &str) -> Result<ManifestHead, String> {
             .map(str::trim)
             .filter(|name| !name.is_empty() && name.chars().count() <= MAX_SYSTEM_CHARS)
             .map(str::to_owned),
+        game_title: None,
     })
 }
 
@@ -208,6 +213,12 @@ pub fn head_of_header(header: &atlas_pack::Header) -> Result<ManifestHead, Strin
             .and_then(|game| game.system.as_deref())
             .map(str::trim)
             .filter(|name| !name.is_empty() && name.chars().count() <= MAX_SYSTEM_CHARS)
+            .map(str::to_owned),
+        game_title: header
+            .game
+            .as_ref()
+            .map(|game| game.title.trim())
+            .filter(|name| !name.is_empty() && name.chars().count() <= 200 && *name != title)
             .map(str::to_owned),
     })
 }

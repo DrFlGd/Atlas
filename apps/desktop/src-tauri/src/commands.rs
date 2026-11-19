@@ -99,6 +99,9 @@ pub struct DesktopInfo {
     /// Atlas app on the computer. False on Android, whose web app keeps
     /// them in its own storage.
     game_groups_file: bool,
+    /// Settings has "Atlas in the background" (`background_state`,
+    /// `background_set`): in the app without downloads, on Windows.
+    background: bool,
 }
 
 /// Whether this platform has what `DesktopInfo::folders` and
@@ -135,6 +138,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         own_games: DESKTOP_ONLY,
         sites: DESKTOP_ONLY && Downloads::in_build(),
         game_groups_file: DESKTOP_ONLY,
+        background: crate::background::OFFERED,
     }
 }
 
