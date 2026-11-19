@@ -67,6 +67,17 @@ export function PackDetailsView({ details }: { details: PackDetails }) {
           <dd data-testid="pack-details-styles">{styles}</dd>
         </>
       ) : null}
+      {details.readFrom ? (
+        <>
+          <dt>Pack file</dt>
+          <dd data-testid="pack-details-read-from">
+            Read from {details.readFrom.fileName} where it lies (made with{' '}
+            {details.readFrom.header.exportedBy.name} {details.readFrom.header.exportedBy.version}{' '}
+            on <When iso={details.readFrom.header.exportedAt} />
+            ). Atlas never changes this file.
+          </dd>
+        </>
+      ) : null}
       {details.packFile ? (
         <>
           <dt>Pack file</dt>

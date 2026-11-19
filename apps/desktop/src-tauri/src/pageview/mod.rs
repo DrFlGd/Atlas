@@ -1267,9 +1267,22 @@ pub async fn view_open_in_browser<R: Runtime>(
     pack_id: String,
     url: String,
 ) -> Result<(), String> {
-    let root = pack_root(&registry, &pack_id)?;
-    let url = recorded_url(&root, &url)
-        .ok_or_else(|| "Only pages this map pack was made from can be opened.".to_owned())?;
+    let only = || "Only pages this map pack was made from can be opened.".to_owned();
+    // A pack file records its pages in its description.
+    let url = if let Some(pack) = registry.pack_file(&pack_id) {
+        let table = pack.check()?;
+        let wanted = allowed_page_url(&url).ok_or_else(only)?;
+        table
+            .header()
+            .source
+            .pages
+            .iter()
+            .any(|page| page.url == wanted.as_str())
+            .then_some(wanted)
+            .ok_or_else(only)?
+    } else {
+        recorded_url(&pack_root(&registry, &pack_id)?, &url).ok_or_else(only)?
+    };
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|error| format!("Could not open the page: {error}"))

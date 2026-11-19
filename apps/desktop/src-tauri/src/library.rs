@@ -78,15 +78,15 @@ use crate::{
 
 /// Why a pack read from a pack file cannot be changed, in the person's
 /// words: what the editors, downloads and the other changes say for one.
-pub const PACK_FILE_UNCHANGED: &str = "This map, wiki or guide is read from a pack file, and Atlas never changes a pack file. To change it, import the pack file first with Import map pack file.";
+pub const PACK_FILE_UNCHANGED: &str = "This map, wiki or guide is read from a pack file, and Atlas never changes a pack file. To change it, import the pack file first with Import a pack file.";
 
 /// Why map images and photos are not downloaded for a pack read from a
 /// pack file.
-pub const PACK_FILE_NO_DOWNLOADS: &str = "Map images and photos cannot be downloaded for a map that is read from a pack file, because Atlas never changes a pack file. To download them, import the pack file first with Import map pack file.";
+pub const PACK_FILE_NO_DOWNLOADS: &str = "Map images and photos cannot be downloaded for a map that is read from a pack file, because Atlas never changes a pack file. To download them, import the pack file first with Import a pack file.";
 /// Why a pack read from a pack file is not exported.
 pub const PACK_FILE_NO_EXPORT: &str = "This map, wiki or guide is read from a pack file already, so it is not exported again. To pass it on, copy the pack file itself.";
 /// Why the pages a pack read from a pack file was made from are not opened.
-pub const PACK_FILE_NO_PAGES: &str = "The pages of a map that is read from a pack file cannot be opened here. To open them, import the pack file first with Import map pack file.";
+pub const PACK_FILE_NO_PAGES: &str = "The pages of a map that is read from a pack file cannot be opened here. To open them, import the pack file first with Import a pack file.";
 
 /// How deep sub-folders are looked into for pack files.
 const PACK_FILE_DEPTH: usize = 4;
@@ -1054,7 +1054,7 @@ impl Library {
             if pack_files_in(path, None).is_empty() {
                 format!("That folder is not a map pack: {reason}.")
             } else {
-                "That folder holds pack files rather than one map pack. Use \u{201c}Add a folder of map packs\u{201d} for it.".to_owned()
+                "That folder holds pack files rather than one map pack. Use \u{201c}Add a folder of games\u{201d} for it.".to_owned()
             }
         })?;
         self.remember(path, LocationKind::Pack)?;
@@ -4062,7 +4062,7 @@ mod tests {
             .library
             .add_pack_location(&only_files)
             .unwrap_err()
-            .contains("Add a folder of map packs"));
+            .contains("Add a folder of games"));
         assert_eq!(s.library.add_folder_location(&only_files).unwrap(), 1);
 
         let listing = s.library.scan();

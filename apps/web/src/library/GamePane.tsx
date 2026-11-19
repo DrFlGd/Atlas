@@ -69,6 +69,8 @@ function originText(listed: ListedPack | undefined): string {
     return `Added with ${listed.imported.importerTitle}${site ? ` from ${site}` : ''}`;
   }
   if (!listed || listed.origin === 'bundled') return 'Comes with the app';
+  if (listed.origin === 'packs-folder') return 'Read from a pack file in the packs folder';
+  if (listed.packFile) return 'Read from a pack file in a folder you added';
   if (listed.origin === 'location') return 'In a folder you added';
   return 'In the maps folder';
 }

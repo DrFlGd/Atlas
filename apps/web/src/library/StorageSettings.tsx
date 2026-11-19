@@ -248,6 +248,41 @@ export function Locations() {
       <p className="muted small">
         Look again reads every folder again, for games another Atlas app added meanwhile.
       </p>
+      {library.packsFolder ? (
+        <div data-testid="packs-folder">
+          <p className="muted small">
+            Pack files (.atlaspack) in the packs folder, and in the folders you added with Add a
+            folder of games, are read where they are, without importing them. Atlas never changes,
+            moves or deletes a pack file. Packs folder:{' '}
+            <span className="path-inline">{library.packsFolder.path}</span>
+          </p>
+          <div className="row-actions wrap">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                reveal({ kind: 'packs-folder' });
+              }}
+            >
+              Open packs folder
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {library.unreadable && library.unreadable.length > 0 ? (
+        <div className="download-note" data-testid="unreadable-pack-files">
+          <p>
+            <strong>Pack files that cannot be opened:</strong>
+          </p>
+          <ul className="hidden-packs">
+            {library.unreadable.map((file) => (
+              <li key={file.path}>
+                <span className="path-inline">{file.path}</span>: {file.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {library.hidden.length > 0 ? (
         <div className="download-note" data-testid="hidden-packs">
           <p>

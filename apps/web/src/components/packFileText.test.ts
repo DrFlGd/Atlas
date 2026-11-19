@@ -146,6 +146,19 @@ describe('which is newer, a pack file or the installed game', () => {
     expect(freshnessText(verdict, iso)).toMatch(/^The installed game is newer: its data was read/);
   });
 
+  it('knows the file a game is read from where it lies as the same file', () => {
+    const file = header();
+    const readFrom = {
+      path: '/packs/Test Valley.atlaspack',
+      fileName: 'Test Valley.atlaspack',
+      header: file,
+    };
+    expect(compareWithInstalled(file, installed({ readFrom }))).toMatchObject({
+      verdict: 'same',
+      basis: 'same-file',
+    });
+  });
+
   it('then by pack version', () => {
     const file = header({ packVersion: '1.10.0' });
     const freshness = compareWithInstalled(file, installed());

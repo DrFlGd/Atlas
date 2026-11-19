@@ -151,7 +151,9 @@ function latest(dates: (string | null | undefined)[]): string | null {
  * installed game. Dates that are not recorded are never guessed.
  */
 export function compareWithInstalled(header: PackFileHeader, installed: PackDetails): Freshness {
-  if (installed.packFile?.header.exportedAt === header.exportedAt) {
+  // The file the installed game was imported from, or is read from.
+  const installedFile = installed.packFile ?? installed.readFrom ?? null;
+  if (installedFile?.header.exportedAt === header.exportedAt) {
     return { verdict: 'same', basis: 'same-file' };
   }
   const filePages = header.source.newestPageAt;
@@ -178,7 +180,7 @@ export function compareWithInstalled(header: PackFileHeader, installed: PackDeta
     installed.pack.updated,
     installed.pack.created,
     installed.imagesAt,
-    installed.packFile?.header.exportedAt,
+    installedFile?.header.exportedAt,
   ]);
   if (changed && !Number.isNaN(time(header.exportedAt))) {
     return {
