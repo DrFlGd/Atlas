@@ -1128,6 +1128,71 @@ export interface ShellFetchedPage {
   retryAfter: string | null;
 }
 
+/** How often the folder of kept packs is checked, besides after each change. */
+export type KeptPacksSchedule = 'start' | 'daily' | 'weekly';
+
+/** The state of one game in the folder of kept packs. */
+export type KeptPackState =
+  | 'up-to-date'
+  | 'waiting'
+  | 'writing'
+  | 'newer-in-folder'
+  | 'not-in-folder'
+  | 'left-out'
+  | 'failed';
+
+/** One game in the list of kept packs. */
+export interface KeptPackRow {
+  id: string;
+  title: string;
+  state: KeptPackState;
+  /** Where its pack file lies, or lay for one not in the folder. */
+  path: string | null;
+  /** When this app wrote it (ISO 8601). */
+  writtenAt: string | null;
+  /** Why it waits, was left out or failed, or what else to know. */
+  reason: string | null;
+  /** Other pack files of the same game in the folder, left alone. */
+  extraCopies: string[];
+}
+
+/** The pack being written into the folder now. */
+export interface KeptPacksWriting {
+  id: string;
+  title: string;
+  phase: 'writing' | 'checking';
+  bytesDone: number;
+  bytesTotal: number;
+  /** Its place among the packs of this run, from 1, and how many. */
+  number: number;
+  count: number;
+}
+
+/**
+ * The setting "Keep packs up to date" and what it did (see the shell's
+ * `keep` module). Only in a build with downloads.
+ */
+export interface KeptPacksStatus {
+  on: boolean;
+  /** The folder, to show; the page never names one. */
+  folder: string;
+  folderIsDefault: boolean;
+  /** The person chose a folder in the folder dialog. */
+  folderChosen: boolean;
+  schedule: KeptPacksSchedule;
+  /** A check or a write is under way. */
+  running: boolean;
+  writing: KeptPacksWriting | null;
+  lastCheckAt: string | null;
+  /** Why the last run failed as a whole. */
+  problem: string | null;
+  /** A notice for the whole run, to show once (by its serial). */
+  notice: { serial: number; text: string } | null;
+  games: KeptPackRow[];
+  /** Grows with each change. */
+  serial: number;
+}
+
 export interface DesktopBridge {
   info(): Promise<DesktopInfo>;
   /** Opens an http or https link in the system browser. */
@@ -1383,6 +1448,25 @@ export interface DesktopBridge {
     save(what: 'guide' | 'schema', contents: string): Promise<{ name: string } | null>;
   };
   /**
+   * Keeping pack files of the games read from sites up to date in one
+   * folder (see {@link KeptPacksStatus}). Only in a build with downloads.
+   */
+  keptPacks: {
+    status(): Promise<KeptPacksStatus>;
+    /** Asks for the folder in the system's dialog and turns the setting on. Null when the dialog was closed. */
+    chooseFolder(): Promise<KeptPacksStatus | null>;
+    /** Turns it on or off and keeps how often it checks; the folder stays. */
+    set(on: boolean, schedule: KeptPacksSchedule): Promise<KeptPacksStatus>;
+    /** Checks every game and writes each pack that is not current. */
+    writeAll(): Promise<KeptPacksStatus>;
+    /** Writes a pack that was removed from the folder. */
+    writeAgain(id: string): Promise<KeptPacksStatus>;
+    /** Stops the run under way. */
+    cancel(): Promise<KeptPacksStatus>;
+    /** Opens the folder in the system's file manager. */
+    reveal(): Promise<void>;
+  };
+  /**
    * The games a person shows under one title, in one file in the maps
    * folder (`game-groups.json`, see `gameGroupsFile`).
    */
@@ -1446,6 +1530,8 @@ export interface DesktopBridge {
     libraryChanged(handler: (listing: Listing) => void): Promise<() => void>;
     /** A pack file was opened from the file manager; take it with `library.takeOpened`. */
     packFileOpened(handler: () => void): Promise<() => void>;
+    /** The state of the kept packs changed (only in a build with downloads). */
+    keptPacksChanged(handler: (status: KeptPacksStatus) => void): Promise<() => void>;
   };
   /** Pack files (`.atlaspack`): one game in one file, for another device. */
   packFiles: {
@@ -1546,6 +1632,20 @@ function noSites(): DesktopBridge['sites'] {
     remove: missing,
     switch: missing,
     save: missing,
+  };
+}
+
+/** Keeping packs up to date in a build without downloads: none. */
+function noKeptPacks(): DesktopBridge['keptPacks'] {
+  const missing = () => Promise.reject(new Error('This app does not keep packs up to date.'));
+  return {
+    status: missing,
+    chooseFolder: missing,
+    set: missing,
+    writeAll: missing,
+    writeAgain: missing,
+    cancel: missing,
+    reveal: missing,
   };
 }
 
@@ -1709,6 +1809,17 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
           save: (what, contents) => call('sites_save', { what, contents }),
         }
       : noSites(),
+    keptPacks: __ATLAS_DOWNLOADS__
+      ? {
+          status: () => call('kept_packs_status'),
+          chooseFolder: () => call('kept_packs_choose_folder'),
+          set: (on, schedule) => call('kept_packs_set', { choice: { on, schedule } }),
+          writeAll: () => call('kept_packs_write_all'),
+          writeAgain: (id) => call('kept_packs_write_again', { id }),
+          cancel: () => call('kept_packs_cancel'),
+          reveal: () => call('kept_packs_reveal'),
+        }
+      : noKeptPacks(),
     gameGroups: {
       read: () => call('game_groups_read'),
       write: (contents, keepCopy) =>
@@ -1746,6 +1857,12 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
         listen('pack-file-opened', () => {
           handler();
         }),
+      keptPacksChanged: (handler) =>
+        __ATLAS_DOWNLOADS__
+          ? listen('kept-packs-changed', (payload) => {
+              handler(payload as KeptPacksStatus);
+            })
+          : noEvents('kept-packs-changed', () => undefined),
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),

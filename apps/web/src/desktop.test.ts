@@ -183,6 +183,42 @@ describe('desktop bridge', () => {
     expect(calls).toEqual([['import_fetch', { url: 'https://wiki.example.org/wiki/Start' }]]);
   });
 
+  it('keeps packs up to date with the shell commands of a build with downloads', async () => {
+    const calls: [string, unknown][] = [];
+    const heard: string[] = [];
+    const bridge = createBridge(
+      (command, args) => {
+        calls.push([command, args]);
+        return Promise.resolve(null);
+      },
+      (event, handler) => {
+        heard.push(event);
+        handler({ serial: 1 });
+        return Promise.resolve(() => undefined);
+      },
+    );
+    await bridge.keptPacks.status();
+    await bridge.keptPacks.chooseFolder();
+    await bridge.keptPacks.set(true, 'weekly');
+    await bridge.keptPacks.writeAll();
+    await bridge.keptPacks.writeAgain('test-valley');
+    await bridge.keptPacks.cancel();
+    await bridge.keptPacks.reveal();
+    expect(calls).toEqual([
+      ['kept_packs_status', undefined],
+      ['kept_packs_choose_folder', undefined],
+      ['kept_packs_set', { choice: { on: true, schedule: 'weekly' } }],
+      ['kept_packs_write_all', undefined],
+      ['kept_packs_write_again', { id: 'test-valley' }],
+      ['kept_packs_cancel', undefined],
+      ['kept_packs_reveal', undefined],
+    ]);
+    const statuses: unknown[] = [];
+    await bridge.events.keptPacksChanged((status) => statuses.push(status));
+    expect(heard).toEqual(['kept-packs-changed']);
+    expect(statuses).toEqual([{ serial: 1 }]);
+  });
+
   it('calls the shell commands with their arguments', async () => {
     const calls: [string, unknown][] = [];
     const bridge = createBridge((command, args) => {
