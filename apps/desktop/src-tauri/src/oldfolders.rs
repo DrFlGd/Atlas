@@ -137,19 +137,36 @@ pub struct OldFolderRemoved {
 /// A folder whose entries cannot be read counts as one, so nothing is
 /// offered on a guess.
 pub fn is_working_folder(dir: &Path, head: &ManifestHead) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Some(page_data) = has_page_data(dir) else {
         return true;
     };
-    let page_data = entries.flatten().any(|entry| {
+    let download = fs::symlink_metadata(dir.join(META_DIR).join(JOB_FILE)).is_ok();
+    page_data || download || read_from_pages(dir, head)
+}
+
+/// Whether a pack folder was read from a site's pages on this computer:
+/// it holds the page data "Add a map" keeps, or its manifest names an
+/// importer or the pages it was read from, and it was not imported from a
+/// pack file (see [`is_working_folder`], whose rule for a folder read from
+/// pages this is). A folder whose entries cannot be read is not one.
+pub fn read_from_pages_here(dir: &Path, head: &ManifestHead) -> bool {
+    has_page_data(dir).unwrap_or(false) || read_from_pages(dir, head)
+}
+
+/// Whether the folder holds an `import` entry, in any case; none when its
+/// entries cannot be read.
+fn has_page_data(dir: &Path) -> Option<bool> {
+    let entries = fs::read_dir(dir).ok()?;
+    Some(entries.flatten().any(|entry| {
         entry
             .file_name()
             .to_str()
             .is_some_and(|name| name.eq_ignore_ascii_case(IMPORT_DIR))
-    });
-    let download = fs::symlink_metadata(dir.join(META_DIR).join(JOB_FILE)).is_ok();
-    let read_from_pages =
-        (head.importer.is_some() || !head.pages.is_empty()) && read_imported_record(dir).is_none();
-    page_data || download || read_from_pages
+    }))
+}
+
+fn read_from_pages(dir: &Path, head: &ManifestHead) -> bool {
+    (head.importer.is_some() || !head.pages.is_empty()) && read_imported_record(dir).is_none()
 }
 
 /// Whether the game was made in the app on this computer: its manifest
