@@ -221,7 +221,7 @@ function installMadeShell() {
         if (shell.newer && args.replaceNewer !== true) {
           // Tauri rejects with the command's error value, a string.
           // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-          return Promise.reject('A newer file is there. Choose Replace to write over it.');
+          return Promise.reject('A newer file is there. Press Replace to write over it.');
         }
         shell.kept = 'file';
         shell.newer = false;

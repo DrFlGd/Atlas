@@ -443,7 +443,7 @@ pub(crate) fn write_made_with(
     let target = target_of(library, store, &dir, &head)?;
     if let Some(newer) = target.newer().filter(|_| !replace_newer) {
         return Err(Stop::Failed(format!(
-            "{newer} Choose Replace to write over it, or Cancel to leave it."
+            "{newer} Press Replace to write over it, or Cancel to leave it."
         )));
     }
     let maps = library.maps_folder();
