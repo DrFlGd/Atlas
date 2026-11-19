@@ -23,9 +23,11 @@
 //! A value is the next argument, never one that starts with `--`. An option
 //! missing its value, given twice, or mixed in a way that makes no sense
 //! (`--show-pack` with `--show-game`, or either with a pack file path) leaves
-//! the whole request out, with one line: nothing is shown or opened, and
-//! the start is a plain one. Any other option is left out by itself, with a
-//! line, as every option is in the other apps.
+//! out what was asked to be shown or opened, with one line. `--background`
+//! still counts when it was given: a program that starts Atlas beside a
+//! game and gets its request wrong must not bring Atlas in front of the
+//! game. Any other option is left out by itself, with a line, as every
+//! option is in the other apps.
 
 use std::{
     ffi::OsString,
@@ -75,7 +77,7 @@ pub struct StartRequest {
 pub fn read(args: impl IntoIterator<Item = OsString>, cwd: &Path, options: bool) -> StartRequest {
     let mut request = StartRequest::default();
     let mut paths = Vec::new();
-    // Why the whole request is left out, once known.
+    // Why what was asked to be shown or opened is left out, once known.
     let mut refused: Option<String> = None;
     let mut seen: Vec<&'static str> = Vec::new();
     let mut args = args.into_iter().skip(1).peekable();
@@ -136,11 +138,11 @@ pub fn read(args: impl IntoIterator<Item = OsString>, cwd: &Path, options: bool)
         request.show = None;
         request.background = false;
     } else if let Some(reason) = refused {
+        // `--background` stays as it was given (see the module).
         request.show = None;
-        request.background = false;
-        request
-            .left_out
-            .push(format!("{reason}, so Atlas left the whole request out"));
+        request.left_out.push(format!(
+            "{reason}, so Atlas left out what it was asked to show or open"
+        ));
         return request;
     }
     match paths.as_slice() {
@@ -408,11 +410,16 @@ mod tests {
         ] {
             let request = read_all(args(&list), &dir.0);
             assert_eq!(request.show, None, "{list:?}");
-            assert!(!request.background, "{list:?}");
+            // The background still counts when it was asked for.
+            assert_eq!(
+                request.background,
+                list.contains(&"--background"),
+                "{list:?}"
+            );
             assert_eq!(request.pack_file, None, "{list:?}");
             assert_eq!(
                 request.left_out.last().unwrap(),
-                &format!("{reason}, so Atlas left the whole request out"),
+                &format!("{reason}, so Atlas left out what it was asked to show or open"),
                 "{list:?}"
             );
         }

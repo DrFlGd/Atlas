@@ -579,11 +579,14 @@ fn unregister<R: Runtime>(app: &AppHandle<R>, background: &Background) {
 }
 
 /// The entry that starts Atlas with the system: the current user's only,
-/// with `--background`, the program's path in quotes.
+/// with `--background`, the program's path in quotes. It is named by the
+/// app's identifier, not its name, so that an entry of another program
+/// that happens to share the name is never read as this one, written over
+/// or removed.
 fn launcher<R: Runtime>(app: &AppHandle<R>) -> Result<AutoLaunch, String> {
     let program = std::env::current_exe().map_err(|error| error.to_string())?;
     AutoLaunchBuilder::new()
-        .set_app_name(&app.package_info().name)
+        .set_app_name(&app.config().identifier)
         .set_app_path(&format!("\"{}\"", program.display()))
         .set_args(&[BACKGROUND_OPTION])
         .set_windows_enable_mode(WindowsEnableMode::CurrentUser)
