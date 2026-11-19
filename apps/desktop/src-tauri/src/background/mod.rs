@@ -84,6 +84,21 @@ pub fn check_offered() -> Result<(), String> {
     }
 }
 
+/// What the other apps answer when asked for a game another program asked for.
+const NO_START_OPTIONS: &str = "This app does not take a game to show from another program.";
+
+/// Checks the app takes the start options of another program (the app
+/// without downloads, on every desktop); the others answer why not.
+fn check_start_options() -> Result<(), String> {
+    if crate::library::READER {
+        Ok(())
+    } else if cfg!(desktop) {
+        Err(NO_START_OPTIONS.to_owned())
+    } else {
+        Err(crate::commands::NOT_ON_THIS_DEVICE.to_owned())
+    }
+}
+
 /// The settings as the web app shows them.
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -282,7 +297,7 @@ pub async fn background_pause_hotkey<R: Runtime>(
 /// it yet. In the app without downloads, on every desktop.
 #[tauri::command]
 pub fn background_take_show<R: Runtime>(app: AppHandle<R>) -> Result<Option<ShowRequest>, String> {
-    crate::madepack::check_reader()?;
+    check_start_options()?;
     #[cfg(not(target_os = "android"))]
     return Ok(app
         .try_state::<std::sync::Arc<Shows>>()

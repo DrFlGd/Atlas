@@ -144,7 +144,7 @@ mod desktop {
             &PathBuf::from(cwd),
             crate::library::READER,
         );
-        // As at once as it always was, unless what to show is looked for first.
+        // At once, as it always was, unless the game to show is looked for first.
         if request.show.is_none() && !request.background {
             shell::act(app, WindowAction::BringForward);
         }

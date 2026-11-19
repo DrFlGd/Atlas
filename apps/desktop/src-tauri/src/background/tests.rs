@@ -87,3 +87,25 @@ fn finds_a_game_by_the_title_its_pack_file_gives() {
     let found = find_show(&library, &Show::Game("ruined keep".to_owned())).unwrap();
     assert_eq!(found.packs, ["keep-pages"]);
 }
+
+#[test]
+fn says_where_it_works_and_why_not_elsewhere() {
+    use crate::library::READER;
+    assert_eq!(super::OFFERED, READER && cfg!(windows));
+    assert_eq!(super::check_offered().is_ok(), super::OFFERED);
+    if let Err(why) = super::check_offered() {
+        let expected = if READER {
+            "Atlas runs in the background only on Windows for now."
+        } else {
+            "This app does not run in the background."
+        };
+        assert_eq!(why, expected);
+    }
+    assert_eq!(super::check_start_options().is_ok(), READER);
+    if let Err(why) = super::check_start_options() {
+        assert_eq!(
+            why,
+            "This app does not take a game to show from another program."
+        );
+    }
+}
