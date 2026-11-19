@@ -139,6 +139,19 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.24.0
+
+          Atlas can stay ready beside a game. Everything here is off until you turn it on, in **Settings**, then **Atlas in the background**.
+
+          - **Keep Atlas running when its window is closed.** Closing the window hides it, and Atlas keeps running with its icon in the notification area. A press on the icon shows or hides the window. The icon's menu has **Quit Atlas**.
+          - **Hotkey.** Ctrl+Alt+M is offered. Pressed in any program, a game too, it brings Atlas forward, and pressed again while Atlas is in front it puts Atlas away. **Change keys** takes the keys you press instead. Atlas says so when a combination cannot be used or another program has it, and keeps the old one.
+          - **Back where you left it.** A hidden window comes back with the same game, map, location, zoom and panel. While any of these settings is on, Atlas also opens its window at the place and size you left it.
+          - **Stay above other windows.** Atlas stays above other windows, such as a game in a borderless window. A game in exclusive full screen covers every window, so set the game to borderless or windowed.
+          - **Start Atlas when Windows starts.** For your user only, and without coming to the front.
+          - **Another program can ask for a game.** A program that starts Atlas can name the game to show, and can ask Atlas to get ready without coming to the front.
+
+          This version has passed the automatic checks only. The icon, the hotkey over a game and the start with Windows have not been tried in a real Windows window yet.
+
           ## New in 0.23.0
 
           Maps, wikis and guides now come as pack files (.atlaspack), and Atlas reads each one as it is.
