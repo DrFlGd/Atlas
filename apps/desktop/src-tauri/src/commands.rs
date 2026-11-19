@@ -1511,7 +1511,7 @@ pub struct PackFileProgress {
 }
 
 /// Clears the job when the work ends, however it ends.
-struct PackFileTurn {
+pub(crate) struct PackFileTurn {
     jobs: PackFileJobs,
     cancel: Arc<AtomicBool>,
 }
@@ -1529,7 +1529,7 @@ fn lock_jobs(jobs: &PackFileJobs) -> std::sync::MutexGuard<'_, Option<PackFileJo
 }
 
 impl PackFileJobs {
-    fn begin(
+    pub(crate) fn begin(
         &self,
         kind: &'static str,
         pack_id: &str,
@@ -1561,18 +1561,18 @@ impl PackFileJobs {
 }
 
 impl PackFileTurn {
-    fn update(&self, progress: Progress) {
+    pub(crate) fn update(&self, progress: Progress) {
         if let Some(job) = lock_jobs(&self.jobs).as_mut() {
             job.progress.progress = progress;
         }
     }
 
-    fn cancelled(&self) -> bool {
+    pub(crate) fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
 }
 
-type PackFileJobsState<'a> = State<'a, PackFileJobs>;
+pub(crate) type PackFileJobsState<'a> = State<'a, PackFileJobs>;
 
 pub(crate) fn app_info<R: Runtime>(app: &AppHandle<R>) -> AppInfo {
     AppInfo {
@@ -2117,7 +2117,7 @@ pub struct AddedFile {
 }
 
 impl PackFileImported {
-    fn new(
+    pub(crate) fn new(
         pack_id: String,
         title: String,
         replaced: bool,

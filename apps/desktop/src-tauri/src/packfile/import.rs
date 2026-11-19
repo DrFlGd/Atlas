@@ -148,6 +148,34 @@ pub(crate) fn import_with(
     progress: &mut dyn FnMut(Progress),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Imported, Stop> {
+    import_with_record(
+        file,
+        maps_folder,
+        ops,
+        free_space,
+        None,
+        progress,
+        cancelled,
+    )
+}
+
+/// A record of the app's own written into the pack folder's `.atlas/`
+/// with the import, before the folder is moved into place: its file name
+/// there and its bytes (see `madepack`, a map opened for editing).
+pub(crate) type ExtraRecord<'a> = Option<(&'a str, &'a [u8])>;
+
+/// [`import_with`], with `extra` written into the new folder's `.atlas/`
+/// beside the record of the file it came from, so the folder never exists
+/// in its place without it.
+pub(crate) fn import_with_record(
+    file: &Path,
+    maps_folder: &Path,
+    ops: &FileOps,
+    free_space: &dyn Fn(&Path) -> Option<u64>,
+    extra: ExtraRecord<'_>,
+    progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Imported, Stop> {
     let header = read_header(file)?;
     if !is_valid_pack_id(&header.pack_id) {
         return Err(Stop::Failed(
@@ -238,6 +266,10 @@ pub(crate) fn import_with(
                 meta.join(IMPORTED_RECORD),
                 serde_json::to_vec_pretty(&record).expect("the record serialises"),
             )
+        })
+        .and_then(|()| match extra {
+            Some((name, bytes)) => fs::write(meta.join(name), bytes),
+            None => Ok(()),
         })
         .map_err(|error| format!("Could not write the pack folder: {error}"))?;
 
@@ -346,6 +378,28 @@ pub fn check_whole(
         title: head.title,
         mine: checked.mine,
     })
+}
+
+/// The person's own things a pack file carries (`mine/`), read and checked
+/// exactly as an import reads them: the description and its id, every
+/// entry's name, type, packing and size, the pack's JSON files and the own
+/// files read whole and checked to be this game's, and each own photo
+/// checked to be the picture it says. The map images are not read and
+/// nothing is written. For a pack file read where it lies, whose own things
+/// are offered to the person (see `madepack`).
+pub fn read_mine(file: &Path) -> Result<(Header, Mine), Stop> {
+    let header = read_header(file)?;
+    if !is_valid_pack_id(&header.pack_id) {
+        return Err(Stop::Failed(
+            "This pack file names a game id that Atlas cannot use.".to_owned(),
+        ));
+    }
+    let opened = File::open(file).map_err(|error| format!("Could not open the file: {error}"))?;
+    let mut archive = ZipArchive::new(BufReader::new(opened))
+        .map_err(|_| "This pack file is damaged: its list of contents cannot be read.")
+        .map_err(str::to_owned)?;
+    let checked = check_entries(&mut archive, &header)?;
+    Ok((header, checked.mine))
 }
 
 fn damaged(name: &str) -> Stop {
@@ -469,6 +523,8 @@ pub(crate) struct Rules {
     pictures: HashSet<String>,
     /// The small pictures the description lists, the only ones it may hold.
     previews: HashSet<String>,
+    /// The manifest says the game was made in the app (`madeInApp`).
+    pub(crate) made_in_app: bool,
 }
 
 impl Rules {
@@ -495,6 +551,7 @@ impl Rules {
                 "The game inside this pack file is not the one its description names.",
             ));
         }
+        let made_in_app = manifest.get("madeInApp") == Some(&Value::Bool(true));
         let text_of = |entries: &mut dyn PackEntries, name: &str| -> Result<String, Stop> {
             if !entries.has(name) {
                 return Err(refuse(format!("This pack file has no {name}.")));
@@ -554,6 +611,7 @@ impl Rules {
             templates,
             pictures,
             previews,
+            made_in_app,
         })
     }
 }
