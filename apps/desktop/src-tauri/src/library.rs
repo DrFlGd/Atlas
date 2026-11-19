@@ -1063,7 +1063,7 @@ impl Library {
     /// Remembers a pack folder the person opened.
     pub fn add_pack_location(&self, path: &Path) -> Result<String, String> {
         let head = read_head(path).map_err(|reason| {
-            if pack_files_in(path, None).is_empty() {
+            if pack_files_in(path, None).files.is_empty() {
                 format!("That folder is not a map pack: {reason}.")
             } else {
                 "That folder holds pack files rather than one map pack. Use \u{201c}Add a folder of games\u{201d} for it.".to_owned()
@@ -1086,7 +1086,8 @@ impl Library {
             );
         }
         let (packs, _) = packs_in(path);
-        let files = pack_files_in(path, None);
+        let maps_folder = self.maps_folder().canonicalize().ok();
+        let files = pack_files_in(path, maps_folder.as_deref()).files;
         if packs.is_empty() && files.is_empty() {
             return Err("There are no map packs in that folder.".to_owned());
         }
@@ -1152,8 +1153,8 @@ impl Library {
         if path == current {
             return Err("That is the maps folder already.".to_owned());
         }
-        if path.starts_with(self.packs_folder()) {
-            return Err("That is the folder Atlas reads pack files from, which Atlas never writes into. Choose another folder for your maps.".to_owned());
+        if overlap(path, &self.packs_folder()) {
+            return Err("That folder is the packs folder, is inside it or holds it. Atlas reads pack files there and never writes into it, so choose another folder for your maps.".to_owned());
         }
         if path.starts_with(&current) {
             return Err("Choose a folder outside the current maps folder.".to_owned());
@@ -2179,66 +2180,170 @@ pub fn packs_in(dir: &Path) -> (Vec<(PathBuf, ManifestHead)>, Vec<PathBuf>) {
     (packs, others)
 }
 
-/// The pack files (`.atlaspack`) in `dir` and its sub-folders, sorted:
-/// not in a folder whose name begins with a dot, inside a pack folder, or
-/// in `skip` (the maps folder), and not through a symbolic link; a file
-/// whose name ends in `.part` is never one. At most [`MAX_PACK_FILES`],
-/// [`PACK_FILE_DEPTH`] folders down.
-pub fn pack_files_in(dir: &Path, skip: Option<&Path>) -> Vec<PathBuf> {
-    fn walk(
-        dir: &Path,
-        skip: Option<&Path>,
-        depth: usize,
-        read: &mut usize,
-        out: &mut Vec<PathBuf>,
-    ) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        let mut folders = Vec::new();
-        for entry in entries.flatten() {
-            *read += 1;
-            if *read > MAX_FOLDER_ENTRIES || out.len() >= MAX_PACK_FILES {
+/// The pack files a look into a folder found, and what it left out.
+#[derive(Debug, Default)]
+pub struct PackFilesIn {
+    /// Sorted.
+    pub files: Vec<PathBuf>,
+    /// A line for each limit that left something out, or for a folder not
+    /// read, with the folder or file it concerns.
+    pub notes: Vec<UnreadablePackFile>,
+}
+
+/// The pack files (`.atlaspack`) in `dir` and its sub-folders: not in a
+/// folder whose name begins with a dot, inside a pack folder, or in or
+/// inside `maps_folder` (its real path), and not through a symbolic link;
+/// a file whose name ends in `.part` is never one. Each folder is read
+/// whole and in the order of its names before a limit cuts anything, so
+/// what is left out does not depend on the order the system lists files
+/// in: at most [`MAX_FOLDER_ENTRIES`] files and folders are read, at most
+/// [`MAX_PACK_FILES`] pack files taken, and [`PACK_FILE_DEPTH`] folders
+/// down. Each limit that cut something gives a note.
+pub fn pack_files_in(dir: &Path, maps_folder: Option<&Path>) -> PackFilesIn {
+    struct Walk<'a> {
+        maps_folder: Option<&'a Path>,
+        read: usize,
+        stopped: bool,
+        /// Folders whose sub-folders were too deep to read.
+        deeper: Vec<PathBuf>,
+        found: PackFilesIn,
+    }
+    impl Walk<'_> {
+        fn note(&mut self, path: &Path, reason: String) {
+            self.found.notes.push(UnreadablePackFile {
+                path: path.display().to_string(),
+                reason,
+            });
+        }
+
+        fn folder(&mut self, dir: &Path, depth: usize) {
+            if self.stopped {
                 return;
             }
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name.starts_with('.') {
-                continue;
-            }
-            // Not followed when it is a link.
-            let Ok(kind) = entry.file_type() else {
-                continue;
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
             };
-            let path = entry.path();
-            if kind.is_dir() {
-                folders.push(path);
-            } else if kind.is_file()
-                && name.ends_with(&format!(".{EXTENSION}"))
-                && !name.ends_with(".part")
-            {
-                out.push(path);
+            let mut listed = Vec::new();
+            for entry in entries.flatten() {
+                self.read += 1;
+                if self.read > MAX_FOLDER_ENTRIES {
+                    self.stopped = true;
+                    self.note(
+                        dir,
+                        format!(
+                            "Atlas reads at most {} files and folders when it looks for pack files in one folder, so it did not look in this folder or in the folders after it.",
+                            grouped(MAX_FOLDER_ENTRIES)
+                        ),
+                    );
+                    return;
+                }
+                listed.push(entry);
             }
-        }
-        if depth >= PACK_FILE_DEPTH {
-            return;
-        }
-        folders.sort();
-        for folder in folders {
-            let is_skipped =
-                skip.is_some_and(|skip| folder.canonicalize().is_ok_and(|it| it == skip));
-            if folder.join(MANIFEST_FILE).is_file() || is_skipped {
-                continue;
+            listed.sort_by_key(fs::DirEntry::file_name);
+            let mut folders = Vec::new();
+            for entry in listed {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.starts_with('.') {
+                    continue;
+                }
+                // Not followed when it is a link.
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                let path = entry.path();
+                if kind.is_dir() {
+                    let is_maps_folder = self
+                        .maps_folder
+                        .is_some_and(|maps| path.canonicalize().is_ok_and(|it| it == maps));
+                    if !is_maps_folder && !path.join(MANIFEST_FILE).is_file() {
+                        folders.push(path);
+                    }
+                } else if kind.is_file()
+                    && name.ends_with(&format!(".{EXTENSION}"))
+                    && !name.ends_with(".part")
+                {
+                    if self.found.files.len() >= MAX_PACK_FILES {
+                        self.stopped = true;
+                        self.note(
+                            &path,
+                            format!(
+                                "Atlas reads at most {} pack files in one folder and its sub-folders, so this pack file and the ones after it, in the order of their names, are not read.",
+                                grouped(MAX_PACK_FILES)
+                            ),
+                        );
+                        return;
+                    }
+                    self.found.files.push(path);
+                }
             }
-            walk(&folder, skip, depth + 1, read, out);
+            if folders.is_empty() {
+                return;
+            }
+            if depth >= PACK_FILE_DEPTH {
+                self.deeper.push(dir.to_path_buf());
+                return;
+            }
+            for folder in folders {
+                self.folder(&folder, depth + 1);
+            }
         }
     }
+
+    let mut walk = Walk {
+        maps_folder,
+        read: 0,
+        stopped: false,
+        deeper: Vec::new(),
+        found: PackFilesIn::default(),
+    };
     if dir.join(MANIFEST_FILE).is_file() {
-        return Vec::new();
+        return walk.found;
     }
-    let mut out = Vec::new();
-    walk(dir, skip, 0, &mut 0, &mut out);
-    out.sort();
+    let real = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if maps_folder.is_some_and(|maps| real.starts_with(maps)) {
+        walk.note(
+            dir,
+            "This folder is the maps folder or a folder inside it, which holds map packs that Atlas changes, so Atlas does not read pack files in it.".to_owned(),
+        );
+        return walk.found;
+    }
+    walk.folder(dir, 0);
+    if let Some(first) = walk.deeper.first().cloned() {
+        let others = walk.deeper.len() - 1;
+        let mut reason = format!(
+            "Atlas looks for pack files at most {PACK_FILE_DEPTH} folders down, so the folders inside this folder are not read."
+        );
+        if others > 0 {
+            reason.push_str(&format!(
+                " The same is true of {others} other {}.",
+                if others == 1 { "folder" } else { "folders" }
+            ));
+        }
+        walk.note(&first, reason);
+    }
+    walk.found.files.sort();
+    walk.found
+}
+
+/// A count with a comma between each three digits, as people read it.
+fn grouped(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
     out
+}
+
+/// Whether two folders are the same or one is inside the other, by their
+/// real paths (as they are written when one does not exist yet).
+fn overlap(a: &Path, b: &Path) -> bool {
+    let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let (a, b) = (real(a), real(b));
+    a.starts_with(&b) || b.starts_with(&a)
 }
 
 /// What one scan learns of the pack files it finds.
@@ -2275,7 +2380,9 @@ impl FileScan {
     /// Looks at the pack files in `dir`; the ids of those that can be used.
     fn look(&mut self, dir: &Path, origin: Origin) -> Vec<String> {
         let mut ids = Vec::new();
-        for path in pack_files_in(dir, self.maps_folder.as_deref()) {
+        let found = pack_files_in(dir, self.maps_folder.as_deref());
+        self.unreadable.extend(found.notes);
+        for path in found.files {
             let real = path.canonicalize().unwrap_or_else(|_| path.clone());
             if !self.seen.insert(real) {
                 continue;
@@ -4098,6 +4205,99 @@ mod tests {
         // A scan does not keep the tables of the packs read.
         s.library.scan();
         assert_eq!(pool.held_tables(), OPEN_TABLES);
+    }
+
+    #[test]
+    fn says_what_a_limit_left_out_of_a_look_for_pack_files() {
+        let dir = TempDir::new("library-pack-file-limits");
+        let root = dir.0.join("games");
+        // More pack files than are read, made in reverse order: the ones
+        // left out are the last by name, whatever order they are listed in.
+        fs::create_dir_all(&root).unwrap();
+        for index in (0..=MAX_PACK_FILES).rev() {
+            fs::write(root.join(format!("p{index:04}.atlaspack")), "").unwrap();
+        }
+        let found = pack_files_in(&root, None);
+        assert_eq!(found.files.len(), MAX_PACK_FILES);
+        assert!(found.files[MAX_PACK_FILES - 1].ends_with("p0999.atlaspack"));
+        assert_eq!(found.notes.len(), 1, "{:?}", found.notes);
+        assert!(found.notes[0].path.ends_with("p1000.atlaspack"));
+        assert!(
+            found.notes[0].reason.contains("at most 1,000 pack files"),
+            "{:?}",
+            found.notes
+        );
+
+        // Too deep: the folder whose folders are not read is named.
+        let deep = dir.0.join("deep");
+        let fourth = deep.join("a/b/c/d");
+        write_pack_file(
+            &fourth.join("e/too-deep.atlaspack"),
+            "deep-game",
+            "Deep",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        write_pack_file(
+            &fourth.join("shallow.atlaspack"),
+            "shallow-game",
+            "Shallow",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        let found = pack_files_in(&deep, None);
+        assert_eq!(found.files, [fourth.join("shallow.atlaspack")]);
+        assert_eq!(found.notes.len(), 1, "{:?}", found.notes);
+        assert_eq!(found.notes[0].path, fourth.display().to_string());
+        assert!(found.notes[0].reason.contains("at most 4 folders down"));
+    }
+
+    #[test]
+    fn never_reads_pack_files_in_the_maps_folder() {
+        let s = setup("library-pack-files-maps-folder", Vec::new());
+        let packs = s.library.packs_folder();
+        write_pack_file(
+            &packs.join("game.atlaspack"),
+            "example-game",
+            "Example Game",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        // Neither the packs folder, a folder inside it, nor one that holds
+        // it can be the maps folder.
+        for path in [
+            packs.clone(),
+            packs.join("sub"),
+            packs.parent().unwrap().to_path_buf(),
+        ] {
+            let error = s.library.propose_maps_folder(&path).unwrap_err();
+            assert!(
+                error.contains("packs folder"),
+                "{}: {error}",
+                path.display()
+            );
+        }
+        // A maps folder that is the packs folder already (chosen before):
+        // no pack file is read from it, and the Library says why.
+        s.library
+            .settings()
+            .update(|settings| settings.maps_folder = Some(packs.display().to_string()))
+            .unwrap();
+        let listing = s.library.scan();
+        assert!(listing.packs.is_empty(), "{:?}", listing.packs);
+        assert_eq!(listing.unreadable.len(), 1, "{:?}", listing.unreadable);
+        assert_eq!(listing.unreadable[0].path, packs.display().to_string());
+        assert!(listing.unreadable[0].reason.contains("maps folder"));
+        // An added folder of games inside the maps folder is not walked.
+        let inside = packs.join("Inside");
+        write_pack_file(
+            &inside.join("inside.atlaspack"),
+            "inside-game",
+            "Inside",
+            "2026-11-10T09:00:00Z",
+            "2026-11-11T09:00:00Z",
+        );
+        assert!(s.library.add_folder_location(&inside).is_err());
     }
 
     #[test]

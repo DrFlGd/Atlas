@@ -272,11 +272,11 @@ export function Locations() {
       {library.unreadable && library.unreadable.length > 0 ? (
         <div className="download-note" data-testid="unreadable-pack-files">
           <p>
-            <strong>Pack files that cannot be opened:</strong>
+            <strong>Pack files and folders that Atlas could not read:</strong>
           </p>
           <ul className="hidden-packs">
             {library.unreadable.map((file) => (
-              <li key={file.path}>
+              <li key={`${file.path}\n${file.reason}`}>
                 <span className="path-inline">{file.path}</span>: {file.reason}
               </li>
             ))}
