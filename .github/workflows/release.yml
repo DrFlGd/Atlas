@@ -139,6 +139,13 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.25.0
+
+          - **Guidebooks.** A guidebook is a published guide you have as one file, a PDF or a CBZ. In **Guides**, **Add a guidebook…** copies one into a pack file of its own in the packs folder, and it is listed with the game's other guides. It opens over the whole window: page by page or scrolling, zoom, **Fit width** and **Fit page**, a page to go to, the PDF's own **Contents**, **Back** after a jump, and **Find**. It opens again on the page you left. Its pages also show under **In guidebooks** in the search of Guides and of the map. **Remove this guidebook…** takes it out again; the file you added it from is never changed. Guidebooks that another app sends in a pack file show the same way.
+          - **The packs folder can be changed.** **Settings**, then **Games in other folders**, has **Change packs folder…** and **Use the default folder**. Atlas asks whether to move the pack files there or leave them where they are. Atlas and Atlas Importer on one computer use the same packs folder, so update both together: an older version goes back to the default folder.
+
+          This version has passed the automatic checks only. Guidebooks and moving the packs folder have not been tried in a real Windows window yet.
+
           ## New in 0.24.0
 
           Atlas can stay ready beside a game. Everything here is off until you turn it on, in **Settings**, then **Atlas in the background**.
