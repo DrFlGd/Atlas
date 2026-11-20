@@ -363,9 +363,7 @@ fn target_of(
             }
         }
     }
-    let packs = library.packs_folder();
-    fs::create_dir_all(&packs)
-        .map_err(|error| format!("Could not create the packs folder: {error}"))?;
+    let packs = library.ensure_packs_folder()?;
     let stem = stem_from(Some(&head.title), &head.title, None, &head.id);
     free_path(&packs, &stem).map(Target::New).ok_or_else(|| {
         "The packs folder has too many files named like this map, so nothing was written. Rename the map and try again.".to_owned()

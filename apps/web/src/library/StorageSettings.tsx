@@ -357,6 +357,13 @@ function PacksFolder({
           </span>
         ) : null}
       </p>
+      {!folder.exists && folder.isDefault === false ? (
+        <p className="small location-message" data-testid="packs-folder-missing">
+          <span className="badge badge-warn">Not found</span> The packs folder cannot be found. If
+          it is on a drive that is not connected, connect it and press Look again, or choose another
+          packs folder.
+        </p>
+      ) : null}
       {choice ? (
         <div
           className="download-confirm"

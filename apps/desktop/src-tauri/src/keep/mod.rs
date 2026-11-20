@@ -984,8 +984,8 @@ impl Loop {
         }
         let folder = inner.folder_of(&setting);
         if setting.folder.is_none() {
-            // The packs folder is this app's own to make.
-            let _ = fs::create_dir_all(&folder);
+            // The default packs folder is this app's own to make.
+            let _ = inner.library.ensure_packs_folder();
         }
         if !folder.is_dir() {
             return Err(format!(

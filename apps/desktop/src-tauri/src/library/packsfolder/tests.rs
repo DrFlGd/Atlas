@@ -501,3 +501,27 @@ fn the_move_reports_each_file_it_could_not_move_and_goes_on() {
     assert_eq!(files_under(&old), ["b.atlaspack"]);
     assert_eq!(files_under(&new), ["a.atlaspack", "c.atlaspack"]);
 }
+
+#[test]
+fn a_packs_folder_chosen_that_cannot_be_found_is_not_made() {
+    let dir = TempDir::new("packs-folder-missing");
+    let library = library(&dir.0);
+    // The default folder is made when missing.
+    let default = library.packs_folder();
+    assert!(!default.exists());
+    assert_eq!(library.ensure_packs_folder().unwrap(), default);
+    assert!(default.is_dir());
+
+    // A folder chosen on a drive that is not connected now.
+    let gone = dir.0.join("usb").join("Packs");
+    library.propose_packs_folder(&gone).unwrap();
+    library.apply_packs_folder(false).unwrap();
+    fs::remove_dir_all(dir.0.join("usb")).unwrap();
+    let listing = library.scan();
+    assert!(!listing.packs_folder.exists);
+    assert!(!listing.packs_folder.is_default);
+    assert!(!gone.exists(), "not made by a look");
+    let error = library.ensure_packs_folder().unwrap_err();
+    assert!(error.contains("cannot be found"), "{error}");
+    assert!(!gone.exists());
+}

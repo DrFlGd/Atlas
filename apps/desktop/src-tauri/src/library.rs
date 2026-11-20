@@ -697,6 +697,17 @@ impl Library {
         self.settings.packs_folder()
     }
 
+    /// The packs folder, made when it is the default one and missing. A
+    /// folder the person chose that is missing is not made: it may be on a
+    /// drive that is not connected, and its path would then be made on
+    /// another drive. A sentence says so instead.
+    pub fn ensure_packs_folder(&self) -> Result<PathBuf, String> {
+        let settings = self.settings.read();
+        let folder = crate::settings::packs_folder(&settings, self.settings.dir());
+        make_packs_folder(&folder, packs_folder_is_default(&settings))?;
+        Ok(folder)
+    }
+
     fn maps_folder_of(settings: &SharedSettings, shared: &Path) -> PathBuf {
         settings
             .maps_folder
@@ -880,14 +891,14 @@ impl Library {
         let settings = self.settings.read();
         let maps_folder = Self::maps_folder_of(&settings, self.settings.dir());
         let packs_folder = crate::settings::packs_folder(&settings, self.settings.dir());
-        if let Err(error) = fs::create_dir_all(&packs_folder) {
-            activity::warn(
-                Area::Library,
-                format!(
-                    "Could not create the packs folder {}: {error}",
-                    packs_folder.display()
-                ),
-            );
+        let packs_folder_default = packs_folder_is_default(&settings);
+        if packs_folder_default {
+            if let Err(error) = make_packs_folder(&packs_folder, true) {
+                activity::warn(
+                    Area::Library,
+                    format!("{error} ({})", packs_folder.display()),
+                );
+            }
         }
         let mut pack_files = FileScan {
             known: lock(&self.pack_files).clone(),
@@ -1097,7 +1108,7 @@ impl Library {
             },
             packs_folder: PacksFolderInfo {
                 path: packs_folder.display().to_string(),
-                is_default: packs_folder_is_default(&settings),
+                is_default: packs_folder_default,
                 exists: packs_folder.is_dir(),
             },
             packs: shown,
@@ -2378,6 +2389,22 @@ fn is_slug(text: &str) -> bool {
         .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && text.len() <= 64
+}
+
+/// Makes the packs folder when it is missing and the default one; see
+/// [`Library::ensure_packs_folder`].
+fn make_packs_folder(folder: &Path, default: bool) -> Result<(), String> {
+    if folder.is_dir() {
+        return Ok(());
+    }
+    if default {
+        return fs::create_dir_all(folder)
+            .map_err(|error| format!("Could not create the packs folder: {error}"));
+    }
+    Err(format!(
+        "The packs folder {} cannot be found. If it is on a drive that is not connected, connect it and try again, or choose another packs folder in the settings.",
+        folder.display()
+    ))
 }
 
 /// A directory, and not a symbolic link to one.

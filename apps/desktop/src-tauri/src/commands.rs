@@ -1140,12 +1140,7 @@ pub fn library_reveal<R: Runtime>(
                 .map_err(|error| format!("Cannot create the maps folder: {error}"))?;
             folder
         }
-        RevealTarget::PacksFolder => {
-            let folder = library.packs_folder();
-            fs::create_dir_all(&folder)
-                .map_err(|error| format!("Cannot create the packs folder: {error}"))?;
-            folder
-        }
+        RevealTarget::PacksFolder => library.ensure_packs_folder()?,
         // A pack read from a pack file: the folder that holds the file.
         RevealTarget::Pack { id } => library
             .pack_folder(&id)

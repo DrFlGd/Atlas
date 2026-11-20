@@ -146,6 +146,18 @@ test('says why a folder is refused, and offers only Use this folder when there i
   expect(realErrors(errors)).toEqual([]);
 });
 
+test('says when a packs folder chosen cannot be found', async ({ page }) => {
+  await setUp(page, DOWNLOADS_BUILD, { packsFolder: true });
+  const section = await openPacksFolder(page);
+  await expect(section.getByTestId('packs-folder-missing')).toHaveCount(0);
+  await setPacksFolder(page, { path: '/media/usb/Packs', isDefault: false, exists: false });
+  await page.getByTestId('refresh-maps').click();
+  await expect(section.getByTestId('packs-folder-missing')).toHaveText(
+    'Not found The packs folder cannot be found. If it is on a drive that is not connected, connect it and press Look again, or choose another packs folder.',
+  );
+  await expect(section.getByTestId('default-packs-folder')).toBeVisible();
+});
+
 test('an older shell that cannot change the packs folder offers no change', async ({ page }) => {
   await setUp(page, DOWNLOADS_BUILD);
   await page.getByTestId('section-settings').click();

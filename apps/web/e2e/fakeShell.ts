@@ -218,6 +218,8 @@ export interface MockShell {
   packsFolder: {
     path: string;
     isDefault: boolean;
+    /** The folder is there (not on a drive that is not connected). */
+    exists: boolean;
     /** The default packs folder. */
     defaultPath: string;
     /** The pack files in it, and their size in bytes. */
@@ -317,6 +319,7 @@ function installFakeShell({
     packsFolder: {
       path: '/home/test/.local/share/atlas/packs',
       isDefault: true,
+      exists: true,
       defaultPath: '/home/test/.local/share/atlas/packs',
       files: 2,
       bytes: 3_400_000,
@@ -428,7 +431,7 @@ function installFakeShell({
       ? {
           packsFolder: {
             path: shell.packsFolder.path,
-            exists: true,
+            exists: shell.packsFolder.exists,
             isDefault: shell.packsFolder.isDefault,
           },
         }

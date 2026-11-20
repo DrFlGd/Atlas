@@ -156,10 +156,7 @@ fn plan(packs: &Path, source: &Path, header: &Header) -> Result<Plan, String> {
 
 /// The packs folder, made when missing.
 fn packs_folder(library: &Library) -> Result<PathBuf, String> {
-    let packs = library.packs_folder();
-    fs::create_dir_all(&packs)
-        .map_err(|error| format!("Could not create the packs folder: {error}"))?;
-    Ok(packs)
+    library.ensure_packs_folder()
 }
 
 /// What adding the pack file at `source`, with this description, would do.
