@@ -110,6 +110,10 @@ const COMMANDS: &[&str] = &[
     "made_pack_mine_offer",
     "made_pack_mine_take",
     "made_pack_mine_choose",
+    "guidebook_pick",
+    "guidebook_forget_picked",
+    "guidebook_add",
+    "guidebook_remove",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

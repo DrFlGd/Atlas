@@ -28,6 +28,8 @@ mod commands;
 mod downloads;
 pub mod gamefiles;
 pub mod gamegroups;
+// Guidebooks (PDF and CBZ files) in packs of their own, and adding one.
+pub mod guidebooks;
 // A person's links between guide pages and the map, beside the game's folder.
 pub mod guidelinks;
 mod imports;
@@ -202,6 +204,10 @@ macro_rules! viewer_commands {
             madepack::commands::made_pack_mine_offer,
             madepack::commands::made_pack_mine_take,
             madepack::commands::made_pack_mine_choose,
+            guidebooks::guidebook_pick,
+            guidebooks::guidebook_forget_picked,
+            guidebooks::guidebook_add,
+            guidebooks::guidebook_remove,
             $($more)*
         ]
     };
@@ -294,6 +300,7 @@ pub fn run() {
         .manage(imports::Imports::default())
         .manage(commands::PackFileJobs::default())
         .manage(commands::PickedPackFiles::default())
+        .manage(guidebooks::PickedGuidebooks::default())
         .manage(owngame_commands::CutJobs::default())
         .manage(Arc::new(receive::Opened::default()))
         .manage(Arc::new(background::Shows::default()));

@@ -45,6 +45,12 @@ pub struct ManifestHead {
     /// says (`game.title`) when it differs from the pack's own title:
     /// trimmed, at most 200 characters. None for a pack folder.
     pub game_title: Option<String>,
+    /// The pack is a pack of guidebooks: a pack file whose description
+    /// lists guidebooks, or a pack folder with `guidebooks.json`.
+    pub guidebooks: bool,
+    /// The name of the app that wrote the pack (`writtenBy.name`), when
+    /// it says: trimmed, at most 100 characters.
+    pub written_by: Option<String>,
 }
 
 /// The longest system name a listing carries; a longer one is left out.
@@ -80,6 +86,9 @@ struct RawHead {
     /// Read loosely: anything but a usable text is none.
     #[serde(default)]
     system: Option<Value>,
+    /// Read loosely: anything but an object with a usable name is none.
+    #[serde(default)]
+    written_by: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -128,7 +137,9 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
     }
     let text =
         fs::read_to_string(&path).map_err(|error| format!("cannot read manifest.json: {error}"))?;
-    head_of_text(&text)
+    let mut head = head_of_text(&text)?;
+    head.guidebooks = dir.join(atlas_pack::GUIDEBOOK_LIST_FILE).is_file();
+    Ok(head)
 }
 
 /// The identifying fields of a manifest's text, checked as [`read_head`]
@@ -173,6 +184,8 @@ pub fn head_of_text(text: &str) -> Result<ManifestHead, String> {
             .filter(|name| !name.is_empty() && name.chars().count() <= MAX_SYSTEM_CHARS)
             .map(str::to_owned),
         game_title: None,
+        guidebooks: false,
+        written_by: written_by_name(raw.written_by.as_ref()),
     })
 }
 
@@ -220,7 +233,19 @@ pub fn head_of_header(header: &atlas_pack::Header) -> Result<ManifestHead, Strin
             .map(|game| game.title.trim())
             .filter(|name| !name.is_empty() && name.chars().count() <= 200 && *name != title)
             .map(str::to_owned),
+        guidebooks: !header.guidebooks.is_empty(),
+        written_by: written_by_name(header.pack.written_by.as_ref()),
     })
+}
+
+/// The name in a manifest's `writtenBy`, when it is a usable one.
+fn written_by_name(written_by: Option<&Value>) -> Option<String> {
+    written_by
+        .and_then(|by| by.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.chars().count() <= 100)
+        .map(str::to_owned)
 }
 
 /// Compares two `major.minor.patch` versions; anything else compares as 0.0.0.

@@ -157,6 +157,9 @@ pub const PACK_FILES: &[&str] = &[
     // Guides read as pages: their contents, and the list of their pictures.
     "sections.json",
     "pictures.json",
+    // A pack of guidebooks: the list of its guidebooks (see the
+    // `atlas-pack` crate and `guidebooks.rs`).
+    "guidebooks.json",
 ];
 pub const MAX_PACK_FILE_BYTES: usize = 64 << 20;
 pub const MAX_PACK_BYTES: usize = 256 << 20;
@@ -302,10 +305,21 @@ pub struct ListedPack {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editing: Option<crate::madepack::EditingFacts>,
     /// The title the game is shown under, as its pack file says, when that
-    /// is not its own title (see `ManifestHead::game_title`). Only the
-    /// shell uses it, to find a game by its title (see `background`).
-    #[serde(skip)]
+    /// is not its own title (see `ManifestHead::game_title`). The shell
+    /// finds a game by it (see `background`), and the web app joins a
+    /// game's guidebooks to it (see `guidebooks.rs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub game_title: Option<String>,
+    /// The pack is a pack of guidebooks (see `guidebooks.rs`): its title is
+    /// the title of the game they are for.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub guidebooks: bool,
+    /// A pack of guidebooks that Atlas wrote (`writtenBy.name` is
+    /// `Atlas`): the person added its guidebooks here, so they can add
+    /// more to it and remove them. Atlas never changes one another app
+    /// wrote.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub guidebooks_by_atlas: bool,
 }
 
 /// When a pack file's pack was changed last and when the file was made,
@@ -1198,6 +1212,9 @@ impl Library {
             made_here: false,
             editing: None,
             game_title: head.game_title,
+            guidebooks_by_atlas: head.guidebooks
+                && head.written_by.as_deref() == Some(crate::guidebooks::WRITTEN_BY),
+            guidebooks: head.guidebooks,
         }
     }
 

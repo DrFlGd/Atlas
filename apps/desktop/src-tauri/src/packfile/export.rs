@@ -317,6 +317,8 @@ pub fn write_part(
         files: entries.len() as u64,
         bytes: entries.iter().map(|entry| entry.size).sum(),
         mine: mine_facts,
+        // A pack of guidebooks is not exported (see `export_refusal`).
+        guidebooks: Vec::new(),
     };
     let mut header_bytes = serde_json::to_vec_pretty(&header).expect("the header serialises");
     header_bytes.push(b'\n');
