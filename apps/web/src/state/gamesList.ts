@@ -28,6 +28,7 @@ import { useAtlas } from './store';
  */
 export function sourceWords(listed: ListedPack | undefined, folderWords: string): string {
   if (!listed) return 'Comes with the app';
+  if (listed.guidebooks) return 'Guidebooks';
   if (listed.madeInApp) return 'Made in Atlas';
   if (listed.imported) return siteOf(listed.pages) ?? listed.imported.importerTitle;
   if (listed.bundled || listed.origin === 'bundled') return 'Comes with the app';

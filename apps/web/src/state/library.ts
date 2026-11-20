@@ -8,6 +8,7 @@ import {
   type RevealTarget,
 } from '../desktop';
 import { loadGame, notify } from './actions';
+import { joinable, joinGuidebooks } from './guidebookData';
 import { useAtlas } from './store';
 
 /**
@@ -30,14 +31,17 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
  */
 export function catalogFrom(bundled: readonly PackEntry[], listing: Listing | null): PackEntry[] {
   if (!listing) return [...bundled];
-  const listed = new Map(listing.packs.map((pack) => [pack.id, pack]));
+  // A pack of guidebooks of a game here by its title is read with that game, not listed apart.
+  const joined = joinGuidebooks(joinable(listing.packs, bundled), []);
+  const packs = listing.packs.filter((pack) => !joined.has(pack.id));
+  const listed = new Map(packs.map((pack) => [pack.id, pack]));
   const entry = (pack: { id: string; url: string; title: string }): PackEntry => ({
     id: pack.id,
     url: pack.url,
     title: pack.title,
   });
   const first = bundled.map((pack) => entry(listed.get(pack.id) ?? pack));
-  const rest = listing.packs
+  const rest = packs
     .filter((pack) => !bundled.some((b) => b.id === pack.id))
     .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }))
     .map(entry);
@@ -113,6 +117,15 @@ export function applyListing(listing: Listing): 'taken' | 'older' | 'gone' {
   const catalog = catalogFrom(get().bundledCatalog, listing);
   set({ library: listing, catalog });
   const current = get().game?.entry;
+  // A pack of guidebooks shown alone that now joins a game: that game is shown.
+  const host =
+    current &&
+    joinGuidebooks(joinable(listing.packs, get().bundledCatalog), []).get(current.id)?.[0];
+  const hostEntry = host ? catalog.find((p) => p.id === host) : undefined;
+  if (current && hostEntry && !catalog.some((p) => p.id === current.id)) {
+    void loadGame(hostEntry);
+    return 'gone';
+  }
   if (current && !catalog.some((p) => p.id === current.id) && catalog[0]) {
     const was = previous?.packs.find((pack) => pack.id === current.id);
     notify(

@@ -169,18 +169,20 @@ export async function loadAllGameFacts(): Promise<void> {
 // In words
 
 /** What a game is, for the list: maps, a wiki read as guides, or a map made in this app. */
-export type GameKind = 'maps' | 'wiki' | 'own';
+export type GameKind = 'maps' | 'wiki' | 'own' | 'guidebooks';
 
 export const KIND_LABEL: Record<GameKind, string> = {
   maps: 'Maps',
   wiki: 'Wiki',
   own: 'Made here',
+  guidebooks: 'Guidebooks',
 };
 
 export function gameKind(
-  listed: Pick<ListedPack, 'madeInApp'> | undefined,
+  listed: Pick<ListedPack, 'madeInApp' | 'guidebooks'> | undefined,
   details: Pick<PackDetails, 'contents'> | null,
 ): GameKind {
+  if (listed?.guidebooks) return 'guidebooks';
   if (listed?.madeInApp) return 'own';
   if (details?.contents.maps === 0 && details.contents.guides > 0) return 'wiki';
   return 'maps';

@@ -1,0 +1,512 @@
+/* ---------------------------------------------------------------------------
+ * The guidebook reader (guidebook/GuidebookReader.tsx): the whole window,
+ * a bar of tools above the pages, and the contents or the pages found
+ * beside them. In both themes through the theme's tokens; larger targets
+ * for fingers. */
+
+.gb-reader {
+  box-sizing: border-box;
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  overflow: hidden;
+}
+
+.gb-reader[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.gb-reader::backdrop {
+  background: var(--atlas-bg);
+}
+
+.gb-bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+}
+
+.gb-heading {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.gb-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gb-facts {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 12.5px;
+}
+
+.gb-tools {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.gb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gb-button,
+.gb-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 13.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gb-icon-button {
+  min-width: 34px;
+  padding: 0;
+}
+
+.gb-button:hover:not(:disabled),
+.gb-icon-button:hover:not(:disabled) {
+  background: var(--atlas-surface-hover);
+}
+
+.gb-button:disabled,
+.gb-icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gb-button[aria-pressed='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.gb-zoom {
+  min-width: 48px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.gb-page-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.gb-page-field label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gb-page-input {
+  box-sizing: border-box;
+  width: 64px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: center;
+}
+
+.gb-of {
+  color: var(--atlas-muted);
+}
+
+.gb-find {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gb-find-input {
+  box-sizing: border-box;
+  flex: 1 1 200px;
+  max-width: 420px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.gb-find-state {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.gb-find-state:empty {
+  display: none;
+}
+
+.gb-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.gb-side {
+  box-sizing: border-box;
+  flex: none;
+  width: min(320px, 40vw);
+  padding: 12px 8px 24px;
+  border-right: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+  overflow: auto;
+}
+
+.gb-side-title {
+  margin: 0 8px 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.gb-side-note {
+  margin: 8px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.gb-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gb-list .gb-list {
+  padding-left: 14px;
+}
+
+.gb-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--atlas-radius-small);
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gb-entry:hover:not(:disabled) {
+  background: var(--atlas-surface-hover);
+}
+
+.gb-entry:disabled {
+  color: var(--atlas-muted);
+  cursor: default;
+}
+
+.gb-entry[aria-current='page'] {
+  background: var(--atlas-accent-soft);
+}
+
+.gb-entry-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gb-entry-page {
+  color: var(--atlas-muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gb-entry-line {
+  flex: 1 1 100%;
+  color: var(--atlas-muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.gb-entry-line mark {
+  border-radius: 2px;
+  background: var(--atlas-selection);
+  color: inherit;
+}
+
+.gb-view {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: var(--atlas-map-backdrop);
+  /* Two fingers zoom the pages, not the window. */
+  touch-action: pan-x pan-y;
+  overscroll-behavior: contain;
+}
+
+.gb-view:focus {
+  outline: none;
+}
+
+.gb-column {
+  position: relative;
+  min-width: 100%;
+  margin: 0 auto;
+  transform-origin: top center;
+}
+
+.gb-page {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  background: #fff;
+  box-shadow: var(--atlas-shadow);
+}
+
+.gb-canvas,
+.gb-picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.gb-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gb-mark {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(255, 196, 0, 0.42);
+  mix-blend-mode: multiply;
+}
+
+.gb-link {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gb-link:hover,
+.gb-link:focus-visible {
+  background: rgba(0, 110, 255, 0.14);
+  outline: 1px solid var(--atlas-focus);
+}
+
+.gb-page-problem,
+.gb-problem,
+.gb-wait {
+  margin: 0;
+  padding: 24px;
+  color: var(--atlas-muted);
+  font-size: 14.5px;
+  text-align: center;
+}
+
+.gb-page-problem {
+  color: #444;
+}
+
+.gb-problem {
+  color: var(--atlas-danger);
+}
+
+/* A narrow window: the contents and the pages found cover the pages. */
+@media (max-width: 699px) {
+  .gb-side {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(340px, 88vw);
+    box-shadow: var(--atlas-shadow);
+  }
+
+  .gb-body {
+    position: relative;
+  }
+
+  /* One row of tools, moved along with a finger. */
+  .gb-tools {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .gb-find-input {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+
+  .gb-button {
+    padding: 0 8px;
+  }
+}
+
+/* Fingers: larger targets. */
+@media (pointer: coarse) {
+  .gb-button,
+  .gb-icon-button,
+  .gb-page-input,
+  .gb-find-input {
+    min-height: 44px;
+  }
+
+  .gb-icon-button {
+    min-width: 44px;
+  }
+
+  .gb-entry {
+    min-height: 44px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Guidebooks in Guides and the Library: each one's title and facts, and
+ * the ways to open, add and remove them. */
+
+.guidebooks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.guides-landing .guidebooks {
+  margin: 24px 0 16px;
+}
+
+.guidebooks-alone {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 16px 32px;
+  overflow: auto;
+}
+
+.guidebooks-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.guidebooks-lead {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 14px;
+}
+
+.guidebooks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guidebook-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+}
+
+.guidebook-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.guidebook-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.guidebook-name {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.guidebook-facts {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.guidebooks-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.guidebook-results {
+  margin: 12px 0 0;
+}
+
+.guidebook-progress {
+  width: 100%;
+}

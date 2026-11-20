@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { keepScreenOn } from '../androidBars';
 import { ActivityLogDialog } from '../components/ActivityLogDialog';
 import { PictureViewer } from '../components/PictureViewer';
+import { GuidebookLayer } from '../guidebook/Guidebooks';
 import { UiIcon, type UiIconName } from '../components/icons';
 import { MapPageStatus } from '../components/MapPageStatus';
 import { PackArrivalNote } from '../components/PackArrivalNote';
@@ -266,6 +267,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
       ) : null}
       <KeysDialog />
       <PictureViewer />
+      <GuidebookLayer />
     </div>
   );
 }

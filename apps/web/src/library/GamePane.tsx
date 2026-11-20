@@ -41,6 +41,8 @@ import {
 import { useTagsOfGame } from '../state/gameTags';
 import { canChangeGuideLinks, useGuideLinks, type OtherGuides } from '../state/guideLinks';
 import { hasMap } from '../state/guides';
+import { guidebookChangesOffered, useGameGuidebooks } from '../state/guidebooks';
+import { GuidebookList } from '../guidebook/Guidebooks';
 import { updateGame, wikiSourceOf, type WikiSource } from '../state/importing';
 import { useSourceNames, useTitleOf } from '../state/gameGroups';
 import {
@@ -109,6 +111,8 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const group = useTitleOf(id);
   const { tags, tagGroups } = useTagsOfGame(id);
   const several = useAtlas((s) => s.catalog.length > 1);
+  const guidebooks = useGameGuidebooks(id);
+  const guidebookChanges = useAtlas(guidebookChangesOffered);
   // A wiki read page by page: its own screen, once its importer is known.
   const [wiki, setWiki] = useState<WikiSource | null>(null);
   const imported = listed?.imported?.importerId ?? null;
@@ -141,11 +145,16 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const madeFile = madePacks && canOpenForEditing(listed);
   const editing = madePacks ? editingText(listed) : null;
   const busy = library?.busy.includes(id) ?? false;
-  const contents = details
-    ? details.contents.maps === 0
-      ? plural(details.contents.guides, 'page', 'pages')
-      : `${plural(details.contents.maps, 'map', 'maps')}, ${plural(details.contents.locations, 'location', 'locations')}`
-    : null;
+  const contents =
+    kind === 'guidebooks'
+      ? guidebooks.length > 0
+        ? plural(guidebooks.length, 'guidebook', 'guidebooks')
+        : null
+      : details
+        ? details.contents.maps === 0
+          ? plural(details.contents.guides, 'page', 'pages')
+          : `${plural(details.contents.maps, 'map', 'maps')}, ${plural(details.contents.locations, 'location', 'locations')}`
+        : null;
   const close = () => {
     setConfirming(null);
   };
@@ -191,8 +200,12 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
               else void showGame(id);
             }}
           >
-            <UiIcon name={kind === 'wiki' ? 'book' : 'map'} size={16} />
-            {kind === 'wiki' ? 'Read the guides' : 'Show the map'}
+            <UiIcon name={kind === 'wiki' || kind === 'guidebooks' ? 'book' : 'map'} size={16} />
+            {kind === 'wiki'
+              ? 'Read the guides'
+              : kind === 'guidebooks'
+                ? 'Read the guidebooks'
+                : 'Show the map'}
           </button>
           <button
             type="button"
@@ -270,13 +283,25 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
           <MineOfferLine id={id} />
           <SameTitleOfferCard gameId={id} />
           {group ? <TitleCard id={id} /> : null}
-          <ContentsCard
-            id={id}
-            kind={kind}
-            listed={listed}
-            facts={facts}
-            updatable={updatable && !busy}
-          />
+          {kind !== 'guidebooks' ? (
+            <ContentsCard
+              id={id}
+              kind={kind}
+              listed={listed}
+              facts={facts}
+              updatable={updatable && !busy}
+            />
+          ) : null}
+          {guidebooks.length > 0 || (guidebookChanges && !busy) ? (
+            <Card icon="book" title="Guidebooks" testId="library-guidebooks-card">
+              <p className="library-card-state">
+                {guidebooks.length > 0
+                  ? 'Published guides you have as files, a PDF or a CBZ each. Press one to read it.'
+                  : 'A guidebook is a published guide you have as one file, a PDF or a CBZ. Add a guidebook copies it into a pack file of its own in the packs folder, and it is read here.'}
+              </p>
+              <GuidebookList gameId={id} gameTitle={title} heading={null} />
+            </Card>
+          ) : null}
           {__ATLAS_DOWNLOADS__ && downloads && details ? (
             <ImagesCard id={id} facts={facts} shown={shown} />
           ) : null}

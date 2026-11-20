@@ -9,6 +9,7 @@ import { MapPane } from './components/MapPane';
 import { MapsDialog } from './components/MapsDialog';
 import { PackArrivalNote } from './components/PackArrivalNote';
 import { PictureViewer } from './components/PictureViewer';
+import { GuidebookLayer } from './guidebook/Guidebooks';
 import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
@@ -237,6 +238,7 @@ function Shell() {
       <MapsDialog />
       <ActivityLogDialog />
       <PictureViewer />
+      <GuidebookLayer />
       {packFileOpen ? (
         <Suspense fallback={null}>
           <PackFileDialog />
