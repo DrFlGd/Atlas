@@ -178,11 +178,11 @@ fn refuses_a_newer_version_and_what_is_no_pack_file() {
     assert_eq!(error.kind(), RefusalKind::NewerFormat);
     assert_eq!(
         error.what(),
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 8)."
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 9)."
     );
     assert_eq!(
         error.to_string(),
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 8). A newer version of this app is needed to open it."
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 9). A newer version of this app is needed to open it."
     );
     assert_eq!(String::from(error.clone()), error.to_string());
     for (key, value) in [

@@ -20,12 +20,28 @@
 //! with these same types. See `docs/pack-file-format.md` in the Atlas
 //! repository for the format.
 
+mod guidebook;
+mod pdf;
 mod read;
+mod write;
 
+#[cfg(test)]
+mod guidebook_tests;
 #[cfg(test)]
 mod tests;
 
+pub use guidebook::{
+    guidebook_name_of, is_guidebook_name, parse_guidebook_text, text_name_of, GuidebookFacts,
+    GuidebookList, GuidebookText, GuidebookType, PageText, GUIDEBOOK_DIR, GUIDEBOOK_LIST_FILE,
+    GUIDEBOOK_LIST_FORMAT, GUIDEBOOK_TEXT_FORMAT, GUIDEBOOK_TEXT_VERSION, MAX_GUIDEBOOKS,
+    MAX_GUIDEBOOK_BYTES, MAX_GUIDEBOOK_NAME, MAX_GUIDEBOOK_PAGES, MAX_GUIDEBOOK_TEXT_BYTES,
+    MAX_GUIDEBOOK_TITLE,
+};
 pub use read::{read_header, read_header_from, read_preview, read_preview_from};
+pub use write::{
+    guidebook_pages, rewrite_guidebook_pack, write_guidebook_pack, GuidebookPack, NewGuidebook,
+    WriteError, MAX_CBZ_PICTURES,
+};
 
 use std::fmt;
 
@@ -37,7 +53,11 @@ pub const FORMAT: &str = "atlas-pack-file";
 /// The newest version of the format this crate reads. A file is written at
 /// the lowest version that can hold what it carries, so an older app reads
 /// every file it can, and refuses a newer one with a message.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
+/// A file with guidebooks (`guidebooks/`, see [`GuidebookFacts`]). Only a
+/// file that carries guidebooks is written in it: every other file stays at
+/// the version of what else it carries, so an app made before it reads it.
+pub const VERSION_WITH_GUIDEBOOKS: u32 = 8;
 /// A file with small pictures of its maps (`preview/`).
 pub const VERSION_WITH_PREVIEWS: u32 = 7;
 /// A file with the title the game is shown under with other games
@@ -188,6 +208,11 @@ pub struct Header {
     /// them (version 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mine: Option<MineFacts>,
+    /// The guidebooks the file carries, each a PDF or CBZ file with the
+    /// text of its pages (version 8). [`parse_header`] checks them and
+    /// leaves them out of a file of an older version.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guidebooks: Vec<GuidebookFacts>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -210,6 +235,37 @@ impl Header {
             }
         }
         names
+    }
+
+    /// Where the pack came from, in one word: `source.origin` when the
+    /// file says, else what older files say of it: a file that carries
+    /// guidebooks is [`Origin::Guidebooks`], one read from web pages
+    /// (`source.kind` `web-pages`) [`Origin::Site`], one whose pack was
+    /// written by Atlas Map Maker (`pack.writtenBy.name`)
+    /// [`Origin::MapMaker`], and another one an Atlas app made
+    /// (`exportedBy.name` is `Atlas` or starts with `Atlas `)
+    /// [`Origin::MadeInAtlas`]. None when nothing says.
+    pub fn origin(&self) -> Option<Origin> {
+        if let Some(origin) = self.source.origin.filter(|origin| *origin != Origin::Other) {
+            return Some(origin);
+        }
+        if !self.guidebooks.is_empty() {
+            return Some(Origin::Guidebooks);
+        }
+        if self.source.kind == SourceKind::WebPages {
+            return Some(Origin::Site);
+        }
+        let written_by = self
+            .pack
+            .written_by
+            .as_ref()
+            .and_then(|by| by.get("name"))
+            .and_then(Value::as_str);
+        if written_by == Some(MAP_MAKER) {
+            return Some(Origin::MapMaker);
+        }
+        let by = self.exported_by.name.as_str();
+        (by == "Atlas" || by.starts_with("Atlas ")).then_some(Origin::MadeInAtlas)
     }
 
     /// Whether the description lists `name` as a small picture.
@@ -271,10 +327,67 @@ pub enum SourceKind {
     Unknown,
 }
 
+/// The name Atlas Map Maker writes in a pack's manifest (`writtenBy.name`).
+pub const MAP_MAKER: &str = "Atlas Map Maker";
+
+/// Where a pack came from, in one word (`source.origin`), so another app
+/// reads one value. Written by every Atlas app from version 0.25.0, in
+/// every version of the format: a reader of an older version ignores it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum Origin {
+    /// Read from a website by the Importer (`site`).
+    Site,
+    /// Made in an Atlas app from a picture (`made-in-atlas`).
+    MadeInAtlas,
+    /// Made by Atlas Map Maker, whose manifest's `writtenBy.name` is
+    /// exactly `Atlas Map Maker` (`map-maker`).
+    MapMaker,
+    /// A pack of guidebooks (`guidebooks`).
+    Guidebooks,
+    /// A word this crate does not know (from a newer file); see
+    /// [`Header::origin`].
+    #[serde(other)]
+    Other,
+}
+
+impl Origin {
+    /// The word as the description writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Origin::Site => "site",
+            Origin::MadeInAtlas => "made-in-atlas",
+            Origin::MapMaker => "map-maker",
+            Origin::Guidebooks => "guidebooks",
+            Origin::Other => "other",
+        }
+    }
+}
+
+/// Reads `source.origin` loosely: anything but a text is none, and a text
+/// this crate does not know is [`Origin::Other`], so a value from a newer
+/// file never makes the description unreadable.
+fn loose_origin<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Origin>, D::Error> {
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.as_ref().and_then(Value::as_str).map(|text| {
+        serde_json::from_value(Value::String(text.to_owned())).unwrap_or(Origin::Other)
+    }))
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceFacts {
     pub kind: SourceKind,
+    /// Where the pack came from, in one word (see [`Origin`] and
+    /// [`Header::origin`], which also reads a file without it).
+    #[serde(
+        default,
+        deserialize_with = "loose_origin",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub origin: Option<Origin>,
     /// The name of the site the pages were read from: the name the pack's
     /// manifest records (`source.site`), else the site its guide pages name
     /// most, else, for a pack read from web pages, the host of the first
@@ -568,6 +681,12 @@ pub fn parse_header(text: &str) -> Result<Header, Refusal> {
         .is_some_and(|name| !is_preview_name(name))
     {
         header.cover = None;
+    }
+    // Guidebooks only from the version that has them.
+    if header.version < VERSION_WITH_GUIDEBOOKS {
+        header.guidebooks.clear();
+    } else {
+        guidebook::check_guidebooks(&header.guidebooks).map_err(Refusal::damaged)?;
     }
     Ok(header)
 }
