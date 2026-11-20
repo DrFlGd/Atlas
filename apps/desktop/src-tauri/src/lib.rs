@@ -33,6 +33,9 @@ pub mod guidebooks;
 // A person's links between guide pages and the map, beside the game's folder.
 pub mod guidelinks;
 mod imports;
+// Linux: the web view's settings, set before it starts.
+#[cfg(target_os = "linux")]
+mod linux;
 // Keeping packs up to date in a folder (the app with downloads only).
 #[cfg(feature = "downloads")]
 mod keep;
@@ -271,6 +274,10 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First, while Atlas has no other thread: on Linux, how the web view
+    // draws, so that its window is not blank (see `linux.rs`).
+    #[cfg(target_os = "linux")]
+    let web_view_set = linux::prepare_web_view();
     // Map image downloads use rustls with the ring provider.
     #[cfg(feature = "downloads")]
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -331,7 +338,7 @@ pub fn run() {
                 responder.respond(registry.respond(&request));
             });
         })
-        .setup(|app| {
+        .setup(move |app| {
             let paths = app.path();
             let app_data = paths.app_data_dir()?;
             let shared = shared_dir(&paths.local_data_dir()?);
@@ -352,6 +359,8 @@ pub fn run() {
             let legacy = legacy_dirs(app, &app_data)?;
             let bundled = bundled_packs(app);
             log_start(app, &shared, &bundled);
+            #[cfg(target_os = "linux")]
+            activity::info(Area::App, linux::web_view_line(&web_view_set));
             let library = Library::new(
                 SettingsFile::new(shared.clone()),
                 registry.clone(),
