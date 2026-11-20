@@ -3904,11 +3904,14 @@ mod in_place {
     fn does_not_open_a_pipe_in_the_place_of_a_pack_file_and_tries_again() {
         let dir = TempDir::new("inplace-pipe");
         let file = dir.0.join("valley.atlaspack");
-        let made = std::process::Command::new("mkfifo")
-            .arg(&file)
-            .status()
-            .unwrap();
-        assert!(made.success());
+        // Made in this process, not by starting the mkfifo program: a
+        // process started from a test holds a copy of every file the other
+        // tests have open until it runs the program, and so their locks on
+        // pack folders, which made another test find its folder locked.
+        let path = std::ffi::CString::new(file.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `path` is a valid C string that lives across the call.
+        let made = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        assert_eq!(made, 0, "{}", std::io::Error::last_os_error());
         let pack_file = PackFile::new(file.clone(), Pool::shared());
         // Neither waits for a writer.
         let error = pack_file.check().unwrap_err();
