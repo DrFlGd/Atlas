@@ -367,6 +367,12 @@ pub fn run() {
                 bundled,
                 legacy,
             );
+            // On Linux, the AppImage the viewer runs from, kept in the shared
+            // settings for another app that writes the Steam launch line.
+            #[cfg(target_os = "linux")]
+            if !Downloads::in_build() {
+                keep_appimage(library.settings());
+            }
             // Imports are seeded with what measuring their picture learnt.
             #[cfg(feature = "downloads")]
             let library = library.with_picture_cache(tiles::measure::PictureCache::new(&app_data));
@@ -546,6 +552,32 @@ fn legacy_dirs(app: &App, app_data: &std::path::Path) -> tauri::Result<Vec<PathB
 
 /// The first lines of a run in the activity log: which app, where its maps
 /// are and what it comes with.
+/// Keeps the AppImage the viewer runs from as `linuxAppImage` in the
+/// shared settings (see `linux::appimage_to_keep`), with a line in the
+/// activity log when it changes.
+#[cfg(target_os = "linux")]
+fn keep_appimage(settings: &SettingsFile) {
+    let running = linux::appimage_now();
+    let kept = settings.read().linux_app_image;
+    let Some(change) = linux::appimage_to_keep(
+        kept.as_deref(),
+        running.as_deref(),
+        std::path::Path::is_file,
+    ) else {
+        return;
+    };
+    let line = match &change {
+        Some(path) => format!(
+            "Atlas runs from the AppImage {path}, kept in the shared settings for another app"
+        ),
+        None => "The AppImage kept in the shared settings is gone, so it was taken out".to_owned(),
+    };
+    match settings.update(|settings| settings.linux_app_image = change) {
+        Ok(_) => activity::info(Area::App, line),
+        Err(error) => activity::warn(Area::App, error),
+    }
+}
+
 fn log_start(app: &App, shared: &std::path::Path, bundled: &[BundledPack]) {
     let info = app.package_info();
     let settings = SettingsFile::new(shared.to_path_buf()).read();

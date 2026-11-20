@@ -105,6 +105,13 @@ pub struct DesktopInfo {
     /// Settings has "Atlas in the background" (`background_state`,
     /// `background_set`): in the app without downloads, on Windows.
     background: bool,
+    /// Settings has "Start Atlas with a game in Steam": the line for a
+    /// game's launch options, built from the AppImage Atlas runs from (see
+    /// `linux.rs`). In the app without downloads on Linux only (the other
+    /// apps do not take `--background`); absent elsewhere.
+    #[cfg(target_os = "linux")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    steam_launch: Option<crate::linux::SteamLaunch>,
 }
 
 /// Whether this platform has what `DesktopInfo::folders` and
@@ -142,6 +149,9 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         sites: DESKTOP_ONLY && Downloads::in_build(),
         game_groups_file: DESKTOP_ONLY,
         background: crate::background::OFFERED,
+        #[cfg(target_os = "linux")]
+        steam_launch: (!Downloads::in_build())
+            .then(|| crate::linux::steam_launch(crate::linux::appimage_now().as_deref())),
     }
 }
 
