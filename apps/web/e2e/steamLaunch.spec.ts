@@ -72,7 +72,8 @@ test('selects the line when it cannot be copied', async ({ page }) => {
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: () => Promise.reject(new Error('refused')) },
     });
-    document.execCommand = () => false;
+    // The older way of copying, which the app tries next, fails too.
+    Object.defineProperty(document, 'execCommand', { value: () => false });
   });
   await setUp(page, false, { steamLaunch: { state: 'appImage', path: PATH, line: LINE } });
   await openGroup(page);

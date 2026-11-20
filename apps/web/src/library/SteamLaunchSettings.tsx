@@ -5,7 +5,7 @@ import { steamLaunchOffered } from '../features';
 import { useAtlas } from '../state/store';
 
 /** Where the line looks for Atlas when Atlas does not run from an AppImage. */
-export const USUAL_APPIMAGE = '$HOME/Applications/Atlas.AppImage';
+const USUAL_APPIMAGE = '$HOME/Applications/Atlas.AppImage';
 
 /** What Copy did: nothing yet, copied, or the text selected for the person to copy. */
 type Copied = 'no' | 'yes' | 'selected';
@@ -47,7 +47,7 @@ function SteamLaunchSection({ launch }: { launch: SteamLaunch }) {
             ref={box}
             className="steam-launch-line"
             readOnly
-            rows={3}
+            rows={2}
             spellCheck={false}
             aria-label="The line for the game's launch options"
             aria-describedby={helpId}
@@ -101,7 +101,7 @@ function SteamLaunchSection({ launch }: { launch: SteamLaunch }) {
 }
 
 /** What the line names, in one or two sentences. */
-export function pathSentence(launch: SteamLaunch): string {
+function pathSentence(launch: SteamLaunch): string {
   switch (launch.state) {
     case 'appImage':
       return `The line names the file Atlas runs from now: ${launch.path}. If you move that file, start Atlas from its new folder and copy the line again.`;
