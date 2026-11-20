@@ -216,6 +216,11 @@ test('the classic keys work and are shown, and Esc closes what is on top', async
     'B',
     '[',
     ']',
+    '\u2191',
+    '\u2193',
+    '\u2190',
+    '\u2192',
+    'Enter',
     'Esc',
     '?',
   ]);

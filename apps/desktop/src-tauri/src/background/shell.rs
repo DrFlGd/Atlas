@@ -154,7 +154,10 @@ pub fn prepare<R: Runtime>(
     background: bool,
 ) -> (FirstWindow, Option<WindowPlace>) {
     if !OFFERED {
-        return (decide::at_start(background, false), None);
+        return (
+            decide::at_start(background, false, decide::OUT_OF_SIGHT_AT_START),
+            None,
+        );
     }
     let settings = store::read(app_data);
     let start_with_system = launcher(app.handle())
@@ -178,7 +181,14 @@ pub fn prepare<R: Runtime>(
         app_data: app_data.to_path_buf(),
         now: Mutex::new(now),
     }));
-    (decide::at_start(background, settings.keep_running), place)
+    (
+        decide::at_start(
+            background,
+            settings.keep_running,
+            decide::OUT_OF_SIGHT_AT_START,
+        ),
+        place,
+    )
 }
 
 /// The window builder, for how the window starts: made hidden when it is
@@ -193,6 +203,11 @@ pub fn build_window<'a, R: Runtime, M: Manager<R>>(
         FirstWindow::Shown if place.is_none() => builder,
         FirstWindow::Shown => builder.visible(false),
         FirstWindow::Hidden | FirstWindow::Minimized => builder.visible(false).focused(false),
+        // Shown at once, but without taking the focus (on Linux, tao gives
+        // the window the focus back after it is first drawn, so it can be
+        // used as soon as the person turns to it).
+        FirstWindow::Unfocused if place.is_none() => builder.focused(false),
+        FirstWindow::Unfocused => builder.visible(false).focused(false),
     }
 }
 
@@ -236,6 +251,11 @@ pub fn start<R: Runtime>(
             }
         }
         FirstWindow::Hidden => {}
+        FirstWindow::Unfocused => {
+            if place.is_some() {
+                let _ = window.show();
+            }
+        }
         FirstWindow::Minimized => {
             let _ = window.minimize();
             if !window.is_visible().unwrap_or(true) {

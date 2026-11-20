@@ -371,7 +371,24 @@ describe('choosing the layout', () => {
 describe('keys', () => {
   it('lists the classic keys, with C only where there are lists', () => {
     const keys = keyList('Checklists and guides').flatMap((k) => k.keys);
-    expect(keys).toEqual(['/', 'N', 'F', 'Z', 'C', 'H', 'B', '[', ']', 'Esc', '?']);
+    expect(keys).toEqual([
+      '/',
+      'N',
+      'F',
+      'Z',
+      'C',
+      'H',
+      'B',
+      '[',
+      ']',
+      '\u2191',
+      '\u2193',
+      '\u2190',
+      '\u2192',
+      'Enter',
+      'Esc',
+      '?',
+    ]);
     expect(keyList(null).find((k) => k.keys[0] === 'H')?.what).toBe('In Guides, the home page');
     expect(keyList(null).find((k) => k.keys[0] === 'B')?.what).toBe(
       'In Guides, hide or show the contents beside the page',

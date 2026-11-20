@@ -401,6 +401,8 @@ In the desktop app, packs are served by a small protocol in the Rust shell that 
 
 The `Release` workflow (`.github/workflows/release.yml`, run by hand or by pushing a `v*` tag) builds the plain viewer's Windows installer and publishes it as a GitHub Release.
 
+The `Linux release` workflow (`.github/workflows/linux-release.yml`, run by hand with a trial number) builds the plain viewer for Linux as an AppImage on Ubuntu 22.04, checks it, starts it once, and attaches it to a draft prerelease `linux-trial-<number>` whose notes say how to install and try it on a Steam Deck. See [apps/desktop/README.md](apps/desktop/README.md#atlas-on-linux-and-the-steam-deck).
+
 The same shell builds an Android app (Android 10 and later), a viewer with the demo pack: `pnpm android:build --target aarch64` writes an unsigned APK, CI builds and checks one on every run, and the `Android release` workflow (run by hand) attaches a signed one to a draft release `android-v<version>`. See [apps/desktop/README.md](apps/desktop/README.md#android).
 
 ## Map Maker

@@ -11,6 +11,7 @@ import { MapPane, type TouchMapOptions } from '../components/MapPane';
 import { MapsDialog } from '../components/MapsDialog';
 import { ProfileDialog } from '../components/ProfileDialog';
 import { downloadsOffered, keyboardHintsOffered } from '../features';
+import { leaveMap } from '../controller';
 import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
 import { loadBuildPrefs } from '../state/buildPlanner';
@@ -496,7 +497,8 @@ function useTouchEffects(wide: boolean, room: boolean) {
       search: focusSearchField,
       checklists: toggleLists,
       escape: () => {
-        handleBack();
+        // With nothing left to close, the focus leaves the map, whose arrow keys move it.
+        if (!handleBack()) leaveMap();
       },
       keys: () => {
         if (keyboardHintsOffered(useAtlas.getState())) setKeysOpen(true);

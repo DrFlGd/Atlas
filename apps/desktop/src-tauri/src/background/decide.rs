@@ -100,15 +100,28 @@ pub enum FirstWindow {
     Hidden,
     /// In the taskbar, without the focus.
     Minimized,
+    /// Shown, without taking the focus from the program in front.
+    Unfocused,
 }
 
+/// Whether this system lets a start in the background put the window out
+/// of sight (hidden or minimised). Not on Linux: in Game Mode on a Steam
+/// Deck (gamescope) there is no taskbar and no tray, and only the windows
+/// that are shown can be chosen with the Steam button, so a window started
+/// out of sight could never be found again. There the window is shown
+/// without taking the focus, and the system decides what is in front.
+pub const OUT_OF_SIGHT_AT_START: bool = !cfg!(target_os = "linux");
+
 /// The first start: with `--background`, the window is made without
-/// coming to the front.
-pub fn at_start(background: bool, keep_running: bool) -> FirstWindow {
-    match (background, keep_running) {
-        (false, _) => FirstWindow::Shown,
-        (true, true) => FirstWindow::Hidden,
-        (true, false) => FirstWindow::Minimized,
+/// coming to the front: out of sight where the system allows it
+/// (`out_of_sight`, see [`OUT_OF_SIGHT_AT_START`]), else shown without
+/// the focus.
+pub fn at_start(background: bool, keep_running: bool, out_of_sight: bool) -> FirstWindow {
+    match (background, keep_running, out_of_sight) {
+        (false, _, _) => FirstWindow::Shown,
+        (true, _, false) => FirstWindow::Unfocused,
+        (true, true, true) => FirstWindow::Hidden,
+        (true, false, true) => FirstWindow::Minimized,
     }
 }
 
@@ -183,12 +196,27 @@ mod tests {
 
     #[test]
     fn a_start_in_the_background_takes_no_focus() {
-        assert_eq!(at_start(false, false), FirstWindow::Shown);
-        assert_eq!(at_start(false, true), FirstWindow::Shown);
-        assert_eq!(at_start(true, true), FirstWindow::Hidden);
-        assert_eq!(at_start(true, false), FirstWindow::Minimized);
+        for out_of_sight in [true, false] {
+            assert_eq!(at_start(false, false, out_of_sight), FirstWindow::Shown);
+            assert_eq!(at_start(false, true, out_of_sight), FirstWindow::Shown);
+        }
+        assert_eq!(at_start(true, true, true), FirstWindow::Hidden);
+        assert_eq!(at_start(true, false, true), FirstWindow::Minimized);
+        // Where the window may not start out of sight (Linux), it is shown
+        // without the focus, never hidden.
+        assert_eq!(at_start(true, true, false), FirstWindow::Unfocused);
+        assert_eq!(at_start(true, false, false), FirstWindow::Unfocused);
         assert_eq!(on_second_start(false, false), WindowAction::BringForward);
         assert_eq!(on_second_start(true, false), WindowAction::Nothing);
         assert_eq!(on_second_start(false, true), WindowAction::Nothing);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn on_linux_a_start_in_the_background_shows_the_window() {
+        assert_eq!(
+            at_start(true, false, OUT_OF_SIGHT_AT_START),
+            FirstWindow::Unfocused
+        );
     }
 }

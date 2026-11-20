@@ -66,6 +66,21 @@ select {
   outline-offset: 2px;
 }
 
+/*
+ * While the focus is moved with keys or a game controller (see
+ * `controller.ts`), a wide ring shows where it is, from across a room or on
+ * a small screen. A press of the mouse or a finger takes it off.
+ */
+html[data-moving] :focus {
+  outline: 3px solid var(--atlas-focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* The map fills its pane, so its ring is drawn inside it. */
+html[data-moving] .leaflet-container:focus {
+  outline-offset: -4px !important;
+}
+
 [hidden] {
   display: none !important;
 }

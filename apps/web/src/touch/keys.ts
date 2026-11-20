@@ -1,7 +1,8 @@
 /**
  * The keys of the standard layout on a computer, as its list of keys shows
  * them. They are the classic layout's keys (`keyboard.ts`), with Esc
- * closing what is on top and `?` showing this list.
+ * closing what is on top and `?` showing this list, and the arrow keys and
+ * Enter of `controller.ts`.
  */
 
 export interface KeyHelp {
@@ -31,7 +32,15 @@ export function keyList(lists: string | null): KeyHelp[] {
     { keys: ['H'], what: 'In Guides, the home page' },
     { keys: ['B'], what: 'In Guides, hide or show the contents beside the page' },
     { keys: ['[', ']'], what: 'In a guide read in order, the previous or the next page' },
-    { keys: ['Esc'], what: 'Close what is on top: a menu, search, the location, a list' },
+    {
+      keys: ['\u2191', '\u2193', '\u2190', '\u2192'],
+      what: 'Move to the nearest button or link that way; on the map, move the map',
+    },
+    { keys: ['Enter'], what: 'Press the button or link you moved to' },
+    {
+      keys: ['Esc'],
+      what: 'Close what is on top: a menu, search, the location, a list. With nothing left to close, leave the map',
+    },
     { keys: ['?'], what: 'This list of keys' },
   ];
 }
