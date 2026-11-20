@@ -35,7 +35,9 @@ import { MarkdownBody } from '../components/MarkdownBody';
 import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
-import { guidesOf, hasMap, pictureOf } from '../state/guides';
+import { guidesOf, hasGuidePages, hasMap, pictureOf } from '../state/guides';
+import { useGameGuidebooks, useGuidebookHits } from '../state/guidebooks';
+import { GuidebookList, GuidebookResults, GuidebooksAlone } from '../guidebook/Guidebooks';
 import {
   isSourceHome,
   madeLandingOf,
@@ -132,7 +134,16 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
   const editing = usePageEditor((s) => s.open);
   // The person's own pages and changes change what is shown.
   useOwnPages((s) => s.own);
+  const guidebooks = useGameGuidebooks(game?.entry.id);
   if (!game) return null;
+  // A game whose guidebooks are all it has to read.
+  if (!editing && !hasGuidePages(game) && guidebooks.length > 0) {
+    return (
+      <GuidebooksAlone game={game} wide={wide}>
+        {hasMap(game) ? <GuidesFromGames game={game} /> : null}
+      </GuidebooksAlone>
+    );
+  }
   if (!editing) return <GuidesShown game={game} wide={wide} />;
   return (
     <div
@@ -1504,10 +1515,11 @@ function Landing({
   );
 }
 
-/** Under the landing page: linking the pages to the map, and guides of other games. */
+/** Under the landing page: the game's guidebooks, linking the pages to the map, and guides of other games. */
 function LandingFoot({ game }: { game: LoadedGame }) {
   return (
     <>
+      <GuidebookList gameId={game.entry.id} gameTitle={game.pack.manifest.title} />
       {canLinkPages(game) ? (
         <button
           type="button"
@@ -2289,6 +2301,7 @@ function SearchResults({
   view: SourceView;
 }) {
   const hits = useMemo(() => guidesOf(game).search.search(query, 100), [game, query]);
+  const guidebookHits = useGuidebookHits(game.entry.id, query);
   // A page of another source than the one shown says which, so the choice of source hides none.
   const elsewhere = (guideId: string): string | null => {
     if (view.sources.length < 2) return null;
@@ -2299,9 +2312,11 @@ function SearchResults({
     <div className="guides-results" data-testid="guides-results">
       <h1 className="guides-title">Search</h1>
       <p className="guides-lead" aria-live="polite">
-        {hits.length === 0
-          ? `No page has “${query.trim()}”.`
-          : `${hits.length === 100 ? 'The first 100' : hits.length} page${hits.length === 1 ? '' : 's'} with “${query.trim()}”`}
+        {hits.length === 0 && guidebookHits.length > 0
+          ? `No guide page has “${query.trim()}”. These pages of guidebooks have it.`
+          : hits.length === 0
+            ? `No page has “${query.trim()}”.`
+            : `${hits.length === 100 ? 'The first 100' : hits.length} page${hits.length === 1 ? '' : 's'} with “${query.trim()}”`}
       </p>
       <ul className="touch-plain-list guides-entries">
         {hits.map((hit) => (
@@ -2326,6 +2341,7 @@ function SearchResults({
           </li>
         ))}
       </ul>
+      <GuidebookResults hits={guidebookHits} query={query} />
     </div>
   );
 }

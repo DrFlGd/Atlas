@@ -4179,3 +4179,35 @@ fn leaves_nothing_in_the_packs_folder_when_adding_stops() {
     assert!(names_in(&packs).is_empty());
     assert!(names_in(&library.maps_folder()).is_empty());
 }
+
+#[test]
+fn says_in_one_word_where_a_pack_came_from() {
+    let dir = TempDir::new("packfile-origin");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    let file = dir.0.join("Test Valley.atlaspack");
+    run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+    let header = read_header(&file).unwrap();
+    // Read from a site, in a file an older app reads too.
+    assert_eq!(header.source.origin, Some(Origin::Site));
+    assert!(header.version <= VERSION_WITH_PREVIEWS);
+
+    let origin = |manifest: Value| describe_manifest(&manifest, None, false).1.origin;
+    assert_eq!(
+        origin(
+            json!({"writtenBy": {"name": "Atlas Map Maker", "version": "1.0.0"}, "madeInApp": true})
+        ),
+        Some(Origin::MapMaker)
+    );
+    assert_eq!(
+        origin(json!({"madeInApp": true})),
+        Some(Origin::MadeInAtlas)
+    );
+    assert_eq!(origin(json!({"writtenBy": {"name": "A tool"}})), None);
+    assert_eq!(
+        origin(
+            json!({"source": {"importer": {"id": "demo-maps", "title": "Demo map site"}, "pages": []}})
+        ),
+        Some(Origin::Site)
+    );
+}

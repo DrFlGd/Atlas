@@ -16,12 +16,13 @@
 //! half written.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
 };
 
+use atlas_pack::MAX_GUIDEBOOK_TEXT_BYTES;
 use serde_json::Value;
 use zip::ZipArchive;
 
@@ -213,7 +214,7 @@ pub(crate) fn import_with_record(
     // Map images first, then the status files, the pack files and the
     // manifest last, so the folder is a pack only once it is complete.
     let order = |kind: &Kind| match kind {
-        Kind::Image | Kind::Marker | Kind::Picture => 0,
+        Kind::Image | Kind::Marker | Kind::Picture | Kind::Guidebook | Kind::GuidebookText => 0,
         Kind::Status(_) => 1,
         Kind::PackFile | Kind::Mine(_) | Kind::MinePicture | Kind::Preview => 2,
     };
@@ -440,6 +441,11 @@ pub(crate) enum Kind {
     Picture,
     /// A small picture of a map that the header lists (`preview/<name>.jpg`).
     Preview,
+    /// A guidebook the header lists (`guidebooks/<name>.pdf` or `.cbz`).
+    Guidebook,
+    /// The text of a guidebook the header lists
+    /// (`guidebooks/<name>.text.json`).
+    GuidebookText,
 }
 
 struct Checked {
@@ -523,6 +529,10 @@ pub(crate) struct Rules {
     pictures: HashSet<String>,
     /// The small pictures the description lists, the only ones it may hold.
     previews: HashSet<String>,
+    /// The guidebooks the description lists, and their text, the only ones
+    /// it may hold: each entry name with its size when the description
+    /// gives it (a guidebook's file).
+    guidebooks: HashMap<String, Option<u64>>,
     /// The manifest says the game was made in the app (`madeInApp`).
     pub(crate) made_in_app: bool,
 }
@@ -590,6 +600,15 @@ impl Rules {
         } else {
             HashSet::new()
         };
+        // The guidebooks and their text the header lists, from the version
+        // that has them (the crate leaves them out of an older one).
+        let mut guidebooks: HashMap<String, Option<u64>> = HashMap::new();
+        for guidebook in &header.guidebooks {
+            guidebooks.insert(guidebook.file.clone(), Some(guidebook.bytes));
+            if let Some(text) = &guidebook.text {
+                guidebooks.insert(text.clone(), None);
+            }
+        }
         if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
             return Err(refuse(
                 "The game in this pack file keeps its map images in one archive file, which a pack file does not carry.",
@@ -611,6 +630,7 @@ impl Rules {
             templates,
             pictures,
             previews,
+            guidebooks,
             made_in_app,
         })
     }
@@ -686,13 +706,7 @@ pub(crate) fn check_entry(
         }
         return Ok(None);
     }
-    let kind = classify(
-        name,
-        &rules.layers,
-        &rules.templates,
-        &rules.pictures,
-        &rules.previews,
-    )
+    let kind = classify(name, rules)
     .ok_or_else(|| {
         refuse(format!(
             "This pack file holds a file that is not part of a pack ({shown}), so it was not imported."
@@ -732,6 +746,29 @@ pub(crate) fn check_entry(
             {
                 return Err(too_large());
             }
+        }
+        Kind::Guidebook | Kind::GuidebookText => {
+            // Stored, so a reader reads any part of it; a guidebook of the
+            // size the description gives.
+            if entry.compression != zip::CompressionMethod::Stored {
+                return Err(refuse(format!(
+                    "{shown} in this pack file is packed in a way Atlas does not read."
+                )));
+            }
+            let fits = match rules.guidebooks.get(name).copied().flatten() {
+                Some(bytes) => size == bytes,
+                None => size <= MAX_GUIDEBOOK_TEXT_BYTES,
+            };
+            if !fits {
+                return Err(
+                    if size > MAX_GUIDEBOOK_TEXT_BYTES && kind == Kind::GuidebookText {
+                        too_large()
+                    } else {
+                        damaged(name)
+                    },
+                );
+            }
+            tally.bytes = tally.bytes.saturating_add(size);
         }
         Kind::PackFile | Kind::Status(_) | Kind::Image | Kind::Marker | Kind::Picture => {
             let limit = match kind {
@@ -834,7 +871,13 @@ fn check_entries<R: Read + io::Seek>(
                 mine.pictures.push((file, data));
                 continue;
             }
-            Kind::PackFile | Kind::Status(_) | Kind::Image | Kind::Marker | Kind::Picture => {}
+            Kind::PackFile
+            | Kind::Status(_)
+            | Kind::Image
+            | Kind::Marker
+            | Kind::Picture
+            | Kind::Guidebook
+            | Kind::GuidebookText => {}
         }
         let json = match kind {
             Kind::PackFile | Kind::Status(_) => {
@@ -883,13 +926,15 @@ pub(crate) fn check_json(name: &str, data: &[u8], status_of: Option<&str>) -> Re
 }
 
 /// What an entry is, or none when it has no place in a map pack.
-fn classify(
-    name: &str,
-    layers: &[LayerInfo],
-    templates: &[Template],
-    pictures: &HashSet<String>,
-    previews: &HashSet<String>,
-) -> Option<Kind> {
+fn classify(name: &str, rules: &Rules) -> Option<Kind> {
+    let Rules {
+        layers,
+        templates,
+        pictures,
+        previews,
+        guidebooks,
+        ..
+    } = rules;
     // A plain relative path: no `..`, nothing absolute, no drive letter, no
     // hidden segment (`.atlas`), no `\`.
     if name.starts_with('/') || relative_path(name).is_none() {
@@ -912,6 +957,13 @@ fn classify(
     }
     if pictures.contains(name) {
         return Some(Kind::Picture);
+    }
+    if let Some(size) = guidebooks.get(name) {
+        return Some(if size.is_some() {
+            Kind::Guidebook
+        } else {
+            Kind::GuidebookText
+        });
     }
     if let Some(file) = name.strip_prefix(&format!("{STATUS_DIR}/")) {
         return layers

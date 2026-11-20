@@ -6,3 +6,8 @@ packages:
 # platform binary on install.
 onlyBuiltDependencies:
   - esbuild
+
+# pdf.js (the guidebook reader) names a canvas for Node as optional; the
+# app only runs pdf.js in the browser, so it is never installed.
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'

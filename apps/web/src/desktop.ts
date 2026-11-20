@@ -504,6 +504,43 @@ export interface ListedPack {
    * which "Write the pack file" writes again. Absent otherwise.
    */
   editing?: { path: string; fileName: string };
+  /**
+   * The title the game is shown under, as its pack file says, when that
+   * is not its own title. Absent otherwise, and from an older shell.
+   */
+  gameTitle?: string;
+  /**
+   * A pack of guidebooks (PDF and CBZ files, see `state/guidebooks.ts`):
+   * its title is the title of the game they are for. Absent counts as false.
+   */
+  guidebooks?: boolean;
+  /**
+   * A pack of guidebooks Atlas wrote: the person added its guidebooks
+   * here, so they can add more and remove them. Absent counts as false.
+   */
+  guidebooksByAtlas?: boolean;
+}
+
+/** A PDF or CBZ file picked for "Add a guidebook…", served by the shell while it is picked. */
+export interface PickedGuidebook {
+  /** Names the picked file to `guidebooks.add`. */
+  token: string;
+  /** Where the pack protocol serves it, read in parts. */
+  url: string;
+  fileName: string;
+  /** The title offered: the file's name without its extension. */
+  title: string;
+  type: 'pdf' | 'cbz';
+  bytes: number;
+  /** Its pages when the shell counted them (a CBZ's pictures, a PDF's page tree). */
+  pages: number | null;
+}
+
+/** A guidebook added or removed: what to say, and the packs listed after. */
+export interface GuidebooksChanged {
+  packId: string;
+  message: string;
+  listing: Listing;
 }
 
 /** A single pack file the person opened from the file manager. */
@@ -1704,6 +1741,28 @@ export interface DesktopBridge {
     mineChoose(id: string, exportedAt: string, added: boolean): Promise<void>;
   };
   /**
+   * Guidebooks a person adds here ("Add a guidebook…", see the shell's
+   * `guidebooks` module), on a desktop; the Android app answers each with
+   * why not.
+   */
+  guidebooks: {
+    /** Asks for a PDF or CBZ file; null when the dialog is closed. */
+    pick(): Promise<PickedGuidebook | null>;
+    /** The picked file is no longer served. */
+    forgetPicked(): Promise<void>;
+    /** Adds the picked file to the game's own pack of guidebooks. */
+    add(request: {
+      gameId: string;
+      gameTitle: string;
+      token: string;
+      title: string;
+      pages: number | null;
+      text: string[] | null;
+    }): Promise<GuidebooksChanged>;
+    /** Takes a guidebook out of a pack of guidebooks Atlas wrote. */
+    remove(packId: string, file: string): Promise<GuidebooksChanged>;
+  };
+  /**
    * Atlas in the background, in the desktop app without downloads on
    * Windows (see the shell's `background` module); other apps answer each
    * with why not. `takeShow` is in the app without downloads on every
@@ -2067,6 +2126,12 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       mineTake: (id, exportedAt) => call('made_pack_mine_take', { id, exportedAt }),
       mineChoose: (id, exportedAt, added) =>
         call('made_pack_mine_choose', { id, exportedAt, added }),
+    },
+    guidebooks: {
+      pick: () => call('guidebook_pick'),
+      forgetPicked: () => call('guidebook_forget_picked'),
+      add: (request) => call('guidebook_add', { request }),
+      remove: (packId, file) => call('guidebook_remove', { packId, file }),
     },
     background: {
       state: () => call('background_state'),

@@ -9,6 +9,8 @@ import {
 import { useDeferredValue, useEffect, useId, useMemo, useRef } from 'react';
 import { GlyphBadge, UiIcon, type UiIconName } from '../components/icons';
 import { VirtualList } from '../components/VirtualList';
+import { GuidebookResults } from '../guidebook/Guidebooks';
+import { useGuidebookHits } from '../state/guidebooks';
 import { goToLocation } from '../state/actions';
 import { openChecklist, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
@@ -268,6 +270,12 @@ function Results({ game, query }: { game: LoadedGame; query: string }) {
   }, [hits, scope, game]);
 
   const places = rows.some((r) => r.entry.kind === 'location');
+  // Pages of the game's guidebooks, beside its guides.
+  const guidebookHits = useGuidebookHits(
+    scope === 'all' || scope === 'lists' ? game.entry.id : null,
+    query,
+    20,
+  );
   const count = rows.length >= LIMIT ? `More than ${numberFormat.format(LIMIT)}` : `${rows.length}`;
   return (
     <>
@@ -287,11 +295,14 @@ function Results({ game, query }: { game: LoadedGame; query: string }) {
         ))}
       </div>
       <p className="touch-search-summary" role="status" data-testid="search-summary">
-        {rows.length === 0
-          ? 'Nothing matches.'
-          : `${count} result${rows.length === 1 ? '' : 's'}${places ? ', nearest to the middle of the map first' : ''}`}
+        {rows.length === 0 && guidebookHits.length > 0
+          ? 'Nothing on the map matches. Pages of guidebooks do.'
+          : rows.length === 0
+            ? 'Nothing matches.'
+            : `${count} result${rows.length === 1 ? '' : 's'}${places ? ', nearest to the middle of the map first' : ''}`}
       </p>
       <div className="touch-scroll touch-search-list" data-scroll-root>
+        <GuidebookResults hits={guidebookHits} query={query} compact />
         {rows.length > 0 ? (
           <VirtualList
             items={rows}

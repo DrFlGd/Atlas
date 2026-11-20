@@ -111,9 +111,9 @@ use crate::{
 /// which other apps use to show pack files without unpacking them.
 pub use atlas_pack::{
     is_preview_name, AppInfo, Counts, Detail, GameFacts, GuideFacts, GuideType, Header,
-    ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, PackFacts, PageFacts, SourceFacts,
-    SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES,
-    PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
+    ImagesFacts, ImporterFacts, LayerFacts, MapFacts, MineFacts, Origin, PackFacts, PageFacts,
+    SourceFacts, SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS,
+    MAX_PREVIEW_BYTES, PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
     VERSION_WITH_NOTES, VERSION_WITH_PAGES, VERSION_WITH_PHOTOS, VERSION_WITH_PREVIEWS,
     VERSION_WITH_TITLE,
 };
@@ -502,10 +502,12 @@ fn describe_manifest(
     } else {
         SourceKind::Unknown
     };
+    let origin = origin_of(manifest, kind);
     (
         pack,
         SourceFacts {
             kind,
+            origin,
             // The site's name comes from the guide pages (see `card`).
             name: None,
             importer,
@@ -514,6 +516,27 @@ fn describe_manifest(
             oldest_page_at: oldest,
         },
     )
+}
+
+/// Where a pack came from, in one word (`source.origin`): read from a site,
+/// a pack of guidebooks (`guidebooks.json` listed, see the `atlas-pack`
+/// crate), made by Atlas Map Maker (its manifest's `writtenBy.name`), or
+/// made in an Atlas app from a picture (`madeInApp`). None for another
+/// pack, such as one that comes with the app.
+fn origin_of(manifest: &Value, kind: SourceKind) -> Option<Origin> {
+    let written_by = manifest
+        .get("writtenBy")
+        .and_then(|by| by.get("name"))
+        .and_then(Value::as_str);
+    if kind == SourceKind::WebPages {
+        Some(Origin::Site)
+    } else if written_by == Some(atlas_pack::MAP_MAKER) {
+        Some(Origin::MapMaker)
+    } else if manifest.get("madeInApp") == Some(&Value::Bool(true)) {
+        Some(Origin::MadeInAtlas)
+    } else {
+        None
+    }
 }
 
 /// Whether time `a` is later than `b` (a missing time is never later).
@@ -1084,10 +1107,20 @@ pub struct Analysis {
     pub plans: BTreeMap<String, LayerPlan>,
     /// Their status files, by layer id.
     pub statuses: BTreeMap<String, LayerStatus>,
+    /// The pack is a pack of guidebooks (it has `guidebooks.json`), which
+    /// is passed on as the pack file it came in, never exported.
+    pub guidebooks: bool,
 }
+
+/// Why a pack of guidebooks is not exported.
+pub const GUIDEBOOKS_NOT_EXPORTED: &str =
+    "Guidebooks are not exported. To pass them on, copy the pack file they came in.";
 
 /// Why a pack cannot be exported at all, in plain words; none when it can.
 pub fn refusal(analysis: &Analysis) -> Option<String> {
+    if analysis.guidebooks {
+        return Some(GUIDEBOOKS_NOT_EXPORTED.to_owned());
+    }
     let archives: Vec<String> = analysis
         .layers
         .iter()
@@ -1139,6 +1172,7 @@ pub fn analyse(source: &PackSource) -> Result<Analysis, String> {
         layers,
         plans,
         statuses,
+        guidebooks: present(atlas_pack::GUIDEBOOK_LIST_FILE),
     })
 }
 

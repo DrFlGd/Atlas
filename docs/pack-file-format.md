@@ -1,6 +1,6 @@
 # The Atlas pack file format
 
-A pack file (`.atlaspack`) holds a map, wiki or guide for a game in one file: the pack folder of one game, its map images up to a chosen level of detail, and the pictures its pages show. Atlas writes one with **Export** and reads one where it lies, or takes it in with **Import map pack file** (the desktop app without downloads copies it into its packs folder with **Add a pack file** instead and reads it there). Another app can show a card for a pack file and pass it on without unpacking it. This page says what is in the file and how to read it safely.
+A pack file (`.atlaspack`) holds a map, a wiki, a guide or a guidebook for a game in one file: the pack folder of one game, its map images up to a chosen level of detail, and the pictures its pages show. Atlas writes one with **Export** and reads one where it lies, or takes it in with **Import map pack file** (the desktop app without downloads copies it into its packs folder with **Add a pack file** instead and reads it there). Another app can show a card for a pack file and pass it on without unpacking it. This page says what is in the file and how to read it safely.
 
 Every name in the examples is made up.
 
@@ -17,6 +17,8 @@ The entries come in this order:
 5. The map images, at the paths each layer's own `url` gives, with an empty `.404` marker for an image the map server did not have. They are stored.
 6. The pictures the pages show, in `pictures/`, that may be passed on.
 7. Only when the person asked for it: their own lists, locations, pages, notes and photos, and the title the game is shown under with other games, under `mine/`.
+
+A pack of guidebooks (version 8, see "Guidebooks") holds, after the description, `manifest.json` and `guidebooks.json` (deflated), then each guidebook's text file and its file (both stored). It holds nothing else.
 
 Every entry has the time the file was made, in UTC.
 
@@ -37,7 +39,7 @@ Every entry has the time the file was made, in UTC.
 | `exportedBy`     | The app that made it: `name`, `version` and `platform`.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `pack`           | What the pack's manifest says of itself: `id`, `title`, `packVersion`, `gamePatch`, `schemaVersion`, `attribution`, and optionally `created`, `updated` and `writtenBy`.                                                                                                                                                                                                                                                                       |
 | `personalUse`    | Optional, only ever `true`: the pack's manifest says it is kept for the person's own use. A file with it is not to be passed on to others.                                                                                                                                                                                                                                                                                                     |
-| `source`         | Where the data came from. `kind` is `web-pages`, `app` or `unknown`. Optional: `name`, the name of the site the pages were read from (see below); `importer` (`id` and `title`); `pages`, each page read with `url`, `mapId` and `importedAt`; `newestPageAt` and `oldestPageAt`.                                                                                                                                                              |
+| `source`         | Where the data came from. `kind` is `web-pages`, `app` or `unknown`. Optional: `name`, the name of the site the pages were read from (see below); `origin`, where the pack came from in one word (see below); `importer` (`id` and `title`); `pages`, each page read with `url`, `mapId` and `importedAt`; `newestPageAt` and `oldestPageAt`.                                                                                                  |
 | `contents`       | Counts: `maps`, `layers`, `locations`, `categories`, `regions`, `checklists` and `guides`.                                                                                                                                                                                                                                                                                                                                                     |
 | `maps`           | Optional. One entry per map, in the order of the pack's `maps.json`: `id`, `name`, `width` and `height` of its most detailed image in pixels, `locations` (how many the pack has on it), and `preview`, the entry name of its small picture when the file holds one.                                                                                                                                                                           |
 | `guides`         | Optional. The pack's pages, with `title`, `type` and `pages`. `type` is `guide` for pages read in order (the manifest's `pagesInOrder`) and `wiki` for pages read as a collection. A pack's pages are one source of pages, so there is one entry at most. A game of maps whose pages are only the notes of its locations has none.                                                                                                             |
@@ -45,6 +47,7 @@ Every entry has the time the file was made, in UTC.
 | `images`         | The map images in the file: `detail`, `files`, `bytes`, and per layer what it holds (`levels`, `files`, `bytes`, `complete`, `full`, `downloadable`, `downloadedAt`).                                                                                                                                                                                                                                                                          |
 | `files`, `bytes` | The entries after the description, and their size unpacked.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `mine`           | Optional. How many of the person's own things the file carries.                                                                                                                                                                                                                                                                                                                                                                                |
+| `guidebooks`     | From version 8, and only in a pack of guidebooks. Each guidebook the file holds, in order: `file`, `title`, `pages`, `bytes` and optionally `text` (see "Guidebooks").                                                                                                                                                                                                                                                                         |
 
 An example, for a made-up game:
 
@@ -125,6 +128,21 @@ An example, for a made-up game:
 
 It is absent when the pack has none of these. The importer's `title` is never taken for it: one importer can read many sites.
 
+### Where the pack came from
+
+`source.origin` says in one word where a pack came from, so another app can show it without working it out:
+
+| Value           | The pack                                                                     |
+| --------------- | ---------------------------------------------------------------------------- |
+| `site`          | was read from web pages (`source.kind` `web-pages`).                         |
+| `made-in-atlas` | was made in Atlas (its manifest says `madeInApp`).                           |
+| `map-maker`     | was made with Atlas Map Maker (the pack's `writtenBy` is `Atlas Map Maker`). |
+| `guidebooks`    | is a pack of guidebooks (see "Guidebooks").                                  |
+
+Atlas writes it into every pack file it exports when it knows, and into every pack of guidebooks. It is optional: a reader must take a value it does not know as unknown, not refuse the file. A file without it is read with the same rules in the same order: a pack of guidebooks is `guidebooks`, one with `source.kind` `web-pages` is `site`, one whose `pack.writtenBy.name` is `Atlas Map Maker` is `map-maker`, and one whose `exportedBy.name` is `Atlas` or starts with `Atlas ` is `made-in-atlas`. Otherwise nothing is known. `Header::origin()` in the crate reads it so.
+
+The field needs no new version. Atlas 0.23.0 and 0.24.0 were checked: their reader of the description has no rule against fields it does not know (no `deny_unknown_fields`, in `source` either), and a version 7 description with `source.origin` reads as before, so they open such a file.
+
 ## Small pictures
 
 From version 7, the file holds a small picture of each map that has images in the file. Each is a JPEG whose longest side is at most 512 pixels, at most 512 KB. Atlas draws it from the map's own images in the file: the first layer of the map, at the lowest level of detail that is at least 512 pixels on its longest side. A map made from one picture counts too, since Atlas cuts it into the same levels.
@@ -148,8 +166,69 @@ A file is written at the lowest version that can hold what it carries. So an old
 | 5       | Their notes on the game's locations, and a guide page linked to one location alone. |
 | 6       | The title the game is shown under with other games.                                 |
 | 7       | Small pictures of the maps (`preview/`).                                            |
+| 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).           |
 
-The fields `game`, `personalUse`, `maps`, `guides`, `cover` and `source.name` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them.
+The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8; every other file stays at the version of what it carries, so the apps that read version 7 read it.
+
+## Guidebooks
+
+A guidebook is a published guide the person has as one file, a PDF or a CBZ (a ZIP of pictures of pages, one per page). One game's guidebooks are in a pack file of their own, a pack of guidebooks, so a large pack of maps is never written again to add one. Atlas reads it where it lies (or, in the Android app, imports it as any pack file) and shows its guidebooks with the game whose title is the pack's game title (compared without regard to case, space and punctuation), or with the game the person put under one title with it. A pack of guidebooks of a game that is not there is an entry of its own.
+
+Its entries:
+
+- `manifest.json`: a manifest as a pack folder has one, with the pack's id as `gameId`, the game's title as `title`, and `writtenBy`, the app that wrote it. It has no maps, so it reads as a game of guides with no map.
+- `guidebooks.json`: the list, `{ "format": "atlas-guidebooks", "version": 1, "game": { "title": … }, "guidebooks": [ … ] }`, each entry as in the description.
+- For each guidebook, its file `guidebooks/<name>.pdf` or `guidebooks/<name>.cbz`, stored as it is. `<name>` is 1 to 80 lower case letters, digits, `-` and `_`, starting with a letter or a digit, made from the title.
+- When the text of its pages is known, `guidebooks/<name>.text.json`, stored:
+
+```json
+{
+  "format": "atlas-guidebook-text",
+  "version": 1,
+  "pages": [
+    { "page": 1, "text": "Hollow Marsh Field Guide" },
+    { "page": 3, "text": "The heron nests in the reeds by the old mill." }
+  ]
+}
+```
+
+Each page is listed once, in increasing order, from 1 to the guidebook's `pages`; a page with no text is left out. Atlas searches this text and never reads text out of pictures.
+
+Each guidebook in the description and in `guidebooks.json`:
+
+| Field   | What it holds                                                                                         |
+| ------- | ----------------------------------------------------------------------------------------------------- |
+| `file`  | Its entry name, `guidebooks/<name>.pdf` or `.cbz`. The extension says which it is.                    |
+| `title` | Its title as it is shown, 1 to 200 characters.                                                        |
+| `pages` | How many pages it has, 1 to 100,000: a PDF's page tree, or a CBZ's pictures.                          |
+| `bytes` | The size of its file. Its entry must be stored and of this size.                                      |
+| `text`  | Optional. The entry name of the text of its pages, `guidebooks/<name>.text.json`, with the same name. |
+
+An example of the description's part, for a made-up game:
+
+```json
+{
+  "format": "atlas-pack-file",
+  "version": 8,
+  "packId": "guidebooks-hollow-marsh",
+  "title": "Hollow Marsh",
+  "game": { "title": "Hollow Marsh" },
+  "source": { "kind": "unknown", "origin": "guidebooks" },
+  "guidebooks": [
+    {
+      "file": "guidebooks/hollow-marsh-field-guide.pdf",
+      "title": "Hollow Marsh Field Guide",
+      "pages": 212,
+      "bytes": 148000000,
+      "text": "guidebooks/hollow-marsh-field-guide.text.json"
+    }
+  ]
+}
+```
+
+The checks a reader makes, besides those below: at most 100 guidebooks; each `file` a name as above, listed once; `pages` and `bytes` within their bounds (a file at most 16 GB, its text at most 64 MB); the file and its text stored, not deflated, the file of exactly `bytes`; a `text` that names the guidebook's own text file. A file over 4 GB is written with ZIP64 records. A PDF or CBZ is untrusted as any file is: Atlas reads it in parts, never whole, with bounds on what it reads, and a damaged one shows a sentence. Atlas runs no script a PDF holds, and opens a link to a web page only in the system browser.
+
+A pack of guidebooks is not exported: to pass guidebooks on, copy the pack file they came in.
 
 ## What is never in a pack file
 
@@ -191,7 +270,7 @@ Another app may replace a pack file while Atlas has it open, by writing a `.part
 
 **Handing a pack file to Atlas.** An app that makes pack files can put one in the packs folder (read `packsFolder` in the shared settings file to find it; absent means the default folder, see "Changing the packs folder" in `apps/desktop/README.md`), or in a folder of games the person added, and the desktop app notices it while it runs, without being told to look (see "Pack files that arrive, change or go" in `apps/desktop/README.md`). Write it as a `.part` file and rename it to its `.atlaspack` name when it is complete: a `.part` file is never read, and Atlas waits until no change came for a moment before it looks. To replace a file, rename the new one over it; the person is then told that another version of the game arrived, newer when its `pack.updated` (then its `exportedAt`) is later, and chooses when to load it. An app can also start Atlas with the path of one pack file as its only argument, as the file manager does; if Atlas is running already, that Atlas shows it.
 
-## Reading pack files from another Rust app
+## Reading and writing pack files from another Rust app
 
 The `atlas-pack` crate, in this repository at `crates/atlas-pack`, holds what another app needs: the description's types, the format's constants, the checks above for the description and the small pictures, and bounded reads from a file. It has no app code and makes no network request. It is MIT licensed, as Atlas is.
 
@@ -229,3 +308,38 @@ fn card(file: &Path) -> Result<(), String> {
 - `parse_header(text)` checks a description's text: its format and version, the fields every pack file has and its pack id (`is_pack_id`), and it leaves out the names of small pictures that are not safe.
 - Each of them refuses with a `Refusal`: one or two plain sentences to show as they are (`to_string()`, or `?` into a `String`), and a `kind()`: `NotAPackFile`, `NewerFormat`, `Damaged`, `CannotOpen` or `NoSuchPicture`. The sentences name no app to install. For `NewerFormat`, `what()` says which app and version made the file, and the advice after it is only "A newer version of this app is needed to open it.": an app that wants to name itself shows `what()` and adds its own sentence, as Atlas does.
 - Both reads go through the file in order from its start. They also work on a stream that cannot seek, and on a file whose end is missing.
+- `Header::origin()` says where the pack came from, from `source.origin`, else by the rules in "Where the pack came from".
+
+To write a pack of guidebooks of a game:
+
+```rust
+use std::path::{Path, PathBuf};
+
+use atlas_pack::{write_guidebook_pack, AppInfo, GuidebookPack, NewGuidebook};
+
+fn write(packs_folder: &Path) -> Result<(), String> {
+    let pack = GuidebookPack {
+        pack_id: "guidebooks-hollow-marsh".to_owned(),
+        game_title: "Hollow Marsh".to_owned(),
+        written_by: AppInfo {
+            name: "Fen Shelf".to_owned(),
+            version: "1.0.0".to_owned(),
+            platform: "windows".to_owned(),
+        },
+        guidebooks: vec![NewGuidebook {
+            file: PathBuf::from("Hollow Marsh Field Guide.pdf"),
+            title: "Hollow Marsh Field Guide".to_owned(),
+            pages: None,
+            text: None,
+        }],
+    };
+    let target = packs_folder.join("Hollow Marsh guidebooks.atlaspack");
+    write_guidebook_pack(&pack, &target)?;
+    Ok(())
+}
+```
+
+- `write_guidebook_pack(pack, target)` writes a complete pack of guidebooks (version 8) at `target`, as `<target>.part` renamed to `target` when it is complete, and returns its description. It counts each guidebook's pages when `pages` is none (a PDF's page tree, read without rendering it; a CBZ's pictures), records each file's size, and writes `text` (the text of each page, the first being page 1) as its text file. It refuses with a `WriteError`, one plain sentence, and writes nothing, when something does not fit the bounds above.
+- `rewrite_guidebook_pack(existing, keep, pack, target)` writes such a pack again with the guidebooks `keep` keeps and those of `pack` after them, copying the kept ones as they are; the pack's version goes up by one. Atlas uses it to add a guidebook to a game's pack and to take one out, and only on the packs it wrote (`pack.writtenBy.name` `Atlas`).
+- `guidebook_pages(file)` counts a guidebook file's pages only.
+- `parse_guidebook_text(bytes, pages)` checks a text file, and `GuidebookText::of_pages(pages)` makes one.

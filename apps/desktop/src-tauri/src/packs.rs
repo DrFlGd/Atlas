@@ -101,7 +101,23 @@ enum Target {
 pub struct PackRegistry {
     roots: Arc<RwLock<HashMap<String, Entry>>>,
     overlay_root: Arc<RwLock<Option<PathBuf>>>,
+    /// The one file the person picked to add as a guidebook, while it is
+    /// read (see `guidebooks.rs`): served as `<scheme URL>/_picked/<token>/<name>`.
+    picked: Arc<RwLock<Option<Picked>>>,
 }
+
+/// A file picked to add as a guidebook: served under a token of its own,
+/// at one name, for as long as it is picked.
+#[derive(Clone, Debug)]
+struct Picked {
+    token: String,
+    name: String,
+    path: PathBuf,
+}
+
+/// The first segment of the address of a picked file. Never a pack id,
+/// which starts with a letter or a digit.
+pub const PICKED_SEGMENT: &str = "_picked";
 
 #[derive(Debug)]
 pub enum RegisterError {
@@ -239,6 +255,32 @@ impl PackRegistry {
             .cloned()
     }
 
+    /// Serves the file at `path` as `<scheme URL>/_picked/<token>/<name>`
+    /// until another is picked or [`Self::forget_picked`]; the address.
+    pub fn set_picked(&self, token: &str, name: &str, path: PathBuf) -> String {
+        *self.picked.write().unwrap_or_else(PoisonError::into_inner) = Some(Picked {
+            token: token.to_owned(),
+            name: name.to_owned(),
+            path,
+        });
+        format!("{}{token}/{name}", crate::library::pack_url(PICKED_SEGMENT))
+    }
+
+    /// The picked file served under `token`.
+    pub fn picked(&self, token: &str) -> Option<PathBuf> {
+        self.picked
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .filter(|picked| picked.token == token)
+            .map(|picked| picked.path.clone())
+    }
+
+    /// Stops serving the picked file.
+    pub fn forget_picked(&self) {
+        *self.picked.write().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
     /// Sets the folder that holds one overlay folder per pack id. It need
     /// not exist yet.
     pub fn set_overlay_root(&self, root: PathBuf) {
@@ -311,6 +353,16 @@ impl PackRegistry {
     fn resolve(&self, url_path: &str) -> Result<Target, StatusCode> {
         let mut segments = url_path.strip_prefix('/').unwrap_or(url_path).split('/');
         let id = segments.next().unwrap_or_default();
+        if id == PICKED_SEGMENT {
+            let picked = self.picked.read().unwrap_or_else(PoisonError::into_inner);
+            let picked = picked.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+            let rest: Vec<&str> = segments.collect();
+            return if rest == [picked.token.as_str(), picked.name.as_str()] {
+                Ok(Target::Disk(picked.path.clone()))
+            } else {
+                Err(StatusCode::NOT_FOUND)
+            };
+        }
         let source = self.entry(id).ok_or(StatusCode::NOT_FOUND)?.source;
 
         let mut relative = PathBuf::new();

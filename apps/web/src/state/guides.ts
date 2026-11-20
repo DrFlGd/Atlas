@@ -8,6 +8,7 @@ import {
 import { parseId, type GuideEntry, type OwnPages, type Picture } from '@atlas/schema';
 import type { GuidePicture } from '../markdown';
 import { guideSearchText } from '../markdown';
+import { useGameGuidebooks } from './guidebooks';
 import { useGuideLinks, useGuideGamesOffered, type OtherGuides } from './guideLinks';
 import { ownPagesOf, useOwnPages } from './ownPages';
 import { ownPictureUrl } from './ownPictures';
@@ -112,7 +113,8 @@ export function guideAliases(packs: readonly LoadedPack[]): Record<string, strin
 /**
  * Whether the Guides section is there: the game's guides can be read as
  * pages, or (a game with a map) other games on this device have pages to
- * read with it. Follows the guides of other games as they load.
+ * read with it, or it has guidebooks. Follows the guides of other games
+ * and the guidebooks as they load.
  */
 export function useGuidesSection(game: LoadedGame | null): boolean {
   useGuideLinks((s) => s.others);
@@ -120,7 +122,9 @@ export function useGuidesSection(game: LoadedGame | null): boolean {
   const offered = useGuideGamesOffered(
     (s) => game !== null && s.gameId === game.pack.manifest.gameId && s.offered,
   );
-  return hasGuidePages(game) || (offered && hasMap(game));
+  // A game's guidebooks are read in Guides too.
+  const guidebooks = useGameGuidebooks(game?.entry.id).length > 0;
+  return hasGuidePages(game) || (offered && hasMap(game)) || guidebooks;
 }
 
 /** Whether a game has a map: a game of guides and lists only has none. */

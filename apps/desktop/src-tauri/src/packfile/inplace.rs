@@ -700,7 +700,11 @@ impl Table {
                 Kind::Status(layer) => {
                     Serve::Status(u32::try_from(layer).map_err(|_| content(NOT_A_PACK_FILE))?)
                 }
-                Kind::Image | Kind::Marker | Kind::Picture => Serve::Bytes,
+                Kind::Image
+                | Kind::Marker
+                | Kind::Picture
+                | Kind::Guidebook
+                | Kind::GuidebookText => Serve::Bytes,
                 Kind::Mine(_) | Kind::MinePicture | Kind::Preview => Serve::No,
             };
         }
