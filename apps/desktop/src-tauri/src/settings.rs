@@ -16,6 +16,7 @@
 //! ```json
 //! { "format": "atlas-settings", "version": 1,
 //!   "mapsFolder": null,
+//!   "packsFolder": "E:\\Packs",
 //!   "locations": [{ "path": "E:\\Maps\\My Game", "kind": "pack" }],
 //!   "packFiles": ["E:\\Shared\\Test Valley.atlaspack"],
 //!   "downloads": { "parallel": 2, "pauseMs": 250,
@@ -23,7 +24,10 @@
 //! ```
 //!
 //! `mapsFolder` null means the default maps folder next to this file
-//! (`Maps`, or `maps` on Linux). Every change re-reads the file first, so
+//! (`Maps`, or `maps` on Linux). `packsFolder`, absent unless the person
+//! chose another, is the folder of pack files Atlas reads where they lie
+//! (see [`packs_folder`]); another program that puts pack files there reads
+//! it from this file. Every change re-reads the file first, so
 //! two apps changing different settings do not undo each other. A file that
 //! cannot be read counts as the defaults.
 
@@ -76,10 +80,11 @@ pub fn default_maps_folder(shared: &Path) -> PathBuf {
     }
 }
 
-/// The folder of pack files (`.atlaspack`) Atlas reads where they lie:
-/// `Packs` beside the default maps folder (`packs` on Linux, as `maps`
-/// is), whichever maps folder is chosen. Another app may put pack files
-/// there; Atlas never changes, moves or deletes them.
+/// The packs folder used until the person chooses another: `Packs`
+/// beside the default maps folder (`packs` on Linux, as `maps` is),
+/// whichever maps folder is chosen. Only [`packs_folder`] and the choice
+/// "Use the default folder" read it; everything else asks
+/// [`packs_folder`].
 pub fn default_packs_folder(shared: &Path) -> PathBuf {
     let name = if cfg!(target_os = "linux") {
         "packs"
@@ -87,6 +92,94 @@ pub fn default_packs_folder(shared: &Path) -> PathBuf {
         "Packs"
     };
     default_maps_folder(shared).with_file_name(name)
+}
+
+/// The longest packs folder path the settings file may give.
+const MAX_FOLDER_CHARS: usize = 4096;
+
+/// Why a `packsFolder` value of the settings file cannot be used; none
+/// when it can. Read from the file, so untrusted: a path of at most
+/// [`MAX_FOLDER_CHARS`] characters, absolute, with no `..` and no NUL.
+fn unusable_folder(text: &str) -> Option<&'static str> {
+    if text.trim().is_empty() {
+        return Some("it is empty");
+    }
+    if text.chars().count() > MAX_FOLDER_CHARS {
+        return Some("it is too long");
+    }
+    if text.contains('\0') {
+        return Some("it is not a path");
+    }
+    let path = Path::new(text);
+    if !path.is_absolute() {
+        return Some("it is not a full path");
+    }
+    if path
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Some("it goes up a folder with ..");
+    }
+    None
+}
+
+/// The packs folder value last written to the activity log as unusable,
+/// so a value read again and again (the watcher reads the settings at
+/// every look) gives one line.
+static LOGGED_BAD_FOLDER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The folder of pack files (`.atlaspack`) Atlas reads where they lie, as
+/// the settings say: `packsFolder` when the person chose one, else the
+/// default folder (see [`default_packs_folder`]). A value that cannot be
+/// used (empty, not a full path, not text) counts as the default, with one
+/// line in the activity log. Every use of the packs folder, in every Atlas
+/// app on the computer, goes through this, so they always agree. Another
+/// app may put pack files there; Atlas never changes or deletes them, and
+/// moves them only when the person changes the folder and asks to.
+pub fn packs_folder(settings: &SharedSettings, shared: &Path) -> PathBuf {
+    chosen_packs_folder(settings).unwrap_or_else(|| default_packs_folder(shared))
+}
+
+/// Whether the packs folder is the default one (none chosen, or a value
+/// that cannot be used).
+pub fn packs_folder_is_default(settings: &SharedSettings) -> bool {
+    chosen_packs_folder(settings).is_none()
+}
+
+/// The packs folder the person chose, when the value can be used.
+fn chosen_packs_folder(settings: &SharedSettings) -> Option<PathBuf> {
+    let text = settings.packs_folder.as_ref()?;
+    let Some(reason) = unusable_folder(text) else {
+        return Some(PathBuf::from(text));
+    };
+    let mut logged = LOGGED_BAD_FOLDER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if logged.as_deref() != Some(text.as_str()) {
+        activity::warn(
+            Area::Library,
+            format!(
+                "The packs folder in the settings cannot be used ({reason}), so the default packs folder is used"
+            ),
+        );
+        *logged = Some(text.clone());
+    }
+    None
+}
+
+/// Reads `packsFolder` leniently: a value that is not text counts as an
+/// empty one, which cannot be used, rather than making the whole settings
+/// file unreadable.
+fn lenient_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => Some(text),
+        _ => Some(String::new()),
+    })
 }
 
 /// The folder Android never backs up, in the app's data folder.
@@ -241,6 +334,16 @@ pub struct SharedSettings {
     pub version: u32,
     #[serde(default)]
     pub maps_folder: Option<String>,
+    /// The packs folder the person chose; none for the default (see
+    /// [`packs_folder`]). Left out of the file while it is none, so a file
+    /// without it reads as the default. An app that does not know it
+    /// leaves it out when it writes the file.
+    #[serde(
+        default,
+        deserialize_with = "lenient_text",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub packs_folder: Option<String>,
     #[serde(default)]
     pub locations: Vec<Location>,
     /// Single pack files (`.atlaspack`) the person opened from a folder
@@ -269,6 +372,7 @@ impl Default for SharedSettings {
             format: SETTINGS_FORMAT.to_owned(),
             version: SETTINGS_VERSION,
             maps_folder: None,
+            packs_folder: None,
             locations: Vec::new(),
             pack_files: Vec::new(),
             downloads: DownloadSettings::default(),
@@ -294,6 +398,11 @@ impl SettingsFile {
 
     pub fn path(&self) -> PathBuf {
         self.dir.join(SETTINGS_FILE)
+    }
+
+    /// The packs folder as the file says now (see [`packs_folder`]).
+    pub fn packs_folder(&self) -> PathBuf {
+        packs_folder(&self.read(), &self.dir)
     }
 
     /// The current settings; the defaults when the file is missing or unusable.
@@ -473,6 +582,69 @@ mod tests {
         .unwrap();
         assert_eq!(file.read().downloads.photos, PhotoSize::Full);
         assert_eq!(file.read().downloads.pause_ms, 500);
+    }
+
+    #[test]
+    fn reads_the_packs_folder_and_uses_the_default_for_a_value_it_cannot_use() {
+        let dir = TempDir::new("settings-packs-folder");
+        let file = SettingsFile::new(dir.0.join("shared"));
+        let default = default_packs_folder(file.dir());
+        // Absent: the default, and nothing written for it.
+        assert_eq!(file.packs_folder(), default);
+        assert!(packs_folder_is_default(&file.read()));
+        file.update(|s| s.maps_folder = Some("/maps".into()))
+            .unwrap();
+        assert!(!fs::read_to_string(file.path())
+            .unwrap()
+            .contains("packsFolder"));
+
+        // A full path is used, and kept through other changes.
+        let chosen = dir.0.join("Elsewhere").join("Packs");
+        let text = chosen.display().to_string();
+        file.update(|s| s.packs_folder = Some(text.clone()))
+            .unwrap();
+        assert_eq!(file.packs_folder(), chosen);
+        assert!(!packs_folder_is_default(&file.read()));
+        file.update(|s| s.locations.clear()).unwrap();
+        assert_eq!(file.read().packs_folder.as_deref(), Some(text.as_str()));
+        assert!(fs::read_to_string(file.path())
+            .unwrap()
+            .contains("\"packsFolder\""));
+
+        // Values it cannot use count as the default; the rest of the file
+        // is read as it is.
+        let long = format!("/{}", "a".repeat(5000));
+        for bad in [
+            r#""""#.to_owned(),
+            r#""   ""#.to_owned(),
+            r#""Packs""#.to_owned(),
+            r#""packs/inside""#.to_owned(),
+            r#""/packs/../elsewhere""#.to_owned(),
+            r#""/packs\u0000x""#.to_owned(),
+            format!("\"{long}\""),
+            "42".to_owned(),
+            "true".to_owned(),
+            r#"["/packs"]"#.to_owned(),
+            r#"{"path": "/packs"}"#.to_owned(),
+        ] {
+            fs::write(
+                file.path(),
+                format!(r#"{{"format":"atlas-settings","version":1,"mapsFolder":"/maps","packsFolder":{bad}}}"#),
+            )
+            .unwrap();
+            let read = file.read();
+            assert_eq!(read.maps_folder.as_deref(), Some("/maps"), "{bad}");
+            assert_eq!(packs_folder(&read, file.dir()), default, "{bad}");
+            assert!(packs_folder_is_default(&read), "{bad}");
+        }
+        // Null is the default too.
+        fs::write(
+            file.path(),
+            br#"{"format":"atlas-settings","version":1,"packsFolder":null}"#,
+        )
+        .unwrap();
+        assert_eq!(file.read().packs_folder, None);
+        assert_eq!(file.packs_folder(), default);
     }
 
     #[test]

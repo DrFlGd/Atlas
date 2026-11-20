@@ -54,7 +54,7 @@ async function openKeptPacks(page: Page) {
 const row = (page: Page, id: string) =>
   page.locator(`[data-testid="kept-pack-row"][data-id="${id}"]`);
 
-test('turns on with a folder chosen in the dialog, lists each game and writes one again', async ({
+test('turns on in the packs folder or in a folder chosen in the dialog, lists each game and writes one again', async ({
   page,
 }) => {
   const errors = collectErrors(page);
@@ -64,15 +64,24 @@ test('turns on with a folder chosen in the dialog, lists each game and writes on
   await expect(section.getByTestId('kept-packs-status')).toHaveText(
     'Off. No pack files are written.',
   );
-  await expect(section.getByTestId('kept-packs-folder')).toContainText('Default');
+  await expect(section.getByTestId('kept-packs-folder')).toHaveText(
+    '/maps/packsDefault: the packs folder',
+  );
 
-  // The dialog closed: still off.
+  // On with no folder chosen: in the packs folder, without a dialog.
   await section.getByTestId('kept-packs-switch').click({ force: true });
+  await expect(section.getByTestId('kept-packs-switch')).toBeChecked();
+  await expect(section.getByTestId('kept-packs-folder')).toContainText('the packs folder');
+  await section.getByTestId('kept-packs-switch').click({ force: true });
+  await expect(section.getByTestId('kept-packs-switch')).not.toBeChecked();
+
+  // The dialog closed: nothing changes.
+  await section.getByTestId('kept-packs-choose').click();
   await expect(section.getByTestId('kept-packs-switch')).not.toBeChecked();
 
   // A folder chosen: on, with each game and its state.
   await setKeptPacks(page, { pick: '/repo/Maps and Guides', games: GAMES });
-  await section.getByTestId('kept-packs-switch').click({ force: true });
+  await section.getByTestId('kept-packs-choose').click();
   await expect(section.getByTestId('kept-packs-switch')).toBeChecked();
   await expect(section.getByTestId('kept-packs-folder')).toHaveText('/repo/Maps and Guides');
   await expect(section.getByTestId('kept-packs-status')).toContainText(
@@ -100,6 +109,8 @@ test('turns on with a folder chosen in the dialog, lists each game and writes on
   await expect(section.getByTestId('kept-packs-games')).toHaveCount(0);
   const calls = (await mock(page)).keptPacks.calls.filter((call) => call !== 'kept_packs_status');
   expect(calls).toEqual([
+    'kept_packs_set on start',
+    'kept_packs_set off start',
     'kept_packs_choose_folder',
     'kept_packs_choose_folder',
     'kept_packs_write_again example-game',

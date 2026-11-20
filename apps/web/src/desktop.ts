@@ -576,8 +576,12 @@ export interface LocationInfo {
 /** Every pack the app can show, and where they come from. */
 export interface Listing {
   mapsFolder: { path: string; isDefault: boolean; exists: boolean };
-  /** The folder of pack files read where they lie; absent from an older shell. */
-  packsFolder?: { path: string; exists: boolean };
+  /**
+   * The folder of pack files read where they lie; absent from an older
+   * shell. `isDefault` says it is the default one (none chosen); absent
+   * from a shell where it cannot be changed yet.
+   */
+  packsFolder?: { path: string; exists: boolean; isDefault?: boolean };
   packs: ListedPack[];
   hidden: HiddenPack[];
   /** Pack files found that cannot be used; absent from an older shell. */
@@ -601,6 +605,32 @@ export interface FolderChoice {
   packs: number;
   /** They can be moved quickly and safely (same drive). */
   canMove: boolean;
+}
+
+/** A packs folder the person picked, before it is used. */
+export interface PacksFolderChoice {
+  path: string;
+  /** The packs folder now. */
+  current: string;
+  /** The folder picked is the default packs folder. */
+  isDefault: boolean;
+  /** The pack files in the packs folder now, and their size in bytes. */
+  files: number;
+  bytes: number;
+  /** Both folders are on one drive: moving renames each file. */
+  sameDrive: boolean;
+}
+
+/** What changing the packs folder came to. */
+export interface PacksFolderChanged {
+  /** The packs folder now. */
+  folder: string;
+  /** The pack files moved, under another name or not. */
+  moved: number;
+  /** Files moved under another name, because theirs was taken there. */
+  renamed: { from: string; to: string }[];
+  /** Files that stayed in the old folder, each with why. */
+  left: { path: string; reason: string }[];
 }
 
 /** Page data kept with an imported pack. */
@@ -1390,6 +1420,15 @@ export interface DesktopBridge {
     chooseMapsFolder(): Promise<FolderChoice | null>;
     /** Uses the chosen maps folder; returns the ids of the packs moved there. */
     applyMapsFolder(movePacks: boolean): Promise<string[]>;
+    /**
+     * Asks for a new packs folder (a desktop only); it is used only after
+     * {@link applyPacksFolder}. Null when the dialog was closed.
+     */
+    choosePacksFolder(): Promise<PacksFolderChoice | null>;
+    /** What going back to the default packs folder would do; used only after {@link applyPacksFolder}. */
+    defaultPacksFolder(): Promise<PacksFolderChoice>;
+    /** Uses the chosen packs folder, moving the pack files there or leaving them. */
+    applyPacksFolder(moveFiles: boolean): Promise<PacksFolderChanged>;
     reveal(target: RevealTarget): Promise<void>;
     /** Deletes a pack from the maps folder, stopping its download first. */
     deletePack(id: string): Promise<PackDeleted>;
@@ -1866,6 +1905,9 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       removeLocation: (path) => call('library_remove_location', { path }),
       chooseMapsFolder: () => call('library_choose_maps_folder'),
       applyMapsFolder: (movePacks) => call('library_apply_maps_folder', { movePacks }),
+      choosePacksFolder: () => call('library_choose_packs_folder'),
+      defaultPacksFolder: () => call('library_default_packs_folder'),
+      applyPacksFolder: (moveFiles) => call('library_apply_packs_folder', { moveFiles }),
       reveal: (target) => call('library_reveal', { target }),
       deletePack: (id) => call('library_delete_pack', { id }),
       takeOpened: () => call<unknown>('library_take_opened').then(openedFrom, () => []),

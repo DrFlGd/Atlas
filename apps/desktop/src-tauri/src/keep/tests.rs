@@ -551,7 +551,6 @@ impl World {
         let keeper = Keeper::start_with(
             Parts {
                 app_data: data.clone(),
-                shared_dir: dir.0.join("shared"),
                 library: Arc::clone(&library),
                 downloads: crate::downloads::for_tests(&registry, data.clone()),
                 app: app(),
@@ -1030,4 +1029,77 @@ fn writes_a_map_made_here_with_its_own_things_and_others_without() {
     assert_eq!(read_header(&made_path).unwrap().mine.unwrap().locations, 2);
     assert_eq!(after.packs["cave-maps"], before.packs["cave-maps"]);
     assert_eq!(after.packs[ID], before.packs[ID]);
+}
+
+#[test]
+fn writes_into_the_packs_folder_and_follows_it_when_it_changes() {
+    let world = World::new("keep-packs-folder");
+    // On with no folder chosen: the packs folder, as the settings say.
+    let status = world.after_run(|| {
+        world
+            .keeper
+            .set(Setting {
+                on: true,
+                folder: None,
+                schedule: Schedule::Start,
+            })
+            .unwrap();
+    });
+    let old = world.library.packs_folder();
+    assert!(status.folder_is_default && !status.folder_chosen);
+    assert_eq!(PathBuf::from(&status.folder), old);
+    let row = World::row(&status);
+    assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
+    let first = PathBuf::from(row.path.unwrap());
+    assert!(first.starts_with(&old), "{}", first.display());
+    let written_at = world.record().packs[ID].written_at.clone();
+    assert!(written_at.is_some());
+
+    // The packs folder moves with its files: the keeper follows, and the
+    // pack, known by its id, is not written again.
+    let new = world.dir.0.join("New Packs");
+    world.library.propose_packs_folder(&new).unwrap();
+    assert_eq!(world.library.apply_packs_folder(true).unwrap().moved, 1);
+    let status = world.after_run(|| world.keeper.packs_folder_changed(&old));
+    assert_eq!(PathBuf::from(&status.folder), new);
+    assert_eq!(world.keeper.folder(), new);
+    let moved = new.join(first.strip_prefix(&old).unwrap());
+    let row = World::row(&status);
+    assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
+    assert_eq!(row.path, Some(moved.display().to_string()));
+    let record = world.record();
+    assert_eq!(record.folder.as_deref(), Some(new.as_path()));
+    assert_eq!(record.packs[ID].path, moved);
+    assert_eq!(record.packs[ID].written_at, written_at, "not written again");
+    assert_eq!(
+        crate::library::pack_files_in(&new, None).files,
+        vec![moved.clone()]
+    );
+
+    // Changed again with the files left where they are: the pack left in
+    // the old folder is not one the person removed, so a new one is
+    // written into the packs folder now.
+    let third = world.dir.0.join("Third");
+    world.library.propose_packs_folder(&third).unwrap();
+    world.library.apply_packs_folder(false).unwrap();
+    let status = world.after_run(|| world.keeper.packs_folder_changed(&new));
+    let row = World::row(&status);
+    assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
+    let written = PathBuf::from(row.path.unwrap());
+    assert!(written.starts_with(&third), "{}", written.display());
+    assert!(moved.is_file(), "the file left behind stays as it was");
+
+    // A folder the person chose stays as chosen when the packs folder
+    // changes.
+    world.turn_on(&world.repo);
+    world.library.propose_default_packs_folder().unwrap();
+    world.library.apply_packs_folder(false).unwrap();
+    world.keeper.packs_folder_changed(&third);
+    assert_eq!(world.keeper.folder(), world.repo);
+    assert!(!world.keeper.status().folder_is_default);
+    // The old packs folder chosen in the dialog follows the packs folder.
+    world.turn_on(&third);
+    world.keeper.packs_folder_changed(&third);
+    assert_eq!(world.keeper.setting().folder, None);
+    assert_eq!(world.keeper.folder(), world.library.packs_folder());
 }

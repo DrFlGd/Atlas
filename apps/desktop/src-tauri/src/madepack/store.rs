@@ -130,6 +130,24 @@ impl Store {
         })
     }
 
+    /// Follows the files this computer wrote that moved with the packs
+    /// folder (see `library::packsfolder`); how many it followed.
+    pub fn follow_moves(&self, moves: &crate::library::MovedFiles) -> Result<usize, String> {
+        if moves.is_empty() {
+            return Ok(0);
+        }
+        let mut followed = 0;
+        self.change(|remembered| {
+            for file in &mut remembered.written {
+                if let Some(new) = moves.new_place(&file.path) {
+                    file.path = new.to_path_buf();
+                    followed += 1;
+                }
+            }
+        })?;
+        Ok(followed)
+    }
+
     /// Notes what the person chose for one version's own things.
     pub fn note_choice(
         &self,

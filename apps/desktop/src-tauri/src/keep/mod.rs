@@ -84,7 +84,6 @@ use crate::{
         export::NO_ROOM,
         iso_millis, read_imported_record, read_json_capped, AppInfo, Mine, PackSource, Stop,
     },
-    settings::default_packs_folder,
 };
 
 /// The event that tells the main window of each change of the state.
@@ -254,6 +253,28 @@ const NOT_READ_HERE: &str =
     "It was not read from a site on this computer, made in Atlas here, or made by Map Maker.";
 const ARCHIVE: &str = "Its map images are one large archive file, which a pack file cannot carry.";
 
+/// What a record of another folder keeps for the folder now: the packs
+/// whose file is in it as it was written or seen (the same `exportedAt`),
+/// as when the packs folder moved with its files, at their place now. A
+/// pack is known by its id wherever its file lies, so a file that moved is
+/// not written again as a new pack. The others are dropped: a pack whose
+/// file stayed in the old folder is not one the person removed from this
+/// folder, so it is written there as a new one.
+fn carried_over(packs: BTreeMap<String, Written>, found: &Found) -> BTreeMap<String, Written> {
+    packs
+        .into_iter()
+        .filter_map(|(id, written)| {
+            let copy = found
+                .copies
+                .get(&id)?
+                .iter()
+                .find(|copy| copy.header.exported_at == written.exported_at)?;
+            let path = copy.path.clone();
+            Some((id, Written { path, ..written }))
+        })
+        .collect()
+}
+
 /// The games of the maps folder: those read from sites on this computer,
 /// made in the app here or put there by Map Maker, and the others with why
 /// they are left out (a game that comes with the app, one imported from a
@@ -321,8 +342,7 @@ type Rename = Box<dyn Fn(&Path, &Path) -> std::io::Result<()> + Send + Sync>;
 /// What the keeper shares between its thread and the commands.
 struct Inner {
     store: Store,
-    /// The folder of the shared settings, beside which the packs folder is.
-    shared_dir: PathBuf,
+    /// The Library, which says where the packs folder is now.
     library: Arc<Library>,
     downloads: Downloads,
     app: AppInfo,
@@ -406,10 +426,25 @@ pub fn reading() {
     }
 }
 
+/// The packs folder is about to change: a run under way stops, so nothing
+/// is written into the old folder while its files move.
+pub fn packs_folder_changing() {
+    if let Some(keeper) = KEEPER.get() {
+        keeper.cancel();
+    }
+}
+
+/// The packs folder changed from `old`: packs are written into the new one
+/// from now on, when no other folder was chosen.
+pub fn packs_folder_changed(old: &Path) {
+    if let Some(keeper) = KEEPER.get() {
+        keeper.packs_folder_changed(old);
+    }
+}
+
 /// What a keeper needs from the app.
 pub struct Parts {
     pub app_data: PathBuf,
-    pub shared_dir: PathBuf,
     pub library: Arc<Library>,
     pub downloads: Downloads,
     pub app: AppInfo,
@@ -430,7 +465,18 @@ impl Keeper {
 
     fn start_with(parts: Parts, rename: Rename) -> Arc<Self> {
         let store = Store::new(&parts.app_data);
-        let setting = store.read_setting();
+        let mut setting = store.read_setting();
+        if setting
+            .folder
+            .as_ref()
+            .is_some_and(|folder| same_path(folder, &parts.library.packs_folder()))
+        {
+            // A folder chosen that is the packs folder follows it from now on.
+            setting.folder = None;
+            if let Err(error) = store.write_setting(&setting) {
+                activity::warn(Area::Library, format!("Keeping packs up to date: {error}"));
+            }
+        }
         let record = if setting.on {
             store.read_record()
         } else {
@@ -438,7 +484,6 @@ impl Keeper {
         };
         let inner = Arc::new(Inner {
             store,
-            shared_dir: parts.shared_dir,
             library: parts.library,
             downloads: parts.downloads,
             app: parts.app,
@@ -532,6 +577,35 @@ impl Keeper {
         Ok(self.inner.changed_status())
     }
 
+    /// See [`packs_folder_changed`]. A folder chosen that was the old
+    /// packs folder follows the packs folder from now on; any other folder
+    /// chosen stays as it is.
+    pub fn packs_folder_changed(&self, old: &Path) {
+        let setting = self.setting();
+        if setting
+            .folder
+            .as_ref()
+            .is_some_and(|folder| same_path(folder, old))
+        {
+            let _ = self.set(Setting {
+                folder: None,
+                ..setting
+            });
+            return;
+        }
+        if setting.folder.is_none() {
+            activity::info(
+                Area::Library,
+                format!(
+                    "Keeping packs up to date: the packs folder is now {}",
+                    self.folder().display()
+                ),
+            );
+            self.signal(Signal::Setting);
+        }
+        self.inner.changed_status();
+    }
+
     /// "Write all packs now".
     pub fn write_all(&self) -> Status {
         self.inner.cancel.store(false, Ordering::SeqCst);
@@ -566,11 +640,13 @@ impl Drop for Keeper {
 }
 
 impl Inner {
+    /// The folder packs go to: the one chosen, else the packs folder as
+    /// the shared settings say now, so packs follow a change of it.
     fn folder_of(&self, setting: &Setting) -> PathBuf {
         setting
             .folder
             .clone()
-            .unwrap_or_else(|| default_packs_folder(&self.shared_dir))
+            .unwrap_or_else(|| self.library.packs_folder())
     }
 
     fn status(&self) -> Status {
@@ -908,8 +984,8 @@ impl Loop {
         }
         let folder = inner.folder_of(&setting);
         if setting.folder.is_none() {
-            // The packs folder is this app's own to make.
-            let _ = fs::create_dir_all(&folder);
+            // The default packs folder is this app's own to make.
+            let _ = inner.library.ensure_packs_folder();
         }
         if !folder.is_dir() {
             return Err(format!(
@@ -924,28 +1000,30 @@ impl Loop {
                 folder.display()
             ));
         }
+        let found = folder::look(&folder, &mut self.cache);
         let mut record = inner.store.read_record();
         if !record
             .folder
             .as_ref()
             .is_some_and(|recorded| same_path(recorded, &folder))
         {
-            if record.folder.is_some() || !record.packs.is_empty() {
+            let packs = carried_over(record.packs, &found);
+            if record.folder.is_some() {
                 activity::info(
                     Area::Library,
                     format!(
-                        "Keeping packs up to date: the record was of another folder, so it starts again for {}",
-                        folder.display()
+                        "Keeping packs up to date: the record was of another folder, so it starts again for {}, keeping {} packs found there as they were written",
+                        folder.display(),
+                        packs.len()
                     ),
                 );
             }
             record = Record {
                 folder: Some(folder.clone()),
                 last_check_at: None,
-                packs: BTreeMap::new(),
+                packs,
             };
         }
-        let found = folder::look(&folder, &mut self.cache);
         for removed in folder::clear_leftovers(&found.parts, SystemTime::now()) {
             activity::info(
                 Area::Library,

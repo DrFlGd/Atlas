@@ -210,6 +210,30 @@ export interface MockShell {
     /** What the person saved with "Save the guide…" and "Save the schema…". */
     saved: { what: string; contents: string }[];
   };
+  /**
+   * The packs folder under "Games in other folders", as the shell's
+   * `library/packsfolder.rs` answers it; listed only when `setUp` asks for
+   * it (`packsFolder`).
+   */
+  packsFolder: {
+    path: string;
+    isDefault: boolean;
+    /** The folder is there (not on a drive that is not connected). */
+    exists: boolean;
+    /** The default packs folder. */
+    defaultPath: string;
+    /** The pack files in it, and their size in bytes. */
+    files: number;
+    bytes: number;
+    /** The folder the person chooses in the next folder dialog, or null (they close it). */
+    pick: string | null;
+    /** The next choice is refused with this sentence, if set. */
+    refuse: string | null;
+    /** The pack files the next move leaves in the old folder, each with why. */
+    left: { path: string; reason: string }[];
+    /** The commands called, with their arguments, in order. */
+    calls: string[];
+  };
   /** Settings, "Keep packs for Game Repo up to date" (a build with downloads). */
   keptPacks: {
     /** What `kept_packs_status` answers (`KeptPacksStatus`). */
@@ -270,6 +294,7 @@ function installFakeShell({
   others,
   listed,
   background,
+  packsFolder,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
@@ -277,6 +302,7 @@ function installFakeShell({
   others: Record<string, WikiSite>;
   listed: Record<string, unknown>[];
   background: boolean;
+  packsFolder: boolean;
 }) {
   const shell: MockShell = {
     events: [],
@@ -290,6 +316,18 @@ function installFakeShell({
     styleTexts: {},
     reports: [],
     sites: { files: {}, switches: { on: {}, off: [] }, pick: null, page: null, saved: [] },
+    packsFolder: {
+      path: '/home/test/.local/share/atlas/packs',
+      isDefault: true,
+      exists: true,
+      defaultPath: '/home/test/.local/share/atlas/packs',
+      files: 2,
+      bytes: 3_400_000,
+      pick: null,
+      refuse: null,
+      left: [],
+      calls: [],
+    },
     keptPacks: {
       status: {
         on: false,
@@ -363,8 +401,41 @@ function installFakeShell({
           : [],
       ),
     );
+  /** The packs folder the person picked and has not confirmed yet. */
+  let pendingPacksFolder: string | null = null;
+  /** What changing the packs folder to `path` would do, or the sentence that refuses it. */
+  const packsFolderChoice = (path: string) => {
+    const folder = shell.packsFolder;
+    if (folder.refuse) {
+      const refusal = folder.refuse;
+      folder.refuse = null;
+      // Tauri rejects with the command's error value, a string.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw refusal;
+    }
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    if (path === folder.path) throw 'That is the packs folder already.';
+    pendingPacksFolder = path;
+    return {
+      path,
+      current: folder.path,
+      isDefault: path === folder.defaultPath,
+      files: folder.files,
+      bytes: folder.bytes,
+      sameDrive: !path.startsWith('/media/'),
+    };
+  };
   const listing = () => ({
     mapsFolder: { path: '/maps', isDefault: true, exists: true },
+    ...(packsFolder
+      ? {
+          packsFolder: {
+            path: shell.packsFolder.path,
+            exists: shell.packsFolder.exists,
+            isDefault: shell.packsFolder.isDefault,
+          },
+        }
+      : {}),
     packs: structuredClone(packs),
     hidden: [],
     locations: [],
@@ -640,6 +711,37 @@ function installFakeShell({
       }
       case 'library_list':
         return listing();
+      case 'library_choose_packs_folder': {
+        const folder = shell.packsFolder;
+        folder.calls.push(command);
+        const picked = folder.pick;
+        folder.pick = null;
+        return picked === null ? null : packsFolderChoice(picked);
+      }
+      case 'library_default_packs_folder':
+        shell.packsFolder.calls.push(command);
+        return packsFolderChoice(shell.packsFolder.defaultPath);
+      case 'library_apply_packs_folder': {
+        const folder = shell.packsFolder;
+        const moveFiles = args.moveFiles === true;
+        folder.calls.push(`${command} ${moveFiles ? 'move' : 'leave'}`);
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (pendingPacksFolder === null) throw 'Choose the new folder first.';
+        const target = pendingPacksFolder;
+        pendingPacksFolder = null;
+        const left = moveFiles ? folder.left : [];
+        const moved = moveFiles ? folder.files - left.length : 0;
+        folder.path = target;
+        folder.isDefault = target === folder.defaultPath;
+        folder.files = moved;
+        folder.left = [];
+        return {
+          folder: target,
+          moved,
+          renamed: moved > 1 ? [{ from: 'a.atlaspack', to: `${target}/a (2).atlaspack` }] : [],
+          left,
+        };
+      }
       case 'import_open':
         current = {
           url: args.url as string,
@@ -943,6 +1045,7 @@ export async function setUp(
     others = null,
     listed = [],
     background = false,
+    packsFolder = false,
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -951,6 +1054,8 @@ export async function setUp(
     listed?: Record<string, unknown>[];
     /** The shell offers "Atlas in the background" (the app without downloads on Windows). */
     background?: boolean;
+    /** The shell lists the packs folder, which can be changed (see {@link MockShell.packsFolder}). */
+    packsFolder?: boolean;
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -1028,6 +1133,7 @@ export async function setUp(
     others: others ?? {},
     listed,
     background,
+    packsFolder,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
@@ -1083,6 +1189,15 @@ export const pickSavedPage = (page: Page, saved: { name: string; text: string })
   page.evaluate((saved) => {
     (window as unknown as { __mockShell: MockShell }).__mockShell.sites.page = saved;
   }, saved);
+
+/** Changes the stand-in of the packs folder (see {@link MockShell.packsFolder}). */
+export const setPacksFolder = (page: Page, change: Partial<MockShell['packsFolder']>) =>
+  page.evaluate((change) => {
+    Object.assign(
+      (window as unknown as { __mockShell: MockShell }).__mockShell.packsFolder,
+      change,
+    );
+  }, change);
 
 /** The folder the person chooses in the next folder dialog of the kept packs, and the games listed. */
 export const setKeptPacks = (

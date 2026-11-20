@@ -239,6 +239,9 @@ describe('desktop bridge', () => {
     });
     await bridge.library.reveal({ kind: 'pack', id: 'demo' });
     await bridge.library.applyMapsFolder(true);
+    await bridge.library.choosePacksFolder();
+    await bridge.library.defaultPacksFolder();
+    await bridge.library.applyPacksFolder(false);
     await bridge.library.importSources('demo', 'demo-maps');
     await bridge.library.importSourceList('demo', 'demo-maps');
     await bridge.library.importSource('demo', 'demo-maps', 'east-field');
@@ -314,6 +317,9 @@ describe('desktop bridge', () => {
       ],
       ['library_reveal', { target: { kind: 'pack', id: 'demo' } }],
       ['library_apply_maps_folder', { movePacks: true }],
+      ['library_choose_packs_folder', undefined],
+      ['library_default_packs_folder', undefined],
+      ['library_apply_packs_folder', { moveFiles: false }],
       ['library_import_sources', { packId: 'demo', importerId: 'demo-maps' }],
       ['library_import_source_list', { packId: 'demo', importerId: 'demo-maps' }],
       ['library_import_source', { packId: 'demo', importerId: 'demo-maps', key: 'east-field' }],
