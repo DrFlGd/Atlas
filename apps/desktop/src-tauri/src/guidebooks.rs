@@ -5,8 +5,8 @@
 //! pack protocol, and lists them with the guides of their game (see
 //! `apps/web/src/state/guidebooks.ts`).
 //!
-//! **Add a guidebook…** (desktop only) is for a person without Game Repo,
-//! the app that sends guidebooks with their text: the person picks a PDF or
+//! **Add a guidebook…** (desktop only) is for a person with no other app
+//! that sends guidebooks with their text: the person picks a PDF or
 //! CBZ file ([`guidebook_pick`]), which the pack protocol then serves at an
 //! address of its own (`_picked/<token>/<name>`, see `packs.rs`) so the
 //! web app reads its pages and the text of a PDF with pdf.js; the web app
@@ -21,7 +21,7 @@
 //! without it, or deletes the pack file when it was the last one.
 //!
 //! Atlas changes only the guidebook packs it wrote itself: their manifest's
-//! `writtenBy.name` is [`WRITTEN_BY`]. A pack Game Repo or another app
+//! `writtenBy.name` is [`WRITTEN_BY`]. A pack another app
 //! wrote is never changed, as no other pack file is.
 
 use std::{

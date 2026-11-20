@@ -63,7 +63,7 @@ fn library(dir: &Path) -> Library {
 /// A pack of guidebooks another app wrote, in the packs folder.
 fn other_apps_pack(library: &Library, id: &str, file: &Path) -> std::path::PathBuf {
     let folder = library.ensure_packs_folder().unwrap();
-    let target = folder.join("Hollow Marsh - Game Repo.atlaspack");
+    let target = folder.join("Hollow Marsh - Other App.atlaspack");
     let mut book = NewGuidebook {
         file: file.to_owned(),
         title: "Official Guide".into(),
@@ -76,7 +76,7 @@ fn other_apps_pack(library: &Library, id: &str, file: &Path) -> std::path::PathB
             pack_id: id.into(),
             game_title: "Hollow Marsh".into(),
             written_by: AppInfo {
-                name: "Game Repo".into(),
+                name: "Other App".into(),
                 version: "2.0.0".into(),
                 platform: "windows".into(),
             },
@@ -126,7 +126,7 @@ fn lists_a_pack_of_guidebooks_and_serves_its_guidebooks_in_parts() {
         .find(|pack| pack.id == "guidebooks-1234")
         .unwrap();
     assert!(pack.pack_file && pack.guidebooks);
-    // Game Repo wrote it: Atlas does not change it.
+    // Another app wrote it: Atlas does not change it.
     assert!(!pack.guidebooks_by_atlas);
     assert_eq!(pack.title, "Hollow Marsh");
     let listed = serde_json::to_value(pack).unwrap();
@@ -176,7 +176,7 @@ fn refuses_a_pack_whose_guidebook_is_deflated_or_not_its_size() {
             "format": "atlas-pack-file", "version": 8, "packId": format!("guidebooks-{name}"),
             "title": "Hollow Marsh", "packVersion": "1.0.0", "detail": "full",
             "exportedAt": "2026-11-19T09:30:00Z",
-            "exportedBy": {"name": "Game Repo", "version": "2.0.0", "platform": "windows"},
+            "exportedBy": {"name": "Other App", "version": "2.0.0", "platform": "windows"},
             "pack": {"id": format!("guidebooks-{name}"), "title": "Hollow Marsh", "packVersion": "1.0.0",
                      "schemaVersion": 2, "attribution": []},
             "source": {"kind": "unknown", "origin": "guidebooks"},
@@ -244,7 +244,7 @@ fn imports_a_pack_of_guidebooks_into_a_folder_as_the_android_app_does() {
         .is_file());
     let head = crate::manifest::read_head(&imported.folder).unwrap();
     assert!(head.guidebooks);
-    assert_eq!(head.written_by.as_deref(), Some("Game Repo"));
+    assert_eq!(head.written_by.as_deref(), Some("Other App"));
     assert_eq!(head.title, "Hollow Marsh");
 }
 

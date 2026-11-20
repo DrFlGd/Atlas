@@ -460,7 +460,7 @@ fn header_v8() -> Value {
         "packVersion": "1.0.0",
         "detail": "full",
         "exportedAt": "2026-11-19T09:30:00Z",
-        "exportedBy": {"name": "Game Repo", "version": "2.0.0", "platform": "windows"},
+        "exportedBy": {"name": "Other App", "version": "2.0.0", "platform": "windows"},
         "pack": {"id": "guidebooks-hollow-marsh", "title": "Hollow Marsh", "packVersion": "1.0.0",
                  "schemaVersion": 2, "attribution": []},
         "source": {"kind": "unknown", "origin": "guidebooks"},
@@ -567,7 +567,7 @@ fn checks_the_guidebooks_a_description_lists() {
     assert_eq!(refusal.kind(), RefusalKind::NewerFormat);
     assert_eq!(
         refusal.what(),
-        "This pack file was made by Game Repo 2.0.0 in a newer format (version 9)."
+        "This pack file was made by Other App 2.0.0 in a newer format (version 9)."
     );
 }
 
