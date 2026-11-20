@@ -463,12 +463,6 @@ const PAN_PX_PER_S = 900;
 /** How fast a trigger pressed fully zooms, in zoom levels a second. */
 const ZOOM_PER_S = 2;
 
-/** What a gamepad shows now: the direction held, if any, and the buttons pressed. */
-export interface PadState {
-  direction: Direction | null;
-  pressed: ReadonlySet<number>;
-}
-
 /** The direction the D-pad or the left stick holds, if any. */
 export function padDirection(
   axes: readonly number[],
