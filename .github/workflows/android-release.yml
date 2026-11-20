@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.25.0
+
+          - **Guidebooks.** A pack file of guidebooks (a published guide as a PDF or a CBZ) opens with **Import pack file…** like any pack file. Its guidebooks are listed with the game's other guides, open over the whole screen with page turning, zoom with two fingers, the PDF's own **Contents** and **Find**, and their pages show in search. Guidebooks are added on Windows only.
+
           ## New in 0.24.0
 
           Nothing changes in what you see in this release. The app keeps the same version number as Atlas for Windows, which can now stay ready beside a game.
