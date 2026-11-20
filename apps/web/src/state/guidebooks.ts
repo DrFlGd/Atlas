@@ -380,7 +380,7 @@ function gameToAddTo(gameId: string): string {
   return mine?.id ?? gameId;
 }
 
-/** "Add a guidebook…": asks for the file, then for its title (see `GuidebookDialogs.tsx`). */
+/** "Add a guidebook…": asks for the file, then for its title (see `guidebook/Guidebooks.tsx`). */
 export async function startAddingGuidebook(gameId: string, gameTitle: string): Promise<void> {
   if (!desktop || get().adding || get().busy) return;
   set({ busy: true });
@@ -477,7 +477,7 @@ async function taken(changed: GuidebooksChanged): Promise<void> {
   notify(changed.message);
 }
 
-/** "Remove this guidebook…": asks first (see `GuidebookDialogs.tsx`). */
+/** "Remove this guidebook…": asks first (see `guidebook/Guidebooks.tsx`). */
 export function askToRemoveGuidebook(guidebook: Guidebook | null): void {
   set({ removing: guidebook });
 }
