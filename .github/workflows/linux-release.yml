@@ -69,7 +69,7 @@ jobs:
       - name: Install Linux system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+          sudo apt-get install -y gdb libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev file xvfb imagemagick
           echo "WebKitGTK $(pkg-config --modversion webkit2gtk-4.1), GTK $(pkg-config --modversion gtk+-3.0)"
           ldd --version | head -n 1
@@ -198,11 +198,38 @@ jobs:
           set -u
           "./release/$ASSET" > test-results/linux-start.out 2>&1 &
           pid=$!
-          sleep 20
+          # GTK may wait up to 25 seconds at start for a desktop service on
+          # the session bus that does not answer on this machine (seen in a
+          # stack of the main thread: g_application_register, then
+          # g_dbus_proxy_new_sync). So wait for the web view's process for up
+          # to 60 seconds, and say how long it took.
+          waited=0
+          while [ "$waited" -lt 60 ] && ! pgrep -f WebKitWebProcess > /dev/null; do
+            if ! kill -0 "$pid" 2> /dev/null; then
+              echo "::error::Atlas ended after $waited seconds"
+              exit 1
+            fi
+            sleep 1
+            waited=$((waited + 1))
+          done
+          echo "The web view's process was running after $waited seconds." | tee test-results/linux-start-seconds.txt
+          if [ "$waited" -gt 10 ]; then
+            echo "::warning::Atlas took $waited seconds to start its web view here"
+          fi
+          sleep 10
           import -window root test-results/linux-start.png || true
-          ps -eo pid,args | grep -i '[W]ebKit' | tee test-results/linux-webkit.txt
+          ps -eo pid,args | grep '[W]ebKitWebProcess' | tee test-results/linux-webkit.txt
+          if ! grep -q WebKitWebProcess test-results/linux-webkit.txt; then
+            # Where Atlas waits when its web view has not started: every
+            # process under the AppImage, and the stack of each thread.
+            ps -ef --forest | tee test-results/linux-processes.txt
+            for p in $(pgrep -f atlas-desktop); do
+              sudo gdb -p "$p" -batch -ex 'thread apply all bt 25' > "test-results/linux-stack-$p.txt" 2>&1 || true
+              grep -E '^(Thread|#)' "test-results/linux-stack-$p.txt" | head -n 200
+            done
+          fi
           if ! kill -0 "$pid" 2> /dev/null; then
-            echo "::error::Atlas ended within 20 seconds"
+            echo "::error::Atlas ended after it started"
             exit 1
           fi
           kill "$pid"
