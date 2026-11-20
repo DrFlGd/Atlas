@@ -54,7 +54,7 @@ async function openKeptPacks(page: Page) {
 const row = (page: Page, id: string) =>
   page.locator(`[data-testid="kept-pack-row"][data-id="${id}"]`);
 
-test('turns on with a folder chosen in the dialog, lists each game and writes one again', async ({
+test('turns on in the packs folder or in a folder chosen in the dialog, lists each game and writes one again', async ({
   page,
 }) => {
   const errors = collectErrors(page);
