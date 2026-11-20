@@ -44,17 +44,18 @@ export function KeptPacks() {
       <p className="muted small">
         Game Repo, another app, reads pack files from its Maps and Guides folder. With this on,
         Atlas writes a pack file of each map and wiki read from a site on this computer, each map
-        you made in Atlas here and each map Map Maker made into the folder you choose, and writes it
-        again when it changes: once a session, an update or a download of its map images or photos
-        is finished, once you change a map you made or your own things of it, at each start, and
-        daily or weekly if you choose. A pack file of the game already in the folder, in any folder
-        inside it and under any name, is replaced where it lies; a new one goes into the folder “No
-        game yet”. Atlas never moves, renames or deletes anything else there. A pack file you delete
-        stays deleted until you press Write again, and one that is newer than this computer’s copy,
-        written on another computer, is left as it is. Each pack file carries every map image on
-        this computer and the photos kept for your own use. Only the pack file of a map you made in
-        Atlas carries your own lists, locations, notes and pages of it; one of a map read from a
-        site or made by Map Maker never does.
+        you made in Atlas here and each map Map Maker made into the packs folder, the folder Atlas
+        reads pack files from (see Games in other folders), or into another folder you choose, and
+        writes it again when it changes: once a session, an update or a download of its map images
+        or photos is finished, once you change a map you made or your own things of it, at each
+        start, and daily or weekly if you choose. A pack file of the game already in the folder, in
+        any folder inside it and under any name, is replaced where it lies; a new one goes into the
+        folder “No game yet”. Atlas never moves, renames or deletes anything else there. A pack file
+        you delete stays deleted until you press Write again, and one that is newer than this
+        computer’s copy, written on another computer, is left as it is. Each pack file carries every
+        map image on this computer and the photos kept for your own use. Only the pack file of a map
+        you made in Atlas carries your own lists, locations, notes and pages of it; one of a map
+        read from a site or made by Map Maker never does.
       </p>
       {status ? (
         <>
@@ -68,11 +69,7 @@ export function KeptPacks() {
                 disabled={pending}
                 aria-label={`Keep packs up to date: ${status.on ? 'on' : 'off'}`}
                 onChange={(event) => {
-                  if (event.target.checked && !status.folderChosen) {
-                    void chooseKeptPacksFolder();
-                  } else {
-                    void setKeptPacks(event.target.checked, status.schedule);
-                  }
+                  void setKeptPacks(event.target.checked, status.schedule);
                 }}
               />
               <span className="switch-track" aria-hidden="true" />
@@ -81,7 +78,9 @@ export function KeptPacks() {
           </div>
           <p className="path" data-testid="kept-packs-folder">
             {status.folder}
-            {status.folderIsDefault ? <span className="badge">Default</span> : null}
+            {status.folderIsDefault ? (
+              <span className="badge">Default: the packs folder</span>
+            ) : null}
           </p>
           <div className="row-actions wrap">
             <button
