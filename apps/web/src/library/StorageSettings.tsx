@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { FolderChoice, LocationInfo, OpenedFileInfo } from '../desktop';
+import type {
+  FolderChoice,
+  LocationInfo,
+  OpenedFileInfo,
+  PacksFolderChanged,
+  PacksFolderChoice,
+} from '../desktop';
 import { downloadsOffered, readsPackFilesOnly } from '../features';
 import { notify } from '../state/actions';
 import { loadDownloadSettings } from '../state/downloads';
@@ -17,6 +23,14 @@ import { useAtlas } from '../state/store';
 import { DownloadSettingsSection } from '../components/DownloadSettings';
 import { openActivityLog } from '../state/activityLog';
 import { pickPackFile } from '../state/packFile';
+import {
+  applyPacksFolder,
+  choosePacksFolder,
+  defaultPacksFolder,
+  packsFolderChangeable,
+  packsFolderFacts,
+  packsFolderQuestion,
+} from '../state/packsFolder';
 
 /**
  * The settings that were in the Maps dialog: where maps are kept, map
@@ -258,40 +272,7 @@ export function Locations() {
           : 'Look again reads every folder again, for games another Atlas app added meanwhile.'}
       </p>
       <OpenedFiles files={library.openedFiles ?? []} />
-      {library.packsFolder ? (
-        <div data-testid="packs-folder">
-          <p className="muted small">
-            Pack files (.atlaspack) in the packs folder, and in the folders you added with Add a
-            folder of games, are read where they are, without importing them. Atlas never changes,
-            moves or deletes a pack file.
-            {reader
-              ? ' Add a pack file copies one into the packs folder; you can also put pack files there yourself, or open one from your file manager.'
-              : ''}{' '}
-            Packs folder: <span className="path-inline">{library.packsFolder.path}</span>
-          </p>
-          <div className="row-actions wrap">
-            {reader ? (
-              <button
-                type="button"
-                className="button"
-                data-testid="settings-add-pack-file"
-                onClick={() => void pickPackFile()}
-              >
-                Add a pack file…
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="button"
-              onClick={() => {
-                reveal({ kind: 'packs-folder' });
-              }}
-            >
-              Open packs folder
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {library.packsFolder ? <PacksFolder folder={library.packsFolder} reader={reader} /> : null}
       {library.unreadable && library.unreadable.length > 0 ? (
         <div className="download-note" data-testid="unreadable-pack-files">
           <p>
@@ -321,6 +302,185 @@ export function Locations() {
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The packs folder, under Games in other folders: what it is, Add a pack
+ * file… (the app without downloads) and Open packs folder, and on a
+ * desktop Change packs folder… and Use the default folder, each with the
+ * question before anything changes (see `state/packsFolder.ts`).
+ */
+function PacksFolder({
+  folder,
+  reader,
+}: {
+  folder: { path: string; exists: boolean; isDefault?: boolean };
+  reader: boolean;
+}) {
+  const changeable = useAtlas(packsFolderChangeable);
+  const downloads = useAtlas(downloadsOffered);
+  const [choice, setChoice] = useState<PacksFolderChoice | null>(null);
+  const [working, setWorking] = useState<'move' | 'leave' | null>(null);
+  const [left, setLeft] = useState<PacksFolderChanged['left']>([]);
+  const apply = (moveFiles: boolean) => {
+    setWorking(moveFiles ? 'move' : 'leave');
+    void applyPacksFolder(moveFiles).then((changed) => {
+      setWorking(null);
+      if (changed) {
+        setChoice(null);
+        setLeft(changed.left);
+      }
+    });
+  };
+  const ask = (asked: Promise<PacksFolderChoice | null | undefined>) => {
+    void asked.then((picked) => {
+      if (picked) {
+        setLeft([]);
+        setChoice(picked);
+      }
+    });
+  };
+  return (
+    <div data-testid="packs-folder">
+      <p className="muted small">
+        Pack files (.atlaspack) in the packs folder, and in the folders you added with Add a folder
+        of games, are read where they are, without importing them. Atlas never changes or deletes a
+        pack file, and moves one only when you change the packs folder and ask it to.
+        {reader
+          ? ' Add a pack file copies one into the packs folder; you can also put pack files there yourself, or open one from your file manager.'
+          : ''}{' '}
+        Packs folder: <span className="path-inline">{folder.path}</span>
+        {changeable && folder.isDefault ? (
+          <span className="badge" data-testid="packs-folder-default">
+            Default
+          </span>
+        ) : null}
+      </p>
+      {choice ? (
+        <div
+          className="download-confirm"
+          role="group"
+          aria-label="Use the new packs folder?"
+          data-testid="packs-folder-confirm"
+        >
+          <p>{packsFolderQuestion(choice)}</p>
+          {packsFolderFacts(choice).map((fact) => (
+            <p key={fact} className="muted small">
+              {fact}
+            </p>
+          ))}
+          <div className="row-actions wrap">
+            {choice.files > 0 ? (
+              <button
+                type="button"
+                className="button button-primary"
+                data-testid="packs-folder-move"
+                disabled={working !== null}
+                onClick={() => {
+                  apply(true);
+                }}
+              >
+                {working === 'move' ? 'Moving…' : 'Move the pack files there'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={choice.files > 0 ? 'button' : 'button button-primary'}
+              data-testid="packs-folder-leave"
+              disabled={working !== null}
+              onClick={() => {
+                apply(false);
+              }}
+            >
+              {choice.files > 0 ? 'Leave them where they are' : 'Use this folder'}
+            </button>
+            <button
+              type="button"
+              className="button"
+              data-testid="packs-folder-cancel"
+              disabled={working !== null}
+              onClick={() => {
+                setChoice(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="row-actions wrap">
+            {reader ? (
+              <button
+                type="button"
+                className="button"
+                data-testid="settings-add-pack-file"
+                onClick={() => void pickPackFile()}
+              >
+                Add a pack file…
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                reveal({ kind: 'packs-folder' });
+              }}
+            >
+              Open packs folder
+            </button>
+            {changeable ? (
+              <button
+                type="button"
+                className="button"
+                data-testid="change-packs-folder"
+                onClick={() => {
+                  ask(choosePacksFolder());
+                }}
+              >
+                Change packs folder…
+              </button>
+            ) : null}
+            {changeable && folder.isDefault === false ? (
+              <button
+                type="button"
+                className="button"
+                data-testid="default-packs-folder"
+                onClick={() => {
+                  ask(defaultPacksFolder());
+                }}
+              >
+                Use the default folder
+              </button>
+            ) : null}
+          </div>
+          {changeable ? (
+            <p className="muted small">
+              Change packs folder chooses another folder and then asks whether to move the pack
+              files there. Every Atlas app on this computer uses the same packs folder.
+              {__ATLAS_DOWNLOADS__ && downloads
+                ? ' Packs kept up to date are written into it too, unless you choose another folder for them below.'
+                : ''}
+            </p>
+          ) : null}
+        </>
+      )}
+      {left.length > 0 ? (
+        <div className="download-note" data-testid="packs-folder-left">
+          <p>
+            <strong>Pack files that stayed in the old folder:</strong>
+          </p>
+          <ul className="hidden-packs">
+            {left.map((file) => (
+              <li key={file.path}>
+                <span className="path-inline">{file.path}</span>: {file.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -44,6 +44,9 @@ function OldFoldersSection() {
   const [removing, setRemoving] = useState(false);
   const madeHereId = useId();
 
+  // The packs folder: the old folders are looked at again when it changes,
+  // as the pack files Atlas reads may be others then.
+  const packsFolder = useAtlas((s) => s.library?.packsFolder?.path);
   // Raised to look at the maps folder again.
   const [looks, setLooks] = useState(0);
   const look = useCallback(() => {
@@ -65,7 +68,7 @@ function OldFoldersSection() {
     return () => {
       run.live = false;
     };
-  }, [looks]);
+  }, [looks, packsFolder]);
 
   // Each folder measured in turn, off the page: "measuring…" until known.
   useEffect(() => {
