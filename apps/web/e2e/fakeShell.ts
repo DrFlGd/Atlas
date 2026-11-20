@@ -306,6 +306,7 @@ function installFakeShell({
   listed,
   background,
   packsFolder,
+  steamLaunch,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
@@ -314,6 +315,7 @@ function installFakeShell({
   listed: Record<string, unknown>[];
   background: boolean;
   packsFolder: boolean;
+  steamLaunch: Record<string, string> | null;
 }) {
   const shell: MockShell = {
     events: [],
@@ -671,10 +673,11 @@ function installFakeShell({
         return {
           name: 'Atlas',
           version: '0.0.0',
-          platform: 'test',
+          platform: steamLaunch ? 'linux' : 'test',
           downloads,
           sites: downloads,
           ...(background ? { background: true } : {}),
+          ...(steamLaunch ? { steamLaunch } : {}),
         };
       case 'background_state':
       case 'background_set':
@@ -1089,6 +1092,7 @@ export async function setUp(
     background = false,
     packsFolder = false,
     served = {},
+    steamLaunch = null,
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -1099,6 +1103,11 @@ export async function setUp(
     background?: boolean;
     /** The shell lists the packs folder, which can be changed (see {@link MockShell.packsFolder}). */
     packsFolder?: boolean;
+    /**
+     * The shell runs on Linux and gives the Steam launch line it built
+     * (`DesktopInfo::steam_launch`, see the shell's `linux.rs`).
+     */
+    steamLaunch?: Record<string, string> | null;
     /**
      * Files the pack protocol serves, by pack id (or `_picked/<token>`) and
      * name, read in parts as the shell serves them (`Range`, `206`).
@@ -1185,6 +1194,7 @@ export async function setUp(
     listed,
     background,
     packsFolder,
+    steamLaunch,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');

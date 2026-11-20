@@ -304,6 +304,8 @@ jobs:
                   bash -c '"$HOME/Applications/Atlas.AppImage" --background & exec "$@"' -- %command%
 
              It starts Atlas from your Applications folder, without bringing it in front, and then starts the game as before, so that Steam counts Atlas as part of the game.
+
+             The same line is in Atlas too: open **Settings** in Atlas and find **Start Atlas with a game in Steam**. There the line already names the file Atlas runs from, wherever you keep it, and **Copy** puts it on the clipboard, so you can paste it into Launch Options without typing it.
           4. Go back to Game Mode and start that game. Atlas starts at the same time. The game should come up in front of it.
           5. Press the Steam button. Steam may list the game's windows there: choose Atlas to switch to it, and the game's own window to switch back.
           6. When you quit the game, Atlas may stay open as part of the game. If it does, press the Steam button and choose **Exit Game**, which closes both.

@@ -1,3 +1,4 @@
+import type { SteamLaunch } from './desktop';
 import type { AtlasState } from './state/store';
 
 declare global {
@@ -124,4 +125,25 @@ export function readsPackFilesOnly(state: Pick<AtlasState, 'app'>): boolean {
  */
 export function backgroundOffered(state: Pick<AtlasState, 'app'>): boolean {
   return !__ATLAS_DOWNLOADS__ && readsPackFilesOnly(state) && state.app?.background === true;
+}
+
+/**
+ * The line of Settings, "Start Atlas with a game in Steam", where it is
+ * offered: in the desktop app without downloads on Linux, whose shell
+ * builds the line (`steamLaunch`, see the shell's `linux.rs`). Null
+ * elsewhere: the Android app, Windows, a browser and the app with
+ * downloads, which does not take `--background`.
+ */
+export function steamLaunchOffered(state: Pick<AtlasState, 'app'>): SteamLaunch | null {
+  const app = state.app;
+  if (__ATLAS_DOWNLOADS__ || app?.platform !== 'linux') return null;
+  const launch = app.steamLaunch;
+  switch (launch?.state) {
+    case 'appImage':
+    case 'usual':
+    case 'refused':
+      return launch;
+    default:
+      return null;
+  }
 }

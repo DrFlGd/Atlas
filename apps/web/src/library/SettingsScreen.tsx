@@ -5,12 +5,14 @@ import { Settings } from '../touch/GamesScreen';
 import { KeptPacks } from './KeptPacks';
 import { OldFolders } from './OldFolders';
 import { SitesSettings } from './SitesSettings';
+import { SteamLaunchSettings } from './SteamLaunchSettings';
 import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './StorageSettings';
 
 /**
  * Settings, in the desktop app: the app's own (theme, layout, keys) where
  * the layout has no other place for them, where maps are saved, map packs
- * in other folders, Atlas in the background (on Windows), how fast
+ * in other folders, Atlas in the background (on Windows), starting Atlas
+ * with a game in Steam (on Linux), how fast
  * downloads go and the activity log. In the
  * standard layout it is a section of its own; in the classic layout, the
  * Library's Settings.
@@ -38,6 +40,7 @@ export function SettingsScreen({ general }: { general: boolean }) {
         <Locations />
         <OldFolders />
         <BackgroundSettings />
+        <SteamLaunchSettings />
         <DownloadSpeed />
         {__ATLAS_DOWNLOADS__ ? <SitesSettings /> : null}
         {__ATLAS_DOWNLOADS__ ? <KeptPacks /> : null}

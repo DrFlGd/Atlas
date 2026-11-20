@@ -270,6 +270,14 @@ Another app may replace a pack file while Atlas has it open, by writing a `.part
 
 **Handing a pack file to Atlas.** An app that makes pack files can put one in the packs folder (read `packsFolder` in the shared settings file to find it; absent means the default folder, see "Changing the packs folder" in `apps/desktop/README.md`), or in a folder of games the person added, and the desktop app notices it while it runs, without being told to look (see "Pack files that arrive, change or go" in `apps/desktop/README.md`). Write it as a `.part` file and rename it to its `.atlaspack` name when it is complete: a `.part` file is never read, and Atlas waits until no change came for a moment before it looks. To replace a file, rename the new one over it; the person is then told that another version of the game arrived, newer when its `pack.updated` (then its `exportedAt`) is later, and chooses when to load it. An app can also start Atlas with the path of one pack file as its only argument, as the file manager does; if Atlas is running already, that Atlas shows it.
 
+**Starting Atlas with a game in Steam (Linux).** On Linux, the plain viewer (the desktop app without downloads) keeps the full path of the AppImage it last started from as `linuxAppImage` in the same shared settings file (`$XDG_DATA_HOME/atlas/settings.json`, beside `packsFolder`). It is absent while Atlas does not know one (it never started from an AppImage, or the file it named is gone) and is never written on Windows or Android; an older Atlas that does not know it may leave it out when it writes the file, until the viewer starts again. Atlas writes it only when the line below can hold the path. An app that writes a game's Steam launch options builds this line from it, exactly, with the path where `<AppImage>` stands:
+
+```sh
+bash -c '"<AppImage>" --background & exec "$@"' -- %command%
+```
+
+The path stands in double quotes inside single quotes, so before using it the app checks again that it is a full path to an existing file and holds no `'`, `"`, `$`, backtick, `\` or control character (a line break among them), since the file can be edited; for such a path, or when `linuxAppImage` is absent, it writes the line with `$HOME/Applications/Atlas.AppImage` and tells the person to change the path if the file is elsewhere. Atlas's Settings show the same line under "Start Atlas with a game in Steam" (see "Atlas on Linux and the Steam Deck" in `apps/desktop/README.md`).
+
 ## Reading and writing pack files from another Rust app
 
 The `atlas-pack` crate, in this repository at `crates/atlas-pack`, holds what another app needs: the description's types, the format's constants, the checks above for the description and the small pictures, and bounded reads from a file. It has no app code and makes no network request. It is MIT licensed, as Atlas is.
