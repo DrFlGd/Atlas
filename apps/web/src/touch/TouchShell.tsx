@@ -77,6 +77,7 @@ import { KeysButton, SaveButton } from './DesktopTools';
 import { TouchToast } from './TouchToast';
 import { KeyHint, ProgressRing } from './widgets';
 import '../styles/touch.css';
+import '../styles/handheld.css';
 
 const PackFileDialog = lazy(() =>
   import('../components/PackFileDialog').then((module) => ({ default: module.PackFileDialog })),
@@ -108,9 +109,23 @@ declare global {
  * Everything it does goes through the app's store and actions, as the
  * classic layout does, and the desktop app's dialogs are the same ones.
  */
-export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
+export function TouchShell({
+  input = 'touch',
+  handheld = false,
+}: {
+  input?: 'touch' | 'mouse';
+  /**
+   * Made for fingers on a computer (a Steam Deck, a computer with a touch
+   * screen), not on a phone or a tablet: on a short wide screen the
+   * controls used most sit in the lower corners, where the thumbs reach
+   * with the device held in both hands (see `thumbsFor`), and every target
+   * is at least 44 pixels (`touch.css`).
+   */
+  handheld?: boolean;
+}) {
   const arrangement = useArrangement(input);
   const wide = arrangement.kind === 'wide';
+  const thumbs = handheld && input === 'touch' && thumbsFor(arrangement);
   const section = useTouch((s) => s.section);
   const game = useAtlas((s) => s.game);
   const search = useTouch((s) => s.search);
@@ -188,6 +203,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
     <div
       className="touch"
       data-input={input}
+      data-handheld={thumbs ? '' : undefined}
       data-arrangement={arrangement.kind}
       data-section={section}
       data-map={mapShown ? undefined : 'none'}
@@ -197,7 +213,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
     >
       {wide ? (
         <>
-          <Rail shown={sections} library={library} />
+          <Rail shown={sections} library={library} thumbs={thumbs} />
           {page ? (
             <div className="library-section">
               <SectionContent section={section} />
@@ -248,7 +264,7 @@ export function TouchShell({ input = 'touch' }: { input?: 'touch' | 'mouse' }) {
           {filters ? <FiltersSheet /> : null}
         </>
       )}
-      {placeShown ? <PlaceSheet wide={wide} /> : null}
+      {placeShown ? <PlaceSheet wide={wide} thumbs={thumbs} /> : null}
       {wide && editorMode !== 'edit' && !locating && !page ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
       <PackArrivalNote />
@@ -324,7 +340,16 @@ function measure(input: 'touch' | 'mouse') {
     kind: arrangementFor(width, height, input),
     panel: panelWidthFor(width, height),
     editor: editorFits(width, height, input),
+    short: height <= HANDHELD_HEIGHT,
   };
+}
+
+/** The tallest window that counts as a handheld's screen held in both hands (a Steam Deck's is 800). */
+const HANDHELD_HEIGHT = 900;
+
+/** Whether the controls go to the lower corners, for thumbs: wide and short. */
+function thumbsFor(arrangement: { kind: Arrangement; short: boolean }): boolean {
+  return arrangement.kind === 'wide' && arrangement.short;
 }
 
 /** The arrangement for the window, following rotation and resizing. */
@@ -332,13 +357,17 @@ function useArrangement(input: 'touch' | 'mouse'): {
   kind: Arrangement;
   panel: number;
   editor: boolean;
+  short: boolean;
 } {
   const [arrangement, setArrangement] = useState(() => measure(input));
   useEffect(() => {
     const onResize = () => {
       const next = measure(input);
       setArrangement((prev) =>
-        prev.kind === next.kind && prev.panel === next.panel && prev.editor === next.editor
+        prev.kind === next.kind &&
+        prev.panel === next.panel &&
+        prev.editor === next.editor &&
+        prev.short === next.short
           ? prev
           : next,
       );
@@ -653,12 +682,16 @@ function BottomBar({ shown, library }: { shown: Shown; library: boolean }) {
   );
 }
 
-function Rail({ shown, library }: { shown: Shown; library: boolean }) {
+/**
+ * The rail of sections. For thumbs (see `thumbsFor`) the sections are at
+ * its foot, in the lower left corner, and the profile and the other tools
+ * at its head.
+ */
+function Rail({ shown, library, thumbs }: { shown: Shown; library: boolean; thumbs: boolean }) {
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
-  return (
-    <nav className="touch-rail" aria-label="Sections">
-      <SectionButtons shown={shown} className="touch-rail-button" library={library} />
-      <span className="touch-rail-space" />
+  const sections = <SectionButtons shown={shown} className="touch-rail-button" library={library} />;
+  const tools = (
+    <>
       <KeysButton />
       <SaveButton />
       <button
@@ -673,6 +706,13 @@ function Rail({ shown, library }: { shown: Shown; library: boolean }) {
       >
         <UiIcon name="user" size={20} />
       </button>
+    </>
+  );
+  return (
+    <nav className="touch-rail" aria-label="Sections">
+      {thumbs ? tools : sections}
+      <span className="touch-rail-space" />
+      {thumbs ? sections : tools}
     </nav>
   );
 }

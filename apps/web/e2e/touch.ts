@@ -82,3 +82,28 @@ export async function pressAndHold(page: Page, point: { x: number; y: number }):
 export function back(page: Page): Promise<boolean> {
   return page.evaluate(() => (window as unknown as { atlasBack(): boolean }).atlasBack());
 }
+
+/**
+ * Makes the page's pointer look like a Steam Deck's to the app: a touch
+ * screen (the context's `hasTouch`) whose system still reports a mouse
+ * (its trackpads), so `(hover: none) and (pointer: coarse)` does not
+ * match. Chromium with touch emulated reports a coarse pointer only.
+ */
+export async function reportMouse(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const real = window.matchMedia.bind(window);
+    window.matchMedia = (query: string) => {
+      const answer = real(query);
+      if (!/pointer|hover/.test(query)) return answer;
+      const matches = /\(hover: none\)|\(pointer: coarse\)/.test(query) ? false : answer.matches;
+      // The answer, with its own methods bound to it, but for `matches`.
+      return new Proxy(answer, {
+        get: (target, key) => {
+          if (key === 'matches') return matches;
+          const value: unknown = Reflect.get(target, key, target);
+          return typeof value === 'function' ? (value as () => unknown).bind(target) : value;
+        },
+      });
+    };
+  });
+}

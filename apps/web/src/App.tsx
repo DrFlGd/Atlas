@@ -33,7 +33,7 @@ import { initSaves } from './state/saves';
 import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
 import { inputFor } from './touch/controls';
 import { followControls, screenFacts, startControls } from './touch/followControls';
-import { requestedUi, sessionStore, shownUi } from './touch/uiMode';
+import { coarsePointer, requestedUi, sessionStore, shownUi } from './touch/uiMode';
 import { formatViewHash, parseViewHash } from './viewHash';
 
 // The standard layout (src/touch/): loaded only where it is shown, so the
@@ -67,8 +67,14 @@ const PackFileDialog = lazy(() =>
 export function App() {
   const status = useAtlas((s) => s.status);
   const game = useAtlas((s) => s.game);
+  const [coarse] = useState(coarsePointer);
   const touch = useAtlas((s) => shownOf(s).layout === 'standard');
   const input = useAtlas((s) => shownOf(s).input);
+  // The version for fingers on a computer (a Steam Deck, a computer with a
+  // touch screen), not on a phone or a tablet, nor as the address asked.
+  const handheld = useAtlas(
+    (s) => input === 'touch' && !coarse && !touchUiOffered(s) && s.uiRequest !== 'touch',
+  );
   // What the standard layout is made for, by the setting "Controls": the
   // start decided again once the shell says which system it runs on.
   const platform = useAtlas((s) => s.app?.platform ?? null);
@@ -166,7 +172,7 @@ export function App() {
           </main>
         }
       >
-        <TouchShell key={input} input={input} />
+        <TouchShell key={input} input={input} handheld={handheld} />
       </Suspense>
     );
   }
