@@ -24,8 +24,9 @@
 //!
 //! - **Pack files** (`.atlaspack`) are read where they lie, without an
 //!   import and without a second copy (see `packfile::inplace`): those in
-//!   the packs folder (`Packs` beside the default maps folder, see
-//!   `settings::default_packs_folder`, created when missing) and those in
+//!   the packs folder (`Packs` beside the default maps folder until the
+//!   person chooses another, see `settings::packs_folder` and
+//!   `library/packsfolder.rs`, created when missing) and those in
 //!   the folders of packs the person added, sub-folders included (another
 //!   app keeps them as `<game>/<game> - <site>.atlaspack`), but not in a
 //!   folder whose name begins with a dot, inside a pack folder, or in the
@@ -73,11 +74,15 @@ use crate::{
     packs::{is_valid_pack_id, PackKind, PackRegistry, IMPORT_DIR},
     removal::{self, FileOps, ImagesCount, ImagesDeleted, PackDeleted},
     settings::{
-        default_maps_folder, default_packs_folder, Location, LocationKind, SettingsFile,
+        default_maps_folder, packs_folder_is_default, Location, LocationKind, SettingsFile,
         SharedSettings,
     },
     tiles::images::ImagesLocation,
 };
+
+mod packsfolder;
+
+pub use packsfolder::{MovedFiles, PacksFolderChanged, PacksFolderChoice};
 
 /// A reader: the desktop app without downloads. It reads maps, wikis and
 /// guides from pack files where they lie and keeps no folder of them:
@@ -325,6 +330,9 @@ pub struct UnreadablePackFile {
 #[serde(rename_all = "camelCase")]
 pub struct PacksFolderInfo {
     pub path: String,
+    /// It is the default packs folder: none chosen, or the value in the
+    /// settings cannot be used.
+    pub is_default: bool,
     pub exists: bool,
 }
 
@@ -597,6 +605,8 @@ pub struct Library {
     legacy_dirs: Vec<PathBuf>,
     busy: Mutex<HashSet<String>>,
     pending_folder: Mutex<Option<PathBuf>>,
+    /// A packs folder the person picked and has not confirmed yet.
+    pending_packs_folder: Mutex<Option<PathBuf>>,
     /// The last scan summary written to the activity log.
     logged_scan: Mutex<String>,
     /// The pack files the last scan found, by path, with what is known of
@@ -635,6 +645,7 @@ impl Library {
             legacy_dirs,
             busy: Mutex::new(HashSet::new()),
             pending_folder: Mutex::new(None),
+            pending_packs_folder: Mutex::new(None),
             logged_scan: Mutex::new(String::new()),
             pack_files: Mutex::new(HashMap::new()),
             read_in_folders: Mutex::new(HashSet::new()),
@@ -680,10 +691,10 @@ impl Library {
         Self::maps_folder_of(&self.settings.read(), self.settings.dir())
     }
 
-    /// The folder of pack files read where they lie (see
-    /// `settings::default_packs_folder`).
+    /// The folder of pack files read where they lie, as the shared
+    /// settings say now (see `settings::packs_folder`).
     pub fn packs_folder(&self) -> PathBuf {
-        default_packs_folder(self.settings.dir())
+        self.settings.packs_folder()
     }
 
     fn maps_folder_of(settings: &SharedSettings, shared: &Path) -> PathBuf {
@@ -868,7 +879,7 @@ impl Library {
     fn look_everywhere(&self) -> Listing {
         let settings = self.settings.read();
         let maps_folder = Self::maps_folder_of(&settings, self.settings.dir());
-        let packs_folder = self.packs_folder();
+        let packs_folder = crate::settings::packs_folder(&settings, self.settings.dir());
         if let Err(error) = fs::create_dir_all(&packs_folder) {
             activity::warn(
                 Area::Library,
@@ -1086,6 +1097,7 @@ impl Library {
             },
             packs_folder: PacksFolderInfo {
                 path: packs_folder.display().to_string(),
+                is_default: packs_folder_is_default(&settings),
                 exists: packs_folder.is_dir(),
             },
             packs: shown,

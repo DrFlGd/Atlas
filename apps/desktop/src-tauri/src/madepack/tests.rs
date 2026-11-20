@@ -585,3 +585,60 @@ fn offers_the_makers_own_things_on_another_computer_once() {
     );
     assert!(crate::packfile::import::read_mine(&bad).is_err());
 }
+
+#[test]
+fn finds_its_pack_file_again_after_the_packs_folder_moved() {
+    let here = Here::new("madepack-packs-folder");
+    here.make_map();
+    let first = here.write(false).unwrap();
+    let file = PathBuf::from(&first.path);
+    let opened = here.open().unwrap();
+    let folder = opened.folder.clone();
+
+    // The packs folder moves with its files, from this app: the record of
+    // the working folder and this app's own record follow.
+    let new = here.dir.0.join("Elsewhere").join("Packs");
+    here.library.propose_packs_folder(&new).unwrap();
+    let changed = here.library.apply_packs_folder(true).unwrap();
+    assert_eq!(changed.moved, 1);
+    let moved = new.join("Ruined Keep.atlaspack");
+    assert!(moved.is_file() && !file.exists());
+    assert_eq!(here.store.follow_moves(&changed.moves), Ok(1));
+    assert_eq!(read_editing_record(&folder).unwrap().path, moved);
+    assert_eq!(here.store.read().last_written(GAME).unwrap().path, moved);
+    let plan = plan_write(&here.library, &here.store, GAME).unwrap();
+    assert_eq!(PathBuf::from(&plan.target), moved);
+    assert!(plan.replaces && plan.opened_from);
+
+    // Moved from another app, which updated neither record: the file of
+    // the same name in the packs folder now is found, when it is the same.
+    let record = read_editing_record(&folder).unwrap();
+    let write_record = |record: &super::EditingRecord| {
+        fs::write(folder.join(META_DIR).join(EDITING_RECORD), record.bytes()).unwrap();
+    };
+    write_record(&super::EditingRecord {
+        path: file.clone(),
+        ..record.clone()
+    });
+    let plan = plan_write(&here.library, &here.store, GAME).unwrap();
+    assert_eq!(PathBuf::from(&plan.target), moved);
+    assert!(plan.replaces && plan.opened_from);
+    // A file of another version under that name is not taken for the one
+    // it was opened from (the file this app wrote last is).
+    write_record(&super::EditingRecord {
+        path: file.clone(),
+        exported_at: "2020-01-01T00:00:00Z".into(),
+        ..record.clone()
+    });
+    let plan = plan_write(&here.library, &here.store, GAME).unwrap();
+    assert_eq!(PathBuf::from(&plan.target), moved);
+    assert!(plan.replaces && !plan.opened_from);
+    // Closing without writing finds it.
+    write_record(&super::EditingRecord {
+        path: file.clone(),
+        ..record
+    });
+    close_editing(&here.library, GAME).unwrap();
+    assert!(!folder.exists());
+    assert!(moved.is_file());
+}

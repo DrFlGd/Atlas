@@ -60,7 +60,7 @@ use serde::Serialize;
 use self::store::{Choice, Store, WrittenFile};
 use crate::{
     activity::{self, Area},
-    library::{is_inside, same_path, Library, META_DIR},
+    library::{is_inside, packs_in, same_path, Library, MovedFiles, META_DIR},
     manifest::{now_rfc3339, read_head, ManifestHead},
     oldfolders::{is_made_here, site_reader_here},
     packfile::{
@@ -281,6 +281,54 @@ fn usable_file(library: &Library, path: &Path, id: &str) -> Option<Header> {
     read_header(path).ok().filter(|header| header.pack_id == id)
 }
 
+/// The pack file of game `id` kept at `path`, with its description; or,
+/// when nothing is at `path` any more, the file of the same name in the
+/// packs folder now, when it is the same file (`same`): one the person
+/// moved with the packs folder from another Atlas app, which could not
+/// update this app's paths.
+fn found_file(
+    library: &Library,
+    path: &Path,
+    id: &str,
+    same: impl Fn(&Header) -> bool,
+) -> Option<(PathBuf, Header)> {
+    if let Some(there) = usable_file(library, path, id) {
+        return Some((path.to_path_buf(), there));
+    }
+    if fs::symlink_metadata(path).is_ok() {
+        return None;
+    }
+    let moved = library.packs_folder().join(path.file_name()?);
+    usable_file(library, &moved, id)
+        .filter(|there| same(there))
+        .map(|there| (moved, there))
+}
+
+/// Updates the pack file each working folder in the maps folder was
+/// opened from (`.atlas/editing.json`) when that file moved with the packs
+/// folder; how many were updated.
+pub fn follow_moved_files(maps_folder: &Path, moves: &MovedFiles) -> usize {
+    let mut followed = 0;
+    for (dir, _) in packs_in(maps_folder).0 {
+        let Some(record) = read_editing_record(&dir) else {
+            continue;
+        };
+        let Some(new) = moves.new_place(&record.path) else {
+            continue;
+        };
+        let record = EditingRecord {
+            path: new.to_path_buf(),
+            ..record
+        };
+        if crate::manifest::write_atomic(&dir.join(META_DIR).join(EDITING_RECORD), &record.bytes())
+            .is_ok()
+        {
+            followed += 1;
+        }
+    }
+    followed
+}
+
 /// Where the pack file of the map in `dir` goes (see the module).
 fn target_of(
     library: &Library,
@@ -289,24 +337,26 @@ fn target_of(
     head: &ManifestHead,
 ) -> Result<Target, String> {
     if let Some(record) = read_editing_record(dir) {
-        if let Some(there) = usable_file(library, &record.path, &head.id) {
+        let same = |there: &Header| there.exported_at == record.exported_at;
+        if let Some((path, there)) = found_file(library, &record.path, &head.id, same) {
             return Ok(Target::Replace {
                 opened: record.version(),
-                path: record.path,
+                path,
                 there: Box::new(there),
                 opened_from: true,
             });
         }
     }
     if let Some(last) = store.read().last_written(&head.id) {
-        if let Some(there) = usable_file(library, &last.path, &head.id) {
+        let same = |there: &Header| there.exported_at == last.exported_at;
+        if let Some((path, there)) = found_file(library, &last.path, &head.id, same) {
             if there.exported_at == last.exported_at {
                 return Ok(Target::Replace {
                     opened: (
                         there.pack.updated.as_deref().and_then(iso_millis),
                         iso_millis(&there.exported_at),
                     ),
-                    path: last.path.clone(),
+                    path,
                     there: Box::new(there),
                     opened_from: false,
                 });
@@ -791,7 +841,8 @@ pub fn close_editing(library: &Library, id: &str) -> Result<PackDeleted, String>
     let (dir, _) = working_folder(library, id)?;
     let record = read_editing_record(&dir)
         .ok_or_else(|| "This map was not opened for editing from a pack file, so its folder is the map itself. Write the pack file instead.".to_owned())?;
-    if usable_file(library, &record.path, id).is_none() {
+    let same = |there: &Header| there.exported_at == record.exported_at;
+    if found_file(library, &record.path, id, same).is_none() {
         return Err(format!(
             "The pack file this map was opened from, {}, is not there any more, so closing without writing would lose the map. Write the pack file instead.",
             record.path.display()
