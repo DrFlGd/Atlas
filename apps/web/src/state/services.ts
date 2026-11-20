@@ -71,6 +71,8 @@ export const SETTINGS = {
   theme: 'theme',
   /** The layout: the standard one, or the classic one (see `touch/uiMode.ts`). */
   layout: 'layout',
+  /** What the standard layout is made for: Automatic, fingers or a mouse (see `touch/controls.ts`). */
+  controls: 'controls',
   panes: 'panes',
   profile: (gameId: string) => `profile:${gameId}`,
   filters: (gameId: string) => `filters:${gameId}`,

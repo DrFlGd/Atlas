@@ -15,7 +15,8 @@ import {
   layoutChoiceOffered,
   readsPackFilesOnly,
 } from '../features';
-import { setLayout, setTheme, switchGame } from '../state/actions';
+import { setControls, setLayout, setTheme, switchGame } from '../state/actions';
+import { nowSentence, type Controls } from './controls';
 import { openActivityLog } from '../state/activityLog';
 import type { TagGroup, TaggedRow } from '../state/gameTags';
 import { loadMissingDetails } from '../state/gameFacts';
@@ -696,6 +697,7 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
           </span>
         </div>
       ) : null}
+      {layoutOffered ? <ControlsSetting /> : null}
       {offered ? (
         <button
           type="button"
@@ -762,5 +764,58 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
         </p>
       ) : null}
     </section>
+  );
+}
+
+const CONTROLS: { value: Controls; label: string }[] = [
+  { value: 'auto', label: 'Automatic' },
+  { value: 'touch', label: 'For fingers' },
+  { value: 'mouse', label: 'For a mouse' },
+];
+
+/**
+ * The setting "Controls", under the layout: what the standard layout is
+ * made for (see `controls.ts`), with what Automatic shows now and why.
+ */
+function ControlsSetting() {
+  const controls = useAtlas((s) => s.controls);
+  const auto = useAtlas((s) => s.autoInput);
+  return (
+    <div className="touch-setting-row touch-setting-row-noted" data-testid="controls-setting">
+      <span className="touch-setting-label" id="controls-label">
+        Controls
+      </span>
+      <div
+        className="touch-segmented"
+        role="group"
+        aria-labelledby="controls-label"
+        aria-describedby="controls-note"
+      >
+        {CONTROLS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            className="touch-segment"
+            aria-pressed={controls === value}
+            data-testid={`controls-${value}`}
+            onClick={() => {
+              setControls(value);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <span className="touch-switch-note touch-setting-note" id="controls-note">
+        For fingers has larger buttons and no names on hover, and you press and hold a location to
+        mark it. Automatic changes to it when you touch the screen, and back after you use only the
+        mouse for two minutes. On a phone, a tablet or a Steam Deck it stays for fingers.
+        {controls === 'auto' ? (
+          <span className="controls-now" data-testid="controls-now">
+            {nowSentence(auto)}
+          </span>
+        ) : null}
+      </span>
+    </div>
   );
 }

@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import type { LogArea } from '../activityLog';
 import type { RuntimeConfig } from '../config';
 import type { GameTableState, SaveState } from './saves';
+import type { AutoInput, Controls } from '../touch/controls';
 import type { Layout, UiRequest } from '../touch/uiMode';
 import type {
   DesktopInfo,
@@ -159,6 +160,13 @@ export interface AtlasState {
   layout: Layout;
   /** The layout the address asked for in this session, which wins over the setting; null when none. */
   uiRequest: UiRequest | null;
+  /**
+   * The setting "Controls" (see `touch/controls.ts`): what the standard
+   * layout is made for, fingers or a mouse, or Automatic.
+   */
+  controls: Controls;
+  /** What Automatic shows now, and why (see `touch/followControls.ts`). */
+  autoInput: AutoInput;
   /** Whether each side pane is open. */
   panes: Record<PaneName, boolean>;
   leftTab: LeftTab;
@@ -259,6 +267,8 @@ export const useAtlas = create<AtlasState>()(() => ({
   theme: 'dark',
   layout: 'standard',
   uiRequest: null,
+  controls: 'auto',
+  autoInput: { input: 'mouse', reason: 'mouse' },
   panes: { filters: true, details: true },
   leftTab: 'filters',
   checklistPages: [],

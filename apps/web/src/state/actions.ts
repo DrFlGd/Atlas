@@ -30,6 +30,7 @@ import {
 } from '@atlas/core';
 import { applyQueryOverrides, loadCatalog, loadRuntimeConfig } from '../config';
 import { desktop } from '../desktop';
+import { parseControls, type Controls } from '../touch/controls';
 import { forgetRequestedUi, parseLayout, sessionStore, type Layout } from '../touch/uiMode';
 import type { HashView } from '../viewHash';
 import { catalogFrom, openedOutcome } from './library';
@@ -88,6 +89,7 @@ export async function boot(initialView: HashView | null): Promise<void> {
     const theme: Theme =
       savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : config.theme;
     const layout = parseLayout(await store.getSetting(SETTINGS.layout));
+    const controls = parseControls(await store.getSetting(SETTINGS.controls));
     const savedPanes = (await store.getSetting(SETTINGS.panes)) as
       Partial<Record<PaneName, boolean>> | undefined;
     const narrow = isNarrow();
@@ -96,6 +98,7 @@ export async function boot(initialView: HashView | null): Promise<void> {
       config,
       theme,
       layout,
+      controls,
       persistent,
       panes: {
         filters: !narrow && (savedPanes?.filters ?? true),
@@ -723,6 +726,12 @@ export function setLayout(layout: Layout): void {
   }
   set({ layout, uiRequest: null });
   saveSetting(SETTINGS.layout, layout);
+}
+
+/** Chooses what the standard layout is made for, and remembers it, as the theme is. */
+export function setControls(controls: Controls): void {
+  set({ controls });
+  saveSetting(SETTINGS.controls, controls);
 }
 
 /** Opens or closes a side pane. On narrow screens only one sheet is open at a time. */
