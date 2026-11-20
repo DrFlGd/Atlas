@@ -19,6 +19,50 @@
 //! whichever app that is). The Atlas app writes and imports pack files
 //! with these same types. See `docs/pack-file-format.md` in the Atlas
 //! repository for the format.
+//!
+//! # Writing a pack of guidebooks
+//!
+//! A guidebook is a published guide a person has as one file, a PDF or a
+//! CBZ (a ZIP of pictures of pages). From version 8 of the format, a pack
+//! file can hold one game's guidebooks, in a pack of their own, so a large
+//! pack of maps is never written again to add one. Another program writes
+//! one with [`write_guidebook_pack`]: the pack id, the game's title, the
+//! app that writes it, and each guidebook's file, title and (when known)
+//! the text of each page. The file is written as `<target>.part` and
+//! renamed to `target` when it is complete, so put it in Atlas's packs
+//! folder under its `.atlaspack` name and Atlas reads it where it lies.
+//! [`rewrite_guidebook_pack`] adds guidebooks to such a pack, or takes some
+//! out; Atlas changes only the packs it wrote itself, which it tells by
+//! `pack.writtenBy`.
+//!
+//! ```no_run
+//! use std::path::{Path, PathBuf};
+//!
+//! use atlas_pack::{write_guidebook_pack, AppInfo, GuidebookPack, NewGuidebook};
+//!
+//! fn write(packs_folder: &Path) -> Result<(), String> {
+//!     let pack = GuidebookPack {
+//!         pack_id: "guidebooks-hollow-marsh".to_owned(),
+//!         game_title: "Hollow Marsh".to_owned(),
+//!         written_by: AppInfo {
+//!             name: "Fen Shelf".to_owned(),
+//!             version: "1.0.0".to_owned(),
+//!             platform: "windows".to_owned(),
+//!         },
+//!         guidebooks: vec![NewGuidebook {
+//!             file: PathBuf::from("Hollow Marsh Field Guide.pdf"),
+//!             title: "Hollow Marsh Field Guide".to_owned(),
+//!             // Counted from the file.
+//!             pages: None,
+//!             // The text of each page, for search, when the program has it.
+//!             text: None,
+//!         }],
+//!     };
+//!     let header = write_guidebook_pack(&pack, &packs_folder.join("Hollow Marsh guidebooks.atlaspack"))?;
+//!     println!("{} guidebooks", header.guidebooks.len());
+//!     Ok(())
+//! }
+//! ```
 
 mod guidebook;
 mod pdf;
