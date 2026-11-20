@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page, type Route } from '@playwright/test';
 import { downloadsEnabled } from '../tooling/buildFlags.ts';
 
 /**
@@ -264,6 +264,17 @@ export interface MockShell {
     /** The commands called with their arguments, in order. */
     calls: { command: string; args: Record<string, unknown> }[];
   };
+  /**
+   * "Add a guidebook…" and "Remove this guidebook…", as the shell's
+   * `guidebooks` module answers them: what `guidebook_pick` hands over
+   * (once), the pack listed after `guidebook_add`, and the calls.
+   */
+  guidebooks: {
+    pick: Record<string, unknown> | null;
+    /** Listed (or listed again, by id) once a guidebook is added. */
+    added: Record<string, unknown> | null;
+    calls: { command: string; args: Record<string, unknown> }[];
+  };
 }
 
 /** The state of the kept packs, as the shell sends it. */
@@ -358,6 +369,7 @@ function installFakeShell({
       startFails: null,
       calls: [],
     },
+    guidebooks: { pick: null, added: null, calls: [] },
   };
   /** The kept packs' state after a change: listed when on, with a new serial. */
   const keptPacks = () => {
@@ -711,6 +723,36 @@ function installFakeShell({
       }
       case 'library_list':
         return listing();
+      case 'guidebook_pick': {
+        shell.guidebooks.calls.push({ command, args });
+        const picked = shell.guidebooks.pick;
+        shell.guidebooks.pick = null;
+        return picked;
+      }
+      case 'guidebook_forget_picked':
+        shell.guidebooks.calls.push({ command, args });
+        return null;
+      case 'guidebook_add': {
+        shell.guidebooks.calls.push({ command, args: structuredClone(args) });
+        const added = structuredClone(shell.guidebooks.added);
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (!added) throw 'Pick the guidebook’s file again.';
+        const at = packs.findIndex((pack) => pack.id === added.id);
+        if (at >= 0) packs[at] = added;
+        else packs.push(added);
+        const request = args.request as { title: string; gameTitle: string };
+        return {
+          packId: added.id,
+          message: `${request.title} was added to the guidebooks of ${request.gameTitle}. Its pack file is in the packs folder.`,
+          listing: listing(),
+        };
+      }
+      case 'guidebook_remove': {
+        shell.guidebooks.calls.push({ command, args: structuredClone(args) });
+        const at = packs.findIndex((pack) => pack.id === args.packId);
+        if (at >= 0) packs.splice(at, 1);
+        return { packId: args.packId, message: 'The guidebook was removed.', listing: listing() };
+      }
       case 'library_choose_packs_folder': {
         const folder = shell.packsFolder;
         folder.calls.push(command);
@@ -1046,6 +1088,7 @@ export async function setUp(
     listed = [],
     background = false,
     packsFolder = false,
+    served = {},
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -1056,6 +1099,11 @@ export async function setUp(
     background?: boolean;
     /** The shell lists the packs folder, which can be changed (see {@link MockShell.packsFolder}). */
     packsFolder?: boolean;
+    /**
+     * Files the pack protocol serves, by pack id (or `_picked/<token>`) and
+     * name, read in parts as the shell serves them (`Range`, `206`).
+     */
+    served?: Record<string, Record<string, Buffer | string>>;
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -1119,6 +1167,9 @@ export async function setUp(
   await page.route(`${PACKS}**`, (route) => {
     const [, id = '', name = ''] =
       /^\/([^/]+)\/(.+)$/.exec(new URL(route.request().url()).pathname) ?? [];
+    const path = new URL(route.request().url()).pathname;
+    const file = Object.entries(served).find(([pack]) => path.startsWith(`/${pack}/`));
+    if (file) return serveFile(route, file[1][path.slice(file[0].length + 2)]);
     const body = packs[id]?.[name];
     const headers = { 'access-control-allow-origin': '*' };
     return body === undefined
@@ -1137,6 +1188,38 @@ export async function setUp(
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
+}
+
+/** Answers a request for a file the pack protocol serves, a part of it when a range is asked for. */
+function serveFile(route: Route, file: Buffer | string | undefined) {
+  const headers: Record<string, string> = {
+    'access-control-allow-origin': '*',
+    'access-control-expose-headers': 'Accept-Ranges, Content-Length, Content-Range',
+    'accept-ranges': 'bytes',
+  };
+  if (route.request().method() === 'OPTIONS') {
+    return route.fulfill({
+      status: 204,
+      headers: { ...headers, 'access-control-allow-headers': 'Range' },
+    });
+  }
+  if (file === undefined) return route.fulfill({ status: 404, headers, body: 'not found' });
+  const body = typeof file === 'string' ? Buffer.from(file) : file;
+  const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? '');
+  if (!range) return route.fulfill({ headers, body });
+  const start = Number(range[1]);
+  const end = range[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1;
+  if (start > end) {
+    return route.fulfill({
+      status: 416,
+      headers: { ...headers, 'content-range': `bytes */${body.length}` },
+    });
+  }
+  return route.fulfill({
+    status: 206,
+    headers: { ...headers, 'content-range': `bytes ${start}-${end}/${body.length}` },
+    body: body.subarray(start, end + 1),
+  });
 }
 
 /** Changes the stand-in of "Atlas in the background" (see {@link MockShell.background}). */
