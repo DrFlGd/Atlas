@@ -29,7 +29,10 @@ use crate::{
     activity::{self, ActivityLog, Area, RecentLog},
     downloads::Downloads,
     imports::{Imports, Navigated, PollResult},
-    library::{FolderChoice, Library, Listing, SaveImport, SavedSource, SavedSourceEntry},
+    library::{
+        FolderChoice, Library, Listing, PacksFolderChanged, PacksFolderChoice, SaveImport,
+        SavedSource, SavedSourceEntry,
+    },
     ownlists,
     packfile::{self, AppInfo, ExportOptions, Progress, Stop},
     removal::{ImagesCount, ImagesDeleted, PackDeleted},
@@ -1028,6 +1031,79 @@ pub async fn library_apply_maps_folder(
     #[cfg(feature = "downloads")]
     crate::keep::changed_all();
     applied
+}
+
+/// Asks for a new packs folder, starting at the one in use, and says what
+/// changing to it would do. It is used only after
+/// `library_apply_packs_folder`. Desktop only: Android keeps its packs in
+/// the app's own storage.
+#[tauri::command]
+pub async fn library_choose_packs_folder<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+) -> Result<Option<PacksFolderChoice>, String> {
+    desktop_only()?;
+    let start = library
+        .packs_folder()
+        .ancestors()
+        .find(|folder| folder.is_dir())
+        .map(std::path::Path::to_path_buf);
+    let Some(path) = pick_folder_at(&window, "Choose the packs folder", start).await? else {
+        return Ok(None);
+    };
+    let library = Arc::clone(&library);
+    blocking(move || library.propose_packs_folder(&path).map(Some)).await
+}
+
+/// "Use the default folder": what changing back to the default packs
+/// folder would do. It is used only after `library_apply_packs_folder`.
+#[tauri::command]
+pub async fn library_default_packs_folder(
+    library: LibraryState<'_>,
+) -> Result<PacksFolderChoice, String> {
+    desktop_only()?;
+    let library = Arc::clone(&library);
+    blocking(move || library.propose_default_packs_folder()).await
+}
+
+/// Uses the chosen packs folder from now on, moving the pack files there
+/// or leaving them where they are. Not while a pack file is written,
+/// added or imported; the keeper of packs, in the app with downloads,
+/// stops its run first and follows the new folder after.
+#[tauri::command]
+pub async fn library_apply_packs_folder(
+    library: LibraryState<'_>,
+    store: crate::madepack::commands::StoreState<'_>,
+    jobs: PackFileJobsState<'_>,
+    move_files: bool,
+) -> Result<PacksFolderChanged, String> {
+    desktop_only()?;
+    let turn = jobs.begin("move", "", "")?;
+    let old = library.packs_folder();
+    #[cfg(feature = "downloads")]
+    crate::keep::packs_folder_changing();
+    let (library, store) = (Arc::clone(&library), Arc::clone(&store));
+    let changed = blocking(move || {
+        let _turn = turn;
+        let changed = library.apply_packs_folder(move_files)?;
+        match store.follow_moves(&changed.moves) {
+            Ok(0) => {}
+            Ok(followed) => activity::info(
+                Area::Library,
+                format!("Updated {followed} pack files this computer wrote that moved"),
+            ),
+            Err(error) => activity::warn(Area::Library, error),
+        }
+        Ok(changed)
+    })
+    .await;
+    #[cfg(feature = "downloads")]
+    if changed.is_ok() {
+        crate::keep::packs_folder_changed(&old);
+    }
+    #[cfg(not(feature = "downloads"))]
+    let _ = old;
+    changed
 }
 
 /// What to show in the system's file manager.

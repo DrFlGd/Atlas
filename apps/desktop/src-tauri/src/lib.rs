@@ -104,6 +104,9 @@ macro_rules! viewer_commands {
             commands::library_remove_location,
             commands::library_choose_maps_folder,
             commands::library_apply_maps_folder,
+            commands::library_choose_packs_folder,
+            commands::library_default_packs_folder,
+            commands::library_apply_packs_folder,
             commands::library_reveal,
             commands::library_delete_pack,
             commands::library_images_info,
@@ -385,7 +388,7 @@ pub fn run() {
             // Packs kept up to date in a folder, written on a thread of
             // their own once each change is finished.
             #[cfg(feature = "downloads")]
-            start_keeper(app, &app_data, &shared, &library, &downloads);
+            start_keeper(app, &app_data, &library, &downloads);
             app.manage(downloads);
             // What this computer remembers of the pack files of maps made
             // here (see `madepack`).
@@ -438,7 +441,6 @@ pub fn run() {
 fn start_keeper(
     app: &App,
     app_data: &std::path::Path,
-    shared: &std::path::Path,
     library: &Arc<Library>,
     downloads: &Downloads,
 ) {
@@ -448,7 +450,6 @@ fn start_keeper(
     let tell_app = app.handle().clone();
     let keeper = keep::Keeper::start(keep::Parts {
         app_data: app_data.to_path_buf(),
-        shared_dir: shared.to_path_buf(),
         library: Arc::clone(library),
         downloads: downloads.clone(),
         app: commands::app_info(app.handle()),

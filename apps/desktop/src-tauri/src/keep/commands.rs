@@ -15,7 +15,7 @@ use super::{
 };
 use crate::{
     commands::{blocking, pick_folder_at},
-    library::{is_inside, Library},
+    library::{is_inside, same_path, Library},
     manifest::MANIFEST_FILE,
 };
 
@@ -61,10 +61,13 @@ pub async fn kept_packs_choose_folder<R: Runtime>(
             );
         }
         let setting = keeper.setting();
+        // The packs folder chosen in the dialog is the default: it follows
+        // a change of the packs folder.
+        let folder = (!same_path(&folder, &library.packs_folder())).then_some(folder);
         keeper
             .set(Setting {
                 on: true,
-                folder: Some(folder),
+                folder,
                 schedule: setting.schedule,
             })
             .map(Some)
