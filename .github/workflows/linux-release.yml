@@ -1,0 +1,352 @@
+# Builds the Atlas viewer for Linux on 64-bit PCs, as an AppImage (one file
+# that runs without installing, as SteamOS needs: its system cannot be
+# changed, so no deb, rpm or Flatpak here), with the demo world, no
+# importers and no map image downloads. It checks the AppImage and starts
+# it once, then attaches it to the release linux-trial-<trial> of this
+# repository: a draft prerelease by default, which only people with write
+# access to the repository can see. Its notes say how to install it on a
+# Steam Deck and what to try (trial T3: switching between a game and Atlas
+# in Game Mode).
+#
+# Run it from the Actions tab ("Linux release", "Run workflow") with the
+# trial's number. It builds the branch or tag it is run from. Its tags start
+# with "linux-trial-", which release.yml (tags "v*") does not take.
+#
+# Built on Ubuntu 22.04, the oldest runner GitHub offers, so the AppImage
+# asks for no newer C library (glibc 2.35) than an older Linux system has;
+# SteamOS has a newer one. Tauri bundles WebKitGTK, GTK and their libraries
+# into the AppImage with linuxdeploy; the graphics drivers and the C library
+# come from the system.
+
+name: Linux release
+
+on:
+  workflow_dispatch:
+    inputs:
+      trial:
+        description: Number of the trial, for example 1 (the tag is linux-trial-<number>)
+        required: true
+        type: number
+      draft:
+        description: Keep the release a draft (only people with write access see it)
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-release-${{ inputs.trial }}
+  cancel-in-progress: false
+
+jobs:
+  appimage:
+    name: Linux AppImage (x86_64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Work out the trial
+        id: trial
+        env:
+          INPUT_TRIAL: ${{ inputs.trial }}
+        run: |
+          trial="$INPUT_TRIAL"
+          if ! printf '%s' "$trial" | grep -Eq '^[1-9][0-9]{0,3}$'; then
+            echo "::error::\"$trial\" is not a trial number such as 1"
+            exit 1
+          fi
+          {
+            echo "trial=$trial"
+            echo "tag=linux-trial-$trial"
+            echo "asset=Atlas.AppImage"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev file xvfb imagemagick
+          echo "WebKitGTK $(pkg-config --modversion webkit2gtk-4.1), GTK $(pkg-config --modversion gtk+-3.0)"
+          ldd --version | head -n 1
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          key: linux-appimage
+
+      - run: pnpm install --frozen-lockfile
+
+      # The shell's unit tests on Linux, which ci.yml runs on Windows only:
+      # among them those of the Linux start (the web view's settings, a
+      # start with --background) and of the Linux folders.
+      - name: Rust unit tests on Linux
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked
+
+      # The plain viewer: the demo world only, no importers, no map image
+      # downloads (ATLAS_ENABLE_DOWNLOADS stays off), the app's own name and
+      # identifier. Only the AppImage is made.
+      - name: Build the AppImage
+        env:
+          ATLAS_ENABLE_DOWNLOADS: '0'
+        run: pnpm desktop:build --bundles appimage
+
+      - name: Collect the AppImage
+        env:
+          ASSET: ${{ steps.trial.outputs.asset }}
+        run: |
+          shopt -s nullglob
+          images=(apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage)
+          if [ "${#images[@]}" -ne 1 ]; then
+            echo "::error::Expected one AppImage, found ${#images[@]}: ${images[*]}"
+            exit 1
+          fi
+          mkdir -p release
+          cp "${images[0]}" "release/$ASSET"
+          chmod +x "release/$ASSET"
+          ls -l release
+
+      # What is inside: the viewer without download code, WebKitGTK with its
+      # own helper programs (the web view cannot start without them), the
+      # demo pack, and nothing that needs a newer C library than 2.35.
+      - name: Check the AppImage
+        env:
+          ASSET: ${{ steps.trial.outputs.asset }}
+        run: |
+          mkdir -p check
+          cd check
+          "../release/$ASSET" --appimage-extract > /dev/null
+          root=squashfs-root
+          cd ..
+          root="check/$root"
+
+          shopt -s nullglob
+          bins=("$root"/usr/bin/*)
+          if [ "${#bins[@]}" -ne 1 ]; then
+            echo "::error::Expected one program in usr/bin, found ${#bins[@]}: ${bins[*]}"
+            exit 1
+          fi
+          ATLAS_ENABLE_DOWNLOADS=0 node apps/desktop/scripts/check-binary.js "${bins[0]}"
+
+          missing=0
+          for file in libwebkit2gtk-4.1.so.0 libjavascriptcoregtk-4.1.so.0; do
+            if [ -z "$(find "$root/usr/lib" -name "$file" -print -quit)" ]; then
+              echo "::error::$file is not in the AppImage"
+              missing=1
+            fi
+          done
+          for file in WebKitWebProcess WebKitNetworkProcess libwebkit2gtkinjectedbundle.so; do
+            if [ -z "$(find "$root" -path '*webkit2gtk-4.1*' -name "$file" -print -quit)" ]; then
+              echo "::error::WebKitGTK's $file is not in the AppImage"
+              missing=1
+            fi
+          done
+          if [ -z "$(find "$root" -path '*/usr/lib/*/packs/demo/manifest.json' -print -quit)" ]; then
+            echo "::error::The demo pack is not in the AppImage"
+            missing=1
+          fi
+          [ "$missing" -eq 0 ]
+
+          # The Gamepad API of WebKitGTK reads controllers through libmanette.
+          if [ -n "$(find "$root/usr/lib" -name 'libmanette-0.2.so*' -print -quit)" ]; then
+            echo "libmanette is in the AppImage: the web view can offer the Gamepad API."
+          else
+            echo "::warning::libmanette is not in the AppImage: the web view may not offer the Gamepad API, and a controller then works only through keys."
+          fi
+
+          newest="$(find "$root" -type f \( -name '*.so*' -o -perm -u+x \) -exec sh -c 'file -b "$1" | grep -q ELF && objdump -T "$1" 2>/dev/null' _ {} \; \
+            | grep -o 'GLIBC_[0-9.]*' | sort -u -V | tail -n 1)"
+          echo "The newest C library version asked for: $newest"
+          if [ -z "$newest" ]; then
+            echo "::error::No C library version was read from the AppImage's programs"
+            exit 1
+          fi
+          if [ "$(printf '%s\n' "$newest" "GLIBC_2.35" | sort -V | tail -n 1)" != "GLIBC_2.35" ]; then
+            echo "::error::The AppImage asks for $newest, newer than Ubuntu 22.04's GLIBC_2.35"
+            exit 1
+          fi
+
+      # Starts the AppImage itself (unpacked to a temporary folder, as no FUSE
+      # is set up here) on a virtual screen of the Steam Deck's size, with
+      # its folders in a temporary folder: it must keep running, start the
+      # web view's own process, and write its first lines to the activity
+      # log, among them the web view setting it made. Saves a picture of the
+      # screen for a person to look at.
+      - name: Start-up test of the AppImage
+        env:
+          ASSET: ${{ steps.trial.outputs.asset }}
+        run: |
+          home="$RUNNER_TEMP/atlas-home"
+          mkdir -p "$home/data" "$home/config" "$home/cache" test-results
+          export XDG_DATA_HOME="$home/data" XDG_CONFIG_HOME="$home/config" XDG_CACHE_HOME="$home/cache"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          cat > "$RUNNER_TEMP/start.sh" <<'EOF'
+          set -u
+          "./release/$ASSET" > test-results/linux-start.out 2>&1 &
+          pid=$!
+          sleep 20
+          import -window root test-results/linux-start.png || true
+          ps -eo pid,args | grep -i '[W]ebKit' | tee test-results/linux-webkit.txt
+          if ! kill -0 "$pid" 2> /dev/null; then
+            echo "::error::Atlas ended within 20 seconds"
+            exit 1
+          fi
+          kill "$pid"
+          wait "$pid" || true
+          EOF
+          xvfb-run -a -s '-screen 0 1280x800x24' bash "$RUNNER_TEMP/start.sh"
+          log="$XDG_DATA_HOME/atlas/logs/atlas.log"
+          cp "$log" test-results/ || true
+          cat test-results/linux-start.out || true
+          grep -q 'started on linux' "$log"
+          grep -q 'WEBKIT_DISABLE_DMABUF_RENDERER=1' "$log"
+          grep -q 'WebKitWebProcess' test-results/linux-webkit.txt
+          test -d "$XDG_DATA_HOME/atlas/packs"
+          echo "Atlas started, its web view ran, and its packs folder is $XDG_DATA_HOME/atlas/packs."
+
+      - name: Upload the start-up test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-start-up
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The notes are written as they are (a quoted heredoc: nothing in it is
+      # expanded, and it holds no backticks), then the trial's number and
+      # the commit are put in.
+      - name: Write the release notes
+        env:
+          TRIAL: ${{ steps.trial.outputs.trial }}
+        run: |
+          commit="$(git rev-parse --short HEAD)"
+          cat > release/notes.md <<'EOF'
+          Atlas for Steam Deck, trial @TRIAL@: a test build of the Atlas map viewer for Linux, made to try Atlas beside a game on a Steam Deck. It comes with the made-up demo world only. It is not a finished release.
+
+          ## What this trial is for
+
+          In Game Mode only one app shows at a time, an app cannot bring itself to the front, and keyboard shortcuts do not reach Atlas. This trial finds out whether you can switch from a game to Atlas and back, and which of two ways of starting Atlas feels right:
+
+          - **Way 1.** Atlas starts together with a game, as a second window of that game. You reach it with the Steam button.
+          - **Way 2.** Atlas is its own entry in your Steam library. You start it yourself, then switch between it and the game with the Steam button.
+
+          ## How to install, in Desktop Mode
+
+          1. Press the Steam button, choose **Power**, then **Switch to Desktop**.
+          2. Open this release page in the web browser. While the release is a draft, sign in to github.com first with an account that can see it.
+          3. Under **Assets**, press **Atlas.AppImage** to download it. It goes to your Downloads folder.
+          4. Open the file manager (Dolphin). In your home folder, make a folder named **Applications** if there is none: right-click an empty spot (in Desktop Mode the left trigger, L2, is the right mouse button, and the right trigger, R2, the left one), choose **Create New**, then **Folder**. Move **Atlas.AppImage** from Downloads into it. If an older Atlas.AppImage is there, replace it.
+          5. Right-click **Atlas.AppImage**, choose **Properties**, open the **Permissions** tab, tick **Is executable**, and press **OK**. Without this, the file does not start.
+          6. Open **Atlas.AppImage** in the file manager to try it. The Atlas window should open with the demo map. Close it again.
+          7. Open Steam on the desktop. In the **Games** menu at the top, choose **Add a Non-Steam Game to My Library**. Press **Browse**, go to your home folder, then **Applications**, choose **Atlas.AppImage** and press **Open**. If the file is not listed, set the file type at the bottom of that window to all files. Then tick Atlas.AppImage in the list and press **Add Selected Programs**.
+          8. Go back to Game Mode with the **Return to Gaming Mode** icon on the desktop.
+
+          Atlas keeps its files in the same folders as on any Linux computer. The packs folder is .local/share/atlas/packs in your home folder: a pack file (.atlaspack) you put there shows in Atlas. The maps folder is .local/share/atlas/maps, and the settings are in .local/share/atlas/settings.json. The folder .local is hidden: in the file manager, press Ctrl+H to show it.
+
+          ## Trial, way 2: Atlas as its own entry in Steam
+
+          1. In Game Mode, open your **Library**, go to **Non-Steam**, and start **Atlas**.
+          2. Press the Steam button and start a game from your library, as you always do.
+          3. To switch to Atlas, press the Steam button and choose **Atlas** in the list of apps that are running.
+          4. Switch back to the game the same way.
+          5. To close Atlas, switch to it, press the Steam button and choose **Exit Game**.
+
+          ## Trial, way 1: Atlas starts with a game
+
+          This is a trial. Later, another app will write this for you; for now you put it in yourself, for one game.
+
+          1. Close Atlas first if it is running from way 2.
+          2. In Desktop Mode, open Steam, right-click a game in your library, and choose **Properties**. Under **General**, find **Launch Options**. Use a game whose launch options are empty; if a game has text there, write it down first so you can put it back.
+          3. Copy this whole line from this page and paste it into **Launch Options**:
+
+                  bash -c '"$HOME/Applications/Atlas.AppImage" --background & exec "$@"' -- %command%
+
+             It starts Atlas from your Applications folder, without bringing it in front, and then starts the game as before, so that Steam counts Atlas as part of the game.
+          4. Go back to Game Mode and start that game. Atlas starts at the same time. The game should come up in front of it.
+          5. Press the Steam button. Steam may list the game's windows there: choose Atlas to switch to it, and the game's own window to switch back.
+          6. When you quit the game, Atlas may stay open as part of the game. If it does, press the Steam button and choose **Exit Game**, which closes both.
+          7. When you are done, delete the line from the game's launch options.
+
+          ## Moving around Atlas
+
+          - The touch screen works as it does on a phone.
+          - With the controller, the D-pad or the left stick moves between buttons, A presses, B goes back, and L1 and R1 switch sections or turn the pages of a guide. When the map has the focus, the right stick moves it and the triggers zoom out and in. The first time Atlas sees the controller, a notice says "A controller is connected".
+          - If the D-pad, A and B do nothing in Atlas, the web view may not pass the controller on. Then press the Steam button, choose **Controller Settings**, and choose a layout that sends keys, such as the template named **Web Browser**, or set the D-pad to the arrow keys, A to Enter and B to Escape yourself. With keys, the arrow keys move between buttons, Enter presses and Escape goes back. The back grips (L4, L5, R4 and R5) are free if you want to give them keys too.
+          - The Steam button and X together open the on-screen keyboard, for search.
+
+          ## If the window is blank or white
+
+          Atlas already sets WEBKIT_DISABLE_DMABUF_RENDERER=1 for its window, which fixes this on most systems. If the window is still blank, open the **Properties** of the Atlas entry in Steam, put this line in **Launch Options**, and start it again:
+
+              WEBKIT_DISABLE_COMPOSITING_MODE=1 %command%
+
+          ## What to tell us
+
+          1. Desktop Mode: does the Atlas window open and show the demo map?
+          2. Way 2: does the Atlas window show in Game Mode? Can you switch from the game to Atlas and back with the Steam button?
+          3. Way 1: does Atlas start with the game, and does the game still come up in front? Can you switch to Atlas and back? What happens when you quit the game?
+          4. Did the notice "A controller is connected" show? Do the D-pad, A, B, L1 and R1 move around Atlas? Did you have to change the controller layout, and to which one?
+          5. Which way felt right, and why?
+          6. Anything that went wrong. A picture of the screen helps: in Game Mode, press the Steam button and R1 together.
+
+          Not in this build: the icon in the notification area, the hotkey and starting with the system, which are on Windows only. Opening a pack file from the file manager does not start Atlas yet.
+
+          ---
+
+          Built from Atlas @COMMIT@.
+          EOF
+          sed -i -e "s/@TRIAL@/$TRIAL/g" -e "s/@COMMIT@/$commit/g" release/notes.md
+          if grep -q '@[A-Z]*@' release/notes.md; then
+            echo "::error::A placeholder is left in the notes"
+            exit 1
+          fi
+          cat release/notes.md
+
+      - name: Upload the AppImage as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.trial.outputs.asset }}
+          path: release/${{ steps.trial.outputs.asset }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # A prerelease; --latest=false keeps the Windows release as the
+      # repository's latest.
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.trial.outputs.tag }}
+          TRIAL: ${{ steps.trial.outputs.trial }}
+          ASSET: ${{ steps.trial.outputs.asset }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG exists: replacing its AppImage and notes."
+            gh release upload "$TAG" "release/$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release/notes.md \
+              --draft="$DRAFT" --prerelease
+          else
+            gh release create "$TAG" "release/$ASSET" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Atlas for Steam Deck, trial $TRIAL" \
+              --notes-file release/notes.md \
+              --draft="$DRAFT" \
+              --prerelease \
+              --latest=false
+          fi
