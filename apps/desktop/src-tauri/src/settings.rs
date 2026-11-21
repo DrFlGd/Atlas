@@ -27,7 +27,9 @@
 //! (`Maps`, or `maps` on Linux). `packsFolder`, absent unless the person
 //! chose another, is the folder of pack files Atlas reads where they lie
 //! (see [`packs_folder`]); another program that puts pack files there reads
-//! it from this file. Every change re-reads the file first, so
+//! it from this file. `linuxAppImage`, on Linux only and absent while
+//! unknown, is the AppImage the viewer last started from (see
+//! [`SharedSettings::linux_app_image`]). Every change re-reads the file first, so
 //! two apps changing different settings do not undo each other. A file that
 //! cannot be read counts as the defaults.
 
@@ -179,6 +181,19 @@ where
         serde_json::Value::Null => None,
         serde_json::Value::String(text) => Some(text),
         _ => Some(String::new()),
+    })
+}
+
+/// Reads an optional text leniently: a value that is not text counts as
+/// none, rather than making the whole settings file unreadable.
+fn lenient_optional_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::String(text) => Some(text),
+        _ => None,
     })
 }
 
@@ -364,6 +379,21 @@ pub struct SharedSettings {
     /// file, until that app starts again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site_reader_started_at: Option<String>,
+    /// Linux only: the full path of the AppImage the plain viewer (the app
+    /// without downloads) last started from, for another app that writes
+    /// the line which starts Atlas with a game in Steam (see `linux.rs`).
+    /// Written at each start from an AppImage whose path the line can hold,
+    /// and taken out when the file it names is gone; absent while unknown,
+    /// and never written on Windows or Android. A value that is not text
+    /// counts as none. An app that does not know it leaves it out when it
+    /// writes the file, until the viewer starts again.
+    #[serde(
+        rename = "linuxAppImage",
+        default,
+        deserialize_with = "lenient_optional_text",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub linux_app_image: Option<String>,
 }
 
 impl Default for SharedSettings {
@@ -377,6 +407,7 @@ impl Default for SharedSettings {
             pack_files: Vec::new(),
             downloads: DownloadSettings::default(),
             site_reader_started_at: None,
+            linux_app_image: None,
         }
     }
 }
@@ -538,6 +569,37 @@ mod tests {
         let kept = file.read().pack_files;
         assert_eq!(kept.len(), 100);
         assert_eq!(kept[0], "/files/5.atlaspack");
+    }
+
+    #[test]
+    fn keeps_the_linux_appimage_only_while_known() {
+        let dir = TempDir::new("settings-appimage");
+        let file = SettingsFile::new(dir.0.clone());
+        // Absent while unknown.
+        file.update(|s| s.maps_folder = Some("/maps".into()))
+            .unwrap();
+        assert!(!fs::read_to_string(file.path())
+            .unwrap()
+            .contains("linuxAppImage"));
+        // Kept through another app's changes, under its own name.
+        let path = "/home/deck/Applications/Atlas.AppImage";
+        file.update(|s| s.linux_app_image = Some(path.into()))
+            .unwrap();
+        file.update(|s| s.pack_files.push("/a.atlaspack".into()))
+            .unwrap();
+        assert_eq!(file.read().linux_app_image.as_deref(), Some(path));
+        assert!(fs::read_to_string(file.path())
+            .unwrap()
+            .contains(r#""linuxAppImage": "/home/deck/Applications/Atlas.AppImage""#));
+        // A value that is not text counts as none, and the rest is read.
+        fs::write(
+            file.path(),
+            br#"{"format":"atlas-settings","version":1,"mapsFolder":"/maps","linuxAppImage":7}"#,
+        )
+        .unwrap();
+        let read = file.read();
+        assert_eq!(read.linux_app_image, None);
+        assert_eq!(read.maps_folder.as_deref(), Some("/maps"));
     }
 
     #[test]

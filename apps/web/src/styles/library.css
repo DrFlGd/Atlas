@@ -1895,3 +1895,24 @@
   height: 30px;
   color: var(--atlas-muted);
 }
+
+/* Settings, "Start Atlas with a game in Steam": the line, whole and in a monospace font. */
+.steam-launch-line {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 8px;
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  font-family: var(--atlas-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  resize: none;
+  overflow-wrap: anywhere;
+}
+
+.steam-launch-steps {
+  margin: 0;
+  padding-left: 1.4em;
+}

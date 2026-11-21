@@ -3558,3 +3558,9 @@ button.photo-card-text {
 .touch[data-arrangement='compact'] .pack-arrival {
   bottom: calc(var(--touch-bar) + 12px);
 }
+
+/* The setting "Controls": what Automatic shows now, on a line of its own. */
+.controls-now {
+  display: block;
+  margin-top: 4px;
+}

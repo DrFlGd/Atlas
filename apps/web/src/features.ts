@@ -1,3 +1,4 @@
+import type { SteamLaunch } from './desktop';
 import type { AtlasState } from './state/store';
 
 declare global {
@@ -75,8 +76,9 @@ export function keyboardHintsOffered(state: Pick<AtlasState, 'app'>): boolean {
 /**
  * Whether the app always shows its standard layout (`src/touch/`) made for
  * fingers, for a phone or tablet beside the game: in the Android app. Other
- * apps show it made for a mouse unless the screen is a touch screen, or the
- * classic layout where the person chose it (see `touch/uiMode.ts`).
+ * apps show it made for what the setting "Controls" gives (see
+ * `touch/controls.ts`), or the classic layout where the person chose it
+ * (see `touch/uiMode.ts`).
  */
 export function touchUiOffered(state: Pick<AtlasState, 'app'>): boolean {
   return state.app?.platform === 'android';
@@ -124,4 +126,25 @@ export function readsPackFilesOnly(state: Pick<AtlasState, 'app'>): boolean {
  */
 export function backgroundOffered(state: Pick<AtlasState, 'app'>): boolean {
   return !__ATLAS_DOWNLOADS__ && readsPackFilesOnly(state) && state.app?.background === true;
+}
+
+/**
+ * The line of Settings, "Start Atlas with a game in Steam", where it is
+ * offered: in the desktop app without downloads on Linux, whose shell
+ * builds the line (`steamLaunch`, see the shell's `linux.rs`). Null
+ * elsewhere: the Android app, Windows, a browser and the app with
+ * downloads, which does not take `--background`.
+ */
+export function steamLaunchOffered(state: Pick<AtlasState, 'app'>): SteamLaunch | null {
+  const app = state.app;
+  if (__ATLAS_DOWNLOADS__ || app?.platform !== 'linux') return null;
+  const launch = app.steamLaunch;
+  switch (launch?.state) {
+    case 'appImage':
+    case 'usual':
+    case 'refused':
+      return launch;
+    default:
+      return null;
+  }
 }

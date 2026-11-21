@@ -304,6 +304,8 @@ jobs:
                   bash -c '"$HOME/Applications/Atlas.AppImage" --background & exec "$@"' -- %command%
 
              It starts Atlas from your Applications folder, without bringing it in front, and then starts the game as before, so that Steam counts Atlas as part of the game.
+
+             The same line is in Atlas too: open **Settings** in Atlas and find **Start Atlas with a game in Steam**. There the line already names the file Atlas runs from, wherever you keep it, and **Copy** puts it on the clipboard, so you can paste it into Launch Options without typing it.
           4. Go back to Game Mode and start that game. Atlas starts at the same time. The game should come up in front of it.
           5. Press the Steam button. Steam may list the game's windows there: choose Atlas to switch to it, and the game's own window to switch back.
           6. When you quit the game, Atlas may stay open as part of the game. If it does, press the Steam button and choose **Exit Game**, which closes both.
@@ -311,7 +313,7 @@ jobs:
 
           ## Moving around Atlas
 
-          - The touch screen works as it does on a phone.
+          - The touch screen works as it does on a tablet: Atlas starts with large buttons for fingers on a Steam Deck, the sections at the lower left and the buttons used most at the lower right. Press and hold a location to mark it found. If Atlas shows small buttons, touch the screen once, or open **Settings** and set **Controls** to **For fingers**.
           - With the controller, the D-pad or the left stick moves between buttons, A presses, B goes back, and L1 and R1 switch sections or turn the pages of a guide. When the map has the focus, the right stick moves it and the triggers zoom out and in. The first time Atlas sees the controller, a notice says "A controller is connected".
           - If the D-pad, A and B do nothing in Atlas, the web view may not pass the controller on. Then press the Steam button, choose **Controller Settings**, and choose a layout that sends keys, such as the template named **Web Browser**, or set the D-pad to the arrow keys, A to Enter and B to Escape yourself. With keys, the arrow keys move between buttons, Enter presses and Escape goes back. The back grips (L4, L5, R4 and R5) are free if you want to give them keys too.
           - The Steam button and X together open the on-screen keyboard, for search.

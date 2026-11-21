@@ -1,0 +1,70 @@
+/*
+ * The standard layout made for fingers on a handheld computer held in both
+ * hands, such as a Steam Deck (1280 by 800, on its side): `data-handheld`
+ * on `.touch`, set only on a computer (not on a phone or a tablet, which
+ * keep the rules of `touch.css`) and on a wide screen at most 900 pixels
+ * tall (see `TouchShell`). The sections sit at the foot of the rail and
+ * the place card's two buttons at its foot, where the thumbs reach; every
+ * target is at least 44 pixels; and dialogs sit at the top, clear of the
+ * on-screen keyboard.
+ */
+
+/* "Nearest unfound" in the lower right corner, while no card is there. */
+.touch[data-input='touch'][data-handheld][data-place='none']:not(:has(.touch-next-card))
+  .touch-map-bottom {
+  left: auto;
+  right: calc(16px + var(--atlas-inset-right));
+}
+
+/* The place card's buttons at its foot, below the details, which scroll. */
+.touch[data-input='touch'][data-handheld] .place-card .place-actions {
+  padding-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.touch[data-input='touch'][data-handheld] .place-card .place-details {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Targets of at least 44 pixels. */
+.touch[data-input='touch'][data-handheld] .guides-tree-row,
+.touch[data-input='touch'][data-handheld] .guides-toc-toggle,
+.touch[data-input='touch'][data-handheld] .guides-toc-row {
+  min-height: 44px;
+}
+
+.touch[data-input='touch'][data-handheld] .touch-segment {
+  height: 44px;
+}
+
+.touch[data-input='touch'][data-handheld] .library-input {
+  min-height: 44px;
+}
+
+.touch[data-input='touch'][data-handheld] summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/*
+ * Dialogs sit at the top of the screen, not in its middle, so a text field
+ * in them stays above the on-screen keyboard, which covers the lower part
+ * of the screen (in Game Mode about 40 percent). They do not move when a
+ * field gets the focus: a dialog that moved under a finger would take the
+ * press that follows as one outside it, and close.
+ */
+.touch[data-input='touch'][data-handheld] .dialog {
+  margin-top: calc(8px + var(--atlas-inset-top));
+  margin-bottom: auto;
+}
+
+.touch[data-input='touch'][data-handheld] .profile-switch {
+  height: 44px;
+}
+
+/* The page editor's tick boxes, which a mouse finds on hover, are always in view. */
+.touch[data-input='touch'][data-handheld] .pe-tick {
+  opacity: 1;
+}

@@ -29,22 +29,31 @@ const SWIPE = 40;
  * mark it found, and go to the next one. Pulled up (or on a wide screen
  * always), it shows the rest.
  */
-export function PlaceSheet({ wide }: { wide: boolean }) {
+export function PlaceSheet({ wide, thumbs = false }: { wide: boolean; thumbs?: boolean }) {
   const game = useAtlas((s) => s.game);
   const selectedId = useAtlas((s) => s.selectedId);
   const location = selectedId ? game?.pack.locations.get(selectedId) : undefined;
   if (!game || !location) return null;
-  return <Place key={location.id} game={game} locationId={location.id} wide={wide} />;
+  return (
+    <Place key={location.id} game={game} locationId={location.id} wide={wide} thumbs={thumbs} />
+  );
 }
 
+/**
+ * One place. With `thumbs` (a handheld held in both hands, see
+ * `TouchShell`), the two buttons used most are at the foot of the card,
+ * in the lower right corner, under the details.
+ */
 function Place({
   game,
   locationId,
   wide,
+  thumbs,
 }: {
   game: LoadedGame;
   locationId: string;
   wide: boolean;
+  thumbs: boolean;
 }) {
   const found = useAtlas((s) => s.found.has(locationId));
   const expanded = useTouch((s) => s.placeExpanded);
@@ -141,7 +150,9 @@ function Place({
           </button>
         </header>
       </div>
-      <PlaceActions game={game} locationId={locationId} trackable={trackable} found={found} />
+      {thumbs ? null : (
+        <PlaceActions game={game} locationId={locationId} trackable={trackable} found={found} />
+      )}
       {wide ? null : (
         <button
           type="button"
@@ -161,6 +172,9 @@ function Place({
         </button>
       )}
       {open ? <PlaceDetails game={game} locationId={locationId} wide={wide} /> : null}
+      {thumbs ? (
+        <PlaceActions game={game} locationId={locationId} trackable={trackable} found={found} />
+      ) : null}
     </section>
   );
 }

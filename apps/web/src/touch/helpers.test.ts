@@ -335,9 +335,14 @@ describe('choosing the layout', () => {
   });
 
   it('shows the standard layout unless the classic one is chosen or asked for', () => {
-    const base = { android: false, requested: null, saved: 'standard', coarse: false } as const;
+    const base = { android: false, requested: null, saved: 'standard', input: 'mouse' } as const;
     expect(shownUi(base)).toEqual({ layout: 'standard', input: 'mouse' });
-    expect(shownUi({ ...base, coarse: true })).toEqual({ layout: 'standard', input: 'touch' });
+    expect(shownUi({ ...base, input: 'touch' })).toEqual({ layout: 'standard', input: 'touch' });
+    // The classic layout is always made for a mouse.
+    expect(shownUi({ ...base, input: 'touch', saved: 'classic' })).toEqual({
+      layout: 'classic',
+      input: 'mouse',
+    });
     expect(shownUi({ ...base, saved: 'classic' })).toEqual({ layout: 'classic', input: 'mouse' });
     // The address wins over the setting, both ways.
     expect(shownUi({ ...base, requested: 'classic' }).layout).toBe('classic');
@@ -352,7 +357,7 @@ describe('choosing the layout', () => {
   });
 
   it('always shows the standard layout for fingers in the Android app', () => {
-    const android = { android: true, requested: null, saved: 'standard', coarse: false } as const;
+    const android = { android: true, requested: null, saved: 'standard', input: 'mouse' } as const;
     expect(shownUi(android)).toEqual({ layout: 'standard', input: 'touch' });
     expect(shownUi({ ...android, saved: 'classic', requested: 'classic' })).toEqual({
       layout: 'standard',

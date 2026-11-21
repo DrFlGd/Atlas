@@ -367,7 +367,25 @@ export interface DesktopInfo {
    * app without downloads, on Windows. Absent counts as false.
    */
   background?: boolean;
+  /**
+   * Settings has "Start Atlas with a game in Steam" (`steamLaunch`): the
+   * line for a game's launch options, which the shell builds from the
+   * AppImage Atlas runs from (see the shell's `linux.rs`). In the app
+   * without downloads on Linux only; absent elsewhere.
+   */
+  steamLaunch?: SteamLaunch;
 }
+
+/**
+ * The Steam launch line, as the shell built it: for the AppImage Atlas
+ * runs from (`appImage`), for `$HOME/Applications/Atlas.AppImage` when
+ * Atlas does not run from an AppImage (`usual`), or no line, for an
+ * AppImage whose path the line cannot hold (`refused`).
+ */
+export type SteamLaunch =
+  | { state: 'appImage'; path: string; line: string }
+  | { state: 'usual'; line: string }
+  | { state: 'refused'; path: string };
 
 /**
  * The settings of "Atlas in the background", with what the system says

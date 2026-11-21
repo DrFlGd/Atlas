@@ -2,9 +2,11 @@
  * Which layout the app shows, and for which kind of pointer.
  *
  * - The standard layout (`src/touch/`): a rail of sections, one panel and
- *   the map. It is the default everywhere. In the Android app, and in a
- *   browser on a touch screen, it is made for fingers; elsewhere for a
- *   mouse and keyboard (names on hover, zoom buttons, right-click to mark).
+ *   the map. It is the default everywhere. In the Android app it is made
+ *   for fingers. Elsewhere the setting "Controls" chooses: for fingers, for
+ *   a mouse and keyboard (names on hover, zoom buttons, right-click to
+ *   mark), or Automatic, which decides by the screen and follows a touch
+ *   (see `controls.ts`).
  * - The classic layout (`App.tsx`'s `Shell`): panes on both sides of the
  *   map under a bar. The desktop app and a browser can switch back to it in
  *   the settings (stored like the theme); the Android app always shows the
@@ -77,19 +79,20 @@ export function forgetRequestedUi(storage: SessionStore | null): void {
 /**
  * What to show. The Android app always shows the standard layout for
  * fingers; otherwise the address wins over the setting, and the standard
- * layout is made for fingers where the screen has no mouse (`coarse`).
+ * layout is made for what the setting "Controls" gives (`input`, see
+ * `controls.ts`).
  */
 export function shownUi(options: {
   android: boolean;
   requested: UiRequest | null;
   saved: Layout;
-  coarse: boolean;
+  input: 'touch' | 'mouse';
 }): ShownUi {
-  const { android, requested, saved, coarse } = options;
+  const { android, requested, saved, input } = options;
   if (android || requested === 'touch') return { layout: 'standard', input: 'touch' };
   const layout = requested ?? saved;
   if (layout === 'classic') return { layout: 'classic', input: 'mouse' };
-  return { layout: 'standard', input: coarse ? 'touch' : 'mouse' };
+  return { layout: 'standard', input };
 }
 
 /** A saved setting as a layout: the standard one unless it says classic. */

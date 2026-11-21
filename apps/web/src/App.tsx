@@ -16,7 +16,7 @@ import { Toast } from './components/Toast';
 import { TopBar } from './components/TopBar';
 import { downloadsOffered, touchUiOffered } from './features';
 import { useShortcuts } from './keyboard';
-import { NARROW_QUERY, boot, onWidthClassChange, setPane } from './state/actions';
+import { NARROW_QUERY, boot, moveMap, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
 import { loadGameGroups } from './state/gameGroups';
 import { hasMap } from './state/guides';
@@ -31,6 +31,8 @@ import { loadOwnLists } from './state/ownLists';
 import { sweepOwnPicturesOnOpen } from './state/ownPictures';
 import { initSaves } from './state/saves';
 import { useAtlas, type AtlasState, type LeftTab, type PaneName } from './state/store';
+import { inputFor } from './touch/controls';
+import { followControls, screenFacts, startControls } from './touch/followControls';
 import { coarsePointer, requestedUi, sessionStore, shownUi } from './touch/uiMode';
 import { formatViewHash, parseViewHash } from './viewHash';
 
@@ -66,18 +68,30 @@ export function App() {
   const status = useAtlas((s) => s.status);
   const game = useAtlas((s) => s.game);
   const [coarse] = useState(coarsePointer);
-  const shown = (s: AtlasState) =>
-    shownUi({
-      android: touchUiOffered(s),
-      requested: s.uiRequest,
-      saved: s.layout,
-      coarse,
-    });
-  const touch = useAtlas((s) => shown(s).layout === 'standard');
-  const input = useAtlas((s) => shown(s).input);
+  const touch = useAtlas((s) => shownOf(s).layout === 'standard');
+  const input = useAtlas((s) => shownOf(s).input);
+  // The version for fingers on a computer (a Steam Deck, a computer with a
+  // touch screen), not on a phone or a tablet, nor as the address asked.
+  const handheld = useAtlas(
+    (s) => input === 'touch' && !coarse && !touchUiOffered(s) && s.uiRequest !== 'touch',
+  );
+  // What the standard layout is made for, by the setting "Controls": the
+  // start decided again once the shell says which system it runs on.
+  const platform = useAtlas((s) => s.app?.platform ?? null);
+  useEffect(() => {
+    startControls(screenFacts(platform));
+  }, [platform]);
 
   useEffect(() => {
     useAtlas.setState({ uiRequest: requestedUi(window.location.search, sessionStore()) });
+    const stopControls = followControls();
+    // The other version of the layout makes a new map: it opens where the old one was.
+    const stopKeepingView = useAtlas.subscribe((state, previous) => {
+      const view = previous.view;
+      if (view && shownOf(state).input !== shownOf(previous).input) {
+        moveMap(view.center.x, view.center.y, { zoom: view.zoom, animate: false });
+      }
+    });
     const stopSaves = initSaves();
     // Before the start, so a pack file opened meanwhile is not missed.
     const stopArrivals = followArrivals();
@@ -87,6 +101,8 @@ export function App() {
     const stopKeptPacks = followKeptPacks();
     void boot(parseViewHash(window.location.hash));
     return () => {
+      stopControls();
+      stopKeepingView();
       stopSaves();
       stopArrivals();
       stopBackground();
@@ -156,11 +172,21 @@ export function App() {
           </main>
         }
       >
-        <TouchShell key={input} input={input} />
+        <TouchShell key={input} input={input} handheld={handheld} />
       </Suspense>
     );
   }
   return <Shell />;
+}
+
+/** What the app shows (see `touch/uiMode.ts`). */
+function shownOf(s: AtlasState) {
+  return shownUi({
+    android: touchUiOffered(s),
+    requested: s.uiRequest,
+    saved: s.layout,
+    input: inputFor(s.controls, s.autoInput.input),
+  });
 }
 
 function Shell() {
