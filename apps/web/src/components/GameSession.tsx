@@ -76,7 +76,9 @@ export function GamesPlan() {
             <li key={game.id} data-testid="games-plan-game" data-game={game.id}>
               <span>{game.name}</span>
               {known ? <span className="muted small">{known}</span> : null}
-              {game.direct ? <span className="muted small">One map</span> : null}
+              {game.direct && game.maps === undefined ? (
+                <span className="muted small">One map</span>
+              ) : null}
             </li>
           );
         })}
