@@ -406,6 +406,7 @@ export function mineText(mine: {
   sections?: number;
   notes?: number;
   group?: boolean;
+  routes?: number;
 }): string {
   const count = (n: number, one: string, many: string) =>
     n === 1 ? `1 ${one}` : `${n.toLocaleString('en')} ${many}`;
@@ -419,6 +420,7 @@ export function mineText(mine: {
     (mine.pages ?? 0) > 0 ? count(mine.pages ?? 0, 'page', 'pages') : null,
     (mine.sections ?? 0) > 0 ? count(mine.sections ?? 0, 'section', 'sections') : null,
     (mine.notes ?? 0) > 0 ? count(mine.notes ?? 0, 'note', 'notes') : null,
+    (mine.routes ?? 0) > 0 ? count(mine.routes ?? 0, 'route', 'routes') : null,
     mine.group ? 'the title it shares with other games' : null,
   ].filter((part): part is string => part !== null);
   if (parts.length === 0) return 'lists, locations and types (none)';

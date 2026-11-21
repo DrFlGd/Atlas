@@ -31,7 +31,7 @@ export function assertValidPack(data: PackData): PackData {
 }
 
 /** Collections written only when a pack has some, so packs without them keep their files. */
-const OPTIONAL_COLLECTIONS: ReadonlySet<string> = new Set(['sections', 'pictures']);
+const OPTIONAL_COLLECTIONS: ReadonlySet<string> = new Set(['sections', 'pictures', 'routes']);
 
 /** Formats an array as JSON with one element per line, which keeps diffs readable. */
 export function formatCollection(items: readonly unknown[]): string {

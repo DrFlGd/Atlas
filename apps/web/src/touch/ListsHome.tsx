@@ -17,6 +17,7 @@ import {
   useNextStep,
 } from './listViews';
 import { OwnListsSection } from './OwnLists';
+import { RoutesSection } from './routes/RouteScreen';
 import { focusSearchField, setScope } from './state';
 import { Meter } from './widgets';
 
@@ -46,7 +47,11 @@ export function ListsHome({ game }: { game: LoadedGame }) {
     return new Map([...collections, ...routes].map((e) => [e, checklistTally(e, isDone)]));
   }, [collections, routes, found]);
   // Own lists change as they are edited; the one to continue may be one.
-  useOwnLists((s) => s.lists);
+  const ownLists = useOwnLists((s) => s.lists);
+  const ownEntries = useMemo(
+    () => ownLists.flatMap((list) => listById(game, list.checklist.id) ?? []),
+    [ownLists, game],
+  );
   const last = lastId ? listById(game, lastId) : undefined;
 
   const listRow = (entry: ChecklistEntry) => (
@@ -83,6 +88,7 @@ export function ListsHome({ game }: { game: LoadedGame }) {
           game={game}
           row={(entry, template) => <OwnListLink entry={entry} template={template} found={found} />}
         />
+        <RoutesSection game={game} lists={[...ownEntries, ...checklists]} />
         {collections.length > 0 ? (
           <section aria-labelledby="collections-heading">
             <h2 className="touch-group-title touch-lists-heading" id="collections-heading">

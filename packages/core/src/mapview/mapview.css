@@ -87,6 +87,61 @@
   stroke-opacity: 0.9;
 }
 
+/* A route: its line, with a dark edge, its corner points and its numbered
+   steps, in the route's colour or the theme's accent. */
+.atlas-map .atlas-route-edge {
+  stroke: var(--atlas-marker-outline, rgba(9, 11, 15, 0.92));
+  stroke-opacity: 0.7;
+}
+
+.atlas-map .atlas-route-line:not([stroke]),
+.atlas-map .atlas-route-line[stroke='#3388ff'] {
+  stroke: var(--atlas-accent, #63cdb9);
+}
+
+.atlas-map .atlas-route-corner {
+  fill: var(--atlas-surface, #161a20);
+  fill-opacity: 1;
+  stroke-width: 2;
+}
+
+.atlas-map .atlas-route-corner[stroke='#3388ff'] {
+  stroke: var(--atlas-accent, #63cdb9);
+}
+
+.atlas-map .atlas-route-step {
+  background: none;
+  border: none;
+}
+
+.atlas-map .atlas-route-step span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--atlas-route, var(--atlas-accent, #63cdb9));
+  border: 2px solid var(--atlas-marker-outline, rgba(9, 11, 15, 0.92));
+  color: #ffffff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+  font:
+    700 12px/1 system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.atlas-map .atlas-route-step-current span {
+  border: 3px solid var(--atlas-selection, #ffffff);
+  box-shadow: 0 0 0 3px var(--atlas-marker-outline, rgba(9, 11, 15, 0.92));
+  font-size: 14px;
+}
+
+.atlas-map .atlas-route-step-done span {
+  opacity: 0.55;
+}
+
 /* A location being moved: a ring that can be dragged, or moved with the
    arrow keys once it has focus. */
 .atlas-map .atlas-handle {

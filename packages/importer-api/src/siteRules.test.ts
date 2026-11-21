@@ -80,7 +80,7 @@ describe('the guide', () => {
     // a map part of pictures listed on a page,
     // a map part with the address of its images in its data, counted in sides of the square,
     // and a map part with the site’s list of games and the page of each game.
-    expect(blocks.length).toBe(17);
+    expect(blocks.length).toBe(18);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -731,6 +731,52 @@ describe('checking a file', () => {
         'parts[0].reading.ways',
       ]);
       expect(pieceFields({ ...fromValues, start: '/maps/{guide}' })).toContain('parts[0].start');
+    });
+
+    it('takes the routes of a map, each step on a location or a point', () => {
+      const withRoutes = (routes: unknown, values: Record<string, unknown> = {}) => ({
+        ...fromValues,
+        data: { from: 'values', values: { ...fromValues.data.values, ...values } },
+        routes,
+      });
+      const trails = { trails: 'trailBox.list' };
+      const routes = {
+        path: 'trails[*]',
+        id: 'key',
+        title: 'name',
+        description: 'about',
+        type: 'kind',
+        types: { tour: 'walkthrough', haul: 'collection' },
+        color: 'tint',
+        markup: 'markdown',
+        line: 'path.points',
+        steps: {
+          path: 'stops[*]',
+          title: 'label',
+          text: 'tip',
+          note: 'aside',
+          location: 'spot',
+          x: 'at[0]',
+          y: 'at[1]',
+          order: 'n',
+        },
+      };
+      expect(pieceFields(withRoutes(routes, trails))).toEqual([]);
+      // From a value the part declares, as every path is.
+      expect(pieceFields(withRoutes(routes))).toEqual(['parts[0].routes.path']);
+      // A point is x and y; a step needs a location or a point.
+      const steps = (s: Record<string, unknown>) =>
+        pieceFields(withRoutes({ ...routes, steps: { path: 'stops[*]', ...s } }, trails));
+      expect(steps({ location: 'spot', x: 'at[0]' })).toEqual(['parts[0].routes.steps.y']);
+      expect(steps({ title: 'label' })).toEqual(['parts[0].routes.steps']);
+      expect(steps({ x: 'a', y: 'b' })).toEqual([]);
+      // Types name only the route types of Atlas, and only with a type.
+      expect(pieceFields(withRoutes({ ...routes, types: { tour: 'stroll' } }, trails))).toEqual([
+        'parts[0].routes.types.tour',
+      ]);
+      const { type: _type, ...untyped } = routes;
+      expect(pieceFields(withRoutes(untyped, trails))).toEqual(['parts[0].routes.types']);
+      expect(pieceFields(withRoutes({ ...routes, colour: 'tint' }, trails))).not.toEqual([]);
     });
 
     it('refuses a page path to anything of the browser’s own, and a value no path reads', () => {

@@ -17,7 +17,8 @@ use super::{
     preview::make_previews,
     refusal, shared_pictures, smaller, space, unavailable, AppInfo, DirCache, Entry, EntryData,
     Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
-    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
+    MINE_PICTURES_DIR, PICTURES_FILE, ROUTES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
+    VERSION_WITH_ROUTES,
 };
 use crate::{
     library::PackLock,
@@ -217,7 +218,9 @@ pub fn write_part(
         })
         .collect();
     let with_previews = !entries.is_empty();
-    for entry in pack_file_entries(&source.root)? {
+    let pack_entries = pack_file_entries(&source.root)?;
+    let with_routes = pack_entries.iter().any(|entry| entry.name == ROUTES_FILE);
+    for entry in pack_entries {
         if entry.name == PICTURES_FILE {
             if let Some(pictures) = &pictures {
                 let list = pictures.list_bytes();
@@ -289,7 +292,9 @@ pub fn write_part(
         format: FORMAT.to_owned(),
         // The lowest version that holds what the file carries, so an older
         // app reads every file it can.
-        version: if with_previews {
+        version: if with_routes {
+            carried.max(VERSION_WITH_ROUTES)
+        } else if with_previews {
             carried.max(VERSION_WITH_PREVIEWS)
         } else {
             carried

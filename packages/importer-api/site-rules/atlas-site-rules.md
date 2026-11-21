@@ -1101,6 +1101,76 @@ Two more fields of `locations`, beside `path` and `fields`:
 
 A value of the wrong kind (a name that is a list, a position that is not a number) leaves that fact out, or, for `type`, `x`, `y` and `map`, the location; the Importer counts what it left out and says so.
 
+### `routes`
+
+Some maps have routes: an ordered path through the map with a short guide at each step, drawn as a line from step to step. `routes` is optional; leave it out when the data has none. `path` is the list of routes, read from the data's top as `locations.path` is (with `"from": "values"`, beginning with the name of a value of `data.values`), and the other fields are data paths inside one route.
+
+| Field         | Needed | Meaning                                                                                                                                                                                                  |
+| ------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`       | yes    | The route's title. A route without one is left out                                                                                                                                                       |
+| `steps`       | yes    | Its steps: `path` (inside one route) and data paths inside one step (next table)                                                                                                                         |
+| `id`          | no     | The site's own id of the route. Give it when there is one: it keeps the route the same route in Atlas, with the steps the owner ticked, when the data changes                                            |
+| `description` | no     | A short description, written in `markup`                                                                                                                                                                 |
+| `type`        | no     | What the route is. A value `walkthrough`, `collection` or `build` is taken as it is; `types` names what other values mean. Any other value is no type                                                    |
+| `types`       | no     | An object of up to 50 site values and the route type each means, such as `{ "tour": "walkthrough" }`. Only with `type`                                                                                   |
+| `color`       | no     | The colour of its line, `#rrggbb`. Anything else is left out, and Atlas uses its own                                                                                                                     |
+| `markup`      | no     | `html` (default) or `markdown`: what the description and the steps' text are written in, as `locations.markup`                                                                                           |
+| `line`        | no     | The line of the route: a list of points, each `[x, y]` in the part's position units. Where it bends between two steps, Atlas keeps the bends as corners of its line; a line that goes straight adds none |
+
+Inside one step:
+
+| Field      | Meaning                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `location` | The site's id of the location it stands on, as `locations.fields.id` gives it. A location on several maps is taken on the first of them |
+| `x`, `y`   | Its point, in the part's position units, for a step on no location, or one whose location the data does not have                        |
+| `map`      | The id of the map its point is on, as `maps.id` gives it, with several maps. A step on a location is on that location's map             |
+| `title`    | Its title. Without one, the step takes its location's name, or is numbered                                                              |
+| `text`     | What to do at the step                                                                                                                  |
+| `note`     | A second text, added after `text` as a paragraph of its own                                                                             |
+| `order`    | A number that places the step in its route, lowest first. Without it the steps keep the data's order                                    |
+
+A step needs `location`, or `x` and `y`, or both. A step that has neither a location the data has nor a point on a map is left out, and a route left without a step is left out; the trial counts the routes and steps it read and left out. A route may cross maps: Atlas joins two steps with its line only when both are on the same map. Ticking a step that stands on a location ticks that location as found.
+
+This part reads a made-up map page whose routes are in the value `trailBox.list`, beside its map in `boardData.current`:
+
+```json
+{
+  "type": "map",
+  "reader": "rules",
+  "start": "/charts/{map}",
+  "data": {
+    "from": "values",
+    "values": { "board": "boardData.current", "trails": "trailBox.list" }
+  },
+  "maps": {
+    "path": "board.chart",
+    "id": "slug",
+    "name": "title",
+    "size": ["width", "height"],
+    "maxZoom": 4,
+    "picture": { "images": "https://tiles.example.com/charts/{map}/{z}/{x}/{y}.png", "tile": 256 }
+  },
+  "types": { "from": "locations", "found": "all" },
+  "locations": {
+    "path": "board.pins[*]",
+    "fields": { "id": "slug", "type": "layer", "name": "title", "x": "x", "y": "y" }
+  },
+  "routes": {
+    "path": "trails[*]",
+    "id": "key",
+    "title": "name",
+    "type": "kind",
+    "types": { "tour": "walkthrough" },
+    "steps": { "path": "stops[*]", "title": "label", "text": "tip", "location": "pin" }
+  },
+  "position": { "units": "pixels" },
+  "pictures": { "hosts": ["tiles.example.com"] },
+  "reading": { "ways": ["window"], "pause": 5 }
+}
+```
+
+A value that only `routes` reads may be missing from the page: the map is read without routes, and the reader does not wait for them.
+
 ### `position`
 
 | Field    | Form                                        | Meaning                                                                                                                                                                                                                                                     |

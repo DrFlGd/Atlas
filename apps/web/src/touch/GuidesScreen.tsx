@@ -17,6 +17,7 @@ import {
   pageChange,
   pagesAToZ,
   revertPage,
+  routeTypeName,
 } from '@atlas/core';
 import {
   lazy,
@@ -78,7 +79,8 @@ import {
 } from './reader';
 import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
 import { sequenceOf, useFollowSource, useSourceView, type SourceView } from './sourceView';
-import { useKeyHints, useTouch } from './state';
+import { showSection, useKeyHints, useTouch } from './state';
+import { openRoute, useGameRoutes } from '../state/routes';
 import '../styles/guides.css';
 import '../styles/landing.css';
 
@@ -1515,11 +1517,50 @@ function Landing({
   );
 }
 
+/** The game's routes, under the landing page: each opens in Lists, drawn on the map. */
+function GuidesRoutes() {
+  const routes = useGameRoutes();
+  if (routes.length === 0) return null;
+  return (
+    <section className="guides-routes" aria-labelledby="guides-routes-heading">
+      <h2 className="touch-group-title" id="guides-routes-heading">
+        Routes on the map
+      </h2>
+      <ul className="touch-plain-list touch-list-cards">
+        {routes.map(({ route }) => (
+          <li key={route.id}>
+            <button
+              type="button"
+              className="touch-list-card"
+              data-testid="guides-route"
+              onClick={() => {
+                openRoute(route.id);
+                showSection('lists');
+              }}
+            >
+              <UiIcon name="route" size={20} strokeWidth={1.8} />
+              <span className="touch-list-card-text">
+                <span className="touch-list-card-name">{route.title}</span>
+                <span className="touch-figure">
+                  {routeTypeName(route.type)} ·{' '}
+                  {route.steps.length === 1 ? 'One step' : `${route.steps.length} steps`}
+                </span>
+              </span>
+              <UiIcon name="chevron" size={20} strokeWidth={1.8} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** Under the landing page: the game's guidebooks, linking the pages to the map, and guides of other games. */
 function LandingFoot({ game }: { game: LoadedGame }) {
   return (
     <>
       <GuidebookList gameId={game.entry.id} gameTitle={game.pack.manifest.title} />
+      <GuidesRoutes />
       {canLinkPages(game) ? (
         <button
           type="button"

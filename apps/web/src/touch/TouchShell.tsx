@@ -53,6 +53,7 @@ import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
 import { followOpenList, loadListPrefs, orderKeyDone, orderKeyNext, useLists } from './listViews';
 import { PlaceSheet } from './PlaceSheet';
+import { RouteBar } from './routes/RouteScreen';
 import { ProgressScreen } from './ProgressScreen';
 import { openPlace, resetReader } from './reader';
 import { SearchField, SearchScreen, SearchResults } from './SearchView';
@@ -194,6 +195,9 @@ export function TouchShell({
         <CompactMapControls />
       ) : null}
       {editorMode === 'edit' && game ? <EditorSide game={game} /> : null}
+      {wide && section !== 'lists' && !page && editorMode !== 'edit' && !locating ? (
+        <RouteBar />
+      ) : null}
       {locating && game ? <LocationEditorSide game={game} /> : null}
       {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
     </main>
@@ -726,6 +730,7 @@ function CompactMapControls() {
     <>
       <div className="touch-map-top">
         <SearchPill />
+        <RouteBar />
         {placeShown ? null : <ChipRow />}
       </div>
       {placeShown ? null : (

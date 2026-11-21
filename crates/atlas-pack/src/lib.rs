@@ -97,7 +97,12 @@ pub const FORMAT: &str = "atlas-pack-file";
 /// The newest version of the format this crate reads. A file is written at
 /// the lowest version that can hold what it carries, so an older app reads
 /// every file it can, and refuses a newer one with a message.
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
+/// A file with routes (`routes.json`, or the person's own under `mine/`)
+/// or with pictures of its types of location. Only a file that carries one
+/// of them is written in it: every other file stays at the version of what
+/// else it carries, so an app made before it reads it.
+pub const VERSION_WITH_ROUTES: u32 = 9;
 /// A file with guidebooks (`guidebooks/`, see [`GuidebookFacts`]). Only a
 /// file that carries guidebooks is written in it: every other file stays at
 /// the version of what else it carries, so an app made before it reads it.
@@ -544,6 +549,13 @@ pub struct MineFacts {
     /// Whether the title the game is shown under with other games is in it
     /// (version 6).
     pub group: bool,
+    /// Their own routes (version 9).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub routes: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// The map images in the file.

@@ -9,7 +9,8 @@
 //! the schema package), their changes to the guide pages in
 //! `<game id>.my-pages.json` ([`PAGES`], see `ownPages.ts`), and their
 //! notes on the game's locations in `<game id>.my-notes.json` ([`NOTES`],
-//! see `ownNotes.ts`).
+//! see `ownNotes.ts`), and their routes in `<game id>.my-routes.json`
+//! ([`ROUTES`], see `routes.ts`).
 //!
 //! It is never inside a pack folder, so nothing that replaces a pack's
 //! files touches it: refreshing a pack from its site, a newer pack that
@@ -76,8 +77,15 @@ pub const NOTES: OwnFile = OwnFile {
     what: "notes",
 };
 
+/// Own routes: ordered paths on the maps, with a short guide at each step.
+pub const ROUTES: OwnFile = OwnFile {
+    suffix: ".my-routes.json",
+    format: "atlas-own-routes",
+    what: "routes",
+};
+
 /// Every kind of own file.
-pub const OWN_FILES: [OwnFile; 4] = [LISTS, LOCATIONS, PAGES, NOTES];
+pub const OWN_FILES: [OwnFile; 5] = [LISTS, LOCATIONS, PAGES, NOTES, ROUTES];
 
 /// The person's links between guide pages and the map (see `guidelinks`,
 /// which reads, writes and carries the file): described here too, so a map

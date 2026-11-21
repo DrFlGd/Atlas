@@ -26,6 +26,7 @@ import { followBackground } from './state/background';
 import { followArrivals } from './state/packArrivals';
 import { followKeptPacks } from './state/keptPacks';
 import { loadOwnNotes } from './state/ownNotes';
+import { loadOwnRoutes } from './state/ownRoutes';
 import { loadOwnPages } from './state/ownPages';
 import { loadOwnLists } from './state/ownLists';
 import { sweepOwnPicturesOnOpen } from './state/ownPictures';
@@ -133,6 +134,11 @@ export function App() {
   useEffect(() => {
     if (!game) return;
     void loadOwnNotes(game);
+  }, [game]);
+  // Their own routes of the game.
+  useEffect(() => {
+    if (!game) return;
+    void loadOwnRoutes(game);
   }, [game]);
   // The games they show under one title, once the app knows where they are kept.
   const booted = game !== null;

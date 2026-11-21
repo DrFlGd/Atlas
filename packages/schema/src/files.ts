@@ -17,6 +17,7 @@ import {
   regionSchema,
   sectionSchema,
 } from './entities';
+import { routesReadSchema, routesWriteSchema } from './routes';
 
 /**
  * Every collection a pack can hold, the JSON file it lives in (relative to the
@@ -118,6 +119,14 @@ export const PACK_COLLECTIONS = {
     schema: z.array(pictureSchema),
     readSchema: z.array(read.pictureSchema),
   },
+  // Routes: ordered paths on the maps, with a short guide at each step
+  // (see `routes.ts`). Written only when the pack has one.
+  routes: {
+    file: 'routes.json',
+    required: false,
+    schema: routesWriteSchema,
+    readSchema: routesReadSchema,
+  },
 } as const;
 
 /** The folder that holds a pack's pictures (see `pictures.json`). */
@@ -161,6 +170,7 @@ export const packDataSchema = z.strictObject({
   // file reads as none, so a pack written with one reads back the same.
   sections: PACK_COLLECTIONS.sections.schema.transform(noneWhenEmpty).optional(),
   pictures: PACK_COLLECTIONS.pictures.schema.transform(noneWhenEmpty).optional(),
+  routes: PACK_COLLECTIONS.routes.schema.transform(noneWhenEmpty).optional(),
 });
 
 /**
@@ -183,6 +193,7 @@ export const packDataReadSchema = z.object({
   presets: PACK_COLLECTIONS.presets.readSchema,
   sections: PACK_COLLECTIONS.sections.readSchema.optional(),
   pictures: PACK_COLLECTIONS.pictures.readSchema.optional(),
+  routes: PACK_COLLECTIONS.routes.readSchema.optional(),
 });
 
 export type PackData = z.infer<typeof packDataSchema>;

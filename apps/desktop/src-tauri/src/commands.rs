@@ -2187,6 +2187,8 @@ pub struct PackFileImported {
     own_pages: Option<String>,
     /// Their notes on the game's locations (the text of the file).
     own_notes: Option<String>,
+    /// Their own routes (the text of the file).
+    own_routes: Option<String>,
     /// The title the game is shown under with other games, and their ids
     /// (the text of the file).
     game_group: Option<String>,
@@ -2233,6 +2235,7 @@ impl PackFileImported {
             guide_links: mine.guide_links,
             own_pages: mine.pages,
             own_notes: mine.notes,
+            own_routes: mine.routes,
             game_group: mine.group,
             own_pictures: mine
                 .pictures

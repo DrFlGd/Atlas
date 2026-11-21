@@ -57,6 +57,7 @@ const restored = (extra: Partial<MineRestored> = {}): MineRestored => ({
   pages: 0,
   sections: 0,
   notes: 0,
+  routes: 0,
   title: null,
   problem: null,
   ...extra,

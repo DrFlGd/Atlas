@@ -4,6 +4,7 @@ import { desktop, type ImagesInfo } from '../desktop';
 import { notify } from './actions';
 import { deleteGuideLinksOf } from './guideLinks';
 import { deleteOwnNotesOf, ownNotesBackend } from './ownNotes';
+import { deleteOwnRoutesOf } from './ownRoutes';
 import { forgetDeletedGame } from './gameGroups';
 import { forgetWikiSite, wikiSiteOf } from './importing';
 import { deleteOwnPagesOf, ownPagesBackend } from './ownPages';
@@ -128,6 +129,8 @@ export async function deletePack(
       // The links between its guide pages and the map, and the pages, go with the lists and guides.
       await deleteGuideLinksOf(id);
       await deleteOwnPagesOf(id);
+      // So do the routes, which are guides on the map.
+      await deleteOwnRoutesOf(id);
     } catch {
       notify(`Deleted ${title}, but your lists and guides for it could not be deleted.`, 'error');
       return { ok: true };

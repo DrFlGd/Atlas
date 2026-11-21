@@ -234,6 +234,48 @@ describe('the values of a map page, read in the window', () => {
     expect(run(reader, { ...empty, performance: { now: () => 16_000 } })).not.toBeNull();
   });
 
+  it('take the routes when the page has them, and read a map without them as well', () => {
+    const part = checked({
+      ...PART,
+      data: { from: 'values', values: { ...PART.data.values, trails: 'trailBox.list' } },
+      routes: {
+        path: 'trails[*]',
+        id: 'key',
+        title: 'name',
+        type: 'kind',
+        steps: { path: 'stops[*]', title: 'label', text: 'tip', location: 'spot' },
+      },
+    });
+    expect(pageValuesSpec(part)!.values.find((v) => v.name === 'trails')?.optional).toBe(true);
+    expect(pageValuesSpec(part)!.values.find((v) => v.name === 'board')?.optional).toBeUndefined();
+    const reader = pageValuesReader(part)!;
+    const trails = [
+      {
+        key: 't',
+        name: 'Shore walk',
+        kind: 'walkthrough',
+        secret: 'never taken',
+        stops: [{ label: 'Pier', tip: 'Go', spot: 1, colour: 'never taken' }],
+      },
+    ];
+    const got = run(reader, { ...page(), trailBox: { list: trails } }) as {
+      values: { trails: unknown };
+    };
+    expect(got.values.trails).toEqual([
+      {
+        key: 't',
+        name: 'Shore walk',
+        kind: 'walkthrough',
+        stops: [{ label: 'Pier', tip: 'Go', spot: 1 }],
+      },
+    ]);
+    // Without routes, and with none yet: the map is read, without them.
+    const without = run(reader, page()) as { values: Record<string, unknown> };
+    expect(without.values.trails).toBeUndefined();
+    expect(without.values.board).toBeDefined();
+    expect(run(reader, { ...page(), trailBox: { list: [] } })).not.toBeNull();
+  });
+
   it('leave out a text that is too long, and say so', () => {
     const reader = pageValuesReader(checked())!;
     const long = page([{ id: 'x'.repeat(MAX_PAGE_VALUE_TEXT + 1), kind: 'a', lng: 1, lat: 2 }]);

@@ -1,3 +1,4 @@
+import { cleanRoutes } from '../routes/routes';
 import {
   COLLECTION_NAMES,
   MANIFEST_FILE,
@@ -143,10 +144,10 @@ export async function loadPack(
     return [name, parsed] as const;
   });
   const collections = Object.fromEntries(entries) as { [K in CollectionName]: PackData[K] };
-  const data: PackData = {
+  const data: PackData = cleanRoutes({
     manifest: withoutLostHomePage(manifest, collections.guides),
     ...collections,
-  };
+  });
 
   const issues = checkPackIntegrity(data);
   if (issues.length > 0) {

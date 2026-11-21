@@ -921,6 +921,8 @@ export interface PackFileHeader {
     notes?: number;
     /** The title the game is shown under with other games (version 6). */
     group?: boolean;
+    /** Own routes (version 9). */
+    routes?: number;
   };
 }
 
@@ -1125,6 +1127,8 @@ export interface PackFileImported {
   ownPages?: string | null;
   /** The text of the own notes file the file carried, to add to the person's. */
   ownNotes?: string | null;
+  /** The text of the own routes file the file carried, to add to the person's. */
+  ownRoutes?: string | null;
   /** The title the game is shown under with other games, as the file carried it. */
   gameGroup?: string | null;
   /** The person's own photos the file carried: their file names and bytes in base64. */
@@ -1646,6 +1650,16 @@ export interface DesktopBridge {
     delete(gameId: string): Promise<boolean>;
   };
   /**
+   * A person's own routes of a game, in their file in the maps folder
+   * (`<game id>.my-routes.json`), kept as own lists are (see
+   * `ownListFiles`).
+   */
+  ownRoutes: {
+    read(gameId: string): Promise<string | null>;
+    write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    delete(gameId: string): Promise<boolean>;
+  };
+  /**
    * The Sites folder of the person's site rules files, beside the maps
    * folder (see `sites`). Only in a build with downloads.
    */
@@ -2087,6 +2101,12 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       write: (gameId, contents, keepCopy) =>
         call('own_notes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_notes_delete', { gameId }),
+    },
+    ownRoutes: {
+      read: (gameId) => call('own_routes_read', { gameId }),
+      write: (gameId, contents, keepCopy) =>
+        call('own_routes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('own_routes_delete', { gameId }),
     },
     sites: __ATLAS_DOWNLOADS__
       ? {

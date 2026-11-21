@@ -38,7 +38,9 @@ export type ChecklistPage =
   | { kind: 'index' }
   /** A checklist; in the standard layout, `area` opens one of its areas (see `touch/listViews.ts`). */
   | { kind: 'checklist'; id: string; area?: string }
-  | { kind: 'guide'; id: string };
+  | { kind: 'guide'; id: string }
+  /** A route (see `routes.ts`), followed step by step and drawn on the map. */
+  | { kind: 'route'; id: string };
 
 export interface LoadedGame {
   entry: PackEntry;

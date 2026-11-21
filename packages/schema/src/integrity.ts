@@ -35,6 +35,7 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
     ['presets', pack.presets],
     ['sections', pack.sections ?? []],
     ['pictures', pack.pictures ?? []],
+    ['routes', pack.routes ?? []],
   ] as const;
 
   for (const [name, items] of collections) {
@@ -196,6 +197,30 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
 
   pack.presets.forEach((preset, i) => {
     refs(preset.categoryIds, categories, `presets[${i}].categoryIds`, 'category');
+  });
+
+  (pack.routes ?? []).forEach((route, i) => {
+    route.steps.forEach((step, k) => {
+      const path = `routes[${i}].steps[${k}]`;
+      const map = maps.get(step.mapId);
+      if (!map) {
+        report(`${path}.mapId`, `unknown map ${step.mapId}`);
+        return;
+      }
+      const inside = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x <= map.width && y <= map.height;
+      expect(inside(step.x, step.y), path, `point (${step.x}, ${step.y}) lies outside ${map.id}`);
+      step.via?.forEach(([x, y], c) => {
+        expect(inside(x, y), `${path}.via[${c}]`, `point (${x}, ${y}) lies outside ${map.id}`);
+      });
+      if (step.locationId !== undefined) {
+        expect(
+          locations.has(step.locationId),
+          `${path}.locationId`,
+          `unknown location ${step.locationId}`,
+        );
+      }
+    });
   });
 
   checkContents(pack, guides, report);

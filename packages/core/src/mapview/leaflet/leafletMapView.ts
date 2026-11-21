@@ -6,6 +6,8 @@ import type {
   MapHandle,
   MapLayerSpec,
   MapOverlay,
+  RouteDrawing,
+  RouteStepPoint,
   MapMarker,
   MapView,
   MapViewOptions,
@@ -21,6 +23,7 @@ import { createTileLayer, firstViewBounds, imageBounds } from './tileLayer';
 const MARKER_PANE = 'atlasMarkers';
 const PLAYER_PANE = 'atlasPlayer';
 const OVERLAY_PANE = 'atlasOverlay';
+const ROUTE_PANE = 'atlasRoute';
 const HANDLE_PANE = 'atlasHandle';
 /** How far an arrow key moves a handle, in screen pixels; with Shift, five times as far. */
 const HANDLE_STEP = 8;
@@ -52,6 +55,19 @@ function overlayIcon(point: MapOverlay['points'][number]): L.DivIcon {
   return L.divIcon({
     className: `atlas-step atlas-step-${point.style}`,
     html: `<span aria-hidden="true">${label}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+/** A numbered step of a route. */
+function routeStepIcon(step: RouteStepPoint, color: string | undefined): L.DivIcon {
+  const size = step.current ? 34 : 26;
+  const label = step.label.replace(/[^0-9]/g, '').slice(0, 4);
+  const style = color ? ` style="--atlas-route: ${color}"` : '';
+  return L.divIcon({
+    className: `atlas-route-step${step.current ? ' atlas-route-step-current' : ''}${step.done ? ' atlas-route-step-done' : ''}`,
+    html: `<span aria-hidden="true"${style}>${label}</span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -93,6 +109,7 @@ export function createLeafletMapView(
   pane.style.zIndex = '450';
   map.createPane(PLAYER_PANE).style.zIndex = '460';
   map.createPane(OVERLAY_PANE).style.zIndex = '455';
+  map.createPane(ROUTE_PANE).style.zIndex = '452';
   map.createPane(HANDLE_PANE).style.zIndex = '470';
 
   let layer: MapLayerSpec | null = null;
@@ -110,6 +127,8 @@ export function createLeafletMapView(
   let playerMarker: L.Marker | null = null;
   let overlay: MapOverlay | null = null;
   let overlayLayer: L.LayerGroup | null = null;
+  let route: RouteDrawing | null = null;
+  let routeLayer: L.LayerGroup | null = null;
   let handle: MapHandle | null = null;
   let handleMarker: L.Marker | null = null;
   const handleListeners = new Set<(point: PixelPoint) => void>();
@@ -366,6 +385,58 @@ export function createLeafletMapView(
     overlayLayer = group.addTo(map);
   };
 
+  const showRoute = () => {
+    routeLayer?.remove();
+    routeLayer = null;
+    if (!route || !layer) return;
+    const group = L.layerGroup();
+    const color = route.color;
+    for (const line of route.lines) {
+      if (line.length < 2) continue;
+      const points = line.map((point) => toLatLng(point.x, point.y));
+      // A dark edge under the line keeps it clear on any map picture.
+      L.polyline(points, {
+        pane: ROUTE_PANE,
+        interactive: false,
+        className: 'atlas-route-edge',
+        weight: 7,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(group);
+      L.polyline(points, {
+        pane: ROUTE_PANE,
+        interactive: false,
+        className: 'atlas-route-line',
+        weight: 4,
+        lineCap: 'round',
+        lineJoin: 'round',
+        ...(color ? { color } : {}),
+      }).addTo(group);
+    }
+    for (const corner of route.corners ?? []) {
+      L.circleMarker(toLatLng(corner.x, corner.y), {
+        pane: ROUTE_PANE,
+        interactive: false,
+        radius: 4,
+        className: 'atlas-route-corner',
+        ...(color ? { color } : {}),
+      }).addTo(group);
+    }
+    const steps = [
+      ...route.steps.filter((step) => !step.current),
+      ...route.steps.filter((step) => step.current),
+    ];
+    for (const step of steps) {
+      L.marker(toLatLng(step.x, step.y), {
+        icon: routeStepIcon(step, color),
+        pane: ROUTE_PANE,
+        interactive: false,
+        keyboard: false,
+      }).addTo(group);
+    }
+    routeLayer = group.addTo(map);
+  };
+
   const select = (id: string | null) => {
     selectedId = id;
     markerLayer?.setSelected(id);
@@ -419,10 +490,13 @@ export function createLeafletMapView(
       player = null;
       playerMarker?.remove();
       playerMarker = null;
-      // So does an overlay, and a handle.
+      // So does an overlay, a route, and a handle.
       overlay = null;
       overlayLayer?.remove();
       overlayLayer = null;
+      route = null;
+      routeLayer?.remove();
+      routeLayer = null;
       handle = null;
       handleMarker?.remove();
       handleMarker = null;
@@ -489,6 +563,12 @@ export function createLeafletMapView(
       if (destroyed || (next === null && overlay === null)) return;
       overlay = next;
       showOverlay();
+    },
+
+    setRoute(next) {
+      if (destroyed || (next === null && route === null)) return;
+      route = next;
+      showRoute();
     },
 
     setHandle(next) {

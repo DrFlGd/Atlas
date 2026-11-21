@@ -8,6 +8,14 @@ import { setDownloadPanelOpen } from '../state/downloads';
 import { useMapOverlay } from '../state/mapOverlay';
 import { cancelPlacing, placePlayerAt, showPlayer, shownPlayer } from '../state/saves';
 import { changeOwn, useOwnLocations } from '../state/ownLocations';
+import {
+  openRouteId,
+  routeDrawing,
+  routePress,
+  stepIndexOf,
+  useGameRoutes,
+  useRoutes,
+} from '../state/routes';
 import { useAtlas } from '../state/store';
 import {
   clickedOnMap,
@@ -79,6 +87,13 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
           else view.setSelected(useAtlas.getState().selectedId);
           return;
         }
+        // The route editor takes presses for itself while it adds steps or corners.
+        const routePick = useRoutes.getState().pick;
+        if (routePick && useRoutes.getState().editing) {
+          view.setSelected(useAtlas.getState().selectedId);
+          if (id && routePick.kind === 'step') routePress({ locationId: id });
+          return;
+        }
         // The list editor takes taps on markers for itself while it is open.
         const pick = useMapOverlay.getState().pick;
         if (pick) {
@@ -104,6 +119,11 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
         useAtlas.setState({ tileStatus });
       }),
       view.onMapClick((point, onMarker) => {
+        const routePick = useRoutes.getState().pick;
+        if (routePick && useRoutes.getState().editing) {
+          if (routePick.kind === 'corner' || !onMarker) routePress(point);
+          return;
+        }
         if (useLocationEditor.getState().active) {
           if (!onMarker) clickedOnMap(point);
           return;
@@ -205,6 +225,20 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     const points = overlayPoints?.filter((point) => point.layerId === layerId) ?? null;
     map.setOverlay(points ? { points, joined: overlayJoined } : null);
   }, [map, overlayPoints, overlayJoined, layerId, layerShown]);
+
+  // The route open in Lists, on the map shown.
+  const routeId = useAtlas(openRouteId);
+  const routes = useGameRoutes();
+  const openRoute = routes.find((entry) => entry.route.id === routeId)?.route;
+  const found = useAtlas((s) => s.found);
+  const routeStep = useRoutes((s) =>
+    openRoute ? stepIndexOf(openRoute.id, openRoute.steps.length, s) : 0,
+  );
+  const routeEditing = useRoutes((s) => s.editing !== null && s.editing === routeId);
+  useEffect(() => {
+    if (!layerShown) return;
+    map.setRoute(routeDrawing(game, openRoute, shownMapId ?? null, found, routeStep, routeEditing));
+  }, [map, game, openRoute, shownMapId, found, routeStep, routeEditing, layerShown]);
 
   // The handle of the location open in Edit locations, on its level.
   const handleId = useLocationEditor((s) =>

@@ -12,11 +12,11 @@ The entries come in this order:
 
 1. `atlaspack.json`, the description. It is always the first entry, so it can be read without the rest of the file.
 2. From version 7, the small pictures of the maps, `preview/<name>.jpg`, right after the description and before everything else. They are stored, not deflated.
-3. The pack's JSON files, such as `manifest.json`, `maps.json`, `layers.json`, `locations.json`, `guides.json`, `sections.json` and `pictures.json`. They are deflated.
+3. The pack's JSON files, such as `manifest.json`, `maps.json`, `layers.json`, `locations.json`, `guides.json`, `sections.json`, `pictures.json` and, from version 9, `routes.json`. They are deflated. A `routes.json` that holds no route is left out.
 4. The status file of each layer whose images can be downloaded, `offline-tiles/<layer>.json`.
 5. The map images, at the paths each layer's own `url` gives, with an empty `.404` marker for an image the map server did not have. They are stored.
 6. The pictures the pages show, in `pictures/`, that may be passed on.
-7. Only when the person asked for it: their own lists, locations, pages, notes and photos, and the title the game is shown under with other games, under `mine/`.
+7. Only when the person asked for it: their own lists, locations, pages, notes, routes (from version 9, `mine/my-routes.json`) and photos, and the title the game is shown under with other games, under `mine/`.
 
 A pack of guidebooks (version 8, see "Guidebooks") holds, after the description, `manifest.json` and `guidebooks.json` (deflated), then each guidebook's text file and its file (both stored). It holds nothing else.
 
@@ -157,18 +157,19 @@ When Atlas imports a file, it checks each small picture and then leaves it out. 
 
 A file is written at the lowest version that can hold what it carries. So an older app reads every file it can, and refuses a newer one with a message that names the app and version that made it.
 
-| Version | What it adds                                                                        |
-| ------- | ----------------------------------------------------------------------------------- |
-| 1       | The pack and its map images.                                                        |
-| 2       | The person's own lists, locations and types (`mine/`).                              |
-| 3       | Their own photos and the links between guide pages and the map.                     |
-| 4       | Their own guide pages.                                                              |
-| 5       | Their notes on the game's locations, and a guide page linked to one location alone. |
-| 6       | The title the game is shown under with other games.                                 |
-| 7       | Small pictures of the maps (`preview/`).                                            |
-| 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).           |
+| Version | What it adds                                                                                                                         |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 1       | The pack and its map images.                                                                                                         |
+| 2       | The person's own lists, locations and types (`mine/`).                                                                               |
+| 3       | Their own photos and the links between guide pages and the map.                                                                      |
+| 4       | Their own guide pages.                                                                                                               |
+| 5       | Their notes on the game's locations, and a guide page linked to one location alone.                                                  |
+| 6       | The title the game is shown under with other games.                                                                                  |
+| 7       | Small pictures of the maps (`preview/`).                                                                                             |
+| 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).                                                            |
+| 9       | Routes: the pack's `routes.json` holding a route, or the person's own routes (`mine/my-routes.json`, counted as `routes` in `mine`). |
 
-The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8; every other file stays at the version of what it carries, so the apps that read version 7 read it.
+The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, and only a file that carries routes is version 9; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
 
 ## Guidebooks
 

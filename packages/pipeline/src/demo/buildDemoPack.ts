@@ -11,6 +11,7 @@ import { createTerrain, renderTerrain } from './terrain';
 import { addUnderground, tintAsCave } from './underground';
 import { addPhotos, photoFiles } from './photos';
 import { addWiki, wikiPictureFiles } from './wiki';
+import { addRoutes } from './routes';
 
 export type TileFormat = 'pmtiles' | 'xyz';
 
@@ -101,16 +102,18 @@ export async function buildDemoPack(
     tiles,
   });
   const data = assertValidPack(
-    addPhotos(
-      addWiki(
-        addChecklists(
-          addUnderground(surface, {
-            seed: options.seed,
-            size: UNDERGROUND_SIZE,
-            tileSize: options.tileSize,
-            locationsPerLayer: options.undergroundLocations,
-            layers: underground,
-          }),
+    addRoutes(
+      addPhotos(
+        addWiki(
+          addChecklists(
+            addUnderground(surface, {
+              seed: options.seed,
+              size: UNDERGROUND_SIZE,
+              tileSize: options.tileSize,
+              locationsPerLayer: options.undergroundLocations,
+              layers: underground,
+            }),
+          ),
         ),
       ),
     ),

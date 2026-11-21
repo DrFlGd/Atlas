@@ -21,6 +21,8 @@ export const ID_KINDS = {
   // Guides read as pages: the sections of their contents, and their pictures.
   section: 'section',
   picture: 'picture',
+  // Routes: an ordered path on the maps, with a short guide at each step.
+  route: 'route',
 } as const;
 
 export type IdKind = (typeof ID_KINDS)[keyof typeof ID_KINDS];

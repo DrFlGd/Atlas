@@ -115,7 +115,7 @@ pub use atlas_pack::{
     SourceFacts, SourceKind, EXTENSION, FORMAT, HEADER_FILE, MAX_HEADER_BYTES, MAX_PREVIEWS,
     MAX_PREVIEW_BYTES, PREVIEW_DIR, PREVIEW_SIDE, VERSION, VERSION_WITHOUT_MINE, VERSION_WITH_MINE,
     VERSION_WITH_NOTES, VERSION_WITH_PAGES, VERSION_WITH_PHOTOS, VERSION_WITH_PREVIEWS,
-    VERSION_WITH_TITLE,
+    VERSION_WITH_ROUTES, VERSION_WITH_TITLE,
 };
 
 /// A refusal of the `atlas-pack` crate in this app's words. The crate
@@ -184,13 +184,14 @@ pub struct Progress {
 }
 
 /// The entries of a person's own files, and which file each is.
-pub const MINE_ENTRIES: [(&str, OwnFile); 6] = [
+pub const MINE_ENTRIES: [(&str, OwnFile); 7] = [
     ("mine/my-lists.json", ownlists::LISTS),
     ("mine/my-locations.json", ownlists::LOCATIONS),
     ("mine/guide-links.json", ownlists::GUIDE_LINKS),
     ("mine/my-pages.json", ownlists::PAGES),
     ("mine/my-notes.json", ownlists::NOTES),
     ("mine/game-group.json", crate::gamegroups::CARRIED),
+    ("mine/my-routes.json", ownlists::ROUTES),
 ];
 
 /// Where a person's own photos are in a file: `mine/pictures/<file>`.
@@ -213,6 +214,8 @@ pub struct Mine {
     pub notes: Option<String>,
     /// The title of the game and the games shown under it (`gamegroups::carried`).
     pub group: Option<String>,
+    /// Their own routes (version 9).
+    pub routes: Option<String>,
     pub pictures: Vec<(String, Vec<u8>)>,
 }
 
@@ -226,6 +229,7 @@ impl Mine {
         let pages = ownlists::PAGES.read(maps_folder, game_id)?;
         let notes = ownlists::NOTES.read(maps_folder, game_id)?;
         let group = crate::gamegroups::carried(maps_folder, game_id)?;
+        let routes = ownlists::ROUTES.read(maps_folder, game_id)?;
         let mut pictures = Vec::new();
         let mut total = 0u64;
         let named = [&lists, &locations, &pages, &notes]
@@ -253,15 +257,19 @@ impl Mine {
             pages,
             notes,
             group,
+            routes,
             pictures,
         })
     }
 
-    /// The version of the format a file carrying these needs: 6 with a
-    /// title, 5 with notes or a guide page linked to one location alone, 4
-    /// with own pages, 3 with photos or guide links, 2 otherwise.
+    /// The version of the format a file carrying these needs: 9 with
+    /// routes, 6 with a title, 5 with notes or a guide page linked to one
+    /// location alone, 4 with own pages, 3 with photos or guide links, 2
+    /// otherwise.
     pub fn version(&self) -> u32 {
-        if self.group.is_some() {
+        if self.routes.is_some() {
+            VERSION_WITH_ROUTES
+        } else if self.group.is_some() {
             VERSION_WITH_TITLE
         } else if self.notes.is_some()
             || self.guide_links.as_deref().is_some_and(links_one_location)
@@ -283,6 +291,7 @@ impl Mine {
             && self.pages.is_none()
             && self.notes.is_none()
             && self.group.is_none()
+            && self.routes.is_none()
             && self.pictures.is_empty()
     }
 
@@ -297,6 +306,7 @@ impl Mine {
                 &self.pages,
                 &self.notes,
                 &self.group,
+                &self.routes,
             ])
             .filter_map(|((name, kind), text)| text.as_deref().map(|text| (name, kind, text)))
     }
@@ -312,6 +322,8 @@ impl Mine {
             &mut self.notes
         } else if kind.suffix == crate::gamegroups::CARRIED.suffix {
             &mut self.group
+        } else if kind.suffix == ownlists::ROUTES.suffix {
+            &mut self.routes
         } else {
             &mut self.guide_links
         }
@@ -342,6 +354,8 @@ impl Mine {
                     .map_or(0, serde_json::Map::len) as u64;
             } else if kind.suffix == crate::gamegroups::CARRIED.suffix {
                 facts.group = true;
+            } else if kind.suffix == ownlists::ROUTES.suffix {
+                facts.routes = count("routes");
             } else {
                 facts.guide_links = true;
             }
@@ -1291,6 +1305,18 @@ pub fn plan_images(
 
 /// The pack's JSON files that are there, as entries (the manifest read
 /// in full, to be rewritten).
+/// A pack's routes (see `routes.ts` in the schema package).
+pub const ROUTES_FILE: &str = "routes.json";
+
+/// Whether a pack's routes file holds a route: a list that is not empty.
+/// One that cannot be read holds none an app would show.
+pub fn holds_routes(path: &Path) -> bool {
+    read_json_capped(path, crate::library::MAX_PACK_FILE_BYTES as u64)
+        .ok()
+        .and_then(|value| value.as_array().map(|routes| !routes.is_empty()))
+        .unwrap_or(false)
+}
+
 pub fn pack_file_entries(root: &Path) -> Result<Vec<Entry>, String> {
     let mut entries = Vec::new();
     for name in PACK_FILES {
@@ -1303,6 +1329,11 @@ pub fn pack_file_entries(root: &Path) -> Result<Vec<Entry>, String> {
         }
         if metadata.len() > crate::library::MAX_PACK_FILE_BYTES as u64 {
             return Err(format!("The pack's {name} is too large."));
+        }
+        // A file of no route stays out, so the file stays at the version of
+        // what else it carries (see [`VERSION_WITH_ROUTES`]).
+        if *name == ROUTES_FILE && !holds_routes(&path) {
+            continue;
         }
         entries.push(Entry {
             name: (*name).to_owned(),

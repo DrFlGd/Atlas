@@ -851,6 +851,7 @@ function MineNote({ mine }: { mine: MineRestored }) {
     mine.pages +
     mine.sections +
     mine.notes +
+    mine.routes +
     (mine.guideLinks ? 1 : 0);
   return (
     <p className="download-note" data-testid="import-mine">

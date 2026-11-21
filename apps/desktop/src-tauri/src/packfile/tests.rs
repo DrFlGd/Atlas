@@ -4214,3 +4214,63 @@ fn says_in_one_word_where_a_pack_came_from() {
         Some(Origin::Site)
     );
 }
+
+#[test]
+fn carries_routes_as_version_9_and_an_empty_routes_file_not_at_all() {
+    let dir = TempDir::new("packfile-routes");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    // An empty routes file is left out: the file keeps the version it had.
+    put(&pack.join(ROUTES_FILE), b"[]\n");
+    let source = folder_source(&pack);
+    let plain = dir.0.join("plain.atlaspack");
+    let exported = run_export(&source, Detail::Overview, &plain).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITHOUT_MINE);
+    assert!(!entry_names(&plain).contains_key(ROUTES_FILE));
+
+    // A pack's routes make it version 9, and come back in its folder.
+    let route = json!([{
+        "id": format!("{ID}:route:walk"),
+        "title": "A walk",
+        "steps": [{"id": "1", "title": "Start", "mapId": format!("{ID}:map:east"), "x": 1, "y": 2}]
+    }]);
+    put_json(&pack.join(ROUTES_FILE), &route);
+    let file = dir.0.join("routes.atlaspack");
+    let exported = run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_ROUTES);
+    assert!(entry_names(&file).contains_key(ROUTES_FILE));
+    let maps = dir.0.join("maps-routes");
+    run_import(&file, &maps).unwrap();
+    let back: Value =
+        serde_json::from_slice(&fs::read(maps.join(ID).join(ROUTES_FILE)).unwrap()).unwrap();
+    assert_eq!(back, route);
+
+    // The person's own routes: version 9, counted, handed back as they were.
+    fs::remove_file(pack.join(ROUTES_FILE)).unwrap();
+    let own = format!(
+        r#"{{"format":"atlas-own-routes","version":1,"gameId":"{ID}","updatedAt":"2026-11-21T10:00:00.000Z","routes":[{{"id":"{ID}:route:own.a"}},{{"id":"{ID}:route:own.b"}}]}}"#
+    );
+    let mine = Mine {
+        routes: Some(own.clone()),
+        ..Mine::default()
+    };
+    assert_eq!(mine.version(), VERSION_WITH_ROUTES);
+    let file = dir.0.join("own-routes.atlaspack");
+    let exported = export_mine(&folder_source(&pack), &file, &mine).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_ROUTES);
+    assert_eq!(exported.header.mine.unwrap().routes, 2);
+    assert!(entry_names(&file).contains_key("mine/my-routes.json"));
+    let imported = run_import(&file, &dir.0.join("maps-own")).unwrap();
+    assert_eq!(imported.mine, mine);
+    // Another game's routes are refused.
+    let other = Mine {
+        routes: Some(own.replace(&format!("\"gameId\":\"{ID}\""), "\"gameId\":\"x\"")),
+        ..Mine::default()
+    };
+    assert!(export_mine(
+        &folder_source(&pack),
+        &dir.0.join("other.atlaspack"),
+        &other
+    )
+    .is_err());
+}
