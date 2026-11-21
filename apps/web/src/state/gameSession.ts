@@ -377,6 +377,24 @@ export async function continueKeptSession(): Promise<void> {
   void askFree();
 }
 
+/**
+ * Runs the games of a job (see `importJobs.ts`) as a session of their own,
+ * as if started from its plan; what it came to, or null when a session is
+ * going already.
+ */
+export async function runGamesOf(
+  planned: Omit<GameSession, 'results' | 'stopped' | 'startedAt'>,
+): Promise<GameSession | null> {
+  if (get().going) return null;
+  backTo = null;
+  set({
+    session: { ...planned, results: {}, stopped: null, startedAt: new Date().toISOString() },
+    stopAsked: false,
+  });
+  await startGames();
+  return get().session;
+}
+
 /** The system the games are filed under when the list does not say one of a game. */
 export function setSessionSystem(system: string): void {
   const session = get().session;

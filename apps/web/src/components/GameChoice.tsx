@@ -34,6 +34,8 @@ import {
 } from '../state/importing';
 import { MAX_RUN_ADDRESSES, stopReasonText, type RunState } from '../state/importRun';
 import { planGames } from '../state/gameSession';
+import { saveChoiceAsJob } from '../state/importJobs';
+import { SaveAsJob } from './ImportJobs';
 import { selectShown, shownCount } from '../state/selectShown';
 import { FollowLinksChoice } from './FollowLinks';
 import { MeasureFromPage } from './MeasureFromPage';
@@ -571,6 +573,11 @@ export function ChoosePages({ choice }: { choice: Choice }) {
               ? `Read ${left} now, keep ${maps - left} for later`
               : `${verb} ${plural(maps, noun[0]!, noun[1]!)}`}
         </button>
+        <SaveAsJob
+          testId="add-map-choose-save-job"
+          disabled={maps === 0}
+          onSave={saveChoiceAsJob}
+        />
         <button
           type="button"
           className="button"

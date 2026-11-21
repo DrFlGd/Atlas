@@ -49,6 +49,8 @@ import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { GamesBar, GamesDone, GamesGoing, GamesPlan, KeptGames } from './GameSession';
+import { SaveAsJob } from './ImportJobs';
+import { saveAddressesAsJob } from '../state/importJobs';
 import { SameTitleOfferCard } from './GameTitles';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
@@ -137,6 +139,11 @@ export function AddBox() {
         >
           {count > 1 ? `Add ${count} maps` : 'Add'}
         </button>
+        <SaveAsJob
+          testId="add-map-save-job"
+          disabled={count === 0}
+          onSave={() => saveAddressesAsJob(address)}
+        />
       </div>
       <p className="library-hint" id={hintId}>
         A map page, a game’s page that lists its maps, or a wiki’s start page. For several map

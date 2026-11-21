@@ -2003,3 +2003,42 @@
 [data-ui='touch'] .map-names summary {
   min-height: 44px;
 }
+
+/* Jobs: imports saved to run later, in Downloads (see `components/ImportJobs.tsx`). */
+.saved-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.saved-job {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+  overflow-wrap: anywhere;
+}
+
+.saved-job-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.saved-job-games {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 0;
+}

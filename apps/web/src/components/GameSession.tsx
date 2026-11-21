@@ -19,8 +19,10 @@ import {
   type GameSession,
   type SessionGame,
 } from '../state/gameSession';
+import { saveGamesAsJob } from '../state/importJobs';
 import { openLibraryGame } from '../state/libraryView';
 import { formatBytes } from './downloadFormat';
+import { SaveAsJob } from './ImportJobs';
 
 /**
  * Adding the games of a site's list one after another (see
@@ -148,6 +150,11 @@ export function GamesPlan() {
             ? `Continue: ${plural(left.length, 'game', 'games')}`
             : `Add ${plural(left.length, 'game', 'games')}`}
         </button>
+        <SaveAsJob
+          testId="games-plan-save-job"
+          disabled={left.length === 0}
+          onSave={saveGamesAsJob}
+        />
         <button type="button" className="button" data-testid="games-plan-back" onClick={leavePlan}>
           Back
         </button>

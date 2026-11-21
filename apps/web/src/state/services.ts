@@ -163,4 +163,10 @@ export const SETTINGS = {
    * `gameSession.ts`), to continue later.
    */
   gameSession: 'gameSession',
+  /**
+   * Imports saved to run later, as jobs (see `importJobs.ts`): what each
+   * reads and how, never the pages read. Kept on this device, with the
+   * Importer's other settings.
+   */
+  importJobs: 'importJobs',
 } as const;

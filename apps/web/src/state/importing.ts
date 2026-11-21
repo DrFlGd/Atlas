@@ -128,6 +128,7 @@ import {
 } from './pageStyles';
 import {
   choiceGame,
+  chosenToRead,
   keptCatalogue,
   newChoice,
   newPick,
@@ -136,6 +137,7 @@ import {
   planPick,
   splitChosen,
   tickFrom,
+  titleFromAddress,
   tickGames,
   tickPages,
   toggleGame,
@@ -3257,6 +3259,96 @@ export function addGamePages(
       problem: null,
       listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
     })),
+    0,
+    { firstPauseMs: pauseLeft(), show: false },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Jobs: imports saved to run later (see `importJobs.ts`)
+
+/** A map page a job reads, with the importer that reads it. */
+export interface JobPage {
+  url: string;
+  title: string;
+  importerId: string;
+}
+
+/**
+ * The map pages of addresses typed in the address box, each with its
+ * importer, for a job; or why they cannot be one. A game's address or a
+ * list of games lists pages to choose from, so it is opened and its pages
+ * are saved from there instead.
+ */
+export async function pagesOfAddresses(
+  text: string,
+): Promise<{ pages: JobPage[] } | { problem: string }> {
+  const { addresses } = parseAddresses(text);
+  if (addresses.length === 0) return { problem: 'Paste the address of a map page first.' };
+  const importers = await loadImporters();
+  const pages: JobPage[] = [];
+  for (const url of addresses) {
+    const refusal = refusalFor(importers, url);
+    if (refusal) return { problem: refusal };
+    const reader = findReader(importers, url);
+    if (reader && reader.kind !== 'page') {
+      return {
+        problem:
+          'A game’s address or a list of games cannot be saved as a job as it is. Press Add, tick the maps or the games, and save them as a job there.',
+      };
+    }
+    const importer = checkAddresses([url], importers)[0]?.importer;
+    if (!importer) return { problem: `No importer of this app reads ${url}.` };
+    pages.push({ url, title: titleFromAddress(url), importerId: importer.id });
+  }
+  return { pages };
+}
+
+/** The pages ticked in a list of pages, for a job. */
+export function pagesOfChoice(): JobPage[] {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'choose') return [];
+  return chosenToRead(phase.choice).map((page) => ({
+    url: page.url,
+    title: page.title,
+    importerId: page.importerId,
+  }));
+}
+
+/**
+ * Why a page cannot be read without the person, or null when it can: a
+ * site the person chose to read only as they browse it, or one that shows
+ * its pages only to a person, who confirms it in the app's window.
+ */
+export async function needsPerson(
+  importer: AtlasImporter,
+  url: string,
+  reading: 'map' | 'game' = 'map',
+): Promise<string | null> {
+  const way = (await readingOf(importer, url))?.way;
+  if (way === 'browse') {
+    return 'You chose to read its site only as you browse it, so this app never opens its pages by itself.';
+  }
+  const fetch = reading === 'game' ? importer.games?.fetch : importer.fetch;
+  if (fetch && (way === 'window' || (way === undefined && readsInWindow(fetch, url)))) {
+    return 'Its site shows its pages only to a person, who confirms it in the window of this app, so it cannot run by itself.';
+  }
+  return null;
+}
+
+/** Reads the pages of a job as one go, without showing a game at the end. */
+export async function runJobPages(pages: readonly JobPage[]): Promise<RunState | null> {
+  const importers = await loadImporters();
+  return startRun(
+    pages.map((page) => {
+      const importer = importers.find((one) => one.id === page.importerId) ?? null;
+      return {
+        url: page.url,
+        importer,
+        problem: importer ? null : 'The importer that read this page is not in this app now.',
+        listed: { title: page.title },
+      };
+    }),
     0,
     { firstPauseMs: pauseLeft(), show: false },
   );
