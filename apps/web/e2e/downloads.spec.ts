@@ -979,9 +979,10 @@ test('the plain web app offers no download', async ({ page }) => {
   await expect(page.getByTestId('tile-notice')).toContainText('Map image not installed');
   await expect(page.getByTestId('download-map-images')).toHaveCount(0);
   await expect(page.getByTestId('map-images-button')).toHaveCount(0);
-  // Without the shell no status file is asked for: the only 404 is the tile probe.
+  // Without the shell no status file is asked for: the only 404s are the tile probe and the
+  // routes file, which a pack without routes does not have.
   expect(errors.filter((e) => !/Failed to load resource.*404/.test(e))).toEqual([]);
-  expect(errors.length).toBeLessThanOrEqual(1);
+  expect(errors.length).toBeLessThanOrEqual(2);
 });
 
 test('a shell without downloads offers none', async ({ page }) => {

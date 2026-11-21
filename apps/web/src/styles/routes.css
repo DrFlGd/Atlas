@@ -27,7 +27,8 @@
 .route-field input[type='text'],
 .route-field textarea {
   box-sizing: border-box;
-  min-height: 40px;
+  /* A target a finger can press, as every control of the touch layout. */
+  min-height: 44px;
   padding: 6px 10px;
   border: 1px solid var(--atlas-border-strong);
   border-radius: var(--atlas-radius-small);

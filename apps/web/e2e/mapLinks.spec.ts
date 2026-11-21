@@ -131,10 +131,10 @@ async function openGuidePage(page: Page): Promise<void> {
 /** The guide page's links: found ones are buttons of the app, the others links to the web. */
 async function expectLinks(page: Page, other: boolean): Promise<void> {
   const shown = page.getByTestId('guides-page');
-  const gilded = shown.getByRole('button', { name: 'gilded chest' });
+  const gilded = shown.getByRole('button', { name: 'gilded chest', exact: true });
   await expect(gilded).toHaveAttribute('data-atlas-target', 'demo:loc:2391');
   await expect(gilded).toHaveClass('app-link');
-  const deep = shown.getByRole('button', { name: 'iron-bound chest of the deep' });
+  const deep = shown.getByRole('button', { name: 'iron-bound chest of the deep', exact: true });
   await expect(deep).toHaveAttribute('data-atlas-target', 'demo:loc:deep-0003');
   for (const link of [gilded, deep]) {
     if (other) await expect(link).toHaveAttribute('data-atlas-game', 'demo');
@@ -164,7 +164,10 @@ test('a link of the guide opens its location on the map of the title, one not fo
   await page.getByTestId('guides-page').getByRole('link', { name: 'own map' }).hover();
   await shot(page, '1-guide-page-desktop');
 
-  await page.getByTestId('guides-page').getByRole('button', { name: 'gilded chest' }).click();
+  await page
+    .getByTestId('guides-page')
+    .getByRole('button', { name: 'gilded chest', exact: true })
+    .click();
   // The demo world opens on its map, at the location.
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
   await expect(page.getByTestId('map-chip')).toContainText('The Sundered Isle');
@@ -181,7 +184,7 @@ test('a link of the guide opens its location on the map of the title, one not fo
   await expectLinks(page, false);
   await page
     .getByTestId('guides-page')
-    .getByRole('button', { name: 'iron-bound chest of the deep' })
+    .getByRole('button', { name: 'iron-bound chest of the deep', exact: true })
     .click();
   await expect(page.getByTestId('map-chip')).toContainText('The Hollow Deep');
   await expect(page.getByTestId('selected-name')).toHaveText('Iron-bound chest 3');
@@ -203,7 +206,10 @@ test('at phone size, the link opens the map of the title at its location', async
   );
   await shot(page, '3-guide-page-phone');
 
-  await page.getByTestId('guides-page').getByRole('button', { name: 'gilded chest' }).click();
+  await page
+    .getByTestId('guides-page')
+    .getByRole('button', { name: 'gilded chest', exact: true })
+    .click();
   await expect(page.getByTestId('section-map')).toHaveAttribute('aria-current', /page|true/);
   await expect(page.getByTestId('selected-name')).toHaveText('Gilded chest 1');
   await page.waitForTimeout(800);
