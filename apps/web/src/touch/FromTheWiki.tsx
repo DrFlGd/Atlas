@@ -1,12 +1,14 @@
 import type { TargetInfo } from '@atlas/core';
 import { NO_LICENCE_RECORDED, licenseBasisOf } from '@atlas/schema';
-import type { GuideEntry, GuideSource, Location } from '@atlas/schema';
+import { isOwnId, type GuideEntry, type GuideSource, type Location } from '@atlas/schema';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { notify } from '../state/actions';
 import { numberFormat } from '../state/derived';
 import { canChangeGuideLinks, useGuideLinks } from '../state/guideLinks';
 import { pagesAt, type LocationPage } from '../state/guideMatches';
+import { guidesOf } from '../state/guides';
+import { canChangeOwnPages, useOwnPages } from '../state/ownPages';
 import type { LoadedGame } from '../state/store';
 import {
   hasWikiPages,
@@ -19,6 +21,7 @@ import {
   type WikiHit,
 } from '../state/wikiSearch';
 import { pageExcerpt } from './pageExcerpt';
+import { editWithMapLink } from './pages/pageEditorState';
 import { openPlace } from './reader';
 import { showSection } from './state';
 
@@ -34,7 +37,8 @@ function readPage(guideId: string): void {
  * then its region), with its first lines, its credit and a way to the full
  * page; and the other pages linked to it, each a way to its page. The link
  * can be taken off, and another page searched for. Without a linked page,
- * "Search wiki" searches the saved pages (see `wikiSearch.ts`).
+ * "Add to a wiki page…" searches the saved pages (see `wikiSearch.ts`) to
+ * link one here, or puts a link to the location on a page of one's own.
  */
 export function FromTheWiki({ game, locationId }: { game: LoadedGame; locationId: string }) {
   // The links and the pages of other games change what is linked here.
@@ -77,7 +81,7 @@ export function FromTheWiki({ game, locationId }: { game: LoadedGame; locationId
             }}
           >
             <UiIcon name="search" size={18} />
-            Search wiki
+            Add to a wiki page…
           </button>
         </div>
       )
@@ -285,7 +289,7 @@ function WikiSearch({
     >
       <div className="place-wiki-search-head">
         <h3 className="place-wiki-heading" id={headingId}>
-          Search wiki
+          Add to a wiki page
         </h3>
         <button
           type="button"
@@ -427,6 +431,60 @@ function WikiSearch({
           })}
         </ul>
       ) : null}
+      <OwnPageLink game={game} location={location} />
     </section>
+  );
+}
+
+/**
+ * "Or link to it from a page of your own": the person's own pages of the
+ * game; choosing one opens it in the page editor with a link to the
+ * location added at its end, which shows the map mark once saved.
+ */
+function OwnPageLink({ game, location }: { game: LoadedGame; location: Location }) {
+  const canChange = useOwnPages((s) => s.status === 'ready' && canChangeOwnPages(s));
+  useOwnPages((s) => s.own);
+  const pages = guidesOf(game)
+    .contents.pages()
+    .filter((page) => isOwnId(page.id));
+  const [chosen, setChosen] = useState('');
+  const selectId = useId();
+  if (!canChange || pages.length === 0) return null;
+  const guideId = pages.some((page) => page.id === chosen) ? chosen : pages[0]!.id;
+  return (
+    <div className="place-wiki-own" data-testid="own-page-link">
+      <label htmlFor={selectId} className="small-text">
+        Or put a link to {location.name} on a page of your own
+      </label>
+      <div className="place-wiki-search-form">
+        <select
+          id={selectId}
+          className="own-input"
+          data-testid="own-page-choice"
+          value={guideId}
+          onChange={(event) => {
+            setChosen(event.target.value);
+          }}
+        >
+          {pages.map((page) => (
+            <option key={page.id} value={page.id}>
+              {page.title}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="touch-button"
+          data-testid="own-page-add-link"
+          onClick={() => {
+            showSection('guides');
+            openPlace({ kind: 'page', guideId });
+            editWithMapLink(guideId, location.name, location.id);
+          }}
+        >
+          Add the link
+        </button>
+      </div>
+    </div>
   );
 }

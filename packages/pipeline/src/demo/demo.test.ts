@@ -7,6 +7,7 @@ import { generateDemoContent, layoutRegions } from './content';
 import { createTerrain, elevationAt, renderTerrain } from './terrain';
 import { DEMO_CHECKLISTS, DEMO_GUIDES, addChecklists } from './checklists';
 import { DEMO_PHOTO_GUIDE, addPhotos, photoFiles } from './photos';
+import { DEMO_ROUTES, addRoutes } from './routes';
 import { DEEP_MAP_ID, addUnderground, tintAsCave } from './underground';
 import {
   WIKI_HOME,
@@ -195,6 +196,19 @@ describe('demo checklists and guides', () => {
   it('is valid', () => {
     expect(checkPackIntegrity(pack)).toEqual([]);
     expect(packDataSchema.safeParse(pack).success).toBe(true);
+  });
+
+  it('adds a route across both maps, with a free point and a bend', () => {
+    const withRoutes = addRoutes(pack);
+    expect(checkPackIntegrity(withRoutes)).toEqual([]);
+    expect(packDataSchema.safeParse(withRoutes).success).toBe(true);
+    const route = withRoutes.routes?.[0];
+    expect(route?.id).toBe(DEMO_ROUTES.lantern);
+    expect(route?.steps).toHaveLength(6);
+    expect(route?.steps.filter((s) => !s.locationId)).toHaveLength(1);
+    expect(route?.steps.some((s) => s.via?.length === 2)).toBe(true);
+    expect(new Set(route?.steps.map((s) => s.mapId)).size).toBe(2);
+    expect(route?.steps.at(-1)?.mapId).toBe(DEEP_MAP_ID);
   });
 
   it('has a checklist tied to one category, one of steps and a long mixed one', () => {

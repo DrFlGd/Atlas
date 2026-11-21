@@ -13,11 +13,12 @@ use zip::{write::SimpleFileOptions, CompressionMethod, DateTime, ZipWriter};
 use super::{
     analyse,
     card::{read_card, site_name},
-    count_contents, describe_pack, pack_file_entries, plan_images,
+    categories_without_pictures, count_contents, describe_pack, pack_file_entries, plan_images,
     preview::make_previews,
-    refusal, shared_pictures, smaller, space, unavailable, AppInfo, DirCache, Entry, EntryData,
-    Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop, FORMAT, HEADER_FILE,
-    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS,
+    refusal, shared_pictures_with, smaller, space, type_picture_ids, unavailable, AppInfo, Counts,
+    DirCache, Entry, EntryData, Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop,
+    CATEGORIES_FILE, FORMAT, HEADER_FILE, MINE_PICTURES_DIR, PICTURES_FILE, ROUTES_FILE,
+    VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS, VERSION_WITH_ROUTES,
 };
 use crate::{
     library::PackLock,
@@ -195,7 +196,29 @@ pub fn write_part(
 
     // The pack's JSON files, the manifest's image summaries rewritten, and
     // its pictures that may be passed on (the list cut down to them).
-    let mut pictures = shared_pictures(&source.root, &source.images, source.own_use_pictures)?;
+    let mut pictures = shared_pictures_with(
+        &source.root,
+        &source.images,
+        source.own_use_pictures,
+        source.type_pictures,
+    )?;
+    // The map's icons: their pictures in the file, or nothing of them (the
+    // types then name no picture).
+    let type_ids = type_picture_ids(&source.root);
+    let with_type_pictures = source.type_pictures
+        && pictures.as_ref().is_some_and(|pictures| {
+            pictures.list.iter().any(|picture| {
+                picture
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| type_ids.contains(id))
+            })
+        });
+    let categories = if with_type_pictures {
+        None
+    } else {
+        categories_without_pictures(&source.root)?
+    };
     if let Some(pictures) = pictures.as_mut().filter(|_| source.smaller_pictures) {
         let saved = smaller::make_smaller(pictures, progress, cancelled)?;
         if saved.pictures > 0 {
@@ -217,7 +240,9 @@ pub fn write_part(
         })
         .collect();
     let with_previews = !entries.is_empty();
-    for entry in pack_file_entries(&source.root)? {
+    let pack_entries = pack_file_entries(&source.root)?;
+    let with_routes = pack_entries.iter().any(|entry| entry.name == ROUTES_FILE);
+    for entry in pack_entries {
         if entry.name == PICTURES_FILE {
             if let Some(pictures) = &pictures {
                 let list = pictures.list_bytes();
@@ -227,6 +252,13 @@ pub fn write_part(
                     data: EntryData::Bytes(list),
                 });
             }
+        } else if entry.name == CATEGORIES_FILE && categories.is_some() {
+            let bytes = categories.clone().unwrap_or_default();
+            entries.push(Entry {
+                name: entry.name,
+                size: bytes.len() as u64,
+                data: EntryData::Bytes(bytes),
+            });
         } else if entry.name == MANIFEST_FILE {
             let EntryData::File(path) = &entry.data else {
                 unreachable!("pack files are read from disk");
@@ -289,7 +321,9 @@ pub fn write_part(
         format: FORMAT.to_owned(),
         // The lowest version that holds what the file carries, so an older
         // app reads every file it can.
-        version: if with_previews {
+        version: if with_routes || with_type_pictures {
+            carried.max(VERSION_WITH_ROUTES)
+        } else if with_previews {
             carried.max(VERSION_WITH_PREVIEWS)
         } else {
             carried
@@ -304,7 +338,14 @@ pub fn write_part(
         pack,
         personal_use: card.personal_use,
         source: source_facts,
-        contents: count_contents(&source.root),
+        contents: Counts {
+            type_pictures: if with_type_pictures {
+                type_ids.len() as u64
+            } else {
+                0
+            },
+            ..count_contents(&source.root)
+        },
         maps,
         guides: card.guides,
         cover,

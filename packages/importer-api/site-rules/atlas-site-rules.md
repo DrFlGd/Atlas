@@ -1070,7 +1070,9 @@ Types are shown by their group's place, then by their own `order`, then by the s
 
 **Which types can be ticked as found.** In Atlas the owner ticks a location as found, and only the locations of a type that can be ticked have that box. `found` says which types can: the word `"all"`, the word `"none"`, or a list of 1 to 200 type values, each listed once and at most 200 characters long. A type value is the value of the locations' `type` field with `"from": "locations"`, or the id `types.id` gives with a `path`, never the shown name; a value that is a number is written as text, such as `"3"`. It is allowed with both forms of `types`, for example `"types": { "from": "locations", "found": ["key-items", "chests", "bosses"] }`. Without `found` the reader chooses from each type's name, a guess that fits some sites and not others, so state `found` in every map part you write rather than leave it to that guess. Things that are collected once, such as treasure, chests and keys, can usually be ticked; things that stay or come back, such as enemies and shops, usually cannot. A value that names no type in the data is not refused when the file is added, and "Try on a saved page" names it.
 
-**Icons.** Atlas draws its own icons. A type's icon is chosen from the words of its name and of the name the site gives its icon (`types.icon`, or `locations.fields.icon`), never from the site's icon picture, which is not fetched or kept. A name that says nothing gets a plain pin.
+**Icons.** Atlas draws its own icons. A type's icon is chosen from the words of its name and of the name the site gives its icon (`types.icon`, or `locations.fields.icon`). A name that says nothing gets a plain pin.
+
+**The map's own icons.** Only with a `path`, `types.picture` says where the picture of each type's icon is, inside one type: `address` (on `site.hosts` or `pictures.hosts`, a full address or a path from `/` on the site's host) and, where the site draws its icons from one picture of many (a sheet of icons), `cut`, with data paths for the part each icon is: `x` and `y` (its left and top edge on the sheet), `width` and `height`, as the page draws it, and if there is one `scale`, the sheet's pixels for each of those (a sheet made for sharp screens has 2). A type whose `cut` values are missing or not numbers is the whole picture. Without `types.picture` no icon picture is read, fetched or kept, so leave it out unless the owner asked for the map's icons. The icons are kept for the owner's own use, as the locations' pictures are: the Importer only lists them, and the app downloads them with the location photos, at the same pace and with the same rules, and cuts each icon from its sheet, asking for a sheet once. The owner chooses in Atlas whether a game uses them; Atlas's icon is drawn wherever one is not there. Icons that are a font's letters or that the page draws itself are not pictures and cannot be read. "Try on a saved page" counts the types with a picture.
 
 ### `locations`
 
@@ -1100,6 +1102,76 @@ Two more fields of `locations`, beside `path` and `fields`:
 **A location on several maps.** Some sites show one location on several maps, such as the same harbour by day and at low tide, and give it a list of map ids. A `map` data path with `[*]`, such as `layers[*]` or `onMaps[*].id`, reads every id it finds, and the location is put on every map of the list that the data has, at the same position. Each copy is a location of its own in Atlas and is ticked as found by itself. The copy on the first of those maps, in the list's order, keeps the location's Atlas id made from the site's id (see "The site's id of each location"); each further copy has an id of its own, made from the site's id and the map's id, which stays the same each time the data is read. A path without `[*]` reads one map id, as before, and an id that names no map of the data is passed over. The trial counts the locations put on more than one map.
 
 A value of the wrong kind (a name that is a list, a position that is not a number) leaves that fact out, or, for `type`, `x`, `y` and `map`, the location; the Importer counts what it left out and says so.
+
+### `routes`
+
+Some maps have routes: an ordered path through the map with a short guide at each step, drawn as a line from step to step. `routes` is optional; leave it out when the data has none. `path` is the list of routes, read from the data's top as `locations.path` is (with `"from": "values"`, beginning with the name of a value of `data.values`), and the other fields are data paths inside one route.
+
+| Field         | Needed | Meaning                                                                                                                                                                                                  |
+| ------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`       | yes    | The route's title. A route without one is left out                                                                                                                                                       |
+| `steps`       | yes    | Its steps: `path` (inside one route) and data paths inside one step (next table)                                                                                                                         |
+| `id`          | no     | The site's own id of the route. Give it when there is one: it keeps the route the same route in Atlas, with the steps the owner ticked, when the data changes                                            |
+| `description` | no     | A short description, written in `markup`                                                                                                                                                                 |
+| `type`        | no     | What the route is. A value `walkthrough`, `collection` or `build` is taken as it is; `types` names what other values mean. Any other value is no type                                                    |
+| `types`       | no     | An object of up to 50 site values and the route type each means, such as `{ "tour": "walkthrough" }`. Only with `type`                                                                                   |
+| `color`       | no     | The colour of its line, `#rrggbb`. Anything else is left out, and Atlas uses its own                                                                                                                     |
+| `markup`      | no     | `html` (default) or `markdown`: what the description and the steps' text are written in, as `locations.markup`                                                                                           |
+| `line`        | no     | The line of the route: a list of points, each `[x, y]` in the part's position units. Where it bends between two steps, Atlas keeps the bends as corners of its line; a line that goes straight adds none |
+
+Inside one step:
+
+| Field      | Meaning                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `location` | The site's id of the location it stands on, as `locations.fields.id` gives it. A location on several maps is taken on the first of them |
+| `x`, `y`   | Its point, in the part's position units, for a step on no location, or one whose location the data does not have                        |
+| `map`      | The id of the map its point is on, as `maps.id` gives it, with several maps. A step on a location is on that location's map             |
+| `title`    | Its title. Without one, the step takes its location's name, or is numbered                                                              |
+| `text`     | What to do at the step                                                                                                                  |
+| `note`     | A second text, added after `text` as a paragraph of its own                                                                             |
+| `order`    | A number that places the step in its route, lowest first. Without it the steps keep the data's order                                    |
+
+A step needs `location`, or `x` and `y`, or both. A step that has neither a location the data has nor a point on a map is left out, and a route left without a step is left out; the trial counts the routes and steps it read and left out. A route may cross maps: Atlas joins two steps with its line only when both are on the same map. Ticking a step that stands on a location ticks that location as found.
+
+This part reads a made-up map page whose routes are in the value `trailBox.list`, beside its map in `boardData.current`:
+
+```json
+{
+  "type": "map",
+  "reader": "rules",
+  "start": "/charts/{map}",
+  "data": {
+    "from": "values",
+    "values": { "board": "boardData.current", "trails": "trailBox.list" }
+  },
+  "maps": {
+    "path": "board.chart",
+    "id": "slug",
+    "name": "title",
+    "size": ["width", "height"],
+    "maxZoom": 4,
+    "picture": { "images": "https://tiles.example.com/charts/{map}/{z}/{x}/{y}.png", "tile": 256 }
+  },
+  "types": { "from": "locations", "found": "all" },
+  "locations": {
+    "path": "board.pins[*]",
+    "fields": { "id": "slug", "type": "layer", "name": "title", "x": "x", "y": "y" }
+  },
+  "routes": {
+    "path": "trails[*]",
+    "id": "key",
+    "title": "name",
+    "type": "kind",
+    "types": { "tour": "walkthrough" },
+    "steps": { "path": "stops[*]", "title": "label", "text": "tip", "location": "pin" }
+  },
+  "position": { "units": "pixels" },
+  "pictures": { "hosts": ["tiles.example.com"] },
+  "reading": { "ways": ["window"], "pause": 5 }
+}
+```
+
+A value that only `routes` reads may be missing from the page: the map is read without routes, and the reader does not wait for them.
 
 ### `position`
 

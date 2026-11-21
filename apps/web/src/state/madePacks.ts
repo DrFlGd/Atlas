@@ -123,6 +123,7 @@ export function restoredText(restored: MineRestored | null): string {
     pages: restored.pages,
     sections: restored.sections,
     notes: restored.notes,
+    routes: restored.routes,
     group: restored.title !== null,
   });
   const text = added.endsWith('(none)')

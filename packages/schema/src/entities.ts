@@ -62,6 +62,9 @@ const picturePath = z
   .string()
   .regex(PICTURE_PATH_PATTERN, 'must be pictures/<name>.png, .jpg, .jpeg, .webp or .gif');
 
+/** The widest and tallest a picture's cut (`cut`) may be, and where it may start, in pixels. */
+export const MAX_CUT_SIDE = 16_384;
+
 /** The most photos a location or a list entry may have. */
 export const MAX_PHOTOS = 20;
 
@@ -555,6 +558,17 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     trackable: z.boolean(),
     /** Whether the category is shown before the user changes any filter. */
     defaultVisible: z.boolean(),
+    /**
+     * The type's own picture, as the map it was read from draws it: the id
+     * of a picture in `pictures.json`, drawn in place of `icon` where the
+     * person chose to use the map's icons. `icon` is still given, and is
+     * drawn wherever the picture is not (an older app, a picture not
+     * downloaded, the person's choice). Such a picture is kept for the
+     * person's own use (`shareable: false`). Added without a schema version
+     * change; apps before it drop it when reading. When reading, one that
+     * names no picture of the pack is left out.
+     */
+    picture: reading ? idOf('picture').optional().catch(undefined) : idOf('picture').optional(),
   });
 
   // ---------------------------------------------------------------------------
@@ -764,6 +778,19 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   });
 
   /** A smaller copy of a picture for page text (see the picture's `pageCopy`). */
+  /**
+   * The part of a downloaded file that is the picture, for a picture that is
+   * one of many on one sheet (a site's sheet of type icons): the rectangle
+   * in the file's pixels, from its top left. An app that downloads the
+   * file keeps only that part.
+   */
+  const pictureCutSchema = record({
+    x: z.int().min(0).max(MAX_CUT_SIDE),
+    y: z.int().min(0).max(MAX_CUT_SIDE),
+    width: z.int().positive().max(MAX_CUT_SIDE),
+    height: z.int().positive().max(MAX_CUT_SIDE),
+  });
+
   const pageCopySchema = record({
     file: picturePath,
     width: z.int().positive().max(10_000),
@@ -819,6 +846,14 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
      * version change; apps before it drop it when reading and show `file`.
      */
     pageCopy: reading ? descriptive(pageCopySchema) : pageCopySchema.optional(),
+    /**
+     * For a picture that is a part of the file at `remote` (a type's icon on
+     * a sheet of icons): the part to keep when it is downloaded. Added
+     * without a schema version change; apps before it drop it when reading
+     * and keep the whole file, which only a type's picture names, and
+     * those apps do not draw.
+     */
+    cut: reading ? pictureCutSchema.optional().catch(undefined) : pictureCutSchema.optional(),
     /**
      * Whether the picture may be passed on: `false` for one kept for the
      * person's own use, which a map pack file leaves out.

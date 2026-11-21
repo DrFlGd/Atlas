@@ -160,6 +160,9 @@ pub const PACK_FILES: &[&str] = &[
     // A pack of guidebooks: the list of its guidebooks (see the
     // `atlas-pack` crate and `guidebooks.rs`).
     "guidebooks.json",
+    // Routes: ordered paths on the maps (see `routes.ts` in the schema
+    // package). A pack file carries it only when it holds a route.
+    "routes.json",
 ];
 pub const MAX_PACK_FILE_BYTES: usize = 64 << 20;
 pub const MAX_PACK_BYTES: usize = 256 << 20;
@@ -3685,6 +3688,7 @@ mod tests {
             lock: false,
             comes_with_app: false,
             own_use_pictures: false,
+            type_pictures: false,
             smaller_pictures: false,
             group: None,
         })

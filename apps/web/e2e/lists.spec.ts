@@ -50,7 +50,12 @@ test.describe('on a phone', () => {
     const home = page.getByTestId('lists-home');
     // Nothing opened yet: nothing to continue.
     await expect(home.getByTestId('continue')).toHaveCount(0);
-    await expect(home.locator('h2')).toHaveText(['Collections', 'Routes', 'Guides to read']);
+    await expect(home.locator('h2')).toHaveText([
+      'Routes on the map',
+      'Collections',
+      'Routes',
+      'Guides to read',
+    ]);
     // Everything comes first, every trackable place of the game.
     const everything = home.getByTestId('list-link').first();
     await expect(everything).toHaveAttribute('data-checklist-id', 'atlas:everything');

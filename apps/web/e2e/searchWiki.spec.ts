@@ -10,7 +10,7 @@ import { expect, test } from './layout';
 import { choosePlace } from './touch';
 
 /**
- * "Search wiki" on a location's card, in the standard layout on the demo
+ * "Add to a wiki page…" on a location's card, in the standard layout on the demo
  * game and its made-up wiki: the saved pages found by the location's name,
  * the best first; a page linked to this location alone or to every
  * location of its name, asked only when there are several; the link taken

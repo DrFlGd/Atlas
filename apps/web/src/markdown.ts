@@ -2,6 +2,7 @@ import { headingNames, sectionOfTitle } from '@atlas/core';
 import { parseId } from '@atlas/schema';
 import MarkdownIt, { type StateCore, type Token } from 'markdown-it';
 import { markdownForms } from './markdownForms';
+import { markdownEntries, type MapEntryOptions } from './markdownEntries';
 import { isBoxMark, markdownMarks } from './markdownMarks';
 
 /**
@@ -115,6 +116,11 @@ export interface MarkdownOptions {
    * link to it.
    */
   mapLink?: (href: string) => { locationId: string; gameId?: string } | null;
+  /**
+   * On a page: what makes an entry of it one on the map, with a map mark
+   * after it (see `markdownEntries.ts`). Without it, no entry is marked.
+   */
+  mapEntries?: MapEntryOptions;
 }
 
 interface AppLinkMeta {
@@ -839,6 +845,9 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
   token.attrSet('rel', 'noopener noreferrer');
   return defaultLinkOpen(tokens, index, options, env, self);
 };
+
+// Last: the entries of a page that are on the map, once its links are the app's.
+markdown.use(markdownEntries);
 
 /** HTML for a guide body. Safe to insert with `innerHTML`. */
 export function renderGuideMarkdown(source: string, options: MarkdownOptions = {}): string {

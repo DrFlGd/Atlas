@@ -17,6 +17,7 @@ import {
   pageChange,
   pagesAToZ,
   revertPage,
+  routeTypeName,
 } from '@atlas/core';
 import {
   lazy,
@@ -34,6 +35,7 @@ import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
 import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
+import { setEntryAdding, useMapEntries } from '../state/mapEntries';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
 import { guidesOf, hasGuidePages, hasMap, pictureOf } from '../state/guides';
 import { useGameGuidebooks, useGuidebookHits } from '../state/guidebooks';
@@ -78,7 +80,8 @@ import {
 } from './reader';
 import { openPageEditor, packPage, usePageEditor } from './pages/pageEditorState';
 import { sequenceOf, useFollowSource, useSourceView, type SourceView } from './sourceView';
-import { useKeyHints, useTouch } from './state';
+import { showSection, useKeyHints, useTouch } from './state';
+import { openRoute, useGameRoutes } from '../state/routes';
 import '../styles/guides.css';
 import '../styles/landing.css';
 
@@ -1515,11 +1518,50 @@ function Landing({
   );
 }
 
+/** The game's routes, under the landing page: each opens in Lists, drawn on the map. */
+function GuidesRoutes() {
+  const routes = useGameRoutes();
+  if (routes.length === 0) return null;
+  return (
+    <section className="guides-routes" aria-labelledby="guides-routes-heading">
+      <h2 className="touch-group-title" id="guides-routes-heading">
+        Routes on the map
+      </h2>
+      <ul className="touch-plain-list touch-list-cards">
+        {routes.map(({ route }) => (
+          <li key={route.id}>
+            <button
+              type="button"
+              className="touch-list-card"
+              data-testid="guides-route"
+              onClick={() => {
+                openRoute(route.id);
+                showSection('lists');
+              }}
+            >
+              <UiIcon name="route" size={20} strokeWidth={1.8} />
+              <span className="touch-list-card-text">
+                <span className="touch-list-card-name">{route.title}</span>
+                <span className="touch-figure">
+                  {routeTypeName(route.type)} ·{' '}
+                  {route.steps.length === 1 ? 'One step' : `${route.steps.length} steps`}
+                </span>
+              </span>
+              <UiIcon name="chevron" size={20} strokeWidth={1.8} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** Under the landing page: the game's guidebooks, linking the pages to the map, and guides of other games. */
 function LandingFoot({ game }: { game: LoadedGame }) {
   return (
     <>
       <GuidebookList gameId={game.entry.id} gameTitle={game.pack.manifest.title} />
+      <GuidesRoutes />
       {canLinkPages(game) ? (
         <button
           type="button"
@@ -1818,11 +1860,13 @@ function Page({
       {guide.source && hasMap(game) && home === undefined ? (
         <OnTheMap game={game} guide={guide} />
       ) : null}
+      {guide.source && hasMap(game) ? <PutEntries /> : null}
       <OnThisPage guideId={guide.id} body={shown.body} wide={wide} />
       <MarkdownBody
         source={shown.body}
         className="guide-body guides-page-body"
         page
+        pageId={guide.source ? guide.id : undefined}
         onAddRow={
           build.offered
             ? (row, button) => {
@@ -2135,6 +2179,38 @@ function TakeWikiDialog({ onClose, onTake }: { onClose: () => void; onTake: () =
         </footer>
       </div>
     </dialog>
+  );
+}
+
+/**
+ * "Put entries on the map", where Edit locations has room: while on, each
+ * entry of the page that is not on the map has a mark that puts it there.
+ */
+function PutEntries() {
+  const canPut = useMapEntries((s) => s.canPut);
+  const adding = useMapEntries((s) => s.adding);
+  if (!canPut) return null;
+  return (
+    <p className="guides-put-entries">
+      <button
+        type="button"
+        className="own-pill-button"
+        aria-pressed={adding}
+        data-testid="put-entries"
+        onClick={() => {
+          setEntryAdding(!adding);
+        }}
+      >
+        <UiIcon name="pin" size={18} strokeWidth={1.8} />
+        {adding ? 'Done putting entries on the map' : 'Put entries on the map'}
+      </button>
+      {adding ? (
+        <span className="muted">
+          {' '}
+          Press the mark after an entry that is not on the map, then press the map where it is.
+        </span>
+      ) : null}
+    </p>
   );
 }
 

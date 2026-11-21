@@ -56,6 +56,12 @@ import {
 import { canOpenForEditing, editingText, madePacksOffered } from '../state/madePacks';
 import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
+import {
+  chooseTypePictures,
+  readTypePicturesChoice,
+  typePictureCount,
+  useTypePictures,
+} from '../state/typePictures';
 import { showSection } from '../touch/state';
 import { OwnGameActions } from '../touch/OwnGames';
 import { MapNamesCard } from './MapNamesCard';
@@ -310,6 +316,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
           {__ATLAS_DOWNLOADS__ && downloads && facts?.photos && facts.photos.total > 0 ? (
             <PhotosCard id={id} facts={facts} kind={kind} />
           ) : null}
+          <MapIconsCard id={id} facts={facts} />
           {kind !== 'wiki' && shown ? <WikiCard /> : null}
           {ownGame && !busy ? (
             <Card icon="pencil" title="Your map" testId="library-own-card">
@@ -1035,6 +1042,95 @@ function PhotosCard({ id, facts, kind }: { id: string; facts: GameFacts; kind: G
           : 'each is kept at full size, up to 4,096 pixels wide, with a smaller copy for the cards.'}{' '}
         {going ? 'Cancel ends the download and keeps the ones that came. ' : ''}
         For your own use. An exported file leaves them out unless you tick that box.
+      </p>
+    </Card>
+  );
+}
+
+/**
+ * "This map's icons": a game whose types are drawn with the icons of the
+ * map it was read from, kept for the person's own use. "Use this map's
+ * icons" is the game's choice (off goes back to Atlas's own icons); "Get
+ * this map's icons" downloads those not here yet, as the photos are, for a
+ * game read before they were.
+ */
+function MapIconsCard({ id, facts }: { id: string; facts: GameFacts | undefined }) {
+  const shownGame = useAtlas((s) => (s.game?.entry.id === id ? s.game : null));
+  const downloads = useAtlas(downloadsOffered);
+  const shownOn = useTypePictures((s) => (s.gameId === id ? s.on : null));
+  const [readOn, setReadOn] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void readTypePicturesChoice(id).then((on) => {
+      if (live) setReadOn(on);
+    });
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  const photos = facts?.photos ?? null;
+  const count =
+    facts?.details?.contents.typePictures ??
+    photos?.typePictures ??
+    (shownGame ? typePictureCount(shownGame) : 0);
+  if (count === 0) return null;
+  const on = shownOn ?? readOn ?? true;
+  const bridge = desktop;
+  const remaining = photos?.typePicturesRemaining ?? 0;
+  const going = isGoing(photos?.job);
+  const canGet = __ATLAS_DOWNLOADS__ && downloads && bridge && photos && remaining > 0 && !going;
+  const types = plural(count, 'type', 'types');
+  return (
+    <Card icon="pin" title="This map’s icons" testId="library-icons-card">
+      <p className="library-card-state" data-testid="library-icons-state">
+        {on
+          ? `${types} of this game ${count === 1 ? 'is' : 'are'} drawn with the icon of the map it was read from.`
+          : `Every type of this game is drawn with Atlas’s own icons.`}
+        {photos && remaining > 0
+          ? ` ${numberFormat.format(remaining)} of them ${remaining === 1 ? 'is' : 'are'} not on this computer yet.`
+          : ''}
+      </p>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          data-testid="library-icons-use"
+          checked={on}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setReadOn(next);
+            void chooseTypePictures(id, next);
+          }}
+        />
+        <span>Use this map’s icons</span>
+      </label>
+      {canGet ? (
+        <div className="row-actions wrap">
+          <button
+            type="button"
+            className="button"
+            data-testid="library-icons-get"
+            disabled={pending}
+            onClick={() => {
+              setPending(true);
+              void act(id, shownGame !== null, () => bridge.tiles.photosStartTypes(id)).finally(
+                () => {
+                  setPending(false);
+                },
+              );
+            }}
+          >
+            <UiIcon name="download" size={16} />
+            Get this map’s icons
+          </button>
+        </div>
+      ) : null}
+      <p className="library-card-note">
+        Kept for your own use with this game. A type whose icon is not on this computer is drawn
+        with Atlas’s own icon. An exported file leaves them out unless you tick that box.
+        {canGet
+          ? ' Get this map’s icons downloads them one at a time with the pause set for downloads, as the photos are.'
+          : ''}
       </p>
     </Card>
   );

@@ -1941,6 +1941,8 @@ export function importContext(
     keepsUnheadedSections: true,
     // And whether the pages are one guide read in order.
     keepsPagesInOrder: true,
+    // And the icons of a map's types, where the site's rules file says where they are.
+    keepsTypePictures: true,
     // Built again from the pages kept, as the person asked: nothing is fetched.
     ...(rebuilt ? { rebuild: true } : {}),
     ...(listed ? { listed } : {}),

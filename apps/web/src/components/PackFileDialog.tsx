@@ -43,6 +43,7 @@ import {
   mineText,
   packKind,
   photosHint,
+  iconsHint,
   photosLabel,
   PICTURES_IN_FILE_LABELS,
   picturesInFileText,
@@ -302,6 +303,9 @@ function ExportView({
   // Off until asked for: a file with them is one to keep, not to pass on.
   const [withPhotos, setWithPhotos] = useState(false);
   const photosId = useId();
+  // The map's icons: off until asked for, as the photos are.
+  const [withIcons, setWithIcons] = useState(false);
+  const iconsId = useId();
   // Full size until asked otherwise: the file is then as large as the pictures here.
   const [picturesInFile, setPicturesInFile] = useState<PicturesInFile>('full');
   const sizeName = useId();
@@ -351,12 +355,16 @@ function ExportView({
   }, [packId]);
 
   const ownUse = options?.ownUsePictures ?? 0;
+  const icons = options?.typePictures ?? 0;
   // The pictures the file would carry, and their bytes at full size.
-  const carried = (options?.pictures ?? 0) + (withPhotos ? ownUse : 0);
+  const carried = (options?.pictures ?? 0) + (withPhotos ? ownUse : 0) + (withIcons ? icons : 0);
   const carriedBytes =
-    (options?.pictureBytes ?? 0) + (withPhotos ? (options?.ownUsePictureBytes ?? 0) : 0);
+    (options?.pictureBytes ?? 0) +
+    (withPhotos ? (options?.ownUsePictureBytes ?? 0) : 0) +
+    (withIcons ? (options?.typePictureBytes ?? 0) : 0);
   // Offered by a shell that can make them smaller, for a game with pictures.
-  const sizeOffered = options?.pictures !== undefined && (options.pictures > 0 || ownUse > 0);
+  const sizeOffered =
+    options?.pictures !== undefined && (options.pictures > 0 || ownUse > 0 || icons > 0);
 
   const start = (detail: Detail) => {
     setError(null);
@@ -369,6 +377,7 @@ function ExportView({
       withMine,
       withPhotos && ownUse > 0,
       sizeOffered && carried > 0 && picturesInFile === 'smaller',
+      withIcons && icons > 0,
     )
       .then(setResult, (reason: unknown) => {
         setError(errorText(reason));
@@ -399,6 +408,28 @@ function ExportView({
           <span id={`${photosId}-name`}>{photosLabel(kind)}</span>
           <span id={`${photosId}-hint`} className="muted small pack-file-hint">
             {photosHint(ownUse, formatBytes(options.ownUsePictureBytes ?? 0), kind)}
+          </span>
+        </span>
+      </label>
+    ) : null;
+  const iconsBox =
+    options && kind && icons > 0 ? (
+      <label className="checkbox-row pack-file-check">
+        <input
+          type="checkbox"
+          data-testid="export-with-icons"
+          aria-labelledby={`${iconsId}-name`}
+          aria-describedby={`${iconsId}-hint`}
+          checked={withIcons}
+          disabled={running}
+          onChange={(event) => {
+            setWithIcons(event.target.checked);
+          }}
+        />
+        <span>
+          <span id={`${iconsId}-name`}>Include this map’s icons</span>
+          <span id={`${iconsId}-hint`} className="muted small pack-file-hint">
+            {iconsHint(icons, formatBytes(options.typePictureBytes ?? 0))}
           </span>
         </span>
       </label>
@@ -531,6 +562,7 @@ function ExportView({
             </span>
           </label>
           {pages ? null : photosBox}
+          {iconsBox}
           {sizeOffered ? (
             <fieldset
               className="detail-options pack-file-pictures"
@@ -851,6 +883,7 @@ function MineNote({ mine }: { mine: MineRestored }) {
     mine.pages +
     mine.sections +
     mine.notes +
+    mine.routes +
     (mine.guideLinks ? 1 : 0);
   return (
     <p className="download-note" data-testid="import-mine">

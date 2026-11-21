@@ -82,7 +82,10 @@ interface DrawnItem {
 }
 
 const spriteKey = (marker: MapMarker) =>
-  `${marker.color}|${marker.icon ?? ''}|${marker.muted ? 1 : 0}|${marker.noted ? 1 : 0}`;
+  `${marker.color}|${marker.icon ?? ''}|${marker.muted ? 1 : 0}|${marker.noted ? 1 : 0}|${marker.picture ?? ''}`;
+
+/** The side of a picture drawn in place of a badge, in CSS pixels. */
+const PICTURE_SIZE = 22;
 
 /** Radius of the mark of a location with a note, at the badge's top right. */
 const NOTE_RADIUS = 3.5;
@@ -137,6 +140,8 @@ export class CanvasMarkerLayer extends L.Layer {
   private drawnZoom = Number.NaN;
   private margin = L.point(0, 0);
   private readonly sprites = new Map<string, HTMLCanvasElement>();
+  /** Pictures drawn in place of badges, by address: loading, loaded, or not to be had. */
+  private readonly pictures = new Map<string, HTMLImageElement | 'failed'>();
   private frame = 0;
   private animatingZoom = false;
   private palette = FALLBACK_PALETTE;
@@ -319,11 +324,38 @@ export class CanvasMarkerLayer extends L.Layer {
     this.settings.onHover(null);
   };
 
+  /**
+   * A marker's picture once it has loaded; null while it loads (it is
+   * drawn when it has) and when it cannot be.
+   */
+  private picture(address: string): HTMLImageElement | null {
+    const known = this.pictures.get(address);
+    if (known === 'failed') return null;
+    if (known) return known.complete && known.naturalWidth > 0 ? known : null;
+    const image = new Image();
+    image.decoding = 'async';
+    image.onload = () => {
+      this.scheduleRedraw();
+    };
+    image.onerror = () => {
+      this.pictures.set(address, 'failed');
+    };
+    this.pictures.set(address, image);
+    image.src = address;
+    return null;
+  }
+
   /** A pre-rendered marker badge for one style at the given device pixel ratio. */
   private sprite(marker: StyledMarker, ratio: number): HTMLCanvasElement {
-    const key = `${marker.sprite}@${ratio}`;
+    const picture = marker.picture ? this.picture(marker.picture) : null;
+    const key = `${marker.sprite}${picture ? '|shown' : ''}@${ratio}`;
     let sprite = this.sprites.get(key);
     if (sprite) return sprite;
+    if (picture) {
+      sprite = this.pictureSprite(marker, picture, ratio);
+      this.sprites.set(key, sprite);
+      return sprite;
+    }
     const lineWidth = 1.5;
     // Room for the note mark, which stands a little out of the badge.
     const size = Math.ceil((MARKER_RADIUS + lineWidth) * 2 + 2 + (marker.noted ? 4 : 0));
@@ -378,6 +410,49 @@ export class CanvasMarkerLayer extends L.Layer {
     return sprite;
   }
 
+  /** A marker drawn as its picture, fitted into the badge's room, faded when found. */
+  private pictureSprite(
+    marker: StyledMarker,
+    picture: HTMLImageElement,
+    ratio: number,
+  ): HTMLCanvasElement {
+    const size = PICTURE_SIZE + (marker.noted ? 4 : 0);
+    const sprite = document.createElement('canvas');
+    sprite.width = Math.ceil(size * ratio);
+    sprite.height = Math.ceil(size * ratio);
+    const ctx = sprite.getContext('2d');
+    if (!ctx) return sprite;
+    ctx.scale(ratio, ratio);
+    const scale = PICTURE_SIZE / Math.max(picture.naturalWidth, picture.naturalHeight);
+    const width = picture.naturalWidth * scale;
+    const height = picture.naturalHeight * scale;
+    const center = size / 2;
+    if (marker.muted) {
+      ctx.globalAlpha = MUTED_ALPHA * 0.75;
+      ctx.filter = 'grayscale(0.8)';
+    }
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(picture, center - width / 2, center - height / 2, width, height);
+    ctx.filter = 'none';
+    if (marker.noted) {
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(
+        center + PICTURE_SIZE * 0.36,
+        center - PICTURE_SIZE * 0.36,
+        NOTE_RADIUS,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = this.palette.note;
+      ctx.fill();
+      ctx.lineWidth = 1.25;
+      ctx.strokeStyle = this.palette.outline;
+      ctx.stroke();
+    }
+    return sprite;
+  }
+
   private redraw(): void {
     if (this._map as L.Map | undefined) this.redrawNow();
   }
@@ -418,6 +493,7 @@ export class CanvasMarkerLayer extends L.Layer {
       canvas.dataset.drawnMarkers = '0';
       canvas.dataset.drawnClusters = '0';
       canvas.dataset.drawnNoted = '0';
+      canvas.dataset.drawnPictures = '0';
       return;
     }
 
@@ -472,8 +548,10 @@ export class CanvasMarkerLayer extends L.Layer {
     const groups = [...pointsBySprite].sort(
       ([a], [b]) => Number(b.muted ?? false) - Number(a.muted ?? false),
     );
+    let pictureCount = 0;
     for (const [owner, coords] of groups) {
       const sprite = this.sprite(owner, ratio);
+      if (owner.picture && this.picture(owner.picture)) pictureCount += coords.length / 2;
       const size = sprite.width / ratio;
       const half = size / 2;
       for (let i = 0; i < coords.length; i += 2) {
@@ -518,6 +596,7 @@ export class CanvasMarkerLayer extends L.Layer {
     canvas.dataset.drawnMarkers = String(markerCount);
     canvas.dataset.drawnClusters = String(clusters.length);
     canvas.dataset.drawnNoted = String(notedCount);
+    canvas.dataset.drawnPictures = String(pictureCount);
     canvas.dataset.drawMs = (performance.now() - started).toFixed(2);
   }
 }

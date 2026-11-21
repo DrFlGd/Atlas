@@ -282,5 +282,6 @@ function backLabel(game: LoadedGame, previous: ChecklistPage): string {
   if (previous.kind === 'guide') {
     return `Back to ${game.checklists.guide(previous.id)?.title ?? 'the guide'}`;
   }
+  if (previous.kind === 'route') return 'Back to the route';
   return 'Back to all lists';
 }

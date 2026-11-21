@@ -89,6 +89,11 @@ export const SETTINGS = {
   guidesBar: 'guidesBar',
   /** The page read last in a guide read in order, by the game id of its pages (see `guideSources.ts`). */
   guideReadLast: (sourceId: string) => `guideReadLast:${sourceId}`,
+  /**
+   * Whether a game's types are drawn with the icons of the map it was read
+   * from, where its pack has them (on unless turned off; see `typePictures.ts`).
+   */
+  typePictures: (gameId: string) => `typePictures:${gameId}`,
   /** The type last chosen for a new location of the person's own, for the next one. */
   newLocationType: (gameId: string) => `newLocationType:${gameId}`,
   /** Whether an open list is shown alone on the map in the standard layout (on unless turned off). */

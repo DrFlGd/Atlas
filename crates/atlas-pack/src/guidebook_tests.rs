@@ -562,12 +562,15 @@ fn checks_the_guidebooks_a_description_lists() {
     assert!(parsed(&older).unwrap().guidebooks.is_empty());
     // A newer version is refused, naming the app that made it.
     let mut newer = header_v8();
-    newer["version"] = json!(9);
+    newer["version"] = json!(VERSION + 1);
     let refusal = parsed(&newer).unwrap_err();
     assert_eq!(refusal.kind(), RefusalKind::NewerFormat);
     assert_eq!(
         refusal.what(),
-        "This pack file was made by Other App 2.0.0 in a newer format (version 9)."
+        format!(
+            "This pack file was made by Other App 2.0.0 in a newer format (version {}).",
+            VERSION + 1
+        )
     );
 }
 

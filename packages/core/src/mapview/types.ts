@@ -49,6 +49,12 @@ export interface MapMarker {
   muted?: boolean;
   /** Drawn with a small mark, for a location with a note of the person's own. */
   noted?: boolean;
+  /**
+   * The address of a picture drawn in place of the badge (a type's own
+   * icon, from the map it was read from). Until it has loaded, and when it
+   * cannot be, the badge is drawn.
+   */
+  picture?: string;
 }
 
 /** The marker under the pointer, and where it sits in container pixels. */
@@ -124,6 +130,34 @@ export interface MapOverlay {
   joined: boolean;
 }
 
+/** A numbered step of a route, as the route is drawn. */
+export interface RouteStepPoint {
+  /** Image pixel, origin top-left. */
+  x: number;
+  y: number;
+  /** The step's number. */
+  label: string;
+  /** The step open in the route's panel: drawn larger. */
+  current?: boolean;
+  /** A step ticked done: drawn faded. */
+  done?: boolean;
+}
+
+/**
+ * A route drawn over the markers (see `routes.ts` in the core package):
+ * its line on the map shown, through its corner points, and its numbered
+ * steps. It is drawn only: a click on it goes to the marker under it.
+ */
+export interface RouteDrawing {
+  /** The line's colour, `#rrggbb`; the theme's accent when absent. */
+  color?: string;
+  /** Each part of the line, as points in order. */
+  lines: readonly (readonly PixelPoint[])[];
+  steps: readonly RouteStepPoint[];
+  /** Corner points to show as small dots (while the route is edited). */
+  corners?: readonly PixelPoint[];
+}
+
 /**
  * A location being placed or moved: a handle drawn over the markers that
  * can be dragged, or moved with the arrow keys once it has focus.
@@ -163,6 +197,8 @@ export interface MapView {
    * (null). They are drawn only: a click on one goes to the marker under it.
    */
   setOverlay(overlay: MapOverlay | null): void;
+  /** Draws a route over the markers, under a list's points, or nothing (null). */
+  setRoute(route: RouteDrawing | null): void;
   /** Highlights one marker, or none. Does not notify `onSelect` listeners. */
   setSelected(markerId: string | null): void;
   /** Shows a handle that can be dragged to move a location, or none (null). */

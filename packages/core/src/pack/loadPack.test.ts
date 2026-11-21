@@ -282,6 +282,46 @@ describe('view helpers', () => {
   });
 });
 
+describe('loadPack: pictures of types', () => {
+  function withTypePicture(picture: string): Record<string, unknown> {
+    const pack = makeFixturePack();
+    const gameId = pack.manifest.gameId;
+    pack.categories[0] = { ...pack.categories[0]!, picture: `${gameId}:picture:${picture}` };
+    return {
+      ...packFiles(pack),
+      'pictures.json': [
+        { id: `${gameId}:picture:t-herb`, file: 'pictures/t-herb.png', shareable: false },
+      ],
+    };
+  }
+
+  it('reads a type’s picture and draws its markers with it when asked', async () => {
+    const pack = await loadPack(BASE, { fetch: servePack(withTypePicture('t-herb')).fetchFn });
+    const herb = pack.categories.get('demo:cat:herb')!;
+    expect(herb.picture).toBe('demo:picture:t-herb');
+    const asked: string[] = [];
+    const markers = layerMarkers(pack, 'demo:layer:surface', {
+      typePicture: (category) => {
+        asked.push(category.id);
+        return category.picture ? `${BASE}pictures/t-herb.png` : null;
+      },
+    });
+    expect(markers.map((m) => m.picture)).toEqual([
+      `${BASE}pictures/t-herb.png`,
+      `${BASE}pictures/t-herb.png`,
+    ]);
+    // Each type is asked once; without the option, markers have no picture.
+    expect(asked).toEqual(['demo:cat:herb']);
+    expect(layerMarkers(pack, 'demo:layer:surface').some((m) => 'picture' in m)).toBe(false);
+  });
+
+  it('opens a pack whose type names a picture it does not have, drawn with its icon', async () => {
+    const pack = await loadPack(BASE, { fetch: servePack(withTypePicture('gone')).fetchFn });
+    expect(pack.categories.get('demo:cat:herb')!.picture).toBeUndefined();
+    expect(pack.categories.get('demo:cat:herb')!.icon).toBe('leaf');
+  });
+});
+
 describe('loadPack: a game with no map', () => {
   const files = () => {
     const pack = makeGuidesFixturePack();

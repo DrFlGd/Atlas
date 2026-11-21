@@ -2243,6 +2243,38 @@
                             "enum": ["all", "none"]
                           }
                         ]
+                      },
+                      "picture": {
+                        "type": "object",
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "cut": {
+                            "type": "object",
+                            "properties": {
+                              "x": {
+                                "type": "string"
+                              },
+                              "y": {
+                                "type": "string"
+                              },
+                              "width": {
+                                "type": "string"
+                              },
+                              "height": {
+                                "type": "string"
+                              },
+                              "scale": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["x", "y", "width", "height"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": ["address"],
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -2318,6 +2350,84 @@
                       }
                     },
                     "required": ["path", "fields"],
+                    "additionalProperties": false
+                  },
+                  "routes": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "types": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "enum": ["walkthrough", "collection", "build"]
+                        }
+                      },
+                      "color": {
+                        "type": "string"
+                      },
+                      "markup": {
+                        "type": "string",
+                        "enum": ["html", "markdown"]
+                      },
+                      "line": {
+                        "type": "string"
+                      },
+                      "steps": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "note": {
+                            "type": "string"
+                          },
+                          "location": {
+                            "type": "string"
+                          },
+                          "map": {
+                            "type": "string"
+                          },
+                          "x": {
+                            "type": "string"
+                          },
+                          "y": {
+                            "type": "string"
+                          },
+                          "order": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["path"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["path", "title", "steps"],
                     "additionalProperties": false
                   },
                   "games": {

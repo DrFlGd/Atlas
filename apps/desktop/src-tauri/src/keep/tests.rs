@@ -219,6 +219,7 @@ fn source(dir: &Path) -> PackSource {
         lock: false,
         comes_with_app: false,
         own_use_pictures: false,
+        type_pictures: false,
         smaller_pictures: false,
         group: None,
     }

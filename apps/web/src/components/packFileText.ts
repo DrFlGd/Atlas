@@ -83,6 +83,16 @@ export function photosHint(count: number, size: string, kind: PackKind = 'map'):
   return `The ${photos} downloaded for your own use (location photos and the pictures of guide pages, ${size}), so the other device shows them without downloading them again. Keep a file with them to yourself: they are not yours to pass on.`;
 }
 
+/**
+ * The hint of "Include this map's icons": how many icons of the map the
+ * game was read from are on this computer, their size as the caller words
+ * it, and what leaving them out does.
+ */
+export function iconsHint(count: number, size: string): string {
+  const icons = `${numberFormat.format(count)} icon${count === 1 ? '' : 's'}`;
+  return `The ${icons} of the map this game was read from, downloaded for your own use (${size}). Without them, the file draws every type with Atlas’s own icons. Keep a file with them to yourself: they are not yours to pass on.`;
+}
+
 /** "Pictures in the file": the pictures as this computer keeps them, or made smaller. */
 export type PicturesInFile = 'full' | 'smaller';
 
@@ -406,6 +416,7 @@ export function mineText(mine: {
   sections?: number;
   notes?: number;
   group?: boolean;
+  routes?: number;
 }): string {
   const count = (n: number, one: string, many: string) =>
     n === 1 ? `1 ${one}` : `${n.toLocaleString('en')} ${many}`;
@@ -419,6 +430,7 @@ export function mineText(mine: {
     (mine.pages ?? 0) > 0 ? count(mine.pages ?? 0, 'page', 'pages') : null,
     (mine.sections ?? 0) > 0 ? count(mine.sections ?? 0, 'section', 'sections') : null,
     (mine.notes ?? 0) > 0 ? count(mine.notes ?? 0, 'note', 'notes') : null,
+    (mine.routes ?? 0) > 0 ? count(mine.routes ?? 0, 'route', 'routes') : null,
     mine.group ? 'the title it shares with other games' : null,
   ].filter((part): part is string => part !== null);
   if (parts.length === 0) return 'lists, locations and types (none)';

@@ -131,6 +131,13 @@ export interface PhotoPlan {
    * and from a shell before it.
    */
   keptSmaller?: number;
+  /**
+   * Of `total`, the pictures of the pack's types (the icons of the map it
+   * was read from), and how many of those are not here yet: what "Get this
+   * map's icons" downloads. None from a shell before it.
+   */
+  typePictures?: number;
+  typePicturesRemaining?: number;
 }
 
 export interface DownloadPlan {
@@ -866,6 +873,8 @@ export interface ContentCounts {
   regions: number;
   checklists: number;
   guides: number;
+  /** Types drawn with a picture of the map the game was read from; none in older shells. */
+  typePictures?: number;
 }
 
 /** The map images of one layer in a pack file. */
@@ -928,6 +937,8 @@ export interface PackFileHeader {
     notes?: number;
     /** The title the game is shown under with other games (version 6). */
     group?: boolean;
+    /** Own routes (version 9). */
+    routes?: number;
   };
 }
 
@@ -1041,6 +1052,13 @@ export interface PackFileOptions {
   ownUsePictures?: number;
   ownUsePictureBytes?: number;
   /**
+   * The pictures of the pack's types (the map's icons) whose file is here,
+   * which "Include this map's icons" would add, and their bytes. None from
+   * a shell that does not offer it.
+   */
+  typePictures?: number;
+  typePictureBytes?: number;
+  /**
    * The pictures that may be passed on whose file is here, which every file
    * carries, and their bytes at full size. None from a shell that cannot
    * make them smaller.
@@ -1132,6 +1150,8 @@ export interface PackFileImported {
   ownPages?: string | null;
   /** The text of the own notes file the file carried, to add to the person's. */
   ownNotes?: string | null;
+  /** The text of the own routes file the file carried, to add to the person's. */
+  ownRoutes?: string | null;
   /** The title the game is shown under with other games, as the file carried it. */
   gameGroup?: string | null;
   /** The person's own photos the file carried: their file names and bytes in base64. */
@@ -1459,6 +1479,8 @@ export interface DesktopBridge {
     photosStart(packId: string): Promise<DownloadSnapshot>;
     /** "Download again at full size": the photos kept smaller, asked for once more each. */
     photosStartAgain(packId: string): Promise<DownloadSnapshot>;
+    /** "Get this map's icons": downloads the pictures of the pack's types only. */
+    photosStartTypes(packId: string): Promise<DownloadSnapshot>;
     photosPause(packId: string): Promise<DownloadSnapshot>;
     photosResume(packId: string): Promise<DownloadSnapshot>;
     photosCancel(packId: string): Promise<void>;
@@ -1655,6 +1677,16 @@ export interface DesktopBridge {
     delete(gameId: string): Promise<boolean>;
   };
   /**
+   * A person's own routes of a game, in their file in the maps folder
+   * (`<game id>.my-routes.json`), kept as own lists are (see
+   * `ownListFiles`).
+   */
+  ownRoutes: {
+    read(gameId: string): Promise<string | null>;
+    write(gameId: string, contents: string, keepCopy?: string): Promise<string | null>;
+    delete(gameId: string): Promise<boolean>;
+  };
+  /**
    * The Sites folder of the person's site rules files, beside the maps
    * folder (see `sites`). Only in a build with downloads.
    */
@@ -1844,8 +1876,10 @@ export interface DesktopBridge {
      * own lists, locations and types go in the file, and with
      * `includePhotos` the pictures downloaded for their own use; with
      * `smallerPictures` ("Pictures in the file: Smaller") the pictures are
-     * made smaller as they are written, never on this computer. Null when
-     * the dialog was closed.
+     * made smaller as they are written, never on this computer; with
+     * `includeTypePictures` the pictures of the pack's types (the map's
+     * icons), which a file otherwise leaves out. Null when the dialog was
+     * closed.
      */
     export(
       packId: string,
@@ -1854,6 +1888,7 @@ export interface DesktopBridge {
       includeMine?: boolean,
       includePhotos?: boolean,
       smallerPictures?: boolean,
+      includeTypePictures?: boolean,
     ): Promise<PackFileExported | null>;
     /** Asks for a file to import and reads its description. Null when the dialog was closed. */
     pick(): Promise<PackFileInfo | null>;
@@ -1913,6 +1948,7 @@ function noDownloads(): DesktopBridge['tiles'] {
     photosPlan: missing,
     photosStart: missing,
     photosStartAgain: missing,
+    photosStartTypes: missing,
     photosPause: missing,
     photosResume: missing,
     photosCancel: missing,
@@ -1981,6 +2017,7 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
           photosPlan: (packId) => call('photos_plan', { packId }),
           photosStart: (packId) => call('photos_start', { packId }),
           photosStartAgain: (packId) => call('photos_start_again', { packId }),
+          photosStartTypes: (packId) => call('photos_start_types', { packId }),
           photosPause: (packId) => call('photos_pause', { packId }),
           photosResume: (packId) => call('photos_resume', { packId }),
           photosCancel: (packId) => call('photos_cancel', { packId }),
@@ -2107,6 +2144,12 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
         call('own_notes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
       delete: (gameId) => call('own_notes_delete', { gameId }),
     },
+    ownRoutes: {
+      read: (gameId) => call('own_routes_read', { gameId }),
+      write: (gameId, contents, keepCopy) =>
+        call('own_routes_write', { gameId, contents, keepCopy: keepCopy ?? null }),
+      delete: (gameId) => call('own_routes_delete', { gameId }),
+    },
     sites: __ATLAS_DOWNLOADS__
       ? {
           list: () => call('sites_list'),
@@ -2208,13 +2251,22 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
     },
     packFiles: {
       options: (id) => call('packfile_options', { id }),
-      export: (id, detail, progress, includeMine, includePhotos, smallerPictures) =>
+      export: (
+        id,
+        detail,
+        progress,
+        includeMine,
+        includePhotos,
+        smallerPictures,
+        includeTypePictures,
+      ) =>
         call('packfile_export', {
           id,
           detail,
           progress: progress ?? null,
           includeMine: includeMine ?? false,
           includePhotos: includePhotos ?? false,
+          includeTypePictures: includeTypePictures ?? false,
           smallerPictures: smallerPictures ?? false,
         }),
       pick: () => call('packfile_pick'),

@@ -117,6 +117,50 @@ describe('photos in the pack format', () => {
   });
 });
 
+describe('pictures of types', () => {
+  it('lets a type name a picture beside its icon, with the part of a sheet it is', () => {
+    const pack = withPhotos();
+    const gameId = pack.manifest.gameId;
+    pack.pictures!.push({
+      id: `${gameId}:picture:t-herb`,
+      file: 'pictures/t-herb.png',
+      shareable: false,
+      remote: 'https://pictures.example.com/sheet.png',
+      cut: { x: 24, y: 0, width: 24, height: 24 },
+    });
+    pack.categories[0] = { ...pack.categories[0]!, picture: `${gameId}:picture:t-herb` };
+    expect(packDataSchema.safeParse(pack).success).toBe(true);
+    expect(checkPackIntegrity(pack)).toEqual([]);
+    // A type keeps its icon: older apps draw that.
+    expect(pack.categories[0].icon).toBeTruthy();
+    // A picture the pack does not have is reported.
+    pack.categories[0] = { ...pack.categories[0], picture: `${gameId}:picture:missing` };
+    expect(checkPackIntegrity(pack).map((issue) => issue.path)).toEqual(['categories[0].picture']);
+  });
+
+  it('is strict about a cut when writing and leaves out one it cannot read', () => {
+    const picture = { id: 'x:picture:a', file: 'pictures/a.png', shareable: false };
+    const cut = { x: 0, y: 4, width: 16, height: 16 };
+    expect(pictureSchema.safeParse({ ...picture, cut }).success).toBe(true);
+    for (const wrong of [
+      { ...cut, width: 0 },
+      { ...cut, x: -1 },
+      { ...cut, y: 1.5 },
+      { ...cut, height: 20_000 },
+      { ...cut, scale: 2 },
+    ]) {
+      expect(pictureSchema.safeParse({ ...picture, cut: wrong }).success).toBe(false);
+    }
+    const read = packReadSchemas.pictureSchema.parse({ ...picture, cut: { x: 'a' } });
+    expect(read.cut).toBeUndefined();
+    const type = packReadSchemas.categorySchema.parse({
+      ...makeFixturePack().categories[0],
+      picture: 'not a picture id',
+    });
+    expect(type.picture).toBeUndefined();
+  });
+});
+
 describe('own pictures', () => {
   it('names files after their ids and tells their type', () => {
     const picture = ownPicture('demo:picture:own.ab12', 'image/jpeg', 1280, 720.4);

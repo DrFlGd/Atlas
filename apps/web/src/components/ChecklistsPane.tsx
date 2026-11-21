@@ -1,3 +1,4 @@
+import { RouteScreen } from '../touch/routes/RouteScreen';
 import {
   checklistTally,
   countFacets,
@@ -57,6 +58,8 @@ export function ChecklistsPane({ visible }: { visible: boolean }) {
         <IndexPage game={game} />
       ) : page.kind === 'checklist' ? (
         <ChecklistView game={game} id={page.id} visible={visible} />
+      ) : page.kind === 'route' ? (
+        <RouteScreen game={game} id={page.id} />
       ) : (
         <GuideView game={game} id={page.id} />
       )}
@@ -87,7 +90,9 @@ function BackButton({ game }: { game: LoadedGame }) {
       ? checklistScreenTitle(game).toLowerCase()
       : previous.kind === 'checklist'
         ? (game.checklists.checklist(previous.id)?.checklist.name ?? 'the checklist')
-        : (game.checklists.guide(previous.id)?.title ?? 'the guide');
+        : previous.kind === 'route'
+          ? 'the route'
+          : (game.checklists.guide(previous.id)?.title ?? 'the guide');
   return (
     <button type="button" className="back-button" onClick={checklistBack}>
       <span className="back-arrow" aria-hidden="true">

@@ -1,4 +1,7 @@
 import { glyphColorOn, glyphFor } from '@atlas/core';
+import { useState } from 'react';
+import { useAtlas } from '../state/store';
+import { useTypePicture } from '../state/typePictures';
 
 interface GlyphBadgeProps {
   icon: string;
@@ -6,10 +9,49 @@ interface GlyphBadgeProps {
   size?: number;
   /** Drawn faded, as on the map for found markers. */
   muted?: boolean;
+  /**
+   * The type it is the badge of: drawn with the type's own picture where
+   * the person uses the map's icons and its file is there (see
+   * `typePictures.ts`), else with `icon`.
+   */
+  typeId?: string | undefined;
 }
 
-/** A category's marker glyph on its coloured badge, as drawn on the map. Decorative. */
-export function GlyphBadge({ icon, color, size = 20, muted = false }: GlyphBadgeProps) {
+/**
+ * A category's marker glyph on its coloured badge, as drawn on the map, or
+ * the type's own picture. Decorative.
+ */
+export function GlyphBadge({ icon, color, size = 20, muted = false, typeId }: GlyphBadgeProps) {
+  const picture = useTypePicture(typeId);
+  // A picture that could not be shown is tried again once more photos are saved.
+  const revision = useAtlas((s) => s.tileRevision);
+  const [failed, setFailed] = useState<string | null>(null);
+  const failedKey = picture ? `${picture}@${revision}` : null;
+  if (picture && failed !== failedKey) {
+    return (
+      <svg
+        className="glyph-badge glyph-badge-picture"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        focusable="false"
+        style={muted ? { opacity: 0.45 } : undefined}
+      >
+        <image
+          href={picture}
+          x="0"
+          y="0"
+          width="24"
+          height="24"
+          preserveAspectRatio="xMidYMid meet"
+          onError={() => {
+            setFailed(failedKey);
+          }}
+        />
+      </svg>
+    );
+  }
   const glyph = glyphFor(icon);
   return (
     <svg

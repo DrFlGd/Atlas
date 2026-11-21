@@ -41,7 +41,8 @@ export type OwnIdKind =
   | 'region'
   | 'picture'
   | 'guide'
-  | 'section';
+  | 'section'
+  | 'route';
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 

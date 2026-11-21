@@ -178,11 +178,11 @@ fn refuses_a_newer_version_and_what_is_no_pack_file() {
     assert_eq!(error.kind(), RefusalKind::NewerFormat);
     assert_eq!(
         error.what(),
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 9)."
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 10)."
     );
     assert_eq!(
         error.to_string(),
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 9). A newer version of this app is needed to open it."
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 10). A newer version of this app is needed to open it."
     );
     assert_eq!(String::from(error.clone()), error.to_string());
     for (key, value) in [
@@ -458,4 +458,38 @@ fn refuses_hostile_files() {
         .unwrap_err()
         .to_string()
         .contains("newer format"));
+}
+
+#[test]
+fn reads_a_version_9_description_with_routes_of_the_person() {
+    let mut routes = header_v7();
+    routes["version"] = json!(VERSION_WITH_ROUTES);
+    routes["mine"] = json!({"lists": 1, "routes": 2});
+    let header = parse_header(&routes.to_string()).unwrap();
+    assert_eq!(header.version, 9);
+    let mine = header.mine.unwrap();
+    assert_eq!((mine.lists, mine.routes), (1, 2));
+    // A description of a version before routes has none, and writes none.
+    let mut older = header_v7();
+    older["mine"] = json!({"lists": 1});
+    let header = parse_header(&older.to_string()).unwrap();
+    assert_eq!(header.mine.unwrap().routes, 0);
+    let written = serde_json::to_value(header.mine.unwrap()).unwrap();
+    assert!(written.get("routes").is_none());
+}
+
+#[test]
+fn reads_a_version_9_description_with_the_maps_icons() {
+    let mut icons = header_v7();
+    icons["version"] = json!(VERSION_WITH_ROUTES);
+    icons["contents"]["typePictures"] = json!(3);
+    let header = parse_header(&icons.to_string()).unwrap();
+    assert_eq!(header.contents.type_pictures, 3);
+    let written = serde_json::to_value(header.contents).unwrap();
+    assert_eq!(written["typePictures"], 3);
+    // A description without them has none, and writes none.
+    let header = parse_header(&header_v7().to_string()).unwrap();
+    assert_eq!(header.contents.type_pictures, 0);
+    let written = serde_json::to_value(header.contents).unwrap();
+    assert!(written.get("typePictures").is_none());
 }

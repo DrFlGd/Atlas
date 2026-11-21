@@ -7,6 +7,7 @@ import { ListFrame } from './ListFrame';
 import { PageBack } from './ListRows';
 import { ListsHome } from './ListsHome';
 import { listById } from './listViews';
+import { RouteScreen } from './routes/RouteScreen';
 
 const INDEX: ChecklistPage = { kind: 'index' };
 
@@ -23,6 +24,7 @@ export function ListsScreen() {
   const ownStatus = useOwnLists((s) => s.status);
   useOwnLists((s) => s.lists);
   if (page.kind === 'guide') return <GuideScreen key={page.id} game={game} id={page.id} />;
+  if (page.kind === 'route') return <RouteScreen key={page.id} game={game} id={page.id} />;
   if (page.kind === 'index') return <ListsHome game={game} />;
   const entry = listById(game, page.id);
   if (!entry) return <MissingList loading={isOwnId(page.id) && ownStatus === 'loading'} />;

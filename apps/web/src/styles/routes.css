@@ -1,0 +1,326 @@
+/* Routes (see `touch/routes/RouteScreen.tsx`): the list of a game's
+   routes, one route followed step by step, the route editor, and the bar
+   over the map on a phone. */
+
+.route-swatch {
+  flex: none;
+  width: 6px;
+  align-self: stretch;
+  border-radius: 3px;
+  background: var(--atlas-accent);
+}
+
+.route-note {
+  margin: 0 4px 8px;
+}
+
+.route-make {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+
+.route-from-list select,
+.route-field select,
+.route-field input[type='text'],
+.route-field textarea {
+  box-sizing: border-box;
+  /* A target a finger can press, as every control of the touch layout. */
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.route-from-list select {
+  max-width: 100%;
+}
+
+.route-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 24px;
+}
+
+.route-description {
+  margin: 0 4px;
+  color: var(--atlas-muted);
+}
+
+.route-current {
+  padding: 12px 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: var(--atlas-surface-raised);
+}
+
+.route-current-kicker {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.route-current-title {
+  margin: 4px 0 8px;
+  font-size: 18px;
+}
+
+.route-step-text {
+  margin-bottom: 8px;
+}
+
+.route-current-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.route-tick[aria-checked='true'] {
+  border-color: var(--atlas-complete, var(--atlas-accent));
+  color: var(--atlas-complete, var(--atlas-accent));
+}
+
+.route-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.route-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 10px;
+}
+
+.route-step[aria-current='true'] {
+  background: var(--atlas-accent-soft);
+}
+
+.route-step-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.route-step-number {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--atlas-surface-raised);
+  border: 1px solid var(--atlas-border-strong);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.route-step-title {
+  overflow-wrap: anywhere;
+}
+
+.route-step-free {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.route-tick-compact {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--atlas-border-strong);
+  border-radius: 8px;
+  background: var(--atlas-surface);
+  color: transparent;
+}
+
+.route-tick-compact[aria-checked='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+}
+
+[data-handheld] .route-tick-compact,
+[data-input='touch'] .route-tick-compact {
+  width: 44px;
+  height: 44px;
+}
+
+.route-copy,
+.route-delete {
+  margin: 8px 0 0;
+}
+
+.route-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.route-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--atlas-muted);
+}
+
+.route-field > span {
+  font-weight: 600;
+}
+
+.route-field input,
+.route-field textarea,
+.route-field select {
+  color: var(--atlas-text);
+  font-size: 15px;
+}
+
+.route-field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.route-field-colour {
+  flex: none;
+}
+
+.route-field-colour input {
+  width: 64px;
+  height: 40px;
+  padding: 2px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+}
+
+.route-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--atlas-surface-raised);
+}
+
+.route-pick .own-pill-button[aria-pressed='true'],
+.route-step-buttons .own-pill-button[aria-pressed='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.route-step-edit {
+  border: 1px solid transparent;
+}
+
+.route-step-edit[aria-current='true'] {
+  border-color: var(--atlas-border);
+}
+
+.route-step-fields {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 4px 8px 40px;
+}
+
+.route-step-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The open route over the map: under the search on a phone, under the
+   map's own controls when wide, out of the way of the cards. */
+.route-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-surface-translucent, var(--atlas-surface));
+  box-shadow: var(--atlas-shadow);
+  backdrop-filter: blur(8px);
+}
+
+.touch[data-arrangement='wide'] .route-bar {
+  position: absolute;
+  top: calc(var(--atlas-inset-top) + 76px + var(--touch-toast-h, 0px));
+  left: 50%;
+  z-index: 1100;
+  width: min(560px, calc(100% - 32px));
+  transform: translateX(-50%);
+}
+
+.route-bar-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+}
+
+.route-bar-kicker {
+  overflow: hidden;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-bar-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The title over the editor stays on one line, so the fields under it do
+   not move while its title is changed. */
+.route-editor .touch-page-head-text {
+  min-width: 0;
+}
+
+.route-editor .touch-page-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

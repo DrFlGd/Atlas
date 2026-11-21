@@ -304,6 +304,17 @@ export interface ImportContext {
    */
   keepsPagesInOrder?: boolean;
   /**
+   * Optional: true when the app keeps a type's `picture`, the type's own
+   * icon as the map it was read from draws it (read only where the site's
+   * rules file says where the icons are, `types.picture`), and a picture's
+   * `cut`, the part of a sheet of icons it is. An app that does not say so
+   * refuses a pack that has them, as any field it does not know, so an
+   * importer writes them only when this is true. Such pictures are kept for
+   * the person's own use, as photos are: listed with their address
+   * (`remote`) and downloaded by the app, never by the importer.
+   */
+  keepsTypePictures?: boolean;
+  /**
    * Optional: the size the person chose to keep the pictures of the site's
    * pages at, in an app that downloads them (see
    * {@link AtlasImporter.picturesWithPages}). `full`: where the importer

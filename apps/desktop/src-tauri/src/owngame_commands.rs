@@ -24,7 +24,7 @@ use crate::{
     commands::{blocking, desktop_only, kept_game_changed, short, LibraryState},
     library::{Library, Listing},
     owngame::{self, Added},
-    ownlists::{OwnFile, LOCATIONS, NOTES, PAGES},
+    ownlists::{OwnFile, LOCATIONS, NOTES, PAGES, ROUTES},
 };
 
 // ---------------------------------------------------------------------------
@@ -611,6 +611,53 @@ pub async fn own_notes_delete(library: LibraryState<'_>, game_id: String) -> Res
             activity::info(
                 Area::Library,
                 format!("Deleted the own notes of {game_id}, as asked with the game"),
+            );
+        }
+        Ok(deleted)
+    })
+    .await
+}
+
+/// A person's own routes of a game, from their file beside the game's
+/// folder (see `ownlists::ROUTES`); `None` when there is none yet. Not on
+/// Android, where the web app keeps them itself.
+#[tauri::command]
+pub async fn own_routes_read(
+    library: LibraryState<'_>,
+    game_id: String,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || ROUTES.read(&maps, &game_id)).await
+}
+
+/// Writes a person's own routes of a game, whole and at once; with
+/// `keep_copy` (a time), the file as it was is kept beside it first.
+#[tauri::command]
+pub async fn own_routes_write(
+    library: LibraryState<'_>,
+    game_id: String,
+    contents: String,
+    keep_copy: Option<String>,
+) -> Result<Option<String>, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || write_own_file(ROUTES, &maps, &game_id, &contents, keep_copy.as_deref())).await
+}
+
+/// Deletes a person's own routes of a game, when they ask for it as they
+/// delete the game. Whether there were any.
+#[tauri::command]
+pub async fn own_routes_delete(library: LibraryState<'_>, game_id: String) -> Result<bool, String> {
+    desktop_only()?;
+    let maps = library.maps_folder();
+    blocking(move || {
+        let deleted = ROUTES.delete(&maps, &game_id)?;
+        if deleted {
+            kept_game_changed(&game_id);
+            activity::info(
+                Area::Library,
+                format!("Deleted the own routes of {game_id}, as asked with the game"),
             );
         }
         Ok(deleted)

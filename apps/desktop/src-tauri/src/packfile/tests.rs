@@ -244,6 +244,7 @@ fn folder_source(dir: &Path) -> PackSource {
         lock: true,
         comes_with_app: false,
         own_use_pictures: false,
+        type_pictures: false,
         smaller_pictures: false,
         group: None,
     }
@@ -539,7 +540,8 @@ fn the_header_says_where_the_data_came_from() {
             categories: 1,
             regions: 0,
             checklists: 1,
-            guides: 0
+            guides: 0,
+            type_pictures: 0
         }
     );
     // The JSON text uses the documented names.
@@ -615,6 +617,7 @@ fn exports_images_from_the_overlay_of_a_pack_that_comes_with_the_app() {
         lock: false,
         comes_with_app: true,
         own_use_pictures: false,
+        type_pictures: false,
         smaller_pictures: false,
         group: None,
     };
@@ -1552,6 +1555,7 @@ fn exports_the_own_files_beside_the_game() {
             include,
             false,
             false,
+            false,
             &mut |_| {},
             &|| false,
         )
@@ -1591,6 +1595,7 @@ fn the_game_goes_by_its_group_title_with_or_without_own_files() {
             Detail::Overview,
             &dir.0.join(name),
             include,
+            false,
             false,
             false,
             &mut |_| {},
@@ -1934,6 +1939,7 @@ fn carries_the_pictures_kept_for_own_use_only_when_asked() {
     let file = dir.0.join("pages.atlaspack");
     let source = PackSource {
         own_use_pictures: true,
+        type_pictures: true,
         ..folder_source(&pack)
     };
     run_export(&source, Detail::Overview, &file).unwrap();
@@ -2288,6 +2294,7 @@ fn makes_the_pictures_kept_for_own_use_smaller_too_when_they_go_in() {
     let file = dir.0.join("pages.atlaspack");
     let source = PackSource {
         own_use_pictures: true,
+        type_pictures: true,
         smaller_pictures: true,
         ..folder_source(&pack)
     };
@@ -2389,6 +2396,7 @@ fn a_location_photo_kept_at_full_size_goes_in_smaller() {
     for smaller in [false, true] {
         let source = PackSource {
             own_use_pictures: true,
+            type_pictures: true,
             smaller_pictures: smaller,
             ..folder_source(&pack)
         };
@@ -4213,4 +4221,174 @@ fn says_in_one_word_where_a_pack_came_from() {
         ),
         Some(Origin::Site)
     );
+}
+
+#[test]
+fn carries_routes_as_version_9_and_an_empty_routes_file_not_at_all() {
+    let dir = TempDir::new("packfile-routes");
+    let pack = dir.0.join("pack");
+    write_pack(&pack, "1.0.0");
+    // An empty routes file is left out: the file keeps the version it had.
+    put(&pack.join(ROUTES_FILE), b"[]\n");
+    let source = folder_source(&pack);
+    let plain = dir.0.join("plain.atlaspack");
+    let exported = run_export(&source, Detail::Overview, &plain).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITHOUT_MINE);
+    assert!(!entry_names(&plain).contains_key(ROUTES_FILE));
+
+    // A pack's routes make it version 9, and come back in its folder.
+    let route = json!([{
+        "id": format!("{ID}:route:walk"),
+        "title": "A walk",
+        "steps": [{"id": "1", "title": "Start", "mapId": format!("{ID}:map:east"), "x": 1, "y": 2}]
+    }]);
+    put_json(&pack.join(ROUTES_FILE), &route);
+    let file = dir.0.join("routes.atlaspack");
+    let exported = run_export(&folder_source(&pack), Detail::Overview, &file).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_ROUTES);
+    assert!(entry_names(&file).contains_key(ROUTES_FILE));
+    let maps = dir.0.join("maps-routes");
+    run_import(&file, &maps).unwrap();
+    let back: Value =
+        serde_json::from_slice(&fs::read(maps.join(ID).join(ROUTES_FILE)).unwrap()).unwrap();
+    assert_eq!(back, route);
+
+    // The person's own routes: version 9, counted, handed back as they were.
+    fs::remove_file(pack.join(ROUTES_FILE)).unwrap();
+    let own = format!(
+        r#"{{"format":"atlas-own-routes","version":1,"gameId":"{ID}","updatedAt":"2026-11-21T10:00:00.000Z","routes":[{{"id":"{ID}:route:own.a"}},{{"id":"{ID}:route:own.b"}}]}}"#
+    );
+    let mine = Mine {
+        routes: Some(own.clone()),
+        ..Mine::default()
+    };
+    assert_eq!(mine.version(), VERSION_WITH_ROUTES);
+    let file = dir.0.join("own-routes.atlaspack");
+    let exported = export_mine(&folder_source(&pack), &file, &mine).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_ROUTES);
+    assert_eq!(exported.header.mine.unwrap().routes, 2);
+    assert!(entry_names(&file).contains_key("mine/my-routes.json"));
+    let imported = run_import(&file, &dir.0.join("maps-own")).unwrap();
+    assert_eq!(imported.mine, mine);
+    // Another game's routes are refused.
+    let other = Mine {
+        routes: Some(own.replace(&format!("\"gameId\":\"{ID}\""), "\"gameId\":\"x\"")),
+        ..Mine::default()
+    };
+    assert!(export_mine(
+        &folder_source(&pack),
+        &dir.0.join("other.atlaspack"),
+        &other
+    )
+    .is_err());
+}
+
+/// A pack whose type is drawn with a picture of the map it was read from,
+/// downloaded here, beside a photo kept for the person's own use.
+fn write_type_picture_pack(dir: &Path) {
+    write_pack(dir, "1.0.0");
+    put_json(
+        &dir.join(CATEGORIES_FILE),
+        &json!([
+            {"id": "c1", "name": "Ward", "icon": "star", "picture": format!("{ID}:picture:t-ward")},
+            {"id": "c2", "name": "Gate", "icon": "door"}
+        ]),
+    );
+    put_json(
+        &dir.join(PICTURES_FILE),
+        &json!([
+            {"id": format!("{ID}:picture:t-ward"), "file": "pictures/t-ward.png", "shareable": false,
+             "remote": "https://pictures.example.com/sheet.png", "cut": {"x": 0, "y": 0, "width": 4, "height": 4}},
+            {"id": format!("{ID}:picture:own"), "file": "pictures/own.png", "shareable": false,
+             "remote": "https://pictures.example.com/own.png"}
+        ]),
+    );
+    put(&dir.join("pictures/t-ward.png"), b"made-up icon");
+    put(&dir.join("pictures/own.png"), b"my own picture");
+}
+
+#[test]
+fn leaves_the_maps_icons_out_unless_asked_and_then_writes_version_9() {
+    let dir = TempDir::new("packfile-type-pictures");
+    let pack = dir.0.join("pack");
+    write_type_picture_pack(&pack);
+    assert_eq!(
+        type_picture_ids(&pack).into_iter().collect::<Vec<_>>(),
+        [format!("{ID}:picture:t-ward")]
+    );
+    // Offered apart from the photos kept for the person's own use.
+    let options = export_options(&folder_source(&pack)).unwrap();
+    assert_eq!(
+        (options.type_pictures, options.type_picture_bytes),
+        (1, b"made-up icon".len() as u64)
+    );
+    assert_eq!(options.own_use_pictures, 1);
+
+    // Not ticked: nothing of the icons, not even with the photos, and the
+    // types name no picture. The file keeps its version.
+    let file = dir.0.join("plain.atlaspack");
+    let source = PackSource {
+        own_use_pictures: true,
+        ..folder_source(&pack)
+    };
+    let exported = run_export(&source, Detail::Overview, &file).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITHOUT_MINE);
+    assert_eq!(exported.header.contents.type_pictures, 0);
+    let names = entry_names(&file);
+    assert!(!names.contains_key("pictures/t-ward.png"), "{names:?}");
+    assert!(names.contains_key("pictures/own.png"), "{names:?}");
+    let listed = json_entry(&file, PICTURES_FILE);
+    assert!(!listed.to_string().contains("t-ward"), "{listed}");
+    let types = json_entry(&file, CATEGORIES_FILE);
+    assert!(types
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|t| t.get("picture").is_none()));
+    assert_eq!(types[0]["icon"], "star");
+    assert!(!serde_json::to_string(&exported.header)
+        .unwrap()
+        .contains("typePictures"));
+
+    // Ticked: the icons go in, still kept for the person's own use; version 9.
+    let file = dir.0.join("icons.atlaspack");
+    let source = PackSource {
+        type_pictures: true,
+        ..folder_source(&pack)
+    };
+    let exported = run_export(&source, Detail::Overview, &file).unwrap();
+    assert_eq!(exported.header.version, VERSION_WITH_ROUTES);
+    assert_eq!(exported.header.contents.type_pictures, 1);
+    let names = entry_names(&file);
+    assert!(names.contains_key("pictures/t-ward.png"), "{names:?}");
+    assert!(!names.contains_key("pictures/own.png"), "{names:?}");
+    let header = json_entry(&file, HEADER_FILE);
+    assert_eq!(header["contents"]["typePictures"], 1);
+    let types = json_entry(&file, CATEGORIES_FILE);
+    assert_eq!(types[0]["picture"], format!("{ID}:picture:t-ward"));
+    let listed = json_entry(&file, PICTURES_FILE);
+    let icon = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["file"] == "pictures/t-ward.png")
+        .unwrap();
+    assert_eq!(icon["shareable"], false);
+    assert_eq!(icon["cut"]["width"], 4);
+    let imported = run_import(&file, &dir.0.join("maps")).unwrap();
+    assert_eq!(
+        files_under(&imported.folder)["pictures/t-ward.png"],
+        b"made-up icon"
+    );
+
+    // A pack with no type pictures offers none.
+    let plain = dir.0.join("plain");
+    write_pack(&plain, "1.0.0");
+    assert_eq!(
+        export_options(&folder_source(&plain))
+            .unwrap()
+            .type_pictures,
+        0
+    );
+    assert_eq!(categories_without_pictures(&plain).unwrap(), None);
 }

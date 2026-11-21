@@ -441,9 +441,16 @@ function tinyPack(): Record<string, unknown> {
     })),
     // Optional files are present but empty, so the only 404 is the tile probe.
     ...Object.fromEntries(
-      ['regions', 'entities', 'checklists', 'checklistItems', 'guides', 'links', 'presets'].map(
-        (name) => [`${name}.json`, []],
-      ),
+      [
+        'regions',
+        'entities',
+        'checklists',
+        'checklistItems',
+        'guides',
+        'links',
+        'presets',
+        'routes',
+      ].map((name) => [`${name}.json`, []]),
     ),
   };
 }

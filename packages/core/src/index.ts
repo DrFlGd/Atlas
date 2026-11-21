@@ -18,6 +18,7 @@ export * from './checklists/views';
 export * from './checklists/listTypes';
 export * from './checklists/ownLists';
 export * from './checklists/planBuild';
+export * from './routes/routes';
 export * from './progress/records';
 export * from './progress/store';
 export * from './progress/memoryStore';

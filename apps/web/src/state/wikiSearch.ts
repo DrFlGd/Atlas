@@ -27,7 +27,7 @@ import { guideAliases, guidesOf, otherGuidesOf } from './guides';
 import type { LoadedGame } from './store';
 
 /**
- * "Search wiki" on a location's card: the saved pages of the game's wiki
+ * "Add to a wiki page…" on a location's card: the saved pages of the game's wiki
  * (and of the other games read with it) that may be about the location,
  * found by its name (see `nameMatch.ts` in core), the best first; and the
  * page the person picks linked to the location, or to every location of

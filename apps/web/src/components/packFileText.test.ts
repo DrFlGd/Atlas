@@ -14,6 +14,7 @@ import {
   mineLabel,
   packKind,
   photosHint,
+  iconsHint,
   photosLabel,
   picturesInFileText,
   replaceText,
@@ -242,6 +243,8 @@ describe('pack file facts in words', () => {
     );
     expect(photosHint(3081, '212 MB')).toContain('The 3,081 photos downloaded');
     expect(photosHint(2, '1 MB')).toContain('Keep a file with them to yourself');
+    expect(iconsHint(1, '4 KB')).toMatch(/^The 1 icon of the map .* \(4 KB\)\./u);
+    expect(iconsHint(12, '40 KB')).toContain('Atlas’s own icons');
   });
 
   it('says what each size of the pictures in a file means', () => {

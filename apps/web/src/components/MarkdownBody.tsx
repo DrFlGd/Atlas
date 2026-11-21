@@ -18,7 +18,10 @@ import { enhanceTables, sortTableAt, type PageSorts } from '../tableSort';
 import { showTextColours } from '../textColour';
 import { followAppLink, markdownOptionsFor } from '../state/checklists';
 import { useGuideLinks } from '../state/guideLinks';
+import { entryLocations, mapEntryOptions, putEntryOnMap, useMapEntries } from '../state/mapEntries';
 import { followMapLink, useMapLinks } from '../state/mapLinks';
+import { notify } from '../state/actions';
+import { EntryMenu, type EntryMenuAt } from './EntryMenu';
 import { useOwnPages } from '../state/ownPages';
 import { useOwnPictures } from '../state/ownPictures';
 import { useAtlas } from '../state/store';
@@ -46,16 +49,29 @@ export const UNREAD_PAGE = 'This page has not been read yet';
  * small mark in its corner that says so. A picture that moves is shown
  * still, with a Play button, when the system asks for less motion (see
  * `movingPictures.ts`).
+ *
+ * On a page, its entries on the map have a small map mark (see
+ * `markdownEntries.ts` and `mapEntries.ts`): pressed, it shows the entry's
+ * location, or a short list of its locations. With "Put entries on the
+ * map" on, where Edit locations has room, entries not on the map have a
+ * mark that puts one there, linked to its page (`pageId` for an entry
+ * that is not a link to a page of its own).
  */
 export function MarkdownBody({
   source,
   className,
   page = false,
+  pageId,
+  entries = true,
   onAddRow,
 }: {
   source: string;
   className: string;
   page?: boolean;
+  /** The page shown, for an entry of it put on the map. */
+  pageId?: string | undefined;
+  /** Whether a page's entries on the map are marked: not for a page of a game not shown. */
+  entries?: boolean;
   onAddRow?: ((row: RowThing, button: HTMLElement) => void) | undefined;
 }) {
   const game = useAtlas((s) => s.game);
@@ -68,6 +84,10 @@ export function MarkdownBody({
   const own = useOwnPages((s) => s.own);
   const draftPictures = useOwnPages((s) => s.draftPictures);
   const ownPictures = useOwnPictures((s) => s.files);
+  // Entries on the map: the links of pages to it, and whether entries are being put there.
+  const choices = useGuideLinks((s) => s.links.choices);
+  const adding = useMapEntries((s) => s.adding && s.canPut) && pageId !== undefined;
+  const [entryMenu, setEntryMenu] = useState<EntryMenuAt | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   // A picture whose file is not here (one to be downloaded later) shows
   // what it is in words; it is tried again when new images are saved.
@@ -167,18 +187,56 @@ export function MarkdownBody({
               ...(page && game.pack.data.guides.some((guide) => guide.source)
                 ? { unreadPage: UNREAD_PAGE }
                 : {}),
+              ...(page && entries ? { mapEntries: mapEntryOptions(game, adding) } : {}),
             }
           : {},
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, game, page, others, own, draftPictures, ownPictures, mapLinks, mapSources],
+    [
+      source,
+      game,
+      page,
+      others,
+      own,
+      draftPictures,
+      ownPictures,
+      mapLinks,
+      mapSources,
+      choices,
+      adding,
+      entries,
+    ],
   );
-  return (
+  const body = (
     <div
       ref={ref}
       key={missingAt === null || missingAt === revision ? 'shown' : revision}
       className={className}
       onClick={(event) => {
+        // An entry's mark: its location, its locations, or putting it on the map.
+        const mark =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>('[data-map-entry], [data-map-add]')
+            : null;
+        if (mark && game && event.currentTarget.contains(mark)) {
+          event.preventDefault();
+          const add = mark.getAttribute('data-map-add');
+          if (add !== null) {
+            const guideId = mark.getAttribute('data-map-add-page') ?? pageId;
+            if (guideId) putEntryOnMap({ name: add, guideId });
+            return;
+          }
+          const ids = entryLocations(
+            game,
+            mark.getAttribute('data-map-entry-kind') ?? 'location',
+            mark.getAttribute('data-map-entry') ?? '',
+          );
+          const label = mark.getAttribute('data-map-label') ?? 'This entry';
+          if (ids.length === 0) notify(`${label} is not on the map any more.`);
+          else if (ids.length === 1) followAppLink(ids[0]!);
+          else setEntryMenu({ ids, label, anchor: mark.getBoundingClientRect(), mark });
+          return;
+        }
         const row = page && onAddRow ? buildRowAt(event.target, event.currentTarget) : null;
         if (row && onAddRow) {
           event.preventDefault();
@@ -225,5 +283,18 @@ export function MarkdownBody({
       // markdown-it runs with raw HTML disabled, so this holds only renderer-made tags.
       dangerouslySetInnerHTML={{ __html: html }}
     />
+  );
+  return entryMenu ? (
+    <>
+      {body}
+      <EntryMenu
+        at={entryMenu}
+        onClose={() => {
+          setEntryMenu(null);
+        }}
+      />
+    </>
+  ) : (
+    body
   );
 }

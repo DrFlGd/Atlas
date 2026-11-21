@@ -14,3 +14,4 @@ export * from './gameGroups';
 export * from './layoutForms';
 export * from './pageWidth';
 export * from './mapLinks';
+export * from './routes';

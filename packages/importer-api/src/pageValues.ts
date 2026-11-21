@@ -97,6 +97,8 @@ export interface PageValueSpec {
   element?: string;
   /** For a store or an element: the steps inside what it gives. */
   inside?: (string | number)[];
+  /** A value only the routes read: one that is not there is left out, not waited for. */
+  optional?: true;
 }
 
 /** What the reader is given: the values, the fields of each that are kept, and the lists it waits for. */
@@ -238,7 +240,20 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
       sets.bounds,
     ]);
   }
-  under(types.path, [types.id, types.name, types.group, types.icon, types.order]);
+  const cut = types.picture?.cut;
+  under(types.path, [
+    types.id,
+    types.name,
+    types.group,
+    types.icon,
+    types.order,
+    types.picture?.address,
+    cut?.x,
+    cut?.y,
+    cut?.width,
+    cut?.height,
+    cut?.scale,
+  ]);
   if (types.groups) {
     under(types.groups.path, [types.groups.id, types.groups.name, types.groups.order]);
   }
@@ -251,11 +266,36 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
         )
       : []),
   ]);
+  const routes = part.routes;
+  if (routes) {
+    const { steps } = routes;
+    under(routes.path, [
+      routes.id,
+      routes.title,
+      routes.description,
+      routes.type,
+      routes.color,
+      routes.line,
+      ...[
+        steps.title,
+        steps.text,
+        steps.note,
+        steps.location,
+        steps.map,
+        steps.x,
+        steps.y,
+        steps.order,
+      ]
+        .filter((field) => field !== undefined)
+        .map((field) => `${steps.path}.${field}`),
+    ]);
+  }
   const names = new Set(values.map((value) => value.name));
   // The lists the part reads (each path up to its first `[*]` or entry), waited for.
   const wait: PageValuesSpec['wait'] = [];
   for (const { field, path } of mapTopPaths(part)) {
-    if (field[0] === 'game') continue;
+    // Not the routes: a map without any is read as well.
+    if (field[0] === 'game' || field[0] === 'routes') continue;
     const steps: string[] = [...prefix];
     for (const step of dataPathSteps(path) ?? []) {
       if (!('field' in step)) break;
@@ -275,7 +315,23 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
       if (first !== undefined && !names.has(first)) return null;
     }
   }
-  return { values: values.filter((value) => keep[value.name] !== undefined), keep, wait };
+  // A value only the routes read may be missing: a map without routes is read as well.
+  const needed = new Set(
+    mapTopPaths(part)
+      .filter(({ field }) => field[0] !== 'routes')
+      .map(({ path }) => keyStepsOf(path)[0]),
+  );
+  return {
+    values: values
+      .filter((value) => keep[value.name] !== undefined)
+      .map((value) =>
+        prefix.length === 0 && !needed.has(value.name)
+          ? { ...value, optional: true as const }
+          : value,
+      ),
+    keep,
+    wait,
+  };
 }
 
 /** The name the JSON of a list of games' element is handed over under (see {@link gamesListSpec}). */
@@ -426,10 +482,14 @@ export const PAGE_VALUES_READER = String.raw`(spec) => {
     if (one.call === 'element') {
       const element = doc.querySelector(one.element);
       const text = element ? element.textContent : null;
-      if (typeof text !== 'string' || text.length > ${MAX_JSON_TEXT}) return null;
+      if (typeof text !== 'string' || text.length > ${MAX_JSON_TEXT}) {
+        if (one.optional) continue;
+        return null;
+      }
       try {
         value = JSON.parse(text);
       } catch (error) {
+        if (one.optional) continue;
         return null;
       }
     } else {
@@ -437,16 +497,21 @@ export const PAGE_VALUES_READER = String.raw`(spec) => {
     }
     if (one.call === 'store') {
       const read = method(value, 'getState');
-      if (!read) return null;
+      if (!read) {
+        if (one.optional) continue;
+        return null;
+      }
       try {
         value = read.call(value);
       } catch (error) {
+        if (one.optional) continue;
         return null;
       }
     }
     if (one.inside) value = walk(value, one.inside);
+    if ((value === undefined || value === null) && one.optional) continue;
     if (value === undefined || value === null) return null;
-    if (!settled && empty(value)) return null;
+    if (!settled && empty(value) && !one.optional) return null;
     const copied = copy(value, spec.keep[one.name] === undefined ? 1 : spec.keep[one.name], 0);
     if (copied === undefined) return null;
     values[one.name] = copied;

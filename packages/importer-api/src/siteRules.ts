@@ -44,6 +44,7 @@ import {
   MAP_LINK_ID_MARK,
   MAP_LINK_QUERY_PATTERN,
   PAGE_WIDTHS,
+  ROUTE_TYPES,
   hasIdMark,
 } from '@atlas/schema';
 import { z } from 'zod';
@@ -738,6 +739,27 @@ export const PAGE_VALUE_FORMS = ['store', 'element'] as const;
  */
 export const POSITION_UNITS = ['pixels', 'fraction', 'degrees', 'square'] as const;
 
+/**
+ * `types.picture`: inside one type, the address of its icon picture (on
+ * `site.hosts` or `pictures.hosts`), and where the icon is one of several
+ * on one picture (a sheet of icons), the part it is: its left and top edge
+ * and its size, in the sizes the page draws it at, times `scale` (the
+ * sheet's pixels for each of those) when there is one. A type whose part
+ * the data does not give is the whole picture.
+ */
+const typePictureSchema = z.strictObject({
+  address: dataPath,
+  cut: z
+    .strictObject({
+      x: dataPath,
+      y: dataPath,
+      width: dataPath,
+      height: dataPath,
+      scale: dataPath.optional(),
+    })
+    .optional(),
+});
+
 /** Type values one `types.found` list names at most. */
 export const MAX_FOUND_TYPES = 200;
 
@@ -791,6 +813,53 @@ const gamePageSchema = z.strictObject({
   only: onlySchema.optional(),
 });
 
+/** Most route types one `routes.types` names. */
+export const MAX_ROUTE_TYPE_VALUES = 50;
+
+/**
+ * The routes of a map part (`routes`): a list in the data (`path`, read
+ * from the data's top) whose entries are routes, each with its `title`
+ * and, if there are, `id`, `description`, `type` (a value that `types`
+ * turns into `walkthrough`, `collection` or `build`, or one of those words
+ * itself), `color` (`#rrggbb`) and `line` (a list of points of the line,
+ * each `[x, y]` in the part's position units); and its steps (`steps.path`
+ * inside one route), each with, if there are, `title`, `text`, `note`,
+ * `location` (the site's id of a location, as `locations.fields.id` gives
+ * it), `map` (as `maps.id` gives it), `x` and `y` (the part's units) and
+ * `order`. A step stands on its location when the data has it, else on its
+ * point.
+ */
+const routesRulesSchema = z.strictObject({
+  path: dataPath,
+  id: dataPath.optional(),
+  title: dataPath,
+  description: dataPath.optional(),
+  type: dataPath.optional(),
+  types: z
+    .record(z.string().min(1).max(200), z.enum(ROUTE_TYPES))
+    .refine(
+      (types) => Object.keys(types).length <= MAX_ROUTE_TYPE_VALUES,
+      `must name at most ${MAX_ROUTE_TYPE_VALUES} values`,
+    )
+    .optional(),
+  color: dataPath.optional(),
+  markup: z.enum(['html', 'markdown']).optional(),
+  line: dataPath.optional(),
+  steps: z.strictObject({
+    path: dataPath,
+    title: dataPath.optional(),
+    text: dataPath.optional(),
+    note: dataPath.optional(),
+    location: dataPath.optional(),
+    map: dataPath.optional(),
+    x: dataPath.optional(),
+    y: dataPath.optional(),
+    order: dataPath.optional(),
+  }),
+});
+
+export type MapRoutesRules = z.infer<typeof routesRulesSchema>;
+
 export type MapGamesList = z.infer<typeof gamesListSchema>;
 export type MapGamePage = z.infer<typeof gamePageSchema>;
 
@@ -832,6 +901,12 @@ const mapPartFields = {
       })
       .optional(),
     found: foundSchema.optional(),
+    /**
+     * The type's own icon on the map, as the site draws it: kept for the
+     * owner's own use and drawn in place of Atlas's icon where they choose.
+     * Without it, no icon picture is read.
+     */
+    picture: typePictureSchema.optional(),
   }),
   locations: z.strictObject({
     path: dataPath,
@@ -858,6 +933,8 @@ const mapPartFields = {
       icon: dataPath.optional(),
     }),
   }),
+  /** The map's routes, when the data has them. */
+  routes: routesRulesSchema.optional(),
   /** For a map part whose start holds {game} and {map}: the site's list of games. */
   games: gamesListSchema.optional(),
   /** For a map part whose start holds {game} and {map}: the page of a game, which lists its maps. */
@@ -1155,6 +1232,7 @@ const FIELDS_ELSEWHERE: Record<string, string> = {
   types: 'a map part read by rules from its data',
   locations: 'a map part read by rules from its data',
   position: 'a map part read by rules from its data',
+  routes: 'a map part read by rules from its data',
   list: 'a map part read by rules whose maps are pictures listed on a page',
   options: 'a part with a built-in reader',
   pack: 'a part with a built-in reader',
@@ -1421,6 +1499,7 @@ export function mapTopPaths(part: RulesMapPart): { field: string[]; path: string
   add(['types', 'path'], part.types.path);
   add(['types', 'groups', 'path'], part.types.groups?.path);
   add(['locations', 'path'], part.locations.path);
+  add(['routes', 'path'], part.routes?.path);
   return found;
 }
 
@@ -1494,6 +1573,25 @@ function mapPartProblems(
   }
   if (data.from !== 'values' && data.values !== undefined) {
     add(['data', 'values'], 'is only for "from": "values"');
+  }
+  const routes = part.routes;
+  if (routes) {
+    const { steps } = routes;
+    if ((steps.x === undefined) !== (steps.y === undefined)) {
+      add(
+        ['routes', 'steps', steps.x === undefined ? 'x' : 'y'],
+        'is needed with the other: a point is x and y',
+      );
+    }
+    if (steps.location === undefined && (steps.x === undefined || steps.y === undefined)) {
+      add(
+        ['routes', 'steps'],
+        'needs location, or x and y: a step stands on a location of the map or on a point of it',
+      );
+    }
+    if (routes.types !== undefined && routes.type === undefined) {
+      add(['routes', 'types'], 'is only with routes.type, whose values it names');
+    }
   }
   const picture = maps.picture;
   const forms = [picture.image, picture.images, picture.sets, picture.pattern].filter(
@@ -1658,7 +1756,7 @@ function mapPartProblems(
   if (fromLocations === (types.path !== undefined)) {
     add(['types'], 'must hold either "from": "locations" or path, not both and not neither');
   } else if (fromLocations) {
-    for (const key of ['id', 'name', 'group', 'icon', 'order', 'groups'] as const) {
+    for (const key of ['id', 'name', 'group', 'icon', 'order', 'groups', 'picture'] as const) {
       if (types[key] !== undefined) add(['types', key], 'is only for types with a path');
     }
   } else {

@@ -11,6 +11,7 @@ import {
 import { exportProgress, loadGame, notify } from './actions';
 import { addImportedGuideLinks, flushGuideLinks } from './guideLinks';
 import { addImportedOwnNotes, flushOwnNotes } from './ownNotes';
+import { addImportedOwnRoutes } from './ownRoutes';
 import { addImportedGameGroup } from './gameGroups';
 import { addImportedOwnPages, flushOwnPages } from './ownPages';
 import { applyListing } from './library';
@@ -142,6 +143,8 @@ export async function exportPackFile(
   withPhotos = false,
   /** "Pictures in the file: Smaller": the pictures in the file are made smaller. */
   smallerPictures = false,
+  /** "Include this map's icons": the pictures of the pack's types go in the file. */
+  withTypePictures = false,
 ): Promise<PackFileExported | null> {
   const progress = withProgress
     ? `${JSON.stringify(await exportProgress({ scope: 'all' }), null, 2)}\n`
@@ -156,7 +159,15 @@ export async function exportPackFile(
       flushOwnNotes(),
     ]);
   }
-  return desktop!.packFiles.export(packId, detail, progress, withMine, withPhotos, smallerPictures);
+  return desktop!.packFiles.export(
+    packId,
+    detail,
+    progress,
+    withMine,
+    withPhotos,
+    smallerPictures,
+    withTypePictures,
+  );
 }
 
 /** What adding the person's own records from a pack file did. */
@@ -173,6 +184,8 @@ export interface MineRestored {
   sections: number;
   /** Notes on the game's locations added. */
   notes: number;
+  /** Own routes added. */
+  routes: number;
   /** The title the game is shown under with other games now, from the file. */
   title: string | null;
   /** Why some could not be added, in plain words. */
@@ -188,6 +201,7 @@ export async function restoreMine(imported: PackFileImported): Promise<MineResto
     !imported.guideLinks &&
     !imported.ownPages &&
     !imported.ownNotes &&
+    !imported.ownRoutes &&
     !imported.gameGroup &&
     pictures.length === 0
   ) {
@@ -203,6 +217,7 @@ export async function restoreMine(imported: PackFileImported): Promise<MineResto
     pages: 0,
     sections: 0,
     notes: 0,
+    routes: 0,
     title: null,
     problem: null,
   };
@@ -261,6 +276,13 @@ export async function restoreMine(imported: PackFileImported): Promise<MineResto
       restored.notes = await addImportedOwnNotes(imported.packId, imported.ownNotes);
     } catch (error) {
       problems.push(`Your notes from the file could not be added: ${errorText(error)}`);
+    }
+  }
+  if (imported.ownRoutes) {
+    try {
+      restored.routes = await addImportedOwnRoutes(imported.packId, imported.ownRoutes);
+    } catch (error) {
+      problems.push(`Your routes from the file could not be added: ${errorText(error)}`);
     }
   }
   if (imported.gameGroup) {
