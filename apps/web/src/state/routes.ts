@@ -150,7 +150,7 @@ export function stepIndexOf(routeId: string, count: number, state: RoutesState =
   return Math.min(Math.max(at, 0), Math.max(count - 1, 0));
 }
 
-/** Opens a step of a route and shows it on the map. */
+/** Opens a step of a route and shows it on the map, with its location's card unless the route is changed. */
 export function goToStep(route: Route, index: number): void {
   const { game } = useAtlas.getState();
   if (!game) return;
@@ -158,7 +158,8 @@ export function goToStep(route: Route, index: number): void {
   const shown = steps[index];
   if (!shown) return;
   set({ steps: { ...get().steps, [route.id]: index } });
-  if (shown.location) goToLocation(shown.location.id);
+  // While the route is changed, the map only moves: a location's card would cover it.
+  if (shown.location && get().editing !== route.id) goToLocation(shown.location.id);
   else goToPoint(shown.mapId, shown.x, shown.y);
 }
 
