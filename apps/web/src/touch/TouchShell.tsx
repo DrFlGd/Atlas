@@ -26,8 +26,12 @@ import {
   useTitleOf,
 } from '../state/gameGroups';
 import { useOwnLists } from '../state/ownLists';
+import { packAsRead, useOwnLocations } from '../state/ownLocations';
+import { shownName, useMapNamesOf, type RenameTarget } from '../state/mapNames';
+import { RenameMapButton } from '../components/RenameMap';
 import { libraryOffered, setLibraryHost } from '../state/libraryView';
 import { LibraryScreen } from '../library/LibraryScreen';
+import { ExitButton } from '../library/ExitAtlas';
 import { SettingsScreen } from '../library/SettingsScreen';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
@@ -685,13 +689,15 @@ function BottomBar({ shown, library }: { shown: Shown; library: boolean }) {
 /**
  * The rail of sections. For thumbs (see `thumbsFor`) the sections are at
  * its foot, in the lower left corner, and the profile and the other tools
- * at its head.
+ * at its head, with "Exit Atlas" first where it is offered (Game Mode on a
+ * Steam Deck gives the window no close button).
  */
 function Rail({ shown, library, thumbs }: { shown: Shown; library: boolean; thumbs: boolean }) {
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   const sections = <SectionButtons shown={shown} className="touch-rail-button" library={library} />;
   const tools = (
     <>
+      {thumbs ? <ExitButton place="rail" /> : null}
       <KeysButton />
       <SaveButton />
       <button
@@ -943,6 +949,9 @@ function MapsMenu({ wide }: { wide: boolean }) {
   const summary = useSummary();
   const gameId = game?.entry.id ?? null;
   const { group, facts, names, others } = useOtherSources(gameId);
+  // Maps and levels are renamed with the person's own data of the game, where it can be changed.
+  const canRename = useOwnLocations((s) => s.status === 'ready' && s.readOnly === null);
+  const originalPack = packAsRead(gameId);
   if (!open || !game || !mapId || !summary) return null;
   // Under one title: the maps of each source under its name, the one shown first.
   const sources = group && others.length > 0;
@@ -956,8 +965,9 @@ function MapsMenu({ wide }: { wide: boolean }) {
     tally: { found: number; total: number },
     current: boolean,
     onChoose: () => void,
+    rename: RenameTarget | null = null,
   ) => (
-    <li key={key}>
+    <li key={key} className={rename ? 'touch-menu-item-renamable' : undefined}>
       <button
         type="button"
         className="touch-menu-row"
@@ -977,8 +987,22 @@ function MapsMenu({ wide }: { wide: boolean }) {
           {current ? <UiIcon name="check" size={18} strokeWidth={2.2} /> : null}
         </span>
       </button>
+      {rename ? (
+        <RenameMapButton
+          target={rename}
+          name={name}
+          className="touch-round-button rename-map-button"
+        />
+      ) : null}
     </li>
   );
+  // The pack's own names, which "Use the original name" shows again.
+  const original = (id: string) =>
+    originalPack?.maps.find((m) => m.id === id)?.name ??
+    originalPack?.layers.find((l) => l.id === id)?.name ??
+    '';
+  const renamable = (id: string, kind: 'map' | 'level'): RenameTarget | null =>
+    gameId && canRename ? { gameId, id, kind, original: original(id) } : null;
   return (
     <>
       <div className="touch-scrim touch-scrim-light" aria-hidden="true" onClick={close} />
@@ -1005,9 +1029,16 @@ function MapsMenu({ wide }: { wide: boolean }) {
         ) : null}
         <ul className="touch-plain-list">
           {game.pack.data.maps.map((map) =>
-            row(map.id, map.name, summary.map(map.id), map.id === mapId, () => {
-              showMap(map.id);
-            }),
+            row(
+              map.id,
+              map.name,
+              summary.map(map.id),
+              map.id === mapId,
+              () => {
+                showMap(map.id);
+              },
+              renamable(map.id, 'map'),
+            ),
           )}
         </ul>
         {layers.length > 1 ? (
@@ -1015,9 +1046,16 @@ function MapsMenu({ wide }: { wide: boolean }) {
             <h3 className="touch-group-title">Levels of {game.pack.maps.get(mapId)?.name}</h3>
             <ul className="touch-plain-list">
               {layers.map((layer) =>
-                row(layer.id, layer.name, summary.layer(layer.id), layer.id === layerId, () => {
-                  showMap(mapId, layer.id);
-                }),
+                row(
+                  layer.id,
+                  layer.name,
+                  summary.layer(layer.id),
+                  layer.id === layerId,
+                  () => {
+                    showMap(mapId, layer.id);
+                  },
+                  renamable(layer.id, 'level'),
+                ),
               )}
             </ul>
           </>
@@ -1032,13 +1070,24 @@ function MapsMenu({ wide }: { wide: boolean }) {
                 >
                   {names.get(entry.id) ?? entry.title}
                 </h3>
-                <ul className="touch-plain-list">
-                  {(facts[entry.id]?.maps ?? []).map((map) =>
-                    row(`${entry.id} ${map.id}`, map.name, NO_TALLY, false, () => {
-                      void showSource(entry.id, map.id);
-                    }),
-                  )}
-                </ul>
+                <OtherSourceMaps
+                  gameId={entry.id}
+                  maps={facts[entry.id]?.maps ?? []}
+                  row={(map, name) =>
+                    row(
+                      `${entry.id} ${map.id}`,
+                      name,
+                      NO_TALLY,
+                      false,
+                      () => {
+                        void showSource(entry.id, map.id);
+                      },
+                      canRename
+                        ? { gameId: entry.id, id: map.id, kind: 'map', original: map.name }
+                        : null,
+                    )
+                  }
+                />
               </div>
             ))
           : null}
@@ -1053,3 +1102,24 @@ function MapsMenu({ wide }: { wide: boolean }) {
 }
 
 const NO_TALLY = { found: 0, total: 0 };
+
+/**
+ * The maps of another source of the title shown, in the maps menu, with the
+ * person's names of them (read from that game's own data).
+ */
+function OtherSourceMaps({
+  gameId,
+  maps,
+  row,
+}: {
+  gameId: string;
+  maps: readonly { id: string; name: string }[];
+  row: (map: { id: string; name: string }, name: string) => React.ReactNode;
+}) {
+  const names = useMapNamesOf(gameId);
+  return (
+    <ul className="touch-plain-list">
+      {maps.map((map) => row(map, shownName(names, map.id, map.name)))}
+    </ul>
+  );
+}

@@ -171,3 +171,49 @@ describe('own ids in packs', () => {
     expect(odd.success && 'madeInApp' in odd.data ? odd.data.madeInApp : undefined).toBeUndefined();
   });
 });
+
+describe('names of maps and levels in the own locations file', () => {
+  const named = (): OwnLocations => ({
+    ...own(),
+    names: [
+      { id: 'demo:map:world', name: 'Home', original: 'World' },
+      { id: 'demo:layer:surface', name: 'Up top', original: 'Surface' },
+    ],
+  });
+
+  it('keeps the original name beside the person name, as version 2', () => {
+    const text = writeOwnLocationsFile('demo', named(), NOW);
+    expect(JSON.parse(text)).toMatchObject({ version: 2 });
+    const read = readOwnLocationsFile(JSON.parse(text));
+    expect(read.ok && read.file.own).toEqual(named());
+    expect(read.ok && read.file.version).toBe(2);
+    expect(countOwnLocations(named())).toBe(7);
+  });
+
+  it('stays version 1 without names, so older apps go on changing it', () => {
+    expect(JSON.parse(writeOwnLocationsFile('demo', own(), NOW))).toMatchObject({ version: 1 });
+    expect(
+      JSON.parse(writeOwnLocationsFile('demo', { ...own(), names: [] }, NOW)),
+    ).not.toHaveProperty('names');
+  });
+
+  it('leaves out a name that is not of a map or a level of the game, and reads the others', () => {
+    const value = JSON.parse(writeOwnLocationsFile('demo', named(), NOW)) as {
+      names: unknown[];
+    };
+    value.names.push(
+      { id: 'other:map:world', name: 'Elsewhere', original: 'World' },
+      { id: 'demo:loc:0001', name: 'Not a map', original: '' },
+      { id: 'demo:map:cave', name: ' ', original: 'Cave' },
+    );
+    const read = readOwnLocationsFile(value);
+    expect(read.ok && read.file.own.names).toEqual(named().names);
+    expect(read.ok && read.file.skipped).toBe(3);
+  });
+
+  it('refuses to write a name that is empty', () => {
+    const empty = named();
+    empty.names![0]!.name = '  ';
+    expect(() => writeOwnLocationsFile('demo', empty, NOW)).toThrow();
+  });
+});

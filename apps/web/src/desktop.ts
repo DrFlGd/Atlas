@@ -368,6 +368,13 @@ export interface DesktopInfo {
    */
   background?: boolean;
   /**
+   * "Exit Atlas" is offered whatever the settings (`exit`): on Linux, where
+   * Game Mode on a Steam Deck gives the window no close button. On Windows
+   * it is offered only while Atlas keeps running when its window is closed.
+   * Absent counts as false.
+   */
+  exit?: boolean;
+  /**
    * Settings has "Start Atlas with a game in Steam" (`steamLaunch`): the
    * line for a game's launch options, which the shell builds from the
    * AppImage Atlas runs from (see the shell's `linux.rs`). In the app
@@ -1498,6 +1505,8 @@ export interface DesktopBridge {
     oldFolders(): Promise<OldFolders>;
     /** How much room one old folder takes, by its name. */
     oldFolderSize(folder: string): Promise<FolderSize>;
+    /** Bytes this user may still write on the drive of the maps folder; null when not known. */
+    freeSpace(): Promise<number | null>;
     /** Removes the old folders named, then lists the games again. */
     removeOldFolders(folders: { folder: string; id: string }[]): Promise<OldFoldersRemoved>;
     /** How many map images were downloaded for a pack. */
@@ -1796,6 +1805,11 @@ export interface DesktopBridge {
     pauseHotkey(paused: boolean): Promise<BackgroundState>;
     /** The game another program asked for, if not taken yet. */
     takeShow(): Promise<ShowRequest | null>;
+    /**
+     * "Exit Atlas": ends the app as the tray's "Quit Atlas" does. Every
+     * desktop takes it; the Android app answers why not.
+     */
+    exit(): Promise<void>;
   };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
@@ -1991,6 +2005,11 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       forgetPackFile: (path) => call('library_forget_pack_file', { path }),
       oldFolders: () => call('library_old_folders'),
       oldFolderSize: (folder) => call('library_old_folder_size', { folder }),
+      freeSpace: () =>
+        call<unknown>('library_free_space').then(
+          (bytes) => (typeof bytes === 'number' && Number.isFinite(bytes) ? bytes : null),
+          () => null,
+        ),
       removeOldFolders: (folders) => call('library_remove_old_folders', { folders }),
       imagesInfo: (id) => call('library_images_info', { id }),
       deleteImages: (id) => call('library_delete_images', { id }),
@@ -2157,6 +2176,7 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       setHotkey: (keys) => call('background_set_hotkey', { keys }),
       pauseHotkey: (paused) => call('background_pause_hotkey', { paused }),
       takeShow: () => call<unknown>('background_take_show').then(showRequestFrom, () => null),
+      exit: () => call('app_exit'),
     },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),

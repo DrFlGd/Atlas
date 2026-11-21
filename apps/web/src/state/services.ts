@@ -157,4 +157,16 @@ export const SETTINGS = {
   gameTags: 'gameTags',
   /** How Games and the Library list the games: the view, the group of tags they are grouped by and the headings folded. */
   gamesList: 'gamesList',
+  /**
+   * Games of a site's list being added one after another, not all added
+   * yet: the games, what came of each so far and why it stopped (see
+   * `gameSession.ts`), to continue later.
+   */
+  gameSession: 'gameSession',
+  /**
+   * Imports saved to run later, as jobs (see `importJobs.ts`): what each
+   * reads and how, never the pages read. Kept on this device, with the
+   * Importer's other settings.
+   */
+  importJobs: 'importJobs',
 } as const;

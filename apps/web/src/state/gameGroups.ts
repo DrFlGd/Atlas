@@ -687,3 +687,56 @@ export async function acceptOffer(offer: SameTitleOffer, title: string): Promise
 export function dismissOffer(offer: SameTitleOffer): void {
   set({ offers: get().offers.filter((o) => o.gameId !== offer.gameId) });
 }
+
+// ---------------------------------------------------------------------------
+// Games added one after another from a site's list (see `gameSession.ts`)
+
+/** What came of matching a game just added with the games here by its title. */
+export type TitleMatch =
+  /** It is shown with the game here of the same title, under that title. */
+  | { kind: 'joined'; title: string }
+  /** No game here has its title: it is a game of its own. */
+  | { kind: 'none' }
+  /** Several games here, apart, have its title: it is left on its own, for the person to choose. */
+  | { kind: 'unsure'; others: string[] }
+  /** It could not be shown with them: the titles cannot be changed now, say. */
+  | { kind: 'failed'; message: string };
+
+/**
+ * Shows a game just added with the games here of the same title (tidied,
+ * as the Importer's offer compares them), quietly, only when that is sure:
+ * one game here has the title, or every game that has it is under one
+ * title already. Games in `apart` (the others added in the same session)
+ * are never matched. Nothing is asked: the game's offer, if one waits, is
+ * answered by this.
+ */
+export async function joinSameTitle(
+  gameId: string,
+  apart: ReadonlySet<string>,
+): Promise<TitleMatch> {
+  if (get().status === 'idle') await loadGameGroups();
+  const others = sameTitleGames(useAtlas.getState().catalog, gameId).filter(
+    (entry) => !apart.has(entry.id),
+  );
+  const offer = get().offers.find((o) => o.gameId === gameId);
+  if (offer) dismissOffer(offer);
+  if (others.length === 0) return { kind: 'none' };
+  const groups = get().groups;
+  const titles = new Set(others.map((entry) => groupOf(groups, entry.id)?.id ?? entry.id));
+  if (titles.size > 1) return { kind: 'unsure', others: others.map((entry) => entry.id) };
+  const first = others[0]!;
+  const title = groupOf(groups, first.id)?.title ?? first.title;
+  const why = whyGroupsCannotChange();
+  if (why) return { kind: 'failed', message: why };
+  try {
+    const done = await changeGroups(
+      (now) => joinGames(now, first.id, gameId, title, newGroupId()),
+      null,
+    );
+    return done
+      ? { kind: 'joined', title }
+      : { kind: 'failed', message: 'The titles of your games could not be saved.' };
+  } catch (error) {
+    return { kind: 'failed', message: errorText(error) };
+  }
+}

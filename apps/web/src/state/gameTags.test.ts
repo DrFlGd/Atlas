@@ -8,6 +8,7 @@ import {
   autoTags,
   contentsTags,
   everyGroup,
+  fileUnderSystem,
   loadGameTags,
   matchesName,
   nameFold,
@@ -335,6 +336,18 @@ describe('what is kept', () => {
         system: ['Tern 16'],
         genre: ['Puzzle'],
       });
+    });
+
+    it('files a game under a system quietly, never over the person’s own choice', async () => {
+      await loadGameTags();
+      expect(await fileUnderSystem('emberfall', '  Tern 16 ')).toBe(true);
+      expect(useGameTags.getState().choices['game:emberfall']).toEqual({ system: ['Tern 16'] });
+      // Chosen now: another system does not replace it, nor does it change a choice of none.
+      expect(await fileUnderSystem('emberfall', 'Kite')).toBe(false);
+      await setTags('game:frostvale', { system: [] }, 'Frostvale');
+      expect(await fileUnderSystem('frostvale', 'Kite')).toBe(false);
+      expect(useGameTags.getState().choices['game:frostvale']).toEqual({ system: [] });
+      expect(await fileUnderSystem('ashgrove', '   ')).toBe(false);
     });
 
     it('adds, renames and removes a group of one’s own, its tags with it', async () => {

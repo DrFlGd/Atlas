@@ -287,11 +287,23 @@ test.describe('in Games', () => {
       'Second map site',
     ]);
     await shot(page, '3-maps-menu-two-sources');
+    // A map of the other source is renamed here, in that game's own data.
+    await menu.locator('[data-testid="rename-map"][data-id="isles-two:map:world"]').click();
+    await page.getByTestId('rename-map-input').fill('The far isle');
+    await page.getByTestId('rename-map-save').click();
+    await expect(page.getByTestId('rename-map-dialog')).toHaveCount(0);
+    await expect(
+      menu
+        .locator('div')
+        .filter({ has: page.locator('[data-testid="maps-menu-source"][data-pack="isles-two"]') })
+        .getByText('The far isle'),
+    ).toBeVisible();
     // A map of the other source shows that source, at that map.
     await menu
       .locator('div')
       .filter({ has: page.locator('[data-testid="maps-menu-source"][data-pack="isles-two"]') })
-      .getByRole('button', { name: 'The Hollow Deep' })
+      .locator('.touch-menu-row')
+      .filter({ hasText: 'The Hollow Deep' })
       .click();
     await expect(chip).toContainText('Second map site · The Hollow Deep');
     await expect(page.getByTestId('marker-count')).not.toHaveText('');
@@ -359,7 +371,8 @@ test.describe('in Games', () => {
     await page.getByTestId('map-chip').click();
     await page
       .getByTestId('maps-menu')
-      .getByRole('button', { name: 'The Sundered Isle' })
+      .locator('.touch-menu-row')
+      .filter({ hasText: 'The Sundered Isle' })
       .last()
       .click();
     await expect(page.getByTestId('map-chip')).toContainText('Second map site');

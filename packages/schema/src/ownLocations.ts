@@ -33,14 +33,30 @@ import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
  * A location may have photos (`photos`), the person's own pictures kept in
  * the file's `pictures` (see `ownPictures.ts`).
  *
+ * The person's own names of the game's maps and levels (`names`): each with
+ * the id of the map or level (a layer), the name the person gave, and the
+ * name the source gave it when they renamed it (`original`). The pack's own
+ * name is never changed: a name here is shown in its place wherever the map
+ * or level is named, and taking it out ("Use the original name") shows the
+ * pack's name again. A name of a map or level the game does not have (now)
+ * is kept, and shown again if the map comes back. A file with names is
+ * version 2, so an app older than names shows its locations and does not
+ * write over them (and so over the names); one without names stays version
+ * 1.
+ *
+ *
  * Written strictly and read tolerantly: one record that cannot be read is
  * left out, not the file.
  */
 
 /** What the own locations file of a game says it is. */
 export const OWN_LOCATIONS_FORMAT = 'atlas-own-locations';
-/** The version of the own locations file this app writes. */
-export const OWN_LOCATIONS_VERSION = 1;
+/** The newest version of the own locations file this app reads and writes: with names. */
+export const OWN_LOCATIONS_VERSION = 2;
+/** The version of a file without names, which every app since own locations reads. */
+export const OWN_LOCATIONS_VERSION_WITHOUT_NAMES = 1;
+/** The most names of maps and levels one file may hold. */
+export const MAX_OWN_NAMES = 2000;
 
 /** The longest name of a location, type, group or area. */
 export const MAX_OWN_NAME_LENGTH = 200;
@@ -91,6 +107,18 @@ function ownLocationSchemas(mode: SchemaMode) {
     updatedAt: time,
   });
 
+  /**
+   * The person's name of a map or a level of the game, and the source's name
+   * when they gave it.
+   */
+  const ownNameSchema = record({
+    id: z.union([idOf('map'), idOf('layer')]),
+    name,
+    original: reading
+      ? z.string().max(MAX_OWN_NAME_LENGTH).catch('')
+      : z.string().max(MAX_OWN_NAME_LENGTH),
+  });
+
   /** A person's own picture, named as `ownPictureFile` says. */
   const ownPictureSchema = (
     reading ? packReadSchemas.pictureSchema : ownRecordWriteSchemas.pictureSchema
@@ -104,7 +132,9 @@ function ownLocationSchemas(mode: SchemaMode) {
 
   const ownLocationsFileSchema = record({
     format: z.literal(OWN_LOCATIONS_FORMAT),
-    version: reading ? z.int().positive() : z.literal(OWN_LOCATIONS_VERSION),
+    version: reading
+      ? z.int().positive()
+      : z.union([z.literal(OWN_LOCATIONS_VERSION_WITHOUT_NAMES), z.literal(OWN_LOCATIONS_VERSION)]),
     gameId: gameIdSchema,
     updatedAt: reading ? isoTime.optional().catch(undefined) : isoTime,
     // Read one record at a time (see `readOwnLocationsFile`), so one that
@@ -119,10 +149,15 @@ function ownLocationSchemas(mode: SchemaMode) {
     pictures: reading
       ? z.array(z.unknown()).optional().catch(undefined)
       : z.array(ownPictureSchema).max(MAX_OWN_PICTURES).optional(),
+    /** The person's names of maps and levels. */
+    names: reading
+      ? z.array(z.unknown()).optional().catch(undefined)
+      : z.array(ownNameSchema).max(MAX_OWN_NAMES).optional(),
   });
 
   return {
     ownLocationSchema,
+    ownNameSchema,
     ownPictureSchema,
     ownTypeGroupSchema: own(pack.categoryGroupSchema),
     ownTypeSchema: own(pack.categorySchema),
@@ -140,6 +175,15 @@ export const ownLocationReadSchemas = ownLocationSchemas('read');
 /** A location a person put on a map. */
 export type OwnLocation = z.infer<typeof ownLocationSchema>;
 
+/** A person's name of a map or a level, with the source's name when they gave it. */
+export interface OwnName {
+  /** The map's or the level's (layer's) id. */
+  id: string;
+  name: string;
+  /** What the source called it when the person renamed it; kept, never shown in its place. */
+  original: string;
+}
+
 /** A game's own locations, types, type groups and areas. */
 export interface OwnLocations {
   categoryGroups: CategoryGroup[];
@@ -148,6 +192,8 @@ export interface OwnLocations {
   locations: OwnLocation[];
   /** The person's own photos of their locations; absent when there are none. */
   pictures?: Picture[];
+  /** The person's names of maps and levels; absent when there are none. */
+  names?: OwnName[];
 }
 
 /** Nothing of one's own yet. */
@@ -221,26 +267,37 @@ export function readOwnLocationsFile(
   };
   const pictures = take(parsed.data.pictures ?? [], read.ownPictureSchema, () => []);
   if (pictures.length > 0) own.pictures = pictures;
+  const names = take(parsed.data.names ?? [], read.ownNameSchema, () => []);
+  if (names.length > 0) own.names = names;
   return { ok: true, file: { gameId, version: parsed.data.version, own, skipped } };
 }
 
 /** The own locations file of a game, checked strictly; throws when a record is not valid. */
 export function writeOwnLocationsFile(gameId: string, own: OwnLocations, now: Date): string {
-  const { pictures, ...records } = own;
+  const { pictures, names, ...records } = own;
+  const named = names !== undefined && names.length > 0;
   const file = ownLocationsFileSchema.parse({
     format: OWN_LOCATIONS_FORMAT,
-    version: OWN_LOCATIONS_VERSION,
+    version: named ? OWN_LOCATIONS_VERSION : OWN_LOCATIONS_VERSION_WITHOUT_NAMES,
     gameId,
     updatedAt: now.toISOString(),
     ...records,
     ...(pictures && pictures.length > 0 ? { pictures } : {}),
+    ...(named ? { names } : {}),
   });
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
-/** How many records there are: for messages and the map pack file's description. */
+/**
+ * How many records there are, names of maps and levels among them: for
+ * messages and the map pack file's description.
+ */
 export function countOwnLocations(own: OwnLocations): number {
   return (
-    own.locations.length + own.categories.length + own.categoryGroups.length + own.regions.length
+    own.locations.length +
+    own.categories.length +
+    own.categoryGroups.length +
+    own.regions.length +
+    (own.names?.length ?? 0)
   );
 }

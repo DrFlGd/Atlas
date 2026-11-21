@@ -58,6 +58,7 @@ import { ownGamesOffered } from '../state/ownGames';
 import { useAtlas } from '../state/store';
 import { showSection } from '../touch/state';
 import { OwnGameActions } from '../touch/OwnGames';
+import { MapNamesCard } from './MapNamesCard';
 import { MoreMenu, type MoreConfirm } from './MoreMenu';
 import { WikiScreen } from './WikiScreen';
 
@@ -292,6 +293,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
               updatable={updatable && !busy}
             />
           ) : null}
+          {kind !== 'guidebooks' && kind !== 'wiki' ? <MapNamesCard id={id} /> : null}
           {guidebooks.length > 0 || (guidebookChanges && !busy) ? (
             <Card icon="book" title="Guidebooks" testId="library-guidebooks-card">
               <p className="library-card-state">

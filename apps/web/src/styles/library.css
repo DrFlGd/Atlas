@@ -267,6 +267,25 @@
   gap: 8px;
 }
 
+/* "Exit Atlas" at the head of Settings (ExitAtlas.tsx), 44 px high for fingers. */
+.exit-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-ui='touch'] .exit-button {
+  min-height: 44px;
+}
+
+.exit-dialog {
+  width: min(420px, calc(100% - 24px));
+}
+
+.exit-dialog .row-actions .button {
+  min-height: 44px;
+}
+
 .library-more {
   position: absolute;
   top: calc(100% - 4px);
@@ -1915,4 +1934,111 @@
 .steam-launch-steps {
   margin: 0;
   padding-left: 1.4em;
+}
+
+/* Renaming a map or a level (RenameMap.tsx). */
+.rename-map-dialog {
+  width: min(480px, calc(100% - 24px));
+}
+
+.rename-map-label {
+  display: block;
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+
+.rename-map-input {
+  width: 100%;
+  min-height: 40px;
+}
+
+[data-ui='touch'] .rename-map-input,
+[data-ui='touch'] .rename-map-dialog .button {
+  min-height: 44px;
+}
+
+.rename-map-problem {
+  color: var(--atlas-danger);
+}
+
+/* "Maps and levels" in a game's details (MapNamesCard.tsx). */
+.map-names summary {
+  cursor: pointer;
+  color: var(--atlas-muted);
+}
+
+.map-names-list,
+.map-names-levels {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.map-names-levels {
+  margin: 0 0 4px 20px;
+}
+
+.map-names-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.map-names-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.map-names-row .rename-map-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+[data-ui='touch'] .map-names-row .rename-map-button,
+[data-ui='touch'] .map-names summary {
+  min-height: 44px;
+}
+
+/* Jobs: imports saved to run later, in Downloads (see `components/ImportJobs.tsx`). */
+.saved-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.saved-job {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+  overflow-wrap: anywhere;
+}
+
+.saved-job-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.saved-job-games {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 0;
 }

@@ -11,9 +11,11 @@ import {
   changeOwnLocation,
   mergeOwnFiles,
   mergeOwnLocations,
+  namedMapsAndLevels,
   newOwnArea,
   newOwnType,
   newOwnTypeGroup,
+  ownNameOf,
   ownNoteId,
   putOwnArea,
   putOwnType,
@@ -22,6 +24,7 @@ import {
   removeOwnLocationPhoto,
   removeOwnOfMap,
   removeOwnType,
+  renameMapOrLevel,
   setOwnLocationPhotoSpoiler,
 } from './ownLocations';
 
@@ -261,5 +264,91 @@ describe('photos of own locations', () => {
     const next = addOwnLocationPhoto(own(), 'demo:loc:own.l1', shot, NOW);
     expect(removeOwnLocation(next, 'demo:loc:own.l1').pictures).toBeUndefined();
     expect(mergeOwnFiles(own(), next).pictures).toEqual([shot]);
+  });
+});
+
+describe('names of maps and levels', () => {
+  it('gives a map and a level the person name, and Use the original name takes it out', () => {
+    const renamed = renameMapOrLevel(own(), 'demo:map:world', '  Home  ', 'World');
+    expect(renamed.names).toEqual([{ id: 'demo:map:world', name: 'Home', original: 'World' }]);
+    const both = renameMapOrLevel(renamed, 'demo:layer:surface', 'Up top', 'Surface');
+    expect(ownNameOf(both, 'demo:layer:surface')?.name).toBe('Up top');
+    // Renamed again: the original kept is the one from the first time.
+    const again = renameMapOrLevel(both, 'demo:map:world', 'House', 'World (new)');
+    expect(ownNameOf(again, 'demo:map:world')).toEqual({
+      id: 'demo:map:world',
+      name: 'House',
+      original: 'World',
+    });
+    const back = renameMapOrLevel(again, 'demo:map:world', null, 'World');
+    expect(ownNameOf(back, 'demo:map:world')).toBeUndefined();
+    // The source's own name, or nothing, is the original name again too.
+    expect(
+      renameMapOrLevel(back, 'demo:layer:surface', 'Surface', 'Surface').names,
+    ).toBeUndefined();
+    expect(renameMapOrLevel(back, 'demo:layer:surface', ' ', 'Surface').names).toBeUndefined();
+    // Nothing changes: the same data.
+    expect(renameMapOrLevel(back, 'demo:map:world', null, 'World')).toBe(back);
+    expect(renameMapOrLevel(both, 'demo:map:world', 'Home', 'World')).toBe(both);
+  });
+
+  it('shows the person names in place of the pack names everywhere the pack is indexed', () => {
+    const pack = makeFixturePack();
+    const mine = renameMapOrLevel(
+      renameMapOrLevel(own(), 'demo:map:world', 'Home', 'World'),
+      'demo:layer:surface',
+      'Up top',
+      'Surface',
+    );
+    const { data, skipped } = mergeOwnLocations(pack, mine);
+    expect(skipped).toBe(0);
+    const loaded = indexPack(data, new URL('https://example.test/demo/'));
+    expect(loaded.maps.get('demo:map:world')?.name).toBe('Home');
+    expect(loaded.layers.get('demo:layer:surface')?.name).toBe('Up top');
+    // The pack itself is as it was.
+    expect(pack.maps.find((m) => m.id === 'demo:map:world')?.name).not.toBe('Home');
+    // Only names: the same data with only the names changed.
+    const onlyNames = mergeOwnLocations(pack, {
+      categoryGroups: [],
+      categories: [],
+      regions: [],
+      locations: [],
+      names: [{ id: 'demo:map:world', name: 'Home', original: 'World' }],
+    });
+    expect(onlyNames.data.maps.find((m) => m.id === 'demo:map:world')?.name).toBe('Home');
+    expect(onlyNames.data.locations).toBe(pack.locations);
+  });
+
+  it('keeps a name of a map the game does not have, and leaves the data as it was', () => {
+    const pack = makeFixturePack();
+    const names = [{ id: 'demo:map:gone', name: 'Old cave', original: 'Cave' }];
+    expect(namedMapsAndLevels(pack, names)).toBe(pack);
+    expect(namedMapsAndLevels(pack, undefined)).toBe(pack);
+  });
+
+  it('forgets the names of a deleted map and its levels, and merges names of a file', () => {
+    const mine: OwnLocations = {
+      ...own(),
+      names: [
+        { id: 'demo:map:world', name: 'Home', original: 'World' },
+        { id: 'demo:layer:surface', name: 'Up top', original: 'Surface' },
+        { id: 'demo:map:cave', name: 'Den', original: 'Cave' },
+      ],
+    };
+    expect(removeOwnOfMap(mine, 'demo:map:world', ['demo:layer:surface']).names).toEqual([
+      { id: 'demo:map:cave', name: 'Den', original: 'Cave' },
+    ]);
+    const incoming: OwnLocations = {
+      categoryGroups: [],
+      categories: [],
+      regions: [],
+      locations: [],
+      names: [{ id: 'demo:map:cave', name: 'Lair', original: 'Cave' }],
+    };
+    expect(mergeOwnFiles(mine, incoming).names?.map((n) => n.name)).toEqual([
+      'Home',
+      'Up top',
+      'Lair',
+    ]);
   });
 });

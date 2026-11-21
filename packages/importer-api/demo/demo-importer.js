@@ -409,6 +409,8 @@ const importer = {
   catalogue: {
     address: 'http://127.0.0.1:4432/demo-maps',
     label: 'All worlds of the demo map site',
+    // Every world of the demo site is for one made-up system.
+    system: 'Demo console',
     matches(url) {
       try {
         return CATALOGUE.test(new URL(url).pathname);
@@ -426,12 +428,15 @@ const importer = {
       for (const { url, text } of links) {
         if (url.origin !== origin) continue;
         // A world, or the one map of a world with a single map.
-        const world = GAME.exec(url.pathname)?.[1] ?? PAGE.exec(url.pathname)?.[1];
+        const game = GAME.exec(url.pathname)?.[1];
+        const world = game ?? PAGE.exec(url.pathname)?.[1];
         if (!world || games.has(world)) continue;
         games.set(world, {
           id: world,
           name: text || tidy(world),
           address: `${origin}${url.pathname.replace(/\/$/, '')}`,
+          // A link to a map page is a world of one map: the list knows that before it is read.
+          ...(game ? {} : { maps: 1 }),
         });
       }
       return { ok: true, games: [...games.values()] };

@@ -33,6 +33,9 @@ import {
   type ListingPurpose,
 } from '../state/importing';
 import { MAX_RUN_ADDRESSES, stopReasonText, type RunState } from '../state/importRun';
+import { planGames } from '../state/gameSession';
+import { saveChoiceAsJob } from '../state/importJobs';
+import { SaveAsJob } from './ImportJobs';
 import { selectShown, shownCount } from '../state/selectShown';
 import { FollowLinksChoice } from './FollowLinks';
 import { MeasureFromPage } from './MeasureFromPage';
@@ -217,12 +220,13 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
         </ul>
       )}
       {plan.leftOut.length > 0 ? (
-        <p className="download-note" role="alert" data-testid="add-map-catalogue-cap">
+        <p className="download-note" data-testid="add-map-catalogue-cap">
           This app opens at most {MAX_RUN_ADDRESSES} pages at a time
           {pick.keptFrom === null ? ', and the list of games was one of them' : ''}. Each game needs
           its game page and at least one map, so only the first{' '}
           {plural(plan.games.length, 'ticked game fits', 'ticked games fit')} in this session. These
-          are left for afterwards: {plan.leftOut.map((game) => game.name).join(', ')}.
+          are left for afterwards: {plan.leftOut.map((game) => game.name).join(', ')}. Add the
+          ticked games one at a time adds them all, one game after another.
         </p>
       ) : null}
       <div className="row-actions wrap">
@@ -239,6 +243,16 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
               ? `List the maps of ${plural(plan.games.length, 'game', 'games')}`
               : `Read ${plural(reading, 'game page', 'game pages')}`}
         </button>
+        {ticked > 1 ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="add-map-catalogue-session"
+            onClick={() => void planGames(pick)}
+          >
+            Add the ticked games one at a time
+          </button>
+        ) : null}
         <button
           type="button"
           className="button"
@@ -559,6 +573,11 @@ export function ChoosePages({ choice }: { choice: Choice }) {
               ? `Read ${left} now, keep ${maps - left} for later`
               : `${verb} ${plural(maps, noun[0]!, noun[1]!)}`}
         </button>
+        <SaveAsJob
+          testId="add-map-choose-save-job"
+          disabled={maps === 0}
+          onSave={saveChoiceAsJob}
+        />
         <button
           type="button"
           className="button"

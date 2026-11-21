@@ -28,6 +28,10 @@
 //!   [`SHOW_REQUESTED`]. These work in the app without downloads on every
 //!   desktop.
 //!
+//! - **Exit Atlas** (`app_exit`), in the web app's Settings: ends Atlas as
+//!   the tray's "Quit Atlas" does. On Linux it is there in every desktop
+//!   app, since Game Mode on a Steam Deck gives the window no close button.
+//!
 //! The decisions are made without the system (`decide.rs`), and the
 //! settings are kept in the app's own data folder (`store.rs`); the tray,
 //! the hotkey, the start with the system and the window calls are in
@@ -307,6 +311,22 @@ pub fn background_take_show<R: Runtime>(app: AppHandle<R>) -> Result<Option<Show
         drop(app);
         Ok(None)
     }
+}
+
+/// "Exit Atlas": ends the app as the tray's "Quit Atlas" does, keeping the
+/// window's place first while a setting keeps it. The web app offers it
+/// where the window may have no close button or closing it only hides it:
+/// on Linux always (Game Mode on a Steam Deck shows no window frame, see
+/// `DesktopInfo::exit`), and on Windows while Atlas keeps running when its
+/// window is closed. Every desktop takes it; the Android app answers why not.
+#[tauri::command]
+pub fn app_exit<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    crate::commands::desktop_only()?;
+    #[cfg(not(target_os = "android"))]
+    shell::quit(&app);
+    #[cfg(target_os = "android")]
+    drop(app);
+    Ok(())
 }
 
 /// The keys pressed, as the web app sends them.

@@ -881,7 +881,14 @@ describe("listing a game's pages and a site's games", () => {
       checkCatalogue(
         games([
           { id: 'test-valley', name: ' Test Valley ', address: game, search: ' tv ' },
-          { id: 'test-hills', name: 'Test Hills', address: `${site}/test-hills/high-pass` },
+          {
+            id: 'test-hills',
+            name: 'Test Hills',
+            address: `${site}/test-hills/high-pass`,
+            maps: 3,
+            bytes: 120_000,
+            system: ' Test Console ',
+          },
         ]),
         site,
         demo,
@@ -890,13 +897,22 @@ describe("listing a game's pages and a site's games", () => {
       ok: true,
       games: [
         { id: 'test-valley', name: 'Test Valley', address: game, search: 'tv' },
-        { id: 'test-hills', name: 'Test Hills', address: `${site}/test-hills/high-pass` },
+        {
+          id: 'test-hills',
+          name: 'Test Hills',
+          address: `${site}/test-hills/high-pass`,
+          maps: 3,
+          bytes: 120_000,
+          system: 'Test Console',
+        },
       ],
     });
     const bad: unknown[] = [
       games([{ id: 'a', name: 'A', address: 'https://elsewhere.example.com/demo-maps/a' }]),
       games([{ id: 'a', name: 'A', address: `${site}/a/guides/x` }]),
       games([{ id: 'Bad Id', name: 'A', address: `${site}/a` }]),
+      games([{ id: 'a', name: 'A', address: `${site}/a`, maps: -1 }]),
+      games([{ id: 'a', name: 'A', address: `${site}/a`, bytes: 1.5 }]),
       games([
         { id: 'a', name: 'A', address: `${site}/a` },
         { id: 'a', name: 'B', address: `${site}/b` },

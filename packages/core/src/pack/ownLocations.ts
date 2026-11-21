@@ -1,5 +1,6 @@
 import {
   makeId,
+  MAX_OWN_NAME_LENGTH,
   parseId,
   type Category,
   type CategoryGroup,
@@ -7,6 +8,7 @@ import {
   type Location,
   type OwnLocation,
   type OwnLocations,
+  type OwnName,
   type PackData,
   type Picture,
   type Region,
@@ -61,6 +63,10 @@ export function locationOfOwn(own: OwnLocation): Location {
  * area that is not on the location's map is dropped from it. A record with
  * an id the pack already uses is left out too, though packs may not use
  * own ids. A location outside its map is moved to the nearest edge.
+ *
+ * The person's names of maps and levels are shown in place of the pack's
+ * (see {@link namedMapsAndLevels}); a name of a map or level the game does
+ * not have is kept for when it comes back, and not counted.
  */
 export function mergeOwnLocations(data: PackData, own: OwnLocations): MergedOwnLocations {
   let skipped = 0;
@@ -125,17 +131,18 @@ export function mergeOwnLocations(data: PackData, own: OwnLocations): MergedOwnL
     }
     locations.push(location);
   }
+  const named = namedMapsAndLevels(data, own.names);
   if (
     groups.length === 0 &&
     categories.length === 0 &&
     regions.length === 0 &&
     locations.length === 0
   ) {
-    return { data, skipped };
+    return { data: named === data ? data : named, skipped };
   }
   return {
     data: {
-      ...data,
+      ...named,
       categoryGroups: [...data.categoryGroups, ...groups],
       categories: [...data.categories, ...categories],
       regions: [...data.regions, ...regions],
@@ -144,6 +151,58 @@ export function mergeOwnLocations(data: PackData, own: OwnLocations): MergedOwnL
     },
     skipped,
   };
+}
+
+/**
+ * The pack's data with the person's names of maps and levels in place of
+ * the pack's: the same data when no name applies. Nothing else changes, so
+ * the pack's own name is back as soon as the person's is taken out.
+ */
+export function namedMapsAndLevels(
+  data: PackData,
+  names: readonly OwnName[] | undefined,
+): PackData {
+  if (!names || names.length === 0) return data;
+  const byId = new Map(names.map((n) => [n.id, n.name]));
+  const rename = <T extends { id: string; name: string }>(record: T): T => {
+    const name = byId.get(record.id);
+    return name === undefined || name === record.name ? record : { ...record, name };
+  };
+  const maps = data.maps.map(rename);
+  const layers = data.layers.map(rename);
+  const same = <T>(a: readonly T[], b: readonly T[]) => a.every((record, i) => record === b[i]);
+  return same(maps, data.maps) && same(layers, data.layers) ? data : { ...data, maps, layers };
+}
+
+/** The person's name of a map or level, if they gave one. */
+export function ownNameOf(own: Pick<OwnLocations, 'names'>, id: string): OwnName | undefined {
+  return own.names?.find((n) => n.id === id);
+}
+
+/**
+ * Gives a map or a level the person's name, or takes it out (`name` null or
+ * empty, or the source's own name): "Use the original name". `original` is
+ * the source's name now, kept beside the person's. The same data when
+ * nothing changes.
+ */
+export function renameMapOrLevel(
+  own: OwnLocations,
+  id: string,
+  name: string | null,
+  original: string,
+): OwnLocations {
+  const wanted = name?.trim() ?? '';
+  const before = ownNameOf(own, id);
+  const others = (own.names ?? []).filter((n) => n.id !== id);
+  if (wanted === '' || wanted === original.trim()) {
+    if (!before) return own;
+    const { names: _names, ...rest } = own;
+    return others.length > 0 ? { ...rest, names: others } : rest;
+  }
+  if (before?.name === wanted) return own;
+  // The name the source gave when it was first renamed is kept.
+  const kept = before?.original ?? original.slice(0, MAX_OWN_NAME_LENGTH);
+  return { ...own, names: [...others, { id, name: wanted, original: kept }] };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,12 +484,24 @@ export function removeOwnArea(own: OwnLocations, id: string, now: Date): OwnLoca
   };
 }
 
-/** Removes every own record of a map (when the map is deleted). */
-export function removeOwnOfMap(own: OwnLocations, mapId: string): OwnLocations {
+/**
+ * Removes every own record of a map (when the map is deleted): its
+ * locations, areas, and the person's names of it and of its levels
+ * (`layerIds`).
+ */
+export function removeOwnOfMap(
+  own: OwnLocations,
+  mapId: string,
+  layerIds: readonly string[] = [],
+): OwnLocations {
+  const gone = new Set([mapId, ...layerIds]);
+  const { names, ...rest } = own;
+  const left = names?.filter((n) => !gone.has(n.id)) ?? [];
   return keepOwnPicturesInUse({
-    ...own,
+    ...rest,
     regions: own.regions.filter((r) => r.mapId !== mapId),
     locations: own.locations.filter((l) => l.mapId !== mapId),
+    ...(left.length > 0 ? { names: left } : {}),
   });
 }
 
@@ -441,11 +512,13 @@ export function mergeOwnFiles(here: OwnLocations, incoming: OwnLocations): OwnLo
     return [...a.filter((r) => !ids.has(r.id)), ...b];
   };
   const pictures = merge(here.pictures ?? [], incoming.pictures ?? []);
+  const names = merge(here.names ?? [], incoming.names ?? []);
   return keepOwnPicturesInUse({
     categoryGroups: merge(here.categoryGroups, incoming.categoryGroups),
     categories: merge(here.categories, incoming.categories),
     regions: merge(here.regions, incoming.regions),
     locations: merge(here.locations, incoming.locations),
     ...(pictures.length > 0 ? { pictures } : {}),
+    ...(names.length > 0 ? { names } : {}),
   });
 }

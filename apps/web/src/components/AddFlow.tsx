@@ -48,6 +48,9 @@ import { layoutText } from '../state/pageLayouts';
 import { useAtlas } from '../state/store';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
+import { GamesBar, GamesDone, GamesGoing, GamesPlan, KeptGames } from './GameSession';
+import { SaveAsJob } from './ImportJobs';
+import { saveAddressesAsJob } from '../state/importJobs';
 import { SameTitleOfferCard } from './GameTitles';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
@@ -76,6 +79,7 @@ export function AddBox() {
   const busy =
     phase.kind === 'waiting' ||
     phase.kind === 'converting' ||
+    (phase.kind === 'games' && phase.step === 'going') ||
     (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running');
   useEffect(() => {
@@ -135,6 +139,11 @@ export function AddBox() {
         >
           {count > 1 ? `Add ${count} maps` : 'Add'}
         </button>
+        <SaveAsJob
+          testId="add-map-save-job"
+          disabled={count === 0}
+          onSave={() => saveAddressesAsJob(address)}
+        />
       </div>
       <p className="library-hint" id={hintId}>
         A map page, a game’s page that lists its maps, or a wiki’s start page. For several map
@@ -154,6 +163,7 @@ export function AddFlow() {
   const busy = phase.kind === 'waiting' || phase.kind === 'converting';
   const running =
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running') ||
+    (phase.kind === 'games' && phase.step === 'going') ||
     (phase.kind === 'browse' && !phase.ended);
   return (
     <section
@@ -189,6 +199,7 @@ export function AddFlow() {
         {phase.kind === 'browse' ? <BrowseKeep phase={phase} /> : null}
         {phase.kind === 'failed' ? <Failure message={phase.message} how={phase.how} /> : null}
         {phase.kind === 'check' ? <Check phase={phase} /> : null}
+        {phase.kind === 'listing' || phase.kind === 'run' ? <GamesBar /> : null}
         {busy && !asking ? <Progress phase={phase} /> : null}
         {phase.kind === 'done' ? <Result phase={phase} /> : null}
         {phase.kind === 'run' ? (
@@ -200,6 +211,9 @@ export function AddFlow() {
         {phase.kind === 'catalogue' ? <CataloguePick pick={phase.pick} /> : null}
         {phase.kind === 'update-games' ? <UpdateGames phase={phase} /> : null}
         {phase.kind === 'choose' ? <ChoosePages choice={phase.choice} /> : null}
+        {phase.kind === 'games' && phase.step === 'plan' ? <GamesPlan /> : null}
+        {phase.kind === 'games' && phase.step === 'going' ? <GamesGoing /> : null}
+        {phase.kind === 'games' && phase.step === 'done' ? <GamesDone /> : null}
       </div>
     </section>
   );
@@ -221,6 +235,7 @@ function AddHelp() {
         short pause between them.
       </p>
       <QueuedPages />
+      <KeptGames />
       {importers.length > 0 ? (
         <div className="muted small">
           <p>This app can add maps and pages from:</p>
