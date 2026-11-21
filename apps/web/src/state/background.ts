@@ -53,14 +53,23 @@ const set = useBackground.setState;
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** The settings being read now, so two asking at once read them once. */
+let reading: Promise<void> | null = null;
+
 /** Reads the settings, with what the system says. */
-export async function loadBackground(): Promise<void> {
-  if (!desktop) return;
-  try {
-    set({ state: await desktop.background.state(), error: null });
-  } catch (error) {
-    set({ error: errorText(error) });
-  }
+export function loadBackground(): Promise<void> {
+  const bridge = desktop;
+  if (!bridge) return Promise.resolve();
+  reading ??= (async () => {
+    try {
+      set({ state: await bridge.background.state(), error: null });
+    } catch (error) {
+      set({ error: errorText(error) });
+    } finally {
+      reading = null;
+    }
+  })();
+  return reading;
 }
 
 /** Runs one change; the settings after it, or why it was refused. */

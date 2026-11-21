@@ -20,6 +20,7 @@ import {
   removeOwnLocation,
   removeOwnOfMap,
   removeOwnType,
+  renameMapOrLevel,
   SearchIndex,
   takenRecordIds,
   type LoadedPack,
@@ -37,6 +38,7 @@ import {
   type CategoryGroup,
   type OwnLocation,
   type OwnLocations,
+  type PackData,
   type Picture,
   type Region,
 } from '@atlas/schema';
@@ -264,6 +266,15 @@ export function packWithOwn(
     pack: merged.data === pack.data ? pack : indexPack(merged.data, pack.baseUrl),
     skipped: merged.skipped,
   };
+}
+
+/**
+ * The data of the game shown as its pack has it, before the person's own
+ * records and names: the maps' and levels' own names, for "Use the
+ * original name". Null for another game.
+ */
+export function packAsRead(gameId: string | null): PackData | null {
+  return base?.gameId === gameId ? base.pack.data : null;
 }
 
 /** Makes the game shown again with the own records as they are now. */
@@ -614,14 +625,24 @@ export function deleteOwnArea(id: string): boolean {
   return apply(removeOwnArea(get().own, id, new Date()), `Deleted the area “${area.name}”`);
 }
 
+/**
+ * Gives a map or a level of the game shown the person's name, or takes it
+ * out (`name` null): "Use the original name". Undo takes it back.
+ */
+export function renameShownMapOrLevel(id: string, name: string | null, original: string): boolean {
+  const next = renameMapOrLevel(get().own, id, name, original);
+  return apply(next, name === null ? 'Original name used' : `Renamed “${name.trim()}”`);
+}
+
 /** Forgets the person's own records on a map that was deleted; that cannot be undone. */
-export function forgetOwnOfMap(mapId: string): void {
+export function forgetOwnOfMap(mapId: string, layerIds: readonly string[] = []): void {
   if (!canChangeOwnLocations()) return;
   const { own } = get();
-  const next = removeOwnOfMap(own, mapId);
+  const next = removeOwnOfMap(own, mapId, layerIds);
   if (
     next.locations.length === own.locations.length &&
-    next.regions.length === own.regions.length
+    next.regions.length === own.regions.length &&
+    next.names?.length === own.names?.length
   ) {
     return;
   }

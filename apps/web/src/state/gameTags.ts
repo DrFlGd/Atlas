@@ -653,6 +653,24 @@ export async function setTags(
   });
 }
 
+/**
+ * Files a game under a system (its System tag), quietly, as games added one
+ * after another from a site's list are: only when the person has not chosen
+ * the game's systems already, so nothing of theirs is changed. Returns
+ * whether it was set.
+ */
+export async function fileUnderSystem(gameId: string, system: string): Promise<boolean> {
+  const name = tidyTag(system);
+  if (!name) return false;
+  await loadGameTags();
+  const key = gameKey(gameId);
+  const before = get().choices;
+  if (chosen(before, key, 'system') !== null) return false;
+  set({ choices: { ...before, [key]: { ...before[key], system: [name] } } });
+  saveTags();
+  return true;
+}
+
 /** Why a name cannot be a group's name, or null when it can. */
 export function groupNameProblem(name: string, except: string | null = null): string | null {
   const tidy = tidyTag(name);

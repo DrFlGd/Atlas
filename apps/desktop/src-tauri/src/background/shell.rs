@@ -404,9 +404,11 @@ fn on_tray_press<R: Runtime>(app: &AppHandle<R>) {
     act(app, action);
 }
 
-/// "Quit Atlas": keeps the window's place and ends the app, as closing
-/// its window does when Atlas does not keep running.
-fn quit<R: Runtime>(app: &AppHandle<R>) {
+/// "Quit Atlas" in the tray, and "Exit Atlas" in the web app (`app_exit`):
+/// keeps the window's place and ends the app, as closing its window does
+/// when Atlas does not keep running. Where the settings are not offered
+/// (Linux) there is no place to keep, and the app just ends.
+pub fn quit<R: Runtime>(app: &AppHandle<R>) {
     if let (Some(background), Some(window)) = (background(app), main_window(app)) {
         note_place(&background, &window);
         background.keep_place();

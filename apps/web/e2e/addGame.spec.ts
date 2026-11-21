@@ -167,7 +167,7 @@ test('lists the games of the site to tick, then their maps', async ({ page }) =>
   await expect(page.getByTestId('add-map-catalogue-confirm')).toBeDisabled();
   await page.getByTestId('add-map-catalogue-search').fill('hills');
   await expect(games).toHaveCount(1);
-  await expect(games.first()).toContainText('One map');
+  await expect(games.first()).toContainText('1 map');
   // Tick all and Tick none act on the games the search shows.
   const select = page.getByTestId('add-map-catalogue-select');
   const selectText = select.getByTestId('add-map-catalogue-select-text');

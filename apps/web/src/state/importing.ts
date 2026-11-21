@@ -42,6 +42,7 @@ import {
   type ImportContext,
   type ImportFailure,
   type ImportSummary,
+  type ListedPage,
   type ListingContext,
   type PageObservations,
   type PageStyles,
@@ -77,6 +78,7 @@ import {
   type StoredPage,
 } from '../desktop';
 import { downloadsOffered } from '../features';
+import { AnchoredPages } from './anchoredPages';
 import { loadGame, notify } from './actions';
 import {
   ImportRun,
@@ -127,6 +129,7 @@ import {
 } from './pageStyles';
 import {
   choiceGame,
+  chosenToRead,
   keptCatalogue,
   newChoice,
   newPick,
@@ -135,6 +138,7 @@ import {
   planPick,
   splitChosen,
   tickFrom,
+  titleFromAddress,
   tickGames,
   tickPages,
   toggleGame,
@@ -311,7 +315,14 @@ export type ImportPhase =
   /** "Update all": the games to update, before anything opens. */
   | { kind: 'update-games'; games: UpdateGame[]; ticked: string[] }
   /** The pages of one or more games, to tick the ones to add or refresh. */
-  | { kind: 'choose'; choice: Choice };
+  | { kind: 'choose'; choice: Choice }
+  /**
+   * Games of a site's list added one after another (see `gameSession.ts`,
+   * which holds them): the plan before anything is read, the session going
+   * (between two games; each game's own steps show as `listing` and `run`),
+   * or what it came to.
+   */
+  | { kind: 'games'; step: 'plan' | 'going' | 'done' };
 
 /**
  * Why pages that list others are read: a game address the person pasted,
@@ -596,8 +607,12 @@ function fetcherFor(
   url: string,
   way?: ReadingWay,
 ): PageFetch | null {
-  if (reading === 'catalogue') return null;
-  const fetch = (reading === 'game' ? importer.games?.fetch : importer.fetch) ?? null;
+  const fetch =
+    (reading === 'game'
+      ? importer.games?.fetch
+      : reading === 'catalogue'
+        ? catalogueAt(importer, url)?.fetch
+        : importer.fetch) ?? null;
   if (!fetch) return null;
   if (way !== undefined) return way === 'fetch' ? fetch : null;
   // A page its site shows only to a person is opened in a window, where the person answers.
@@ -623,8 +638,21 @@ function withWindowHint(message: string, site: SiteReading | undefined): string 
 /** When the app last asked a site for a page. */
 let lastFetchAt = 0;
 
-/** The robots.txt rules of each site, read once in a go (`session`). */
-const robotsOf = new Map<string, { session: number; rules: RobotsRules }>();
+/** The robots.txt rules of each site, read once in a go (`session`), or in a session held. */
+const robotsOf = new Map<string, { session: number | symbol; rules: RobotsRules }>();
+
+/** Pages fetched for an address at one of their anchors, and what robots.txt rules are kept for. */
+const anchoredPages = new AnchoredPages();
+
+/**
+ * Holds a session of games added one at a time: until the function it
+ * returns is called, a page asked for at one of its anchors, and each
+ * site's robots.txt, are asked for once in it rather than once in each of
+ * its goes. A later hold takes over from an earlier one.
+ */
+export function holdFetchedPages(): () => void {
+  return anchoredPages.hold();
+}
 
 /**
  * What the rules file of each site says of the addresses this app opens on
@@ -686,14 +714,15 @@ async function robotsFor(
   origin: string,
   id: number,
 ): Promise<RobotsRules | { refusal: string } | null> {
+  const owner = anchoredPages.keptFor(id);
   const robots = robotsOf.get(origin);
-  if (robots?.session === id) return robots.rules;
+  if (robots?.session === owner) return robots.rules;
   const answer = await fetchAsApp(shell, `${origin}/robots.txt`, id);
   if (!answer) return null;
   const refusal = refusalOf(answer.status, answer.retryAfter);
   if (refusal) return { refusal };
   const rules = rulesFromAnswer(answer);
-  robotsOf.set(origin, { session: id, rules });
+  robotsOf.set(origin, { session: owner, rules });
   return rules;
 }
 
@@ -841,6 +870,12 @@ async function fetchPage(
   };
   try {
     for (const address of named.addresses) {
+      // The page of another anchor read before in this go or session: not asked for again.
+      const before = anchoredPages.get(id, url, address);
+      if (before) {
+        fetched.push(before);
+        continue;
+      }
       const limits = limitsOf(importer, address);
       const asked = await askAsApp(shell, address, id, limits);
       if (asked.kind === 'cancelled') return { state: 'cancelled' };
@@ -854,6 +889,7 @@ async function fetchPage(
       if (refusal) return stop(`${refusal} This app stopped and read no more pages.`);
       const { retryAfter: _, ...page } = answer;
       fetched.push(page);
+      if (id === session) anchoredPages.keep(id, url, address, page);
     }
   } catch (error) {
     if (id !== session) return { state: 'cancelled' };
@@ -1233,6 +1269,7 @@ export async function cancelImport(): Promise<void> {
  * a session of pages or lists going, or the person browsing a wiki.
  */
 export const sessionGoing = (phase: ImportPhase): boolean =>
+  (phase.kind === 'games' && phase.step === 'going') ||
   phase.kind === 'waiting' ||
   phase.kind === 'converting' ||
   (phase.kind === 'browse' && !phase.ended) ||
@@ -1255,6 +1292,7 @@ export async function startWikiAgain(start: string): Promise<void> {
 export function resetImport(): void {
   const { phase } = useImport.getState();
   if (
+    (phase.kind === 'games' && phase.step === 'going') ||
     phase.kind === 'waiting' ||
     (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running')
@@ -1488,10 +1526,13 @@ async function startRun(
     update = false,
     firstPauseMs = 0,
     follow,
+    show = true,
   }: {
     update?: boolean;
     firstPauseMs?: number;
     follow?: ReadonlyMap<string, FollowLinks>;
+    /** Show the game of the last map added at the end (not between games added one after another). */
+    show?: boolean;
   } = {},
 ): Promise<RunState | null> {
   const shell = desktop;
@@ -1757,7 +1798,7 @@ async function startRun(
     (page) => page.state.kind === 'added' && page.state.mapId !== undefined,
   )?.state;
   let shownPackId: string | null = null;
-  if (last?.kind === 'added' && last.mapId) {
+  if (show && last?.kind === 'added' && last.mapId) {
     const entry = useAtlas.getState().catalog.find((p) => p.id === last.packId);
     if (entry && (await showMap(entry, last.mapId))) shownPackId = last.packId;
   }
@@ -2762,10 +2803,45 @@ interface ListingItem {
 type ListingResult =
   ({ ok: true } & GameListing) | ({ ok: true } & Catalogue) | ImportFailure | undefined;
 
-/** The page keys of every page the packs in the maps folder were made from. */
-function recordedKeys(): Set<string> {
+/**
+ * The key of an address at one of its anchors: its page key with its
+ * fragment, or null when it has none. The games of a list page of whole
+ * pictures are each an anchor on the one page.
+ */
+export function anchoredKey(url: string): string | null {
+  try {
+    const hash = new URL(url.trim()).hash;
+    return hash.length > 1 ? `${pageKey(url)}${hash}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The page keys of every page the packs in the maps folder were made from;
+ * for a page read at one of its anchors also that anchor's key
+ * ({@link anchoredKey}), and for one read without a fragment the key with
+ * `#` (the whole page). See {@link isRecorded}.
+ */
+export function recordedKeys(): Set<string> {
   const packs = useAtlas.getState().library?.packs ?? [];
-  return new Set(packs.flatMap((pack) => (pack.pages ?? []).map((page) => pageKey(page.url))));
+  return new Set(packs.flatMap((pack) => (pack.pages ?? []).flatMap((page) => keysOf(page.url))));
+}
+
+/** The keys {@link recordedKeys} holds for a page made from `url`. */
+export function keysOf(url: string): string[] {
+  const key = pageKey(url);
+  return [key, anchoredKey(url) ?? `${key}#`];
+}
+
+/**
+ * Whether a page is one the maps folder was made from ({@link recordedKeys}):
+ * an address at an anchor only when that anchor, or the whole page, was.
+ */
+export function isRecorded(recorded: ReadonlySet<string>, url: string): boolean {
+  const key = pageKey(url);
+  const anchored = anchoredKey(url);
+  return anchored === null ? recorded.has(key) : recorded.has(anchored) || recorded.has(`${key}#`);
 }
 
 /** The pages a listed pack was made from. */
@@ -3051,12 +3127,19 @@ export async function catalogueImporters(): Promise<
 > {
   const importers = await loadImporters();
   return importers.flatMap((importer) =>
-    cataloguesOf(importer).map((catalogue) => ({
-      id: importer.id,
-      title: importer.title,
-      label: catalogue.label ?? `Games on ${catalogue.site ?? importer.title}`,
-      address: catalogue.address,
-    })),
+    // A list read only at an address the person gives has no button.
+    cataloguesOf(importer).flatMap((catalogue) =>
+      catalogue.pastedOnly
+        ? []
+        : [
+            {
+              id: importer.id,
+              title: importer.title,
+              label: catalogue.label ?? `Games on ${catalogue.site ?? importer.title}`,
+              address: catalogue.address,
+            },
+          ],
+    ),
   );
 }
 
@@ -3068,7 +3151,8 @@ export async function catalogueImporters(): Promise<
 export async function browseGames(importerId: string, address?: string): Promise<void> {
   const importer = (await loadImporters()).find((i) => i.id === importerId);
   if (!importer) return;
-  const lists = cataloguesOf(importer);
+  // A list read only at an address the person gives is never browsed to.
+  const lists = cataloguesOf(importer).filter((one) => !one.pastedOnly);
   const catalogue = address === undefined ? lists[0] : lists.find((one) => one.address === address);
   if (!catalogue) return;
   const kept = await readKeptCatalogue(importer, catalogue.address);
@@ -3181,6 +3265,164 @@ export async function readPickedGames(): Promise<void> {
       plan.leftOut.map((game) => game.name),
     ),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Games added one after another (see `gameSession.ts`)
+
+/** Shows a site's list of games again, as it was ticked (back from the plan of games to add). */
+export function showCatalogue(pick: GamePick): void {
+  setPhase({ kind: 'catalogue', pick });
+}
+
+/** Shows the games added one after another, at the step given. */
+export function showGamesStep(step: 'plan' | 'going' | 'done'): void {
+  setPhase({ kind: 'games', step });
+}
+
+/**
+ * The pause a site's rules file sets between two pages (`SiteInfo.pause`),
+ * in milliseconds; none when it sets none.
+ */
+export function sitePauseMs(importer: AtlasImporter, url: string): number {
+  try {
+    return (siteInfoOf(importer, url).pause ?? 0) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
+/** How the person chose to read the site of `url`, for an importer that offers ways. */
+export async function siteWayOf(
+  importer: AtlasImporter,
+  url: string,
+): Promise<ReadingWay | undefined> {
+  return (await readingOf(importer, url))?.way;
+}
+
+/**
+ * Reads one game page, as a listing run of one page; null when it was
+ * cancelled or another import took over.
+ */
+export async function readGamePage(
+  importer: AtlasImporter,
+  url: string,
+): Promise<{ run: RunState; pages: ListedPage[] | null; message: string | null } | null> {
+  const read = await readListings([{ url, importer, reading: 'game' }], 'catalogue-games');
+  if (!read) return null;
+  const result = read.results[0];
+  if (result?.ok && 'pages' in result) return { run: read.run, pages: result.pages, message: null };
+  return { run: read.run, pages: null, message: listingFailure(read.run, result) };
+}
+
+/**
+ * Adds the pages of one game as a go, without showing its game at the end;
+ * null when there is no shell to read them.
+ */
+export function addGamePages(
+  importer: AtlasImporter,
+  pages: readonly { url: string; title: string; group?: string }[],
+): Promise<RunState | null> {
+  return startRun(
+    pages.map((page) => ({
+      url: page.url,
+      importer,
+      problem: null,
+      listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
+    })),
+    0,
+    { firstPauseMs: pauseLeft(), show: false },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Jobs: imports saved to run later (see `importJobs.ts`)
+
+/** A map page a job reads, with the importer that reads it. */
+export interface JobPage {
+  url: string;
+  title: string;
+  importerId: string;
+}
+
+/**
+ * The map pages of addresses typed in the address box, each with its
+ * importer, for a job; or why they cannot be one. A game's address or a
+ * list of games lists pages to choose from, so it is opened and its pages
+ * are saved from there instead.
+ */
+export async function pagesOfAddresses(
+  text: string,
+): Promise<{ pages: JobPage[] } | { problem: string }> {
+  const { addresses } = parseAddresses(text);
+  if (addresses.length === 0) return { problem: 'Paste the address of a map page first.' };
+  const importers = await loadImporters();
+  const pages: JobPage[] = [];
+  for (const url of addresses) {
+    const refusal = refusalFor(importers, url);
+    if (refusal) return { problem: refusal };
+    const reader = findReader(importers, url);
+    if (reader && reader.kind !== 'page') {
+      return {
+        problem:
+          'A game’s address or a list of games cannot be saved as a job as it is. Press Add, tick the maps or the games, and save them as a job there.',
+      };
+    }
+    const importer = checkAddresses([url], importers)[0]?.importer;
+    if (!importer) return { problem: `No importer of this app reads ${url}.` };
+    pages.push({ url, title: titleFromAddress(url), importerId: importer.id });
+  }
+  return { pages };
+}
+
+/** The pages ticked in a list of pages, for a job. */
+export function pagesOfChoice(): JobPage[] {
+  const { phase } = useImport.getState();
+  if (phase.kind !== 'choose') return [];
+  return chosenToRead(phase.choice).map((page) => ({
+    url: page.url,
+    title: page.title,
+    importerId: page.importerId,
+  }));
+}
+
+/**
+ * Why a page cannot be read without the person, or null when it can: a
+ * site the person chose to read only as they browse it, or one that shows
+ * its pages only to a person, who confirms it in the app's window.
+ */
+export async function needsPerson(
+  importer: AtlasImporter,
+  url: string,
+  reading: 'map' | 'game' = 'map',
+): Promise<string | null> {
+  const way = (await readingOf(importer, url))?.way;
+  if (way === 'browse') {
+    return 'You chose to read its site only as you browse it, so this app never opens its pages by itself.';
+  }
+  const fetch = reading === 'game' ? importer.games?.fetch : importer.fetch;
+  if (fetch && (way === 'window' || (way === undefined && readsInWindow(fetch, url)))) {
+    return 'Its site shows its pages only to a person, who confirms it in the window of this app, so it cannot run by itself.';
+  }
+  return null;
+}
+
+/** Reads the pages of a job as one go, without showing a game at the end. */
+export async function runJobPages(pages: readonly JobPage[]): Promise<RunState | null> {
+  const importers = await loadImporters();
+  return startRun(
+    pages.map((page) => {
+      const importer = importers.find((one) => one.id === page.importerId) ?? null;
+      return {
+        url: page.url,
+        importer,
+        problem: importer ? null : 'The importer that read this page is not in this app now.',
+        listed: { title: page.title },
+      };
+    }),
+    0,
+    { firstPauseMs: pauseLeft(), show: false },
+  );
 }
 
 // ---------------------------------------------------------------------------

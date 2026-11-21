@@ -795,6 +795,37 @@ describe("listing a game's pages and a site's games", () => {
     expect(() => asImporter({ ...withoutGames, catalogues: () => [] })).toThrow(/catalogue/);
   });
 
+  it('takes a list of games read by fetching, and one read only at an address given', () => {
+    const { pageReader: _reader, ...unread } = demo.catalogue!;
+    const fetched = {
+      ...unread,
+      address: 'http://127.0.0.1:4432/lists',
+      pastedOnly: true,
+      matches: (url: string) => url.startsWith('http://127.0.0.1:4432/lists/'),
+      fetch: { addresses: (url: string) => [url] },
+    };
+    const many = asImporter({ ...demo, catalogues: () => [fetched] });
+    expect(catalogueAt(many, 'http://127.0.0.1:4432/lists/saltbox')).toMatchObject({
+      pastedOnly: true,
+    });
+    expect(findReader([many], 'http://127.0.0.1:4432/lists/saltbox')?.kind).toBe('catalogue');
+    // Neither a reader nor fetch, or fetch.inWindow without a reader: left out.
+    const odd = asImporter({
+      ...demo,
+      catalogues: () =>
+        [
+          { ...unread, address: 'http://127.0.0.1:4432/none' },
+          {
+            ...fetched,
+            address: 'http://127.0.0.1:4432/window',
+            fetch: { addresses: (url: string) => [url], inWindow: () => true },
+          },
+          { ...fetched, pastedOnly: 'yes' },
+        ] as unknown as SiteCatalogue[],
+    });
+    expect(cataloguesOf(odd).map((c) => c.address)).toEqual([site]);
+  });
+
   it('takes the reader an importer gives for one game address, when it is one', () => {
     const reader = '() => null';
     const given = (value: unknown) => ({
@@ -881,7 +912,14 @@ describe("listing a game's pages and a site's games", () => {
       checkCatalogue(
         games([
           { id: 'test-valley', name: ' Test Valley ', address: game, search: ' tv ' },
-          { id: 'test-hills', name: 'Test Hills', address: `${site}/test-hills/high-pass` },
+          {
+            id: 'test-hills',
+            name: 'Test Hills',
+            address: `${site}/test-hills/high-pass`,
+            maps: 3,
+            bytes: 120_000,
+            system: ' Test Console ',
+          },
         ]),
         site,
         demo,
@@ -890,13 +928,22 @@ describe("listing a game's pages and a site's games", () => {
       ok: true,
       games: [
         { id: 'test-valley', name: 'Test Valley', address: game, search: 'tv' },
-        { id: 'test-hills', name: 'Test Hills', address: `${site}/test-hills/high-pass` },
+        {
+          id: 'test-hills',
+          name: 'Test Hills',
+          address: `${site}/test-hills/high-pass`,
+          maps: 3,
+          bytes: 120_000,
+          system: 'Test Console',
+        },
       ],
     });
     const bad: unknown[] = [
       games([{ id: 'a', name: 'A', address: 'https://elsewhere.example.com/demo-maps/a' }]),
       games([{ id: 'a', name: 'A', address: `${site}/a/guides/x` }]),
       games([{ id: 'Bad Id', name: 'A', address: `${site}/a` }]),
+      games([{ id: 'a', name: 'A', address: `${site}/a`, maps: -1 }]),
+      games([{ id: 'a', name: 'A', address: `${site}/a`, bytes: 1.5 }]),
       games([
         { id: 'a', name: 'A', address: `${site}/a` },
         { id: 'a', name: 'B', address: `${site}/b` },

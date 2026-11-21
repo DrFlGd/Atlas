@@ -1,5 +1,6 @@
 import { useAtlas } from '../state/store';
 import { BackgroundSettings } from './BackgroundSettings';
+import { ExitButton } from './ExitAtlas';
 import { ProgressTools } from '../touch/DesktopTools';
 import { Settings } from '../touch/GamesScreen';
 import { KeptPacks } from './KeptPacks';
@@ -15,7 +16,8 @@ import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './Stor
  * with a game in Steam (on Linux), how fast
  * downloads go and the activity log. In the
  * standard layout it is a section of its own; in the classic layout, the
- * Library's Settings.
+ * Library's Settings. Its head has "Exit Atlas" where the window may give
+ * no other way to end it (see `ExitAtlas.tsx`).
  */
 export function SettingsScreen({ general }: { general: boolean }) {
   const app = useAtlas((s) => s.app);
@@ -27,6 +29,9 @@ export function SettingsScreen({ general }: { general: boolean }) {
           <p className="library-facts">
             What this app looks like, where it keeps maps and how it downloads.
           </p>
+        </div>
+        <div className="library-pane-actions">
+          <ExitButton place="settings" />
         </div>
       </header>
       <div className="library-settings-body touch-scroll" data-scroll-root>

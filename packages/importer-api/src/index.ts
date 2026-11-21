@@ -1261,6 +1261,20 @@ export interface CatalogueGame {
   address: string;
   /** Other words the game is found by, such as short names. */
   search?: string;
+  /**
+   * How many maps the game has, when the list says so before its page is
+   * read: shown beside the game, and added up, when the person ticks games
+   * to add one after another.
+   */
+  maps?: number;
+  /**
+   * About how many bytes its maps take on this computer once added, when
+   * the list says so before anything is fetched (the sizes of its whole
+   * pictures, say): added up to the disk space needed.
+   */
+  bytes?: number;
+  /** The system the game is for, such as a console, when the list says so. */
+  system?: string;
 }
 
 export interface Catalogue {
@@ -1319,9 +1333,26 @@ export interface SiteCatalogue {
   label?: string;
   /** The site's name, as the app says "12 games on <site>"; the importer's title when absent. */
   site?: string;
+  /**
+   * The system every game of the list is for, such as a console, when the
+   * list is of one system: the app files each game it adds from the list
+   * under it (the System tag of the Library). A game's own `system` wins.
+   */
+  system?: string;
+  /**
+   * Whether the app reads the list only at an address the person gives
+   * that {@link matches} recognises, and offers no button for it: for lists
+   * of one form at many addresses (a page for each system of a site, say),
+   * which `address` alone does not name. `address` is then only the list's
+   * key, never opened.
+   */
+  pastedOnly?: boolean;
   /** Whether `url` is the address of the list of games. Must not throw. */
   matches(url: string): boolean;
-  pageReader: string;
+  /** Like {@link AtlasImporter.pageReader}, for the list of games; not needed with `fetch`. */
+  pageReader?: string;
+  /** Like {@link AtlasImporter.fetch}, for the list of games; then `pageReader` is not needed. */
+  fetch?: PageFetch;
   waitSeconds?: number;
   convert(
     pageData: unknown,
@@ -1619,18 +1650,24 @@ const gamePagesSchema = z
   .refine(readsSomehow, readsSomehowError)
   .refine(readsItsWindows, readsItsWindowsError);
 
-const catalogueSchema = z.object({
-  address: z
-    .string()
-    .max(MAX_ADDRESS_CHARS)
-    .refine((text) => isAllowedPageUrl(text), 'must be a web address'),
-  label: z.string().trim().min(1).max(100).optional(),
-  site: z.string().trim().min(1).max(100).optional(),
-  matches: z.custom<SiteCatalogue['matches']>(isFunction, 'must be a function'),
-  pageReader: readerSchema,
-  waitSeconds: waitSchema,
-  convert: z.custom<SiteCatalogue['convert']>(isFunction, 'must be a function'),
-});
+const catalogueSchema = z
+  .object({
+    address: z
+      .string()
+      .max(MAX_ADDRESS_CHARS)
+      .refine((text) => isAllowedPageUrl(text), 'must be a web address'),
+    label: z.string().trim().min(1).max(100).optional(),
+    site: z.string().trim().min(1).max(100).optional(),
+    system: z.string().trim().min(1).max(80).optional(),
+    pastedOnly: z.boolean().optional(),
+    matches: z.custom<SiteCatalogue['matches']>(isFunction, 'must be a function'),
+    pageReader: readerSchema.optional(),
+    fetch: fetchSchema.optional(),
+    waitSeconds: waitSchema,
+    convert: z.custom<SiteCatalogue['convert']>(isFunction, 'must be a function'),
+  })
+  .refine(readsSomehow, readsSomehowError)
+  .refine(readsItsWindows, readsItsWindowsError);
 
 /** Checks the shape of a loaded importer module's default export. */
 export const importerSchema = z
@@ -2185,6 +2222,9 @@ const catalogueGameSchema = z.strictObject({
   name: z.string().trim().min(1).max(200),
   address: z.string().min(1).max(MAX_ADDRESS_CHARS),
   search: z.string().max(500).optional(),
+  maps: z.int().nonnegative().max(100_000).optional(),
+  bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  system: z.string().max(80).optional(),
 });
 
 const catalogueOutcomeSchema = z.discriminatedUnion('ok', [
@@ -2296,6 +2336,9 @@ export function checkCatalogue(
       name: game.name.trim(),
       address,
       ...(game.search?.trim() ? { search: game.search.trim() } : {}),
+      ...(game.maps !== undefined ? { maps: game.maps } : {}),
+      ...(game.bytes !== undefined ? { bytes: game.bytes } : {}),
+      ...(game.system?.trim() ? { system: game.system.trim() } : {}),
     });
   }
   return { ok: true, games };

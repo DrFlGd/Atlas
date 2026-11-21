@@ -115,13 +115,17 @@ export async function deleteOwnMap(
   mapName: string,
 ): Promise<string | null> {
   let changed: OwnGameChanged;
+  // Its levels, while the game shown still has them: their names go with the map.
+  const game = useAtlas.getState().game;
+  const layerIds =
+    game?.entry.id === gameId ? game.pack.layersOf(mapId).map((layer) => layer.id) : [];
   try {
     changed = await desktop!.ownGames.deleteMap(gameId, mapId);
   } catch (error) {
     return errorText(error);
   }
   try {
-    await forgetOwnOn(gameId, mapId);
+    await forgetOwnOn(gameId, mapId, layerIds);
   } catch (error) {
     console.error(error);
   }
@@ -130,10 +134,14 @@ export async function deleteOwnMap(
   return null;
 }
 
-/** Forgets the person's own locations and areas on a map that was deleted. */
-async function forgetOwnOn(gameId: string, mapId: string): Promise<void> {
+/** Forgets the person's own locations, areas and names on a map that was deleted. */
+async function forgetOwnOn(
+  gameId: string,
+  mapId: string,
+  layerIds: readonly string[],
+): Promise<void> {
   if (useOwnLocations.getState().gameId === gameId) {
-    forgetOwnOfMap(mapId);
+    forgetOwnOfMap(mapId, layerIds);
     return;
   }
   const backend = ownLocationsBackend();
@@ -141,10 +149,11 @@ async function forgetOwnOn(gameId: string, mapId: string): Promise<void> {
   if (text === null) return;
   const parsed = parseOwnLocations(gameId, text);
   if (!parsed.ok || parsed.newer) return;
-  const next = removeOwnOfMap(parsed.own, mapId);
+  const next = removeOwnOfMap(parsed.own, mapId, layerIds);
   if (
     next.locations.length === parsed.own.locations.length &&
-    next.regions.length === parsed.own.regions.length
+    next.regions.length === parsed.own.regions.length &&
+    next.names?.length === parsed.own.names?.length
   ) {
     return;
   }

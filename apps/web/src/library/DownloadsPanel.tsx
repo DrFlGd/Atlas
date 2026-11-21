@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { downloadPercent, formatBytes, roughDuration } from '../components/downloadFormat';
 import { UiIcon } from '../components/icons';
+import { JobsList } from '../components/ImportJobs';
 import { BrowseStrip } from '../components/SiteReading';
 import type { JobEntry } from '../desktop';
 import { numberFormat } from '../state/derived';
@@ -474,6 +475,7 @@ export function DownloadsPanel() {
             </ul>
           </section>
         ) : null}
+        <JobsList />
       </div>
       <footer className="library-downloads-foot">
         <span className="muted small" data-testid="downloads-pace">

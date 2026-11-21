@@ -2444,6 +2444,22 @@ th[aria-sort='descending'] .table-sort-arrow::after {
   align-items: baseline;
 }
 
+/* Games of a site's list added one after another (see `components/GameSession.tsx`). */
+.games-plan-list {
+  max-height: min(40vh, 360px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.games-plan-facts p {
+  margin: 4px 0;
+}
+
+.games-bar {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
 [data-testid='add-map-catalogue-list'] {
   max-height: min(50vh, 420px);
   overflow-y: auto;

@@ -303,19 +303,23 @@ function installFakeShell({
   downloads,
   wiki,
   others,
+  pages,
   listed,
   background,
   packsFolder,
   steamLaunch,
+  exit,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
   wiki: WikiSite | null;
   others: Record<string, WikiSite>;
+  pages: Record<string, string>;
   listed: Record<string, unknown>[];
   background: boolean;
   packsFolder: boolean;
   steamLaunch: Record<string, string> | null;
+  exit: boolean;
 }) {
   const shell: MockShell = {
     events: [],
@@ -552,6 +556,15 @@ function installFakeShell({
       retryAfter: null,
     });
     const at = new URL(address);
+    // A made-up page of a test's own (`pages`), as HTML; its site's robots.txt allows all.
+    const own = Object.keys(pages).some((key) => new URL(key).origin === at.origin);
+    if (own) {
+      if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nAllow: /');
+      const html = pages[`${at.origin}${at.pathname}${at.search}`];
+      return html === undefined
+        ? answer(404, 'Not found')
+        : { ...answer(200, html), contentType: 'text/html' };
+    }
     // The Example Wiki, or a wiki only the "Other wikis" importer reads.
     const site = at.origin === 'https://wiki.example.org' ? wiki : (others[at.hostname] ?? null);
     if (!site || at.protocol !== 'https:') return null;
@@ -673,12 +686,17 @@ function installFakeShell({
         return {
           name: 'Atlas',
           version: '0.0.0',
-          platform: steamLaunch ? 'linux' : 'test',
+          platform: steamLaunch || exit ? 'linux' : 'test',
           downloads,
           sites: downloads,
           ...(background ? { background: true } : {}),
           ...(steamLaunch ? { steamLaunch } : {}),
+          ...(exit ? { exit: true } : {}),
         };
+      case 'app_exit':
+        // The real shell ends the app here; the stand-in only notes the call.
+        shell.background.calls.push({ command, args });
+        return null;
       case 'background_state':
       case 'background_set':
       case 'background_set_hotkey':
@@ -726,6 +744,9 @@ function installFakeShell({
       }
       case 'library_list':
         return listing();
+      case 'library_free_space':
+        // A made-up drive with 3 GB free.
+        return 3_000_000_000;
       case 'guidebook_pick': {
         shell.guidebooks.calls.push({ command, args });
         const picked = shell.guidebooks.pick;
@@ -1093,6 +1114,9 @@ export async function setUp(
     packsFolder = false,
     served = {},
     steamLaunch = null,
+    exit = false,
+    pages = {},
+    importers = [],
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -1108,11 +1132,17 @@ export async function setUp(
      * (`DesktopInfo::steam_launch`, see the shell's `linux.rs`).
      */
     steamLaunch?: Record<string, string> | null;
+    /** The shell offers "Exit Atlas" whatever the settings (`DesktopInfo::exit`, on Linux). */
+    exit?: boolean;
     /**
      * Files the pack protocol serves, by pack id (or `_picked/<token>`) and
      * name, read in parts as the shell serves them (`Range`, `206`).
      */
     served?: Record<string, Record<string, Buffer | string>>;
+    /** Made-up pages answered as HTML by `import_fetch`, by address (no fragment), on sites of their own. */
+    pages?: Record<string, string>;
+    /** More made-up importers the build lists, each module's source given. */
+    importers?: { id: string; title: string; source: string }[];
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -1149,6 +1179,13 @@ export async function setUp(
                 },
               ]
             : []),
+          ...importers.map(({ id, title }) => ({
+            id,
+            title,
+            description: `Reads made-up pages (${title}).`,
+            version: '1.0.0',
+            module: `importers/${id}.js`,
+          })),
           ...(others
             ? [
                 {
@@ -1173,6 +1210,11 @@ export async function setUp(
   await page.route('**/importers/other-wikis.js', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: otherWikis }),
   );
+  for (const { id, source } of importers) {
+    await page.route(`**/importers/${id}.js`, (route) =>
+      route.fulfill({ contentType: 'text/javascript', body: source }),
+    );
+  }
   await page.route(`${PACKS}**`, (route) => {
     const [, id = '', name = ''] =
       /^\/([^/]+)\/(.+)$/.exec(new URL(route.request().url()).pathname) ?? [];
@@ -1191,10 +1233,12 @@ export async function setUp(
     downloads,
     wiki,
     others: others ?? {},
+    pages,
     listed,
     background,
     packsFolder,
     steamLaunch,
+    exit,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
