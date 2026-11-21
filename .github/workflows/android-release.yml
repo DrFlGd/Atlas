@@ -192,6 +192,13 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.26.0
+
+          - **Routes.** A route is a path on the map with a short guide at each step. Routes that a pack file carries, and routes of your own, are under **Lists**; a bar over the map follows the open route, and ticking a step marks its location found.
+          - **Wiki entries on the map.** In a wiki page, an entry that is on the map has a small map mark after it: press it to go to that location.
+          - **Rename a map or a level.** **Rename…** in the maps menu gives a map or a level a name of your own, and **Use the original name** gives the source's name back.
+          - **A map's own icons.** A pack file written with **Include this map's icons** shows the map site's own icons for its types.
+
           ## New in 0.25.0
 
           - **Guidebooks.** A pack file of guidebooks (a published guide as a PDF or a CBZ) opens with **Import pack file…** like any pack file. Its guidebooks are listed with the game's other guides, open over the whole screen with page turning, zoom with two fingers, the PDF's own **Contents** and **Find**, and their pages show in search. Guidebooks are added on Windows only.
