@@ -139,6 +139,17 @@ jobs:
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
 
+          ## New in 0.26.0
+
+          - **Routes.** A route is a path on the map with a short guide at each step. Under **Lists**, **New route** makes one, or **Make a route from a list…** starts from an ordered list. Steps are locations or points of your own, and corner points let the line go around corners. On the map a route is a line through numbered steps, with **Previous** and **Next**; ticking a step marks its location found. A route can cross maps. Routes that a map pack carries show the same way.
+          - **Wiki entries on the map.** In a wiki page, an entry that is on the map has a small map mark after it: press it to go to that location, or to choose among several. **Put entries on the map** lets you place an entry that is on no map yet, as a location of your own linked to the page.
+          - **Add to a wiki page.** On a location's card, **Search wiki** is now **Add to a wiki page…**: it still finds the page about the location, and can also put a link to the location on a page of your own.
+          - **Rename a map or a level.** **Rename…** beside each map and level, in the maps menu and in the game's **Maps and levels** card in the Library, gives it a name of your own. **Use the original name** gives the source's name back. Your names stay when the game is updated.
+          - **A map's own icons.** A game read from a map site whose rules file allows it can show that site's own icons for its types, kept for your own use only. The game's **This map's icons** card in the Library has **Use this map's icons**; untick it to go back to Atlas's icons. A pack file carries these icons only when **Include this map's icons** is ticked.
+          - **Exit Atlas.** While **Keep Atlas running when its window is closed** is on, **Exit Atlas** at the head of **Settings** ends Atlas, as **Quit Atlas** in the tray does.
+
+          This version has passed the automatic checks only. None of this has been tried in a real Windows window yet.
+
           ## New in 0.25.0
 
           - **Guidebooks.** A guidebook is a published guide you have as one file, a PDF or a CBZ. In **Guides**, **Add a guidebook…** copies one into a pack file of its own in the packs folder, and it is listed with the game's other guides. It opens over the whole window: page by page or scrolling, zoom, **Fit width** and **Fit page**, a page to go to, the PDF's own **Contents**, **Back** after a jump, and **Find**. It opens again on the page you left. Its pages also show under **In guidebooks** in the search of Guides and of the map. **Remove this guidebook…** takes it out again; the file you added it from is never changed. Guidebooks that another app sends in a pack file show the same way.
