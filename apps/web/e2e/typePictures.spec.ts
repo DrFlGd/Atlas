@@ -42,6 +42,9 @@ async function showNear(page: Page, near: string): Promise<void> {
   await page.goto(near);
   await page.reload();
   await expect(page.locator('.atlas-marker-canvas')).toHaveAttribute('data-draw-ms', /\d/);
+  // An app that downloads opens on the Library: the map is a press away.
+  if (await page.getByTestId('library').isVisible()) await page.getByTestId('section-map').click();
+  await expect(page.getByTestId('library')).toBeHidden();
   await waitForTiles(page);
 }
 
