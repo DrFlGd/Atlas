@@ -892,7 +892,7 @@ function Preview({
       {row.state === 'read' || (leftOut && row.guideId) ? (
         guide ? (
           <div className="wiki-preview-text" data-testid="wiki-preview-text">
-            <MarkdownBody source={guide.body} className="guide-body" page />
+            <MarkdownBody source={guide.body} className="guide-body" page entries={false} />
           </div>
         ) : (
           <div className="wiki-preview-text wiki-preview-hidden">

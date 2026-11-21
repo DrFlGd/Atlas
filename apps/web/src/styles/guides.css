@@ -1726,7 +1726,7 @@ img[data-opens-large]:focus-visible {
   gap: 6px;
 }
 
-/* "Search wiki" on a location's card */
+/* "Add to a wiki page…" on a location's card */
 
 .place-wiki-find {
   margin: 0 0 8px;
@@ -1783,6 +1783,19 @@ img[data-opens-large]:focus-visible {
 
 .place-wiki-search p {
   margin: 0;
+}
+
+.place-wiki-own {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.place-wiki-own .own-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .place-wiki-ask {

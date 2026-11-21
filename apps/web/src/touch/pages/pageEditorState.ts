@@ -267,6 +267,32 @@ export function openPageEditor(guideId: string | null): void {
   startEditing(guideId);
 }
 
+/** A link to a location, in a page's text: `[name](id)`. */
+export function mapLinkLine(name: string, locationId: string): string {
+  return `[${name.replace(/[[\]\\*_`<>]/gu, '\\$&')}](${locationId})`;
+}
+
+/**
+ * Opens the editor on a page of one's own with a link to a location added
+ * at its end ("Add to a wiki page…" on a location's card). The person saves
+ * the page, or undoes the link. Asks first when another page has changes
+ * not saved.
+ */
+export function editWithMapLink(guideId: string, name: string, locationId: string): void {
+  requestLeave(() => {
+    if (!get().open || get().guideId !== guideId) startEditing(guideId);
+    const state = get();
+    if (state.guideId !== guideId) return;
+    const before = state.text.trimEnd();
+    const line = mapLinkLine(name, locationId);
+    const text = before ? `${before}\n\n${line}\n` : `${line}\n`;
+    lastChange = null;
+    set({ undo: [...state.undo.slice(-199), { title: state.title, text: state.text }], redo: [] });
+    reread({ title: state.title, text });
+    set({ pendingFocus: null });
+  });
+}
+
 /** A page of one's own just added: edited at once. */
 export function editNewPage(guideId: string): void {
   requestLeave(() => {

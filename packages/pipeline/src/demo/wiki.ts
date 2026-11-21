@@ -8,6 +8,7 @@ import {
 } from '@atlas/schema';
 import sharp from 'sharp';
 import { DEMO_GAME_ID } from './content';
+import { DEEP_MAP_ID } from './underground';
 
 /**
  * The demo's wiki: a few pages of a made-up "Example Wiki" about the
@@ -147,6 +148,7 @@ Pick an area below, start with ${to('welcome', 'the welcome page')}, or see them
 export function wikiGuides(
   regionNames: readonly string[],
   shrine = 'Sunken shrine 1',
+  nearby: readonly string[] = [],
 ): GuideEntry[] {
   const regions = regionNames.length > 0 ? regionNames : ['The lowlands'];
   const rows = regions.map((name, i) => {
@@ -262,7 +264,7 @@ they land is heavy.
 - ||Its weak point is the crack on its back.||
 
 Wardens are found near the ${to('waystones', 'waystones')} they protect.
-`,
+${wardenTable(nearby)}`,
     ),
     page(
       'wolves',
@@ -365,6 +367,24 @@ Bought from a travelling merchant, who turns up at random.
 `,
     ),
   ];
+}
+
+/**
+ * Where wardens stand: a table whose first column names locations of the
+ * map, and one that is on no map, so the page shows entries on the map
+ * (the small map mark after a name) and one to put there.
+ */
+function wardenTable(nearby: readonly string[]): string {
+  if (nearby.length < 2) return '';
+  return `
+## Where they stand
+
+| Near | What to bring |
+| --- | --- |
+| ${nearby[0]} | Rope for the cliffs |
+| ${nearby[1]} | Fire for the wolves |
+| The hermit stone | Nothing: it sleeps |
+`;
 }
 
 /**
@@ -516,6 +536,11 @@ export function addWiki(data: PackData): PackData {
   const regionNames = data.regions.filter((r) => r.parentId !== null).map((r) => r.name);
   // A ruin of the map, named on the gear pages as where a blade is.
   const shrine = data.locations.find((l) => /^Sunken shrine \d+$/u.test(l.name))?.name;
+  // Two waystones of the surface, named in the wardens' page.
+  const nearby = data.locations
+    .filter((l) => l.categoryId === id('cat', 'waystone') && l.mapId !== DEEP_MAP_ID)
+    .slice(0, 2)
+    .map((l) => l.name);
   return {
     ...data,
     manifest: {
@@ -535,7 +560,7 @@ export function addWiki(data: PackData): PackData {
     },
     guides: [
       ...data.guides,
-      ...wikiGuides(regionNames.slice(0, 5), shrine),
+      ...wikiGuides(regionNames.slice(0, 5), shrine, nearby),
       portalPage(regionNames.slice(0, 5)),
       wikiHomePage(),
     ],

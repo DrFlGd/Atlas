@@ -309,6 +309,23 @@ export function showPageOnMap(game: LoadedGame, guideId: string, title: string):
   fitPlaces(game, ids);
 }
 
+/** Shows some locations alone on the map, as a page's are (an entry of a page with several). */
+export function showPlacesOnMap(game: LoadedGame, ids: readonly string[], title: string): void {
+  if (ids.length === 0) return;
+  if (useAtlas.getState().checklistPages.at(-1)?.kind === 'checklist') {
+    useAtlas.setState({ checklistPages: [] });
+  }
+  useGuideOnMap.setState({
+    gameId: game.pack.manifest.gameId,
+    guideId: null,
+    title,
+    places: new Set(ids),
+  });
+  followOpenList();
+  showSection('map');
+  fitPlaces(game, ids);
+}
+
 /** Shows every location again, after a guide page's alone. */
 export function clearPageOnMap(): void {
   if (useGuideOnMap.getState().places === null) return;

@@ -35,6 +35,7 @@ import { UiIcon } from '../components/icons';
 import { MarkdownBody } from '../components/MarkdownBody';
 import { guideHeadings } from '../markdown';
 import { useGuideLinks } from '../state/guideLinks';
+import { setEntryAdding, useMapEntries } from '../state/mapEntries';
 import { canLinkPages, linkedTargets, locationsText, targetText } from '../state/guideMatches';
 import { guidesOf, hasGuidePages, hasMap, pictureOf } from '../state/guides';
 import { useGameGuidebooks, useGuidebookHits } from '../state/guidebooks';
@@ -1859,11 +1860,13 @@ function Page({
       {guide.source && hasMap(game) && home === undefined ? (
         <OnTheMap game={game} guide={guide} />
       ) : null}
+      {guide.source && hasMap(game) ? <PutEntries /> : null}
       <OnThisPage guideId={guide.id} body={shown.body} wide={wide} />
       <MarkdownBody
         source={shown.body}
         className="guide-body guides-page-body"
         page
+        pageId={guide.source ? guide.id : undefined}
         onAddRow={
           build.offered
             ? (row, button) => {
@@ -2176,6 +2179,38 @@ function TakeWikiDialog({ onClose, onTake }: { onClose: () => void; onTake: () =
         </footer>
       </div>
     </dialog>
+  );
+}
+
+/**
+ * "Put entries on the map", where Edit locations has room: while on, each
+ * entry of the page that is not on the map has a mark that puts it there.
+ */
+function PutEntries() {
+  const canPut = useMapEntries((s) => s.canPut);
+  const adding = useMapEntries((s) => s.adding);
+  if (!canPut) return null;
+  return (
+    <p className="guides-put-entries">
+      <button
+        type="button"
+        className="own-pill-button"
+        aria-pressed={adding}
+        data-testid="put-entries"
+        onClick={() => {
+          setEntryAdding(!adding);
+        }}
+      >
+        <UiIcon name="pin" size={18} strokeWidth={1.8} />
+        {adding ? 'Done putting entries on the map' : 'Put entries on the map'}
+      </button>
+      {adding ? (
+        <span className="muted">
+          {' '}
+          Press the mark after an entry that is not on the map, then press the map where it is.
+        </span>
+      ) : null}
+    </p>
   );
 }
 

@@ -1,6 +1,7 @@
 import { isOwnId } from '@atlas/schema';
 import { create } from 'zustand';
 import { notify } from '../../state/actions';
+import { cancelEntry, linkNewLocation, useMapEntries } from '../../state/mapEntries';
 import {
   canChangeOwnLocations,
   changeOwn,
@@ -8,6 +9,7 @@ import {
   dropOwnLocation,
   flushOwnLocations,
   newLocationAsksType,
+  newLocationType,
   ownLocationById,
   undoOwnChange,
   useOwnLocations,
@@ -77,6 +79,7 @@ export function startLocationEditing(): void {
 
 /** Leaves Edit locations, saving at once. */
 export function stopLocationEditing(): void {
+  cancelEntry();
   if (!get().active) return;
   set(INITIAL);
   useAtlas.setState({ selectedId: null });
@@ -119,6 +122,15 @@ export function clickedOnMap(point: { x: number; y: number }): void {
     set({ side: { kind: 'new-location', draft: { ...side.draft, ...at } } });
     return;
   }
+  // An entry of a wiki page put on the map: named after it, its type chosen (the last one first).
+  const entry = useMapEntries.getState().pending;
+  if (entry) {
+    openSide({
+      kind: 'new-location',
+      draft: { ...at, name: entry.name.slice(0, 200), typeId: newLocationType() },
+    });
+    return;
+  }
   // No type chosen for a new location of this game yet: the person chooses one first.
   if (newLocationAsksType()) {
     openSide({ kind: 'new-location', draft: { ...at, name: 'New location', typeId: null } });
@@ -143,6 +155,8 @@ export function addDraftLocation(draft: NewLocationDraft): boolean {
     draft.typeId,
   );
   if (!location) return false;
+  // An entry of a wiki page waited for it: the location is linked to its page.
+  if (useMapEntries.getState().pending) linkNewLocation(location.id);
   openSide({ kind: 'location', id: location.id });
   return true;
 }

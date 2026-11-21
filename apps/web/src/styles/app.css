@@ -3660,3 +3660,116 @@ button.games-heading-button:hover {
 .tags-add-group {
   align-self: flex-start;
 }
+
+/*
+ * An entry of a page on the map (see `markdownEntries.ts`): a small map
+ * mark after it, muted as the arrow after a link to the web is, that shows
+ * the entry on the map. A mark that puts an entry on the map is a pin.
+ * Small in the line, so a table's rows keep their height; a finger's press
+ * reaches a little around it.
+ */
+.guide-body .map-entry {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 0 0.2em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--atlas-muted);
+  font-size: 0.85em;
+  line-height: 1;
+  vertical-align: -0.1em;
+  cursor: pointer;
+}
+
+.guide-body .map-entry::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.guide-body .map-entry:hover,
+.guide-body .map-entry:focus-visible {
+  color: var(--atlas-accent);
+}
+
+.guide-body .map-entry-add {
+  color: var(--atlas-accent);
+}
+
+.guides-put-entries {
+  margin: 0 0 12px;
+}
+
+.entry-menu {
+  position: fixed;
+  z-index: 2000;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  background: var(--atlas-surface-raised, var(--atlas-surface));
+  box-shadow: var(--atlas-shadow);
+  color: var(--atlas-text);
+}
+
+.entry-menu-title {
+  margin: 2px 6px 6px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.entry-menu-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry-menu-item,
+.entry-menu-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.entry-menu-item:hover,
+.entry-menu-item:focus-visible,
+.entry-menu-all:hover,
+.entry-menu-all:focus-visible {
+  background: var(--atlas-accent-soft);
+}
+
+.entry-menu-all {
+  margin-top: 4px;
+  border-top: 1px solid var(--atlas-border);
+  border-radius: 0 0 8px 8px;
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+
+.entry-menu-more {
+  margin: 4px 8px;
+  font-size: 13px;
+}
+
+[data-handheld] .entry-menu-item,
+[data-input='touch'] .entry-menu-item,
+[data-handheld] .entry-menu-all,
+[data-input='touch'] .entry-menu-all {
+  min-height: 44px;
+}

@@ -3,6 +3,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GlyphBadge, UiIcon } from '../../components/icons';
 import { goToLocation } from '../../state/actions';
 import { numberFormat } from '../../state/derived';
+import { guidesOf } from '../../state/guides';
+import { cancelEntry, useMapEntries } from '../../state/mapEntries';
 import {
   addOwnPhoto,
   canChangeOwnLocations,
@@ -85,6 +87,30 @@ export function LocationMapHint() {
   const name = useOwnLocations((s) =>
     moving ? s.own.locations.find((l) => l.id === moving)?.name : undefined,
   );
+  const entry = useMapEntries((s) => s.pending);
+  const drafting = useLocationEditor((s) => s.side?.kind === 'new-location');
+  if (entry && !moving) {
+    // An entry of a wiki page waiting for its place; once pressed, its form asks the rest.
+    const text = drafting
+      ? 'Press the map to put it somewhere else'
+      : `Press the map where “${entry.name}” is`;
+    return (
+      <div
+        className="touch-pill editor-map-hint"
+        role="status"
+        title={text}
+        data-testid="locations-map-hint"
+      >
+        <UiIcon name="pin" size={18} strokeWidth={1.9} />
+        <span className="editor-map-hint-text">{text}</span>
+        {drafting ? null : (
+          <button type="button" className="editor-hint-cancel" onClick={cancelEntry}>
+            Cancel
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="touch-pill editor-map-hint" role="status" data-testid="locations-map-hint">
       <UiIcon name={moving ? 'pin' : 'plus'} size={18} strokeWidth={1.9} />
@@ -723,6 +749,7 @@ function NewLocationForm({ game, draft }: { game: LoadedGame; draft: NewLocation
   const typeId = draft.typeId;
   const type = typeId === null ? undefined : game.pack.categories.get(typeId);
   const ready = typeId !== null;
+  const entry = useMapEntries((s) => s.pending);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -838,6 +865,13 @@ function NewLocationForm({ game, draft }: { game: LoadedGame; draft: NewLocation
               . Press the map to put it somewhere else.
             </p>
           </div>
+          {entry ? (
+            <p className="editor-side-line" data-testid="location-entry-page">
+              It is linked to the page “
+              {guidesOf(game).contents.guide(entry.guideId)?.title ?? 'of the wiki'}”, so the page
+              shows on its card.
+            </p>
+          ) : null}
         </div>
         <footer className="editor-side-foot">
           <button

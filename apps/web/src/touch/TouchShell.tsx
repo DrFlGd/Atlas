@@ -25,6 +25,7 @@ import {
   useSourceNames,
   useTitleOf,
 } from '../state/gameGroups';
+import { provideEntryActions, startEntry } from '../state/mapEntries';
 import { useOwnLists } from '../state/ownLists';
 import { libraryOffered, setLibraryHost } from '../state/libraryView';
 import { LibraryScreen } from '../library/LibraryScreen';
@@ -46,12 +47,23 @@ import {
   LocationEditorSide,
   LocationMapHint,
 } from './locations/LocationEditor';
-import { stopLocationEditing, useLocationEditor } from './locations/locationEditorState';
+import {
+  startLocationEditing,
+  stopLocationEditing,
+  useLocationEditor,
+} from './locations/locationEditorState';
 import { loadGuidesBar } from './guidesBar';
 import { ListOnlyChip } from './ListMapChips';
 import { NextUpCard } from './ListNextUp';
 import { ListsScreen } from './ListsScreen';
-import { followOpenList, loadListPrefs, orderKeyDone, orderKeyNext, useLists } from './listViews';
+import {
+  followOpenList,
+  loadListPrefs,
+  orderKeyDone,
+  orderKeyNext,
+  showPlacesOnMap,
+  useLists,
+} from './listViews';
 import { PlaceSheet } from './PlaceSheet';
 import { RouteBar } from './routes/RouteScreen';
 import { ProgressScreen } from './ProgressScreen';
@@ -144,6 +156,28 @@ export function TouchShell({
   const editorMode = useEditor((s) => (s.listId === null || !room ? null : s.mode));
   // Edit locations: where the list editor fits, and only one of them at a time.
   const locating = useLocationEditor((s) => s.active) && room && wide && editorMode === null;
+  // Entries of a wiki page on the map: several shown alone, and one put on the map where
+  // Edit locations has room.
+  const canPutEntries = room && wide;
+  useEffect(() => {
+    provideEntryActions({
+      showAll: (ids, label) => {
+        const shown = useAtlas.getState().game;
+        if (shown) showPlacesOnMap(shown, ids, label);
+      },
+      putOnMap: canPutEntries
+        ? (entry) => {
+            startEntry(entry, () => {
+              showSection('map');
+              startLocationEditing();
+            });
+          }
+        : null,
+    });
+    return () => {
+      provideEntryActions(null);
+    };
+  }, [canPutEntries]);
   const locationSide = useLocationEditor((s) => s.side !== null);
   const selected = useAtlas((s) => s.selectedId !== null && editorMode !== 'edit' && !locating);
   const loading = useAtlas((s) => s.status.kind === 'loading');
