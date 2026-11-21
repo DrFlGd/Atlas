@@ -125,7 +125,7 @@ export function ChipRow() {
             toggleSolo(category.id);
           }}
         >
-          <GlyphBadge icon={category.icon} color={category.color} size={26} />
+          <GlyphBadge icon={category.icon} color={category.color} typeId={category.id} size={26} />
           {category.name}
         </button>
       ))}
@@ -463,7 +463,13 @@ function KindGroup({ group, categories }: { group: CategoryGroup; categories: Ca
               setCategoriesVisible([category.id], !on);
             }}
           >
-            <GlyphBadge icon={category.icon} color={category.color} size={32} muted={!on} />
+            <GlyphBadge
+              icon={category.icon}
+              color={category.color}
+              typeId={category.id}
+              size={32}
+              muted={!on}
+            />
             <span className="touch-kind-name">{category.name}</span>
             <span className="touch-figure">
               {kindTally

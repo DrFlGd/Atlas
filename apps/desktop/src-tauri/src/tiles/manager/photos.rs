@@ -88,6 +88,9 @@ const DRAWING_SCALE: f32 = 4.0;
 /// these, in pixels.
 const DRAWING_MIN_SIDE: f32 = 64.0;
 const DRAWING_MAX_SIDE: f32 = 1024.0;
+/// The widest a picture of a type of location (the map's icon) is kept,
+/// in pixels: more than any badge or list shows it at.
+pub const TYPE_PICTURE_WIDTH: u32 = 256;
 /// The line the photos of a job are counted under.
 const PHOTOS_NAME: &str = "Location photos";
 /// A photo's copy for cards is made for this many CSS pixels wide, so at
@@ -115,6 +118,11 @@ pub struct PhotoPlan {
     /// "Download again at full size" asks for. None while the download
     /// settings say "Smaller".
     pub kept_smaller: u64,
+    /// Of `total`, the pictures of the pack's types (the map's icons), and
+    /// how many of those are not on this device yet: what "Get this map's
+    /// icons" downloads.
+    pub type_pictures: u64,
+    pub type_pictures_remaining: u64,
 }
 
 /// Whether an address may be asked for a picture: https, or plain http to
@@ -156,6 +164,68 @@ pub struct PhotoTask {
     /// A photo of a location or a list entry: kept at the size the download
     /// settings say ([`PhotoSize`]).
     pub photo: bool,
+    /// A picture of a type of location (the map's icon): kept small, at
+    /// most [`TYPE_PICTURE_WIDTH`] pixels wide.
+    pub of_type: bool,
+    /// The part of the file at `url` that is the picture (an icon on a
+    /// sheet of icons), when it is only a part.
+    pub cut: Option<Cut>,
+}
+
+/// A part of a picture's file, in its pixels from the top left (a
+/// picture's `cut`, see the pack format).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cut {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Cut {
+    /// A picture's `cut`, when it is one: whole numbers, its sides at least
+    /// one pixel, all within [`MAX_SIDE`].
+    fn of(picture: &Value) -> Option<Self> {
+        let cut = picture.get("cut")?;
+        let side = |name: &str, least: u64| {
+            cut.get(name)
+                .and_then(Value::as_u64)
+                .filter(|value| (least..=u64::from(MAX_SIDE)).contains(value))
+                .map(|value| value as u32)
+        };
+        Some(Self {
+            x: side("x", 0)?,
+            y: side("y", 0)?,
+            width: side("width", 1)?,
+            height: side("height", 1)?,
+        })
+    }
+}
+
+/// The part of a downloaded file a picture is: refused when the part is
+/// not within the file. Kept as a PNG, which [`fit_picture`] then makes the
+/// kind its file names.
+pub fn cut_picture(bytes: &[u8], cut: Cut) -> Result<Vec<u8>, String> {
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| format!("it could not be read: {error}"))?;
+    let mut limits = Limits::default();
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    reader.limits(limits);
+    let image = reader
+        .decode()
+        .map_err(|error| format!("it could not be read: {error}"))?;
+    let fits = u64::from(cut.x) + u64::from(cut.width) <= u64::from(image.width())
+        && u64::from(cut.y) + u64::from(cut.height) <= u64::from(image.height());
+    if !fits {
+        return Err("the part of it the picture is lies outside it".to_owned());
+    }
+    encode(
+        &image.crop_imm(cut.x, cut.y, cut.width, cut.height),
+        ImageFormat::Png,
+    )
 }
 
 impl PhotoTask {
@@ -167,6 +237,8 @@ impl PhotoTask {
             shown_at: None,
             page_copy: None,
             photo: false,
+            of_type: false,
+            cut: None,
         }
     }
 }
@@ -250,6 +322,7 @@ pub fn photo_tasks(root: &Path) -> Result<Vec<PhotoTask>, String> {
         return Err("The pack's list of pictures cannot be read.".to_owned());
     };
     let photos = photo_ids(root);
+    let types = crate::packfile::type_picture_ids(root);
     let files: HashSet<String> = pictures
         .iter()
         .filter_map(|picture| picture.get("file").and_then(Value::as_str))
@@ -295,12 +368,18 @@ pub fn photo_tasks(root: &Path) -> Result<Vec<PhotoTask>, String> {
                 height: None,
                 for_cards: true,
             });
+        let of_type = picture
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| types.contains(id));
         tasks.push(PhotoTask {
             url: remote.to_owned(),
             path: relative,
             page_copy: page_copy_of(picture, file).or(card_copy),
             shown_at,
             photo,
+            of_type,
+            cut: Cut::of(picture),
         });
     }
     Ok(tasks)
@@ -534,7 +613,9 @@ pub fn fitted(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32,
 /// one kept at full size and for a photo of a location or an entry while
 /// the download settings say "Full size", else [`PHOTO_WIDTH`].
 fn kept_width(task: &PhotoTask, photo_size: PhotoSize) -> u32 {
-    if task.shown_at.is_some() || (task.photo && photo_size == PhotoSize::Full) {
+    if task.of_type {
+        TYPE_PICTURE_WIDTH
+    } else if task.shown_at.is_some() || (task.photo && photo_size == PhotoSize::Full) {
         FULL_WIDTH
     } else {
         PHOTO_WIDTH
@@ -560,12 +641,43 @@ fn photo_transform(tasks: &[PhotoTask], store: TileStore, photo_size: PhotoSize)
             )
         })
         .collect();
+    // The parts of one sheet: all cut from the file the first time it
+    // comes, so the sheet is asked for once (the others are then here).
+    let mut sheets: HashMap<String, Vec<(PathBuf, Cut, u32)>> = HashMap::new();
+    for task in tasks {
+        if let Some(cut) = task.cut {
+            sheets.entry(task.url.clone()).or_default().push((
+                task.path.clone(),
+                cut,
+                kept_width(task, photo_size),
+            ));
+        }
+    }
     Arc::new(move |task: &Task, bytes: Vec<u8>| {
         let (width, copy, card) =
             extras
                 .get(&task.path)
                 .cloned()
                 .unwrap_or((PHOTO_WIDTH, None, false));
+        let bytes = match sheets.get(&task.url) {
+            Some(parts) => {
+                for (path, cut, width) in parts.iter().filter(|(path, ..)| *path != task.path) {
+                    if store.is_done(path) {
+                        continue;
+                    }
+                    if let Ok(part) = cut_picture(&bytes, *cut)
+                        .and_then(|part| fit_picture(part, path, *width, None))
+                    {
+                        let _ = store.write(path, &part);
+                    }
+                }
+                match parts.iter().find(|(path, ..)| *path == task.path) {
+                    Some((_, cut, _)) => cut_picture(&bytes, *cut)?,
+                    None => bytes,
+                }
+            }
+            None => bytes,
+        };
         let kept = fit_picture(bytes, &task.path, width, None)?;
         // A GIF kept as it moves has no copy: pages show it at their size.
         let moving = is_moving_gif(&kept);
@@ -701,6 +813,11 @@ impl DownloadManager {
         } else {
             0
         };
+        let type_pictures = tasks.iter().filter(|task| task.of_type).count() as u64;
+        let type_pictures_remaining = tasks
+            .iter()
+            .filter(|task| task.of_type && !store.is_done(&task.path))
+            .count() as u64;
         Ok(PhotoPlan {
             pack_id: pack_id.to_owned(),
             total: tasks.len() as u64,
@@ -709,6 +826,8 @@ impl DownloadManager {
             job,
             busy_with,
             kept_smaller,
+            type_pictures,
+            type_pictures_remaining,
         })
     }
 
@@ -721,7 +840,14 @@ impl DownloadManager {
     /// that are not here yet. When another job is downloading, it queues
     /// behind it.
     pub fn start_photos(self: &Arc<Self>, pack_id: &str) -> Result<Snapshot, String> {
-        self.start_photos_with(pack_id, false)
+        self.start_photos_with(pack_id, false, false)
+    }
+
+    /// "Get this map's icons": [`Self::start_photos`] for the pictures of
+    /// the pack's types only, as the same job (one picture at a time, the
+    /// same pace, rules and log).
+    pub fn start_type_pictures(self: &Arc<Self>, pack_id: &str) -> Result<Snapshot, String> {
+        self.start_photos_with(pack_id, false, true)
     }
 
     /// "Download again at full size": [`Self::start_photos`], and the photos
@@ -735,13 +861,24 @@ impl DownloadManager {
                     .to_owned(),
             );
         }
-        self.start_photos_with(pack_id, true)
+        self.start_photos_with(pack_id, true, false)
     }
 
-    fn start_photos_with(self: &Arc<Self>, pack_id: &str, again: bool) -> Result<Snapshot, String> {
+    fn start_photos_with(
+        self: &Arc<Self>,
+        pack_id: &str,
+        again: bool,
+        types_only: bool,
+    ) -> Result<Snapshot, String> {
         let store = self.store(pack_id)?;
         let root = store.bundled.clone().expect("set by store()");
-        let all = photo_tasks(&root)?;
+        let mut all = photo_tasks(&root)?;
+        if types_only {
+            all.retain(|task| task.of_type);
+            if all.is_empty() {
+                return Err("This map has no icons of its own to download.".to_owned());
+            }
+        }
         if all.is_empty() {
             return Err("This pack lists no photos to download.".to_owned());
         }
@@ -1074,6 +1211,8 @@ mod tests {
                     for_cards: false,
                 }),
                 photo: false,
+                of_type: false,
+                cut: None,
             }
         );
         // A copy shown on another host is never asked for; a copy for pages
@@ -1197,6 +1336,128 @@ mod tests {
         assert_eq!(manager.photos_plan("t").unwrap().remaining, 0);
         // No job record is left for a photo job.
         assert!(!pack_dir.join(META_DIR).join(JOB_FILE).exists());
+    }
+
+    /// A made-up sheet of icons: its left half red, its right half blue.
+    fn sheet(width: u32, height: u32) -> Vec<u8> {
+        let image = RgbImage::from_fn(width, height, |x, _| {
+            if x < width / 2 {
+                Rgb([200, 30, 30])
+            } else {
+                Rgb([30, 30, 200])
+            }
+        });
+        encode(&DynamicImage::ImageRgb8(image), ImageFormat::Png).unwrap()
+    }
+
+    fn colour_at(bytes: &[u8], x: u32, y: u32) -> [u8; 3] {
+        image::load_from_memory(bytes)
+            .unwrap()
+            .to_rgb8()
+            .get_pixel(x, y)
+            .0
+    }
+
+    #[test]
+    fn cuts_a_part_of_a_picture_and_refuses_one_outside_it() {
+        let bytes = sheet(40, 20);
+        let cut = |x, y, width, height| Cut {
+            x,
+            y,
+            width,
+            height,
+        };
+        let right = cut_picture(&bytes, cut(20, 0, 20, 20)).unwrap();
+        assert!(right.starts_with(b"\x89PNG"));
+        assert_eq!(size_of(&right), (20, 20));
+        assert_eq!(colour_at(&right, 0, 0), [30, 30, 200]);
+        let left = cut_picture(&bytes, cut(0, 5, 10, 10)).unwrap();
+        assert_eq!(size_of(&left), (10, 10));
+        assert_eq!(colour_at(&left, 9, 9), [200, 30, 30]);
+        assert!(cut_picture(&bytes, cut(30, 0, 20, 20)).is_err());
+        assert!(cut_picture(&bytes, cut(0, 0, 40, 21)).is_err());
+        assert!(cut_picture(b"not a picture", cut(0, 0, 1, 1)).is_err());
+        // A picture's cut: whole numbers, sides of a pixel at least.
+        assert_eq!(
+            Cut::of(&serde_json::json!({"cut": {"x": 1, "y": 2, "width": 3, "height": 4}})),
+            Some(cut(1, 2, 3, 4))
+        );
+        for wrong in [
+            serde_json::json!({"cut": {"x": 1, "y": 2, "width": 0, "height": 4}}),
+            serde_json::json!({"cut": {"x": -1, "y": 2, "width": 3, "height": 4}}),
+            serde_json::json!({"cut": {"x": 1.5, "y": 2, "width": 3, "height": 4}}),
+            serde_json::json!({"file": "pictures/a.png"}),
+        ] {
+            assert_eq!(Cut::of(&wrong), None, "{wrong}");
+        }
+    }
+
+    /// A pack whose two types are drawn with icons on one made-up sheet, and
+    /// with one photo of its own.
+    fn icon_pack(dir: &Path, server: &MockServer) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("manifest.json"),
+            r#"{"schemaVersion":2,"gameId":"t","title":"Test Isle","packVersion":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("categories.json"),
+            r#"[{"id":"t:cat:red","name":"Red","icon":"star","picture":"t:picture:t-red"},
+                {"id":"t:cat:blue","name":"Blue","icon":"star","picture":"t:picture:t-blue"}]"#,
+        )
+        .unwrap();
+        let sheet = server.url("/media/sheet.png");
+        fs::write(
+            dir.join("pictures.json"),
+            format!(
+                r#"[{{"id":"t:picture:t-red","file":"pictures/t-red.png","shareable":false,"remote":"{sheet}","cut":{{"x":0,"y":0,"width":20,"height":20}}}},
+                    {{"id":"t:picture:t-blue","file":"pictures/t-blue.png","shareable":false,"remote":"{sheet}","cut":{{"x":20,"y":0,"width":20,"height":20}}}},
+                    {{"id":"t:picture:a","file":"pictures/a.jpg","shareable":false,"remote":"{}"}}]"#,
+                server.url("/media/a.png"),
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn gets_the_maps_icons_alone_asking_for_a_sheet_once() {
+        ensure_crypto();
+        let made_up = sheet(40, 20);
+        let photo = picture(30, 20, ImageFormat::Png);
+        let server = MockServer::start(Arc::new(move |path: &str, _| match path {
+            "/media/sheet.png" => Reply::image(made_up.clone()),
+            "/media/a.png" => Reply::image(photo.clone()),
+            _ => Reply::status(404),
+        }))
+        .await;
+        let dir = TempDir::new("photo-icons");
+        let pack_dir = dir.0.join("pack");
+        icon_pack(&pack_dir, &server);
+        let tasks = photo_tasks(&pack_dir).unwrap();
+        assert_eq!(
+            tasks.iter().map(|task| task.of_type).collect::<Vec<_>>(),
+            [true, true, false]
+        );
+        assert_eq!(kept_width(&tasks[0], PhotoSize::Full), TYPE_PICTURE_WIDTH);
+        let manager = manager(&dir, &pack_dir);
+        let plan = manager.photos_plan("t").unwrap();
+        assert_eq!((plan.type_pictures, plan.type_pictures_remaining), (2, 2));
+
+        manager.start_type_pictures("t").unwrap();
+        let done = wait_done(&manager, "t").await;
+        assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
+        let red = fs::read(pack_dir.join("pictures/t-red.png")).unwrap();
+        let blue = fs::read(pack_dir.join("pictures/t-blue.png")).unwrap();
+        assert_eq!((size_of(&red), size_of(&blue)), ((20, 20), (20, 20)));
+        assert_eq!(colour_at(&red, 10, 10), [200, 30, 30]);
+        assert_eq!(colour_at(&blue, 10, 10), [30, 30, 200]);
+        // The sheet was asked for once; the photo not at all.
+        let seen: Vec<String> = server.seen().iter().map(|r| r.path.clone()).collect();
+        assert_eq!(seen, ["/media/sheet.png"]);
+        assert!(!pack_dir.join("pictures/a.jpg").exists());
+        let plan = manager.photos_plan("t").unwrap();
+        assert_eq!((plan.type_pictures_remaining, plan.remaining), (0, 1));
     }
 
     const DRAWING: &str = r##"<?xml version="1.0" encoding="UTF-8"?>

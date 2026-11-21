@@ -123,7 +123,13 @@ function Place({
         {wide ? null : <div className="place-grip" aria-hidden="true" />}
         <header className="place-head">
           {category ? (
-            <GlyphBadge icon={category.icon} color={category.color} size={46} muted={found} />
+            <GlyphBadge
+              icon={category.icon}
+              color={category.color}
+              typeId={category.id}
+              size={46}
+              muted={found}
+            />
           ) : null}
           <div className="place-title-block">
             <p className="place-kind">{category?.name}</p>

@@ -100,6 +100,7 @@ function LocationDetails({ locationId }: { locationId: string }) {
             color={category.color}
             size={34}
             muted={Boolean(found)}
+            typeId={category.id}
           />
         ) : null}
         <div>

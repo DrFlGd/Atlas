@@ -2243,6 +2243,38 @@
                             "enum": ["all", "none"]
                           }
                         ]
+                      },
+                      "picture": {
+                        "type": "object",
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "cut": {
+                            "type": "object",
+                            "properties": {
+                              "x": {
+                                "type": "string"
+                              },
+                              "y": {
+                                "type": "string"
+                              },
+                              "width": {
+                                "type": "string"
+                              },
+                              "height": {
+                                "type": "string"
+                              },
+                              "scale": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["x", "y", "width", "height"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": ["address"],
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false

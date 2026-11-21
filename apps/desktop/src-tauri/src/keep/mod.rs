@@ -1562,6 +1562,8 @@ impl Loop {
             // The photos kept for the person's own use go in when the game
             // has them, as the export's own-use choice puts them.
             own_use_pictures: true,
+            // The map's icons go in a file only when the person ticks them in.
+            type_pictures: false,
             smaller_pictures: false,
             group,
             ..source
@@ -1592,6 +1594,7 @@ impl GameFacts {
             lock: false,
             comes_with_app: false,
             own_use_pictures: false,
+            type_pictures: false,
             smaller_pictures: false,
             group: None,
         })?;

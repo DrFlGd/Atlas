@@ -484,6 +484,12 @@ pub struct Counts {
     pub regions: u64,
     pub checklists: u64,
     pub guides: u64,
+    /// Types of location drawn with a picture of their own that the file
+    /// carries (the icons of the map the pack was read from, kept for the
+    /// person's own use). Optional: absent when there are none, and in a
+    /// file made before it.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub type_pictures: u64,
 }
 
 /// One map of the pack.

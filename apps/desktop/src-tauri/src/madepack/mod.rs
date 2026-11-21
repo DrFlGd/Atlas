@@ -507,6 +507,8 @@ pub(crate) fn write_made_with(
         // A photo kept for the person's own use is the map's too: nothing of
         // the folder is lost when it goes.
         own_use_pictures: true,
+        // So are the map's icons: the folder becomes this file.
+        type_pictures: true,
         smaller_pictures: false,
         group: crate::gamegroups::carried(&maps, id).ok().flatten(),
     };

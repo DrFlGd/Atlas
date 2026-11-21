@@ -477,3 +477,19 @@ fn reads_a_version_9_description_with_routes_of_the_person() {
     let written = serde_json::to_value(header.mine.unwrap()).unwrap();
     assert!(written.get("routes").is_none());
 }
+
+#[test]
+fn reads_a_version_9_description_with_the_maps_icons() {
+    let mut icons = header_v7();
+    icons["version"] = json!(VERSION_WITH_ROUTES);
+    icons["contents"]["typePictures"] = json!(3);
+    let header = parse_header(&icons.to_string()).unwrap();
+    assert_eq!(header.contents.type_pictures, 3);
+    let written = serde_json::to_value(header.contents).unwrap();
+    assert_eq!(written["typePictures"], 3);
+    // A description without them has none, and writes none.
+    let header = parse_header(&header_v7().to_string()).unwrap();
+    assert_eq!(header.contents.type_pictures, 0);
+    let written = serde_json::to_value(header.contents).unwrap();
+    assert!(written.get("typePictures").is_none());
+}

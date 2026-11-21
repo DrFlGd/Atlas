@@ -788,6 +788,15 @@ pub async fn photos_start(manager: Manager<'_>, pack_id: String) -> Result<Snaps
     manager.start_photos(&pack_id)
 }
 
+/// "Get this map's icons": the pictures of the pack's types not here yet,
+/// as a photo job of their own.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn photos_start_types(manager: Manager<'_>, pack_id: String) -> Result<Snapshot, String> {
+    crate::keep::changed(&pack_id);
+    manager.start_type_pictures(&pack_id)
+}
+
 /// "Download again at full size": the photos kept smaller before, asked
 /// for once more each, with those not here yet.
 #[cfg(feature = "downloads")]
@@ -1758,6 +1767,7 @@ pub async fn packfile_export<R: Runtime>(
     progress: Option<String>,
     include_mine: Option<bool>,
     include_photos: Option<bool>,
+    include_type_pictures: Option<bool>,
     smaller_pictures: Option<bool>,
 ) -> Result<Option<PackFileExported>, String> {
     desktop_only()?;
@@ -1811,6 +1821,7 @@ pub async fn packfile_export<R: Runtime>(
             &destination,
             include_mine.unwrap_or(false),
             include_photos.unwrap_or(false),
+            include_type_pictures.unwrap_or(false),
             smaller_pictures.unwrap_or(false),
             &mut |done| turn.update(done),
             &|| turn.cancelled(),

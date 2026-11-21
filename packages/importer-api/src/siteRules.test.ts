@@ -486,6 +486,39 @@ describe('checking a file', () => {
       ]);
     });
 
+    it('reads the icons of types only when the file says where they are, with a path', () => {
+      const picture = {
+        address: 'badge.src',
+        cut: {
+          x: 'badge.left',
+          y: 'badge.top',
+          width: 'badge.w',
+          height: 'badge.h',
+          scale: 'badge.ratio',
+        },
+      };
+      expect(
+        checkSiteRules(withPart({ ...several, types: { ...several.types, picture } })).ok,
+      ).toBe(true);
+      expect(
+        checkSiteRules(
+          withPart({ ...several, types: { ...several.types, picture: { address: 'badge' } } }),
+        ).ok,
+      ).toBe(true);
+      expect(mapFields({ ...oneMap, types: { ...oneMap.types, picture } })).toEqual([
+        'parts[0].types.picture',
+      ]);
+      expect(
+        mapFields({
+          ...several,
+          types: { ...several.types, picture: { address: 'badge', size: 'w' } },
+        }),
+      ).toEqual(['parts[0].types.picture.size']);
+      expect(
+        mapFields({ ...several, types: { ...several.types, picture: { cut: picture.cut } } }),
+      ).toEqual(['parts[0].types.picture.address']);
+    });
+
     it('takes which types can be ticked as found: all, none, or a list of type values', () => {
       const found = (value: unknown, types: object = oneMap.types) =>
         checkSiteRules(withPart({ ...oneMap, types: { ...types, found: value } }));

@@ -161,7 +161,14 @@ export function ProgressScreen() {
                     name={category.name}
                     tally={kindTally}
                     showPercent
-                    icon={<GlyphBadge icon={category.icon} color={category.color} size={28} />}
+                    icon={
+                      <GlyphBadge
+                        icon={category.icon}
+                        color={category.color}
+                        typeId={category.id}
+                        size={28}
+                      />
+                    }
                   />
                 </li>
               );

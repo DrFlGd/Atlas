@@ -54,6 +54,10 @@ interface PackShell {
   ownUse: { pictures: number; bytes: number } | null;
   /** Whether each export was asked to include them. */
   exportsPhotos: boolean[];
+  /** The map's icons whose file is here (pictures of the game's types): count and bytes. */
+  typePictures: { pictures: number; bytes: number } | null;
+  /** Whether each export was asked to include them. */
+  exportsIcons: boolean[];
   /** The pictures to pass on whose file is here, offered at full size or smaller: count and bytes. */
   pictures: { pictures: number; bytes: number } | null;
   /** Whether each export was asked to make the pictures smaller. */
@@ -79,6 +83,8 @@ function installPackShell() {
     exportsMine: [],
     ownUse: null,
     exportsPhotos: [],
+    typePictures: null,
+    exportsIcons: [],
     pictures: null,
     exportsSmaller: [],
     importMine: null,
@@ -320,6 +326,12 @@ function installPackShell() {
           ...(shell.ownUse
             ? { ownUsePictures: shell.ownUse.pictures, ownUsePictureBytes: shell.ownUse.bytes }
             : {}),
+          ...(shell.typePictures
+            ? {
+                typePictures: shell.typePictures.pictures,
+                typePictureBytes: shell.typePictures.bytes,
+              }
+            : {}),
           ...(shell.pictures
             ? { pictures: shell.pictures.pictures, pictureBytes: shell.pictures.bytes }
             : {}),
@@ -331,6 +343,7 @@ function installPackShell() {
         const withMine = args.includeMine === true;
         shell.exportsMine.push(withMine);
         shell.exportsPhotos.push(args.includePhotos === true);
+        shell.exportsIcons.push(args.includeTypePictures === true);
         const smaller = args.smallerPictures === true;
         shell.exportsSmaller.push(smaller);
         if (args.id === 'isle-wiki') {
@@ -719,6 +732,38 @@ test('offers the photos downloaded for one’s own use in a pack file, and only 
   await dialog.getByTestId('export-start').click();
   await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
   expect((await packShell(page)).exportsPhotos).toEqual([false, true]);
+  expect(errors).toEqual([]);
+});
+
+test('offers the map’s icons in a pack file, off until ticked, and only when there are any', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await openLibraryGame(page, 'demo');
+  const dialog = page.getByTestId('pack-file-dialog');
+  await libraryMore(page, 'export-pack');
+  await expect(dialog.getByTestId('export-start')).toBeEnabled();
+  await expect(dialog.getByTestId('export-with-icons')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  await setShell(page, { typePictures: { pictures: 14, bytes: 42_000 } });
+  await libraryMore(page, 'export-pack');
+  const icons = dialog.getByTestId('export-with-icons');
+  await expect(icons).toHaveAccessibleName('Include this map’s icons');
+  await expect(icons).toHaveAccessibleDescription(
+    /The 14 icons of the map this game was read from/,
+  );
+  await expect(icons).toHaveAccessibleDescription(/Atlas’s own icons/);
+  await expect(icons).not.toBeChecked();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  await libraryMore(page, 'export-pack');
+  await icons.check();
+  await dialog.getByTestId('export-start').click();
+  await expect(dialog.getByTestId('export-result')).toContainText('Saved demo-standard.atlaspack');
+  expect((await packShell(page)).exportsIcons).toEqual([false, true]);
   expect(errors).toEqual([]);
 });
 

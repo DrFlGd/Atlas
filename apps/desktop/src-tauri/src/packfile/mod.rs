@@ -637,7 +637,59 @@ pub fn count_contents(root: &Path) -> Counts {
         regions: count("regions.json"),
         checklists: count("checklists.json"),
         guides: count("guides.json"),
+        type_pictures: type_picture_ids(root).len() as u64,
     }
+}
+
+/// The pack's types (`categories.json`).
+pub const CATEGORIES_FILE: &str = "categories.json";
+
+/// The pictures the pack's types are drawn with (a type's `picture`): the
+/// icons of the map it was read from. None when the file is absent or
+/// cannot be read.
+pub fn type_picture_ids(root: &Path) -> BTreeSet<String> {
+    read_json_capped(
+        &root.join(CATEGORIES_FILE),
+        crate::library::MAX_PACK_FILE_BYTES as u64,
+    )
+    .ok()
+    .and_then(|value| {
+        value.as_array().map(|types| {
+            types
+                .iter()
+                .filter_map(|category| category.get("picture").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+    })
+    .unwrap_or_default()
+}
+
+/// The pack's `categories.json` without the pictures of its types, for a
+/// file that leaves the map's icons out; None when no type has one, so the
+/// file is carried as it is.
+pub fn categories_without_pictures(root: &Path) -> Result<Option<Vec<u8>>, String> {
+    let path = root.join(CATEGORIES_FILE);
+    if fs::symlink_metadata(&path).is_err() {
+        return Ok(None);
+    }
+    let Value::Array(mut types) =
+        read_json_capped(&path, crate::library::MAX_PACK_FILE_BYTES as u64)?
+    else {
+        return Err(format!("The pack's {CATEGORIES_FILE} is not a list."));
+    };
+    let mut changed = false;
+    for category in &mut types {
+        if let Some(object) = category.as_object_mut() {
+            changed |= object.remove("picture").is_some();
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut bytes = serde_json::to_vec_pretty(&Value::Array(types)).expect("JSON serialises");
+    bytes.push(b'\n');
+    Ok(Some(bytes))
 }
 
 /// The number of entries of a JSON array file; 0 when absent or unreadable.
@@ -733,10 +785,27 @@ impl SharedPictures {
 /// How many pictures kept for the person's own use have their file here,
 /// and their bytes: what "Include downloaded photos" would add to a file.
 pub fn own_use_pictures(root: &Path, images: &Path) -> Result<(u64, u64), String> {
-    let Some(all) = shared_pictures(root, images, true)? else {
+    added_pictures(root, images, true, false)
+}
+
+/// How many pictures of the pack's types (the map's icons) have their file
+/// here, and their bytes: what "Include this map's icons" would add.
+pub fn type_pictures_here(root: &Path, images: &Path) -> Result<(u64, u64), String> {
+    added_pictures(root, images, false, true)
+}
+
+/// The pictures whose file a choice adds to a file, and their bytes.
+fn added_pictures(
+    root: &Path,
+    images: &Path,
+    own_use: bool,
+    type_pictures: bool,
+) -> Result<(u64, u64), String> {
+    let Some(all) = shared_pictures_with(root, images, own_use, type_pictures)? else {
         return Ok((0, 0));
     };
-    let shared = shared_pictures(root, images, false)?.map_or(Vec::new(), |shared| shared.files);
+    let shared =
+        shared_pictures_with(root, images, false, false)?.map_or(Vec::new(), |shared| shared.files);
     let bytes = |files: &[Entry]| files.iter().map(|entry| entry.size).sum::<u64>();
     Ok((
         (all.files.len() - shared.len()) as u64,
@@ -749,6 +818,23 @@ pub fn shared_pictures(
     images: &Path,
     own_use: bool,
 ) -> Result<Option<SharedPictures>, String> {
+    shared_pictures_with(root, images, own_use, own_use)
+}
+
+/// [`shared_pictures`], with the pictures of the pack's types (the icons of
+/// the map it was read from, see [`type_picture_ids`]) apart from the other
+/// pictures kept for the person's own use: with `type_pictures`, those
+/// whose file is here go in (still marked as kept for the person's own
+/// use); without it, they are left out of the list altogether, even those
+/// fetched later, so the file holds nothing of them (its types then name
+/// no picture, see [`categories_without_pictures`]).
+pub fn shared_pictures_with(
+    root: &Path,
+    images: &Path,
+    own_use: bool,
+    type_pictures: bool,
+) -> Result<Option<SharedPictures>, String> {
+    let types = type_picture_ids(root);
     let path = root.join(PICTURES_FILE);
     if fs::symlink_metadata(&path).is_err() {
         return Ok(None);
@@ -761,7 +847,15 @@ pub fn shared_pictures(
     let mut kept = Vec::new();
     let mut files = Vec::new();
     for picture in pictures {
+        let of_type = picture
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| types.contains(id));
+        if of_type && !type_pictures {
+            continue;
+        }
         let shareable = picture.get("shareable").and_then(Value::as_bool) == Some(true);
+        let carried = shareable || if of_type { type_pictures } else { own_use };
         let remote = picture.get("remote").and_then(Value::as_str).is_some();
         let Some(file) = picture.get("file").and_then(Value::as_str) else {
             continue;
@@ -772,7 +866,7 @@ pub fn shared_pictures(
         let Some(relative) = relative_path(file) else {
             continue;
         };
-        let found = if shareable || own_use {
+        let found = if carried {
             [root.join(&relative), images.join(&relative)]
                 .into_iter()
                 .find_map(|on_disk| match fs::symlink_metadata(&on_disk) {
@@ -1090,6 +1184,10 @@ pub struct PackSource {
     /// (`shareable: false`, such as location photos) to go in the file
     /// too: it is then a file to keep, not to pass on.
     pub own_use_pictures: bool,
+    /// The person ticked "Include this map's icons": the pictures of the
+    /// pack's types whose file is here go in the file, kept for their own
+    /// use. Without it the file holds nothing of them.
+    pub type_pictures: bool,
     /// The person chose "Pictures in the file: Smaller": the pictures it
     /// carries are made smaller as they are written (see [`smaller`]).
     pub smaller_pictures: bool,
@@ -1303,8 +1401,6 @@ pub fn plan_images(
     (entries, facts)
 }
 
-/// The pack's JSON files that are there, as entries (the manifest read
-/// in full, to be rewritten).
 /// A pack's routes (see `routes.ts` in the schema package).
 pub const ROUTES_FILE: &str = "routes.json";
 
@@ -1317,6 +1413,8 @@ pub fn holds_routes(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// The pack's JSON files that are there, as entries (the manifest read
+/// in full, to be rewritten).
 pub fn pack_file_entries(root: &Path) -> Result<Vec<Entry>, String> {
     let mut entries = Vec::new();
     for name in PACK_FILES {
@@ -1388,6 +1486,11 @@ pub struct ExportOptions {
     /// and their bytes; 0 when there are none to offer.
     pub own_use_pictures: u64,
     pub own_use_picture_bytes: u64,
+    /// The pictures of the pack's types (the map's icons) whose file is
+    /// here, which "Include this map's icons" would add, and their bytes; 0
+    /// when there are none to offer.
+    pub type_pictures: u64,
+    pub type_picture_bytes: u64,
     /// The pictures that may be passed on whose file is here, which every
     /// file carries, and their bytes at full size: what "Pictures in the
     /// file" is about, with those for the person's own use.
@@ -1442,11 +1545,14 @@ pub fn export_options(source: &PackSource) -> Result<ExportOptions, String> {
         });
     }
     let (own_use_pictures, own_use_picture_bytes) = own_use_pictures(&source.root, &source.images)?;
+    let (type_pictures, type_picture_bytes) = type_pictures_here(&source.root, &source.images)?;
     let shared = shared_pictures(&source.root, &source.images, false)?
         .map_or(Vec::new(), |shared| shared.files);
     Ok(ExportOptions {
         own_use_pictures,
         own_use_picture_bytes,
+        type_pictures,
+        type_picture_bytes,
         pictures: shared.len() as u64,
         picture_bytes: shared.iter().map(|entry| entry.size).sum(),
         pack_id: source.pack_id.clone(),

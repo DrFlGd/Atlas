@@ -1,4 +1,4 @@
-import type { Layer } from '@atlas/schema';
+import type { Category, Layer } from '@atlas/schema';
 import type { PixelBounds, PixelPoint } from '../geometry/coords';
 import type { MapLayerSpec, MapMarker } from '../mapview/types';
 import { passesFilter, type MarkerFilter } from '../filters/visibility';
@@ -80,6 +80,8 @@ export interface LayerMarkerOptions {
   alwaysInclude?: string | null;
   /** The locations with a note of the person's own, marked as such. */
   noted?: ReadonlySet<string> | null;
+  /** The address of the picture a type is drawn with in place of its badge, or null for its badge. */
+  typePicture?: ((category: Category) => string | null) | undefined;
 }
 
 /**
@@ -92,8 +94,17 @@ export function layerMarkers(
   layerId: string,
   options: LayerMarkerOptions = {},
 ): MapMarker[] {
-  const { filter, alwaysInclude = null, noted = null } = options;
+  const { filter, alwaysInclude = null, noted = null, typePicture } = options;
   const markers: MapMarker[] = [];
+  const pictures = new Map<string, string | null>();
+  const pictureOf = (category: Category): string | null => {
+    let picture = pictures.get(category.id);
+    if (picture === undefined) {
+      picture = typePicture?.(category) ?? null;
+      pictures.set(category.id, picture);
+    }
+    return picture;
+  };
   for (const location of pack.locationsOn(layerId)) {
     if (filter && location.id !== alwaysInclude && !passesFilter(location, filter)) continue;
     const category = pack.categories.get(location.categoryId);
@@ -106,6 +117,8 @@ export function layerMarkers(
     };
     if (filter?.isFound(location.id)) marker.muted = true;
     if (noted?.has(location.id)) marker.noted = true;
+    const picture = typePicture && category ? pictureOf(category) : null;
+    if (picture) marker.picture = picture;
     markers.push(marker);
   }
   return markers;

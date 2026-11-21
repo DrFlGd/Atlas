@@ -131,6 +131,7 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "photos_plan",
     "photos_start",
     "photos_start_again",
+    "photos_start_types",
     "photos_pause",
     "photos_resume",
     "photos_cancel",

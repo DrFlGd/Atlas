@@ -377,7 +377,12 @@ function Browse({ game }: { game: LoadedGame }) {
                     showSection('map');
                   }}
                 >
-                  <GlyphBadge icon={category.icon} color={category.color} size={36} />
+                  <GlyphBadge
+                    icon={category.icon}
+                    color={category.color}
+                    typeId={category.id}
+                    size={36}
+                  />
                   <span className="touch-row-text">
                     <span className="touch-row-title">{category.name}</span>
                   </span>
@@ -567,7 +572,13 @@ function PlaceRow({
         }}
       >
         {category ? (
-          <GlyphBadge icon={category.icon} color={category.color} size={36} muted={found} />
+          <GlyphBadge
+            icon={category.icon}
+            color={category.color}
+            typeId={category.id}
+            size={36}
+            muted={found}
+          />
         ) : null}
         <span className="touch-row-text">
           <span className="touch-row-title">{location.name}</span>

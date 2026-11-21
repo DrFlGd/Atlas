@@ -169,6 +169,16 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
       expect(guides.has(loc.guideId), `${path}.guideId`, `unknown guide ${loc.guideId}`);
   });
 
+  pack.categories.forEach((category, i) => {
+    if (category.picture !== undefined) {
+      expect(
+        pictures.has(category.picture),
+        `categories[${i}].picture`,
+        `unknown picture ${category.picture}`,
+      );
+    }
+  });
+
   pack.checklistItems.forEach((item, i) => {
     const path = `checklistItems[${i}]`;
     expect(

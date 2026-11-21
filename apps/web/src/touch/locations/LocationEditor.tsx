@@ -299,7 +299,7 @@ export function LocationEditorOutline({ game }: { game: LoadedGame }) {
                       openSide({ kind: 'type', id: type.id, forLocation: null });
                     }}
                   >
-                    <GlyphBadge icon={type.icon} color={type.color} size={28} />
+                    <GlyphBadge icon={type.icon} color={type.color} typeId={type.id} size={28} />
                     <span className="locations-row-text">
                       <span className="locations-row-name">{type.name}</span>
                       <span className="locations-row-detail">
@@ -398,7 +398,9 @@ function OwnLocationRow({
           goToLocation(location.id);
         }}
       >
-        {type ? <GlyphBadge icon={type.icon} color={type.color} size={28} /> : null}
+        {type ? (
+          <GlyphBadge icon={type.icon} color={type.color} typeId={type.id} size={28} />
+        ) : null}
         <span className="locations-row-text">
           <span className="locations-row-name">{location.name}</span>
           <span className="locations-row-detail">
@@ -574,7 +576,9 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
             Type
           </label>
           <div className="locations-pick">
-            {type ? <GlyphBadge icon={type.icon} color={type.color} size={28} /> : null}
+            {type ? (
+              <GlyphBadge icon={type.icon} color={type.color} typeId={type.id} size={28} />
+            ) : null}
             <select
               id={`${id}-type`}
               className="own-input locations-select"
@@ -796,7 +800,9 @@ function NewLocationForm({ game, draft }: { game: LoadedGame; draft: NewLocation
               Type
             </label>
             <div className="locations-pick">
-              {type ? <GlyphBadge icon={type.icon} color={type.color} size={28} /> : null}
+              {type ? (
+                <GlyphBadge icon={type.icon} color={type.color} typeId={type.id} size={28} />
+              ) : null}
               <select
                 id={`${id}-type`}
                 className="own-input locations-select"

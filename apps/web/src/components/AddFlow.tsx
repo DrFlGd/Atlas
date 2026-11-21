@@ -46,6 +46,7 @@ import {
 import { titleFromAddress } from '../state/gameChoice';
 import { layoutText } from '../state/pageLayouts';
 import { useAtlas } from '../state/store';
+import { chooseTypePictures, typePictureCount, useTypePictures } from '../state/typePictures';
 import { formatDuration } from './downloadFormat';
 import { CataloguePick, ChoosePages, Listing, UpdateGames } from './GameChoice';
 import { SameTitleOfferCard } from './GameTitles';
@@ -663,6 +664,7 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
           {PHOTOS_COMING}
         </p>
       ) : null}
+      <MapIconsChoice packId={phase.packId} />
       <SameTitleOfferCard gameId={phase.packId} />
       <div className="row-actions wrap">
         {phase.guideId && !phase.rebuilt ? (
@@ -716,6 +718,35 @@ function Result({ phase }: { phase: Extract<ImportPhase, { kind: 'done' }> }) {
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * "Use this map's icons", for a game just added whose types name the icons
+ * of the map it was read from: ticked, as the game's choice is until the
+ * person turns it off (here or in the Library).
+ */
+function MapIconsChoice({ packId }: { packId: string }) {
+  const game = useAtlas((s) => (s.game?.entry.id === packId ? s.game : null));
+  const on = useTypePictures((s) => (s.gameId === packId ? s.on : true));
+  if (!game || typePictureCount(game) === 0) return null;
+  return (
+    <label className="checkbox-row" data-testid="add-map-icons">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(event) => {
+          void chooseTypePictures(packId, event.target.checked);
+        }}
+      />
+      <span>
+        Use this map’s icons
+        <span className="muted small pack-file-hint">
+          Its types are drawn with the icons of the map it was read from, kept for your own use,
+          once they are downloaded with its photos. Untick this for Atlas’s own icons.
+        </span>
+      </span>
+    </label>
   );
 }
 

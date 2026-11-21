@@ -183,7 +183,13 @@ function SearchResult({ id, hit, active, onChoose, onHover }: SearchResultProps)
     >
       <span className="search-result-icon">
         {category ? (
-          <GlyphBadge icon={category.icon} color={category.color} size={22} muted={found} />
+          <GlyphBadge
+            icon={category.icon}
+            color={category.color}
+            typeId={category.id}
+            size={22}
+            muted={found}
+          />
         ) : (
           <span className="kind-tag">{KIND_LABEL[entry.kind]}</span>
         )}

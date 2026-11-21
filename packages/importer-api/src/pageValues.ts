@@ -240,7 +240,20 @@ export function pageValuesSpec(part: RulesMapPart): PageValuesSpec | null {
       sets.bounds,
     ]);
   }
-  under(types.path, [types.id, types.name, types.group, types.icon, types.order]);
+  const cut = types.picture?.cut;
+  under(types.path, [
+    types.id,
+    types.name,
+    types.group,
+    types.icon,
+    types.order,
+    types.picture?.address,
+    cut?.x,
+    cut?.y,
+    cut?.width,
+    cut?.height,
+    cut?.scale,
+  ]);
   if (types.groups) {
     under(types.groups.path, [types.groups.id, types.groups.name, types.groups.order]);
   }

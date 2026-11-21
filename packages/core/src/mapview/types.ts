@@ -49,6 +49,12 @@ export interface MapMarker {
   muted?: boolean;
   /** Drawn with a small mark, for a location with a note of the person's own. */
   noted?: boolean;
+  /**
+   * The address of a picture drawn in place of the badge (a type's own
+   * icon, from the map it was read from). Until it has loaded, and when it
+   * cannot be, the badge is drawn.
+   */
+  picture?: string;
 }
 
 /** The marker under the pointer, and where it sits in container pixels. */

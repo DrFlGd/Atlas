@@ -739,6 +739,27 @@ export const PAGE_VALUE_FORMS = ['store', 'element'] as const;
  */
 export const POSITION_UNITS = ['pixels', 'fraction', 'degrees', 'square'] as const;
 
+/**
+ * `types.picture`: inside one type, the address of its icon picture (on
+ * `site.hosts` or `pictures.hosts`), and where the icon is one of several
+ * on one picture (a sheet of icons), the part it is: its left and top edge
+ * and its size, in the sizes the page draws it at, times `scale` (the
+ * sheet's pixels for each of those) when there is one. A type whose part
+ * the data does not give is the whole picture.
+ */
+const typePictureSchema = z.strictObject({
+  address: dataPath,
+  cut: z
+    .strictObject({
+      x: dataPath,
+      y: dataPath,
+      width: dataPath,
+      height: dataPath,
+      scale: dataPath.optional(),
+    })
+    .optional(),
+});
+
 /** Type values one `types.found` list names at most. */
 export const MAX_FOUND_TYPES = 200;
 
@@ -880,6 +901,12 @@ const mapPartFields = {
       })
       .optional(),
     found: foundSchema.optional(),
+    /**
+     * The type's own icon on the map, as the site draws it: kept for the
+     * owner's own use and drawn in place of Atlas's icon where they choose.
+     * Without it, no icon picture is read.
+     */
+    picture: typePictureSchema.optional(),
   }),
   locations: z.strictObject({
     path: dataPath,
@@ -1729,7 +1756,7 @@ function mapPartProblems(
   if (fromLocations === (types.path !== undefined)) {
     add(['types'], 'must hold either "from": "locations" or path, not both and not neither');
   } else if (fromLocations) {
-    for (const key of ['id', 'name', 'group', 'icon', 'order', 'groups'] as const) {
+    for (const key of ['id', 'name', 'group', 'icon', 'order', 'groups', 'picture'] as const) {
       if (types[key] !== undefined) add(['types', key], 'is only for types with a path');
     }
   } else {

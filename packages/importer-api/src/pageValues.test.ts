@@ -120,6 +120,25 @@ describe('the values of a map page, read in the window', () => {
     ).toBeNull();
   });
 
+  it('take the icon of each type and its part of a sheet only where the file reads them', () => {
+    const part = checked({
+      ...PART,
+      types: {
+        ...PART.types,
+        picture: {
+          address: 'badge.src',
+          cut: { x: 'badge.left', y: 'badge.top', width: 'w', height: 'h' },
+        },
+      },
+    });
+    expect(pageValuesSpec(part)!.keep.state).toMatchObject({
+      kinds: { '*': { id: 1, label: 1, badge: { src: 1, left: 1, top: 1 }, w: 1, h: 1 } },
+    });
+    expect((pageValuesSpec(checked())!.keep.state as { kinds: unknown }).kinds).toEqual({
+      '*': { id: 1, label: 1 },
+    });
+  });
+
   it('copy only the named fields, call only getState, and run no getter', () => {
     const reader = pageValuesReader(checked())!;
     expect(reader.length).toBeLessThan(MAX_READER_CHARS);

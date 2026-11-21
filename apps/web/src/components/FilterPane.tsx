@@ -327,7 +327,12 @@ function GroupRow({ group, categories, visible, tally, categoryTally }: GroupRow
                   setCategoriesVisible([category.id], event.target.checked);
                 }}
               />
-              <GlyphBadge icon={category.icon} color={category.color} size={20} />
+              <GlyphBadge
+                icon={category.icon}
+                color={category.color}
+                typeId={category.id}
+                size={20}
+              />
               <span className="tree-name">{category.name}</span>
               <CountBadge tally={categoryTally(category.id)} />
             </label>

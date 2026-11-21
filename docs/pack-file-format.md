@@ -15,7 +15,7 @@ The entries come in this order:
 3. The pack's JSON files, such as `manifest.json`, `maps.json`, `layers.json`, `locations.json`, `guides.json`, `sections.json`, `pictures.json` and, from version 9, `routes.json`. They are deflated. A `routes.json` that holds no route is left out.
 4. The status file of each layer whose images can be downloaded, `offline-tiles/<layer>.json`.
 5. The map images, at the paths each layer's own `url` gives, with an empty `.404` marker for an image the map server did not have. They are stored.
-6. The pictures the pages show, in `pictures/`, that may be passed on.
+6. The pictures the pages show, in `pictures/`, that may be passed on, and those kept for the person's own use that they asked for: their downloaded photos, and from version 9 the map's icons (the pictures the pack's types name, see "The map's icons").
 7. Only when the person asked for it: their own lists, locations, pages, notes, routes (from version 9, `mine/my-routes.json`) and photos, and the title the game is shown under with other games, under `mine/`.
 
 A pack of guidebooks (version 8, see "Guidebooks") holds, after the description, `manifest.json` and `guidebooks.json` (deflated), then each guidebook's text file and its file (both stored). It holds nothing else.
@@ -40,7 +40,7 @@ Every entry has the time the file was made, in UTC.
 | `pack`           | What the pack's manifest says of itself: `id`, `title`, `packVersion`, `gamePatch`, `schemaVersion`, `attribution`, and optionally `created`, `updated` and `writtenBy`.                                                                                                                                                                                                                                                                       |
 | `personalUse`    | Optional, only ever `true`: the pack's manifest says it is kept for the person's own use. A file with it is not to be passed on to others.                                                                                                                                                                                                                                                                                                     |
 | `source`         | Where the data came from. `kind` is `web-pages`, `app` or `unknown`. Optional: `name`, the name of the site the pages were read from (see below); `origin`, where the pack came from in one word (see below); `importer` (`id` and `title`); `pages`, each page read with `url`, `mapId` and `importedAt`; `newestPageAt` and `oldestPageAt`.                                                                                                  |
-| `contents`       | Counts: `maps`, `layers`, `locations`, `categories`, `regions`, `checklists` and `guides`.                                                                                                                                                                                                                                                                                                                                                     |
+| `contents`       | Counts: `maps`, `layers`, `locations`, `categories`, `regions`, `checklists` and `guides`, and optionally `typePictures` (from version 9), the types drawn with a picture of their own that the file carries; absent when there are none.                                                                                                                                                                                                      |
 | `maps`           | Optional. One entry per map, in the order of the pack's `maps.json`: `id`, `name`, `width` and `height` of its most detailed image in pixels, `locations` (how many the pack has on it), and `preview`, the entry name of its small picture when the file holds one.                                                                                                                                                                           |
 | `guides`         | Optional. The pack's pages, with `title`, `type` and `pages`. `type` is `guide` for pages read in order (the manifest's `pagesInOrder`) and `wiki` for pages read as a collection. A pack's pages are one source of pages, so there is one entry at most. A game of maps whose pages are only the notes of its locations has none.                                                                                                             |
 | `cover`          | Optional. The entry name of the small picture to show for the file: that of the first map that has one.                                                                                                                                                                                                                                                                                                                                        |
@@ -153,23 +153,27 @@ A map with no image in the file has no small picture. Neither has a map whose im
 
 When Atlas imports a file, it checks each small picture and then leaves it out. It is not written into the pack folder and is kept nowhere, since the map's own images show the map. The description, kept with the pack as `.atlas/pack-file.json`, still names it.
 
+## The map's icons
+
+A pack read from a map site may draw its types with the site's own icons: a type in `categories.json` then names a picture (`picture`, beside its `icon`), and that picture is kept for the person's own use (`shareable: false`). A picture cut from a sheet of icons has `cut`, the part of the downloaded file it is. A file leaves these icons out unless the person ticked "Include this map's icons" when writing it: neither their pictures nor their entries in `pictures.json` are in the file, and its types name no picture, so the file stays at the version of what else it carries. With them, the file is version 9 and `contents.typePictures` counts the types that name a picture. A reader that does not know `picture` draws each type's `icon`, which every type still has.
+
 ## Versions
 
 A file is written at the lowest version that can hold what it carries. So an older app reads every file it can, and refuses a newer one with a message that names the app and version that made it.
 
-| Version | What it adds                                                                                                                         |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 1       | The pack and its map images.                                                                                                         |
-| 2       | The person's own lists, locations and types (`mine/`).                                                                               |
-| 3       | Their own photos and the links between guide pages and the map.                                                                      |
-| 4       | Their own guide pages.                                                                                                               |
-| 5       | Their notes on the game's locations, and a guide page linked to one location alone.                                                  |
-| 6       | The title the game is shown under with other games.                                                                                  |
-| 7       | Small pictures of the maps (`preview/`).                                                                                             |
-| 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).                                                            |
-| 9       | Routes: the pack's `routes.json` holding a route, or the person's own routes (`mine/my-routes.json`, counted as `routes` in `mine`). |
+| Version | What it adds                                                                                                                                                                                                                                                                     |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1       | The pack and its map images.                                                                                                                                                                                                                                                     |
+| 2       | The person's own lists, locations and types (`mine/`).                                                                                                                                                                                                                           |
+| 3       | Their own photos and the links between guide pages and the map.                                                                                                                                                                                                                  |
+| 4       | Their own guide pages.                                                                                                                                                                                                                                                           |
+| 5       | Their notes on the game's locations, and a guide page linked to one location alone.                                                                                                                                                                                              |
+| 6       | The title the game is shown under with other games.                                                                                                                                                                                                                              |
+| 7       | Small pictures of the maps (`preview/`).                                                                                                                                                                                                                                         |
+| 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).                                                                                                                                                                                                        |
+| 9       | Routes: the pack's `routes.json` holding a route, or the person's own routes (`mine/my-routes.json`, counted as `routes` in `mine`). The map's icons: types that name a picture (`picture` in `categories.json`), with those pictures (counted as `typePictures` in `contents`). |
 
-The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, and only a file that carries routes is version 9; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
+The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, and only a file that carries routes or the map's icons is version 9; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
 
 ## Guidebooks
 
@@ -236,7 +240,7 @@ A pack of guidebooks is not exported: to pass guidebooks on, copy the pack file 
 - The person's progress: found marks, ticks, profiles, presets and settings. They live in the app's own storage, never in the pack folder.
 - The page data and style sheets kept by "Add a map" (`import/`).
 - The app's lock and download records (`.atlas/`).
-- A picture kept for the person's own use (`shareable: false`), unless the person chose to include such pictures. The file is then for their own devices only.
+- A picture kept for the person's own use (`shareable: false`), unless the person chose to include such pictures. The file is then for their own devices only. The map's icons go in only with their own choice (see "The map's icons").
 - A smaller copy of a picture made for pages (`pageCopy`).
 - The person's own things under `mine/`, unless the person chose to include them.
 

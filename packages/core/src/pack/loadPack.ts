@@ -48,6 +48,33 @@ function namesPhotos(raw: unknown): boolean {
   );
 }
 
+/** Whether a raw list of types names a picture of its own. */
+function namesPictures(raw: unknown): boolean {
+  return (
+    Array.isArray(raw) &&
+    raw.some(
+      (record: unknown) => typeof (record as { picture?: unknown } | null)?.picture === 'string',
+    )
+  );
+}
+
+/**
+ * The types without a picture that names no picture of the pack: read
+ * leniently, as a field the app could not use, so the pack still opens.
+ */
+function withoutLostPictures(
+  categories: PackData['categories'],
+  pictures: PackData['pictures'],
+): PackData['categories'] {
+  if (!categories.some((category) => category.picture !== undefined)) return categories;
+  const known = new Set((pictures ?? []).map((picture) => picture.id));
+  return categories.map((category) => {
+    if (category.picture === undefined || known.has(category.picture)) return category;
+    const { picture: _lost, ...rest } = category;
+    return rest;
+  });
+}
+
 /**
  * Loads, validates and indexes the data pack at `packUrl`. The URL must be
  * absolute and point at the pack root folder (the one holding
@@ -113,16 +140,18 @@ export async function loadPack(
   const guides = read('guides');
   const locations = read('locations');
   const items = read('checklistItems');
+  const types = read('categories');
   const hasGuides = guides.then((raw) => Array.isArray(raw) && raw.length > 0);
   const raws = await Promise.all(
     COLLECTION_NAMES.map((name) => {
       if (name === 'guides') return guides;
       if (name === 'locations') return locations;
       if (name === 'checklistItems') return items;
+      if (name === 'categories') return types;
       if (name === 'sections') return hasGuides.then((yes) => (yes ? read(name) : undefined));
       if (name === 'pictures') {
-        return Promise.all([hasGuides, locations, items]).then(([yes, l, i]) =>
-          yes || namesPhotos(l) || namesPhotos(i) ? read(name) : undefined,
+        return Promise.all([hasGuides, locations, items, types]).then(([yes, l, i, t]) =>
+          yes || namesPhotos(l) || namesPhotos(i) || namesPictures(t) ? read(name) : undefined,
         );
       }
       return read(name);
@@ -147,6 +176,7 @@ export async function loadPack(
   const data: PackData = cleanRoutes({
     manifest: withoutLostHomePage(manifest, collections.guides),
     ...collections,
+    categories: withoutLostPictures(collections.categories, collections.pictures),
   });
 
   const issues = checkPackIntegrity(data);
