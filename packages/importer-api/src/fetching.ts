@@ -11,9 +11,10 @@
  *   with no page limit: the person watches the count and stops it.
  * - Every request names the app (`Atlas/<version>`) and carries no cookies
  *   and no sign-in; the app never pretends to be a browser.
- * - The site's `robots.txt` is read first, once per site in a go, and an
- *   address it does not allow for `Atlas` is never asked for, unless the
- *   site's own permission, recorded in a file of the person's, covers it
+ * - The site's `robots.txt` is read first, once per site in a go (and in a
+ *   session of games added one at a time), and an address it does not
+ *   allow for `Atlas` is never asked for, unless the site's own
+ *   permission, recorded in a file of the person's, covers it
  *   (`SiteInfo.permission`, see {@link fetchVerdict}).
  * - An address the site's rules file keeps the app off
  *   (`SiteInfo.keepOff`) is never asked for, nor opened in a window, and
@@ -22,6 +23,12 @@
  *   once: nothing is tried again or around it. An importer that sees a
  *   page asking to confirm the reader is a person does the same, with a
  *   failure that has `stop: true`.
+ * - A page read at one of its anchors (an address with a fragment, `#…`),
+ *   for which the importer names that page without its fragment, is asked
+ *   for once in a go, and once in a session of games added one at a time:
+ *   its other anchors are read from the answer kept then (the games of a
+ *   list page that are each an anchor on it, say). Only an answer that
+ *   does not refuse is kept, and only until the go or the session ends.
  *
  * Only an app that downloads map images can fetch pages; an importer that
  * reads this way fails plainly in one that cannot.

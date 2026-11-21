@@ -303,6 +303,7 @@ function installFakeShell({
   downloads,
   wiki,
   others,
+  pages,
   listed,
   background,
   packsFolder,
@@ -313,6 +314,7 @@ function installFakeShell({
   downloads: boolean;
   wiki: WikiSite | null;
   others: Record<string, WikiSite>;
+  pages: Record<string, string>;
   listed: Record<string, unknown>[];
   background: boolean;
   packsFolder: boolean;
@@ -554,6 +556,15 @@ function installFakeShell({
       retryAfter: null,
     });
     const at = new URL(address);
+    // A made-up page of a test's own (`pages`), as HTML; its site's robots.txt allows all.
+    const own = Object.keys(pages).some((key) => new URL(key).origin === at.origin);
+    if (own) {
+      if (at.pathname === '/robots.txt') return answer(200, 'User-agent: *\nAllow: /');
+      const html = pages[`${at.origin}${at.pathname}${at.search}`];
+      return html === undefined
+        ? answer(404, 'Not found')
+        : { ...answer(200, html), contentType: 'text/html' };
+    }
     // The Example Wiki, or a wiki only the "Other wikis" importer reads.
     const site = at.origin === 'https://wiki.example.org' ? wiki : (others[at.hostname] ?? null);
     if (!site || at.protocol !== 'https:') return null;
@@ -1104,6 +1115,8 @@ export async function setUp(
     served = {},
     steamLaunch = null,
     exit = false,
+    pages = {},
+    importers = [],
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -1126,6 +1139,10 @@ export async function setUp(
      * name, read in parts as the shell serves them (`Range`, `206`).
      */
     served?: Record<string, Record<string, Buffer | string>>;
+    /** Made-up pages answered as HTML by `import_fetch`, by address (no fragment), on sites of their own. */
+    pages?: Record<string, string>;
+    /** More made-up importers the build lists, each module's source given. */
+    importers?: { id: string; title: string; source: string }[];
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -1162,6 +1179,13 @@ export async function setUp(
                 },
               ]
             : []),
+          ...importers.map(({ id, title }) => ({
+            id,
+            title,
+            description: `Reads made-up pages (${title}).`,
+            version: '1.0.0',
+            module: `importers/${id}.js`,
+          })),
           ...(others
             ? [
                 {
@@ -1186,6 +1210,11 @@ export async function setUp(
   await page.route('**/importers/other-wikis.js', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: otherWikis }),
   );
+  for (const { id, source } of importers) {
+    await page.route(`**/importers/${id}.js`, (route) =>
+      route.fulfill({ contentType: 'text/javascript', body: source }),
+    );
+  }
   await page.route(`${PACKS}**`, (route) => {
     const [, id = '', name = ''] =
       /^\/([^/]+)\/(.+)$/.exec(new URL(route.request().url()).pathname) ?? [];
@@ -1204,6 +1233,7 @@ export async function setUp(
     downloads,
     wiki,
     others: others ?? {},
+    pages,
     listed,
     background,
     packsFolder,

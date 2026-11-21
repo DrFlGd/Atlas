@@ -213,7 +213,11 @@ export function CataloguePick({ pick }: { pick: GamePick }) {
                   <span>{game.name}</span>
                 </label>
                 {game.added ? <span className="badge badge-done">In your maps folder</span> : null}
-                {game.direct ? <span className="muted small">One map</span> : null}
+                {game.maps !== undefined ? (
+                  <span className="muted small">{plural(game.maps, 'map', 'maps')}</span>
+                ) : game.direct ? (
+                  <span className="muted small">One map</span>
+                ) : null}
               </li>
             );
           })}

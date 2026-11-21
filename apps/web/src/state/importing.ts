@@ -78,6 +78,7 @@ import {
   type StoredPage,
 } from '../desktop';
 import { downloadsOffered } from '../features';
+import { AnchoredPages } from './anchoredPages';
 import { loadGame, notify } from './actions';
 import {
   ImportRun,
@@ -606,8 +607,12 @@ function fetcherFor(
   url: string,
   way?: ReadingWay,
 ): PageFetch | null {
-  if (reading === 'catalogue') return null;
-  const fetch = (reading === 'game' ? importer.games?.fetch : importer.fetch) ?? null;
+  const fetch =
+    (reading === 'game'
+      ? importer.games?.fetch
+      : reading === 'catalogue'
+        ? catalogueAt(importer, url)?.fetch
+        : importer.fetch) ?? null;
   if (!fetch) return null;
   if (way !== undefined) return way === 'fetch' ? fetch : null;
   // A page its site shows only to a person is opened in a window, where the person answers.
@@ -633,8 +638,21 @@ function withWindowHint(message: string, site: SiteReading | undefined): string 
 /** When the app last asked a site for a page. */
 let lastFetchAt = 0;
 
-/** The robots.txt rules of each site, read once in a go (`session`). */
-const robotsOf = new Map<string, { session: number; rules: RobotsRules }>();
+/** The robots.txt rules of each site, read once in a go (`session`), or in a session held. */
+const robotsOf = new Map<string, { session: number | symbol; rules: RobotsRules }>();
+
+/** Pages fetched for an address at one of their anchors, and what robots.txt rules are kept for. */
+const anchoredPages = new AnchoredPages();
+
+/**
+ * Holds a session of games added one at a time: until the function it
+ * returns is called, a page asked for at one of its anchors, and each
+ * site's robots.txt, are asked for once in it rather than once in each of
+ * its goes. A later hold takes over from an earlier one.
+ */
+export function holdFetchedPages(): () => void {
+  return anchoredPages.hold();
+}
 
 /**
  * What the rules file of each site says of the addresses this app opens on
@@ -696,14 +714,15 @@ async function robotsFor(
   origin: string,
   id: number,
 ): Promise<RobotsRules | { refusal: string } | null> {
+  const owner = anchoredPages.keptFor(id);
   const robots = robotsOf.get(origin);
-  if (robots?.session === id) return robots.rules;
+  if (robots?.session === owner) return robots.rules;
   const answer = await fetchAsApp(shell, `${origin}/robots.txt`, id);
   if (!answer) return null;
   const refusal = refusalOf(answer.status, answer.retryAfter);
   if (refusal) return { refusal };
   const rules = rulesFromAnswer(answer);
-  robotsOf.set(origin, { session: id, rules });
+  robotsOf.set(origin, { session: owner, rules });
   return rules;
 }
 
@@ -851,6 +870,12 @@ async function fetchPage(
   };
   try {
     for (const address of named.addresses) {
+      // The page of another anchor read before in this go or session: not asked for again.
+      const before = anchoredPages.get(id, url, address);
+      if (before) {
+        fetched.push(before);
+        continue;
+      }
       const limits = limitsOf(importer, address);
       const asked = await askAsApp(shell, address, id, limits);
       if (asked.kind === 'cancelled') return { state: 'cancelled' };
@@ -864,6 +889,7 @@ async function fetchPage(
       if (refusal) return stop(`${refusal} This app stopped and read no more pages.`);
       const { retryAfter: _, ...page } = answer;
       fetched.push(page);
+      if (id === session) anchoredPages.keep(id, url, address, page);
     }
   } catch (error) {
     if (id !== session) return { state: 'cancelled' };
@@ -2775,10 +2801,45 @@ interface ListingItem {
 type ListingResult =
   ({ ok: true } & GameListing) | ({ ok: true } & Catalogue) | ImportFailure | undefined;
 
-/** The page keys of every page the packs in the maps folder were made from. */
+/**
+ * The key of an address at one of its anchors: its page key with its
+ * fragment, or null when it has none. The games of a list page of whole
+ * pictures are each an anchor on the one page.
+ */
+export function anchoredKey(url: string): string | null {
+  try {
+    const hash = new URL(url.trim()).hash;
+    return hash.length > 1 ? `${pageKey(url)}${hash}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The page keys of every page the packs in the maps folder were made from;
+ * for a page read at one of its anchors also that anchor's key
+ * ({@link anchoredKey}), and for one read without a fragment the key with
+ * `#` (the whole page). See {@link isRecorded}.
+ */
 export function recordedKeys(): Set<string> {
   const packs = useAtlas.getState().library?.packs ?? [];
-  return new Set(packs.flatMap((pack) => (pack.pages ?? []).map((page) => pageKey(page.url))));
+  return new Set(packs.flatMap((pack) => (pack.pages ?? []).flatMap((page) => keysOf(page.url))));
+}
+
+/** The keys {@link recordedKeys} holds for a page made from `url`. */
+export function keysOf(url: string): string[] {
+  const key = pageKey(url);
+  return [key, anchoredKey(url) ?? `${key}#`];
+}
+
+/**
+ * Whether a page is one the maps folder was made from ({@link recordedKeys}):
+ * an address at an anchor only when that anchor, or the whole page, was.
+ */
+export function isRecorded(recorded: ReadonlySet<string>, url: string): boolean {
+  const key = pageKey(url);
+  const anchored = anchoredKey(url);
+  return anchored === null ? recorded.has(key) : recorded.has(anchored) || recorded.has(`${key}#`);
 }
 
 /** The pages a listed pack was made from. */
@@ -3064,12 +3125,19 @@ export async function catalogueImporters(): Promise<
 > {
   const importers = await loadImporters();
   return importers.flatMap((importer) =>
-    cataloguesOf(importer).map((catalogue) => ({
-      id: importer.id,
-      title: importer.title,
-      label: catalogue.label ?? `Games on ${catalogue.site ?? importer.title}`,
-      address: catalogue.address,
-    })),
+    // A list read only at an address the person gives has no button.
+    cataloguesOf(importer).flatMap((catalogue) =>
+      catalogue.pastedOnly
+        ? []
+        : [
+            {
+              id: importer.id,
+              title: importer.title,
+              label: catalogue.label ?? `Games on ${catalogue.site ?? importer.title}`,
+              address: catalogue.address,
+            },
+          ],
+    ),
   );
 }
 
@@ -3081,7 +3149,8 @@ export async function catalogueImporters(): Promise<
 export async function browseGames(importerId: string, address?: string): Promise<void> {
   const importer = (await loadImporters()).find((i) => i.id === importerId);
   if (!importer) return;
-  const lists = cataloguesOf(importer);
+  // A list read only at an address the person gives is never browsed to.
+  const lists = cataloguesOf(importer).filter((one) => !one.pastedOnly);
   const catalogue = address === undefined ? lists[0] : lists.find((one) => one.address === address);
   if (!catalogue) return;
   const kept = await readKeptCatalogue(importer, catalogue.address);
