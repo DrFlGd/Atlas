@@ -14,6 +14,7 @@ import {
   type GameSession,
   type SessionGame,
 } from './gameSession';
+import { keysOf } from './importing';
 import type { RunState } from './importRun';
 import { openProgressStore } from './services';
 import { useAtlas } from './store';
@@ -80,6 +81,27 @@ describe('games added one after another', () => {
       'East',
       'West',
     ]);
+  });
+
+  it('takes each game of a list page that is an anchor on it, and none added before', () => {
+    const importer = { matches: (url: string) => url.startsWith(SITE), fetch: {} as never };
+    const list = `${SITE}/atlas/saltbox/index.html`;
+    const one = (anchor: string) => [{ url: `${list}#${anchor}`, kind: MAP_KIND, title: anchor }];
+    const recorded = new Set(keysOf(`${list}#Emberfall`));
+    expect(pagesToAdd(importer, one('Emberfall'), recorded)).toEqual([]);
+    expect(pagesToAdd(importer, one('Ashgrove'), recorded)).toEqual([
+      { url: `${list}#Ashgrove`, title: 'Ashgrove' },
+    ]);
+    // The whole page made into a pack holds all its anchors; one anchor, the page itself.
+    expect(pagesToAdd(importer, one('Ashgrove'), new Set(keysOf(list)))).toEqual([]);
+    expect(pagesToAdd(importer, [{ url: list, kind: MAP_KIND, title: 'List' }], recorded)).toEqual(
+      [],
+    );
+    // Two anchors of one page listed together are two pages.
+    expect(
+      pagesToAdd(importer, [...one('Ashgrove'), ...one('Frostvale'), ...one('Ashgrove')], new Set())
+        .length,
+    ).toBe(2);
   });
 
   it('names the game most pages of a go went into', () => {

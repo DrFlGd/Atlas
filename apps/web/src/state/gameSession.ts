@@ -2,7 +2,6 @@ import {
   MAP_KIND,
   canAddPage,
   catalogueAt,
-  pageKey,
   type AtlasImporter,
   type ListedPage,
 } from '@atlas/importer-api';
@@ -13,6 +12,9 @@ import { joinSameTitle, type TitleMatch } from './gameGroups';
 import { fileUnderSystem } from './gameTags';
 import {
   addGamePages,
+  holdFetchedPages,
+  isRecorded,
+  keysOf,
   loadImporters,
   readGamePage,
   recordedKeys,
@@ -36,7 +38,9 @@ import { useAtlas } from './store';
  * none), and every page of it the importer can add that is not in the maps
  * folder yet is added, as a go of its own. Between two pages there is the
  * pause of the site's rules file, never less than the app's own, and only
- * one page is read at a time.
+ * one page is read at a time. A page fetched for one game at one of its
+ * anchors (a list page of whole pictures, each game an anchor on it) is
+ * asked for once in the session, not once for each game.
  *
  * It stops at the first refusal (a go stops there, and so does the
  * session), when the person closes the page window or presses Stop, and
@@ -194,10 +198,11 @@ export function pagesToAdd(
 ): { url: string; title: string; group?: string }[] {
   const seen = new Set<string>();
   return listed.flatMap((page) => {
-    const key = pageKey(page.url);
-    if (seen.has(key) || recorded.has(key) || !canAddPage(importer, page.url)) return [];
+    // The games of a list page are each an anchor on it: one anchor is not another.
+    if (isRecorded(seen, page.url) || isRecorded(recorded, page.url)) return [];
+    if (!canAddPage(importer, page.url)) return [];
     if (importer.fetch && page.kind !== MAP_KIND) return [];
-    seen.add(key);
+    for (const key of keysOf(page.url)) seen.add(key);
     return [{ url: page.url, title: page.title, ...(page.group ? { group: page.group } : {}) }];
   });
 }
@@ -325,18 +330,21 @@ let backTo: GamePick | null = null;
 /** "Add the ticked games one at a time": the plan of the games ticked in a list of games. */
 export async function planGames(pick: GamePick): Promise<void> {
   const importer = (await loadImporters()).find((i) => i.id === pick.importerId);
-  const listSystem = importer ? (catalogueAt(importer, pick.url)?.system ?? '') : '';
-  const games = pick.games
-    .filter((game) => pick.ticked.includes(game.id))
-    .map((game): SessionGame => ({
-      id: game.id,
-      name: game.name,
-      address: game.address,
-      direct: game.direct,
-      ...(game.maps !== undefined ? { maps: game.maps } : {}),
-      ...(game.bytes !== undefined ? { bytes: game.bytes } : {}),
-      ...(game.system ? { system: game.system } : {}),
-    }));
+  const ticked = pick.games.filter((game) => pick.ticked.includes(game.id));
+  // One system the list names for every game ticked (a list page of one system, say) is the
+  // list's, for the person to change in the plan, rather than each game's own.
+  const systems = new Set(ticked.map((game) => game.system ?? ''));
+  const shared = systems.size === 1 ? [...systems][0]! : '';
+  const listSystem = (importer ? catalogueAt(importer, pick.url)?.system : undefined) ?? shared;
+  const games = ticked.map((game): SessionGame => ({
+    id: game.id,
+    name: game.name,
+    address: game.address,
+    direct: game.direct,
+    ...(game.maps !== undefined ? { maps: game.maps } : {}),
+    ...(game.bytes !== undefined ? { bytes: game.bytes } : {}),
+    ...(game.system && game.system !== listSystem ? { system: game.system } : {}),
+  }));
   if (games.length === 0) return;
   backTo = pick;
   set({
@@ -454,6 +462,8 @@ export async function startGames(): Promise<void> {
   set({ going: true, stopAsked: false, session, kept: null });
   showGamesStep('going');
   await keep(session);
+  // A page asked for at one of its anchors, and robots.txt, are asked for once in the session.
+  const release = holdFetchedPages();
   try {
     const importer = (await loadImporters()).find((i) => i.id === session.importerId);
     if (!importer) {
@@ -594,6 +604,7 @@ export async function startGames(): Promise<void> {
       }
     }
   } finally {
+    release();
     set({ going: false, current: null, nextAt: null });
     await keep(session);
     // Another import that took over shows its own steps.

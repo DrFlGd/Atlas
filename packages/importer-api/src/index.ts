@@ -1328,9 +1328,20 @@ export interface SiteCatalogue {
    * under it (the System tag of the Library). A game's own `system` wins.
    */
   system?: string;
+  /**
+   * Whether the app reads the list only at an address the person gives
+   * that {@link matches} recognises, and offers no button for it: for lists
+   * of one form at many addresses (a page for each system of a site, say),
+   * which `address` alone does not name. `address` is then only the list's
+   * key, never opened.
+   */
+  pastedOnly?: boolean;
   /** Whether `url` is the address of the list of games. Must not throw. */
   matches(url: string): boolean;
-  pageReader: string;
+  /** Like {@link AtlasImporter.pageReader}, for the list of games; not needed with `fetch`. */
+  pageReader?: string;
+  /** Like {@link AtlasImporter.fetch}, for the list of games; then `pageReader` is not needed. */
+  fetch?: PageFetch;
   waitSeconds?: number;
   convert(
     pageData: unknown,
@@ -1628,19 +1639,24 @@ const gamePagesSchema = z
   .refine(readsSomehow, readsSomehowError)
   .refine(readsItsWindows, readsItsWindowsError);
 
-const catalogueSchema = z.object({
-  address: z
-    .string()
-    .max(MAX_ADDRESS_CHARS)
-    .refine((text) => isAllowedPageUrl(text), 'must be a web address'),
-  label: z.string().trim().min(1).max(100).optional(),
-  site: z.string().trim().min(1).max(100).optional(),
-  system: z.string().trim().min(1).max(80).optional(),
-  matches: z.custom<SiteCatalogue['matches']>(isFunction, 'must be a function'),
-  pageReader: readerSchema,
-  waitSeconds: waitSchema,
-  convert: z.custom<SiteCatalogue['convert']>(isFunction, 'must be a function'),
-});
+const catalogueSchema = z
+  .object({
+    address: z
+      .string()
+      .max(MAX_ADDRESS_CHARS)
+      .refine((text) => isAllowedPageUrl(text), 'must be a web address'),
+    label: z.string().trim().min(1).max(100).optional(),
+    site: z.string().trim().min(1).max(100).optional(),
+    system: z.string().trim().min(1).max(80).optional(),
+    pastedOnly: z.boolean().optional(),
+    matches: z.custom<SiteCatalogue['matches']>(isFunction, 'must be a function'),
+    pageReader: readerSchema.optional(),
+    fetch: fetchSchema.optional(),
+    waitSeconds: waitSchema,
+    convert: z.custom<SiteCatalogue['convert']>(isFunction, 'must be a function'),
+  })
+  .refine(readsSomehow, readsSomehowError)
+  .refine(readsItsWindows, readsItsWindowsError);
 
 /** Checks the shape of a loaded importer module's default export. */
 export const importerSchema = z

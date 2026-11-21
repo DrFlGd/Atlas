@@ -64,10 +64,12 @@ export function GamesPlan() {
             ? `${plural(left.length, 'game', 'games')} left to add from ${session.site}, of ${numberFormat.format(session.games.length)}.`
             : `Add ${plural(left.length, 'game', 'games')} from ${session.site}, one at a time.`}
         </strong>{' '}
-        This app reads the game page of each game, then adds every map of it that is not in your
-        maps folder yet, one page at a time, with the pause the site’s rules file asks for between
-        pages. It stops at once if the site refuses a page, and you can stop it whenever you like;
-        the games left are kept, to continue later.
+        {left.every((game) => game.direct)
+          ? 'This app adds each game in turn, with every map of it that is not in your maps folder yet,'
+          : 'This app reads the game page of each game, then adds every map of it that is not in your maps folder yet,'}{' '}
+        one page at a time, with the pause the site’s rules file asks for between pages. It stops at
+        once if the site refuses a page, and you can stop it whenever you like; the games left are
+        kept, to continue later.
       </p>
       <ul className="add-map-pick-list games-plan-list" data-testid="games-plan-list">
         {left.map((game) => {
