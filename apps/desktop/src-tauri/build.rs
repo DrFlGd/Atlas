@@ -102,6 +102,7 @@ const COMMANDS: &[&str] = &[
     "app_exit",
     "library_old_folders",
     "library_old_folder_size",
+    "library_free_space",
     "library_remove_old_folders",
     "made_pack_plan",
     "made_pack_write",

@@ -42,6 +42,7 @@ import {
   type ImportContext,
   type ImportFailure,
   type ImportSummary,
+  type ListedPage,
   type ListingContext,
   type PageObservations,
   type PageStyles,
@@ -311,7 +312,14 @@ export type ImportPhase =
   /** "Update all": the games to update, before anything opens. */
   | { kind: 'update-games'; games: UpdateGame[]; ticked: string[] }
   /** The pages of one or more games, to tick the ones to add or refresh. */
-  | { kind: 'choose'; choice: Choice };
+  | { kind: 'choose'; choice: Choice }
+  /**
+   * Games of a site's list added one after another (see `gameSession.ts`,
+   * which holds them): the plan before anything is read, the session going
+   * (between two games; each game's own steps show as `listing` and `run`),
+   * or what it came to.
+   */
+  | { kind: 'games'; step: 'plan' | 'going' | 'done' };
 
 /**
  * Why pages that list others are read: a game address the person pasted,
@@ -1233,6 +1241,7 @@ export async function cancelImport(): Promise<void> {
  * a session of pages or lists going, or the person browsing a wiki.
  */
 export const sessionGoing = (phase: ImportPhase): boolean =>
+  (phase.kind === 'games' && phase.step === 'going') ||
   phase.kind === 'waiting' ||
   phase.kind === 'converting' ||
   (phase.kind === 'browse' && !phase.ended) ||
@@ -1255,6 +1264,7 @@ export async function startWikiAgain(start: string): Promise<void> {
 export function resetImport(): void {
   const { phase } = useImport.getState();
   if (
+    (phase.kind === 'games' && phase.step === 'going') ||
     phase.kind === 'waiting' ||
     (phase.kind === 'browse' && !phase.ended) ||
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running')
@@ -1488,10 +1498,13 @@ async function startRun(
     update = false,
     firstPauseMs = 0,
     follow,
+    show = true,
   }: {
     update?: boolean;
     firstPauseMs?: number;
     follow?: ReadonlyMap<string, FollowLinks>;
+    /** Show the game of the last map added at the end (not between games added one after another). */
+    show?: boolean;
   } = {},
 ): Promise<RunState | null> {
   const shell = desktop;
@@ -1757,7 +1770,7 @@ async function startRun(
     (page) => page.state.kind === 'added' && page.state.mapId !== undefined,
   )?.state;
   let shownPackId: string | null = null;
-  if (last?.kind === 'added' && last.mapId) {
+  if (show && last?.kind === 'added' && last.mapId) {
     const entry = useAtlas.getState().catalog.find((p) => p.id === last.packId);
     if (entry && (await showMap(entry, last.mapId))) shownPackId = last.packId;
   }
@@ -2761,7 +2774,7 @@ type ListingResult =
   ({ ok: true } & GameListing) | ({ ok: true } & Catalogue) | ImportFailure | undefined;
 
 /** The page keys of every page the packs in the maps folder were made from. */
-function recordedKeys(): Set<string> {
+export function recordedKeys(): Set<string> {
   const packs = useAtlas.getState().library?.packs ?? [];
   return new Set(packs.flatMap((pack) => (pack.pages ?? []).map((page) => pageKey(page.url))));
 }
@@ -3179,6 +3192,74 @@ export async function readPickedGames(): Promise<void> {
       plan.leftOut.map((game) => game.name),
     ),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Games added one after another (see `gameSession.ts`)
+
+/** Shows a site's list of games again, as it was ticked (back from the plan of games to add). */
+export function showCatalogue(pick: GamePick): void {
+  setPhase({ kind: 'catalogue', pick });
+}
+
+/** Shows the games added one after another, at the step given. */
+export function showGamesStep(step: 'plan' | 'going' | 'done'): void {
+  setPhase({ kind: 'games', step });
+}
+
+/**
+ * The pause a site's rules file sets between two pages (`SiteInfo.pause`),
+ * in milliseconds; none when it sets none.
+ */
+export function sitePauseMs(importer: AtlasImporter, url: string): number {
+  try {
+    return (siteInfoOf(importer, url).pause ?? 0) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
+/** How the person chose to read the site of `url`, for an importer that offers ways. */
+export async function siteWayOf(
+  importer: AtlasImporter,
+  url: string,
+): Promise<ReadingWay | undefined> {
+  return (await readingOf(importer, url))?.way;
+}
+
+/**
+ * Reads one game page, as a listing run of one page; null when it was
+ * cancelled or another import took over.
+ */
+export async function readGamePage(
+  importer: AtlasImporter,
+  url: string,
+): Promise<{ run: RunState; pages: ListedPage[] | null; message: string | null } | null> {
+  const read = await readListings([{ url, importer, reading: 'game' }], 'catalogue-games');
+  if (!read) return null;
+  const result = read.results[0];
+  if (result?.ok && 'pages' in result) return { run: read.run, pages: result.pages, message: null };
+  return { run: read.run, pages: null, message: listingFailure(read.run, result) };
+}
+
+/**
+ * Adds the pages of one game as a go, without showing its game at the end;
+ * null when there is no shell to read them.
+ */
+export function addGamePages(
+  importer: AtlasImporter,
+  pages: readonly { url: string; title: string; group?: string }[],
+): Promise<RunState | null> {
+  return startRun(
+    pages.map((page) => ({
+      url: page.url,
+      importer,
+      problem: null,
+      listed: { title: page.title, ...(page.group ? { group: page.group } : {}) },
+    })),
+    0,
+    { firstPauseMs: pauseLeft(), show: false },
+  );
 }
 
 // ---------------------------------------------------------------------------

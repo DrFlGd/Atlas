@@ -199,6 +199,7 @@ macro_rules! viewer_commands {
             background::app_exit,
             commands::library_old_folders,
             commands::library_old_folder_size,
+            commands::library_free_space,
             commands::library_remove_old_folders,
             madepack::commands::made_pack_plan,
             madepack::commands::made_pack_write,

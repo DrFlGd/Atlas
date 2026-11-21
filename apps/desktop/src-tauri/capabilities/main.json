@@ -104,6 +104,7 @@
     "allow-app-exit",
     "allow-library-old-folders",
     "allow-library-old-folder-size",
+    "allow-library-free-space",
     "allow-library-remove-old-folders",
     "allow-made-pack-plan",
     "allow-made-pack-write",

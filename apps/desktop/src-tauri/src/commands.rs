@@ -1290,6 +1290,21 @@ pub async fn library_old_folder_size(
     blocking(move || crate::oldfolders::size_of(&library, &folder)).await
 }
 
+/// Bytes this user may still write on the drive of the maps folder, where
+/// added games are written: none when the folder is missing or the system
+/// cannot tell. Shown before games are added one after another, beside the
+/// space they need.
+#[tauri::command]
+pub async fn library_free_space(library: LibraryState<'_>) -> Result<Option<u64>, String> {
+    let folder = library.maps_folder();
+    blocking(move || {
+        // A folder not made yet is on the drive of the nearest folder that is.
+        let existing = folder.ancestors().find(|path| path.is_dir());
+        Ok(existing.and_then(packfile::space::available))
+    })
+    .await
+}
+
 /// What removing old folders came to, and the packs listed after it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

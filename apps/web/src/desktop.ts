@@ -1505,6 +1505,8 @@ export interface DesktopBridge {
     oldFolders(): Promise<OldFolders>;
     /** How much room one old folder takes, by its name. */
     oldFolderSize(folder: string): Promise<FolderSize>;
+    /** Bytes this user may still write on the drive of the maps folder; null when not known. */
+    freeSpace(): Promise<number | null>;
     /** Removes the old folders named, then lists the games again. */
     removeOldFolders(folders: { folder: string; id: string }[]): Promise<OldFoldersRemoved>;
     /** How many map images were downloaded for a pack. */
@@ -2003,6 +2005,11 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       forgetPackFile: (path) => call('library_forget_pack_file', { path }),
       oldFolders: () => call('library_old_folders'),
       oldFolderSize: (folder) => call('library_old_folder_size', { folder }),
+      freeSpace: () =>
+        call<unknown>('library_free_space').then(
+          (bytes) => (typeof bytes === 'number' && Number.isFinite(bytes) ? bytes : null),
+          () => null,
+        ),
       removeOldFolders: (folders) => call('library_remove_old_folders', { folders }),
       imagesInfo: (id) => call('library_images_info', { id }),
       deleteImages: (id) => call('library_delete_images', { id }),

@@ -733,6 +733,9 @@ function installFakeShell({
       }
       case 'library_list':
         return listing();
+      case 'library_free_space':
+        // A made-up drive with 3 GB free.
+        return 3_000_000_000;
       case 'guidebook_pick': {
         shell.guidebooks.calls.push({ command, args });
         const picked = shell.guidebooks.pick;
