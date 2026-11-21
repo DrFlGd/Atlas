@@ -302,7 +302,7 @@ describe('names of maps and levels', () => {
     );
     const { data, skipped } = mergeOwnLocations(pack, mine);
     expect(skipped).toBe(0);
-    const loaded = indexPack(data, 'https://example.test/demo/');
+    const loaded = indexPack(data, new URL('https://example.test/demo/'));
     expect(loaded.maps.get('demo:map:world')?.name).toBe('Home');
     expect(loaded.layers.get('demo:layer:surface')?.name).toBe('Up top');
     // The pack itself is as it was.
