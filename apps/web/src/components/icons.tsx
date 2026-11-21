@@ -100,6 +100,7 @@ const UI_PATHS = {
   pinPlace:
     'M10 17s5-4.6 5-8.5a5 5 0 0 0-10 0C5 12.4 10 17 10 17zM10 6.7a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6z',
   pause: 'M7 4.5v11M13 4.5v11',
+  power: 'M10 2.5v7M6 5.2a6 6 0 1 0 8 0',
   // The width of a game's guide pages (PageWidthMenu.tsx): arrows apart.
   width: 'M2.5 10h15M5.5 6.5L2 10l3.5 3.5M14.5 6.5L18 10l-3.5 3.5',
   // The contents beside a page in Guides (GuidesScreen.tsx), folded away or brought back:

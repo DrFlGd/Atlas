@@ -368,6 +368,13 @@ export interface DesktopInfo {
    */
   background?: boolean;
   /**
+   * "Exit Atlas" is offered whatever the settings (`exit`): on Linux, where
+   * Game Mode on a Steam Deck gives the window no close button. On Windows
+   * it is offered only while Atlas keeps running when its window is closed.
+   * Absent counts as false.
+   */
+  exit?: boolean;
+  /**
    * Settings has "Start Atlas with a game in Steam" (`steamLaunch`): the
    * line for a game's launch options, which the shell builds from the
    * AppImage Atlas runs from (see the shell's `linux.rs`). In the app
@@ -1796,6 +1803,11 @@ export interface DesktopBridge {
     pauseHotkey(paused: boolean): Promise<BackgroundState>;
     /** The game another program asked for, if not taken yet. */
     takeShow(): Promise<ShowRequest | null>;
+    /**
+     * "Exit Atlas": ends the app as the tray's "Quit Atlas" does. Every
+     * desktop takes it; the Android app answers why not.
+     */
+    exit(): Promise<void>;
   };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
@@ -2157,6 +2169,7 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       setHotkey: (keys) => call('background_set_hotkey', { keys }),
       pauseHotkey: (paused) => call('background_pause_hotkey', { paused }),
       takeShow: () => call<unknown>('background_take_show').then(showRequestFrom, () => null),
+      exit: () => call('app_exit'),
     },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),

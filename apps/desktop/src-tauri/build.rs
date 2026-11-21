@@ -99,6 +99,7 @@ const COMMANDS: &[&str] = &[
     "background_set_hotkey",
     "background_pause_hotkey",
     "background_take_show",
+    "app_exit",
     "library_old_folders",
     "library_old_folder_size",
     "library_remove_old_folders",

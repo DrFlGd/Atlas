@@ -105,6 +105,11 @@ pub struct DesktopInfo {
     /// Settings has "Atlas in the background" (`background_state`,
     /// `background_set`): in the app without downloads, on Windows.
     background: bool,
+    /// Settings has "Exit Atlas" in every case (`app_exit`): on Linux, where
+    /// Game Mode on a Steam Deck gives the window no close button. On
+    /// Windows the web app offers it only while Atlas keeps running when its
+    /// window is closed (see `background`).
+    exit: bool,
     /// Settings has "Start Atlas with a game in Steam": the line for a
     /// game's launch options, built from the AppImage Atlas runs from (see
     /// `linux.rs`). In the app without downloads on Linux only (the other
@@ -118,6 +123,9 @@ pub struct DesktopInfo {
 /// `DesktopInfo::imports` need: a desktop's dialogs, file manager and
 /// windows.
 const DESKTOP_ONLY: bool = cfg!(desktop);
+
+/// "Exit Atlas" is offered whatever the settings (see `DesktopInfo::exit`).
+const EXIT_ALWAYS: bool = cfg!(target_os = "linux");
 
 /// The answer of a desktop-only command on Android, whose web app does not
 /// offer it.
@@ -149,6 +157,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         sites: DESKTOP_ONLY && Downloads::in_build(),
         game_groups_file: DESKTOP_ONLY,
         background: crate::background::OFFERED,
+        exit: EXIT_ALWAYS,
         #[cfg(target_os = "linux")]
         steam_launch: (!Downloads::in_build())
             .then(|| crate::linux::steam_launch(crate::linux::appimage_now().as_deref())),

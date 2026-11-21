@@ -28,6 +28,7 @@ import {
 import { useOwnLists } from '../state/ownLists';
 import { libraryOffered, setLibraryHost } from '../state/libraryView';
 import { LibraryScreen } from '../library/LibraryScreen';
+import { ExitButton } from '../library/ExitAtlas';
 import { SettingsScreen } from '../library/SettingsScreen';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
@@ -685,13 +686,15 @@ function BottomBar({ shown, library }: { shown: Shown; library: boolean }) {
 /**
  * The rail of sections. For thumbs (see `thumbsFor`) the sections are at
  * its foot, in the lower left corner, and the profile and the other tools
- * at its head.
+ * at its head, with "Exit Atlas" first where it is offered (Game Mode on a
+ * Steam Deck gives the window no close button).
  */
 function Rail({ shown, library, thumbs }: { shown: Shown; library: boolean; thumbs: boolean }) {
   const profileName = useAtlas((s) => s.profiles.find((p) => p.id === s.profileId)?.name ?? '');
   const sections = <SectionButtons shown={shown} className="touch-rail-button" library={library} />;
   const tools = (
     <>
+      {thumbs ? <ExitButton place="rail" /> : null}
       <KeysButton />
       <SaveButton />
       <button

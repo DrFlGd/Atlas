@@ -307,6 +307,7 @@ function installFakeShell({
   background,
   packsFolder,
   steamLaunch,
+  exit,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
@@ -316,6 +317,7 @@ function installFakeShell({
   background: boolean;
   packsFolder: boolean;
   steamLaunch: Record<string, string> | null;
+  exit: boolean;
 }) {
   const shell: MockShell = {
     events: [],
@@ -673,12 +675,17 @@ function installFakeShell({
         return {
           name: 'Atlas',
           version: '0.0.0',
-          platform: steamLaunch ? 'linux' : 'test',
+          platform: steamLaunch || exit ? 'linux' : 'test',
           downloads,
           sites: downloads,
           ...(background ? { background: true } : {}),
           ...(steamLaunch ? { steamLaunch } : {}),
+          ...(exit ? { exit: true } : {}),
         };
+      case 'app_exit':
+        // The real shell ends the app here; the stand-in only notes the call.
+        shell.background.calls.push({ command, args });
+        return null;
       case 'background_state':
       case 'background_set':
       case 'background_set_hotkey':
@@ -1093,6 +1100,7 @@ export async function setUp(
     packsFolder = false,
     served = {},
     steamLaunch = null,
+    exit = false,
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -1108,6 +1116,8 @@ export async function setUp(
      * (`DesktopInfo::steam_launch`, see the shell's `linux.rs`).
      */
     steamLaunch?: Record<string, string> | null;
+    /** The shell offers "Exit Atlas" whatever the settings (`DesktopInfo::exit`, on Linux). */
+    exit?: boolean;
     /**
      * Files the pack protocol serves, by pack id (or `_picked/<token>`) and
      * name, read in parts as the shell serves them (`Range`, `206`).
@@ -1195,6 +1205,7 @@ export async function setUp(
     background,
     packsFolder,
     steamLaunch,
+    exit,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');

@@ -267,6 +267,25 @@
   gap: 8px;
 }
 
+/* "Exit Atlas" at the head of Settings (ExitAtlas.tsx), 44 px high for fingers. */
+.exit-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-ui='touch'] .exit-button {
+  min-height: 44px;
+}
+
+.exit-dialog {
+  width: min(420px, calc(100% - 24px));
+}
+
+.exit-dialog .row-actions .button {
+  min-height: 44px;
+}
+
 .library-more {
   position: absolute;
   top: calc(100% - 4px);

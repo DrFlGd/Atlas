@@ -101,6 +101,7 @@
     "allow-background-set-hotkey",
     "allow-background-pause-hotkey",
     "allow-background-take-show",
+    "allow-app-exit",
     "allow-library-old-folders",
     "allow-library-old-folder-size",
     "allow-library-remove-old-folders",
