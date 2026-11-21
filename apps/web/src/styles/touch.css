@@ -3564,3 +3564,26 @@ button.photo-card-text {
   display: block;
   margin-top: 4px;
 }
+
+/* A map or level in the maps menu with "Rename…" beside it (RenameMap.tsx). */
+.touch-menu-item-renamable {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+
+.touch-menu-item-renamable .touch-menu-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.touch-menu-item-renamable .rename-map-button {
+  background: transparent;
+  color: var(--atlas-muted);
+}
+
+.touch-menu-item-renamable .rename-map-button:hover,
+.touch-menu-item-renamable .rename-map-button:focus-visible {
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+}
