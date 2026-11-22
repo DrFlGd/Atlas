@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { collectErrors, openMap } from './helpers';
+import { collectErrors, openMap, storedSetting } from './helpers';
 import { expect, test } from './layout';
 import { DOWNLOADS_BUILD, mock, realErrors, setUp } from './fakeShell';
 
@@ -161,6 +161,8 @@ test.describe('in the app that updates itself', () => {
     // The switch is kept for the next start.
     await atStart.click({ force: true });
     await expect(atStart).not.toBeChecked();
+    // Settings are saved without waiting: wait for the save before the restart.
+    await expect.poll(() => storedSetting(page, 'updateCheckAtStart')).toBe(false);
     await page.reload();
     await expect(page.getByTestId('marker-count')).toHaveText('5,000');
     await page.clock.runFor(6_000);
