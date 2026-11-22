@@ -3,6 +3,7 @@ import { desktop } from '../desktop';
 import { backgroundOffered, touchUiOffered } from '../features';
 import { notify } from './actions';
 import { loadBackground, useBackground } from './background';
+import { saveEverything } from './saveAll';
 import { useAtlas, type AtlasState } from './store';
 
 /**
@@ -34,10 +35,14 @@ export function useExitOffered(): boolean {
   return useAtlas((s) => exitOffered(s, keepRunning));
 }
 
-/** Ends Atlas. Says why not, when the shell refuses, and answers false then. */
+/**
+ * Saves what the person changed, then ends Atlas. Says why not, when the
+ * shell refuses, and answers false then.
+ */
 export async function exitAtlas(): Promise<boolean> {
   if (!desktop) return false;
   try {
+    await saveEverything();
     await desktop.background.exit();
     return true;
   } catch (error) {

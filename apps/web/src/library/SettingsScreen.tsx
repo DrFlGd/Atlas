@@ -7,6 +7,7 @@ import { KeptPacks } from './KeptPacks';
 import { OldFolders } from './OldFolders';
 import { SitesSettings } from './SitesSettings';
 import { SteamLaunchSettings } from './SteamLaunchSettings';
+import { UpdateSettings } from './UpdateSettings';
 import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './StorageSettings';
 
 /**
@@ -14,7 +15,7 @@ import { ActivityLogSetting, DownloadSpeed, Locations, MapsFolder } from './Stor
  * the layout has no other place for them, where maps are saved, map packs
  * in other folders, Atlas in the background (on Windows), starting Atlas
  * with a game in Steam (on Linux), how fast
- * downloads go and the activity log. In the
+ * downloads go, updates of Atlas and the activity log. In the
  * standard layout it is a section of its own; in the classic layout, the
  * Library's Settings. Its head has "Exit Atlas" where the window may give
  * no other way to end it (see `ExitAtlas.tsx`).
@@ -49,6 +50,7 @@ export function SettingsScreen({ general }: { general: boolean }) {
         <DownloadSpeed />
         {__ATLAS_DOWNLOADS__ ? <SitesSettings /> : null}
         {__ATLAS_DOWNLOADS__ ? <KeptPacks /> : null}
+        <UpdateSettings />
         <ActivityLogSetting />
         <p className="muted small app-version" data-testid="app-version">
           {app?.name ?? 'Atlas'}

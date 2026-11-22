@@ -98,6 +98,10 @@ export const SETTINGS = {
   newLocationType: (gameId: string) => `newLocationType:${gameId}`,
   /** Whether an open list is shown alone on the map in the standard layout (on unless turned off). */
   listOnlyOnMap: 'listOnlyOnMap',
+  /** "Check for updates when Atlas starts", in the desktop app that updates itself (on unless turned off; see `updates.ts`). */
+  updateCheckAtStart: 'updateCheckAtStart',
+  /** The version of Atlas whose update notice the person chose to skip (see `updates.ts`). */
+  updateSkipped: 'updateSkipped',
   /** Whether the Android app keeps the screen on while it is shown. */
   keepScreenOn: 'keepScreenOn',
   /** The game save linked to a profile (see `state/saves.ts`). */
