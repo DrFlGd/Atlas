@@ -30,6 +30,8 @@ import { ProgressTools } from './DesktopTools';
 import { NewGameButton, OwnGameActions } from './OwnGames';
 import { setKeepScreenOn, setKeysOpen, useKeyHints, useTouch } from './state';
 import { GroupTitle, SwitchTrack } from './widgets';
+import { ControllerSettings } from './ControllerSettings';
+import { usePad } from '../input/padState';
 
 /**
  * Games: the games on this device (press one to show it), importing a map
@@ -635,6 +637,8 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
   const offered = useTouch((s) => s.screenOnOffered);
   const layoutOffered = useAtlas(layoutChoiceOffered);
   const hints = useKeyHints();
+  // The guide lists the controller's buttons too: offered wherever one is connected.
+  const pad = usePad((s) => s.padId !== null);
   return (
     <section aria-labelledby="settings-heading" className="touch-settings">
       <GroupTitle id="settings-heading">Settings</GroupTitle>
@@ -716,7 +720,7 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
           <SwitchTrack on={keepOn} />
         </button>
       ) : null}
-      {hints ? (
+      {hints || pad ? (
         <button
           type="button"
           className="touch-row touch-row-button"
@@ -727,9 +731,9 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
           }}
         >
           <span className="touch-row-text">
-            <span className="touch-row-title">Keys and mouse</span>
+            <span className="touch-row-title">Keys and controller</span>
             <span className="touch-row-detail">
-              The keyboard shortcuts, and what the mouse does
+              The keyboard shortcuts, the controller's buttons, and what the mouse does
             </span>
           </span>
           <span className="touch-row-end">
@@ -737,6 +741,7 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
           </span>
         </button>
       ) : null}
+      <ControllerSettings />
       {desktop && withLog ? (
         <button
           type="button"

@@ -12,7 +12,8 @@ import { MapPane, type TouchMapOptions } from '../components/MapPane';
 import { MapsDialog } from '../components/MapsDialog';
 import { ProfileDialog } from '../components/ProfileDialog';
 import { downloadsOffered, keyboardHintsOffered } from '../features';
-import { leaveMap } from '../controller';
+import { leaveMap, setPadHost } from '../controller';
+import { HintBar } from '../input/HintBar';
 import { setShortcutOverrides } from '../keyboard';
 import { jumpToNearestUnfound, setProfileDialogOpen, showMap } from '../state/actions';
 import { loadBuildPrefs } from '../state/buildPlanner';
@@ -43,6 +44,7 @@ import { GamesScreen } from './GamesScreen';
 import { GuidesScreen } from './GuidesScreen';
 import { withKey } from './keys';
 import { KeysDialog } from './KeysDialog';
+import { TOUCH_PAD_HOST } from './padHost';
 import { EditorMapHint, EditorOutline, EditorSide, PreviewBar } from './editor/ListEditor';
 import { setPreview, stopEditing, useEditor } from './editor/editorState';
 import { arrangementFor, editorFits, panelWidthFor, type Arrangement } from './layout';
@@ -327,6 +329,7 @@ export function TouchShell({
         </Suspense>
       ) : null}
       <KeysDialog />
+      <HintBar />
       <PictureViewer />
       <GuidebookLayer />
     </div>
@@ -580,8 +583,11 @@ function useTouchEffects(wide: boolean, room: boolean) {
       found: orderKeyDone,
       nearest: orderKeyNext,
     });
+    // What a controller does in this layout's own way.
+    setPadHost(TOUCH_PAD_HOST);
     return () => {
       setShortcutOverrides(null);
+      setPadHost(null);
       setKeysOpen(false);
     };
   }, []);

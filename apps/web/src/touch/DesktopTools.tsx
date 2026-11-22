@@ -4,6 +4,7 @@ import { setProfileDialogOpen } from '../state/actions';
 import { saveReaderOf, setSaveDialogOpen } from '../state/saves';
 import { useAtlas } from '../state/store';
 import { setKeysOpen, useKeyHints } from './state';
+import { usePad } from '../input/padState';
 
 /**
  * The desktop app's tools in the standard layout: the same dialogs as the
@@ -48,16 +49,17 @@ export function SaveButton() {
   );
 }
 
-/** The list of keys, in the rail where there is a keyboard. */
+/** The guide of keys and controller, in the rail where there is a keyboard or a controller. */
 export function KeysButton() {
   const hints = useKeyHints();
-  if (!hints) return null;
+  const pad = usePad((s) => s.padId !== null);
+  if (!hints && !pad) return null;
   return (
     <button
       type="button"
       className="touch-round-button touch-rail-tool"
-      aria-label="Keys and mouse"
-      title="Keys and mouse (?)"
+      aria-label="Keys and controller"
+      title="Keys and controller (?)"
       aria-haspopup="dialog"
       aria-keyshortcuts="?"
       data-testid="keys-button"

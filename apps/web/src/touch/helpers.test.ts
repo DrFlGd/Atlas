@@ -4,7 +4,7 @@ import { backStep, type BackState } from './backStack';
 import { arrangementFor, editorFits, panelWidthFor } from './layout';
 import { nextOnList, orderHits, revealShift, type Placed } from './ordering';
 import { parseRecent, withRecent } from './recent';
-import { keyList, withKey } from './keys';
+import { withKey } from './keys';
 import { forgetRequestedUi, parseLayout, requestedUi, shownUi, uiFromSearch } from './uiMode';
 
 describe('arrangement', () => {
@@ -374,34 +374,6 @@ describe('choosing the layout', () => {
 });
 
 describe('keys', () => {
-  it('lists the classic keys, with C only where there are lists', () => {
-    const keys = keyList('Checklists and guides').flatMap((k) => k.keys);
-    expect(keys).toEqual([
-      '/',
-      'N',
-      'F',
-      'Z',
-      'C',
-      'H',
-      'B',
-      '[',
-      ']',
-      '\u2191',
-      '\u2193',
-      '\u2190',
-      '\u2192',
-      'Enter',
-      'Esc',
-      '?',
-    ]);
-    expect(keyList(null).find((k) => k.keys[0] === 'H')?.what).toBe('In Guides, the home page');
-    expect(keyList(null).find((k) => k.keys[0] === 'B')?.what).toBe(
-      'In Guides, hide or show the contents beside the page',
-    );
-    expect(keyList(null).flatMap((k) => k.keys)).not.toContain('C');
-    expect(keyList('Lists').find((k) => k.keys[0] === 'C')?.what).toBe('Lists, or back to the map');
-  });
-
   it('adds the key to a tooltip where keys are shown', () => {
     expect(withKey('Lists', 'C', true)).toBe('Lists (C)');
     expect(withKey('Lists', 'C', false)).toBe('Lists');

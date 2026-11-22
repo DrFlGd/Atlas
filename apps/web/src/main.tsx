@@ -6,6 +6,7 @@ import { installController } from './controller';
 import { desktop, openLinksOutside } from './desktop';
 import './styles/theme.css';
 import './styles/app.css';
+import './styles/pad.css';
 
 // In the desktop app, links to other sites open in the system browser.
 if (desktop) openLinksOutside(desktop);

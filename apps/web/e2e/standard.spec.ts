@@ -206,23 +206,13 @@ test('the classic keys work and are shown, and Esc closes what is on top', async
   await page.keyboard.press('?');
   const keys = page.getByTestId('keys-dialog');
   await expect(keys).toBeVisible();
+  // Each context with its keys (and its controller buttons, see controller.spec.ts).
   await expect(keys.locator('kbd')).toHaveText([
-    '/',
-    'N',
-    'F',
-    'Z',
-    'C',
-    'H',
-    'B',
-    '[',
-    ']',
-    '\u2191',
-    '\u2193',
-    '\u2190',
-    '\u2192',
-    'Enter',
-    'Esc',
-    '?',
+    ...['W', 'A', 'S', 'D', '-', '+', 'Enter', 'F', 'N', '0', 'L'],
+    ...['[', ']', 'H', 'B'],
+    ...['N', 'F'],
+    ...['\u2191', '\u2193', '\u2190', '\u2192', 'Enter', 'Page Up', 'Page Down'],
+    ...['Esc', 'Q', 'E', '/', 'Z', 'C', '?'],
   ]);
   await expect(keys).toContainText('Right-click a location');
   await page.keyboard.press('Escape');

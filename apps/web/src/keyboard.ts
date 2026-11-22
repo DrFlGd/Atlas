@@ -7,6 +7,8 @@ import {
   toggleFound,
   undo,
 } from './state/actions';
+import { isKeyOf } from './input/bindings';
+import { reticleTarget } from './input/padState';
 import { toggleLeftTab } from './state/checklists';
 import { useAtlas } from './state/store';
 
@@ -71,42 +73,36 @@ export function useShortcuts(): void {
         }
         return;
       }
-      switch (key) {
-        case 'f':
-          event.preventDefault();
-          if (!overrides?.found?.()) toggleFound();
-          break;
-        case 'z':
-          event.preventDefault();
-          undo();
-          break;
-        case '/':
-          event.preventDefault();
-          if (overrides) overrides.search();
-          else focusSearch();
-          break;
-        case '?':
-          if (!overrides) break;
-          event.preventDefault();
-          overrides.keys();
-          break;
-        case 'n':
-          event.preventDefault();
-          if (!overrides?.nearest?.()) jumpToNearestUnfound();
-          break;
-        case 'c':
-          event.preventDefault();
-          if (overrides) overrides.checklists();
-          else toggleLeftTab('checklists');
-          break;
-        case 'escape':
-          if (overrides) {
-            overrides.escape();
-          } else if (useAtlas.getState().selectedId) {
-            select(null);
-            if (window.matchMedia('(max-width: 899px)').matches) setPane('details', false);
-          }
-          break;
+      // The keys are those of the table of keys and buttons (`input/bindings.ts`).
+      if (isKeyOf('mark-found', key)) {
+        event.preventDefault();
+        // The location the controller's crosshair holds, while it shows; else the selection.
+        if (!overrides?.found?.()) toggleFound(reticleTarget()?.marker.id ?? undefined);
+      } else if (isKeyOf('undo', key)) {
+        event.preventDefault();
+        undo();
+      } else if (isKeyOf('search', key)) {
+        event.preventDefault();
+        if (overrides) overrides.search();
+        else focusSearch();
+      } else if (isKeyOf('keys-guide', key)) {
+        if (!overrides) return;
+        event.preventDefault();
+        overrides.keys();
+      } else if (isKeyOf('nearest', key)) {
+        event.preventDefault();
+        if (!overrides?.nearest?.()) jumpToNearestUnfound();
+      } else if (isKeyOf('lists', key)) {
+        event.preventDefault();
+        if (overrides) overrides.checklists();
+        else toggleLeftTab('checklists');
+      } else if (isKeyOf('back', event.key)) {
+        if (overrides) {
+          overrides.escape();
+        } else if (useAtlas.getState().selectedId) {
+          select(null);
+          if (window.matchMedia('(max-width: 899px)').matches) setPane('details', false);
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
