@@ -171,15 +171,25 @@ jobs:
           commit="$(git rev-parse --short HEAD)"
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas $VERSION for Windows: an offline map, checklist and guide viewer. It comes with a small demo world, and shows map packs from its maps folder and from any folder you choose (**Settings**, then **Games in other folders**).
+          Atlas $VERSION for Windows and Linux: an offline map, checklist and guide viewer. It comes with a small demo world, and shows map packs from its maps folder and from any folder you choose (**Settings**, then **Games in other folders**).
 
           ## How to install
 
           1. Under **Assets** below, download **$ASSET**.
-          2. Open the downloaded file. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: click **More info**, then **Run anyway**.
+          2. Open the downloaded file. The installer is not signed, so Windows shows a blue "Windows protected your PC" box: press **More info**, then **Run anyway**.
           3. Follow the installer, then start **Atlas** from the Start menu.
 
           Map packs, with their map images, are kept in %LOCALAPPDATA%\\Atlas\\Maps unless you choose another folder. Your progress stays in the app.
+
+          On Linux and the Steam Deck, download **Atlas.AppImage**, put it in the **Applications** folder of your home folder in place of the older one, and make sure **Is executable** is ticked under **Properties**, then **Permissions**.
+
+          ## New in 0.27.0
+
+          - **Atlas updates itself.** A few seconds after it starts, Atlas looks for a newer version. When there is one, a notice shows what is new, with **Install now**, **Later** and **Skip this version**. **Install now** saves your changes, installs the update and starts Atlas again. **Settings** has an **Updates** group with **Check for updates**, and a switch to stop the look at the start.
+          - **Where it does not.** The Linux AppImage updates itself too, but does not look when Steam starts it beside a game; **Check for updates** in Settings still works there. A copy installed another way on Linux is updated the way it was installed.
+          - This is the last version you install by hand: from here on, updates come in by themselves.
+
+          This version has passed the automatic checks only. Updating has not been tried on a real Windows PC or Steam Deck yet.
 
           ## New in 0.26.0
 
