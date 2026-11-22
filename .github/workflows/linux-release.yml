@@ -2,21 +2,20 @@
 # that runs without installing, as SteamOS needs: its system cannot be
 # changed, so no deb, rpm or Flatpak here), with the demo world, no
 # importers and no map image downloads. It checks the AppImage and starts
-# it once, then attaches it to the release linux-trial-<trial> of this
-# repository: a draft prerelease by default, which only people with write
-# access to the repository can see. Its notes say how to install it on a
-# Steam Deck and what to try (trial T3: switching between a game and Atlas
-# in Game Mode).
+# it once (linux-appimage.yml, which release.yml uses too), then attaches
+# it to the release linux-trial-<trial> of this repository: a draft
+# prerelease by default, which only people with write access to the
+# repository can see. Its notes say how to install it on a Steam Deck and
+# what to try (trial T3: switching between a game and Atlas in Game Mode).
 #
 # Run it from the Actions tab ("Linux release", "Run workflow") with the
 # trial's number. It builds the branch or tag it is run from. Its tags start
 # with "linux-trial-", which release.yml (tags "v*") does not take.
 #
-# Built on Ubuntu 22.04, the oldest runner GitHub offers, so the AppImage
-# asks for no newer C library (glibc 2.35) than an older Linux system has;
-# SteamOS has a newer one. Tauri bundles WebKitGTK, GTK and their libraries
-# into the AppImage with linuxdeploy; the graphics drivers and the C library
-# come from the system.
+# The AppImage is signed for updates when the repository secret
+# TAURI_SIGNING_PRIVATE_KEY is set, and built all the same when it is not.
+# A trial never publishes latest.json: Atlas updates only from the
+# viewer's releases (release.yml).
 
 name: Linux release
 
@@ -41,15 +40,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  appimage:
-    name: Linux AppImage (x86_64)
-    runs-on: ubuntu-22.04
-    timeout-minutes: 90
+  trial:
+    name: Work out the trial
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      trial: ${{ steps.trial.outputs.trial }}
+      tag: ${{ steps.trial.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
       - name: Work out the trial
         id: trial
         env:
@@ -63,203 +61,43 @@ jobs:
           {
             echo "trial=$trial"
             echo "tag=linux-trial-$trial"
-            echo "asset=Atlas.AppImage"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install Linux system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gdb libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev file xvfb imagemagick
-          echo "WebKitGTK $(pkg-config --modversion webkit2gtk-4.1), GTK $(pkg-config --modversion gtk+-3.0)"
-          ldd --version | head -n 1
+  appimage:
+    name: Build
+    needs: trial
+    uses: ./.github/workflows/linux-appimage.yml
+    permissions:
+      contents: read
+    secrets: inherit
 
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
+  publish:
+    name: Publish the trial
+    needs: [trial, appimage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      # Reading this run's artifact.
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
         with:
-          node-version: 22
-          cache: pnpm
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          key: linux-appimage
-
-      - run: pnpm install --frozen-lockfile
-
-      # The shell's unit tests on Linux, which ci.yml runs on Windows only:
-      # among them those of the Linux start (the web view's settings, a
-      # start with --background) and of the Linux folders.
-      - name: Rust unit tests on Linux
-        working-directory: apps/desktop/src-tauri
-        run: cargo test --locked
-
-      # The plain viewer: the demo world only, no importers, no map image
-      # downloads (ATLAS_ENABLE_DOWNLOADS stays off), the app's own name and
-      # identifier. Only the AppImage is made.
-      - name: Build the AppImage
+      - name: Download the AppImage
         env:
-          ATLAS_ENABLE_DOWNLOADS: '0'
-        run: pnpm desktop:build --bundles appimage
-
-      - name: Collect the AppImage
-        env:
-          ASSET: ${{ steps.trial.outputs.asset }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          shopt -s nullglob
-          images=(apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage)
-          if [ "${#images[@]}" -ne 1 ]; then
-            echo "::error::Expected one AppImage, found ${#images[@]}: ${images[*]}"
-            exit 1
-          fi
-          mkdir -p release
-          cp "${images[0]}" "release/$ASSET"
-          chmod +x "release/$ASSET"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name Atlas.AppImage --dir release
           ls -l release
-
-      # What is inside: the viewer without download code, WebKitGTK with its
-      # own helper programs (the web view cannot start without them), the
-      # demo pack, and nothing that needs a newer C library than 2.35.
-      - name: Check the AppImage
-        env:
-          ASSET: ${{ steps.trial.outputs.asset }}
-        run: |
-          mkdir -p check
-          cd check
-          "../release/$ASSET" --appimage-extract > /dev/null
-          root=squashfs-root
-          cd ..
-          root="check/$root"
-
-          shopt -s nullglob
-          bins=("$root"/usr/bin/*)
-          if [ "${#bins[@]}" -ne 1 ]; then
-            echo "::error::Expected one program in usr/bin, found ${#bins[@]}: ${bins[*]}"
-            exit 1
-          fi
-          ATLAS_ENABLE_DOWNLOADS=0 node apps/desktop/scripts/check-binary.js "${bins[0]}"
-
-          missing=0
-          for file in libwebkit2gtk-4.1.so.0 libjavascriptcoregtk-4.1.so.0; do
-            if [ -z "$(find "$root/usr/lib" -name "$file" -print -quit)" ]; then
-              echo "::error::$file is not in the AppImage"
-              missing=1
-            fi
-          done
-          for file in WebKitWebProcess WebKitNetworkProcess libwebkit2gtkinjectedbundle.so; do
-            if [ -z "$(find "$root" -path '*webkit2gtk-4.1*' -name "$file" -print -quit)" ]; then
-              echo "::error::WebKitGTK's $file is not in the AppImage"
-              missing=1
-            fi
-          done
-          if [ -z "$(find "$root" -path '*/usr/lib/*/packs/demo/manifest.json' -print -quit)" ]; then
-            echo "::error::The demo pack is not in the AppImage"
-            missing=1
-          fi
-          [ "$missing" -eq 0 ]
-
-          # The Gamepad API of WebKitGTK reads controllers through libmanette.
-          if [ -n "$(find "$root/usr/lib" -name 'libmanette-0.2.so*' -print -quit)" ]; then
-            echo "libmanette is in the AppImage: the web view can offer the Gamepad API."
-          else
-            echo "::warning::libmanette is not in the AppImage: the web view may not offer the Gamepad API, and a controller then works only through keys."
-          fi
-
-          newest="$(find "$root" -type f \( -name '*.so*' -o -perm -u+x \) -exec sh -c 'file -b "$1" | grep -q ELF && objdump -T "$1" 2>/dev/null' _ {} \; \
-            | grep -o 'GLIBC_[0-9.]*' | sort -u -V | tail -n 1)"
-          echo "The newest C library version asked for: $newest"
-          if [ -z "$newest" ]; then
-            echo "::error::No C library version was read from the AppImage's programs"
-            exit 1
-          fi
-          if [ "$(printf '%s\n' "$newest" "GLIBC_2.35" | sort -V | tail -n 1)" != "GLIBC_2.35" ]; then
-            echo "::error::The AppImage asks for $newest, newer than Ubuntu 22.04's GLIBC_2.35"
-            exit 1
-          fi
-
-      # Starts the AppImage itself (unpacked to a temporary folder, as no FUSE
-      # is set up here) on a virtual screen of the Steam Deck's size, with
-      # its folders in a temporary folder: it must keep running, start the
-      # web view's own process, and write its first lines to the activity
-      # log, among them the web view setting it made. Saves a picture of the
-      # screen for a person to look at.
-      - name: Start-up test of the AppImage
-        env:
-          ASSET: ${{ steps.trial.outputs.asset }}
-        run: |
-          home="$RUNNER_TEMP/atlas-home"
-          mkdir -p "$home/data" "$home/config" "$home/cache" test-results
-          export XDG_DATA_HOME="$home/data" XDG_CONFIG_HOME="$home/config" XDG_CACHE_HOME="$home/cache"
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          cat > "$RUNNER_TEMP/start.sh" <<'EOF'
-          set -u
-          "./release/$ASSET" > test-results/linux-start.out 2>&1 &
-          pid=$!
-          # GTK may wait up to 25 seconds at start for a desktop service on
-          # the session bus that does not answer on this machine (seen in a
-          # stack of the main thread: g_application_register, then
-          # g_dbus_proxy_new_sync). So wait for the web view's process for up
-          # to 60 seconds, and say how long it took.
-          waited=0
-          while [ "$waited" -lt 60 ] && ! pgrep -f WebKitWebProcess > /dev/null; do
-            if ! kill -0 "$pid" 2> /dev/null; then
-              echo "::error::Atlas ended after $waited seconds"
-              exit 1
-            fi
-            sleep 1
-            waited=$((waited + 1))
-          done
-          echo "The web view's process was running after $waited seconds." | tee test-results/linux-start-seconds.txt
-          if [ "$waited" -gt 10 ]; then
-            echo "::warning::Atlas took $waited seconds to start its web view here"
-          fi
-          sleep 10
-          import -window root test-results/linux-start.png || true
-          ps -eo pid,args | grep '[W]ebKitWebProcess' | tee test-results/linux-webkit.txt
-          if ! grep -q WebKitWebProcess test-results/linux-webkit.txt; then
-            # Where Atlas waits when its web view has not started: every
-            # process under the AppImage, and the stack of each thread.
-            ps -ef --forest | tee test-results/linux-processes.txt
-            for p in $(pgrep -f atlas-desktop); do
-              sudo gdb -p "$p" -batch -ex 'thread apply all bt 25' > "test-results/linux-stack-$p.txt" 2>&1 || true
-              grep -E '^(Thread|#)' "test-results/linux-stack-$p.txt" | head -n 200
-            done
-          fi
-          if ! kill -0 "$pid" 2> /dev/null; then
-            echo "::error::Atlas ended after it started"
-            exit 1
-          fi
-          kill "$pid"
-          wait "$pid" || true
-          EOF
-          xvfb-run -a -s '-screen 0 1280x800x24' bash "$RUNNER_TEMP/start.sh"
-          log="$XDG_DATA_HOME/atlas/logs/atlas.log"
-          cp "$log" test-results/ || true
-          cat test-results/linux-start.out || true
-          grep -q 'started on linux' "$log"
-          grep -q 'WEBKIT_DISABLE_DMABUF_RENDERER=1' "$log"
-          grep -q 'WebKitWebProcess' test-results/linux-webkit.txt
-          test -d "$XDG_DATA_HOME/atlas/packs"
-          echo "Atlas started, its web view ran, and its packs folder is $XDG_DATA_HOME/atlas/packs."
-
-      - name: Upload the start-up test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-start-up
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
 
       # The notes are written as they are (a quoted heredoc: nothing in it is
       # expanded, and it holds no backticks), then the trial's number and
       # the commit are put in.
       - name: Write the release notes
         env:
-          TRIAL: ${{ steps.trial.outputs.trial }}
+          TRIAL: ${{ needs.trial.outputs.trial }}
         run: |
           commit="$(git rev-parse --short HEAD)"
           cat > release/notes.md <<'EOF'
@@ -346,22 +184,16 @@ jobs:
           fi
           cat release/notes.md
 
-      - name: Upload the AppImage as a workflow artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.trial.outputs.asset }}
-          path: release/${{ steps.trial.outputs.asset }}
-          if-no-files-found: error
-          retention-days: 30
-
-      # A prerelease; --latest=false keeps the Windows release as the
-      # repository's latest.
+      # A prerelease; --latest=false keeps the viewer's release as the
+      # repository's latest. Only the AppImage is attached: a trial never
+      # has latest.json, so no Atlas takes it as an update, and no
+      # signature either.
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.trial.outputs.tag }}
-          TRIAL: ${{ steps.trial.outputs.trial }}
-          ASSET: ${{ steps.trial.outputs.asset }}
+          TAG: ${{ needs.trial.outputs.tag }}
+          TRIAL: ${{ needs.trial.outputs.trial }}
+          ASSET: Atlas.AppImage
           DRAFT: ${{ inputs.draft }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

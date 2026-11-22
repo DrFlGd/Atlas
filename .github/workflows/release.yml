@@ -1,10 +1,19 @@
 # Builds the plain Atlas viewer for Windows (with the demo world, no
 # importers and no map image downloads) and publishes the installer as a
-# GitHub Release of this repository.
+# GitHub Release of this repository, the repository's latest. Then it adds
+# the Linux AppImage (linux-appimage.yml) and latest.json, which tells every
+# Atlas that updates itself about this version (see "Updates" in the
+# README).
 #
 # Run it from the Actions tab ("Release", "Run workflow") with a version such
 # as 0.3.0, or push a tag such as v0.3.0. The version must match the one in
 # apps/desktop/package.json, so the installer and the app say the same.
+#
+# Updates are signed: the repository secret TAURI_SIGNING_PRIVATE_KEY (and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD, empty for a key without one) must be
+# set, or the release stops at once. The Windows release does not wait for
+# Linux: when the AppImage fails, latest.json lists Windows only, since it
+# names only files that are really in the release.
 
 name: Release
 
@@ -28,10 +37,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Stops the release before anything is built when updates cannot be
+  # signed: without the key, Atlas could not check them.
+  signing-key:
+    name: Check the signing key for updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the signing key for updates
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Add the repository secret TAURI_SIGNING_PRIVATE_KEY first (Settings, Secrets and variables, Actions). Without it the updates cannot be signed, and no release is made."
+            exit 1
+          fi
+          echo "The signing key for updates is set."
+
   windows:
     name: Windows installer
+    needs: signing-key
     runs-on: windows-latest
     timeout-minutes: 75
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      asset: ${{ steps.version.outputs.asset }}
     defaults:
       run:
         shell: bash
@@ -91,10 +122,15 @@ jobs:
       # reports as style issues.
       # The plain viewer: the demo world only, no importers, no map image
       # downloads (ATLAS_ENABLE_DOWNLOADS stays off), the app's own name and
-      # identifier. No signing keys are set: the installer is unsigned.
+      # identifier. The installer is not code-signed for Windows; it is
+      # signed for updates (ATLAS_UPDATER_ARTIFACTS=1: a .sig file beside
+      # it, made with TAURI_SIGNING_PRIVATE_KEY).
       - name: Build the desktop app
         env:
           ATLAS_ENABLE_DOWNLOADS: '0'
+          ATLAS_UPDATER_ARTIFACTS: '1'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm desktop:build
 
       # The viewer must not be able to fetch map images: the download and map
@@ -122,8 +158,14 @@ jobs:
             echo "::error::Expected one NSIS installer, found ${#installers[@]}: ${installers[*]}"
             exit 1
           fi
+          if [ ! -f "${installers[0]}.sig" ]; then
+            echo "::error::The build wrote no signature (${installers[0]}.sig) for the installer"
+            exit 1
+          fi
           mkdir -p release
           cp "${installers[0]}" "release/$ASSET"
+          # The signature is of the file's bytes, so it holds under the asset's name.
+          cp "${installers[0]}.sig" "release/$ASSET.sig"
           ls -l release
 
           commit="$(git rev-parse --short HEAD)"
@@ -409,6 +451,17 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # For latest.json: the installer's signature and the notes.
+      - name: Upload the signature and notes as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-update
+          path: |
+            release/${{ steps.version.outputs.asset }}.sig
+            release/notes.md
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -416,14 +469,129 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           ASSET: ${{ steps.version.outputs.asset }}
         run: |
+          # A normal release (not a draft, not a prerelease), marked as the
+          # repository's latest, so /releases/latest/download/latest.json
+          # leads to it.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG exists: replacing its installer and notes."
-            gh release upload "$TAG" "release/$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+            echo "Release $TAG exists: replacing its installer, signature and notes."
+            gh release upload "$TAG" "release/$ASSET" "release/$ASSET.sig" \
+              --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release/notes.md
           else
-            gh release create "$TAG" "release/$ASSET" \
+            gh release create "$TAG" "release/$ASSET" "release/$ASSET.sig" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Atlas $VERSION" \
-              --notes-file release/notes.md
+              --notes-file release/notes.md \
+              --latest
+          fi
+
+  # The AppImage for Linux and the Steam Deck, built, checked and started
+  # once as linux-release.yml does, and signed for updates. It does not hold
+  # up the Windows release; the next job attaches it.
+  linux:
+    name: Linux AppImage
+    needs: signing-key
+    uses: ./.github/workflows/linux-appimage.yml
+    permissions:
+      contents: read
+    with:
+      require-signing: true
+    secrets: inherit
+
+  # Attaches the AppImage and its signature to the release when they were
+  # built, then writes latest.json from the files that are really in the
+  # release: Windows always, Linux when it was attached.
+  updates:
+    name: Linux AppImage and latest.json
+    needs: [windows, linux]
+    if: ${{ always() && needs.windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      # Reading this run's artifacts.
+      actions: read
+    steps:
+      - name: Download the installer's signature and the notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name windows-update --dir windows
+          ls -l windows
+
+      - name: Attach the AppImage to the release
+        id: linux
+        if: ${{ needs.linux.result == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.windows.outputs.tag }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name Atlas.AppImage --dir linux
+          ls -l linux
+          if [ ! -s linux/Atlas.AppImage ] || [ ! -s linux/Atlas.AppImage.sig ]; then
+            echo "::error::The AppImage or its signature is missing"
+            exit 1
+          fi
+          # Always Atlas.AppImage, so the Steam launch line keeps naming it
+          # after an update replaced it in place.
+          gh release upload "$TAG" linux/Atlas.AppImage linux/Atlas.AppImage.sig \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "attached=true" >> "$GITHUB_OUTPUT"
+
+      - name: Say that Linux is left out
+        if: ${{ steps.linux.outputs.attached != 'true' }}
+        run: echo "::warning::The Linux AppImage was not built or not attached, so latest.json offers the update on Windows only."
+
+      # The version, what is new (the notes' "New in <version>" part), when
+      # it was published, and for each system the file's address and its
+      # signature, as the updater reads them.
+      - name: Write latest.json
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+          TAG: ${{ needs.windows.outputs.tag }}
+          ASSET: ${{ needs.windows.outputs.asset }}
+          LINUX: ${{ steps.linux.outputs.attached == 'true' }}
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          notes="$(awk -v head="## New in $VERSION" '
+            $0 == head { on = 1; next }
+            on && (/^## / || /^---/) { exit }
+            on { print }
+          ' windows/notes.md | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}')"
+          if [ -z "$notes" ]; then
+            echo "::warning::The notes have no \"## New in $VERSION\" part, so the update says only its version."
+            notes="Atlas $VERSION."
+          fi
+          platforms="$(jq -n \
+            --arg url "$base/$ASSET" \
+            --rawfile signature "windows/$ASSET.sig" \
+            '{ "windows-x86_64": { url: $url, signature: $signature } }')"
+          if [ "$LINUX" = true ]; then
+            platforms="$(jq -n \
+              --argjson platforms "$platforms" \
+              --arg url "$base/Atlas.AppImage" \
+              --rawfile signature linux/Atlas.AppImage.sig \
+              '$platforms + { "linux-x86_64": { url: $url, signature: $signature } }')"
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$notes" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$platforms" \
+            '{ version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms }' \
+            > latest.json
+          cat latest.json
+
+      - name: Attach latest.json to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.windows.outputs.tag }}
+        run: |
+          gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)"
+          if [ "$latest" = "$TAG" ]; then
+            echo "$TAG is the repository's latest release: Atlas finds this update."
+          else
+            echo "::warning::The repository's latest release is $latest, not $TAG, so Atlas does not offer this version as an update."
           fi
