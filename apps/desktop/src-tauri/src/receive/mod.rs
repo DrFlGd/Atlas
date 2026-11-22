@@ -98,7 +98,7 @@ mod desktop {
     use tauri::{AppHandle, Emitter, Manager, Runtime};
 
     use super::{
-        args::{self, StartRequest},
+        args::{self, StartFlags, StartRequest},
         watch::{Receiver, Timing},
         Opened, LIBRARY_CHANGED, PACK_FILE_OPENED,
     };
@@ -116,11 +116,15 @@ mod desktop {
     /// Start-up: the pack file Atlas was started with, if any, read before
     /// the window is made; the web app takes it at its start. A game asked
     /// for by another program waits for it in the same way (see
-    /// `background`). Whether the start asked for the background.
-    pub fn open_at_start<R: Runtime>(app: &AppHandle<R>, library: &Library) -> bool {
+    /// `background`). What the start asked of the background and of
+    /// updates.
+    pub fn open_at_start<R: Runtime>(app: &AppHandle<R>, library: &Library) -> StartFlags {
         let cwd = std::env::current_dir().unwrap_or_default();
         let request = args::read(std::env::args_os(), &cwd, crate::library::READER);
-        let background = request.background;
+        let flags = StartFlags {
+            background: request.background,
+            no_update_check: request.no_update_check,
+        };
         if let Some(show) = &request.show {
             if let Some(found) = background::find_show(library, show) {
                 if let Some(shows) = app.try_state::<Arc<Shows>>() {
@@ -129,7 +133,7 @@ mod desktop {
             }
         }
         open(app, library, request, "started");
-        background
+        flags
     }
 
     /// A second start handed over its arguments and the folder it was

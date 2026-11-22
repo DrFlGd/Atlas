@@ -8,6 +8,8 @@ import {
   androidCommands,
   androidEnv,
   downloadsEnabled,
+  SIGNING_KEY_MISSING,
+  updaterArtifacts,
   identityConfig,
   mainActivitySource,
   tauriArgs,
@@ -104,6 +106,43 @@ test('a build with downloads turns on the shell feature', () => {
     '--features',
     'downloads',
     '--no-bundle',
+  ]);
+});
+
+test('the update files are signed for the plain viewer, and a release needs the key', () => {
+  const viewer = { identity: false, downloads: false };
+  const key = { TAURI_SIGNING_PRIVATE_KEY: 'secret' };
+  // Not asked: when the key is set.
+  assert.equal(updaterArtifacts({}, viewer), false);
+  assert.equal(updaterArtifacts({ TAURI_SIGNING_PRIVATE_KEY: '  ' }, viewer), false);
+  assert.equal(updaterArtifacts(key, viewer), true);
+  // Never for a build with downloads or its own name.
+  assert.equal(updaterArtifacts(key, { identity: false, downloads: true }), false);
+  assert.equal(updaterArtifacts(key, { identity: true, downloads: false }), false);
+  // Asked for: the key must be there.
+  assert.equal(updaterArtifacts({ ...key, ATLAS_UPDATER_ARTIFACTS: '1' }, viewer), true);
+  assert.throws(
+    () => updaterArtifacts({ ATLAS_UPDATER_ARTIFACTS: '1' }, viewer),
+    (error) => error instanceof Error && error.message === SIGNING_KEY_MISSING,
+  );
+  assert.match(SIGNING_KEY_MISSING, /^Add the repository secret TAURI_SIGNING_PRIVATE_KEY first/);
+  assert.throws(
+    () =>
+      updaterArtifacts(
+        { ...key, ATLAS_UPDATER_ARTIFACTS: '1' },
+        { identity: false, downloads: true },
+      ),
+    /plain Atlas viewer only/,
+  );
+  // Switched off, or a value it does not know.
+  assert.equal(updaterArtifacts({ ...key, ATLAS_UPDATER_ARTIFACTS: '0' }, viewer), false);
+  assert.throws(() => updaterArtifacts({ ATLAS_UPDATER_ARTIFACTS: 'yes' }, viewer), /must be 1, 0/);
+  assert.deepEqual(tauriArgs({ identity: false, downloads: false, updater: true, extra: [] }), [
+    'build',
+    '--config',
+    'src-tauri/tauri.build.conf.json',
+    '--config',
+    'src-tauri/tauri.updater.conf.json',
   ]);
 });
 

@@ -20,6 +20,16 @@
  * recorded in `src-tauri/atlas-build.json` (ignored by git), so the tests of
  * the built app know what to expect without being told again.
  *
+ * Updates (see `src-tauri/src/updates/`): when `TAURI_SIGNING_PRIVATE_KEY`
+ * is set, a build of the plain viewer also writes the update files
+ * (`src-tauri/tauri.updater.conf.json`, `createUpdaterArtifacts`): the
+ * installer or AppImage signed with that key, as a `.sig` file beside it.
+ * `ATLAS_UPDATER_ARTIFACTS=1` asks for them, and stops the build when the
+ * key is not set, so a release never ships unsigned updates; `0` leaves
+ * them out. A build with downloads or with its own name and identifier
+ * never writes them: such an app does not update itself from the viewer's
+ * releases.
+ *
  * Other arguments are passed on to `tauri build`.
  *
  * `node scripts/build.js android` (`pnpm --filter @atlas/desktop
@@ -116,13 +126,45 @@ export function downloadsEnabled(value) {
 /** Where a build records whether it has downloads; see `scripts/check-binary.js`. */
 export const BUILD_RECORD = here('../src-tauri/atlas-build.json');
 
+/** What a release needs when its update files are asked for and cannot be made. */
+export const SIGNING_KEY_MISSING =
+  'Add the repository secret TAURI_SIGNING_PRIVATE_KEY first: without it the update files cannot be signed.';
+
+/**
+ * Whether the build writes the signed update files: as
+ * `ATLAS_UPDATER_ARTIFACTS` says (`1` must, `0` not), else when the signing
+ * key is set; never for a build with downloads or its own identity.
+ * Throws when they are asked for and cannot be made. Exported for tests.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{ identity: boolean, downloads: boolean }} build
+ */
+export function updaterArtifacts(env, { identity, downloads }) {
+  const asked = env.ATLAS_UPDATER_ARTIFACTS?.trim() ?? '';
+  if (asked !== '' && asked !== '0' && asked !== '1') {
+    throw new Error(`ATLAS_UPDATER_ARTIFACTS must be 1, 0 or unset, not "${asked}".`);
+  }
+  if (asked === '0') return false;
+  const key = (env.TAURI_SIGNING_PRIVATE_KEY?.trim() ?? '') !== '';
+  if (asked === '1') {
+    if (downloads || identity) {
+      throw new Error(
+        'Update files are made for the plain Atlas viewer only: unset ATLAS_UPDATER_ARTIFACTS for a build with downloads or its own name.',
+      );
+    }
+    if (!key) throw new Error(SIGNING_KEY_MISSING);
+    return true;
+  }
+  return key && !downloads && !identity;
+}
+
 /**
  * The arguments for `tauri build`. Exported for tests.
- * @param {{ identity: boolean, downloads: boolean, extra: string[] }} options
+ * @param {{ identity: boolean, downloads: boolean, updater?: boolean, extra: string[] }} options
  */
-export function tauriArgs({ identity, downloads, extra }) {
+export function tauriArgs({ identity, downloads, updater = false, extra }) {
   const args = ['build', '--config', 'src-tauri/tauri.build.conf.json'];
   if (identity) args.push('--config', 'src-tauri/tauri.identity.conf.json');
+  if (updater) args.push('--config', 'src-tauri/tauri.updater.conf.json');
   if (downloads) args.push('--features', 'downloads');
   args.push(...extra.filter((arg) => arg !== '--'));
   return args;
@@ -255,9 +297,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === 'a
       ? 'With map image downloads (ATLAS_ENABLE_DOWNLOADS=1)'
       : 'Without map image downloads: a viewer (set ATLAS_ENABLE_DOWNLOADS=1 for them)',
   );
+  const updater = updaterArtifacts(process.env, { identity: identity !== null, downloads });
+  console.log(
+    updater
+      ? 'With signed update files (TAURI_SIGNING_PRIVATE_KEY is set)'
+      : 'Without update files (set TAURI_SIGNING_PRIVATE_KEY for them)',
+  );
   const args = tauriArgs({
     identity: identity !== null,
     downloads,
+    updater,
     extra: process.argv.slice(2),
   });
   // The web build that `tauri build` runs first reads the same variable.

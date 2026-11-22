@@ -116,6 +116,10 @@ const COMMANDS: &[&str] = &[
     "guidebook_forget_picked",
     "guidebook_add",
     "guidebook_remove",
+    "update_check",
+    "update_download",
+    "update_progress",
+    "update_install",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map
@@ -187,6 +191,13 @@ fn main() {
         COMMANDS
     };
     forget_other_commands(commands);
+    // `self_update`: the updater is in this build (see `src/updates/`): the
+    // app without downloads, on Windows and Linux.
+    println!("cargo::rustc-check-cfg=cfg(self_update)");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if !downloads && matches!(target_os.as_str(), "windows" | "linux") {
+        println!("cargo::rustc-cfg=self_update");
+    }
     // `capabilities/main.json` grants the commands of every build to the main
     // window; `capabilities/downloads/` adds the download commands, and is
     // read only when they exist, since a capability naming a command that

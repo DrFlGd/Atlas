@@ -409,11 +409,26 @@ fn on_tray_press<R: Runtime>(app: &AppHandle<R>) {
 /// when Atlas does not keep running. Where the settings are not offered
 /// (Linux) there is no place to keep, and the app just ends.
 pub fn quit<R: Runtime>(app: &AppHandle<R>) {
+    keep_place(app);
+    app.exit(0);
+}
+
+/// Before an update ends Atlas to install itself (the installer on
+/// Windows ends it at once, without the app's own exit): keeps the
+/// window's place as "Quit Atlas" does, and takes the icon out of the
+/// notification area, which would otherwise stay there until the mouse
+/// passes over it.
+pub fn before_update<R: Runtime>(app: &AppHandle<R>) {
+    keep_place(app);
+    tray_off(app);
+}
+
+/// Keeps the window's place while a setting keeps it (see [`quit`]).
+fn keep_place<R: Runtime>(app: &AppHandle<R>) {
     if let (Some(background), Some(window)) = (background(app), main_window(app)) {
         note_place(&background, &window);
         background.keep_place();
     }
-    app.exit(0);
 }
 
 /// The tray menu's items that change.

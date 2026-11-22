@@ -93,6 +93,17 @@ tauri-plugin-global-shortcut = "2.4.1"
 # quotes, and it has no setting for either.
 auto-launch = "0.6.0"
 
+# Updating the viewer itself (src/updates/), on Windows and Linux: reads
+# latest.json of the repository's newest release, checks the download's
+# signature against the public key in tauri.conf.json, and installs it (the
+# NSIS installer on Windows, the AppImage in place on Linux). Used from Rust
+# only, and only the app without downloads registers it (`cfg(self_update)`,
+# set by build.rs). Apache-2.0 OR MIT, the Tauri 2 plugin, with rustls and
+# the system's proxy, and without its zip support, which updates of other
+# bundles use.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "system-proxy"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

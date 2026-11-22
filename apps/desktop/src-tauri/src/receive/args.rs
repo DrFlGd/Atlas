@@ -18,7 +18,9 @@
 //!   syntax only; see `packs::is_valid_pack_id`);
 //! - `--show-game <title>`: show the game of that title (at most
 //!   [`MAX_TITLE_CHARS`] characters; see `background::titles`);
-//! - `--background`: get ready without coming to the front.
+//! - `--background`: get ready without coming to the front;
+//! - `--no-update-check`: do not look for an update of Atlas at this start
+//!   (see `updates`; the person can still look in Settings).
 //!
 //! A value is the next argument, never one that starts with `--`. An option
 //! missing its value, given twice, or mixed in a way that makes no sense
@@ -26,7 +28,7 @@
 //! out what was asked to be shown or opened, with one line. `--background`
 //! still counts when it was given: a program that starts Atlas beside a
 //! game and gets its request wrong must not bring Atlas in front of the
-//! game. Any other option is left out by itself, with a line, as every
+//! game, and `--no-update-check` counts in the same way. Any other option is left out by itself, with a line, as every
 //! option is in the other apps.
 
 use std::{
@@ -47,6 +49,10 @@ pub const MAX_TITLE_CHARS: usize = 200;
 const SHOW_PACK: &str = "--show-pack";
 const SHOW_GAME: &str = "--show-game";
 const BACKGROUND: &str = "--background";
+const NO_UPDATE_CHECK: &str = "--no-update-check";
+
+/// The options that take no value.
+const FLAGS: [&str; 2] = [BACKGROUND, NO_UPDATE_CHECK];
 
 /// A game asked for by another program.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,8 +72,19 @@ pub struct StartRequest {
     pub show: Option<Show>,
     /// `--background`: get ready without coming to the front.
     pub background: bool,
+    /// `--no-update-check`: no look for an update of Atlas at this start.
+    pub no_update_check: bool,
     /// What was left out, and why, one plain line each.
     pub left_out: Vec<String>,
+}
+
+/// The options of a start that take no value, as the shell's start uses them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StartFlags {
+    /// `--background`.
+    pub background: bool,
+    /// `--no-update-check`.
+    pub no_update_check: bool,
 }
 
 /// Reads a start's arguments: `args` as the system gives them, the
@@ -90,7 +107,7 @@ pub fn read(args: impl IntoIterator<Item = OsString>, cwd: &Path, options: bool)
             paths.push(arg);
             continue;
         }
-        let Some(option) = [SHOW_PACK, SHOW_GAME, BACKGROUND]
+        let Some(option) = [SHOW_PACK, SHOW_GAME, BACKGROUND, NO_UPDATE_CHECK]
             .into_iter()
             .find(|known| *known == text)
         else {
@@ -103,8 +120,11 @@ pub fn read(args: impl IntoIterator<Item = OsString>, cwd: &Path, options: bool)
             refused.get_or_insert_with(|| format!("{option} is given twice"));
         }
         seen.push(option);
-        if option == BACKGROUND {
-            request.background = true;
+        if FLAGS.contains(&option) {
+            match option {
+                BACKGROUND => request.background = true,
+                _ => request.no_update_check = true,
+            }
             continue;
         }
         // The value: the next argument, unless it is another option.
@@ -128,7 +148,7 @@ pub fn read(args: impl IntoIterator<Item = OsString>, cwd: &Path, options: bool)
         refused = Some("a game to show is given with a path".to_owned());
     }
     if !options {
-        for option in [SHOW_PACK, SHOW_GAME, BACKGROUND] {
+        for option in [SHOW_PACK, SHOW_GAME, BACKGROUND, NO_UPDATE_CHECK] {
             if seen.contains(&option) {
                 request.left_out.push(format!(
                     "\u{201c}{option}\u{201d}: an option this app does not take"
@@ -137,8 +157,10 @@ pub fn read(args: impl IntoIterator<Item = OsString>, cwd: &Path, options: bool)
         }
         request.show = None;
         request.background = false;
+        request.no_update_check = false;
     } else if let Some(reason) = refused {
-        // `--background` stays as it was given (see the module).
+        // `--background` and `--no-update-check` stay as they were given
+        // (see the module).
         request.show = None;
         request.left_out.push(format!(
             "{reason}, so Atlas left out what it was asked to show or open"
@@ -362,6 +384,44 @@ mod tests {
         assert_eq!(request.show, Some(Show::Game(title)));
         let request = read_all(args(&["--show-game", "-Keep-"]), &dir.0);
         assert_eq!(request.show, Some(Show::Game("-Keep-".to_owned())));
+    }
+
+    #[test]
+    fn takes_no_update_check_with_the_other_options() {
+        let dir = TempDir::new("args-no-update-check");
+        let request = read_all(args(&["--no-update-check"]), &dir.0);
+        assert!(request.no_update_check && !request.background);
+        assert!(request.left_out.is_empty());
+
+        // With the launch line's `--background` and a game to show.
+        let request = read_all(
+            args(&["--background", "--no-update-check", "--show-pack", "valley"]),
+            &dir.0,
+        );
+        assert!(request.no_update_check && request.background);
+        assert_eq!(request.show, Some(Show::Pack("valley".to_owned())));
+
+        // Given twice: what was asked to be shown is left out, the flag counts.
+        let request = read_all(
+            args(&[
+                "--no-update-check",
+                "--show-pack",
+                "valley",
+                "--no-update-check",
+            ]),
+            &dir.0,
+        );
+        assert!(request.no_update_check);
+        assert_eq!(request.show, None);
+        assert!(request.left_out[0].starts_with("--no-update-check is given twice"));
+
+        // The app with downloads does not take it.
+        let request = read(args(&["--no-update-check"]), &dir.0, false);
+        assert!(!request.no_update_check);
+        assert_eq!(
+            request.left_out,
+            ["\u{201c}--no-update-check\u{201d}: an option this app does not take"]
+        );
     }
 
     #[test]

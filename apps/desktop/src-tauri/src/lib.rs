@@ -69,6 +69,8 @@ pub mod settings;
 pub mod sites;
 pub mod styles;
 pub mod tiles;
+// Updating the viewer itself (on Windows and Linux, without downloads).
+pub mod updates;
 
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -216,6 +218,10 @@ macro_rules! viewer_commands {
             guidebooks::guidebook_forget_picked,
             guidebooks::guidebook_add,
             guidebooks::guidebook_remove,
+            updates::update_check,
+            updates::update_download,
+            updates::update_progress,
+            updates::update_install,
             $($more)*
         ]
     };
@@ -306,6 +312,9 @@ pub fn run() {
     } else {
         builder
     };
+    // The updater, where Atlas updates itself (see `updates`).
+    #[cfg(self_update)]
+    let builder = builder.plugin(updates::plugin());
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -398,9 +407,11 @@ pub fn run() {
             // files followed from now on.
             #[cfg(not(target_os = "android"))]
             let start_background = {
-                let background = receive::open_at_start(app.handle(), &library);
+                let flags = receive::open_at_start(app.handle(), &library);
                 receive::follow(app.handle(), Arc::clone(&library));
-                background
+                // Whether this copy updates itself (see `updates`).
+                updates::start(app, flags);
+                flags.background
             };
             #[cfg(feature = "downloads")]
             let downloads = {
