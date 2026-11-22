@@ -37,7 +37,7 @@ export function triggerValue(value: number, dead = TRIGGER_DEAD): number {
 /** The map's speed at full lean, in screen pixels a second, by the setting. */
 export const PAN_SPEED = { slow: 550, normal: 950, fast: 1600 } as const;
 export type PanSpeed = keyof typeof PAN_SPEED;
-/** The right stick moves the map this much slower, to line up the crosshair. */
+/** The right stick moves the map this much slower, for finer aim at a location. */
 export const FINE_PAN = 0.3;
 /** How fast a trigger pulled fully zooms, in zoom levels a second. */
 export const ZOOM_RATE = 2.4;

@@ -111,7 +111,7 @@ export const BINDINGS: readonly Binding[] = [
     context: 'map',
     keys: [],
     pad: ['rs'],
-    what: 'Move the map slowly, to line up the crosshair',
+    what: 'Move the map at a third of the speed, for finer aim at a location',
     hint: 'Fine move',
   },
   {
