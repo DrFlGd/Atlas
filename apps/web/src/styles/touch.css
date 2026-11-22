@@ -3555,7 +3555,8 @@ button.photo-card-text {
 
 /* The note that another version of the game's pack file arrived sits
    above the bar at the bottom. */
-.touch[data-arrangement='compact'] .pack-arrival {
+.touch[data-arrangement='compact'] .pack-arrival,
+.touch[data-arrangement='compact'] .update-notice {
   bottom: calc(var(--touch-bar) + 12px);
 }
 

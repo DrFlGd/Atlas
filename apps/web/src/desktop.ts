@@ -388,7 +388,48 @@ export interface DesktopInfo {
    * without downloads on Linux only; absent elsewhere.
    */
   steamLaunch?: SteamLaunch;
+  /**
+   * Whether this copy updates itself (`itself`, with whether it looks for
+   * an update when it starts) or where its updates come from
+   * (`elsewhere`); see the shell's `updates` module. On a desktop only:
+   * absent in the Android app and from an older shell.
+   */
+  updates?: UpdateWay;
 }
+
+/** Where a copy of Atlas gets its updates, as the shell decided at its start. */
+export type UpdateWay =
+  | { way: 'itself'; atStart: boolean }
+  | {
+      way: 'elsewhere';
+      /**
+       * `otherApp`: the app with downloads, released apart from the viewer;
+       * `system`: a package the system installed (Linux without an
+       * AppImage); `releases`: a system Atlas makes no updates for.
+       */
+      from: 'otherApp' | 'system' | 'releases';
+    };
+
+/** What looking for an update found. */
+export type UpdateCheck =
+  | { state: 'upToDate'; version: string }
+  | {
+      state: 'available';
+      version: string;
+      /** The version running now. */
+      current: string;
+      /** What is new in it, as the release says. */
+      notes: string;
+      /** When it was published (RFC 3339), if the release says. */
+      date: string | null;
+    };
+
+/** How downloading an update goes. */
+export type UpdateProgress =
+  | { state: 'idle' }
+  | { state: 'downloading'; received: number; total: number | null }
+  | { state: 'ready'; version: string }
+  | { state: 'failed'; message: string };
 
 /**
  * The Steam launch line, as the shell built it: for the AppImage Atlas
@@ -1843,6 +1884,23 @@ export interface DesktopBridge {
      */
     exit(): Promise<void>;
   };
+  /**
+   * Updating Atlas itself, where `DesktopInfo.updates` says it does (the
+   * shell's `updates` module); elsewhere each answers why not.
+   */
+  updates: {
+    /** Looks for an update in the newest release. */
+    check(): Promise<UpdateCheck>;
+    /** Downloads the update found last and checks it; resolves once it is ready to install. */
+    download(): Promise<void>;
+    /** How the download goes. */
+    progress(): Promise<UpdateProgress>;
+    /**
+     * Installs the downloaded update and starts Atlas again. Save what the
+     * person changed first: Atlas ends here.
+     */
+    install(): Promise<void>;
+  };
   /** Files of one list (`.atlaslist`), through the system's dialogs. */
   listFiles: {
     /** Asks where to save, then saves. Null when the dialog was closed. */
@@ -2220,6 +2278,12 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       pauseHotkey: (paused) => call('background_pause_hotkey', { paused }),
       takeShow: () => call<unknown>('background_take_show').then(showRequestFrom, () => null),
       exit: () => call('app_exit'),
+    },
+    updates: {
+      check: () => call('update_check'),
+      download: () => call('update_download'),
+      progress: () => call('update_progress'),
+      install: () => call('update_install'),
     },
     listFiles: {
       save: (suggestedName, contents) => call('list_file_save', { suggestedName, contents }),

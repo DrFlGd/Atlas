@@ -7,6 +7,7 @@ import { GuidebookLayer } from '../guidebook/Guidebooks';
 import { UiIcon, type UiIconName } from '../components/icons';
 import { MapPageStatus } from '../components/MapPageStatus';
 import { PackArrivalNote } from '../components/PackArrivalNote';
+import { UpdateNotice } from '../components/UpdateNotice';
 import { MapPane, type TouchMapOptions } from '../components/MapPane';
 import { MapsDialog } from '../components/MapsDialog';
 import { ProfileDialog } from '../components/ProfileDialog';
@@ -310,6 +311,7 @@ export function TouchShell({
       {wide && editorMode !== 'edit' && !locating && !page ? <NextUpCard /> : null}
       <MapsMenu wide={wide} />
       <PackArrivalNote />
+      <UpdateNotice />
       <TouchToast wide={wide} />
       <ProfileDialog />
       {saveDialogOpen ? (

@@ -13,6 +13,7 @@ import { GuidebookLayer } from './guidebook/Guidebooks';
 import { ProfileDialog } from './components/ProfileDialog';
 import { SearchBox } from './components/SearchBox';
 import { Toast } from './components/Toast';
+import { UpdateNotice } from './components/UpdateNotice';
 import { TopBar } from './components/TopBar';
 import { downloadsOffered, touchUiOffered } from './features';
 import { useShortcuts } from './keyboard';
@@ -25,6 +26,7 @@ import { useLibrary } from './state/libraryView';
 import { followBackground } from './state/background';
 import { followArrivals } from './state/packArrivals';
 import { followKeptPacks } from './state/keptPacks';
+import { startUpdateCheck } from './state/updates';
 import { loadOwnNotes } from './state/ownNotes';
 import { loadOwnRoutes } from './state/ownRoutes';
 import { loadOwnPages } from './state/ownPages';
@@ -100,8 +102,11 @@ export function App() {
     const stopBackground = followBackground();
     // The notice of a run of the kept packs that failed comes wherever the person is.
     const stopKeptPacks = followKeptPacks();
+    // A quiet look for a new version of Atlas, a few seconds after the start.
+    const stopUpdates = startUpdateCheck();
     void boot(parseViewHash(window.location.hash));
     return () => {
+      stopUpdates();
       stopControls();
       stopKeepingView();
       stopSaves();
@@ -255,6 +260,7 @@ function Shell() {
         <DetailsPane />
       </SidePane>
       <PackArrivalNote />
+      <UpdateNotice />
       <Toast />
       <ProfileDialog />
       {saveDialogOpen ? (

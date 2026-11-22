@@ -117,6 +117,11 @@ pub struct DesktopInfo {
     #[cfg(target_os = "linux")]
     #[serde(skip_serializing_if = "Option::is_none")]
     steam_launch: Option<crate::linux::SteamLaunch>,
+    /// Whether this copy updates itself, and whether it looks at its start,
+    /// or where its updates come from (see `updates`). On a desktop only;
+    /// absent on Android.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updates: Option<crate::updates::UpdateWay>,
 }
 
 /// Whether this platform has what `DesktopInfo::folders` and
@@ -161,6 +166,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         #[cfg(target_os = "linux")]
         steam_launch: (!Downloads::in_build())
             .then(|| crate::linux::steam_launch(crate::linux::appimage_now().as_deref())),
+        updates: app.try_state::<crate::updates::Way>().map(|way| way.0),
     }
 }
 

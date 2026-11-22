@@ -275,6 +275,18 @@ export interface MockShell {
     added: Record<string, unknown> | null;
     calls: { command: string; args: Record<string, unknown> }[];
   };
+  /**
+   * Updating Atlas itself, as the shell's `updates` module answers it:
+   * what `update_check` finds (an `UpdateCheck`), or the sentence it
+   * fails with; the sentence the download fails with, if set; and the
+   * commands called, in order. `update_install` only notes the call, where
+   * the real shell ends Atlas.
+   */
+  updates: {
+    check: Record<string, unknown> | string;
+    downloadFails: string | null;
+    calls: string[];
+  };
 }
 
 /** The state of the kept packs, as the shell sends it. */
@@ -309,6 +321,7 @@ function installFakeShell({
   packsFolder,
   steamLaunch,
   exit,
+  updates,
 }: {
   worlds: Record<string, World>;
   downloads: boolean;
@@ -320,6 +333,7 @@ function installFakeShell({
   packsFolder: boolean;
   steamLaunch: Record<string, string> | null;
   exit: boolean;
+  updates: { way: Record<string, unknown>; platform: string } | null;
 }) {
   const shell: MockShell = {
     events: [],
@@ -376,6 +390,7 @@ function installFakeShell({
       calls: [],
     },
     guidebooks: { pick: null, added: null, calls: [] },
+    updates: { check: { state: 'upToDate', version: '0.26.0' }, downloadFails: null, calls: [] },
   };
   /** The kept packs' state after a change: listed when on, with a new serial. */
   const keptPacks = () => {
@@ -685,14 +700,42 @@ function installFakeShell({
       case 'desktop_info':
         return {
           name: 'Atlas',
-          version: '0.0.0',
-          platform: steamLaunch || exit ? 'linux' : 'test',
+          version: updates ? '0.26.0' : '0.0.0',
+          platform: updates?.platform ?? (steamLaunch || exit ? 'linux' : 'test'),
           downloads,
           sites: downloads,
           ...(background ? { background: true } : {}),
           ...(steamLaunch ? { steamLaunch } : {}),
           ...(exit ? { exit: true } : {}),
+          ...(updates ? { updates: updates.way } : {}),
         };
+      case 'update_check': {
+        const kept = shell.updates;
+        kept.calls.push(command);
+        // Tauri rejects with the command's error value, a string.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (typeof kept.check === 'string') throw kept.check;
+        return structuredClone(kept.check);
+      }
+      case 'update_download': {
+        const kept = shell.updates;
+        kept.calls.push(command);
+        // Half, then all of a made-up 120 MB, a moment apart.
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        // Tauri rejects with the command's error value, a string.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (kept.downloadFails) throw kept.downloadFails;
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        return null;
+      }
+      case 'update_progress':
+        return shell.updates.calls.includes('update_download')
+          ? { state: 'downloading', received: 60_000_000, total: 120_000_000 }
+          : { state: 'idle' };
+      case 'update_install':
+        // The real shell ends Atlas here and starts the new version; the stand-in only notes the call.
+        shell.updates.calls.push(command);
+        return null;
       case 'app_exit':
         // The real shell ends the app here; the stand-in only notes the call.
         shell.background.calls.push({ command, args });
@@ -1117,6 +1160,7 @@ export async function setUp(
     exit = false,
     pages = {},
     importers = [],
+    updates = null,
   }: {
     wiki?: WikiSite | null;
     /** Wikis no importer knows, by host, read by the "Other wikis" importer (a general reader). */
@@ -1143,6 +1187,11 @@ export async function setUp(
     pages?: Record<string, string>;
     /** More made-up importers the build lists, each module's source given. */
     importers?: { id: string; title: string; source: string }[];
+    /**
+     * How the shell says this copy updates (`DesktopInfo::updates`), and the
+     * system it runs on; see {@link MockShell.updates} for its answers.
+     */
+    updates?: { way: Record<string, unknown>; platform: string } | null;
   } = {},
 ) {
   const packs: Record<string, Record<string, string>> = {};
@@ -1239,6 +1288,7 @@ export async function setUp(
     packsFolder,
     steamLaunch,
     exit,
+    updates,
   });
   await page.goto('./');
   await expect(page.getByTestId('marker-count')).toHaveText('5,000');
