@@ -10,6 +10,13 @@
  * the device or the web view has none, it says so and the map stays in 2D.
  * It is shown in the standard layout; the classic layout shows such a map
  * in 2D, with a note.
+ *
+ * Pressing a location in 3D goes to it (`focusLocation`): its floor is
+ * shown and the model is cut at head height above it. Going back (All
+ * floors, Back to the start, Escape or B, which clear the selection)
+ * shows every floor again without that cut (`leaveFocus`). The names of
+ * the areas float over the view unless the person turned them off, a
+ * choice kept on the device.
  */
 import { floorsOf, type Layer, type Scene } from '@atlas/schema';
 import { create } from 'zustand';
@@ -41,6 +48,18 @@ export interface Scene3dState {
   /** Cut away what lies between the camera and the point looked at. */
   cutTowardCamera: boolean;
   request: SceneRequest | null;
+  /**
+   * The location the view went to, and the height the model is cut at
+   * above it, in place of the floor's top and the free cut; null: none.
+   */
+  focus: SceneFocus | null;
+  /** The names of the areas over the view. */
+  titles: boolean;
+}
+
+export interface SceneFocus {
+  id: string;
+  cut: number;
 }
 
 export const useScene3d = create<Scene3dState>()(() => ({
@@ -50,6 +69,8 @@ export const useScene3d = create<Scene3dState>()(() => ({
   cut: null,
   cutTowardCamera: false,
   request: null,
+  focus: null,
+  titles: true,
 }));
 
 /** Reads the person's choice of 2D or 3D, once the store with the settings is open. */
@@ -57,9 +78,17 @@ export async function loadSceneSettings(): Promise<void> {
   try {
     const saved = await progressStore().getSetting(SETTINGS.sceneView);
     if (saved === '2d' || saved === '3d') useScene3d.setState({ mode: saved });
+    const titles = await progressStore().getSetting(SETTINGS.sceneTitles);
+    if (titles === true || titles === false) useScene3d.setState({ titles });
   } catch {
     // The default stands.
   }
+}
+
+/** Shows the names of the areas over the 3D view, or not, and keeps the choice. */
+export function setTitlesShown(on: boolean): void {
+  useScene3d.setState({ titles: on });
+  saveSetting(SETTINGS.sceneTitles, on);
 }
 
 /** Shows 3D maps in 3D or in 2D, and keeps the choice. */
@@ -139,11 +168,11 @@ export function floorStep(by: -1 | 1, in3d: boolean): string | null {
   const next = Math.min(Math.max(at + by, 0), in3d ? floors.length : floors.length - 1);
   if (next === at) return null;
   if (next === floors.length) {
-    useScene3d.setState({ allFloors: true });
+    useScene3d.setState({ allFloors: true, focus: null });
     return 'All floors';
   }
   const layer = floors[next]!;
-  useScene3d.setState({ allFloors: false });
+  useScene3d.setState({ allFloors: false, focus: null });
   showMap(state.mapId, layer.id);
   return layer.name;
 }
@@ -152,25 +181,53 @@ export function floorStep(by: -1 | 1, in3d: boolean): string | null {
 export function pickFloor(layerId: string | null): void {
   const state = useAtlas.getState();
   if (layerId === null) {
-    useScene3d.setState({ allFloors: true });
+    useScene3d.setState({ allFloors: true, focus: null });
     return;
   }
   if (!state.mapId) return;
+  useScene3d.setState({ focus: null });
   // A level of a map without floors is only shown.
   if (floorsOfMap(state, state.mapId).length > 0) useScene3d.setState({ allFloors: false });
   showMap(state.mapId, layerId);
+}
+
+/**
+ * The view went to a location (see the module): shows its floor (a layer
+ * of its map; null on a map without floors) and cuts the model at `cut`.
+ */
+export function focusLocation(id: string, floorId: string | null, cut: number): void {
+  const state = useAtlas.getState();
+  // Not back from the location before (the selection may be let go of for a moment below).
+  useScene3d.setState({ focus: null });
+  if (floorId !== null && state.mapId) {
+    useScene3d.setState({ allFloors: false });
+    showMap(state.mapId, floorId);
+    // A floor other than the location's own layer lets go of the selection: it is kept.
+    if (state.selectedId === id && useAtlas.getState().selectedId !== id) {
+      useAtlas.setState({ selectedId: id });
+    }
+  }
+  useScene3d.setState({ focus: { id, cut } });
+}
+
+/** Back from a location the view went to: every floor, and no cut above it. */
+export function leaveFocus(): void {
+  if (useScene3d.getState().focus === null) return;
+  useScene3d.setState({ allFloors: true, focus: null });
 }
 
 let requestSeq = 1;
 
 /** Asks the 3D view to look straight down, or to go back to where it started. */
 export function requestSceneView(kind: SceneRequest['kind']): void {
+  // Back to the start is back from a location too.
+  if (kind === 'recenter') leaveFocus();
   useScene3d.setState({ request: { kind, seq: requestSeq++ } });
 }
 
 /** Sets the height cut (null: none) and the cut toward the camera. */
 export function setCut(cut: number | null): void {
-  useScene3d.setState({ cut });
+  useScene3d.setState({ cut, focus: null });
 }
 
 export function setCutTowardCamera(on: boolean): void {

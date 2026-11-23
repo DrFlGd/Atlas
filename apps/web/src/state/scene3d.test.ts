@@ -4,7 +4,11 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   floorStep,
   floorsOfMap,
+  focusLocation,
+  leaveFocus,
   pickFloor,
+  requestSceneView,
+  setCut,
   sceneOf,
   setViewMode,
   useScene3d,
@@ -54,7 +58,7 @@ beforeEach(() => {
     mapId: 'demo:map:world',
     layerId: 'demo:layer:surface',
   });
-  useScene3d.setState({ mode: '3d', webgl: 'yes', allFloors: true });
+  useScene3d.setState({ mode: '3d', webgl: 'yes', allFloors: true, focus: null, cut: null });
 });
 
 describe('maps with a model', () => {
@@ -96,6 +100,43 @@ describe('maps with a model', () => {
     expect(useAtlas.getState().layerId).toBe('demo:layer:cellar');
     pickFloor(null);
     expect(useScene3d.getState().allFloors).toBe(true);
+  });
+
+  it('goes to a location: its floor, the cut above it, and back to every floor', () => {
+    const id = useAtlas.getState().game!.pack.data.locations[0]!.id;
+    useAtlas.setState({ selectedId: id });
+    focusLocation(id, 'demo:layer:cellar', -2);
+    expect(useScene3d.getState()).toMatchObject({ allFloors: false, focus: { id, cut: -2 } });
+    expect(useAtlas.getState().layerId).toBe('demo:layer:cellar');
+    // The location stays selected, though it is on another layer.
+    expect(useAtlas.getState().selectedId).toBe(id);
+    leaveFocus();
+    expect(useScene3d.getState()).toMatchObject({ allFloors: true, focus: null });
+
+    // All floors, a floor picked, Back to the start and the free cut each go back too.
+    for (const back of [
+      () => {
+        pickFloor(null);
+      },
+      () => {
+        pickFloor('demo:layer:attic');
+      },
+      () => {
+        requestSceneView('recenter');
+      },
+      () => {
+        setCut(3);
+      },
+    ]) {
+      focusLocation(id, 'demo:layer:cellar', -2);
+      back();
+      expect(useScene3d.getState().focus).toBeNull();
+    }
+
+    // Without a floor: only the cut.
+    useScene3d.setState({ allFloors: true });
+    focusLocation(id, null, 4);
+    expect(useScene3d.getState()).toMatchObject({ allFloors: true, focus: { id, cut: 4 } });
   });
 
   it('stays in 2D on a device that cannot show the 3D view', () => {

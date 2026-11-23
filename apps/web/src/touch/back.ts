@@ -140,7 +140,8 @@ export function revealSelection() {
     requestAnimationFrame(() => {
       const { game, selectedId, view } = useAtlas.getState();
       const location = selectedId ? game?.pack.locations.get(selectedId) : undefined;
-      const pane = document.querySelector('.touch-map .map-pane');
+      // The 3D view goes to the location itself (scene/SceneView.tsx).
+      const pane = document.querySelector('.touch-map .map-pane:not(.scene-view)');
       if (!location || !view || !pane) return;
       const map = pane.getBoundingClientRect();
       const scale = (view.bounds.maxX - view.bounds.minX) / Math.max(1, map.width);

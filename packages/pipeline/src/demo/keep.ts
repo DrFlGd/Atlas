@@ -4,6 +4,7 @@ import {
   type Location,
   type MapDef,
   type PackData,
+  type Region,
   type Scene,
   type SceneCell,
   type TileSource,
@@ -809,6 +810,35 @@ const SPOTS: readonly Spot[] = [
   },
 ];
 
+/**
+ * The keep's areas: the valley, and the places in it, each a box in world
+ * units with the point its name stands at. A location is in the first
+ * place whose box holds it, else in the valley. Their names float over the
+ * 3D view.
+ */
+const VALE = { local: 'keep-vale', name: 'Mossgate Vale' } as const;
+const PLACES: readonly {
+  local: string;
+  name: string;
+  box: [number, number, number, number];
+  at: [number, number];
+}[] = [
+  { local: 'keep-halls', name: 'The keep', box: [62, 56, 98, 84], at: [80, 70] },
+  { local: 'keep-lake', name: 'Stillwater Lake', box: [45, 158, 102, 205], at: [72, 182] },
+  { local: 'keep-glimmer', name: 'Glimmer Caves', box: [128, 183, 210, 208], at: [192, 195] },
+  { local: 'keep-warden', name: 'Warden’s Hill', box: [150, 208, 245, 250], at: [190, 226] },
+  { local: 'keep-rise', name: 'Eastern Rise', box: [170, 50, 256, 140], at: [214, 95] },
+  { local: 'keep-meadow', name: 'West Meadow', box: [0, 20, 60, 150], at: [28, 85] },
+];
+
+/** The area a point of the keep's map is in (world units). */
+function placeOf(x: number, y: number): string {
+  const place = PLACES.find(
+    ({ box: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1,
+  );
+  return id('region', (place ?? VALE).local);
+}
+
 /** World x and y to map image pixels. */
 const toPixel = (x: number, y: number): [number, number] => [
   Math.round(x * PIXELS_PER_UNIT * 10) / 10,
@@ -861,7 +891,7 @@ export function addKeep(data: PackData, scene: Scene, options: KeepOptions): Pac
       x,
       y,
       categoryId: id('cat', spot.category),
-      regionId: null,
+      regionId: placeOf(spot.x, spot.y),
       name: spot.name,
       entityIds: [],
       guideId: spot.guide && guides.has(spot.guide) ? spot.guide : null,
@@ -869,10 +899,35 @@ export function addKeep(data: PackData, scene: Scene, options: KeepOptions): Pac
       ...(height === undefined ? {} : { height: round(height) }),
     };
   });
+  const outline = ([x0, y0, x1, y1]: readonly number[]): [number, number][] => [
+    toPixel(x0!, y0!),
+    toPixel(x1!, y0!),
+    toPixel(x1!, y1!),
+    toPixel(x0!, y1!),
+  ];
+  const vale: Region = {
+    id: id('region', VALE.local),
+    mapId: KEEP_MAP_ID,
+    parentId: null,
+    name: VALE.name,
+    polygon: outline([0, 0, KEEP_WORLD, KEEP_WORLD]),
+  };
+  const regions: Region[] = [
+    vale,
+    ...PLACES.map((place) => ({
+      id: id('region', place.local),
+      mapId: KEEP_MAP_ID,
+      parentId: vale.id,
+      name: place.name,
+      polygon: outline(place.box),
+      center: toPixel(...place.at),
+    })),
+  ];
   return {
     ...data,
     maps: [...data.maps, map],
     layers: [...data.layers, ...layers],
+    regions: [...data.regions, ...regions],
     locations: [...data.locations, ...locations],
   };
 }

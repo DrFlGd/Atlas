@@ -5,9 +5,9 @@ import { back, choosePlace } from './touch';
 /**
  * Lists in the standard layout: the lists of a game, one list by area, by
  * kind or in order, and "Only this list on the map". The demo pack has
- * nested regions (two top-level areas), places without a region (the
- * second map), a list with stages and no places, and a route of 2,015
- * steps.
+ * nested regions (two top-level areas on the island, one on the keep's
+ * map), places without a region (the second map), a list with stages and
+ * no places, and a route of 2,015 steps.
  */
 
 const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7'];
@@ -137,8 +137,9 @@ test.describe('on a phone', () => {
     await openLists(page);
     await list(page, 'Everything').click();
     const areas = page.getByTestId('area-link');
-    // The two top-level areas, and the places of the second map, which have none.
-    await expect(areas).toHaveCount(3);
+    // The two top-level areas of the island, the keep's valley, and the places of the
+    // second map, which have none.
+    await expect(areas).toHaveCount(4);
     await expect(areas.first().getByTestId('map-is-here')).toBeVisible();
     await expect(areas.last()).toContainText('No area');
     const first = (await areas.first().getAttribute('data-area'))!;

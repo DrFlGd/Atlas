@@ -157,6 +157,8 @@ const UI_PATHS = {
   fromAbove: 'M10 2v7M7 6l3 3l3-3M3 13.5l7-3.5l7 3.5l-7 3.5z',
   recenter: 'M3.5 10a6.5 6.5 0 1 0 2-4.7M3.5 3v3.5H7M10 8a2 2 0 1 1 0 4a2 2 0 1 1 0-4z',
   cut: 'M2.5 9.5h15M5 13l5 3l5-3M5 6l5-3l5 3',
+  // A name over a point: the names of the areas.
+  titles: 'M3 4h14v7H11.5L10 13.5L8.5 11H3zM6 7.5h8M10 16.5v1',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

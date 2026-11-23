@@ -12,6 +12,7 @@ import { Floors3D, SectionPicture, TopPicture } from './FloorViews';
 import { MapStyleChoice } from './MapStyleChoice';
 import {
   addCut,
+  bandOf,
   canAddCut,
   checkMarker,
   deleteFloor,
@@ -20,6 +21,7 @@ import {
   placeSlots,
   floorColour,
   fromBase64,
+  headCut,
   heightTicks,
   lookOf,
   markerTypeText,
@@ -122,6 +124,8 @@ export function FloorsPanel(props: Props) {
   const [lower, setLower] = useState<Lower>('3d');
   const [full3d, setFull3d] = useState(false);
   const [hideAbove, setHideAbove] = useState(false);
+  // The item the 3D view went to, and the cut above it (see floors3d.ts).
+  const [focus, setFocus] = useState<{ index: number; cut: number; seq: number } | null>(null);
   const [showItems, setShowItems] = useState(true);
   const [turn, setTurn] = useState(0);
   const [tip, setTip] = useState<number | null>(null);
@@ -454,7 +458,9 @@ export function FloorsPanel(props: Props) {
       className="mm-overlay"
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || dragging.current !== null) return;
-        if (full3d) setFull3d(false);
+        // Back from an item the 3D view went to, first.
+        if (focus) setFocus(null);
+        else if (full3d) setFull3d(false);
         else props.onClose();
       }}
     >
@@ -773,6 +779,7 @@ export function FloorsPanel(props: Props) {
                       value={shown}
                       onChange={(event) => {
                         setSelected(Number(event.target.value));
+                        setFocus(null);
                       }}
                     >
                       {floorsHighestFirst.map((band) => (
@@ -789,6 +796,7 @@ export function FloorsPanel(props: Props) {
                     disabled={shown === floorCount - 1}
                     onClick={() => {
                       setHideAbove(!hideAbove);
+                      setFocus(null);
                     }}
                   >
                     Hide what is above this floor
@@ -840,6 +848,28 @@ export function FloorsPanel(props: Props) {
                     looks={looks}
                     label={`${area.name} in 3D, ${nameOf(shown)} chosen`}
                     describe={describe}
+                    focus={focus}
+                    onPick={(index) => {
+                      if (index === null) {
+                        setFocus(null);
+                        return;
+                      }
+                      // Its floor (by its height with cuts; the floor it is put on with automatic passages), and
+                      // the view cut at head height above it.
+                      const marker = markers[index];
+                      if (!marker) return;
+                      const floor = passages
+                        ? (checks[index]?.floor ?? 0)
+                        : bandOf(draft.cuts, marker.y);
+                      const band = bands[Math.min(floor, bands.length - 1)];
+                      const top = passages || floor < floorCount - 1 ? (band?.to ?? null) : null;
+                      setSelected(floor);
+                      setFocus({
+                        index,
+                        cut: headCut(marker.y, top),
+                        seq: (focus?.seq ?? 0) + 1,
+                      });
+                    }}
                   />
                 ) : (
                   <div className="mm-preview-empty muted small">

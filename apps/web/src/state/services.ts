@@ -108,6 +108,8 @@ export const SETTINGS = {
   controller: 'controller',
   /** Whether maps with a 3D model are shown in 3D or in 2D (see `state/scene3d.ts`). */
   sceneView: 'sceneView',
+  /** Whether the names of the areas float over the 3D view (see `state/scene3d.ts`). */
+  sceneTitles: 'sceneTitles',
   /** The report of the last 3D trial on this device (see `touch/SceneTrial.tsx`). */
   sceneTrial: 'sceneTrial',
   /** The game save linked to a profile (see `state/saves.ts`). */

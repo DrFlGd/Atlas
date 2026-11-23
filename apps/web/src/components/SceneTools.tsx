@@ -6,6 +6,7 @@ import {
   sceneOf,
   setCut,
   setCutTowardCamera,
+  setTitlesShown,
   setViewMode,
   useScene3d,
   useSceneShown,
@@ -55,8 +56,9 @@ export function SceneSwitch() {
 
 /**
  * The 3D view's tools: the floors (each, or all of them), "View from
- * above", "Back to the start", and the cuts: away above a height, when no
- * floor is picked, and toward the camera.
+ * above", "Back to the start", the names of the areas on or off, and the
+ * cuts: away above a height, when no floor is picked, and toward the
+ * camera. After going to a location, All (or Back to the start) goes back.
  */
 export function SceneTools() {
   const game = useAtlas((s) => s.game);
@@ -65,6 +67,8 @@ export function SceneTools() {
   const allFloors = useScene3d((s) => s.allFloors);
   const cut = useScene3d((s) => s.cut);
   const towardCamera = useScene3d((s) => s.cutTowardCamera);
+  const focus = useScene3d((s) => s.focus);
+  const titles = useScene3d((s) => s.titles);
   const [cutsOpen, setCutsOpen] = useState(false);
   const sliderId = useId();
   if (!game || !mapId) return null;
@@ -73,7 +77,9 @@ export function SceneTools() {
   const scene = sceneOf(state, mapId);
   const picked = floors.length > 0 && !allFloors ? layerId : null;
   const heights = sceneHeights(scene, floors);
-  const cutting = cut !== null || towardCamera;
+  // Going to a location cuts above it, in place of the free cut.
+  const shownCut = focus?.cut ?? cut;
+  const cutting = shownCut !== null || towardCamera;
   return (
     <>
       {floors.length > 0 ? (
@@ -134,6 +140,19 @@ export function SceneTools() {
         <button
           type="button"
           className="scene-tool"
+          aria-pressed={titles}
+          data-testid="scene-titles-toggle"
+          title={titles ? 'Hide the names of the areas' : 'Show the names of the areas'}
+          onClick={() => {
+            setTitlesShown(!titles);
+          }}
+        >
+          <UiIcon name="titles" size={18} />
+          <span>Area names</span>
+        </button>
+        <button
+          type="button"
+          className="scene-tool"
           aria-expanded={cutsOpen}
           aria-pressed={cutting}
           data-testid="scene-cuts"
@@ -151,7 +170,9 @@ export function SceneTools() {
             <label className="scene-cut" htmlFor={sliderId}>
               <span className="scene-cut-label">
                 Cut above{' '}
-                <span className="muted">{cut === null ? 'off' : Math.round(cut).toString()}</span>
+                <span className="muted">
+                  {shownCut === null ? 'off' : Math.round(shownCut).toString()}
+                </span>
               </span>
               <input
                 id={sliderId}
@@ -159,7 +180,7 @@ export function SceneTools() {
                 min={heights[0]}
                 max={heights[1]}
                 step={(heights[1] - heights[0]) / 100}
-                value={cut ?? heights[1]}
+                value={Math.min(Math.max(shownCut ?? heights[1], heights[0]), heights[1])}
                 data-testid="scene-cut-above"
                 onChange={(event) => {
                   const value = Number(event.target.value);
@@ -168,7 +189,11 @@ export function SceneTools() {
               />
             </label>
           ) : picked !== null ? (
-            <p className="scene-cut-note muted">The floor picked is cut above its top.</p>
+            <p className="scene-cut-note muted">
+              {focus
+                ? 'Cut just above the location shown. All goes back to every floor.'
+                : 'The floor picked is cut above its top.'}
+            </p>
           ) : null}
           <label className="scene-cut-toggle">
             <input
