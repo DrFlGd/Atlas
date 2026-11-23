@@ -28,6 +28,14 @@ import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
 
+/**
+ * Where the 2D map was when its pane went away (for the 3D view, or
+ * another layout), so that it opens there again on the same map.
+ */
+let keptView: { mapId: string; center: { x: number; y: number }; zoom: number } | null = null;
+/** The last fly request a pane ran (see `handledFly`). */
+let lastFlySeq = 0;
+
 /** What the standard layout (`src/touch/`) asks of the map. */
 export interface TouchMapOptions {
   /**
@@ -140,6 +148,9 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     setMap(view);
     setPadMap({ view, container });
     return () => {
+      const last = view.getView();
+      const mapId = shownLayer.current?.view === view ? shownLayer.current.mapId : null;
+      keptView = last && mapId ? { mapId, center: last.center, zoom: last.zoom } : null;
       setPadMap(null);
       unsubscribe.forEach((off) => {
         off();
@@ -182,7 +193,11 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
       if (imagesAdded && previous?.layerId === layer.id) map.refreshTiles();
       if (previous?.mapId === layer.mapId && previous.layerId !== layer.id && previousView) {
         map.flyTo({ ...previousView.center, zoom: previousView.zoom }, { animate: false });
+      } else if (!previous && keptView?.mapId === layer.mapId) {
+        // Back from the 3D view: the 2D map is where it was.
+        map.flyTo({ ...keptView.center, zoom: keptView.zoom }, { animate: false });
       }
+      keptView = null;
       shownLayer.current = { view: map, layerId: layer.id, mapId: layer.mapId };
       setShownLayerId(layer.id);
     };
@@ -270,11 +285,14 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
     );
   }, [map, handleLocation, handleColor, layerId, layerShown]);
 
-  // Fly requests run after the layer is set, so a jump to another layer lands on the right map.
-  const handledFly = useRef(0);
+  // Fly requests run after the layer is set, so a jump to another layer
+  // lands on the right map. A pane made again (back from the 3D view) runs
+  // only those made since the last pane ran its own.
+  const handledFly = useRef(lastFlySeq);
   useEffect(() => {
     if (!layerShown || !fly || fly.seq === handledFly.current) return;
     handledFly.current = fly.seq;
+    lastFlySeq = fly.seq;
     map.flyTo(fly, { animate: fly.animate });
   }, [map, fly, layerShown]);
 

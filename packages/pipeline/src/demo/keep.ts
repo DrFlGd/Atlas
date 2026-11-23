@@ -238,6 +238,15 @@ const WOOD_COLOUR = [0.5, 0.36, 0.22];
 const ROOF_COLOUR = [0.55, 0.22, 0.18];
 const ROCK_COLOUR = [0.44, 0.38, 0.33];
 
+/** The ground at a world point: its height, its normal in the model and its colour (sRGB). */
+function groundPoint(x: number, y: number) {
+  const e = 0.5;
+  const h = groundHeight(x, y);
+  const hx = (groundHeight(x + e, y) - groundHeight(x - e, y)) / (2 * e);
+  const hy = (groundHeight(x, y + e) - groundHeight(x, y - e)) / (2 * e);
+  return { h, normal: normalise([-hx, 1, hy]), colour: groundColour(h, Math.hypot(hx, hy)) };
+}
+
 /** The ground of one cell, with a skirt along its edges so neighbours at other levels meet. */
 function groundMesh(cx: number, cy: number, segments: number): MeshBuilder {
   const mesh = new MeshBuilder();
@@ -245,17 +254,13 @@ function groundMesh(cx: number, cy: number, segments: number): MeshBuilder {
   const y0 = cy * CELL;
   const step = CELL / segments;
   const grid: number[][] = [];
-  const e = 0.5;
   for (let j = 0; j <= segments; j++) {
     const row: number[] = [];
     for (let i = 0; i <= segments; i++) {
       const x = x0 + i * step;
       const y = y0 + j * step;
-      const h = groundHeight(x, y);
-      const hx = (groundHeight(x + e, y) - groundHeight(x - e, y)) / (2 * e);
-      const hy = (groundHeight(x, y + e) - groundHeight(x, y - e)) / (2 * e);
-      const normal = normalise([-hx, 1, hy]);
-      row.push(mesh.vertex(model(x, y, h), normal, groundColour(h, Math.hypot(hx, hy))));
+      const ground = groundPoint(x, y);
+      row.push(mesh.vertex(model(x, y, ground.h), ground.normal, ground.colour));
     }
     grid.push(row);
   }
@@ -282,15 +287,21 @@ function groundMesh(cx: number, cy: number, segments: number): MeshBuilder {
       const [bx, by] = edge[k + 1]!;
       const ha = groundHeight(ax, ay);
       const hb = groundHeight(bx, by);
-      const colour = groundColour(Math.min(ha, hb), 0);
       const inside = [middle[0], (ha + hb) / 2, middle[2]];
       mesh.quad(
         [model(ax, ay, ha), model(bx, by, hb), model(bx, by, hb - 3), model(ax, ay, ha - 3)],
-        colour,
+        [0, 0, 0],
         inside,
       );
-      // Lit as the ground it hangs from, so a seam between levels does not show.
-      mesh.normals.splice(-12, 12, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+      // Lit and coloured as the ground it hangs from, corner by corner: where
+      // the skirt shows along the edge of a cell, it looks like the ground
+      // beside it, so no line is drawn between cells.
+      for (let v = mesh.vertexCount - 4; v < mesh.vertexCount; v++) {
+        const ground = groundPoint(mesh.positions[v * 3]!, -mesh.positions[v * 3 + 2]!);
+        mesh.normals.splice(v * 3, 3, ...ground.normal);
+        const colour = ground.colour.map(linear);
+        mesh.colors.splice(v * 4, 3, colour[0]!, colour[1]!, colour[2]!);
+      }
     }
   }
   return mesh;
