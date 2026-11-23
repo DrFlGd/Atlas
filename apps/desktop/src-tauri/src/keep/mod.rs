@@ -2,8 +2,13 @@
 //! the setting "Keep packs for Game Repo up to date" (see the desktop
 //! README, "Keeping packs up to date in a folder").
 //!
-//! The person chooses one folder once (another app's folder of maps and
-//! guides, or any folder; by default the packs folder). From then on each
+//! The folder is Game Repo's own `Maps and Guides` folder by default, in
+//! the library Game Repo has open now (see `gamerepo.rs`), or the packs
+//! folder when Game Repo is not on this computer or its library cannot be
+//! used; the person may choose any other folder once. A default that moves
+//! (Game Repo installed, or another library opened there) is a change of
+//! folder like any other: packs are written into the new folder and those
+//! in the old one are left where they are. From then on each
 //! map and wiki read from a site on this computer, each map made in the app
 //! here, and each map Map Maker put in the maps folder (a game folder in
 //! the maps folder, see [`candidates`]) has a pack file in that folder,
@@ -37,10 +42,13 @@
 //! - **Quiet.** Nothing asks the person anything by itself. A run that
 //!   fails as a whole (the folder cannot be found, the drive is full) gives
 //!   one notice; everything else is listed in the settings and written to
-//!   the activity log.
+//!   the activity log. Game Repo's library folder that is missing (a drive
+//!   not connected) is never made: the run writes nothing and says so. Its
+//!   `Maps and Guides` folder is made in a library folder that is there.
 
 mod fingerprint;
 mod folder;
+pub mod gamerepo;
 mod plan;
 pub mod store;
 mod write;
@@ -67,6 +75,7 @@ use serde::Serialize;
 use self::{
     fingerprint::Fingerprint,
     folder::{Copy, Found, HeaderCache, NEW_PACKS_FOLDER},
+    gamerepo::{GameRepo, Paths},
     plan::{decide, Action, Game},
     store::{Record, Schedule, Setting, Store, Written},
     write::{write_pack, Phase},
@@ -188,6 +197,8 @@ pub struct Status {
     /// The folder, to show; the page never names one.
     pub folder: String,
     pub folder_is_default: bool,
+    /// Where the default folder comes from, a folder chosen or not.
+    pub folder_default_from: DefaultFrom,
     /// The person has chosen a folder (in the folder dialog).
     pub folder_chosen: bool,
     pub schedule: Schedule,
@@ -203,6 +214,35 @@ pub struct Status {
     pub games: Vec<Row>,
     /// Grows with each change.
     pub serial: u64,
+}
+
+/// Where the default folder comes from.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DefaultFrom {
+    /// Game Repo's `Maps and Guides` folder, in the library it has open.
+    GameRepo,
+    /// The packs folder: Game Repo is not on this computer, or its library
+    /// cannot be used.
+    PacksFolder,
+}
+
+/// The default folder now, read fresh.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DefaultFolder {
+    folder: PathBuf,
+    from: DefaultFrom,
+    /// Game Repo's library folder, for its `Maps and Guides` folder.
+    library: Option<PathBuf>,
+    /// Why Game Repo's library cannot be used, when it is here but cannot.
+    unusable: Option<String>,
+}
+
+/// The folder a run writes into, and where the default comes from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InUse {
+    folder: PathBuf,
+    default_from: DefaultFrom,
 }
 
 enum Signal {
@@ -344,6 +384,8 @@ struct Inner {
     store: Store,
     /// The Library, which says where the packs folder is now.
     library: Arc<Library>,
+    /// Where Game Repo keeps its settings, read for the default folder.
+    game_repo: Paths,
     downloads: Downloads,
     app: AppInfo,
     timing: Timing,
@@ -386,6 +428,11 @@ struct State {
     /// What the activity log said last of each game, so a skip is written
     /// once, not at every check.
     logged: HashMap<String, String>,
+    /// The folder of the run under way.
+    in_use: Option<InUse>,
+    /// Why Game Repo's library could not be used, as last written to the
+    /// activity log, so it is written once.
+    unusable_logged: Option<String>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -449,6 +496,8 @@ pub struct Parts {
     pub downloads: Downloads,
     pub app: AppInfo,
     pub timing: Timing,
+    /// Where Game Repo keeps its settings ([`Paths::of_this_computer`]).
+    pub game_repo: Paths,
     pub probe: Box<dyn Fn() -> Activity + Send + Sync>,
     pub tell: Box<dyn Fn(&Status) + Send + Sync>,
 }
@@ -466,12 +515,14 @@ impl Keeper {
     fn start_with(parts: Parts, rename: Rename) -> Arc<Self> {
         let store = Store::new(&parts.app_data);
         let mut setting = store.read_setting();
+        let default = default_folder(&parts.game_repo, &parts.library);
         if setting
             .folder
             .as_ref()
-            .is_some_and(|folder| same_path(folder, &parts.library.packs_folder()))
+            .is_some_and(|folder| same_path(folder, &default.folder))
         {
-            // A folder chosen that is the packs folder follows it from now on.
+            // A folder chosen that is the default (the packs folder, or Game
+            // Repo's Maps and Guides folder) follows it from now on.
             setting.folder = None;
             if let Err(error) = store.write_setting(&setting) {
                 activity::warn(Area::Library, format!("Keeping packs up to date: {error}"));
@@ -485,6 +536,7 @@ impl Keeper {
         let inner = Arc::new(Inner {
             store,
             library: parts.library,
+            game_repo: parts.game_repo,
             downloads: parts.downloads,
             app: parts.app,
             timing: parts.timing,
@@ -541,9 +593,16 @@ impl Keeper {
         lock(&self.inner.state).setting.clone()
     }
 
-    /// The folder packs go to: the one chosen, else the packs folder.
+    /// The folder packs go to: the one chosen, else the default.
     pub fn folder(&self) -> PathBuf {
         self.inner.folder_of(&self.setting())
+    }
+
+    /// The default folder now: Game Repo's Maps and Guides folder when
+    /// Game Repo is on this computer, else the packs folder.
+    pub fn default_folder(&self) -> (PathBuf, DefaultFrom) {
+        let default = self.inner.default_folder();
+        (default.folder, default.from)
     }
 
     /// Keeps a new setting and acts on it: a check now when it goes on or
@@ -578,27 +637,28 @@ impl Keeper {
     }
 
     /// See [`packs_folder_changed`]. A folder chosen that was the old
-    /// packs folder follows the packs folder from now on; any other folder
-    /// chosen stays as it is.
+    /// packs folder follows the packs folder from now on (as the default
+    /// when that is the packs folder); any other folder chosen stays as it
+    /// is, and so does Game Repo's folder as the default.
     pub fn packs_folder_changed(&self, old: &Path) {
         let setting = self.setting();
+        let default = self.inner.default_folder();
         if setting
             .folder
             .as_ref()
             .is_some_and(|folder| same_path(folder, old))
         {
-            let _ = self.set(Setting {
-                folder: None,
-                ..setting
-            });
+            let folder = (default.from != DefaultFrom::PacksFolder)
+                .then(|| self.inner.library.packs_folder());
+            let _ = self.set(Setting { folder, ..setting });
             return;
         }
-        if setting.folder.is_none() {
+        if setting.folder.is_none() && default.from == DefaultFrom::PacksFolder {
             activity::info(
                 Area::Library,
                 format!(
                     "Keeping packs up to date: the packs folder is now {}",
-                    self.folder().display()
+                    default.folder.display()
                 ),
             );
             self.signal(Signal::Setting);
@@ -639,23 +699,64 @@ impl Drop for Keeper {
     }
 }
 
+/// The default folder now: Game Repo's Maps and Guides folder, read from
+/// its settings now so a library it switches to is followed, else the
+/// packs folder as the shared settings say now, so packs follow a change
+/// of it.
+fn default_folder(game_repo: &Paths, library: &Library) -> DefaultFolder {
+    let packs_folder = |unusable: Option<String>| DefaultFolder {
+        folder: library.packs_folder(),
+        from: DefaultFrom::PacksFolder,
+        library: None,
+        unusable,
+    };
+    match gamerepo::find(game_repo) {
+        GameRepo::Here { library, folder } => DefaultFolder {
+            folder,
+            from: DefaultFrom::GameRepo,
+            library: Some(library),
+            unusable: None,
+        },
+        GameRepo::NotHere => packs_folder(None),
+        GameRepo::Unusable(why) => packs_folder(Some(why)),
+    }
+}
+
 impl Inner {
-    /// The folder packs go to: the one chosen, else the packs folder as
-    /// the shared settings say now, so packs follow a change of it.
+    fn default_folder(&self) -> DefaultFolder {
+        default_folder(&self.game_repo, &self.library)
+    }
+
+    /// The folder packs go to: the one chosen, else the default now.
     fn folder_of(&self, setting: &Setting) -> PathBuf {
         setting
             .folder
             .clone()
-            .unwrap_or_else(|| self.library.packs_folder())
+            .unwrap_or_else(|| self.default_folder().folder)
+    }
+
+    /// The folder and where the default comes from: those of the run under
+    /// way while there is one, so the settings show where it writes, else
+    /// read now.
+    fn in_use(&self, setting: &Setting, run: Option<InUse>) -> InUse {
+        run.unwrap_or_else(|| {
+            let default = self.default_folder();
+            InUse {
+                folder: setting.folder.clone().unwrap_or(default.folder),
+                default_from: default.from,
+            }
+        })
     }
 
     fn status(&self) -> Status {
         let state = lock(&self.state);
-        let setting = &state.setting;
-        Status {
+        let setting = state.setting.clone();
+        let run = state.running.then(|| state.in_use.clone()).flatten();
+        let mut status = Status {
             on: setting.on,
-            folder: self.folder_of(setting).display().to_string(),
+            folder: String::new(),
             folder_is_default: setting.folder.is_none(),
+            folder_default_from: DefaultFrom::PacksFolder,
             folder_chosen: setting.folder.is_some(),
             schedule: setting.schedule,
             running: state.running,
@@ -665,7 +766,13 @@ impl Inner {
             notice: state.notice.clone(),
             games: state.rows.values().cloned().collect(),
             serial: state.serial,
-        }
+        };
+        drop(state);
+        // Read without the state's lock: it may read Game Repo's settings.
+        let in_use = self.in_use(&setting, run);
+        status.folder = in_use.folder.display().to_string();
+        status.folder_default_from = in_use.default_from;
+        status
     }
 
     /// Notes a change of the state, tells it, and gives the status.
@@ -736,6 +843,23 @@ impl Inner {
         } else {
             activity::info(Area::Library, message);
         }
+    }
+
+    /// Writes why Game Repo's library cannot be used to the activity log,
+    /// once until that changes.
+    fn note_unusable(&self, why: Option<&str>) {
+        {
+            let mut state = lock(&self.state);
+            if state.unusable_logged.as_deref() == why {
+                return;
+            }
+            state.unusable_logged = why.map(str::to_owned);
+        }
+        let Some(why) = why else { return };
+        activity::warn(
+            Area::Library,
+            format!("Keeping packs up to date: {why} The packs are written into the packs folder until it can."),
+        );
     }
 
     /// Whether a game is busy now: something still works on it.
@@ -957,6 +1081,7 @@ impl Loop {
         inner.update(|state| {
             state.running = false;
             state.writing = None;
+            state.in_use = None;
             state.problem = problem;
             if let Some(text) = notice {
                 state.notice = Some(Notice {
@@ -982,10 +1107,41 @@ impl Loop {
         if !setting.on {
             return Ok(());
         }
-        let folder = inner.folder_of(&setting);
+        let default = inner.default_folder();
+        let folder = setting.folder.clone().unwrap_or(default.folder.clone());
+        inner.update(|state| {
+            state.in_use = Some(InUse {
+                folder: folder.clone(),
+                default_from: default.from,
+            });
+        });
         if setting.folder.is_none() {
-            // The default packs folder is this app's own to make.
-            let _ = inner.library.ensure_packs_folder();
+            inner.note_unusable(default.unusable.as_deref());
+            match &default.library {
+                // Game Repo's library folder that is missing is never made:
+                // it may be on a drive that is not connected.
+                Some(library) if !library.is_dir() => {
+                    return Err(format!(
+                        "Game Repo's library folder {} cannot be found. It may be on a drive or a network share that is not connected. Nothing was written, and the packs are written when it is there again.",
+                        library.display()
+                    ));
+                }
+                // Its Maps and Guides folder, as Game Repo makes it.
+                Some(_) => {
+                    if let Err(error) = fs::create_dir(&folder) {
+                        if !folder.is_dir() {
+                            return Err(format!(
+                                "Could not make the folder {}: {error}",
+                                folder.display()
+                            ));
+                        }
+                    }
+                }
+                // The default packs folder is this app's own to make.
+                None => {
+                    let _ = inner.library.ensure_packs_folder();
+                }
+            }
         }
         if !folder.is_dir() {
             return Err(format!(
@@ -1527,7 +1683,17 @@ impl Loop {
         match &item.target {
             Target::Replace(copy) => Ok(copy.path.clone()),
             Target::New(last) => {
-                let folder = self.inner.folder_of(&lock(&self.inner.state).setting);
+                let folder = {
+                    let state = lock(&self.inner.state);
+                    match &state.in_use {
+                        Some(in_use) => in_use.folder.clone(),
+                        None => {
+                            let setting = state.setting.clone();
+                            drop(state);
+                            self.inner.folder_of(&setting)
+                        }
+                    }
+                };
                 if let Some(last) = last {
                     let parent = last
                         .parent()

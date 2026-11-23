@@ -485,6 +485,7 @@ function installFakeShell(downloads: boolean) {
           on: false,
           folder: '/maps/packs',
           folderIsDefault: true,
+          folderDefaultFrom: 'packsFolder',
           folderChosen: false,
           schedule: 'start',
           running: false,

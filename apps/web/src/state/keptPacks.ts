@@ -134,6 +134,14 @@ export async function revealKeptPacksFolder(): Promise<void> {
 // ---------------------------------------------------------------------------
 // In plain words
 
+/** What is said beside the folder when it is the default; null when it is not. */
+export function defaultFolderText(status: KeptPacksStatus): string | null {
+  if (!status.folderIsDefault) return null;
+  return status.folderDefaultFrom === 'gameRepo'
+    ? 'Default: Game Repo’s Maps and Guides folder'
+    : 'Default: the packs folder';
+}
+
 export const SCHEDULE_NAMES: Record<KeptPacksSchedule, string> = {
   start: 'At each start',
   daily: 'At each start and daily',
