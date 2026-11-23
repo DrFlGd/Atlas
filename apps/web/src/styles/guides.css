@@ -1111,14 +1111,29 @@ img[data-opens-large]:focus-visible {
 
 /* Narrow: one block under another. Three or four blocks fold sooner. */
 @container (max-width: 34rem) {
-  .guide-side > .guide-side-block {
+  .guide-side:not(.guide-side-short) > .guide-side-block {
     flex-basis: 100%;
   }
 }
 
 @container (max-width: 46rem) {
-  .guide-side-3 > .guide-side-block,
-  .guide-side-4 > .guide-side-block {
+  .guide-side-3:not(.guide-side-short) > .guide-side-block,
+  .guide-side-4:not(.guide-side-short) > .guide-side-block {
+    flex-basis: 100%;
+  }
+}
+
+/*
+ * Blocks of short lines only (two lists with their headings, in a narrow
+ * card): side by side while each has room for a short line, on a further
+ * line when the width runs out, one under another on a phone.
+ */
+.guide-side-short > .guide-side-block {
+  min-width: min(100%, 9rem);
+}
+
+@media (max-width: 480px) {
+  .guide-side-short > .guide-side-block {
     flex-basis: 100%;
   }
 }
@@ -1173,9 +1188,17 @@ img[data-opens-large]:focus-visible {
   margin-right: 6px;
 }
 
+/* An item of several lines: its lines one under another, beside the pictures it starts with. */
+.guide-row-lines {
+  display: inline-block;
+  vertical-align: middle;
+  text-align: start;
+}
+
 /* Columns: a list flowed down and across, never narrower than a short line. */
 .guide-columns {
   column-gap: 24px;
+  container-type: inline-size;
 }
 
 .guide-columns-2 {
@@ -1231,6 +1254,51 @@ img[data-opens-large]:focus-visible {
 @container (max-width: 30rem) {
   .guide-columns {
     columns: auto;
+  }
+}
+
+/*
+ * A list of lines fills its columns by count, and lists as many as the
+ * columns are one a column (see `markdownForms.ts`): each marked part
+ * starts a column, only where all the columns fit (their least widths and
+ * the gaps between them), so no part is pushed past the last column.
+ */
+.guide-body .guide-columns > :is(ul, ol).guide-column-start {
+  margin-top: 0;
+}
+
+@container (min-width: 26rem) {
+  .guide-columns-2 > :is(ul, ol).guide-column-start,
+  .guide-columns-2 > :is(ul, ol) > .guide-column-start {
+    break-before: column;
+  }
+}
+
+@container (min-width: 30.5rem) {
+  .guide-columns-3 > :is(ul, ol).guide-column-start,
+  .guide-columns-3 > :is(ul, ol) > .guide-column-start {
+    break-before: column;
+  }
+}
+
+@container (min-width: 37rem) {
+  .guide-columns-4 > :is(ul, ol).guide-column-start,
+  .guide-columns-4 > :is(ul, ol) > .guide-column-start {
+    break-before: column;
+  }
+}
+
+@container (min-width: 41.5rem) {
+  .guide-columns-5 > :is(ul, ol).guide-column-start,
+  .guide-columns-5 > :is(ul, ol) > .guide-column-start {
+    break-before: column;
+  }
+}
+
+@container (min-width: 44rem) {
+  .guide-columns-6 > :is(ul, ol).guide-column-start,
+  .guide-columns-6 > :is(ul, ol) > .guide-column-start {
+    break-before: column;
   }
 }
 
