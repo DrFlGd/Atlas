@@ -2,6 +2,7 @@ import {
   cellBox,
   MAX_BIAS,
   nextBias,
+  nextTextureBias,
   planCells,
   type PlanCell,
   type SceneBudget,
@@ -728,8 +729,15 @@ export class SceneEngine {
       this.biasDue = now + BIAS_MS;
       const bias = nextBias(this.bias, this.frameTimes);
       if (this.frameTimes.length >= 20) this.frameTimes = [];
-      if (bias !== this.bias) {
+      // Once the coarser cells are in, the textures may leave room for finer ones again.
+      const textureBias = nextTextureBias(
+        this.textureBias,
+        this.status().textureBytes,
+        this.options.budget,
+      );
+      if (bias !== this.bias || textureBias !== this.textureBias) {
         this.bias = bias;
+        this.textureBias = textureBias;
         this.planDue = 0;
         this.report();
       }
@@ -841,9 +849,11 @@ export class SceneEngine {
       state.loaded = loaded;
       this.model.add(loaded.group);
       loaded.group.updateMatrixWorld(true);
-      if (this.status().textureBytes > this.options.budget.textureBytes) {
-        this.textureBias = Math.min(MAX_BIAS, this.textureBias + 1);
-      }
+      this.textureBias = nextTextureBias(
+        this.textureBias,
+        this.status().textureBytes,
+        this.options.budget,
+      );
       this.placeDots(state);
       this.drawRoute();
     } catch {

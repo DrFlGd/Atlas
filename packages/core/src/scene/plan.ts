@@ -134,13 +134,16 @@ export interface SceneBudget {
 }
 
 /**
- * The budgets per kind of device. First guesses: the 3D trial in
- * Settings measures a device, and its reports set them.
+ * The budgets per kind of device: a phone about 2 million triangles and
+ * 300 MB of textures, a Steam Deck and a computer about twice that. They
+ * stay under what the 3D trial in Settings found devices hold at a good
+ * frame rate, leaving a margin for the dots, the map beside the view and
+ * the rest of the page; the trial's reports keep them honest.
  */
 export const SCENE_BUDGETS: Readonly<Record<DeviceClass, SceneBudget>> = {
-  phone: { triangles: 400_000, textureBytes: 96 << 20, maxPixelRatio: 1.5, reach: 4, loads: 2 },
-  handheld: { triangles: 1_000_000, textureBytes: 256 << 20, maxPixelRatio: 1, reach: 6, loads: 2 },
-  computer: { triangles: 3_000_000, textureBytes: 768 << 20, maxPixelRatio: 2, reach: 8, loads: 4 },
+  phone: { triangles: 2_000_000, textureBytes: 300 << 20, maxPixelRatio: 1.5, reach: 6, loads: 2 },
+  handheld: { triangles: 4_000_000, textureBytes: 600 << 20, maxPixelRatio: 1, reach: 8, loads: 3 },
+  computer: { triangles: 4_000_000, textureBytes: 600 << 20, maxPixelRatio: 2, reach: 8, loads: 4 },
 };
 
 /** The budget of a device: its class's, halved where the browser says it has 2 GB or less. */
@@ -250,9 +253,10 @@ export const MAX_BIAS = 3;
 
 /**
  * The bias of the plan after a second or two of frames: one level coarser
- * when they came slowly, one finer when they came quickly (and the bias is
- * above 0), else as it was. `frameMs` are the times between frames drawn
- * while the view moved; too few say nothing.
+ * when they came slowly, one finer again when they came quickly (and the
+ * bias is above 0), else as it was. `frameMs` are the times between frames
+ * drawn while the view moved; too few say nothing. Between slow and quick
+ * the bias stays, so the detail does not go up and down each time.
  */
 export function nextBias(bias: number, frameMs: readonly number[]): number {
   if (frameMs.length < 20) return bias;
@@ -260,5 +264,21 @@ export function nextBias(bias: number, frameMs: readonly number[]): number {
   const median = sorted[Math.floor(sorted.length / 2)]!;
   if (median > SLOW_FRAME_MS) return Math.min(MAX_BIAS, bias + 1);
   if (median < QUICK_FRAME_MS && bias > 0) return bias - 1;
+  return bias;
+}
+
+/**
+ * The bias the textures add to the plan: one level coarser while the
+ * textures loaded are over the budget, one finer again once they take
+ * less than a quarter of it (a level finer takes about four times the
+ * texture memory, so it fits), else as it was.
+ */
+export function nextTextureBias(
+  bias: number,
+  textureBytes: number,
+  budget: Pick<SceneBudget, 'textureBytes'>,
+): number {
+  if (textureBytes > budget.textureBytes) return Math.min(MAX_BIAS, bias + 1);
+  if (bias > 0 && textureBytes * 4 < budget.textureBytes) return bias - 1;
   return bias;
 }
