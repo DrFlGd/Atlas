@@ -192,6 +192,16 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.29.0
+
+          - **Magazines.** Magazines come in a pack of their own, one per magazine, written by the app that keeps them. **Magazines** beside the list of games opens a shelf of every magazine, then its issues, newest first, with covers. An issue opens in the guidebook reader, with **Games in this issue** in its contents.
+          - **In magazines.** A game's guides list each issue that covers the game, with its pages. Press one to open the issue at the first of them. Search finds words on those pages too.
+          - **Wiki pages look more like the wiki.** A row of small blocks keeps each block's lines, two short lists in a narrow box stay side by side, and lists in columns keep the wiki's number of entries per column. Pages read before show the new rows after **Build again from saved pages** in Atlas Importer.
+
+          - **Controller.** With a controller connected, the left stick moves the map, the triggers zoom, a crosshair picks the nearest location (A opens it, X marks it found), and LB and RB switch sections. A bar at the bottom shows what the buttons do, and the key guide lists keys and controller side by side.
+
+          This version has passed the automatic checks only. No real magazine pack has been opened yet.
+
           ## New in 0.26.0
 
           - **Routes.** A route is a path on the map with a short guide at each step. Routes that a pack file carries, and routes of your own, are under **Lists**; a bar over the map follows the open route, and ticking a step marks its location found.
