@@ -38,6 +38,11 @@
     "m14_00": { "names": ["Swamp", "Upper Blighttown"] },
     "m15_01": { "names": ["Ground", "Rooftops"] }
   },
+  "scene": {
+    "$comment": "3D maps (Also make 3D maps). drop: name patterns (* and ?) of collision parts never seen in game, left out of the 3D model; cellTriangles: about how many triangles one cell of the model holds at its finest. cellSize, levels and creaseAngle can be set too (see crates/atlas-scene).",
+    "drop": [],
+    "cellTriangles": 60000
+  },
   "render": {
     "pixelsPerMetre": 8,
     "minPixelsPerMetre": 2,

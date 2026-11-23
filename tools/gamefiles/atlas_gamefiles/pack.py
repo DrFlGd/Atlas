@@ -5,7 +5,9 @@ Only fields that the pack schema (`packages/schema`, manifest version 2) knows a
 refuse unknown fields. CI checks every file this writes with the schema itself (`pnpm --filter @atlas/pipeline
 validate-pack`).
 
-The pack is a self-contained folder: its JSON files and `tiles/<area>/<floor>/{z}/{x}/{y}.<webp|png>`. It is
+The pack is a self-contained folder: its JSON files, `tiles/<area>/<floor>/{z}/{x}/{y}.<webp|png>` and, with 3D maps,
+`scene/<area>/<cell>/lod<n>.glb` (see scene.py). An area with a 3D model has its `scene` on its map, its markers'
+heights (`height`, the game's y) and, where it has two floors or more, each floor's heights on its layer (`heights`). It is
 written next to its final place (a hidden `.<id>.making` folder in the maps folder) and then swapped in, so Atlas
 never sees half a pack; a pack folder of the same id that the Map Maker did not write is never replaced.
 """
@@ -69,6 +71,10 @@ class AreaOut:
     main_floor: int
     markers: list[Marker]
     place_names: dict[int, str] = field(default_factory=dict)
+    # The 3D model (the scene for maps.json), and each floor's [min, max] heights by floor index (None without
+    # storeys).
+    scene: dict[str, tp.Any] | None = None
+    floor_heights: list[list[float]] | None = None
 
 
 def now() -> str:
@@ -144,6 +150,7 @@ def build_pack(
                 "width": area.frame.width,
                 "height": area.frame.height,
                 "worldTransform": {k: round(v, 6) for k, v in area.frame.world_transform().items()},
+                **({"scene": area.scene} if area.scene else {}),
             }
         )
         floors = [layer.floor for layer in area.layers]
@@ -158,6 +165,11 @@ def build_pack(
                     "minZoom": layer.tiles["minZoom"],
                     "maxZoom": layer.tiles["maxZoom"],
                     "tileSize": layer.tiles["tileSize"],
+                    **(
+                        {"heights": area.floor_heights[index]}
+                        if area.scene and area.floor_heights and index < len(area.floor_heights)
+                        else {}
+                    ),
                 }
             )
         area_region = ident("region", area.key)
@@ -237,6 +249,8 @@ def build_pack(
             }
             if marker.flag:
                 location["flagId"] = str(marker.flag)
+            if area.scene:
+                location["height"] = round(float(marker.position[1]), 2)
             locations.append(location)
             used_categories[marker.category] += 1
             if marker.kind == "bonfire":
