@@ -236,3 +236,27 @@ def test_cancel_while_making_the_model_changes_nothing(dsr_map_folder: Path, bui
     with pytest.raises(Cancelled):
         maker.run()
     assert snapshot(maps) == before
+
+
+def test_make_this_area_again_replaces_its_3d_model(dsr_map_folder: Path, builder: Path, tmp_path: Path) -> None:
+    maps, out = tmp_path / "Maps", tmp_path / "out"
+    make(dsr_map_folder, out, maps, scene_builder=builder)
+    pack = maps / PACK
+    others = {p: d for p, d in snapshot(pack).items() if not p.startswith(("tiles/m15_01/", "scene/m15_01/")) and not p.endswith(".json")}
+    own = tmp_path / "floor-overrides.json"
+    own.write_text(json.dumps({PACK: {"m15_01": {"cuts": [3.5]}}}), encoding="utf-8")
+    report, events = make(dsr_map_folder, out, maps, scene_builder=builder, remake="m15_01", floor_overrides_file=own)
+    assert events[-1]["event"] == "done"
+    # The other maps' files are untouched; the area's new model passes the check, and so does the whole pack.
+    assert {p: d for p, d in snapshot(pack).items() if p in others} == others
+    assert report["remade"]["check3dOfArea"]["problems"] == []
+    assert report["pack"]["check3d"]["problems"] == []
+    assert check_pack(builder, pack)["problems"] == []
+    anor = next(m for m in load(pack, "maps.json") if m["id"] == f"{PACK}:map:m15_01")
+    for cell in anor["scene"]["cells"]:
+        for lod in cell["lods"]:
+            assert (pack / lod["file"]).is_file()
+    heights = [layer["heights"] for layer in load(pack, "layers.json") if layer["mapId"] == anor["id"]]
+    assert sorted(h[1] for h in heights)[0] == pytest.approx(3.5)
+    assert sorted(p.name for p in maps.iterdir()) == [PACK]
+    assert not (out / "scene-work").exists()

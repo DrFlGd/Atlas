@@ -27,17 +27,19 @@ import numpy as np
 
 from . import REPORT_VERSION, TOOL_NAME, __version__
 from .check import CancelToken, _now, display_path, game_dict
-from .config import area_config, floor_overrides, is_skipped, load_config
+from .config import area_config, chosen_floor_overrides, floor_overrides, is_skipped, load_config, load_floor_overrides
 from .content import GameContent, read_content
 from .detect import DSR, detect
 from .events import Events
-from .floors import locate, plan_floors, support_fraction
+from .floors import apply_overrides, locate, plan_floors, support_fraction
+from .floorviews import save_floor_data
 from .games import PROFILES, Area, GameProfile, list_areas, newest_versions
 from .geometry import Cancelled, SourceResult, rotation_matrix
 from .msb import load_msb
 from .pack import (
     AreaOut,
     LayerOut,
+    WRITER,
     PackRefused,
     build_pack,
     check_target,
@@ -45,6 +47,9 @@ from .pack import (
     existing_pack,
     floor_names,
     install,
+    merge_area,
+    read_pack_json,
+    swap_area,
     write_pack_json,
 )
 from .render import BACKGROUND, compose, draw_layer, make_frame, preview_png, triangle_colours
@@ -61,10 +66,17 @@ TIME_LIMIT = 300.0  # seconds one area's geometry may take in the file reader
 STEPS = {"layout": 0.05, "geometry": 0.45, "floors": 0.1, "render": 0.4}
 STEPS_3D = {"layout": 0.05, "geometry": 0.4, "floors": 0.1, "render": 0.3, "scene": 0.15}
 SCENE_WORK = "scene-work"
+REMAKE_PREVIEWS = "previews-remake"
 
 
 class MakeError(Exception):
-    """The map cannot be made; the message says why, for the player."""
+    """The map cannot be made; the message says why, for the player. `code` names the case for the app (making an
+    area again: `pack-missing`, `pack-other-version`, `report-missing`, `area-missing`), which then offers Make
+    map."""
+
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class MapMaker:
@@ -80,6 +92,8 @@ class MapMaker:
         config_file: Path | None = None,
         make_3d: bool = True,
         scene_builder: Path | None = None,
+        floor_overrides_file: Path | None = None,
+        remake: str | None = None,
     ):
         self.folder = Path(folder)
         self.out = Path(out)
@@ -97,6 +111,15 @@ class MapMaker:
         self.scene_builder = scene_builder
         self.builder: Path | None = None
         self.steps = STEPS
+        # The player's own floor overrides (the Map Maker's floor-overrides.json), by area key; per area they
+        # replace the config's entry. The areas that used them, for the report.
+        self.floor_overrides_file = Path(floor_overrides_file) if floor_overrides_file else None
+        self.own_overrides: dict[str, dict[str, tp.Any]] = {}
+        self.own_overrides_error: str | None = None
+        self.used_own: list[str] = []
+        # Making one area again (`mAA_BB`), in place of its map in the pack made before (see replace_area).
+        self.remake = remake.lower()[:6] if remake else None
+        self.preview_dir: Path | None = None
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
@@ -108,6 +131,8 @@ class MapMaker:
         except BaseException:
             if self.staging is not None and self.staging.name.startswith("."):
                 shutil.rmtree(self.staging, ignore_errors=True)
+            if self.preview_dir is not None:
+                shutil.rmtree(self.preview_dir, ignore_errors=True)
             raise
         finally:
             self.runner.close()
@@ -116,7 +141,7 @@ class MapMaker:
 
     def _run(self) -> dict[str, tp.Any]:
         events = self.events
-        events.emit("start", tool=TOOL_NAME, version=__version__, folder=display_path(self.folder), mode="make")
+        events.emit("start", tool=TOOL_NAME, version=__version__, folder=display_path(self.folder), mode="remake" if self.remake else "make")
         events.progress(0.0, "Looking at the folder")
         detection = detect(self.folder)
         events.emit("game", game=game_dict(detection))
@@ -130,6 +155,14 @@ class MapMaker:
             check_output_folder(self.maps_folder, root)
             if is_inside(self.maps_folder, self.out) or is_inside(self.out, self.maps_folder):
                 raise UnsafeOutputError("The maps folder and the output folder must be apart.")
+        profile = PROFILES[detection.game]
+        config = load_config(detection.game, self.config_file)
+        pack_id = str(config.get("packId", detection.game))
+        if self.maps_folder is not None:
+            target = self.maps_folder / pack_id
+        else:
+            target = self.out / "pack" / pack_id
+        previous_report = self.check_remake(target) if self.remake else None
         self.out.mkdir(parents=True, exist_ok=True)
         self.runner.use_folder(self.out)
         (self.out / "previews").mkdir(exist_ok=True)
@@ -138,9 +171,7 @@ class MapMaker:
         importing = time.monotonic()
         prepare_soulstruct()
         self.import_seconds = time.monotonic() - importing
-        profile = PROFILES[detection.game]
-        config = load_config(detection.game, self.config_file)
-        pack_id = str(config.get("packId", detection.game))
+        self.load_own_overrides(detection.game)
         render_settings = dict(config.get("render", {}))
         fmt = tile_format(str(render_settings.get("tileFormat", "webp")))
         if self.make_3d:
@@ -153,14 +184,16 @@ class MapMaker:
         # Where the pack goes: refuse early, before any work, when the place is taken by a pack not ours.
         if self.maps_folder is not None:
             self.maps_folder.mkdir(parents=True, exist_ok=True)
-            target = self.maps_folder / pack_id
-            self.staging = self.maps_folder / f".{pack_id}.making"
-        else:
-            target = self.out / "pack" / pack_id
-            self.staging = self.out / "pack" / f".{pack_id}.making"
         refusal = check_target(target)
         if refusal:
             raise MakeError(refusal)
+        if self.remake:
+            self.staging = target.with_name(f".{pack_id}.remake-{self.remake}")
+            self.preview_dir = self.out / REMAKE_PREVIEWS
+            shutil.rmtree(self.preview_dir, ignore_errors=True)
+            self.preview_dir.mkdir()
+        else:
+            self.staging = target.with_name(f".{pack_id}.making")
         previous = existing_pack(target) or {}
         if self.staging.exists():
             shutil.rmtree(self.staging)
@@ -171,14 +204,21 @@ class MapMaker:
         areas = [a for a in all_areas if not is_skipped(config, a.id)]
         areas, older = newest_versions(areas)
         skipped += older
-        if self.only_areas:
-            areas = [a for a in areas if a.id in self.only_areas or a.id[:6] in self.only_areas]
+        # Every area's map layout is read (see below), but only these are made.
+        wanted = {self.remake} if self.remake else self.only_areas
+        made_areas = [a for a in areas if a.id in wanted or a.id[:6] in wanted] if wanted else list(areas)
+        if not self.remake:
+            areas = made_areas
         areas = [
             Area(id=a.id, name=str(area_config(config, a.id).get("name") or a.name), msb=a.msb, map_folder=a.map_folder)
             for a in areas
         ]
-        events.emit("areas", count=len(areas), areas=[{"id": a.id, "name": a.name} for a in areas], skipped=skipped)
-        if not areas:
+        made_ids = {a.id for a in made_areas}
+        made_areas = [a for a in areas if a.id in made_ids]
+        events.emit("areas", count=len(made_areas), areas=[{"id": a.id, "name": a.name} for a in made_areas], skipped=skipped)
+        if not made_areas:
+            if self.remake:
+                raise MakeError(f"The area {self.remake} was not found in the game folder. Press Make map to make the whole map again.", code="area-missing")
             raise MakeError("No map areas were found in the game folder.")
 
         self.token.stop()
@@ -202,6 +242,7 @@ class MapMaker:
                 "tileFormat": fmt,
                 "floors": config.get("floors", {}),
                 "config": self.config_file.name if self.config_file else f"{detection.game}.json (built in)",
+                "floorOverrides": self.own_overrides_report(),
                 "threeD": {
                     "asked": self.make_3d,
                     "builder": self.builder.name if self.builder else None,
@@ -217,7 +258,8 @@ class MapMaker:
         }
 
         # Every area's map layout and event script first: bonfire objects that event scripts confirm teach the
-        # fallback for areas whose script registers none.
+        # fallback for areas whose script registers none. (Making one area again reads them all too, so that its
+        # markers come out as in the whole map.)
         worlds: dict[str, AreaContent | str] = {}
         msbs: dict[str, tp.Any] = {}
         bonfire_models: set[str] = set()
@@ -231,7 +273,7 @@ class MapMaker:
                 raise
             except Exception as error:
                 worlds[area.id] = f"the map layout could not be read: {type(error).__name__}: {str(error).strip()[:300]}"
-        for area in areas:
+        for area in made_areas:
             world = worlds[area.id]
             if isinstance(world, AreaContent) and world.report["bonfires"]["method"].startswith("fallback") and bonfire_models:
                 worlds[area.id] = extract_area(area, msbs[area.id], root, content, config, bonfire_models)
@@ -239,12 +281,12 @@ class MapMaker:
 
         start, span = 0.05, 0.9
         outs: list[AreaOut] = []
-        for index, area in enumerate(areas):
+        for index, area in enumerate(made_areas):
             self.token.stop()
-            area_start = start + span * index / len(areas)
-            area_span = span / len(areas)
+            area_start = start + span * index / len(made_areas)
+            area_span = span / len(made_areas)
             entry, area_out = self.make_area(
-                profile, root, area, worlds[area.id], index, len(areas), area_start, area_span, content, config, fmt
+                profile, root, area, worlds[area.id], index, len(made_areas), area_start, area_span, content, config, fmt
             )
             report["areas"].append(entry)
             if area_out is not None:
@@ -253,8 +295,11 @@ class MapMaker:
             gc.collect()
 
         self.token.stop()
-        events.progress(0.96, "Writing the map pack")
         title = str(config.get("title", detection.title))
+        if self.remake:
+            assert previous_report is not None
+            return self.replace_area(report, previous_report, outs, target, pack_id, title, detection, content)
+        events.progress(0.96, "Writing the map pack")
         pack = build_pack(pack_id, title, detection.version or "", outs, content, created=previous.get("created"))
         duplicates = duplicate_ids(pack)
         if duplicates:
@@ -296,6 +341,157 @@ class MapMaker:
         events.emit("pack", folder=str(target), id=pack_id, installed=installed, counts=counts)
         report["summary"] = self.summary(report["areas"])
         return self.finish(report, target)
+
+    # ------------------------------------------------------------------------------------------------------
+    # The player's own floor overrides, and making one area again.
+
+    def load_own_overrides(self, game: str) -> None:
+        if self.floor_overrides_file is None:
+            return
+        try:
+            self.own_overrides = load_floor_overrides(self.floor_overrides_file, game)
+        except FileNotFoundError:
+            self.own_overrides = {}
+        except (OSError, ValueError) as error:
+            self.own_overrides = {}
+            self.own_overrides_error = f"{type(error).__name__}: {str(error).strip()[:200]}"
+            self.warn(f"Your floor cuts ({self.floor_overrides_file.name}) could not be read ({self.own_overrides_error}): the floors are made as the Map Maker finds them")
+
+    def own_overrides_report(self) -> dict[str, tp.Any]:
+        """Which file of the player's own floor overrides was given, and (filled in as areas are made) the areas
+        that used it."""
+        return {
+            "file": self.floor_overrides_file.name if self.floor_overrides_file else None,
+            "error": self.own_overrides_error,
+            "usedFor": self.used_own,
+        }
+
+    def check_remake(self, target: Path) -> dict[str, tp.Any]:
+        """Before making an area again: the pack must be there, made by this version of the Map Maker, and the
+        report of the make that made it in the output folder. Returns that report."""
+        manifest = existing_pack(target)
+        if manifest is None:
+            raise MakeError(
+                f"The map pack is not in {display_path(target)} any more, so its area cannot be made again. Press Make map to make the whole map.",
+                code="pack-missing",
+            )
+        written_by = manifest.get("writtenBy") if isinstance(manifest.get("writtenBy"), dict) else {}
+        if written_by.get("name") != WRITER or written_by.get("version") != __version__:
+            version = written_by.get("version") or "an unknown version"
+            raise MakeError(
+                f"The map pack was made by Map Maker {version}, and this is {__version__}. Press Make map to make the whole map again with this version.",
+                code="pack-other-version",
+            )
+        try:
+            previous = json.loads((self.out / "report.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = None
+        if not isinstance(previous, dict) or previous.get("kind") != "make" or previous.get("toolVersion") != __version__:
+            raise MakeError("The report of the last make is missing or from another version. Press Make map to make the whole map again.", code="report-missing")
+        if not any(isinstance(a, dict) and a.get("key") == self.remake for a in previous.get("areas", [])):
+            raise MakeError(f"The last make did not make {self.remake}. Press Make map to make the whole map again.", code="report-missing")
+        return previous
+
+    def replace_area(
+        self,
+        report: dict[str, tp.Any],
+        previous: dict[str, tp.Any],
+        outs: list[AreaOut],
+        target: Path,
+        pack_id: str,
+        title: str,
+        detection: tp.Any,
+        content: GameContent,
+    ) -> dict[str, tp.Any]:
+        """Puts the area just made in place of its map in the installed pack (see pack.replace_area), and the
+        report of the last make, with this area's entry replaced, in place of the report."""
+        assert self.staging is not None and self.remake is not None
+        key = self.remake
+        entry = report["areas"][0]
+        if entry.get("skipped"):
+            raise MakeError(f"{entry['name']} could not be made again: {entry['skipped']}. The map pack was left as it was.")
+        events = self.events
+        events.progress(0.95, "Writing the new map of the area")
+        manifest = existing_pack(target) or {}
+        part = build_pack(pack_id, title, detection.version or "", outs, content, created=manifest.get("created"))
+        write_pack_json(self.staging, part)
+        check_part = None
+        if self.builder is not None and any(area.scene for area in outs):
+            events.progress(0.96, "Checking the new 3D map")
+            check_part = check_pack(self.builder, self.staging)
+            for problem in check_part.get("problems", [])[:5]:
+                self.warn(f"The 3D check found a problem: {problem}")
+        try:
+            old = read_pack_json(target)
+        except (OSError, ValueError) as error:
+            raise MakeError(f"The map pack in {display_path(target)} could not be read ({error}). Press Make map to make the whole map again.", code="pack-missing") from error
+        merged = merge_area(old, part, pack_id, key)
+        duplicates = duplicate_ids(merged)
+        if duplicates:
+            raise MakeError(
+                f"The map pack would have {len(duplicates)} ids used twice, which Atlas refuses "
+                f"(first: {duplicates[0]}). It was left as it was. Please save the report and send it."
+            )
+        self.token.stop()  # the last moment to stop: from here the pack is changed
+        events.progress(0.97, "Putting the new map in the map pack")
+        try:
+            swap_area(self.staging, target, key, merged)
+        except PackRefused as error:
+            raise MakeError(str(error)) from error
+        shutil.rmtree(self.staging, ignore_errors=True)
+        self.staging = None
+        check_3d = None
+        if self.builder is not None:
+            events.progress(0.98, "Checking the 3D maps of the pack")
+            check_3d = check_pack(self.builder, target)
+            for problem in check_3d.get("problems", [])[:5]:
+                self.warn(f"The 3D check found a problem: {problem}")
+        self.move_previews(key)
+
+        # The report: the last make's, with this area's entry, warnings and pack counts made new.
+        name = entry["name"]
+        areas = [entry if isinstance(a, dict) and a.get("key") == key else a for a in previous.get("areas", [])]
+        old_warnings = [w for w in previous.get("warnings", []) if isinstance(w, str) and not w.startswith(f"{name}:")]
+        options = dict(previous.get("options", {}))
+        own = dict(options.get("floorOverrides") or {})
+        used = [k for k in own.get("usedFor", []) if k != key] + self.used_own
+        options["floorOverrides"] = {**self.own_overrides_report(), "usedFor": sorted(used)}
+        options["threeD"] = report["options"]["threeD"]
+        counts = {name_: len(items) for name_, items in merged.items() if isinstance(items, list)}
+        new_report = {
+            **previous,
+            "toolVersion": __version__,
+            "updatedAt": _now(),
+            "remade": {"area": key, "name": name, "at": _now(), "check3dOfArea": check_part},
+            "options": options,
+            "areas": areas,
+            "warnings": old_warnings + self.warnings,
+        }
+        new_report["pack"] = {
+            **(previous.get("pack") or {}),
+            "id": pack_id,
+            "folder": display_path(target),
+            "counts": counts,
+            "tiles": sum(layer["tiles"]["files"] for area in areas for layer in area.get("floors", [])),
+            "tileBytes": sum(layer["tiles"]["bytes"] for area in areas for layer in area.get("floors", [])),
+            "check3d": check_3d,
+        }
+        self.warnings = new_report["warnings"]
+        events.emit("pack", folder=str(target), id=pack_id, installed=self.maps_folder is not None, counts=counts, replaced=key, name=name)
+        new_report["summary"] = self.summary(areas)
+        new_report.pop("elapsedSeconds", None)
+        return self.finish(new_report, target)
+
+    def move_previews(self, key: str) -> None:
+        """The area's new floor previews in place of its old ones."""
+        folder = self.out / "previews"
+        for old in folder.glob(f"{key}_f*.png"):
+            old.unlink(missing_ok=True)
+        if self.preview_dir is not None:
+            for new in self.preview_dir.glob("*.png"):
+                new.replace(folder / new.name)
+            shutil.rmtree(self.preview_dir, ignore_errors=True)
+            self.preview_dir = None
 
     # ------------------------------------------------------------------------------------------------------
 
@@ -382,8 +578,11 @@ class MapMaker:
         # Floors.
         self.token.stop()
         say("floors", 0.0, f"finding floors in {len(mesh):,} triangles")
-        overrides = floor_overrides(config, area.id)
+        overrides, source = chosen_floor_overrides(config, self.own_overrides, area.id)
+        if source == "yours":
+            self.used_own.append(key)
         plan = plan_floors(mesh, config.get("floors"), overrides)
+        describe_cuts(plan, overrides, source, floor_overrides(config, area.id))
         if used == "collision" and len(owners) == len(mesh):
             entry["placement"] = placement_check(mesh, owners, owner_names, world, config)
 
@@ -431,6 +630,20 @@ class MapMaker:
         tile_size = int(render_settings.get("tileSize", 256))
         quality = int(render_settings.get("tileQuality", 85))
         opacity = float(render_settings.get("lowerFloorOpacity", 0.4))
+        if len(mesh):
+            # For the Adjust floors panel (floorviews.py): kept in the output folder, never in the report zip.
+            save_floor_data(
+                self.out,
+                key,
+                area.name,
+                mesh,
+                plan,
+                [(m.position, m.category) for m in world.markers],
+                config.get("floors"),
+                (float(low), float(high)),
+                floor_overrides(config, area.id),
+                opacity,
+            )
         layers_out: list[LayerOut] = []
         floor_entries = []
         assert self.staging is not None
@@ -459,7 +672,8 @@ class MapMaker:
             )
             dots = [(m.pixel[0], m.pixel[1], m.category) for m in world.markers if m.floor == floor_index and m.pixel]
             preview = f"previews/{key}_f{floor_index}.png"
-            (self.out / preview).write_bytes(preview_png(picture, frame, dots))
+            preview_folder = self.preview_dir if self.preview_dir is not None else self.out / "previews"
+            (preview_folder / f"{key}_f{floor_index}.png").write_bytes(preview_png(picture, frame, dots))
             layers_out.append(LayerOut(floor, tiles, f"tiles/{key}/f{floor_index}/{{z}}/{{x}}/{{y}}.{fmt}"))
             on_this = [m for m in world.markers if m.floor == floor_index]
             floor_entries.append(
@@ -467,6 +681,11 @@ class MapMaker:
                     "index": floor_index,
                     "name": floor.name,
                     "heights": [round(floor.low, 1), round(floor.high, 1)],
+                    # Between the cuts below and above it (None: no cut on that side).
+                    "between": [
+                        round(plan.cuts[floor_index - 1], 2) if 0 < floor_index <= len(plan.cuts) else None,
+                        round(plan.cuts[floor_index], 2) if floor_index < len(plan.cuts) else None,
+                    ],
                     "areaSquareMetres": round(floor.area),
                     "triangles": floor.triangles,
                     "wallLines": int(len(plan.wall_lines[floor_index])) if floor_index < len(plan.wall_lines) else 0,
@@ -668,6 +887,26 @@ class MapMaker:
         return report
 
 
+def describe_cuts(plan: tp.Any, overrides: dict[str, tp.Any], source: str | None, shipped: dict[str, tp.Any]) -> None:
+    """Adds to the floor plan's report what the Adjust floors panel shows: each cut and who set it (`automatic`, or
+    `yours` or `shipped` for an override), the override used, and what the area has without the player's own
+    (the shipped config over the automatic cuts), which "Back to automatic" returns to."""
+    report = plan.report
+    auto = [float(note["height"]) for note in report.get("automaticCuts", [])]
+    replaced = isinstance(overrides.get("cuts"), list)
+    cut_list = []
+    for cut in plan.cuts:
+        automatic = source is None or (not replaced and any(abs(cut - a) <= 0.011 for a in auto))
+        cut_list.append({"height": round(cut, 2), "by": "automatic" if automatic else source})
+    report["cutList"] = cut_list
+    report["overrides"] = {"from": source, **overrides} if source else None
+    shipped_names = shipped.get("names") if isinstance(shipped.get("names"), list) else None
+    report["shipped"] = {
+        "cuts": [round(c, 2) for c in apply_overrides(list(auto), shipped)],
+        "names": [str(n) for n in shipped_names] if shipped_names else None,
+    }
+
+
 def scene_summary(areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any] | None:
     """The 3D side of a make, over all areas: None when 3D maps were off."""
     scenes = [a["scene"] for a in areas if isinstance(a.get("scene"), dict)]
@@ -741,7 +980,8 @@ def placement_check(
 README_TEXT = f"""Atlas Map Maker: make map report
 
 report.json says how the map pack was made from the game folder: per area, the geometry read, the floors found
-(height ranges, area, wall lines), the markers by category and those not standing on a floor, the bonfire,
+(height ranges, area, wall lines, the cut heights between them and who set each: automatic, the Map Maker's
+settings, or your own floor cuts, and how much walkable floor there is at each height), the markers by category and those not standing on a floor, the bonfire,
 treasure and character counts, how the collision meshes were placed (placement), and its 3D model (scene:
 triangles before and after, cells, levels of detail, file sizes, time taken, markers with no surface under them). previews/ holds a small
 picture of each floor with a dot per marker. {READER_LOG} is the log of the file reader process.

@@ -6,6 +6,11 @@
 //! it says `done`. Cancel writes
 //! `cancel` to its standard input, which it checks between files; if it has not stopped a few seconds later, the
 //! app ends it (on Windows with its child processes, as the single-file helper runs as two processes).
+//!
+//! Make this area again (`make --remake <area>`) runs in the output folder of the make it changes: its report is
+//! shown all along, and stays when the run fails or is cancelled (the helper leaves the pack and the report as
+//! they were then). The last make's folders are kept in the settings, and its report is shown again when the app
+//! opens (`restore`).
 
 use std::{
     collections::VecDeque,
@@ -58,6 +63,16 @@ pub enum Job {
         maps_folder: PathBuf,
         three_d: bool,
         scene_builder: Option<PathBuf>,
+        /// The player's own floor cuts (overrides.rs), when there is such a file.
+        floor_overrides: Option<PathBuf>,
+    },
+    /// Make one area (`mAA_BB`) again, in place of its map in the pack the make in the same output folder made.
+    Remake {
+        maps_folder: PathBuf,
+        three_d: bool,
+        scene_builder: Option<PathBuf>,
+        floor_overrides: Option<PathBuf>,
+        area: String,
     },
 }
 
@@ -66,6 +81,7 @@ pub enum Job {
 pub enum Kind {
     Check,
     Make,
+    Remake,
 }
 
 impl Job {
@@ -73,6 +89,7 @@ impl Job {
         match self {
             Job::Check => Kind::Check,
             Job::Make { .. } => Kind::Make,
+            Job::Remake { .. } => Kind::Remake,
         }
     }
 
@@ -80,7 +97,7 @@ impl Job {
     pub fn zip_file(&self) -> &'static str {
         match self {
             Job::Check => ZIP_FILE,
-            Job::Make { .. } => MAKE_ZIP_FILE,
+            Job::Make { .. } | Job::Remake { .. } => MAKE_ZIP_FILE,
         }
     }
 }
@@ -106,6 +123,9 @@ pub struct Status {
     /// The map pack a make installed (the helper's `pack` line): its folder, id and counts.
     pub pack: Option<Value>,
     pub error: Option<String>,
+    /// Why making an area again could not start (`pack-missing`, `pack-other-version`, `report-missing`,
+    /// `area-missing`): the page then offers Make map.
+    pub error_code: Option<String>,
     pub helper_output: Vec<String>,
     pub elapsed_seconds: f64,
 }
@@ -123,6 +143,7 @@ impl Status {
             report: None,
             pack: None,
             error: None,
+            error_code: None,
             helper_output: Vec::new(),
             elapsed_seconds: 0.0,
         }
@@ -137,6 +158,7 @@ pub struct Progress {
     pub message: String,
     pub lines: Vec<Line>,
     pub error: Option<String>,
+    pub error_code: Option<String>,
     pub helper_output: VecDeque<String>,
     pub pack: Option<Value>,
     saw_done: bool,
@@ -151,6 +173,7 @@ impl Default for Progress {
             message: String::new(),
             lines: Vec::new(),
             error: None,
+            error_code: None,
             helper_output: VecDeque::new(),
             pack: None,
             saw_done: false,
@@ -219,7 +242,7 @@ impl Progress {
             }
             "areas" => {
                 let count = event.get("count").and_then(Value::as_u64).unwrap_or(0);
-                self.push_line("info", format!("{count} areas to read"));
+                self.push_line("info", format!("{count} area{} to read", plural(count)));
             }
             "area" if event.get("floors").is_some() => {
                 // A make's area: what was drawn from it.
@@ -271,11 +294,22 @@ impl Progress {
             }
             "pack" => {
                 let folder = text(&event, "folder");
-                self.push_line("pack", format!("Map pack installed in {folder}"));
+                let line = if event.get("replaced").is_some() {
+                    format!(
+                        "{}: its new map is in the map pack in {folder}",
+                        text(&event, "name")
+                    )
+                } else {
+                    format!("Map pack installed in {folder}")
+                };
+                self.push_line("pack", line);
                 self.pack = Some(event);
             }
             "warning" => self.push_line("warning", text(&event, "message")),
-            "error" => self.error = Some(text(&event, "message")),
+            "error" => {
+                self.error = Some(text(&event, "message"));
+                self.error_code = event.get("code").and_then(Value::as_str).map(str::to_owned);
+            }
             "cancelled" => self.saw_cancelled = true,
             "done" => {
                 self.saw_done = true;
@@ -329,7 +363,8 @@ struct Run {
     finished: Option<Instant>,
     progress: Progress,
     report: Option<Value>,
-    child: Arc<Mutex<Child>>,
+    /// None for a make restored from an earlier session (`restore`).
+    child: Option<Arc<Mutex<Child>>>,
     stdin: Option<ChildStdin>,
 }
 
@@ -472,7 +507,7 @@ fn full_path(path: &Path) -> PathBuf {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-fn hide_console(command: &mut Command) {
+pub(crate) fn hide_console(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -480,6 +515,14 @@ fn hide_console(command: &mut Command) {
     }
     #[cfg(not(windows))]
     let _ = command;
+}
+
+/// Ends a helper process at once (with the process it started, see `kill_tree`) and waits for it.
+pub(crate) fn end_process(child: &mut Child) {
+    if matches!(child.try_wait(), Ok(None)) {
+        kill_tree(child);
+    }
+    let _ = child.wait();
 }
 
 /// Ends the helper and, on Windows, the process it started (the single-file build unpacks and runs a child).
@@ -521,18 +564,41 @@ impl Checks {
             Job::Check => {
                 command.arg("check");
             }
-            Job::Make { maps_folder, .. } => {
+            Job::Make { maps_folder, .. } | Job::Remake { maps_folder, .. } => {
                 if is_inside(maps_folder, folder) || is_inside(folder, maps_folder) {
                     return Err("The maps folder and the game folder overlap; the Map Maker never writes into the game folder.".to_owned());
                 }
                 command.arg("make");
             }
         }
+        // Making an area again shows the report of the make it changes until it is done, and keeps it when it
+        // fails or is cancelled.
+        let mut previous: Option<(Value, Option<Value>)> = None;
+        if let Job::Remake { maps_folder, .. } = &job {
+            let report = read_report(out_dir).map_err(|_| {
+                "The report of the last make is gone, so its areas cannot be made again. Press Make map.".to_owned()
+            })?;
+            let pack = inner
+                .run
+                .as_ref()
+                .filter(|run| run.out_dir == out_dir)
+                .and_then(|run| run.progress.pack.clone())
+                .or_else(|| pack_of(&report, maps_folder));
+            previous = Some((report, pack));
+        }
         command.arg(folder).arg("--out").arg(out_dir);
         if let Job::Make {
             maps_folder,
             three_d,
             scene_builder,
+            floor_overrides,
+        }
+        | Job::Remake {
+            maps_folder,
+            three_d,
+            scene_builder,
+            floor_overrides,
+            ..
         } = &job
         {
             command.arg("--maps-folder").arg(maps_folder);
@@ -545,6 +611,12 @@ impl Checks {
                 }
                 (true, None) => {}
             }
+            if let Some(file) = floor_overrides {
+                command.arg("--floor-overrides").arg(file);
+            }
+        }
+        if let Job::Remake { area, .. } = &job {
+            command.arg("--remake").arg(area);
         }
         command
             .arg("--stdin-cancel")
@@ -565,6 +637,7 @@ impl Checks {
         inner.next_id += 1;
         let id = inner.next_id;
         let child = Arc::new(Mutex::new(child));
+        let (report, pack) = previous.unzip();
         inner.run = Some(Run {
             id,
             job,
@@ -572,9 +645,12 @@ impl Checks {
             out_dir: out_dir.to_path_buf(),
             started: Instant::now(),
             finished: None,
-            progress: Progress::default(),
-            report: None,
-            child: Arc::clone(&child),
+            progress: Progress {
+                pack: pack.flatten(),
+                ..Progress::default()
+            },
+            report,
+            child: Some(Arc::clone(&child)),
             stdin,
         });
         drop(inner);
@@ -634,11 +710,7 @@ impl Checks {
                 run.stdin = None;
                 run.finished = Some(Instant::now());
                 if run.progress.finish(code) {
-                    match fs::read_to_string(run.out_dir.join(REPORT_FILE))
-                        .map_err(|error| error.to_string())
-                        .and_then(|text| {
-                            serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())
-                        }) {
+                    match read_report(&run.out_dir) {
                         Ok(report) => run.report = Some(report),
                         Err(error) => {
                             run.progress.state = State::Failed;
@@ -669,6 +741,7 @@ impl Checks {
             report: run.report.clone(),
             pack: progress.pack.clone(),
             error: progress.error.clone(),
+            error_code: progress.error_code.clone(),
             helper_output: progress.helper_output.iter().cloned().collect(),
             elapsed_seconds: run
                 .finished
@@ -692,7 +765,9 @@ impl Checks {
             let _ = stdin.write_all(b"cancel\n");
             let _ = stdin.flush();
         }
-        let child = Arc::clone(&run.child);
+        let Some(child) = run.child.clone() else {
+            return;
+        };
         thread::spawn(move || {
             thread::sleep(CANCEL_GRACE);
             let mut child = child
@@ -715,8 +790,10 @@ impl Checks {
         }
         run.progress.state = State::Cancelling;
         run.stdin = None;
-        let mut child = run
-            .child
+        let Some(child) = &run.child else {
+            return;
+        };
+        let mut child = child
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if matches!(child.try_wait(), Ok(None)) {
@@ -724,7 +801,7 @@ impl Checks {
         }
     }
 
-    /// A file of the finished run's output folder, by its name in the report (`previews/<area>.png`) or the
+    /// A file of the output folder of the report shown, by its name in the report (`previews/<area>.png`) or the
     /// zip, refusing any other path.
     pub fn output_file(&self, name: &str) -> Result<PathBuf, String> {
         if !is_output_name(name) {
@@ -734,9 +811,62 @@ impl Checks {
         let run = inner
             .run
             .as_ref()
-            .filter(|run| run.progress.state == State::Done)
+            .filter(|run| run.report.is_some())
             .ok_or("Nothing finished yet.")?;
         Ok(run.out_dir.join(name))
+    }
+
+    /// The make whose report is shown: its game folder and output folder, and the report.
+    pub fn last_make(&self) -> Option<(PathBuf, PathBuf, Value)> {
+        let inner = lock(&self.inner);
+        let run = inner.run.as_ref()?;
+        if run.job.kind() == Kind::Check {
+            return None;
+        }
+        let report = run.report.clone()?;
+        Some((run.folder.clone(), run.out_dir.clone(), report))
+    }
+
+    /// Shows the report of a make of an earlier session again (its output folder `out_dir`, of the game folder
+    /// `folder`), when nothing else is shown. False when there is something else, or no such report.
+    pub fn restore(&self, folder: &Path, out_dir: &Path, maps_folder: &Path) -> bool {
+        let Ok(report) = read_report(out_dir) else {
+            return false;
+        };
+        if report.get("kind").and_then(Value::as_str) != Some("make") {
+            return false;
+        }
+        let mut inner = lock(&self.inner);
+        if inner.run.is_some() {
+            return false;
+        }
+        inner.next_id += 1;
+        let pack = pack_of(&report, maps_folder);
+        let now = Instant::now();
+        inner.run = Some(Run {
+            id: inner.next_id,
+            job: Job::Make {
+                maps_folder: maps_folder.to_path_buf(),
+                three_d: true,
+                scene_builder: None,
+                floor_overrides: None,
+            },
+            folder: folder.to_path_buf(),
+            out_dir: out_dir.to_path_buf(),
+            started: now,
+            finished: Some(now),
+            progress: Progress {
+                state: State::Done,
+                fraction: 1.0,
+                pack,
+                saw_done: true,
+                ..Progress::default()
+            },
+            report: Some(report),
+            child: None,
+            stdin: None,
+        });
+        true
     }
 
     /// The report zip of the finished run.
@@ -758,13 +888,34 @@ impl Checks {
         inner
             .run
             .as_ref()
-            .filter(|run| run.progress.state == State::Done)
+            .filter(|run| run.report.is_some())
             .and_then(|run| run.progress.pack.as_ref())
             .and_then(|pack| pack.get("folder"))
             .and_then(Value::as_str)
             .map(PathBuf::from)
             .ok_or_else(|| "No map pack was made.".to_owned())
     }
+}
+
+fn read_report(out_dir: &Path) -> Result<Value, String> {
+    fs::read_to_string(out_dir.join(REPORT_FILE))
+        .map_err(|error| error.to_string())
+        .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|error| error.to_string()))
+}
+
+/// The pack a make's report names, as the helper's `pack` line gives it, in `maps_folder`.
+fn pack_of(report: &Value, maps_folder: &Path) -> Option<Value> {
+    let pack = report.get("pack")?;
+    let id = pack.get("id")?.as_str()?;
+    if id.is_empty() || id.contains(['/', '\\', '.']) {
+        return None;
+    }
+    Some(serde_json::json!({
+        "folder": maps_folder.join(id).display().to_string(),
+        "id": id,
+        "installed": true,
+        "counts": pack.get("counts").cloned().unwrap_or(Value::Null),
+    }))
 }
 
 /// A report zip, or `previews/` and a name of letters, digits and underscores, then `.png`.
@@ -980,6 +1131,7 @@ mod tests {
                     maps_folder: base.join("Maps"),
                     three_d: true,
                     scene_builder: None,
+                    floor_overrides: None,
                 },
                 &base,
                 &outside,
@@ -1117,6 +1269,7 @@ echo '{"event":"done"}'
                         maps_folder: maps.clone(),
                         three_d,
                         scene_builder,
+                        floor_overrides: None,
                     },
                     &game,
                     out,
@@ -1146,6 +1299,144 @@ echo '{"event":"done"}'
             State::Done
         );
         assert_eq!(given(&flat).trim(), "--no-3d --stdin-cancel");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn remake_lines_and_error_codes() {
+        let mut progress = Progress::default();
+        progress.apply_line(r#"{"event":"areas","count":1}"#);
+        progress.apply_line(
+            r#"{"event":"pack","folder":"/maps/p","id":"p","installed":true,"replaced":"m15_01","name":"Anor Londo"}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"error","message":"Made by 0.2.0","code":"pack-other-version"}"#,
+        );
+        let texts: Vec<_> = progress
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "1 area to read",
+                "Anor Londo: its new map is in the map pack in /maps/p"
+            ]
+        );
+        assert_eq!(progress.error_code.as_deref(), Some("pack-other-version"));
+        assert!(!progress.finish(Some(2)));
+    }
+
+    /// The last make of an earlier session is shown again, and one of its areas made again: with the stand-in
+    /// helper failing, the report stays; succeeding, the new report is shown.
+    #[cfg(unix)]
+    #[test]
+    fn restores_the_last_make_and_makes_an_area_again() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base =
+            std::env::temp_dir().join(format!("atlas-mapmaker-remake-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let game = base.join("game");
+        let out = base.join("out");
+        let maps = base.join("maps");
+        fs::create_dir_all(&game).unwrap();
+        fs::create_dir_all(&out).unwrap();
+        fs::create_dir_all(base.join("check")).unwrap();
+        let checks = Checks::default();
+        assert!(
+            !checks.restore(&game, &out, &maps),
+            "no report: nothing to show"
+        );
+        fs::write(
+            out.join(REPORT_FILE),
+            r#"{"kind":"make","areas":[],"pack":{"id":"p","counts":{"maps":3}}}"#,
+        )
+        .unwrap();
+        assert!(checks.restore(&game, &out, &maps));
+        assert!(
+            !checks.restore(&game, &out, &maps),
+            "only when nothing is shown"
+        );
+        let status = checks.status();
+        assert_eq!(status.state, State::Done);
+        assert_eq!(status.kind, Kind::Make);
+        assert_eq!(status.pack.as_ref().unwrap()["id"], "p");
+        assert_eq!(checks.pack_folder().unwrap(), maps.join("p"));
+        let (folder, out_dir, report) = checks.last_make().unwrap();
+        assert_eq!((folder, out_dir), (game.clone(), out.clone()));
+        assert_eq!(report["pack"]["id"], "p");
+
+        let script = base.join("helper.sh");
+        let run = |body: &str| {
+            fs::write(
+                &script,
+                format!("#!/bin/sh\necho \"$@\" > \"$4/args.txt\"\n{body}\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+            let job = Job::Remake {
+                maps_folder: maps.clone(),
+                three_d: false,
+                scene_builder: None,
+                floor_overrides: Some(base.join("floor-overrides.json")),
+                area: "m15_01".to_owned(),
+            };
+            let status = checks.start(&script, job, &game, &out).unwrap();
+            assert_eq!(status.kind, Kind::Remake);
+            assert!(status.report.is_some(), "the report stays while it runs");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let status = checks.status();
+                if !matches!(status.state, State::Running | State::Cancelling)
+                    || Instant::now() > deadline
+                {
+                    break status;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let failed = run(
+            r#"echo '{"event":"error","message":"The map pack is gone.","code":"pack-missing"}'; exit 2"#,
+        );
+        assert_eq!(failed.state, State::Failed);
+        assert_eq!(failed.error_code.as_deref(), Some("pack-missing"));
+        assert_eq!(
+            failed.report.unwrap()["pack"]["id"],
+            "p",
+            "the report stays"
+        );
+        assert!(checks.report_zip().is_ok());
+        let args = fs::read_to_string(out.join("args.txt")).unwrap();
+        assert!(args.starts_with("make "), "{args}");
+        assert!(
+            args.contains("--no-3d --floor-overrides")
+                && args.contains("--remake m15_01")
+                && args.contains("--stdin-cancel"),
+            "{args}"
+        );
+
+        let done = run(
+            r#"echo '{"kind":"make","remade":{"area":"m15_01"},"pack":{"id":"p"}}' > "$4/report.json"; echo '{"event":"done"}'"#,
+        );
+        assert_eq!(done.state, State::Done);
+        assert_eq!(done.report.unwrap()["remade"]["area"], "m15_01");
+        assert_eq!(done.pack.unwrap()["id"], "p", "the pack is still shown");
+
+        // A remake needs the report of its make.
+        fs::remove_file(out.join(REPORT_FILE)).unwrap();
+        let job = Job::Remake {
+            maps_folder: maps.clone(),
+            three_d: false,
+            scene_builder: None,
+            floor_overrides: None,
+            area: "m15_01".to_owned(),
+        };
+        assert!(checks
+            .start(&script, job, &game, &out)
+            .unwrap_err()
+            .contains("Make map"));
         let _ = fs::remove_dir_all(&base);
     }
 }

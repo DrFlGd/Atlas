@@ -320,6 +320,8 @@ export interface MadeFloor {
   index: number;
   name: string;
   heights: [number, number];
+  /** The cuts below and above it (null: no cut on that side). */
+  between?: [number | null, number | null];
   areaSquareMetres: number;
   triangles: number;
   wallLines: number;
@@ -351,6 +353,37 @@ export interface MadeScene {
   warnings?: string[];
 }
 
+/** How much walkable floor there is at each height: bar i covers low + i × step to low + (i + 1) × step. */
+export interface HeightProfile {
+  low: number;
+  high: number;
+  step: number;
+  /** Square metres, seen from above. */
+  areas: number[];
+}
+
+/** Who set a cut: the Map Maker by itself, the player (Adjust floors), or the Map Maker's settings for the area. */
+export type CutSource = 'automatic' | 'yours' | 'shipped';
+
+export interface FloorPlanReport {
+  cuts: number[];
+  cutList?: { height: number; by: CutSource }[];
+  automaticCuts?: { height: number; stackedArea: number; slicedArea: number }[];
+  profile?: HeightProfile;
+  /** The floor cuts used for the area, and where they came from. */
+  overrides?: {
+    from: 'yours' | 'shipped';
+    cuts?: number[];
+    names?: string[];
+    splitAt?: number[];
+    mergeAt?: number[];
+  } | null;
+  /** The area's floors without the player's own cuts ("Back to automatic"). */
+  shipped?: { cuts: number[]; names: string[] | null };
+  /** Cuts given that left a floor with nothing on it, so were dropped. */
+  cutsDropped?: number[];
+}
+
 export interface MadeArea {
   id: string;
   key: string;
@@ -379,6 +412,7 @@ export interface MadeArea {
   placement?: { verdict: string; markersChecked: number } & Record<string, unknown>;
   frame?: { width: number; height: number; pixelsPerMetre: number; cropped: boolean };
   mainFloor?: number;
+  floorPlan?: FloorPlanReport;
   floors?: MadeFloor[];
   markers?: {
     total: number;
@@ -398,8 +432,16 @@ export interface MakeReport {
   reportVersion: number;
   kind: 'make';
   createdAt: string;
+  /** When an area was made again last. */
+  updatedAt?: string;
   folder: string;
   game: GameInfo;
+  options?: {
+    /** The player's own floor cuts file, and the areas that used it. */
+    floorOverrides?: { file: string | null; error: string | null; usedFor: string[] };
+  } & Record<string, unknown>;
+  /** The area made again last ("Make this area again"). */
+  remade?: { area: string; name: string; at: string };
   areas: MadeArea[];
   pack: {
     id: string;
@@ -530,4 +572,63 @@ export function makeSuggestedFileName(report: MakeReport | null, now: Date): str
 /** Preview file name of one floor, as the shell accepts it. */
 export function floorPreviewFile(floor: MadeFloor): string | null {
   return /^previews\/[A-Za-z0-9_]+\.png$/.test(floor.preview) ? floor.preview : null;
+}
+
+/** "6.3 m", "−2 m": a height, to the centimetre. */
+export function heightText(height: number): string {
+  const rounded = Math.round(height * 100) / 100;
+  return `${rounded < 0 ? '−' : ''}${String(Math.abs(rounded))} m`;
+}
+
+const CUT_SOURCES: Record<CutSource, string> = {
+  automatic: 'automatic',
+  yours: 'set by you',
+  shipped: 'set in the Map Maker',
+};
+
+export function cutSourceText(by: CutSource): string {
+  return CUT_SOURCES[by];
+}
+
+/** "Cut at 6.3 m (automatic)", "Cuts at 4.5 m (set by you) and 12 m (automatic)", "No cut: one floor". */
+export function cutsLine(area: MadeArea): string | null {
+  const plan = area.floorPlan;
+  if (!plan || !area.geometry?.used) return null;
+  const list = plan.cutList ?? plan.cuts.map((height) => ({ height, by: 'automatic' as const }));
+  if (list.length === 0) return 'No cut: one floor';
+  const parts = list.map((cut) => `${heightText(cut.height)} (${cutSourceText(cut.by)})`);
+  const joined =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${list.length === 1 ? 'Cut' : 'Cuts'} at ${joined}`;
+}
+
+/** Where a floor lies between the cuts: "up to 6.3 m", "6.3 to 12 m", "from 12 m". Empty for a lone floor. */
+export function floorRangeText(floor: MadeFloor): string {
+  const [below, above] = floor.between ?? [null, null];
+  if (below === null && above === null) return '';
+  if (below === null) return `up to ${heightText(above!)}`;
+  if (above === null) return `from ${heightText(below)}`;
+  return `${heightText(below).replace(/ m$/, '')} to ${heightText(above)}`;
+}
+
+/** Whether the player's floor cuts as saved now (`saved`) differ from those the area was made with: saved,
+ * changed or cleared since. */
+export function waitingCuts(
+  area: MadeArea,
+  saved: { cuts?: number[]; names?: string[] } | undefined,
+  usedOwn: boolean,
+): boolean {
+  if (!canAdjustFloors(area)) return false;
+  if (!saved) return usedOwn;
+  if (!usedOwn) return true;
+  const used = area.floorPlan?.overrides;
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return !same(saved.cuts, used?.cuts) || !same(saved.names, used?.names);
+}
+
+/** Whether Adjust floors can be offered for an area: it was drawn from geometry. */
+export function canAdjustFloors(area: MadeArea): boolean {
+  return !area.skipped && Boolean(area.geometry?.used) && Boolean(area.floorPlan);
 }
