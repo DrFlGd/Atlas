@@ -2499,6 +2499,7 @@ fn writes_small_pictures_of_the_maps_first_as_version_7() {
                 height: 2048,
                 locations: 2,
                 preview: Some("preview/east.jpg".into()),
+                scene: false,
             },
             // Its images are not pictures: no small picture, and no failure.
             MapFacts {
@@ -2508,6 +2509,7 @@ fn writes_small_pictures_of_the_maps_first_as_version_7() {
                 height: 512,
                 locations: 1,
                 preview: None,
+                scene: false,
             },
         ]
     );
@@ -4391,4 +4393,171 @@ fn leaves_the_maps_icons_out_unless_asked_and_then_writes_version_9() {
         0
     );
     assert_eq!(categories_without_pictures(&plain).unwrap(), None);
+}
+
+/// A pack whose east map has a 3D model: two cells at levels 0 to 2, one
+/// of whose files is missing, and the light model around them.
+fn write_scene_pack(dir: &Path) {
+    write_pack(dir, "1.0.0");
+    let lods = |cell: &str| {
+        json!([
+            {"level": 0, "file": format!("scene/{cell}/lod0.glb"), "triangles": 100},
+            {"level": 1, "file": format!("scene/{cell}/lod1.glb"), "triangles": 50},
+            {"level": 2, "file": format!("scene/{cell}/lod2.glb"), "triangles": 10}
+        ])
+    };
+    put_json(
+        &dir.join("maps.json"),
+        &json!([
+            {"id": format!("{ID}:map:east"), "name": "East Field", "width": 2048, "height": 2048,
+             "worldTransform": {"a": 1, "b": 0, "c": 0, "d": -1, "e": 0, "f": 2048},
+             "scene": {
+                 "cells": [
+                     {"id": "a", "bounds": [0, 0, 1024, 1024], "lods": lods("a")},
+                     {"id": "b", "bounds": [1024, 0, 2048, 1024], "lods": lods("b")}
+                 ],
+                 "neighbours": "scene/neighbours.glb"
+             }},
+            {"id": format!("{ID}:map:west"), "name": "West Ridge", "width": 1024, "height": 512}
+        ]),
+    );
+    for cell in ["a", "b"] {
+        for level in 0..3 {
+            // The finest level of cell b is not there.
+            if cell == "b" && level == 0 {
+                continue;
+            }
+            put(
+                &dir.join(format!("scene/{cell}/lod{level}.glb")),
+                format!("glTF model {cell} {level}").as_bytes(),
+            );
+        }
+    }
+    put(&dir.join("scene/neighbours.glb"), b"glTF around");
+}
+
+#[test]
+fn carries_a_3d_map_as_version_11_with_the_levels_its_detail_picks() {
+    let dir = TempDir::new("packfile-scene");
+    let pack = dir.0.join("pack");
+    write_scene_pack(&pack);
+    let source = folder_source(&pack);
+
+    // Full: every level there is; the missing one is left out of maps.json.
+    let full = dir.0.join("full.atlaspack");
+    let exported = run_export(&source, Detail::Full, &full).unwrap();
+    assert_eq!(exported.header.version, scene::VERSION_WITH_SCENES);
+    assert!(exported.header.maps[0].scene);
+    assert!(!exported.header.maps[1].scene);
+    let names = entry_names(&full);
+    for name in [
+        "scene/a/lod0.glb",
+        "scene/a/lod1.glb",
+        "scene/a/lod2.glb",
+        "scene/b/lod1.glb",
+        "scene/neighbours.glb",
+    ] {
+        assert!(names.contains_key(name), "{name}: {names:?}");
+    }
+    let maps = json_entry(&full, "maps.json");
+    let cells = maps[0]["scene"]["cells"].as_array().unwrap();
+    assert_eq!(cells[0]["lods"].as_array().unwrap().len(), 3);
+    assert_eq!(cells[1]["lods"].as_array().unwrap().len(), 2);
+    assert_eq!(json_entry(&full, HEADER_FILE)["maps"][0]["scene"], true);
+
+    // Standard: level 0 left out; Overview: the coarsest alone.
+    let standard = dir.0.join("standard.atlaspack");
+    run_export(&source, Detail::Standard, &standard).unwrap();
+    let names = entry_names(&standard);
+    assert!(!names.contains_key("scene/a/lod0.glb"));
+    assert!(names.contains_key("scene/a/lod1.glb"));
+    let overview = dir.0.join("overview.atlaspack");
+    run_export(&source, Detail::Overview, &overview).unwrap();
+    let names = entry_names(&overview);
+    let models: Vec<&String> = names.keys().filter(|n| n.starts_with("scene/")).collect();
+    assert_eq!(
+        models,
+        [
+            "scene/a/lod2.glb",
+            "scene/b/lod2.glb",
+            "scene/neighbours.glb"
+        ]
+    );
+    let maps = json_entry(&overview, "maps.json");
+    assert_eq!(
+        maps[0]["scene"]["cells"][0]["lods"],
+        json!([{"level": 2, "file": "scene/a/lod2.glb", "triangles": 10}])
+    );
+
+    // The sizes the Export dialog shows count the models of each detail.
+    let options = export_options(&source).unwrap();
+    let bytes = |detail: Detail| {
+        options
+            .details
+            .iter()
+            .find(|option| option.detail == detail)
+            .unwrap()
+            .bytes
+    };
+    assert!(bytes(Detail::Full) > bytes(Detail::Overview));
+
+    // Imported, the models are in the pack's folder as they were.
+    let imported = run_import(&standard, &dir.0.join("maps")).unwrap();
+    let files = files_under(&imported.folder);
+    assert_eq!(files["scene/a/lod1.glb"], b"glTF model a 1");
+    assert!(!files.contains_key("scene/a/lod0.glb"));
+
+    // A pack without a model stays at the version of what it carries.
+    let plain = dir.0.join("plain");
+    write_pack(&plain, "1.0.0");
+    let file = dir.0.join("plain.atlaspack");
+    let exported = run_export(&folder_source(&plain), Detail::Full, &file).unwrap();
+    assert!(exported.header.version < scene::VERSION_WITH_SCENES);
+}
+
+#[test]
+fn takes_only_the_model_files_maps_json_names_and_only_from_version_11() {
+    let dir = TempDir::new("packfile-scene-refuse");
+    let pack = dir.0.join("pack");
+    write_scene_pack(&pack);
+    let file = dir.0.join("scene.atlaspack");
+    run_export(&folder_source(&pack), Detail::Full, &file).unwrap();
+    let mut archive = ZipArchive::new(fs::File::open(&file).unwrap()).unwrap();
+    let mut header: Value = Value::Null;
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+        if index == 0 {
+            header = serde_json::from_slice(&bytes).unwrap();
+        } else {
+            entries.push((entry.name().unwrap().into_owned(), bytes));
+        }
+    }
+    // A model file maps.json does not name is refused.
+    let mut extra = entries.clone();
+    extra.push(("scene/a/lod9.glb".to_owned(), b"glTF".to_vec()));
+    let error = import_error(&dir.0, "extra", &header, &extra);
+    assert!(error.contains("not part of a pack"), "{error}");
+    // So is a model in a file of a version before 3D maps.
+    let mut older = header.clone();
+    older["version"] = json!(10);
+    let error = import_error(&dir.0, "older", &older, &entries);
+    assert!(error.contains("not part of a pack"), "{error}");
+}
+
+#[test]
+fn names_the_model_files_a_scene_names_and_only_safe_ones() {
+    let maps = json!([
+        {"id": "m", "scene": {"cells": [
+            {"id": "a", "lods": [{"level": 0, "file": "scene/a/lod0.glb"}, {"level": 1, "file": "../x.glb"}]}
+        ], "neighbours": "scene/n.glb"}},
+        {"id": "flat"}
+    ]);
+    let named = scene::named_scene_files(&maps.to_string());
+    let mut named: Vec<String> = named.into_iter().collect();
+    named.sort();
+    assert_eq!(named, ["scene/a/lod0.glb", "scene/n.glb"]);
+    assert!(scene::named_scene_files("not json").is_empty());
 }

@@ -27,10 +27,11 @@ use serde_json::Value;
 use zip::ZipArchive;
 
 use super::{
-    is_picture_path, is_preview_name, parse_layers, refusal_text, space, Header, ImportedRecord,
-    LayerInfo, Mine, Progress, Stop, TileKind, HEADER_FILE, IMPORTED_RECORD,
-    MAX_MINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES, MINE_ENTRIES,
-    MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITH_PREVIEWS,
+    is_picture_path, is_preview_name, parse_layers, refusal_text,
+    scene::{named_scene_files, MAX_SCENE_FILE_BYTES, VERSION_WITH_SCENES},
+    space, Header, ImportedRecord, LayerInfo, Mine, Progress, Stop, TileKind, HEADER_FILE,
+    IMPORTED_RECORD, MAX_MINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PREVIEWS, MAX_PREVIEW_BYTES,
+    MINE_ENTRIES, MINE_PICTURES_DIR, PICTURES_FILE, VERSION_WITH_PREVIEWS,
 };
 use crate::{
     library::{packs_in, PackLock, MAX_PACK_BYTES, MAX_PACK_FILE_BYTES, META_DIR, PACK_FILES},
@@ -214,7 +215,12 @@ pub(crate) fn import_with_record(
     // Map images first, then the status files, the pack files and the
     // manifest last, so the folder is a pack only once it is complete.
     let order = |kind: &Kind| match kind {
-        Kind::Image | Kind::Marker | Kind::Picture | Kind::Guidebook | Kind::GuidebookText => 0,
+        Kind::Image
+        | Kind::Marker
+        | Kind::Picture
+        | Kind::Scene
+        | Kind::Guidebook
+        | Kind::GuidebookText => 0,
         Kind::Status(_) => 1,
         Kind::PackFile | Kind::Mine(_) | Kind::MinePicture | Kind::Preview => 2,
     };
@@ -446,6 +452,8 @@ pub(crate) enum Kind {
     /// The text of a guidebook the header lists
     /// (`guidebooks/<name>.text.json`).
     GuidebookText,
+    /// A model file of a 3D map that `maps.json` names (`scene/…`).
+    Scene,
 }
 
 struct Checked {
@@ -527,6 +535,9 @@ pub(crate) struct Rules {
     templates: Vec<Template>,
     /// The pictures `pictures.json` lists, the only ones it may hold.
     pictures: HashSet<String>,
+    /// The model files of the 3D maps `maps.json` names, the only ones it
+    /// may hold, and only from the version that has them.
+    scenes: HashSet<String>,
     /// The small pictures the description lists, the only ones it may hold.
     previews: HashSet<String>,
     /// The guidebooks the description lists, and their text, the only ones
@@ -571,11 +582,15 @@ impl Rules {
                 .map_err(|_| refuse(format!("The {name} in this pack file is not text.")))
         };
         // A game with no map has neither file.
+        let mut scenes = HashSet::new();
         let layers = if !entries.has("maps.json") && !entries.has("layers.json") {
             Vec::new()
         } else {
             let maps = text_of(entries, "maps.json")?;
             let layers_text = text_of(entries, "layers.json")?;
+            if header.version >= VERSION_WITH_SCENES {
+                scenes = named_scene_files(&maps);
+            }
             parse_layers(&maps, &layers_text).map_err(refuse)?
         };
         // The pictures it lists, the only ones it may hold.
@@ -638,6 +653,7 @@ impl Rules {
             layers,
             templates,
             pictures,
+            scenes,
             previews,
             guidebooks,
             made_in_app,
@@ -779,11 +795,17 @@ pub(crate) fn check_entry(
             }
             tally.bytes = tally.bytes.saturating_add(size);
         }
-        Kind::PackFile | Kind::Status(_) | Kind::Image | Kind::Marker | Kind::Picture => {
+        Kind::PackFile
+        | Kind::Status(_)
+        | Kind::Image
+        | Kind::Marker
+        | Kind::Picture
+        | Kind::Scene => {
             let limit = match kind {
                 Kind::PackFile => MAX_PACK_FILE_BYTES as u64,
                 Kind::Status(_) => MAX_STATUS_BYTES,
                 Kind::Image => MAX_IMAGE_BYTES,
+                Kind::Scene => MAX_SCENE_FILE_BYTES,
                 Kind::Marker => 0,
                 _ => MAX_PICTURE_BYTES,
             };
@@ -885,6 +907,7 @@ fn check_entries<R: Read + io::Seek>(
             | Kind::Image
             | Kind::Marker
             | Kind::Picture
+            | Kind::Scene
             | Kind::Guidebook
             | Kind::GuidebookText => {}
         }
@@ -940,6 +963,7 @@ fn classify(name: &str, rules: &Rules) -> Option<Kind> {
         layers,
         templates,
         pictures,
+        scenes,
         previews,
         guidebooks,
         ..
@@ -966,6 +990,9 @@ fn classify(name: &str, rules: &Rules) -> Option<Kind> {
     }
     if pictures.contains(name) {
         return Some(Kind::Picture);
+    }
+    if scenes.contains(name) {
+        return Some(Kind::Scene);
     }
     if let Some(size) = guidebooks.get(name) {
         return Some(if size.is_some() {

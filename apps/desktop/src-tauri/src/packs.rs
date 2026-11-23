@@ -604,6 +604,9 @@ fn content_type(path: &Path) -> &'static str {
         Some("avif") => "image/avif",
         Some("svg") => "image/svg+xml",
         Some("md") => "text/markdown; charset=utf-8",
+        // The models of a 3D map (see `packfile::scene`).
+        Some("glb") => "model/gltf-binary",
+        Some("ktx2") => "image/ktx2",
         _ => "application/octet-stream",
     }
 }

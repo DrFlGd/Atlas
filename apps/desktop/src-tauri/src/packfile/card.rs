@@ -145,6 +145,8 @@ fn map_facts(root: &Path) -> Vec<MapFacts> {
             width: map.width,
             height: map.height,
             preview: None,
+            // Set by the export from what the file carries.
+            scene: false,
         })
         .collect()
 }

@@ -79,6 +79,7 @@ pub mod import;
 pub mod inplace;
 pub mod names;
 pub mod preview;
+pub mod scene;
 pub mod shell;
 pub mod smaller;
 pub mod space;
@@ -1543,6 +1544,8 @@ pub fn export_options(source: &PackSource) -> Result<ExportOptions, String> {
         };
         let image_bytes: u64 = facts.iter().map(|layer| layer.bytes).sum();
         let missing = unavailable(&analysis, detail);
+        // The model files of its 3D maps at this detail.
+        let scene_bytes = scene::scene_export(&source.root, detail)?.bytes();
         details.push(DetailOption {
             detail,
             available: reason.is_none() && missing.is_none(),
@@ -1552,6 +1555,7 @@ pub fn export_options(source: &PackSource) -> Result<ExportOptions, String> {
             // Status files are a few hundred bytes each.
             bytes: entries.iter().map(|entry| entry.size).sum::<u64>()
                 + json_bytes
+                + scene_bytes
                 + 512 * analysis.statuses.len() as u64,
         });
     }
