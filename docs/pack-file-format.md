@@ -488,3 +488,35 @@ fn write(packs_folder: &Path) -> Result<(), String> {
 - `guidebook_pages(file)` counts a guidebook file's pages only.
 - `parse_guidebook_text(bytes, pages)` checks a text file, and `GuidebookText::of_pages(pages)` makes one.
 - `write_magazine_pack(pack, target)` writes a complete pack of magazines (version 10, see "Magazines") at `target`, as `<target>.part` renamed to `target` when it is complete, and returns its description. `pack` is a `MagazinePack`: its id (`magazines-` and a name), the `MagazineFacts` (title, publisher), the app that writes it, and each `NewIssue`: its file, title, date, number, pages (counted when none), text by page, cover (a JPEG file) and games (`IssueGame`). It refuses with a `WriteError`, one plain sentence, and writes nothing, when something does not fit the bounds above. Write a magazine again under the same id, at the same place, to change it: the new file replaces the old one whole.
+
+## Building a 3D map
+
+Every 3D map should come out the same, whichever app makes it, so Atlas has one builder for them: the `atlas-scene` crate, in this repository at `crates/atlas-scene` (MIT, like `atlas-pack`). It takes a raw model and writes the scene files of one map into a pack folder:
+
+1. **Lines the model up with the game's world.** `axes`, `scale` and `offset` say how the raw model's coordinates become world x, world y and height, as a scene's own fields do. The files it writes use glTF's own axes around the model's rounded centre, so the scene it returns has an `offset` only, and lines up with the map through its `worldTransform`.
+2. **Drops what is never seen in game:** each part whose node (or a parent node), mesh or material name matches one of `drop` (`*` any run of characters, `?` one, any case), such as invisible walls, debug shapes or clutter.
+3. **Floors** are the caller's: an app that knows a map's storeys writes them as its layers' `heights` (a map without storeys has none). The builder can draw each one (step 6).
+4. **Cuts it into square cells** (`cellSize` in world units, or a size that gives about `cellTriangles` each, 60,000 by default), each triangle in the cell of its centre, and makes simpler levels of each cell with meshoptimizer (`levels`: by default 30 % and 8 % of the triangles; a level that saves little is left out), one primitive per material within a cell. Vertices shared with another cell or another material never move, so cells at different levels meet without gaps, and normals are worked out on the whole model first (a hard edge where faces meet at more than `creaseAngle`, 50°), so no seam shows between cells.
+5. **Compresses** each file with `EXT_meshopt_compression` (normals in 8 bits with `KHR_mesh_quantization`). Textures are left out for now, each material keeping its colour; KTX2 textures come later, in the place the crate's `textures` module describes.
+6. **Draws the model from straight above** when asked (`render`): one picture per floor (each floor's `heights`, what lies below it faint) or of the whole map, cut into the map image tiles every app reads (`<folder>/<floor>/{z}/{x}/{y}.png`), with the map's size and `worldTransform`, so the map works in 2D in any app and its 2D side matches its model.
+7. **Checks** the scene and its files with the rules of "3D maps" above, and returns the scene to put on the map in `maps.json`, with a report: triangles in, dropped and kept per level, cells, files, bytes and seconds.
+
+The raw model is one glTF 2.0 binary file (`.glb`) with everything in it: triangle meshes, uncompressed, in any node tree, with vertex colours (`COLOR_0`, linear as glTF reads them) and plain materials (`baseColorFactor`, `doubleSided`). Corners at one place with one colour are joined.
+
+**From a Rust app** (a Tauri shell, say), take the crate as `atlas-pack` above, and call it:
+
+```rust
+use std::path::Path;
+
+fn build(raw: &Path, pack: &Path) -> Result<serde_json::Value, String> {
+    let mut options = atlas_scene::Options::new("scene/keep");
+    options.drop = vec!["*invisible*".to_owned()];
+    let built = atlas_scene::build_file(raw, &options, pack, &mut |fraction, step| {
+        println!("{:.0} % {step}", fraction * 100.0);
+    })?;
+    // built.report: what was done; built.rendered: the pictures, when asked.
+    Ok(built.scene)
+}
+```
+
+**From any other app** (the Map Maker's helper is Python), run the `atlas-scene` program that comes with it. `atlas-scene build <job.json>`, where the job is `{"input": "<raw .glb>", "pack": "<pack folder>", "options": {"folder": "scene/<map>", …}}` with the same options in camelCase (`axes`, `scale`, `offset`, `drop`, `cellSize`, `cellTriangles`, `levels`, `compress`, `creaseAngle`, `sky`, `water`, `camera`, `render`), writes one JSON object per line: `progress` lines (`fraction`, `message`), then `done` with `scene`, `report` and, when it drew the map, `rendered`; or `error` with a `message`, and exit code 1. `atlas-scene check <pack folder>` checks the 3D side of a whole pack folder (every map's scene and its files, the layers' `heights`, the locations' `height`) and writes one `checked` line with what it found; exit code 1 when there is a problem. Neither makes a network request or writes outside the pack folder it is given.

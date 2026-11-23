@@ -1,0 +1,40 @@
+[package]
+name = "atlas-scene"
+version = "0.1.0"
+description = "Builds the 3D model of an Atlas map from a raw glTF model: lines it up with the game's world, drops what is never seen, cuts it into square cells with levels of detail, compresses it, draws it from above and checks the result"
+edition = "2021"
+license = "MIT"
+rust-version = "1.90"
+publish = false
+
+# One builder for every 3D map, so they all come out the same: the Map Maker
+# runs it as a program (`atlas-scene build <job.json>`), and another Rust app
+# (such as a Tauri shell) can call `atlas_scene::build` directly. See
+# "Building a 3D map" in docs/pack-file-format.md.
+
+[lib]
+name = "atlas_scene"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atlas-scene"
+path = "src/main.rs"
+
+[dependencies]
+# The scene file name rule, shared with the pack file reader.
+atlas-pack = { path = "../atlas-pack" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# meshoptimizer 1.3 (bundled C++ source, built with the system's C++
+# compiler: MSVC on Windows): simplification, vertex cache and fetch order,
+# and the EXT_meshopt_compression encoders. MIT OR Apache-2.0.
+meshopt = "=0.7.0"
+# PNG map image tiles, in pure Rust. MIT OR Apache-2.0.
+png = "=0.18.1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
