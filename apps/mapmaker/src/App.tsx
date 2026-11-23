@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FloorsPanel } from './FloorsPanel';
+import { MapStyleChoice } from './MapStyleChoice';
 import {
   CATEGORY_LABELS,
   SOURCE_LABELS,
@@ -28,6 +29,7 @@ import {
   type GeometrySourceName,
   type MadeArea,
   type MakeReport,
+  type MapStyleId,
   type MarkerCategory,
   type Report,
 } from './report';
@@ -75,6 +77,7 @@ function MapMaker() {
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedReport | null>(null);
   const [make3d, setMake3d] = useState(true);
+  const [mapStyle, setMapStyle] = useState<MapStyleId>('shaded');
   const [overrides, setOverrides] = useState<FloorOverrides>({});
   const [adjusting, setAdjusting] = useState<string | null>(null);
 
@@ -84,6 +87,7 @@ function MapMaker() {
         setInfo(appInfo);
         setFolder((current) => current ?? appInfo.lastFolder);
         setMake3d(appInfo.make3d);
+        setMapStyle(appInfo.mapStyle);
       },
       (error: unknown) => {
         setProblem(errorText(error));
@@ -127,12 +131,16 @@ function MapMaker() {
       setProblem(null);
       setSaved(null);
       try {
-        setStatus(await (kind === 'make' ? api.makeStart(folder, make3d) : api.checkStart(folder)));
+        setStatus(
+          await (kind === 'make'
+            ? api.makeStart(folder, make3d, mapStyle)
+            : api.checkStart(folder)),
+        );
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, folder, make3d],
+    [api, folder, make3d, mapStyle],
   );
 
   const cancel = useCallback(async () => {
@@ -159,11 +167,11 @@ function MapMaker() {
   }, [api, status]);
 
   const remake = useCallback(
-    async (area: string) => {
+    async (area: string, style: MapStyleId) => {
       setProblem(null);
       setSaved(null);
       try {
-        setStatus(await api.remakeStart(area, make3d));
+        setStatus(await api.remakeStart(area, make3d, style));
       } catch (error) {
         setProblem(errorText(error));
       }
@@ -273,6 +281,13 @@ function MapMaker() {
           />
           Also make 3D maps
         </label>
+        <MapStyleChoice
+          id="map-style"
+          label="Map style"
+          value={mapStyle}
+          disabled={running}
+          onChange={setMapStyle}
+        />
         <p className="muted small">
           Make map reads every area (a few minutes for Dark Souls Remastered) and puts the map pack
           in <span className="mono">{info?.mapsFolder ?? 'the Atlas maps folder'}</span>, replacing
@@ -397,6 +412,7 @@ function MapMaker() {
           game={report.game.id}
           status={status}
           make3d={make3d}
+          mapStyle={adjusted.mapStyle ?? report.options?.mapStyle ?? mapStyle}
           remadeAt={
             report.remade?.area === adjusted.key
               ? new Date(report.remade.at).toLocaleTimeString()

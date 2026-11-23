@@ -16,6 +16,7 @@ What Soulstruct 2.6.0 cannot write is noted where it matters:
 
 from __future__ import annotations
 
+import math
 import struct
 import sys
 from pathlib import Path
@@ -288,6 +289,123 @@ def two_floor_triangles() -> list[list[tuple[float, float, float]]]:
         triangles += wall(x0, z0, x1, z1, 0.0, 9.0)
         triangles += wall(x0, z0, x1, z1, 9.0, 10.5)
     return triangles
+
+
+Triangles = list[list[tuple[float, float, float]]]
+
+
+def slab(x0: float, x1: float, z0: float, z1: float, y: float, holes: tuple[tuple[float, ...], ...] = (), step: float = 2.0) -> Triangles:
+    """A flat floor at height y in `step`-metre squares, leaving out the squares inside `holes` ((x0, x1, z0, z1))."""
+    out: Triangles = []
+    for i in range(round((x1 - x0) / step)):
+        for k in range(round((z1 - z0) / step)):
+            a, b = x0 + i * step, z0 + k * step
+            cx, cz = a + step / 2, b + step / 2
+            if any(h[0] < cx < h[1] and h[2] < cz < h[3] for h in holes):
+                continue
+            out += quad(a, a + step, b, b + step, y)
+    return out
+
+
+def walls_round(x0: float, x1: float, z0: float, z1: float, y0: float, y1: float, doors: tuple[int, ...] = ()) -> Triangles:
+    """Four upright walls round a rectangle; `doors` names the sides (0 south, 1 east, 2 north, 3 west) that have a
+    3 m wide, 3 m high opening in their middle."""
+    out: Triangles = []
+    corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
+    for side in range(4):
+        (ax, az), (bx, bz) = corners[side], corners[(side + 1) % 4]
+        if side not in doors:
+            out += wall(ax, az, bx, bz, y0, y1)
+            continue
+        mx, mz = (ax + bx) / 2, (az + bz) / 2
+        length = math.hypot(bx - ax, bz - az)
+        ux, uz = (bx - ax) / length, (bz - az) / length
+        out += wall(ax, az, mx - 1.5 * ux, mz - 1.5 * uz, y0, y1)
+        out += wall(mx + 1.5 * ux, mz + 1.5 * uz, bx, bz, y0, y1)
+        out += wall(mx - 1.5 * ux, mz - 1.5 * uz, mx + 1.5 * ux, mz + 1.5 * uz, y0 + 3.0, y1)
+    return out
+
+
+def stairs(x0: float, x1: float, z0: float, z1: float, y0: float, y1: float, steps: int) -> Triangles:
+    """A flight of steps rising from y0 at x0 to y1 at x1 (treads and risers), across z0 to z1."""
+    out: Triangles = []
+    run, rise = (x1 - x0) / steps, (y1 - y0) / steps
+    for i in range(steps):
+        a, y = x0 + i * run, y0 + (i + 1) * rise
+        out += wall(a, z0, a, z1, y - rise, y)
+        out += quad(min(a, a + run), max(a, a + run), z0, z1, y)
+    return out
+
+
+def ramp(x0: float, x1: float, z0: float, z1: float, y0: float, y1: float, pieces: int = 8) -> Triangles:
+    """A ramp rising from y0 at z0 to y1 at z1, across x0 to x1."""
+    out: Triangles = []
+    for i in range(pieces):
+        za, zb = z0 + (z1 - z0) * i / pieces, z0 + (z1 - z0) * (i + 1) / pieces
+        ya, yb = y0 + (y1 - y0) * i / pieces, y0 + (y1 - y0) * (i + 1) / pieces
+        out += [[(x0, ya, za), (x0, yb, zb), (x1, ya, za)], [(x1, ya, za), (x0, yb, zb), (x1, yb, zb)]]
+    return out
+
+
+def made_up_keep() -> tuple[Triangles, list[tuple[tuple[float, float, float], str]]]:
+    """A made-up area that looks like a real one, for the floor views: a courtyard (0 m) with a sunken garden to the
+    west (-3 m, steps down); a keep with a ground floor of rooms, a first floor at 5 m and a second at 10 m (stairs
+    inside between them), a walkable roof at 15 m with a parapet, and a balcony over the courtyard (an overhang); a
+    curtain wall with a wall walk at 5 m and a ramp up to it; a tower with its top at 22 m. Every coordinate is
+    invented. Returns the triangles and the markers ((x, height, z), category), at walking height."""
+    t: Triangles = []
+    # Ground: the courtyard, the sunken garden, the wall between them and the steps down.
+    t += slab(-40, 60, -50, 50, 0.0, step=5.0)
+    t += slab(-70, -46, -50, 50, -3.0, step=5.0)
+    t += wall(-40, -50, -40, -6, -3.0, 0.0) + wall(-40, 6, -40, 50, -3.0, 0.0)
+    t += stairs(-40, -46, -6, 6, 0.0, -3.0, 8)
+    t += walls_round(-70, 60, -50, 50, -3.0, 4.0)  # the outer wall of the area
+    # The keep: outer walls to the roof, rooms on the ground floor, two floors with stairwells, the roof.
+    t += walls_round(-30, 10, -20, 20, 0.0, 15.0, doors=(1,))
+    t += wall(-10, -20, -10, -2, 0.0, 5.0) + wall(-10, 2, -10, 20, 0.0, 5.0) + wall(-10, -2, -10, 2, 3.0, 5.0)
+    t += wall(-30, 0, -10, 0, 0.0, 5.0)
+    first_hole = (-28, -18, -20, -14)
+    second_hole = (-28, -18, 14, 20)
+    t += slab(-30, 10, -20, 20, 5.0, holes=(first_hole,))
+    t += stairs(-28, -18, -20, -14, 0.0, 5.0, 16)
+    t += wall(-30, 6, -2, 6, 5.0, 10.0)
+    t += slab(-30, 10, -20, 20, 10.0, holes=(second_hole,))
+    t += stairs(-28, -18, 14, 20, 5.0, 10.0, 16)
+    t += slab(-30, 10, -20, 20, 15.0)
+    t += walls_round(-30, 10, -20, 20, 15.0, 16.2)
+    # The balcony on the north side at 5 m, over the courtyard, with its rail.
+    t += slab(-22, -2, 20, 28, 5.0)
+    t += wall(-22, 28, -2, 28, 5.0, 6.1) + wall(-22, 20, -22, 28, 5.0, 6.1) + wall(-2, 28, -2, 20, 5.0, 6.1)
+    # The curtain wall to the east with its wall walk at 5 m, and the ramp up to it from the south.
+    t += walls_round(10, 50, -20, -14, 0.0, 5.0)
+    t += slab(10, 50, -20, -14, 5.0)
+    t += wall(10, -20, 50, -20, 5.0, 6.2)
+    t += ramp(44, 50, -44, -20, 0.0, 5.0)
+    # The tower, with a landing at 11 m and its top at 22 m.
+    t += walls_round(30, 40, 10, 20, 0.0, 22.0, doors=(3,))
+    t += slab(30, 40, 10, 20, 11.0, holes=((30, 34, 10, 14),))
+    t += slab(30, 40, 10, 20, 22.0)
+    t += walls_round(30, 40, 10, 20, 22.0, 23.2)
+    markers = [
+        ((0.0, 0.0, -35.0), "bonfire"),
+        ((25.0, 0.0, 30.0), "consumable"),
+        ((-55.0, -3.0, 20.0), "ring"),
+        ((-60.0, -3.0, -30.0), "souls"),
+        ((-20.0, 0.0, -8.0), "weapon"),
+        ((0.0, 0.0, 10.0), "npc"),
+        ((-23.0, 2.5, -17.0), "consumable"),  # on the stairs
+        ((-20.0, 5.0, 0.0), "upgrade"),
+        ((0.0, 5.0, -10.0), "armour"),
+        ((-12.0, 5.0, 24.0), "key"),  # on the balcony
+        ((30.0, 5.0, -17.0), "souls"),  # on the wall walk
+        ((47.0, 2.6, -32.0), "consumable"),  # on the ramp
+        ((-15.0, 10.0, -10.0), "spell"),
+        ((-25.0, 10.0, 8.0), "ring"),
+        ((-10.0, 15.0, 0.0), "boss"),
+        ((35.0, 11.0, 17.0), "upgrade"),
+        ((36.0, 22.0, 15.0), "drop"),
+    ]
+    return t, markers
 
 
 def make_anor_londo_msb() -> MSB:

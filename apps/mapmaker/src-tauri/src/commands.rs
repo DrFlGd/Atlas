@@ -33,6 +33,8 @@ pub struct AppInfo {
     scene_builder_found: bool,
     /// "Also make 3D maps", as last chosen (on by default).
     make_3d: bool,
+    /// "Map style", as last chosen.
+    map_style: String,
     last_folder: Option<String>,
     typical_folder: Option<String>,
     /// Where Make map installs the pack: the Atlas viewer's maps folder.
@@ -88,6 +90,7 @@ pub fn app_info<R: Runtime>(app: AppHandle<R>) -> Result<AppInfo, String> {
         helper_found: checks::find_helper().is_some(),
         scene_builder_found: checks::find_scene_builder().is_some(),
         make_3d: settings.make_3d(),
+        map_style: settings.map_style().to_owned(),
         last_folder: settings.last_folder,
         typical_folder: settings::typical_folder(),
         maps_folder: viewer_maps_folder(&app)
@@ -145,20 +148,36 @@ pub fn check_start<R: Runtime>(
     start(&app, &checks, folder, Job::Check, "checks")
 }
 
+/// The map style asked for, when it is one the helper can draw.
+fn checked_style(
+    map_style: Option<String>,
+    settings: &settings::Settings,
+) -> Result<String, String> {
+    match map_style {
+        Some(style) if settings::is_map_style(&style) => Ok(style),
+        Some(style) => Err(format!("{style} is not a map style that can be drawn.")),
+        None => Ok(settings.map_style().to_owned()),
+    }
+}
+
 /// Starts making the map pack of `folder`, installed in the Atlas viewer's maps folder, with 3D maps when
-/// `make_3d` ("Also make 3D maps", which is remembered). Its report goes to a new folder in the app's own data.
+/// `make_3d` ("Also make 3D maps") and drawn in `map_style` (both remembered). Its report goes to a new folder in
+/// the app's own data.
 #[tauri::command]
 pub fn make_start<R: Runtime>(
     app: AppHandle<R>,
     checks: State<'_, Checks>,
     folder: String,
     make_3d: bool,
+    map_style: Option<String>,
 ) -> Result<Status, String> {
     let maps_folder = viewer_maps_folder(&app)?;
     let file = settings_file(&app)?;
     let mut settings = settings::read(&file);
-    if settings.make_3d() != make_3d {
+    let map_style = checked_style(map_style, &settings)?;
+    if settings.make_3d() != make_3d || settings.map_style() != map_style {
         settings.make_3d = Some(make_3d);
+        settings.map_style = Some(map_style.clone());
         let _ = settings::write(&file, &settings);
     }
     let job = Job::Make {
@@ -166,12 +185,13 @@ pub fn make_start<R: Runtime>(
         three_d: make_3d,
         scene_builder: checks::find_scene_builder(),
         floor_overrides: floor_overrides_for_helper(&app),
+        map_style,
     };
     start(&app, &checks, folder, job, "makes")
 }
 
-/// Starts making one area (`mAA_BB`) of the last make again, with the player's floor cuts, and putting its new map
-/// in place of the old one in the pack that make installed.
+/// Starts making one area (`mAA_BB`) of the last make again, with the player's floor cuts, drawn in `map_style`,
+/// and putting its new map in place of the old one in the pack that make installed.
 #[tauri::command]
 pub fn remake_start<R: Runtime>(
     app: AppHandle<R>,
@@ -179,7 +199,9 @@ pub fn remake_start<R: Runtime>(
     views: State<'_, FloorViews>,
     area: String,
     make_3d: bool,
+    map_style: Option<String>,
 ) -> Result<Status, String> {
+    let map_style = checked_style(map_style, &settings::read(&settings_file(&app)?))?;
     let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     let (folder, out_dir, _) = checks
         .last_make()
@@ -200,6 +222,7 @@ pub fn remake_start<R: Runtime>(
         three_d: make_3d,
         scene_builder: checks::find_scene_builder(),
         floor_overrides: floor_overrides_for_helper(&app),
+        map_style,
         area: key,
     };
     checks.start(&helper, job, &folder, &out_dir)
@@ -346,6 +369,7 @@ pub async fn floor_views_request(
     area: String,
     cuts: Vec<f64>,
     names: Vec<String>,
+    outlines: Option<bool>,
 ) -> Result<Value, String> {
     let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     let cuts: Vec<f64> = cuts
@@ -359,7 +383,8 @@ pub async fn floor_views_request(
         .map(|name| name.chars().take(80).collect())
         .collect();
     let views = views.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || views.request(&key, &cuts, &names))
+    let outlines = outlines.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || views.request(&key, &cuts, &names, outlines))
         .await
         .map_err(|error| error.to_string())?
 }

@@ -1,5 +1,5 @@
 //! The Map Maker's settings, in `settings.json` in the app's config folder: the last game folder, whether Make
-//! map also makes 3D maps, and the last make (so its report, and Adjust floors, are there when the app opens again).
+//! map also makes 3D maps, the map style, and the last make (so its report, and Adjust floors, are there when the app opens again).
 //! The player's own floor cuts are in `floor-overrides.json` beside it (see overrides.rs).
 
 use std::{fs, path::Path};
@@ -13,6 +13,9 @@ pub struct Settings {
     /// "Also make 3D maps"; on when never chosen.
     #[serde(rename = "make3d", skip_serializing_if = "Option::is_none")]
     pub make_3d: Option<bool>,
+    /// "Map style" (the helper's render.MAP_STYLES): how the floors are drawn; "shaded" when never chosen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_style: Option<String>,
     /// The last make: its game folder and output folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_make: Option<LastMake>,
@@ -29,6 +32,21 @@ impl Settings {
     pub fn make_3d(&self) -> bool {
         self.make_3d.unwrap_or(true)
     }
+
+    pub fn map_style(&self) -> &str {
+        self.map_style
+            .as_deref()
+            .filter(|style| is_map_style(style))
+            .unwrap_or(DEFAULT_MAP_STYLE)
+    }
+}
+
+/// The map styles the helper can draw now (the textured ones need the game's textures, not read yet).
+pub const MAP_STYLES: [&str; 2] = ["shaded", "outlines"];
+pub const DEFAULT_MAP_STYLE: &str = "shaded";
+
+pub fn is_map_style(style: &str) -> bool {
+    MAP_STYLES.contains(&style)
 }
 
 pub fn read(file: &Path) -> Settings {
@@ -72,9 +90,11 @@ mod tests {
         let file = dir.join("settings.json");
         assert_eq!(read(&file), Settings::default());
         assert!(read(&file).make_3d(), "3D maps are on until turned off");
+        assert_eq!(read(&file).map_style(), "shaded");
         let settings = Settings {
             last_folder: Some(r"C:\Games\DARK SOULS REMASTERED".into()),
             make_3d: Some(false),
+            map_style: Some("outlines".into()),
             last_make: Some(LastMake {
                 folder: r"C:\Games\DARK SOULS REMASTERED".into(),
                 out: r"C:\Users\Someone\AppData\Local\Atlas Map Maker\makes\run-1".into(),
@@ -83,9 +103,22 @@ mod tests {
         write(&file, &settings).unwrap();
         assert_eq!(read(&file), settings);
         assert!(!read(&file).make_3d());
+        assert_eq!(read(&file).map_style(), "outlines");
+        let unknown = Settings {
+            map_style: Some("textured".into()),
+            ..Settings::default()
+        };
+        assert_eq!(
+            unknown.map_style(),
+            "shaded",
+            "not a style that can be drawn yet"
+        );
         let text = fs::read_to_string(&file).unwrap();
         assert!(
-            text.contains("lastFolder") && text.contains("make3d") && text.contains("lastMake"),
+            text.contains("lastFolder")
+                && text.contains("make3d")
+                && text.contains("mapStyle")
+                && text.contains("lastMake"),
             "{text}"
         );
         fs::write(&file, "not json").unwrap();

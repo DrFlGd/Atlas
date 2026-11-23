@@ -52,7 +52,7 @@ from .pack import (
     swap_area,
     write_pack_json,
 )
-from .render import BACKGROUND, compose, draw_layer, make_frame, preview_png, triangle_colours
+from .render import BACKGROUND, compose, draw_layer, make_frame, map_style, preview_png, triangle_colours
 from .safety import UnsafeOutputError, check_output_folder, is_inside, prepare_soulstruct
 from .scene import BuilderFailed, check_pack, corner_colours, find_builder, floor_heights, raw_glb, run_builder
 from .tiles import tile_format, write_pyramid
@@ -94,6 +94,7 @@ class MapMaker:
         scene_builder: Path | None = None,
         floor_overrides_file: Path | None = None,
         remake: str | None = None,
+        style: str | None = None,
     ):
         self.folder = Path(folder)
         self.out = Path(out)
@@ -120,6 +121,11 @@ class MapMaker:
         # Making one area again (`mAA_BB`), in place of its map in the pack made before (see replace_area).
         self.remake = remake.lower()[:6] if remake else None
         self.preview_dir: Path | None = None
+        # How the floors are drawn (render.MAP_STYLES); an unknown or unavailable style is refused here.
+        try:
+            self.style = map_style(style)
+        except ValueError as error:
+            raise MakeError(str(error)[:1].upper() + str(error)[1:] + ".", code="map-style") from None
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
@@ -239,6 +245,7 @@ class MapMaker:
             "options": {
                 "areas": sorted(self.only_areas) or "all",
                 "render": render_settings,
+                "mapStyle": self.style.id,
                 "tileFormat": fmt,
                 "floors": config.get("floors", {}),
                 "config": self.config_file.name if self.config_file else f"{detection.game}.json (built in)",
@@ -457,6 +464,7 @@ class MapMaker:
         used = [k for k in own.get("usedFor", []) if k != key] + self.used_own
         options["floorOverrides"] = {**self.own_overrides_report(), "usedFor": sorted(used)}
         options["threeD"] = report["options"]["threeD"]
+        options["mapStyle"] = self.style.id
         counts = {name_: len(items) for name_, items in merged.items() if isinstance(items, list)}
         new_report = {
             **previous,
@@ -654,7 +662,7 @@ class MapMaker:
                 tris = mesh[chosen]
                 colours = triangle_colours(tris, float(low), float(high), plan.flipped)
                 walls = plan.wall_lines[floor.index] if floor.index < len(plan.wall_lines) else np.zeros((0, 2, 2))
-                yield floor.index, draw_layer(frame, tris, colours, walls)
+                yield floor.index, draw_layer(frame, tris, colours, walls, self.style)
 
         for done, (floor_index, picture) in enumerate(compose(frame, layers(), opacity)):
             self.token.stop()
@@ -709,6 +717,7 @@ class MapMaker:
         by_category = Counter(m.category for m in world.markers)
         entry["frame"] = frame.to_report()
         entry["floorPlan"] = plan.report
+        entry["mapStyle"] = self.style.id
         entry["mainFloor"] = main
         entry["floors"] = floor_entries
         entry["markers"] = {

@@ -6,6 +6,15 @@
 - Walls (wall triangles cut at chest height, see floors.py) are dark lines, and the floor's outer edge a darker
   rim.
 
+A floor's picture is the area seen from above with everything above that floor left out: only the walkable
+triangles of this floor are drawn (a piece of floor that rises a little past the cut above, joined to this floor
+with nothing stacked over it, stays on it: see floors.py), over the floors below; walls are cut at chest height
+above this floor.
+
+The map style (`MAP_STYLES`) chooses how: "Height shaded" as above; "Height shaded with outlines" draws the
+collision boundaries (the walls and the edges of the walkable floor) as clear light lines. The textured styles
+need the game's textures, which are not read yet: they are listed, and refused, so that the windows can show them.
+
 Seen from above: right is +x and up is +z, so a world point (x, z) is at pixel ((x - xMin) * s, (zMax - z) * s)
 for `s` pixels per metre, and the map's `worldTransform` is the inverse (pixel to world x, z).
 """
@@ -30,6 +39,40 @@ RAMP = (
     (1.0, (172, 224, 210)),
 )
 LIGHT = np.array([-0.45, 0.8, 0.4])  # from the north-west (-x, +z) and above
+OUTLINE = (246, 236, 200)  # the outlines of "Height shaded with outlines": light, over a dark edge
+TEXTURES_NOTE = "Needs the game's textures, which Map Maker does not read yet"
+
+
+@dataclass(frozen=True)
+class MapStyle:
+    id: str
+    label: str
+    outlines: bool
+    textured: bool
+    available: bool
+    note: str | None = None
+
+
+MAP_STYLES = {
+    style.id: style
+    for style in (
+        MapStyle("shaded", "Height shaded", outlines=False, textured=False, available=True),
+        MapStyle("outlines", "Height shaded with outlines", outlines=True, textured=False, available=True),
+        MapStyle("textured", "Textured", outlines=False, textured=True, available=False, note=TEXTURES_NOTE),
+        MapStyle("textured-outlines", "Textured with outlines", outlines=True, textured=True, available=False, note=TEXTURES_NOTE),
+    )
+}
+DEFAULT_STYLE = "shaded"
+
+
+def map_style(name: str | None) -> MapStyle:
+    """The style called `name` (the default without one); ValueError for an unknown one or one not available."""
+    style = MAP_STYLES.get(name or DEFAULT_STYLE)
+    if style is None:
+        raise ValueError(f"there is no map style {name!r}; the styles are {', '.join(MAP_STYLES)}")
+    if not style.available:
+        raise ValueError(f"the map style {style.label!r} is not available: {style.note}")
+    return style
 MARKER_COLOURS = {
     "bonfire": (255, 154, 60),
     "boss": (255, 123, 114),
@@ -128,10 +171,13 @@ def draw_layer(
     triangles: np.ndarray,
     colours: np.ndarray,
     walls: np.ndarray,
+    style: MapStyle | None = None,
 ) -> tp.Any:
     """One floor alone, on a transparent picture: its triangles (lowest first, so higher ones are drawn over
-    them), its rim and its walls."""
+    them), its rim and its walls; with outlines (the style's), the rim and walls as light lines on a dark edge."""
     from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+    outlines = style is not None and style.outlines
 
     layer = Image.new("RGBA", (frame.width, frame.height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
@@ -142,13 +188,27 @@ def draw_layer(
         for corners, fill in zip(pixels.round(2).tolist(), fills.tolist()):
             draw.polygon([tuple(p) for p in corners], fill=(fill[0], fill[1], fill[2], 255))
         alpha = layer.getchannel("A")
-        rim = ImageChops.subtract(alpha, alpha.filter(ImageFilter.MinFilter(3)))
-        layer.paste(Image.new("RGBA", layer.size, RIM + (255,)), (0, 0), rim)
+        if outlines:
+            # Two light pixels at the edge, with a dark one inside them so they stand out on light floor too.
+            dark = ImageChops.subtract(alpha, alpha.filter(ImageFilter.MinFilter(7)))
+            light = ImageChops.subtract(alpha, alpha.filter(ImageFilter.MinFilter(5)))
+            layer.paste(Image.new("RGBA", layer.size, WALL + (255,)), (0, 0), dark)
+            layer.paste(Image.new("RGBA", layer.size, OUTLINE + (255,)), (0, 0), light)
+        else:
+            rim = ImageChops.subtract(alpha, alpha.filter(ImageFilter.MinFilter(3)))
+            layer.paste(Image.new("RGBA", layer.size, RIM + (255,)), (0, 0), rim)
     if len(walls):
         width = max(1, int(round(0.22 * frame.scale)))
         ends = frame.to_pixels(walls.reshape(-1, 2)).reshape(-1, 2, 2).round(2).tolist()
-        for (x0, y0), (x1, y1) in ends:
-            draw.line([(x0, y0), (x1, y1)], fill=WALL + (255,), width=width)
+        if outlines:
+            width = max(2, width)
+            for (x0, y0), (x1, y1) in ends:
+                draw.line([(x0, y0), (x1, y1)], fill=WALL + (255,), width=width + 2)
+            for (x0, y0), (x1, y1) in ends:
+                draw.line([(x0, y0), (x1, y1)], fill=OUTLINE + (255,), width=width)
+        else:
+            for (x0, y0), (x1, y1) in ends:
+                draw.line([(x0, y0), (x1, y1)], fill=WALL + (255,), width=width)
     return layer
 
 

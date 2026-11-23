@@ -384,10 +384,28 @@ export interface FloorPlanReport {
   cutsDropped?: number[];
 }
 
+/** How the floors are drawn: the helper's render.MAP_STYLES. */
+export type MapStyleId = 'shaded' | 'outlines' | 'textured' | 'textured-outlines';
+
+export const TEXTURES_NOTE = 'Needs the game’s textures, which Map Maker does not read yet';
+
+export const MAP_STYLES: { id: MapStyleId; label: string; available: boolean }[] = [
+  { id: 'shaded', label: 'Height shaded', available: true },
+  { id: 'outlines', label: 'Height shaded with outlines', available: true },
+  { id: 'textured', label: 'Textured', available: false },
+  { id: 'textured-outlines', label: 'Textured with outlines', available: false },
+];
+
+export function mapStyleLabel(id: string | undefined): string {
+  return MAP_STYLES.find((style) => style.id === id)?.label ?? 'Height shaded';
+}
+
 export interface MadeArea {
   id: string;
   key: string;
   name: string;
+  /** The map style it was drawn in (none: before map styles, "shaded"). */
+  mapStyle?: MapStyleId;
   /** Why the area was left out (a debug map, or one the config skips). */
   skipped?: string;
   geometry?: { used: GeometrySourceName | null } & Partial<
@@ -439,6 +457,7 @@ export interface MakeReport {
   options?: {
     /** The player's own floor cuts file, and the areas that used it. */
     floorOverrides?: { file: string | null; error: string | null; usedFor: string[] };
+    mapStyle?: MapStyleId;
   } & Record<string, unknown>;
   /** The area made again last ("Make this area again"). */
   remade?: { area: string; name: string; at: string };

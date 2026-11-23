@@ -65,6 +65,8 @@ pub enum Job {
         scene_builder: Option<PathBuf>,
         /// The player's own floor cuts (overrides.rs), when there is such a file.
         floor_overrides: Option<PathBuf>,
+        /// How the floors are drawn (settings::MAP_STYLES).
+        map_style: String,
     },
     /// Make one area (`mAA_BB`) again, in place of its map in the pack the make in the same output folder made.
     Remake {
@@ -72,6 +74,7 @@ pub enum Job {
         three_d: bool,
         scene_builder: Option<PathBuf>,
         floor_overrides: Option<PathBuf>,
+        map_style: String,
         area: String,
     },
 }
@@ -592,12 +595,14 @@ impl Checks {
             three_d,
             scene_builder,
             floor_overrides,
+            map_style,
         }
         | Job::Remake {
             maps_folder,
             three_d,
             scene_builder,
             floor_overrides,
+            map_style,
             ..
         } = &job
         {
@@ -614,6 +619,7 @@ impl Checks {
             if let Some(file) = floor_overrides {
                 command.arg("--floor-overrides").arg(file);
             }
+            command.arg("--map-style").arg(map_style);
         }
         if let Job::Remake { area, .. } = &job {
             command.arg("--remake").arg(area);
@@ -850,6 +856,7 @@ impl Checks {
                 three_d: true,
                 scene_builder: None,
                 floor_overrides: None,
+                map_style: "shaded".into(),
             },
             folder: folder.to_path_buf(),
             out_dir: out_dir.to_path_buf(),
@@ -1132,6 +1139,7 @@ mod tests {
                     three_d: true,
                     scene_builder: None,
                     floor_overrides: None,
+                    map_style: "shaded".into(),
                 },
                 &base,
                 &outside,
@@ -1243,16 +1251,16 @@ mod tests {
         fs::create_dir_all(&game).unwrap();
         fs::create_dir_all(&out).unwrap();
         let script = base.join("helper.sh");
-        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice: --scene-builder and
-        // the builder, or --no-3d. The script writes down what it was given.
+        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice (--scene-builder and
+        // the builder, or --no-3d) and the map style. The script writes down what it was given after the maps folder.
         fs::write(
             &script,
             r#"#!/bin/sh
 [ "$1" = make ] && [ "$5" = --maps-folder ] || exit 9
-echo "$7 $8" > "$4/three-d.txt"
-mkdir -p "$6/p"
-echo "{\"event\":\"pack\",\"folder\":\"$6/p\"}"
-echo '{"kind":"make"}' > "$4/report.json"
+out="$4"; maps="$6"; shift 6; echo "$@" > "$out/three-d.txt"
+mkdir -p "$maps/p"
+echo "{\"event\":\"pack\",\"folder\":\"$maps/p\"}"
+echo '{"kind":"make"}' > "$out/report.json"
 echo '{"event":"done"}'
 "#,
         )
@@ -1270,6 +1278,7 @@ echo '{"event":"done"}'
                         three_d,
                         scene_builder,
                         floor_overrides: None,
+                        map_style: "shaded".into(),
                     },
                     &game,
                     out,
@@ -1292,13 +1301,19 @@ echo '{"event":"done"}'
         assert_eq!(checks.pack_folder().unwrap(), maps.join("p"));
         assert!(checks.report_zip().unwrap().ends_with(MAKE_ZIP_FILE));
         let given = |out: &Path| fs::read_to_string(out.join("three-d.txt")).unwrap();
-        assert_eq!(given(&out).trim(), "--scene-builder /builder");
+        assert_eq!(
+            given(&out).trim(),
+            "--scene-builder /builder --map-style shaded --stdin-cancel"
+        );
         let flat = base.join("out-flat");
         assert_eq!(
             run(false, Some(PathBuf::from("/builder")), &flat).state,
             State::Done
         );
-        assert_eq!(given(&flat).trim(), "--no-3d --stdin-cancel");
+        assert_eq!(
+            given(&flat).trim(),
+            "--no-3d --map-style shaded --stdin-cancel"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1381,6 +1396,7 @@ echo '{"event":"done"}'
                 three_d: false,
                 scene_builder: None,
                 floor_overrides: Some(base.join("floor-overrides.json")),
+                map_style: "shaded".into(),
                 area: "m15_01".to_owned(),
             };
             let status = checks.start(&script, job, &game, &out).unwrap();
@@ -1431,6 +1447,7 @@ echo '{"event":"done"}'
             three_d: false,
             scene_builder: None,
             floor_overrides: None,
+            map_style: "shaded".into(),
             area: "m15_01".to_owned(),
         };
         assert!(checks

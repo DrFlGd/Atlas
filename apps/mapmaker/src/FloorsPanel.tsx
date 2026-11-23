@@ -1,22 +1,30 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { Floors3D, SectionPicture, TopPicture } from './FloorViews';
+import { MapStyleChoice } from './MapStyleChoice';
 import {
   addCut,
   canAddCut,
+  checkMarker,
   deleteFloor,
   entryOf,
   floorBands,
   floorColour,
   heightTicks,
+  lookOf,
+  markerTypeText,
   moveCut,
+  northText,
   removeCut,
   renameFloor,
+  tipPlace,
   roundHeight,
   sameDraft,
   shippedDraft,
@@ -29,9 +37,11 @@ import {
   count,
   cutSourceText,
   heightText,
+  mapStyleLabel,
   plural,
   type HeightProfile,
   type MadeArea,
+  type MapStyleId,
 } from './report';
 import {
   errorText,
@@ -48,11 +58,13 @@ interface Props {
   game: string;
   status: CheckStatus | null;
   make3d: boolean;
+  /** The style the area was drawn in: Make this area again starts from it. */
+  mapStyle: MapStyleId;
   /** When this area was made again last, from these floors. */
   remadeAt: string | null;
   onClose: () => void;
   onOverrides: (overrides: FloorOverrides) => void;
-  onRemake: (area: string) => Promise<void>;
+  onRemake: (area: string, style: MapStyleId) => Promise<void>;
   onCancel: () => void;
   onMakeAll: () => void;
 }
@@ -63,6 +75,9 @@ const AXES: { axis: Axis; label: string; note: string }[] = [
   { axis: 'x', label: 'Seen from the south', note: 'west on the left, east on the right' },
   { axis: 'z', label: 'Seen from the east', note: 'south on the left, north on the right' },
 ];
+
+/** The view under the section: the 3D model, or the selected floor from above. */
+type Lower = '3d' | 'top';
 
 /**
  * Adjust floors: one area's floors, the cuts between them, and views to place the cuts by. A cut is moved by
@@ -78,6 +93,14 @@ export function FloorsPanel(props: Props) {
   const [drawing, setDrawing] = useState(false);
   const [selected, setSelected] = useState(area.mainFloor ?? 0);
   const [axis, setAxis] = useState<Axis>('x');
+  const [lower, setLower] = useState<Lower>('3d');
+  const [full3d, setFull3d] = useState(false);
+  const [hideAbove, setHideAbove] = useState(false);
+  const [showItems, setShowItems] = useState(true);
+  const [turn, setTurn] = useState(0);
+  const [tip, setTip] = useState<number | null>(null);
+  const [style, setStyle] = useState<MapStyleId>(props.mapStyle);
+  const [outlines, setOutlines] = useState(props.mapStyle === 'outlines');
   const [message, setMessage] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -85,8 +108,9 @@ export function FloorsPanel(props: Props) {
   const running = status?.state === 'running' || status?.state === 'cancelling';
   const remaking = running && status.kind === 'remake';
   const profile: HeightProfile | undefined = ready?.profile ?? area.floorPlan?.profile;
-  const low = profile?.low ?? 0;
-  const high = profile && profile.high > profile.low ? profile.high : low + 1;
+  const low = ready?.heights.low ?? profile?.low ?? 0;
+  const high =
+    ready?.heights.high ?? (profile && profile.high > profile.low ? profile.high : low + 1);
   const floorCount = draft.cuts.length + 1;
   const bands = floorBands(draft.cuts, low, high);
   const shown = Math.min(selected, floorCount - 1);
@@ -121,10 +145,10 @@ export function FloorsPanel(props: Props) {
   );
 
   // Redraw the views a moment after the cuts or names change; one request at a time, the latest wins.
-  const wanted = useRef(draft);
+  const wanted = useRef({ draft, outlines });
   useEffect(() => {
-    wanted.current = draft;
-  }, [draft]);
+    wanted.current = { draft, outlines };
+  }, [draft, outlines]);
   const inFlight = useRef(false);
   const again = useRef(false);
   const redraw = useCallback(async () => {
@@ -137,8 +161,13 @@ export function FloorsPanel(props: Props) {
     try {
       for (let more = true; more; more = again.current) {
         again.current = false;
-        const asked = entryOf(wanted.current);
-        const answer = await api.floorViewsRequest(area.key, asked.cuts ?? [], asked.names ?? []);
+        const asked = entryOf(wanted.current.draft);
+        const answer = await api.floorViewsRequest(
+          area.key,
+          asked.cuts ?? [],
+          asked.names ?? [],
+          wanted.current.outlines,
+        );
         setViews(answer);
         setViewsProblem(null);
       }
@@ -155,7 +184,7 @@ export function FloorsPanel(props: Props) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [ready, running, draft, redraw]);
+  }, [ready, running, draft, outlines, redraw]);
 
   const change = (next: FloorsDraft) => {
     setDraft(next);
@@ -215,6 +244,32 @@ export function FloorsPanel(props: Props) {
       ? draft.names[index].trim()
       : (viewed?.floors[index]?.name ?? `Floor ${index + 1}`);
 
+  // Each marker for these cuts: its floor, and whether a cut passes within a metre of it.
+  const markers = useMemo(() => ready?.markers ?? [], [ready]);
+  const placed = viewed?.markers;
+  const checks = useMemo(
+    () => markers.map((marker, i) => checkMarker(draft.cuts, marker.y, placed?.[i])),
+    [markers, draft.cuts, placed],
+  );
+  const looks = useMemo(() => checks.map(lookOf), [checks]);
+  const nearCount = checks.filter((check) => check.nearCut !== null).length;
+  const describe = (index: number) => {
+    const marker = markers[index];
+    const check = checks[index];
+    if (!marker || !check) return '';
+    const notes = [
+      `${markerTypeText(marker.type)} at ${heightText(marker.y)}`,
+      `on ${nameOf(check.floor)}`,
+    ];
+    if (check.nearCut !== null)
+      notes.push(
+        `${heightText(roundHeight(Math.abs(marker.y - check.nearCut)))} from the cut at ${heightText(check.nearCut)}`,
+      );
+    if (check.noSurface) notes.push('no walkable floor under it');
+    else if (check.otherFloor) notes.push('its height is on another floor');
+    return notes.join(' · ');
+  };
+
   const [newCut, setNewCut] = useState<number>(() =>
     profile ? suggestedCut(profile, draft.cuts) : 0,
   );
@@ -248,7 +303,7 @@ export function FloorsPanel(props: Props) {
   const remake = async () => {
     if (!(await save())) return;
     setMessage(null);
-    await props.onRemake(area.key);
+    await props.onRemake(area.key, style);
   };
   const saveFile = async () => {
     setProblem(null);
@@ -285,7 +340,11 @@ export function FloorsPanel(props: Props) {
 
   const unsaved = !sameDraft(draft, baseline);
   const maxBar = Math.max(1, ...(profile?.areas ?? [1]));
-  const side = viewed?.side[axis] ?? views?.side[axis] ?? null;
+  const section = ready?.section[axis] ?? null;
+  const tipAcross = (marker: { x: number; z: number }) =>
+    section && section.to > section.from
+      ? ((axis === 'x' ? marker.x : marker.z) - section.from) / (section.to - section.from)
+      : 0.5;
   const topView = viewed?.floors[shown]?.top ?? null;
   const floorsHighestFirst = [...bands].reverse();
   const failedRemake = status?.kind === 'remake' && status.state === 'failed' ? status : null;
@@ -294,7 +353,9 @@ export function FloorsPanel(props: Props) {
     <div
       className="mm-overlay"
       onKeyDown={(event) => {
-        if (event.key === 'Escape' && dragging.current === null) props.onClose();
+        if (event.key !== 'Escape' || dragging.current !== null) return;
+        if (full3d) setFull3d(false);
+        else props.onClose();
       }}
     >
       <section
@@ -315,8 +376,9 @@ export function FloorsPanel(props: Props) {
         <p id="fp-intro" className="muted small">
           A cut is the height where one floor ends and the next begins. Drag a cut’s line, or type
           its height; with the keyboard, the arrow keys move a selected cut by 0.1 m and Page Up or
-          Page Down by 1 m. The views are redrawn as you go. Press Make this area again to redraw
-          this area’s map from these floors.
+          Page Down by 1 m. The section, the 3D view and the floor from above follow as you go.
+          Items lie at walking height, so a cut passing through them is likely in the wrong place.
+          Press Make this area again to redraw this area’s map from these floors.
         </p>
 
         <div className="mm-fp-body">
@@ -335,6 +397,16 @@ export function FloorsPanel(props: Props) {
                   {entry.label}
                 </button>
               ))}
+              <button
+                type="button"
+                className="button"
+                aria-pressed={showItems}
+                onClick={() => {
+                  setShowItems(!showItems);
+                }}
+              >
+                Show items
+              </button>
             </div>
             <div className="mm-fp-chart">
               <div className="mm-fp-axis" aria-hidden="true">
@@ -347,21 +419,22 @@ export function FloorsPanel(props: Props) {
               <div className="mm-fp-plot" ref={plotRef}>
                 <svg
                   className="mm-fp-bars"
-                  viewBox={`0 0 100 ${Math.max(profile?.areas.length ?? 1, 1)}`}
+                  viewBox={`0 0 100 ${high - low}`}
                   preserveAspectRatio="none"
                   aria-hidden="true"
                 >
                   {(profile?.areas ?? []).map((value, index) => {
                     if (value <= 0) return null;
-                    const n = profile!.areas.length;
-                    const middle = profile!.low + (index + 0.5) * profile!.step;
-                    const band = draft.cuts.filter((cut) => cut < middle).length;
+                    const barLow = profile!.low + index * profile!.step;
+                    const band = draft.cuts.filter(
+                      (cut) => cut < barLow + profile!.step / 2,
+                    ).length;
                     return (
                       <rect
                         key={index}
                         x={0}
-                        y={n - 1 - index}
-                        height={1}
+                        y={high - barLow - profile!.step}
+                        height={profile!.step}
                         width={Math.max(2, Math.sqrt(value / maxBar) * 100)}
                         fill={floorColour(band)}
                       />
@@ -369,14 +442,70 @@ export function FloorsPanel(props: Props) {
                   })}
                 </svg>
                 <div className="mm-fp-side">
-                  {side?.image ? (
-                    <img
-                      src={side.image}
-                      alt={`${area.name} seen from the side, ${AXES.find((a) => a.axis === axis)!.note}, each floor in its colour`}
+                  {section?.pixels ? (
+                    <SectionPicture
+                      section={section}
+                      low={low}
+                      high={high}
+                      cuts={draft.cuts}
+                      selected={shown}
+                      label={`${area.name} ${AXES.find((a) => a.axis === axis)!.label.toLowerCase()}, walls and all, each floor in its colour`}
                     />
                   ) : (
                     <span className="muted small">
-                      {viewsProblem ? 'No side view' : 'Drawing the side view…'}
+                      {viewsProblem ? 'No section' : 'Drawing the section…'}
+                    </span>
+                  )}
+                  {section?.pixels &&
+                    showItems &&
+                    section.to > section.from &&
+                    markers.map((marker, index) => {
+                      const check = checks[index]!;
+                      const across = axis === 'x' ? marker.x : marker.z;
+                      const look = looks[index];
+                      return (
+                        <button
+                          key={index}
+                          type="button"
+                          className={`mm-fp-dot${look === 1 ? ' mm-fp-dot-near' : ''}${look === 2 ? ' mm-fp-dot-odd' : ''}`}
+                          style={{
+                            left: `${((across - section.from) / (section.to - section.from)) * 100}%`,
+                            top: top(marker.y),
+                            background: marker.colour,
+                          }}
+                          aria-label={describe(index)}
+                          onPointerEnter={() => {
+                            setTip(index);
+                          }}
+                          onPointerLeave={() => {
+                            setTip(null);
+                          }}
+                          onFocus={() => {
+                            setTip(index);
+                          }}
+                          onBlur={() => {
+                            setTip(null);
+                          }}
+                          onClick={() => {
+                            setSelected(check.floor);
+                          }}
+                        />
+                      );
+                    })}
+                  {tip !== null && showItems && section && markers[tip] && (
+                    <span
+                      className="mm-fp-tip"
+                      role="status"
+                      style={{
+                        left: `${tipAcross(markers[tip]) * 100}%`,
+                        top: top(markers[tip].y),
+                        transform: tipPlace(
+                          tipAcross(markers[tip]),
+                          (high - markers[tip].y) / (high - low),
+                        ),
+                      }}
+                    >
+                      {describe(tip)}
                     </span>
                   )}
                 </div>
@@ -429,24 +558,193 @@ export function FloorsPanel(props: Props) {
               </div>
             </div>
             <p className="muted small">
-              Left: how much walkable floor there is at each height. Right: the area’s walkable
-              floor {AXES.find((a) => a.axis === axis)!.label.toLowerCase()} (
-              {AXES.find((a) => a.axis === axis)!.note}), each floor in its colour. Press a floor to
-              see it from above.
+              Left: how much walkable floor there is at each height. Right: the whole area{' '}
+              {AXES.find((a) => a.axis === axis)!.label.toLowerCase()} (
+              {AXES.find((a) => a.axis === axis)!.note}, heights stretched to fit): walkable floor
+              as bright lines, walls see-through and lighter where more stand one behind another,
+              each in the colour of its floor.
+              {showItems &&
+                ' Dots are items and other locations, in the colour of their type: a yellow ring is within 1 m of a cut, a white ring is on another floor than its height gives or has no floor under it.'}{' '}
+              Press a floor to choose it.
             </p>
-            <figure className="mm-fp-top">
-              {topView ? (
-                <img src={topView} alt={`${nameOf(shown)} from above`} />
-              ) : (
-                <div className="mm-preview-empty muted small">
-                  {viewsProblem ? 'No picture' : 'Drawing…'}
+            {showItems && nearCount > 0 && (
+              <p className="mm-alert mm-warn small">
+                {plural(nearCount, 'marker')} {nearCount === 1 ? 'lies' : 'lie'} within 1 m of a
+                cut. Things lie at walking height, so the cut may be in the wrong place.
+              </p>
+            )}
+
+            <div className="mm-row mm-fp-axes" role="group" aria-label="View below">
+              <button
+                type="button"
+                className="button"
+                aria-pressed={lower === '3d'}
+                onClick={() => {
+                  setLower('3d');
+                }}
+              >
+                3D view
+              </button>
+              <button
+                type="button"
+                className="button"
+                aria-pressed={lower === 'top'}
+                onClick={() => {
+                  setLower('top');
+                }}
+              >
+                From above
+              </button>
+            </div>
+            {(lower === '3d' || full3d) && (
+              <div
+                className={full3d ? 'mm-fp-3d mm-fp-3d-full' : 'mm-fp-3d'}
+                role={full3d ? 'dialog' : undefined}
+                aria-label={full3d ? `${area.name} in 3D` : undefined}
+              >
+                <div className="mm-row mm-fp-3d-tools">
+                  {full3d && <strong>{area.name}</strong>}
+                  <label className="mm-fp-pick">
+                    <span className="small muted">Floor</span>
+                    <select
+                      value={shown}
+                      onChange={(event) => {
+                        setSelected(Number(event.target.value));
+                      }}
+                    >
+                      {floorsHighestFirst.map((band) => (
+                        <option key={band.index} value={band.index}>
+                          {nameOf(band.index)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="button"
+                    aria-pressed={hideAbove}
+                    disabled={shown === floorCount - 1}
+                    onClick={() => {
+                      setHideAbove(!hideAbove);
+                    }}
+                  >
+                    Hide what is above this floor
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    aria-pressed={showItems}
+                    onClick={() => {
+                      setShowItems(!showItems);
+                    }}
+                  >
+                    Show items
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    aria-pressed={outlines}
+                    onClick={() => {
+                      setOutlines(!outlines);
+                    }}
+                  >
+                    Outlines
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      setFull3d(!full3d);
+                    }}
+                  >
+                    {full3d ? 'Back to the floors' : 'Full 3D'}
+                  </button>
                 </div>
-              )}
-              <figcaption className="small">
-                From above, north up: <strong>{nameOf(shown)}</strong>. The floors below show
-                faintly; dots are markers on this floor.
-              </figcaption>
-            </figure>
+                {ready && ready.model.triangles > 0 ? (
+                  <Floors3D
+                    model={ready.model}
+                    markers={ready.markers}
+                    cuts={draft.cuts}
+                    selected={shown}
+                    hideAbove={hideAbove && shown < floorCount - 1}
+                    showMarkers={showItems}
+                    outlines={outlines}
+                    looks={looks}
+                    label={`${area.name} in 3D, ${nameOf(shown)} chosen`}
+                    describe={describe}
+                  />
+                ) : (
+                  <div className="mm-preview-empty muted small">
+                    {viewsProblem ? 'No 3D view' : 'Loading the area…'}
+                  </div>
+                )}
+                <p className="muted small">
+                  Drag to turn, scroll or pinch to zoom, right-drag or drag with two fingers to
+                  move. With the view selected: the arrow keys turn it, + and − zoom, Home goes back
+                  to the start. Each cut is a see-through level in the colour of the floor above it;
+                  the chosen floor is bright. Outlines draws the edges of the walls and floors.
+                </p>
+              </div>
+            )}
+            {lower === 'top' && (
+              <figure className="mm-fp-top">
+                <div className="mm-row mm-fp-3d-tools">
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      setTurn((turn + 3) % 4);
+                    }}
+                  >
+                    Turn left
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      setTurn((turn + 1) % 4);
+                    }}
+                  >
+                    Turn right
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    aria-pressed={outlines}
+                    onClick={() => {
+                      setOutlines(!outlines);
+                    }}
+                  >
+                    Outlines
+                  </button>
+                </div>
+                {topView ? (
+                  <div
+                    className="mm-fp-top-box"
+                    tabIndex={0}
+                    aria-label={`${nameOf(shown)} from above: the arrow keys Left and Right turn it`}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                        event.preventDefault();
+                        setTurn((turn + (event.key === 'ArrowLeft' ? 3 : 1)) % 4);
+                      }
+                    }}
+                  >
+                    <TopPicture src={topView} turn={turn} label={`${nameOf(shown)} from above`} />
+                  </div>
+                ) : (
+                  <div className="mm-preview-empty muted small">
+                    {viewsProblem ? 'No picture' : 'Drawing…'}
+                  </div>
+                )}
+                <figcaption className="small">
+                  From above, {northText(turn)}: <strong>{nameOf(shown)}</strong>, with what is
+                  above it left out, as its map is drawn. The floors below show faintly; dots are
+                  markers on this floor
+                  {outlines ? '; outlines are the walls and the edge of the floor' : ''}.
+                </figcaption>
+              </figure>
+            )}
             <p className="small mm-fp-state" role="status">
               {viewsProblem ?? stateText(drawing, ready !== null, viewed)}
             </p>
@@ -496,12 +794,24 @@ export function FloorsPanel(props: Props) {
                           <button
                             type="button"
                             className="button"
-                            aria-pressed={band.index === shown}
+                            aria-pressed={band.index === shown && lower === 'top'}
                             onClick={() => {
                               setSelected(band.index);
+                              setLower('top');
                             }}
                           >
                             Show from above
+                          </button>
+                          <button
+                            type="button"
+                            className="button"
+                            aria-pressed={band.index === shown && lower === '3d'}
+                            onClick={() => {
+                              setSelected(band.index);
+                              setLower('3d');
+                            }}
+                          >
+                            Show in 3D
                           </button>
                           <button
                             type="button"
@@ -631,6 +941,13 @@ export function FloorsPanel(props: Props) {
               )}
             </div>
           )}
+          <MapStyleChoice
+            id="fp-style"
+            label="Map style of this area"
+            value={style}
+            disabled={running}
+            onChange={setStyle}
+          />
           <div className="mm-row">
             <button
               type="button"
@@ -666,7 +983,8 @@ export function FloorsPanel(props: Props) {
             {unsaved && <span className="small mm-tone-warn">Not saved yet</span>}
           </div>
           <p className="muted small">
-            Make this area again redraws this area’s map from these floors
+            Make this area again redraws this area’s map from these floors in the style chosen (now{' '}
+            {mapStyleLabel(props.mapStyle).toLowerCase()})
             {props.make3d ? ', with its 3D model,' : ''} and puts it in your map pack in place of
             the old one. The other maps stay as they are.
           </p>

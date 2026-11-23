@@ -1,19 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
   addCut,
+  bandOf,
   canAddCut,
+  checkMarker,
+  cutNear,
   deleteFloor,
   entryOf,
   floorBands,
   floorColour,
+  fromBase64,
   heightTicks,
+  lookOf,
+  markerTypeText,
   moveCut,
+  northText,
+  paintSection,
   removeCut,
   renameFloor,
   sameDraft,
   shippedDraft,
   startDraft,
   suggestedCut,
+  tipPlace,
   walkableBetween,
 } from './floors';
 import {
@@ -21,6 +30,8 @@ import {
   cutsLine,
   floorRangeText,
   heightText,
+  MAP_STYLES,
+  mapStyleLabel,
   waitingCuts,
   type HeightProfile,
   type MadeArea,
@@ -194,5 +205,68 @@ describe('the cuts in the report', () => {
     expect(waitingCuts(mine, { cuts: [6] }, true)).toBe(false);
     expect(waitingCuts(mine, { cuts: [7] }, true)).toBe(true);
     expect(waitingCuts(mine, undefined, true)).toBe(true);
+  });
+});
+
+describe('the markers and the section', () => {
+  const cuts = [1.75, 6.75];
+
+  it('puts a marker on a floor and points out one near a cut', () => {
+    expect(bandOf(cuts, 0)).toBe(0);
+    expect(bandOf(cuts, 5)).toBe(1);
+    expect(cutNear(cuts, 2.5)).toBe(1.75);
+    expect(cutNear(cuts, 4)).toBeNull();
+    const nearStairs = checkMarker(cuts, 2.5, { floor: 1, surface: 2.4 });
+    expect(nearStairs).toEqual({ floor: 1, nearCut: 1.75, otherFloor: false, noSurface: false });
+    expect(lookOf(nearStairs)).toBe(1);
+    // On a surface below the cut, though its own height is above it.
+    const across = checkMarker(cuts, 7.2, { floor: 1, surface: 6.0 });
+    expect(across.otherFloor).toBe(true);
+    expect(lookOf(across)).toBe(2);
+    expect(checkMarker(cuts, 4, { floor: 1, surface: null }).noSurface).toBe(true);
+    expect(checkMarker(cuts, 4, undefined)).toEqual({
+      floor: 1,
+      nearCut: null,
+      otherFloor: false,
+      noSurface: false,
+    });
+    expect(markerTypeText('ring')).toBe('Ring');
+    expect(markerTypeText('made-up')).toBe('Other item');
+  });
+
+  it('colours the section by the floor of each row', () => {
+    // Two rows of two pixels from 10 m down to 0 m: a wall and a floor above the cut at 5 m, nothing and a
+    // floor below it.
+    const pixels = new Uint8Array([60, 200, 0, 255]);
+    const out = paintSection(pixels, 2, 2, 0, 10, [5], 1);
+    expect(Array.from(out.slice(8, 12))).toEqual([22, 26, 32, 255]);
+    const upper = Array.from(out.slice(4, 7));
+    const lower = Array.from(out.slice(12, 15));
+    expect(upper).not.toEqual(lower);
+    expect(Math.max(...upper)).toBeGreaterThan(Math.max(...Array.from(out.slice(0, 3))));
+    expect(Array.from(fromBase64('AAH/'))).toEqual([0, 1, 255]);
+  });
+
+  it('turns the floor from above and keeps notes inside the views', () => {
+    expect([0, 1, 2, 3, 4, -1].map(northText)).toEqual([
+      'north up',
+      'north to the right',
+      'north down',
+      'north to the left',
+      'north up',
+      'north to the left',
+    ]);
+    expect(tipPlace(0.5, 0.5)).toBe('translate(-50%, calc(-100% - 12px))');
+    expect(tipPlace(0.1, 0.1)).toBe('translate(-8%, 14px)');
+    expect(tipPlace(0.9, 0.5)).toBe('translate(-92%, calc(-100% - 12px))');
+  });
+
+  it('lists the map styles, the textured ones not yet', () => {
+    expect(MAP_STYLES.filter((style) => style.available).map((style) => style.id)).toEqual([
+      'shaded',
+      'outlines',
+    ]);
+    expect(mapStyleLabel('outlines')).toBe('Height shaded with outlines');
+    expect(mapStyleLabel(undefined)).toBe('Height shaded');
   });
 });
