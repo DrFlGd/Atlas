@@ -1033,6 +1033,7 @@ const WIDTH_WORDS: Record<PageWidth, string> = {
   reading: 'at reading width, about 760 pixels',
   wide: 'wide, about 1,000 pixels',
   full: 'as wide as the window',
+  site: 'as wide as the site’s own pages',
 };
 
 /** The width a trial's page is shown at, in one sentence. */
@@ -1089,6 +1090,16 @@ export function layoutInWords(
     );
   }
   if (layout.pageWidth) lines.push(pageWidthInWords(layout.pageWidth));
+  if (layout.siteWidth) {
+    lines.push(
+      `The site’s own pages are ${layout.siteWidth.toLocaleString('en')} pixels wide, the width “Original” shows them at.`,
+    );
+  }
+  if (layout.faint) {
+    lines.push(
+      `${plural(layout.faint, 'part')} the page shows fainter than the text around ${layout.faint === 1 ? 'it was' : 'them were'} kept faint.`,
+    );
+  }
   if (!layout.notes && layout.read === 'seen' && !how) {
     lines.push(SAVED_PAGE_LAYOUT_NOTE);
   }

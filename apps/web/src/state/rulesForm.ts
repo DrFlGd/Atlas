@@ -19,7 +19,7 @@ import {
   type MenuFrom,
   type ReadingWay,
 } from '@atlas/importer-api';
-import { DEFAULT_PAGE_WIDTH } from '@atlas/schema';
+import { DEFAULT_PAGE_WIDTH, MAX_SITE_WIDTH, MIN_SITE_WIDTH } from '@atlas/schema';
 import { scanJson, type JsonSpot } from './jsonText';
 import { LICENCE_TYPE_LABELS, LICENCE_TYPE_TEXTS } from './licenceWords';
 import { PAGE_WIDTH_NAMES } from './pageWidthNames';
@@ -59,6 +59,8 @@ export type SettingControl =
   | { type: 'ways'; required: boolean }
   /** `reading.pause`, in seconds. */
   | { type: 'pause'; min: number; max: number }
+  /** A whole number from `min` to `max`, in `unit`, or none (`unset` says what then holds). */
+  | { type: 'number'; min: number; max: number; unit: string; unset: string }
   /** One of the values the format allows, or none (`unset` says what then holds). */
   | { type: 'choice'; options: readonly ChoiceOption[]; unset: string }
   /** `true`, `false`, or none. */
@@ -296,7 +298,15 @@ function alsoOf(kind: FormGroup['kind'], value: Record<string, unknown>): string
     }
     const layout = value.layout;
     if (isObject(layout)) {
-      const shown = new Set(['read', 'pictures', 'longLines', 'pageWidth', 'hidden', 'headings']);
+      const shown = new Set([
+        'read',
+        'pictures',
+        'longLines',
+        'pageWidth',
+        'siteWidth',
+        'hidden',
+        'headings',
+      ]);
       if (Object.keys(layout).some((key) => !shown.has(key))) add('layout.selectors');
       if (Array.isArray(layout.hidden)) add('layout.hidden');
       if (isObject(layout.headings) && Object.keys(layout.headings).some((k) => k !== 'lines')) {
@@ -447,6 +457,18 @@ function readingSettings(
             label: `${one.name}: ${one.says}`,
           })),
           unset: `Not set: ${widthName(DEFAULT_PAGE_WIDTH)}`,
+        },
+      },
+      {
+        ...at('layout', 'siteWidth'),
+        label: 'Width of the site’s own pages',
+        hint: 'The width “Original” shows the pages at. Without it, the width is measured on the pages as they are read or built again, with the site’s style sheets.',
+        control: {
+          type: 'number',
+          min: MIN_SITE_WIDTH,
+          max: MAX_SITE_WIDTH,
+          unit: 'pixels',
+          unset: 'Not set: as measured on the pages',
         },
       },
       {
@@ -995,6 +1017,9 @@ export function valueInWords(setting: Setting, value: unknown, ways: WayNames): 
     case 'pause':
       if (typeof value !== 'number') return 'The app’s own minimum';
       return value === 1 ? '1 second' : `${value.toLocaleString('en')} seconds`;
+    case 'number':
+      if (typeof value !== 'number') return unsetInWords(control.unset);
+      return `${value.toLocaleString('en')} ${control.unit}`;
     case 'choice':
       if (value === undefined) return unsetInWords(control.unset);
       return (

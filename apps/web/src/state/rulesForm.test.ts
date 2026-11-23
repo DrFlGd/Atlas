@@ -106,9 +106,21 @@ describe('reading a file into settings', () => {
       'reading',
       'wide',
       'full',
+      'site',
     ]);
     const pause = settingOf(SHIPPED_TEXT, 'parts[0].reading.pause').setting;
     expect(pause.control).toEqual({ type: 'pause', min: 1, max: 60 });
+    // The width of the site's own pages: whole pixels, measured when the file gives none.
+    const site = settingOf(SHIPPED_TEXT, 'parts[0].layout.siteWidth').setting;
+    expect(site.control).toEqual({
+      type: 'number',
+      min: 320,
+      max: 3840,
+      unit: 'pixels',
+      unset: 'Not set: as measured on the pages',
+    });
+    expect(valueInWords(site, 1012, WAY_NAMES)).toBe('1,012 pixels');
+    expect(valueInWords(site, undefined, WAY_NAMES)).toBe('not set (as measured on the pages)');
   });
 
   it('reads a reader’s defaults into one group, and says why it cannot read other texts', () => {

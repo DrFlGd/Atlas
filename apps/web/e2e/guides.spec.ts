@@ -262,6 +262,88 @@ test.describe('a table sorted by a column', () => {
     await expect.poll(() => shownTexts(firstColumn)).toEqual(pageOrder);
     expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
   });
+
+  test('of ids, with a small picture in a heading and pictures side by side in cells', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    const picture = (alt: string, size: string) =>
+      `![${alt}](demo:picture:wiki-waystone "=${size}")`;
+    await serveRegions(
+      page,
+      [
+        'Relics of the isle.',
+        '',
+        `| Name | Id ${picture('Mark', '31x14')} | Icon | Notes |`,
+        '| --- | --- | --- | ---: |',
+        `| Ember stone | [5.100.]{faint}130 | ${picture('Ember', '40x40')}${picture('Charge', '10x40')} | rare |`,
+        `| Tide shell | [5.100.]{faint}65 | ${picture('Tide', '40x40')} | common |`,
+        `| Ash crown | [5.100.]{faint}136 | ${picture('Ash', '40x40')} | rare |`,
+        `| Wolf tooth | [5.100.]{faint}7 | ${picture('Wolf', '40x40')} | common |`,
+      ].join('\n'),
+    );
+    await openGuides(page);
+    await openEntry(page, 'The isle');
+    await openEntry(page, 'Regions');
+    const table = shownPage(page).locator('table');
+    const ids = table.locator('tbody tr td:nth-child(2)');
+    const idHeading = table.locator('th').nth(1);
+
+    // The heading keeps its picture at its width beside its word (its height follows the
+    // file's own shape), never squeezed to a speck, and every heading shows its arrow.
+    const mark = (await idHeading.locator('img').boundingBox())!;
+    expect(Math.round(mark.width)).toBe(31);
+    expect(mark.height).toBeGreaterThan(10);
+    for (const arrow of await table.locator('.table-sort-arrow').all()) {
+      await expect(arrow).toBeVisible();
+      expect(Number(await arrow.evaluate((el) => getComputedStyle(el).opacity))).toBeGreaterThan(0);
+    }
+    // Headings centred, cells in the middle of their row, the page's own alignment kept.
+    expect(await idHeading.evaluate((el) => getComputedStyle(el).textAlign)).toBe('center');
+    const cell = table.locator('tbody td').first();
+    expect(await cell.evaluate((el) => getComputedStyle(el).verticalAlign)).toBe('middle');
+    expect(
+      await table
+        .locator('tbody td:nth-child(4)')
+        .first()
+        .evaluate((el) => getComputedStyle(el).textAlign),
+    ).toBe('right');
+    // Two pictures with nothing between them stay on one line, each at its size.
+    const [ember, charge] = await table
+      .locator('tbody tr')
+      .first()
+      .locator('td:nth-child(3) img')
+      .all();
+    const one = (await ember!.boundingBox())!;
+    const two = (await charge!.boundingBox())!;
+    // On one line, their middles level (each keeps the file's own shape).
+    expect(Math.abs(two.y + two.height / 2 - (one.y + one.height / 2))).toBeLessThan(1.5);
+    expect(two.x).toBeGreaterThanOrEqual(one.x + one.width - 1);
+    expect(Math.round(two.width)).toBe(10);
+    // The repeated part of each id is faint: the theme's muted colour, not the text's.
+    const faint = table.locator('[data-text-faint]').first();
+    await expect(faint).toHaveText('5.100.');
+    const [faintColour, textColour] = await faint.evaluate((el) => [
+      getComputedStyle(el).color,
+      getComputedStyle(el.parentElement!).color,
+    ]);
+    expect(faintColour).not.toBe(textColour);
+
+    // Ids sort by their numbers, part after part: 7, 65, 130, 136.
+    await idHeading.getByRole('button').click();
+    await expect
+      .poll(() => shownTexts(ids))
+      .toEqual(['5.100.7', '5.100.65', '5.100.130', '5.100.136']);
+    await idHeading.getByRole('button').click();
+    await expect
+      .poll(() => shownTexts(ids))
+      .toEqual(['5.100.136', '5.100.130', '5.100.65', '5.100.7']);
+    await idHeading.getByRole('button').click();
+    await expect
+      .poll(() => shownTexts(ids))
+      .toEqual(['5.100.130', '5.100.65', '5.100.136', '5.100.7']);
+    expect(errors.filter((e) => !e.includes('404'))).toEqual([]);
+  });
 });
 
 test.describe('on a phone', () => {

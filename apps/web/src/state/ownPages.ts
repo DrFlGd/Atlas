@@ -9,9 +9,11 @@ import {
 } from '@atlas/core';
 import {
   DEFAULT_PAGE_WIDTH,
+  isSiteWidth,
   NO_OWN_PAGES,
   OWN_PAGES_VERSION,
   readOwnPagesFile,
+  shownPageWidth,
   writeOwnPagesFile,
   type OwnPages,
   type PageWidth,
@@ -509,15 +511,26 @@ export function mergeOwnPages(here: OwnPages, incoming: OwnPages): OwnPages {
  * The width a game's guide pages are shown at on a computer or a tablet:
  * the person's own choice, kept with their own pages; else the pack's,
  * as the site's rules file gave it; else a column of text. `site` is the
- * pack's, for the person to see which is the site's.
+ * pack's, for the person to see which is the site's. `siteWidth` is the
+ * width of the site's own pages the pack keeps, in CSS pixels, when it
+ * keeps one: the width `site` shows the pages at. Without it `site` is
+ * shown as `reading`, whoever chose it, and the choice is kept as it is,
+ * so it holds again once the pack knows the width.
  */
 export function pageWidthOf(
   game: LoadedGame,
   state: OwnPagesState = get(),
-): { width: PageWidth; chosen: boolean; site: PageWidth } {
+): { width: PageWidth; chosen: boolean; site: PageWidth; siteWidth?: number } {
+  const known = game.pack.manifest.siteWidth;
+  const siteWidth = isSiteWidth(known) ? known : undefined;
   const own = ownPagesOf(game.pack.manifest.gameId, state).pageWidth;
-  const site = game.pack.manifest.pageWidth ?? DEFAULT_PAGE_WIDTH;
-  return { width: own ?? site, chosen: own !== undefined, site };
+  const site = shownPageWidth(game.pack.manifest.pageWidth ?? DEFAULT_PAGE_WIDTH, siteWidth);
+  return {
+    width: own ? shownPageWidth(own, siteWidth) : site,
+    chosen: own !== undefined,
+    site,
+    ...(siteWidth !== undefined ? { siteWidth } : {}),
+  };
 }
 
 /**

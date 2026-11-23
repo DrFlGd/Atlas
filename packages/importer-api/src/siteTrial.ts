@@ -12,7 +12,7 @@
  * of its readers, is the importer's to say (`ImporterSites.cannotTry`).
  */
 
-import { isPageWidth, type PageWidth } from '@atlas/schema';
+import { isPageWidth, isSiteWidth, type PageWidth } from '@atlas/schema';
 import type { PageLayoutRequest } from './layoutNotes';
 import { READER_NAME_PATTERN, type LayoutRead, type SiteRules } from './siteRules';
 
@@ -238,6 +238,15 @@ export interface SiteTrialLayout {
    * give none.
    */
   pageWidth?: PageWidth;
+  /**
+   * Optional: the width of the site's own pages in CSS pixels (the width
+   * `site` shows them at): as the file gives it (`layout.siteWidth`), or
+   * as measured on this page when it was laid out with the site's style
+   * sheets in a window as wide as the app's frame; none for neither.
+   */
+  siteWidth?: number;
+  /** Optional: how many parts of the page were written as faint words (`[like this]{faint}`). */
+  faint?: number;
 }
 
 /** The layout a trial found, in bounds; nothing for none. */
@@ -261,6 +270,8 @@ function layoutTrialOf(value: unknown): { layout?: SiteTrialLayout } {
       hidden: count(given.hidden),
       leftOut: count(given.leftOut),
       ...(isPageWidth(given.pageWidth) ? { pageWidth: given.pageWidth } : {}),
+      ...(isSiteWidth(given.siteWidth) ? { siteWidth: given.siteWidth } : {}),
+      ...(typeof given.faint === 'number' && given.faint > 0 ? { faint: count(given.faint) } : {}),
     },
   };
 }

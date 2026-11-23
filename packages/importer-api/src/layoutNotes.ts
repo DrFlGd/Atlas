@@ -51,9 +51,26 @@
  *   and those of the elements of its lines): `bold` and `italic` when all
  *   of that text is, and `x1.5` for its size against the article's text
  *   (the smallest of its text, noted when 10% or more larger or smaller).
+ *   Also `faint`, on an element that holds words of its own (a line's
+ *   word or link among them) shown clearly fainter than the element around
+ *   it: drawn see-through (its own `opacity`, or its colour's alpha) or in
+ *   a grey, and so much nearer its background that its words read less
+ *   well than text should (a contrast under 4.5 to 1) and at most half as
+ *   well as the words around them, as a wiki greys the part of a number
+ *   that repeats on every row. Words in a colour of their own (a link, a
+ *   word coloured red) and a grey that still reads well are not faint.
+ * - `data-atlas-window="1280"` on the copy of the article, beside its
+ *   mark: the width of the window the page was laid out in (its viewport,
+ *   in CSS pixels). With the article's own box it says how wide the site
+ *   lays out its text column in a window that wide: in the app's closed
+ *   frame always {@link LAYOUT_FRAME_WIDTH}, in a reader's window as wide as
+ *   that window then was.
  *
  * An app or importer without notes reads a page as before, and one that
- * does not know them sees attributes it does not use.
+ * does not know them sees attributes it does not use. `faint` and the
+ * window's width came after the version 1 notes, without a new version: a
+ * reader that does not know them reads the notes as before and passes over
+ * the word and the attribute.
  */
 
 /** The version of the notes {@link LAYOUT_NOTES_SCRIPT} writes. */
@@ -72,6 +89,7 @@ export const LAYOUT_NOTE_ATTRIBUTES = {
   hidden: 'data-atlas-hidden',
   flow: 'data-atlas-flow',
   look: 'data-atlas-look',
+  window: 'data-atlas-window',
 } as const;
 
 /** An element's box, relative to the article's top left, in CSS pixels. */
@@ -101,6 +119,8 @@ export interface LayoutNoteLook {
   italic: boolean;
   /** Its text's size against the article's text (1 when the same, or not noted). */
   size: number;
+  /** Its words shown clearly fainter than those around them; absent when they are not. */
+  faint?: true;
 }
 
 /** What the notes say of one element. */
@@ -180,6 +200,11 @@ export function readLayoutNote(attributes: Attributes): LayoutNote | null {
       looks = true;
       continue;
     }
+    if (word === 'faint') {
+      look.faint = true;
+      looks = true;
+      continue;
+    }
     const size = SIZE.exec(word);
     if (size && Number(size[1]) > 0) {
       look.size = Number(size[1]);
@@ -212,10 +237,26 @@ export function layoutNoteAttributes(note: LayoutNote): Record<string, string> {
   const look = note.look;
   if (look) {
     const words = (['centred', 'framed', 'bold', 'italic'] as const).filter((word) => look[word]);
+    if (look.faint) words.push('faint' as never);
     if (look.size !== 1) words.push(`x${Math.round(look.size * 100) / 100}` as never);
     if (words.length > 0) out[LAYOUT_NOTE_ATTRIBUTES.look] = words.join(' ');
   }
   return out;
+}
+
+/** The narrowest and the widest window a page's notes say it was laid out in, in CSS pixels. */
+const WINDOW = /^(\d{3,5})$/u;
+
+/**
+ * The width of the window the page was laid out in, as the measuring step
+ * notes it on the article's copy (`data-atlas-window`); null for none, or
+ * one not in its form or not a window's (under 200 or over 10,000 pixels).
+ */
+export function readLayoutWindow(value: string | undefined): number | null {
+  const match = WINDOW.exec(value?.trim() ?? '');
+  if (!match) return null;
+  const width = Number(match[1]);
+  return width >= 200 && width <= 10000 ? width : null;
 }
 
 /** The mark of the article as the measuring step writes it. */
@@ -248,7 +289,7 @@ export interface LayoutNotesLimits {
  * first. It never throws.
  */
 export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
-  const NAMES = ['data-atlas-layout', 'data-atlas-box', 'data-atlas-hidden', 'data-atlas-flow', 'data-atlas-look'];
+  const NAMES = ['data-atlas-layout', 'data-atlas-box', 'data-atlas-hidden', 'data-atlas-flow', 'data-atlas-look', 'data-atlas-window'];
   const clear = (root) => {
     for (const el of [root, ...Array.from(root.querySelectorAll(NAMES.map((name) => '[' + name + ']').join(',')))]) {
       for (const name of NAMES) el.removeAttribute(name);
@@ -317,6 +358,53 @@ export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
       parseFloat(style['border' + side + 'Width']) > 0 &&
       !/^(?:none|hidden)$/.test(style['border' + side + 'Style']) &&
       alpha(style['border' + side + 'Color']) > 0.05;
+    // A colour's red, green and blue (0 to 255) and its alpha; null for one not written rgb() or rgba().
+    const channels = (colour) => {
+      const parts = /^rgba?\(([^)]*)\)$/.exec(String(colour || '').trim());
+      if (!parts) return null;
+      const values = parts[1].split(/[\s,\/]+/).filter(Boolean);
+      if (values.length < 3) return null;
+      const rgb = values.slice(0, 3).map((value) => (/%$/.test(value) ? (parseFloat(value) * 255) / 100 : parseFloat(value)));
+      if (rgb.some((value) => !Number.isFinite(value))) return null;
+      return { rgb, alpha: values.length > 3 ? alpha(colour) : 1 };
+    };
+    const luminance = (rgb) => {
+      const [r, g, b] = rgb.map((value) => {
+        const c = Math.min(255, Math.max(0, value)) / 255;
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (a, b) => {
+      const x = luminance(a);
+      const y = luminance(b);
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+    };
+    // How an element's words read on what is behind them: their contrast, with their colour see-through as
+    // much as its own opacity and its colour's alpha make it, laid over its background; how much of
+    // their colour shows; and whether it is a grey. Null when not known.
+    const reads = (el, style, see) => {
+      const words = channels(style.color);
+      const behind = channels(backdrop(el));
+      if (!words || !behind) return null;
+      const opacity = see ? Math.min(1, Math.max(0, parseFloat(style.opacity))) : 1;
+      const share = words.alpha * (Number.isFinite(opacity) ? opacity : 1);
+      const shown = words.rgb.map((value, i) => value * share + behind.rgb[i] * (1 - share));
+      const grey = Math.max(...words.rgb) - Math.min(...words.rgb) < 32;
+      return { contrast: contrast(shown, behind.rgb), share, grey };
+    };
+    // Words of its own shown clearly fainter than the words of the element around it: see-through or
+    // grey (a colour of its own is a colour, not faint), reading less well than text should (4.5 to 1)
+    // and at most half as well as the words around it.
+    const faint = (el, style) => {
+      const parent = el.parentElement;
+      if (!parent || el === article) return false;
+      if (!Array.from(el.childNodes).some((node) => node.nodeType === 3 && String(node.nodeValue || '').trim())) return false;
+      const mine = reads(el, style, true);
+      const theirs = reads(parent, styleOf(parent), false);
+      if (!mine || !theirs || (mine.share > 0.8 && !mine.grey)) return false;
+      return mine.contrast < 4.5 && mine.contrast <= theirs.contrast * 0.5;
+    };
     const sizes = new Map();
     const ownText = (el, style) => {
       const text = { chars: 0, bold: 0, italic: 0, least: Infinity };
@@ -357,7 +445,9 @@ export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
       const note = { twin, look: [] };
       if (display === 'none') note.hidden = 'display';
       else if (style.visibility === 'hidden' || style.visibility === 'collapse') note.hidden = 'visibility';
-      else if (display !== 'inline' && display !== 'contents') {
+      else if (display === 'inline' || display === 'contents') {
+        if (!LEAF.test(name) && faint(el, style)) note.look.push('faint');
+      } else {
         const rect = el.getBoundingClientRect();
         const cuts = (overflow) => overflow !== 'visible';
         // No box at all (inside a part the browser does not lay out), a box too small to show its
@@ -412,6 +502,7 @@ export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
           ) {
             note.look.push('framed');
           }
+          if (!LEAF.test(name) && faint(el, style)) note.look.push('faint');
         }
       }
       if (note.hidden || note.box || note.flow || note.text || note.look.length > 0) notes.push(note);
@@ -443,6 +534,9 @@ export const LAYOUT_NOTES_SCRIPT = String.raw`(article, given, limits) => {
   if (notes.length === 0 || notes[0].twin !== copy || notes[0].hidden) return copy;
   try {
     copy.setAttribute('data-atlas-layout', '1 ' + Math.round(base * 2) / 2 + (cut ? ' cut' : ''));
+    const view = article.ownerDocument.defaultView;
+    const wide = Math.round(Number(view && view.innerWidth) || 0);
+    if (wide >= 200 && wide <= 10000) copy.setAttribute('data-atlas-window', String(wide));
     for (const note of notes) {
       const twin = note.twin;
       if (note.hidden) {

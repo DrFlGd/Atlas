@@ -386,6 +386,81 @@ describe('coloured words', () => {
   });
 });
 
+describe('faint words', () => {
+  it('shows [words]{faint} faint, with no colour of the page, and only that word in the braces', () => {
+    expect(renderGuideMarkdown('| ID |\n| --- |\n| [5.100.]{faint}130 |')).toContain(
+      '<td><span class="text-faint" data-text-faint="">5.100.</span>130</td>',
+    );
+    expect(renderGuideMarkdown('[[red]{color=#c33}]{faint}')).toBe(
+      '<p><span class="text-faint" data-text-faint=""><span class="text-colour" data-text-colour="#cc3333">red</span></span></p>\n',
+    );
+    for (const text of [
+      '[x]{Faint}',
+      '[x] {faint}',
+      '[x]{faint=1}',
+      '\\[x]{faint}',
+      '`[x]{faint}`',
+    ]) {
+      expect(renderGuideMarkdown(text), text).not.toContain('text-faint');
+    }
+    // Searched as the words they are.
+    expect(guideSearchText('[5.100.]{faint}130')).toBe('5.100.130');
+  });
+});
+
+describe('pictures side by side, and aligned cells', () => {
+  const pictures = new Map([
+    ['demo:picture:icon', { url: 'https://app.test/packs/demo/pictures/icon.png' }],
+    ['demo:picture:bar', { url: 'https://app.test/packs/demo/pictures/bar.png' }],
+  ]);
+  const options = { picture: (id: string) => pictures.get(id) ?? null };
+  const runs = (html: string) => html.match(/guide-picture-run/gu)?.length ?? 0;
+
+  it('keeps pictures written with nothing between them together, a link around one or not', () => {
+    const cell = renderGuideMarkdown(
+      '| Icon |\n| --- |\n| [![A pony](demo:picture:icon "=45x45")](demo:guide:pony)![2 rooms](demo:picture:bar "=10x45") |',
+      options,
+    );
+    expect(cell).toMatch(
+      /<td><span class="guide-picture-run"><span class="app-link-missing"><span class="guide-picture inline">.*<\/span><\/span><span class="guide-picture inline">.*<\/span><\/span><\/td>/u,
+    );
+    expect(
+      runs(renderGuideMarkdown('![a](demo:picture:icon)![b](demo:picture:bar) and more', options)),
+    ).toBe(1);
+    // A space, a word or a picture not in the pack between them: no run.
+    expect(
+      runs(renderGuideMarkdown('![a](demo:picture:icon) ![b](demo:picture:bar)', options)),
+    ).toBe(0);
+    expect(
+      runs(renderGuideMarkdown('![a](demo:picture:icon)x![b](demo:picture:bar)', options)),
+    ).toBe(0);
+    expect(
+      runs(renderGuideMarkdown('![a](demo:picture:icon)![c](demo:picture:none)', options)),
+    ).toBe(0);
+    expect(runs(renderGuideMarkdown('![a](demo:picture:icon)', options))).toBe(0);
+    // Three in a row are one run.
+    expect(
+      runs(
+        renderGuideMarkdown(
+          '![a](demo:picture:icon)![b](demo:picture:bar)![a](demo:picture:icon)',
+          options,
+        ),
+      ),
+    ).toBe(1);
+  });
+
+  it('writes the alignment a column states as data-align, never a style', () => {
+    const html = renderGuideMarkdown(
+      '| a | b | c | d |\n| :-- | :-: | --: | --- |\n| 1 | 2 | 3 | 4 |',
+    );
+    expect(html).not.toContain('style=');
+    expect(html).toContain('<th data-align="left">a</th>');
+    expect(html).toContain('<th data-align="center">b</th>');
+    expect(html).toContain('<td data-align="right">3</td>');
+    expect(html).toContain('<td>4</td>');
+  });
+});
+
 describe('pictures', () => {
   const pictures = new Map([
     [

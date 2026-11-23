@@ -96,8 +96,10 @@ describe('pack descriptions (manifest version 2)', () => {
   it('keeps the width of the pages', () => {
     const pack = makeFixturePack();
     pack.manifest.pageWidth = 'wide';
+    pack.manifest.siteWidth = 1012;
     const manifest = describePack(pack, { updated: '2026-11-10T12:00:00Z', writtenBy });
     expect(manifest.pageWidth).toBe('wide');
+    expect(manifest.siteWidth).toBe(1012);
     expect(packDataSchema.safeParse({ ...pack, manifest }).success).toBe(true);
     expect(
       'pageWidth' in

@@ -52,6 +52,15 @@ describe('sorting a table by a column', () => {
     ]);
   });
 
+  it('sorts cells that start with the same number by the numbers after it', () => {
+    // A wiki's ids, whose first part is the same on every row: in natural order.
+    const keys = ['5.100.130', '5.100.65', '5.100.136', '5.100.7'];
+    expect(sorted(keys)).toEqual(['5.100.7', '5.100.65', '5.100.130', '5.100.136']);
+    expect(sorted(keys, 'descending')).toEqual(['5.100.136', '5.100.130', '5.100.65', '5.100.7']);
+    // A number still goes by its value first.
+    expect(sorted(['1.5', '1.25', '1.5 b', '1.5 a'])).toEqual(['1.25', '1.5', '1.5 a', '1.5 b']);
+  });
+
   it('sorts words without regard to case, numbers in words in their order', () => {
     expect(sorted(['banner', 'Axe', 'level 10', 'Level 2', 'axe'])).toEqual([
       'Axe',

@@ -7,13 +7,20 @@
  * the page shown, and the guide's Markdown is never changed.
  *
  * A column whose cells start with numbers ("147-279 (230-437)", "+408%",
- * "-13%", "1,200", "10 seconds") is sorted by those numbers; any other by
- * its words, without regard to case, numbers within words in their order
- * ("Level 2" before "Level 10"). A cell with nothing to sort by ("N/A",
+ * "-13%", "1,200", "10 seconds") is sorted by those numbers, and cells
+ * that start with the same number by the numbers after it in their order
+ * ("5.100.65" before "5.100.130", ids whose first part is the same on every
+ * row); any other by its words, without regard to case, numbers within
+ * words in their order ("Level 2" before "Level 10"). A cell with nothing to sort by ("N/A",
  * "-", empty) comes last either way, and cells that are the same keep the
  * page's order. A picture counts as its words. Hidden text that is not
  * shown counts as nothing, so the order never gives it away, and sorting
  * never shows it.
+ *
+ * The headings that sort show an arrow, faintly until one is pointed at,
+ * focused or chosen, so a table that sorts says so. A heading's words and
+ * pictures stay in its line as the heading had them, in a span of their
+ * own inside the button.
  */
 
 export type SortDirection = 'ascending' | 'descending';
@@ -59,8 +66,9 @@ export function sortedOrder(keys: readonly string[], direction: SortDirection): 
     .sort((a, b) => {
       if (a.nothing !== b.nothing) return a.nothing ? 1 : -1;
       if (a.nothing) return a.index - b.index;
+      // Cells that start with the same number go by the rest, numbers in it in their order.
       const by = numeric
-        ? leadingNumber(a.text)! - leadingNumber(b.text)!
+        ? leadingNumber(a.text)! - leadingNumber(b.text)! || collator.compare(a.text, b.text)
         : collator.compare(a.text, b.text);
       return by !== 0 ? sign * by : a.index - b.index;
     })
@@ -141,7 +149,10 @@ export function enhanceTables(root: Element, sorts: PageSorts): void {
         button.append(arrow);
         cell.append(button);
       } else {
-        button.append(...cell.childNodes, arrow);
+        const words = document.createElement('span');
+        words.className = 'table-sort-words';
+        words.append(...cell.childNodes);
+        button.append(words, arrow);
         cell.append(button);
       }
     });

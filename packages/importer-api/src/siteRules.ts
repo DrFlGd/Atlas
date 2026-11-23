@@ -43,6 +43,8 @@ import {
   GAME_ID_PATTERN,
   MAP_LINK_ID_MARK,
   MAP_LINK_QUERY_PATTERN,
+  MAX_SITE_WIDTH,
+  MIN_SITE_WIDTH,
   PAGE_WIDTHS,
   ROUTE_TYPES,
   hasIdMark,
@@ -336,7 +338,14 @@ const sizeOfText = z.number().min(1).max(4);
  * The `layout` section of a wiki or guide part, and of a reader's
  * defaults: what one site needs said about the layout of its pages, and
  * the owner's choices for them. Every entry may be left out, and the
- * general rules then hold.
+ * general rules then hold. Among them: `faint`, the words the site shows
+ * clearly fainter than the text around them (a grey prefix of a number),
+ * which an importer writes as faint words where its notes of the layout do
+ * not already show them so (the guide Markdown's `[like this]{faint}`);
+ * `pageWidth`, the width the game's pages are shown at by default, `site`
+ * among them; and `siteWidth`, the width of the site's own pages in CSS
+ * pixels, which wins over the one an importer measures (see `pageWidth.ts`
+ * in `@atlas/schema`).
  */
 const layoutSchema = z.strictObject({
   read: z.enum(LAYOUT_READS).optional(),
@@ -363,6 +372,8 @@ const layoutSchema = z.strictObject({
   longLines: z.enum(LAYOUT_LONG_LINES).optional(),
   pictures: z.enum(LAYOUT_PICTURES).optional(),
   pageWidth: z.enum(PAGE_WIDTHS).optional(),
+  siteWidth: z.int().min(MIN_SITE_WIDTH).max(MAX_SITE_WIDTH).optional(),
+  faint: layoutSelectors(MAX_LAYOUT_SELECTORS).optional(),
 });
 
 export type SiteLayout = z.infer<typeof layoutSchema>;

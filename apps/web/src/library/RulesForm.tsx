@@ -393,13 +393,33 @@ function SettingRow({
           <Label htmlFor={id} mark={mark}>
             {setting.label}
           </Label>
-          <PauseInput
+          <NumberInput
             {...common}
             value={setting.value}
             min={control.min}
             max={control.max}
             disabled={noWays}
             set={set}
+          />
+        </>
+      );
+      break;
+    case 'number':
+      body = (
+        <>
+          <Label htmlFor={id} mark={mark}>
+            {setting.label}
+          </Label>
+          <NumberInput
+            {...common}
+            value={setting.value}
+            min={control.min}
+            max={control.max}
+            disabled={false}
+            set={set}
+            whole
+            unit={control.unit}
+            unset={control.unset}
           />
         </>
       );
@@ -582,11 +602,12 @@ function Label({
 }
 
 /**
- * The pause, in seconds: what the person types is kept as typed while it
- * is not a number yet, and written to the file once it is one; empty takes
- * the pause out of the file, and the app's own minimum holds.
+ * The pause, in seconds, or another number (`whole`, such as a width in
+ * pixels): what the person types is kept as typed while it is not a number
+ * yet, and written to the file once it is one; empty takes it out of the
+ * file, and what `unset` says holds (for the pause, the app's own minimum).
  */
-function PauseInput({
+function NumberInput({
   id,
   describedBy,
   invalid,
@@ -595,6 +616,9 @@ function PauseInput({
   max,
   disabled,
   set,
+  whole = false,
+  unit = 'seconds',
+  unset = 'Not set: the app’s own minimum',
 }: {
   id: string;
   describedBy: string | undefined;
@@ -604,6 +628,11 @@ function PauseInput({
   max: number;
   disabled: boolean;
   set: (value: unknown) => void;
+  /** A whole number (a width in pixels), not seconds that may have a fraction. */
+  whole?: boolean;
+  /** What the number counts, and what holds without one. */
+  unit?: string;
+  unset?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const shown = draft ?? (typeof value === 'number' ? String(value) : '');
@@ -613,14 +642,14 @@ function PauseInput({
         id={id}
         className="text-input"
         type="number"
-        inputMode="decimal"
+        inputMode={whole ? 'numeric' : 'decimal'}
         min={min}
         max={max}
-        step="any"
+        step={whole ? 1 : 'any'}
         aria-describedby={describedBy}
         aria-invalid={invalid || undefined}
         disabled={disabled}
-        data-testid="rules-form-pause"
+        data-testid={whole ? 'rules-form-number' : 'rules-form-pause'}
         value={shown}
         onChange={(event) => {
           const typed = event.target.value;
@@ -635,9 +664,7 @@ function PauseInput({
           setDraft(null);
         }}
       />
-      <span className="muted small">
-        {typeof value === 'number' ? 'seconds' : 'Not set: the app’s own minimum'}
-      </span>
+      <span className="muted small">{typeof value === 'number' ? unit : unset}</span>
     </div>
   );
 }
