@@ -247,60 +247,67 @@ function groundPoint(x: number, y: number) {
   return { h, normal: normalise([-hx, 1, hy]), colour: groundColour(h, Math.hypot(hx, hy)) };
 }
 
-/** The ground of one cell, with a skirt along its edges so neighbours at other levels meet. */
+/**
+ * The ground of one cell. Its edges have the points of the finest level
+ * at every level, so a cell meets its neighbours at any level without a
+ * gap: the squares along the edges are drawn as fans from their middles.
+ * (The cells once hung skirts under their edges to hide the gaps, which
+ * showed as thin lines between cells.)
+ */
 function groundMesh(cx: number, cy: number, segments: number): MeshBuilder {
   const mesh = new MeshBuilder();
   const x0 = cx * CELL;
   const y0 = cy * CELL;
   const step = CELL / segments;
-  const grid: number[][] = [];
-  for (let j = 0; j <= segments; j++) {
-    const row: number[] = [];
-    for (let i = 0; i <= segments; i++) {
-      const x = x0 + i * step;
-      const y = y0 + j * step;
+  const fine = SEGMENTS[0] / segments;
+  const at = new Map<string, number>();
+  // A point of the cell, by its place on the finest grid.
+  const point = (fi: number, fj: number) => {
+    const key = `${fi},${fj}`;
+    let index = at.get(key);
+    if (index === undefined) {
+      const x = x0 + (fi * CELL) / SEGMENTS[0];
+      const y = y0 + (fj * CELL) / SEGMENTS[0];
       const ground = groundPoint(x, y);
-      row.push(mesh.vertex(model(x, y, ground.h), ground.normal, ground.colour));
+      index = mesh.vertex(model(x, y, ground.h), ground.normal, ground.colour);
+      at.set(key, index);
     }
-    grid.push(row);
-  }
+    return index;
+  };
+  const edge = (fi: number, fj: number) =>
+    fi === 0 || fj === 0 || fi === SEGMENTS[0] || fj === SEGMENTS[0];
   for (let j = 0; j < segments; j++) {
     for (let i = 0; i < segments; i++) {
-      const v00 = grid[j]![i]!;
-      const v10 = grid[j]![i + 1]!;
-      const v01 = grid[j + 1]![i]!;
-      const v11 = grid[j + 1]![i + 1]!;
-      mesh.indices.push(v00, v10, v01, v10, v11, v01);
-    }
-  }
-  // Skirts: 3 units down from each edge, facing out of the cell.
-  const middle = model(x0 + CELL / 2, y0 + CELL / 2, 0);
-  const edges: [number, number][][] = [
-    Array.from({ length: segments + 1 }, (_, i) => [x0 + i * step, y0]),
-    Array.from({ length: segments + 1 }, (_, i) => [x0 + i * step, y0 + CELL]),
-    Array.from({ length: segments + 1 }, (_, j) => [x0, y0 + j * step]),
-    Array.from({ length: segments + 1 }, (_, j) => [x0 + CELL, y0 + j * step]),
-  ];
-  for (const edge of edges) {
-    for (let k = 0; k < edge.length - 1; k++) {
-      const [ax, ay] = edge[k]!;
-      const [bx, by] = edge[k + 1]!;
-      const ha = groundHeight(ax, ay);
-      const hb = groundHeight(bx, by);
-      const inside = [middle[0], (ha + hb) / 2, middle[2]];
-      mesh.quad(
-        [model(ax, ay, ha), model(bx, by, hb), model(bx, by, hb - 3), model(ax, ay, ha - 3)],
-        [0, 0, 0],
-        inside,
-      );
-      // Lit and coloured as the ground it hangs from, corner by corner: where
-      // the skirt shows along the edge of a cell, it looks like the ground
-      // beside it, so no line is drawn between cells.
-      for (let v = mesh.vertexCount - 4; v < mesh.vertexCount; v++) {
-        const ground = groundPoint(mesh.positions[v * 3]!, -mesh.positions[v * 3 + 2]!);
-        mesh.normals.splice(v * 3, 3, ...ground.normal);
-        const colour = ground.colour.map(linear);
-        mesh.colors.splice(v * 4, 3, colour[0]!, colour[1]!, colour[2]!);
+      const [fi, fj] = [i * fine, j * fine];
+      const v00 = point(fi, fj);
+      const v10 = point(fi + fine, fj);
+      const v01 = point(fi, fj + fine);
+      const v11 = point(fi + fine, fj + fine);
+      const onEdge = i === 0 || j === 0 || i === segments - 1 || j === segments - 1;
+      if (fine === 1 || !onEdge) {
+        mesh.indices.push(v00, v10, v01, v10, v11, v01);
+        continue;
+      }
+      // Round the square (v00, v10, v11, v01), with every point of the finest
+      // level on a side that is the cell's edge, as a fan from its middle.
+      const ring: number[] = [];
+      const side = (ai: number, aj: number, di: number, dj: number) => {
+        const split = edge(ai, aj) && edge(ai + di * fine, aj + dj * fine) ? fine : 1;
+        for (let k = 0; k < split; k++) {
+          const t = (k * fine) / split;
+          ring.push(point(ai + di * t, aj + dj * t));
+        }
+      };
+      side(fi, fj, 1, 0);
+      side(fi + fine, fj, 0, 1);
+      side(fi + fine, fj + fine, -1, 0);
+      side(fi, fj + fine, 0, -1);
+      const x = x0 + (i + 0.5) * step;
+      const y = y0 + (j + 0.5) * step;
+      const ground = groundPoint(x, y);
+      const middle = mesh.vertex(model(x, y, ground.h), ground.normal, ground.colour);
+      for (let k = 0; k < ring.length; k++) {
+        mesh.indices.push(middle, ring[k]!, ring[(k + 1) % ring.length]!);
       }
     }
   }
