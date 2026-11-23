@@ -41,3 +41,4 @@ export * from './guides/mapLinks';
 export * from './guides/nameMatch';
 export * from './guides/locationNames';
 export * from './groups/gameGroups';
+export * from './scene/plan';
