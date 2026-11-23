@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
 import { mapLinksReadSchema, mapLinksWriteSchema } from './mapLinks';
 import { PAGE_WIDTHS } from './pageWidth';
+import { heightRangeSchema, sceneSchemas } from './scene';
 
 /**
  * The pack schema version this package writes. Version 2 adds the optional
@@ -163,6 +164,16 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
    * An optional enum field. When reading, a value it does not list (one a
    * newer pack may use) reads as absent; any other wrong value is an error.
    */
+  /**
+   * An optional field added after a version of the app was made: when
+   * reading, a value that cannot be read counts as absent, so the record
+   * is still read.
+   */
+  const lenient = <T extends z.ZodType>(schema: T) =>
+    reading
+      ? (schema.optional().catch(undefined) as unknown as z.ZodOptional<T>)
+      : schema.optional();
+
   const optionalEnum = <T extends z.ZodEnum>(values: T) =>
     reading
       ? (z
@@ -415,6 +426,12 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     height: z.int().positive(),
     /** Optional mapping to in-game coordinates; absent means none is known. */
     worldTransform: worldTransformSchema.optional(),
+    /**
+     * The map's 3D model (see `scene.ts`). Needs a `worldTransform`. Added
+     * in pack file version 11; apps before it drop it when reading and
+     * show the map in 2D.
+     */
+    scene: lenient(sceneSchemas(mode).sceneSchema),
   });
 
   /**
@@ -497,6 +514,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
       .min(64)
       .max(1024)
       .refine((n) => (n & (n - 1)) === 0, 'must be a power of two'),
+    /**
+     * `[min, max]`: the heights of the world this layer shows, which makes
+     * it a floor of its map (see `scene.ts`). Floors are shown as a stack,
+     * lowest first, in 2D and in 3D. Added in pack file version 11; apps
+     * before it drop it when reading.
+     */
+    heights: lenient(heightRangeSchema),
   })
     .refine((layer) => layer.minZoom <= layer.maxZoom, {
       message: 'minZoom must not exceed maxZoom',
@@ -622,6 +646,13 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     flagId: nonEmpty.optional(),
     /** Photos of the location, shown on its card. */
     photos: photosSchema,
+    /**
+     * Its height in the game's world, in the units of its map's
+     * `worldTransform` (see `scene.ts`); with `x` and `y` it places the
+     * location in 3D. Absent: it sits on the model's surface below it.
+     * Added in pack file version 11; apps before it drop it when reading.
+     */
+    height: lenient(z.number()),
   });
 
   /** Something in the game world that locations or checklist items refer to: an item, a character, an enemy. */

@@ -1,5 +1,6 @@
 import type { PackData } from './files';
 import { parseId } from './ids';
+import type { Scene } from './scene';
 
 /** A problem found in a pack, located by a dotted path such as `locations[3].categoryId`. */
 export interface PackIssue {
@@ -84,6 +85,24 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
       `maxZoom ${layer.maxZoom} with tileSize ${layer.tileSize} does not match a ${map.width}x${map.height} map ` +
         `(expected ${Math.max(0, Math.ceil(Math.log2(longest / layer.tileSize)))})`,
     );
+  });
+
+  pack.layers.forEach((layer, i) => {
+    if (layer.heights && !(layer.heights[0] <= layer.heights[1])) {
+      report(`layers[${i}].heights`, `heights [${layer.heights.join(', ')}] are not lowest first`);
+    }
+  });
+
+  const sceneFiles = new Map<string, string>();
+  pack.maps.forEach((map, i) => {
+    if (!map.scene) return;
+    const path = `maps[${i}].scene`;
+    expect(
+      map.worldTransform !== undefined,
+      path,
+      `map ${map.id} has a scene but no worldTransform to line it up with`,
+    );
+    checkScene(map.scene, path, sceneFiles, report);
   });
 
   pack.regions.forEach((region, i) => {
@@ -247,6 +266,66 @@ export function checkPackIntegrity(pack: PackData): PackIssue[] {
   }
 
   return issues;
+}
+
+/**
+ * A map's scene: each cell's id once, its bounds a square with its lowest
+ * corner first, its heights lowest first, its levels of detail each once
+ * and finest first, with no more triangles than the level before when both
+ * say, and every file named once in the whole pack (also not by case).
+ */
+function checkScene(
+  scene: Scene,
+  path: string,
+  files: Map<string, string>,
+  report: (path: string, message: string) => void,
+): void {
+  const ordered = (range: readonly [number, number] | undefined, at: string) => {
+    if (range && !(range[0] <= range[1])) {
+      report(at, `heights [${range.join(', ')}] are not lowest first`);
+    }
+  };
+  const file = (name: string, at: string) => {
+    const key = name.toLowerCase();
+    const first = files.get(key);
+    if (first !== undefined) report(at, `${name} is also named at ${first}`);
+    else files.set(key, at);
+  };
+  ordered(scene.heights, `${path}.heights`);
+  if (scene.neighbours) file(scene.neighbours, `${path}.neighbours`);
+  const ids = new Set<string>();
+  scene.cells.forEach((cell, c) => {
+    const at = `${path}.cells[${c}]`;
+    if (ids.has(cell.id)) report(`${at}.id`, `cell id ${cell.id} is used twice`);
+    ids.add(cell.id);
+    const [minX, minY, maxX, maxY] = cell.bounds;
+    const width = maxX - minX;
+    const height = maxY - minY;
+    if (!(width > 0 && height > 0)) {
+      report(`${at}.bounds`, 'bounds must be [minX, minY, maxX, maxY] with min below max');
+    } else if (Math.abs(width - height) > 1e-6 * Math.max(width, height)) {
+      report(`${at}.bounds`, `cell ${cell.id} is ${width} by ${height}, not a square`);
+    }
+    ordered(cell.heights, `${at}.heights`);
+    cell.lods.forEach((lod, l) => {
+      const lodAt = `${at}.lods[${l}]`;
+      const before = cell.lods[l - 1];
+      if (before && !(lod.level > before.level)) {
+        report(`${lodAt}.level`, 'levels of detail must be listed finest first, each once');
+      }
+      if (
+        before?.triangles !== undefined &&
+        lod.triangles !== undefined &&
+        lod.triangles > before.triangles
+      ) {
+        report(
+          `${lodAt}.triangles`,
+          `level ${lod.level} has more triangles than level ${before.level}`,
+        );
+      }
+      file(lod.file, `${lodAt}.file`);
+    });
+  });
 }
 
 /**
