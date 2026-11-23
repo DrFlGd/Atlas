@@ -1319,6 +1319,123 @@ The selectors of `list` count the cells of a row (`td:nth-child(3)`), which "Sel
 - The title picture of a game, and any other picture of the list page that no row's `picture` names, is never asked for.
 - "Try on a saved page" tries such a part on a list page the owner saved. Give it the address the page was saved from, with the game's anchor: the trial says which game it found, every map with its name and size, and which pictures would be left out and why. Without the anchor, it names the first anchors the page has.
 
+## Maps that are 3D models
+
+Some map sites keep each map of a game as a 3D model, a glTF binary file (`.glb`), with the map's locations, types and floors in a data file of its own beside it. A map part read by `rules` of this third form holds `models` in place of `data`, `maps`, `types`, `locations` and `position`. Each map of `models.maps` is read by itself: the Importer asks for its data file, reads its locations, types and floors from it, then asks for its model, by itself and one file at a time, after the site's `robots.txt`, with the pause, under the app's own name, stopping at the first refusal. The desktop app that downloads builds the model as the Map Maker does: it lines the model up with the game's world, cuts it into cells with levels of detail, and draws it from straight above, one picture for each floor, so the map can be read in 2D too. Each location stands at its 3D position, on the floor its height is in. A build without downloads, or a phone, says plainly that the map is read only in the desktop app.
+
+```json
+{
+  "format": "atlas-site-rules",
+  "version": 1,
+  "site": {
+    "id": "example-3d-maps",
+    "name": "Example 3D Maps",
+    "game": "Emberfall",
+    "hosts": ["maps.example.net"],
+    "notice": "A fan map. The models come from the game and belong to its makers: they are kept for your own use.",
+    "licence": { "ask": true }
+  },
+  "parts": [
+    {
+      "type": "map",
+      "reader": "rules",
+      "start": "/worlds/{map}/data.json",
+      "reading": { "ways": ["fetch"], "pause": 5 },
+      "models": {
+        "maps": [
+          { "id": "harbour", "name": "Harbour" },
+          { "id": "old-mill", "name": "Old Mill" }
+        ],
+        "list": "/3d.html",
+        "model": {
+          "file": "/worlds/{map}/model.glb",
+          "pieces": { "count": "pieces", "file": "/worlds/{map}/model-{n}.json", "path": "data" },
+          "axes": ["+x", "-z", "+y"],
+          "drop": ["Invisible*"],
+          "water": "sea",
+          "sky": "#101820"
+        },
+        "floors": { "path": "floors[*]", "min": "low", "max": "high" },
+        "types": {
+          "path": "kinds[*]",
+          "id": "id",
+          "name": "label",
+          "color": "colour",
+          "shown": "visible",
+          "names": { "chest": "Chests" },
+          "found": ["chest"]
+        },
+        "locations": {
+          "path": "points[*]",
+          "fields": {
+            "id": "id",
+            "type": "kind",
+            "name": "name",
+            "x": "x",
+            "y": "y",
+            "z": "z",
+            "flag": "save"
+          }
+        },
+        "names": [{ "find": "Coffre", "put": "Chest", "at": "whole" }]
+      }
+    }
+  ]
+}
+```
+
+A data file this part reads would look like this (made up, shortened). Its address is `https://maps.example.net/worlds/harbour/data.json`:
+
+```text
+{
+  "pieces": 2,
+  "sea": -1.5,
+  "kinds": [{ "id": "chest", "label": "Coffres", "colour": "#ffc24a", "visible": 1 }],
+  "floors": [{ "low": -5, "high": 3 }, { "low": 3, "high": 12 }],
+  "points": [{ "id": "h-1", "kind": "chest", "name": "Coffre", "x": 10, "y": 1, "z": 20, "save": ["Opened_7"] }]
+}
+```
+
+It gives the map "Harbour" with two floors and one location, "Chest", at world x 10, y −20 and height 1, on the lower floor, its flag in the game's save `Opened_7`. The model comes in two pieces, `model-0.json` and `model-1.json`.
+
+**`start`** is the address of one map's data file, and holds `{map}` and no other piece: `{map}` stands for the `id` of one entry of `models.maps`. The owner gives that address to add or refresh one map; an address whose `{map}` the file does not list is not read.
+
+**The game and its maps.** The site's home page is its list of games, of one game: the Importer offers it as a source, reads it once only to see that the site is there, and lists the game with its number of maps. The game's address is `models.list`, a page of the site other than its home page that shows the game's maps; it is read once, only to see that it is there, and the maps listed to tick are the entries of `models.maps`, in their order, by their names. The game's maps go into one game in the owner's library: a read adds or refreshes its own map and keeps the others.
+
+**`models`**
+
+| Field       | Needed | Form                                 | Meaning                                                                                                                                                                                                                                                      |
+| ----------- | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `maps`      | yes    | list of `{ "id", "name" }`, 1 to 200 | The game's maps. `id` (lower case letters, digits, `_` and `-`) stands for `{map}`; `name` is the map's name in Atlas                                                                                                                                        |
+| `list`      | yes    | address                              | The page that shows the game's maps: the game's address                                                                                                                                                                                                      |
+| `model`     | yes    | object, below                        | Where each map's model is, and how it lines up with the game's world                                                                                                                                                                                         |
+| `floors`    | no     | `{ "path", "min", "max" }`           | `path` every floor in the data file, `min` and `max` inside one floor: its lowest and highest heights, in the data's frame. With two floors or more, each is a layer of the map with its own picture; with fewer, the map has one picture of the whole model |
+| `types`     | yes    | object, below                        | The types of locations                                                                                                                                                                                                                                       |
+| `locations` | yes    | `{ "path", "fields" }`               | `path` every location; `fields` inside one location: `type` (a type's `id`), `x`, `y` and `z` (its position in the data's frame), and optionally `id` (its own id on the site, kept across reads), `name` and `flag`                                         |
+| `position`  | no     | `axes`, `scale`, `offset`            | How the locations' `x`, `y` and `z`, and the floors' heights, line up with the world, as for the model below. Without it, as the model                                                                                                                       |
+| `names`     | no     | list of `{ "find", "put", "at" }`    | Changes to the locations' names, made in order: `find` at the `start` of a name, at its `end`, `anywhere` in it (the default) or as the `whole` name, `put` in its place. For a site whose names are in another language than its pages, say                 |
+
+**`model`**
+
+| Field    | Needed | Form                                        | Meaning                                                                                                                                                                                                                                                                                                                           |
+| -------- | ------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`   | yes    | address with `{map}`                        | The map's model, one glTF binary file                                                                                                                                                                                                                                                                                             |
+| `pieces` | no     | `{ "count", "file", "path" }`               | For a site that cuts each model into pieces of base64 text: `count` the number of pieces, read from the data file; `file` the address of one piece, with `{map}` and `{n}` (the piece's number, from 0); `path` the name of the field of the piece's JSON file that holds its text. Where the data gives no count, `file` is read |
+| `axes`   | no     | three of `+x`, `-x`, `+y`, `-y`, `+z`, `-z` | Which axis of the model gives the world's x (east), y (north) and height, each axis once. Without it `["+x", "-z", "+y"]`, glTF's own: y up, z towards the viewer                                                                                                                                                                 |
+| `scale`  | no     | number                                      | World units (metres, say) per unit of the model; 1 without it                                                                                                                                                                                                                                                                     |
+| `offset` | no     | `[x, y, height]`                            | Added after the scale, in world units                                                                                                                                                                                                                                                                                             |
+| `drop`   | no     | list of names, up to 50                     | Parts of the model never seen in the game (invisible walls, say), by the name of their node, mesh or material: `*` stands for any letters, `?` for one, in any case                                                                                                                                                               |
+| `water`  | no     | data path                                   | The height of open water in the data file, drawn as a plane                                                                                                                                                                                                                                                                       |
+| `sky`    | no     | `#rrggbb`                                   | The colour of the sky behind the model                                                                                                                                                                                                                                                                                            |
+
+**`types`**: `path` every type in the data file, and inside one type `id` (what a location's `type` names), and optionally `name`, `color` (`#rrggbb`), `shown` (whether its locations are shown at first: true, 1 or text other than `0`, `false` and `no`), `names` (the type's name by its `id`, which wins over the data's) and `found`, as for a map read from its data.
+
+- `reading.ways` offers `fetch` only.
+- The model is asked for only once the licence is answered, and only in the desktop app that downloads. A model larger than 1 GB, or in more than 200 pieces, is not read.
+- Textures are not kept yet: each part of the model with a texture keeps its texture's average colour. A light model of what lies around a map is not read.
+- A location's `flag` is kept as its flag in the game's save only when it is one text, or a list of exactly one, without `&`.
+- "Try on a saved page" takes a map's data file: it says which types and locations it reads, how many floors, and how many locations have one flag. The model is not asked for.
+
 ## Selectors, address patterns and data paths
 
 A file points at things in three ways, and each has one exact form. None of them is a regular expression or a script.

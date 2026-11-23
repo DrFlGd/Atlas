@@ -20,7 +20,7 @@ crate-type = ["cdylib", "rlib"]
 # turns it on with ATLAS_ENABLE_DOWNLOADS=1 (see README, "Building another
 # app from the shell"), which passes `--features downloads` to tauri build.
 default = []
-downloads = ["dep:reqwest", "dep:rustls", "dep:image", "dep:httpdate", "dep:resvg"]
+downloads = ["dep:reqwest", "dep:rustls", "dep:image", "dep:httpdate", "dep:resvg", "dep:atlas-scene"]
 
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
@@ -71,6 +71,11 @@ tauri-plugin-fs = "2.7.1"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 png = "0.18.1"
+# 3D models of maps an importer reads (src/scenebuilds.rs, the `downloads`
+# feature only): Atlas's one 3D builder, so a map read from a site comes
+# out as one the Map Maker makes (MIT, in this repository). Not on Android,
+# which builds no models.
+atlas-scene = { path = "../../../crates/atlas-scene", optional = true }
 # One Atlas at a time: a second start (a pack file opened from the file
 # manager) hands its arguments to the one running and ends (Apache-2.0 OR
 # MIT, the Tauri 2 plugin).

@@ -10,6 +10,8 @@ import {
   checkShippedSiteRules,
   checkSiteRules,
   fieldInWords,
+  isDataMapPart,
+  isModelMapPart,
   isRefusal,
   isSiteRulesFileName,
   parseSiteRules,
@@ -79,8 +81,9 @@ describe('the guide', () => {
     // a part that keeps the app off addresses and records a permission,
     // a map part of pictures listed on a page,
     // a map part with the address of its images in its data, counted in sides of the square,
-    // and a map part with the site’s list of games and the page of each game.
-    expect(blocks.length).toBe(18);
+    // a map part with the site’s list of games and the page of each game,
+    // and a map part of 3D models.
+    expect(blocks.length).toBe(19);
   });
 
   it('has every JSON example valid: a whole file as it is, a part inside the smallest file', () => {
@@ -1152,6 +1155,116 @@ describe('a map part of pictures listed on a page', () => {
 
   it('names the fields of the other form of a map part as such', () => {
     const found = problems(file({ ...listed, data: { from: 'page', element: 'script' } }));
+    expect(found.map(problemText)).toEqual([
+      'Part 1, data: is a field of a map part read by rules from its data, not of this part.',
+    ]);
+  });
+});
+
+describe('a map part of 3D models', () => {
+  const models = {
+    type: 'map',
+    reader: 'rules',
+    start: '/worlds/{map}/data.json',
+    reading: { ways: ['fetch'], pause: 5 },
+    models: {
+      maps: [
+        { id: 'harbour', name: 'Harbour' },
+        { id: 'old-mill', name: 'Old Mill' },
+      ],
+      list: '/3d.html',
+      model: {
+        file: '/worlds/{map}/model.glb',
+        pieces: { count: 'pieces', file: '/worlds/{map}/model-{n}.json', path: 'data' },
+        axes: ['+x', '-z', '+y'],
+        drop: ['Invisible*'],
+        water: 'sea',
+        sky: '#101820',
+      },
+      floors: { path: 'floors[*]', min: 'low', max: 'high' },
+      types: { path: 'kinds[*]', id: 'id', name: 'label', found: ['chest'] },
+      locations: {
+        path: 'points[*]',
+        fields: { id: 'id', type: 'kind', name: 'name', x: 'x', y: 'y', z: 'z', flag: 'save' },
+      },
+      names: [{ find: 'Coffre', put: 'Chest', at: 'whole' }],
+    },
+  };
+  type Models = typeof models.models;
+  const file = (part: Record<string, unknown>) =>
+    changed((f) => {
+      (f.site as Record<string, unknown>).hosts = ['maps.example.net'];
+      f.parts = [part];
+    });
+  const withModels = (change: (m: Models) => void) => {
+    const part = structuredClone(models);
+    change(part.models);
+    return part;
+  };
+  const messages = (part: Record<string, unknown>) => {
+    const result = checkSiteRules(file(part));
+    return result.ok ? [] : result.problems.map(problemText).sort();
+  };
+
+  it('takes a part with its maps, its model in pieces, its floors, types and locations', () => {
+    expect(messages(models)).toEqual([]);
+    const result = checkSiteRules(file(models));
+    if (!result.ok || isRefusal(result.rules) || !('site' in result.rules)) throw new Error();
+    const part = result.rules.parts[0]!;
+    expect(isModelMapPart(part)).toBe(true);
+    expect(isDataMapPart(part)).toBe(false);
+    // One model file, no floors and no lining up: the smallest such part.
+    const smallest = withModels((m) => {
+      delete (m.model as Partial<Models['model']>).pieces;
+      delete (m.model as Partial<Models['model']>).axes;
+      delete (m as Partial<Models>).floors;
+      delete (m as Partial<Models>).names;
+    });
+    expect(messages(smallest)).toEqual([]);
+  });
+
+  it('is read by the app by itself only, one map at a time, from addresses on the site', () => {
+    expect(messages({ ...models, reading: { ways: ['fetch', 'window'] } })).toEqual([
+      'Part 1, reading.ways: may offer only "fetch" for a map part of 3D models: the app reads each map\'s data and model by itself, so "window" cannot read it.',
+    ]);
+    expect(messages({ ...models, start: '/worlds/{game}/data.json' })).toContain(
+      'Part 1, start: must hold {map}, and no other piece or #: it is the address of one map’s data.',
+    );
+    expect(messages({ ...models, start: '/worlds/data.json#{map}' })).toContain(
+      'Part 1, start: must hold {map}, and no other piece or #: it is the address of one map’s data.',
+    );
+    expect(
+      messages(withModels((m) => (m.model.file = 'https://elsewhere.example.org/{map}.glb'))),
+    ).toHaveLength(1);
+    expect(messages(withModels((m) => (m.model.file = '/models/all.glb')))).toHaveLength(1);
+    expect(messages(withModels((m) => (m.model.pieces.file = '/worlds/{map}/model.json')))).toEqual(
+      ['Part 1, models.model.pieces.file: must hold {n} once: the number of the piece, from 0.'],
+    );
+    expect(messages(withModels((m) => (m.model.pieces.path = 'piece.data')))).toEqual([
+      'Part 1, models.model.pieces.path: must be the name of one field of the piece’s file, such as "data".',
+    ]);
+    expect(messages(withModels((m) => (m.list = '/{map}.html')))).toHaveLength(1);
+    expect(messages(withModels((m) => (m.list = '/')))).toEqual([
+      'Part 1, models.list: must be a page other than the site’s home page, which is the site’s list of games.',
+    ]);
+  });
+
+  it('names each map once, each axis once, and every entry of its lists', () => {
+    expect(
+      messages(withModels((m) => m.maps.push({ id: 'harbour', name: 'Harbour again' }))),
+    ).toEqual(['Part 1, models.maps, entry 3.id: "harbour" is listed twice; list each map once.']);
+    expect(messages(withModels((m) => (m.maps[0]!.id = 'Harbour Town')))).toHaveLength(1);
+    expect(messages(withModels((m) => (m.model.axes = ['+x', '-x', '+y'])))).toEqual([
+      'Part 1, models.model.axes: must name each of x, y and z once.',
+    ]);
+    expect(messages(withModels((m) => (m.locations.path = 'points[0]')))).toEqual([
+      'Part 1, models.locations.path: must name every entry of a list, with [*].',
+    ]);
+    expect(messages(withModels((m) => (m.model.sky = 'blue')))).toHaveLength(1);
+  });
+
+  it('names the fields of the other forms of a map part as such', () => {
+    const found = problems(file({ ...models, data: { from: 'file', address: '/a.json' } }));
     expect(found.map(problemText)).toEqual([
       'Part 1, data: is a field of a map part read by rules from its data, not of this part.',
     ]);

@@ -53,6 +53,9 @@ import {
   type WholePicture,
   type WholePictureProblem,
   type WholePictureRequest,
+  type SceneModel,
+  type SceneModelProblem,
+  checkSceneModelRequest,
   type ReadingWay,
   type SavedSource,
   type SiteInfo,
@@ -65,6 +68,7 @@ import {
   PACK_COLLECTIONS,
   describePack,
   recordedImages,
+  sceneSchema,
   type PackData,
   type PackSource,
 } from '@atlas/schema';
@@ -834,6 +838,102 @@ function wholePictures(
         maxZoom: cut.maxZoom,
         tileSize: cut.tileSize,
         extension: cut.extension === 'png' ? 'png' : 'jpg',
+      };
+    } catch (error) {
+      if (id !== session) return failed('cancelled', 'The session was stopped.');
+      return failed('failed', `It could not be read: ${errorText(error)}`);
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 3D models of maps (see `ImportContext.sceneModel` in the importer contract)
+
+/**
+ * How an importer's convert call has the 3D models of maps fetched and
+ * built (`ImportContext.sceneModel`), in go `id`, for the page at
+ * `pageUrl`: the model, or each of its pieces in order, asked for as every
+ * page is ({@link askAsApp}: the site's rules file, `robots.txt`, the
+ * pause, the app's own name), on the site of the page only; then joined
+ * and built by the shell with Atlas's 3D builder. `builds` gathers the
+ * names of the builds made, so those no saved pack names are thrown away.
+ */
+function sceneModels(
+  shell: NonNullable<typeof desktop>,
+  importer: AtlasImporter,
+  pageUrl: string,
+  id: number,
+  builds: string[],
+): (request: unknown) => Promise<SceneModel> {
+  const failed = (problem: SceneModelProblem, message: string): SceneModel => ({
+    ok: false,
+    problem,
+    message,
+  });
+  return async (given) => {
+    // What an importer hands over is checked as it is, whatever its type says.
+    const request = checkSceneModelRequest(given);
+    if (typeof request === 'string') return failed('failed', request);
+    const addresses = request.url !== undefined ? [request.url] : (request.pieces?.urls ?? []);
+    if (!addresses.every((address) => sameSite(pageUrl, address))) {
+      return failed('failed', 'This app reads a model only on the site of the page read.');
+    }
+    const field = request.pieces?.field ?? null;
+    // The page's site's rules file: its addresses kept off, its permission and its pause.
+    const limits = limitsOf(importer, pageUrl);
+    const pauseMs = (siteInfoOf(importer, pageUrl).pause ?? 0) * 1000;
+    let build: string | null = null;
+    try {
+      for (const url of addresses) {
+        const asked = await askAsApp(shell, url, id, limits, {
+          ask: (at) => shell.tiles.fetchModel(at, build, field),
+          pauseMs,
+        });
+        if (asked.kind === 'cancelled') return failed('cancelled', 'The session was stopped.');
+        if (asked.kind === 'kept-off') return failed('kept-off', keptOffMessage(url));
+        if (asked.kind === 'refused') {
+          return failed('stop', `${asked.refusal} This app stopped and read no more pages.`);
+        }
+        if (asked.kind === 'robots') return failed('stop', robotsStopMessage(url, limits));
+        const answer = asked.answer;
+        const refusal = refusalOf(answer.status, answer.retryAfter);
+        if (refusal) return failed('stop', `${refusal} This app stopped and read no more pages.`);
+        if (answer.build === null) {
+          if (answer.tooLarge) return failed('size', 'Its model is larger than this app keeps.');
+          return answer.noField
+            ? failed('missing', 'A piece of its model holds no model.')
+            : failed('missing', 'The site has no model at its address.');
+        }
+        if (build === null) builds.push(answer.build);
+        build = answer.build;
+        if (id !== session) return failed('cancelled', 'The session was stopped.');
+      }
+      if (build === null) return failed('missing', 'The site has no model at its address.');
+      const { url: _url, pieces: _pieces, ...how } = request;
+      const built = await shell.tiles.buildScene(build, how);
+      if (!built.ok || !built.rendered) {
+        const problem = (['format', 'size', 'missing'] as const).find((p) => p === built.problem);
+        return failed(problem ?? 'failed', built.message ?? 'The model could not be built.');
+      }
+      const scene = sceneSchema.safeParse(built.scene);
+      if (!scene.success)
+        return failed('failed', 'The model was built into a scene this app cannot show.');
+      return {
+        ok: true,
+        build,
+        scene: scene.data,
+        width: built.rendered.width,
+        height: built.rendered.height,
+        worldTransform: built.rendered.worldTransform,
+        layers: built.rendered.layers.map(({ id: floor, url, minZoom, maxZoom, tileSize }) => ({
+          id: floor,
+          url,
+          minZoom,
+          maxZoom,
+          tileSize,
+        })),
+        triangles: built.triangles,
+        warnings: built.warnings.slice(0, 20),
       };
     } catch (error) {
       if (id !== session) return failed('cancelled', 'The session was stopped.');
@@ -1883,6 +1983,8 @@ export function importContext(
     pictureSize?: PictureSize;
     /** Fetches and cuts whole pictures of maps, in a go of a build that downloads. */
     wholePicture?: ImportContext['wholePicture'];
+    /** Fetches and builds 3D models of maps, in a go of a build that downloads. */
+    sceneModel?: ImportContext['sceneModel'];
   } = {},
 ): ImportContext {
   const state = useAtlas.getState();
@@ -1957,6 +2059,7 @@ export function importContext(
           ...(observations && !rebuilt ? { pageObservations: observations } : {}),
           // Nothing is fetched for a game built again.
           ...(site.wholePicture && !rebuilt ? { wholePicture: site.wholePicture } : {}),
+          ...(site.sceneModel && !rebuilt ? { sceneModel: site.sceneModel } : {}),
         }
       : {}),
   };
@@ -2059,19 +2162,24 @@ async function convertAndSave(
   const shell = desktop;
   if (!shell) return { kind: 'idle' };
   const cuts: string[] = [];
+  const builds: string[] = [];
   const saved = new Set<string>();
-  const wholePicture =
-    __ATLAS_DOWNLOADS__ && downloadsOffered(useAtlas.getState()) && !rebuilt
-      ? wholePictures(shell, importer, page.url, session, cuts)
-      : undefined;
+  const fetching = __ATLAS_DOWNLOADS__ && downloadsOffered(useAtlas.getState()) && !rebuilt;
+  const wholePicture = fetching
+    ? wholePictures(shell, importer, page.url, session, cuts)
+    : undefined;
+  const sceneModel = fetching ? sceneModels(shell, importer, page.url, session, builds) : undefined;
   try {
     return await convertPage(importer, page, rebuilt, show, onMeasuring, turn, {
       ...(wholePicture ? { wholePicture } : {}),
+      ...(sceneModel ? { sceneModel } : {}),
       saved,
     });
   } finally {
     const left = cuts.filter((name) => !saved.has(name));
     if (left.length > 0) void shell.tiles.discardPictures(left).catch(() => undefined);
+    const unused = builds.filter((name) => !saved.has(name));
+    if (unused.length > 0) void shell.tiles.discardScenes(unused).catch(() => undefined);
   }
 }
 
@@ -2102,7 +2210,8 @@ async function convertPage(
   } = {},
   cutting: {
     wholePicture?: ImportContext['wholePicture'];
-    /** The names of the cuts the saved pack took. */
+    sceneModel?: ImportContext['sceneModel'];
+    /** The names of the cuts and builds the saved pack took. */
     saved: Set<string>;
   } = { saved: new Set() },
 ): Promise<ImportPhase> {
@@ -2134,6 +2243,7 @@ async function convertPage(
           ? { pictureSize: site?.pictures ?? DEFAULT_PICTURE_SIZE }
           : {}),
         ...(cutting.wholePicture ? { wholePicture: cutting.wholePicture } : {}),
+        ...(cutting.sceneModel ? { sceneModel: cutting.sceneModel } : {}),
       },
     );
   // When the importer read each pack: changed since, it reads it again (see `packTurns.ts`).
@@ -2299,8 +2409,11 @@ async function convertPage(
           : {}),
         // Whole pictures of maps cut for it, moved into the game's folder.
         ...(outcome.cutPictures ? { cutPictures: outcome.cutPictures } : {}),
+        // 3D models of maps built for it, moved into the game's folder.
+        ...(outcome.sceneBuilds ? { sceneBuilds: outcome.sceneBuilds } : {}),
       });
       for (const cut of outcome.cutPictures ?? []) cutting.saved.add(cut.picture);
+      for (const built of outcome.sceneBuilds ?? []) cutting.saved.add(built.build);
     } catch (error) {
       return { kind: 'failed', message: errorText(error) };
     }

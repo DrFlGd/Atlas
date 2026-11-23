@@ -797,6 +797,81 @@ pub async fn import_discard_pictures<R: Runtime>(
         .map_err(|error| error.to_string())
 }
 
+/// Where 3D models of maps and their builds wait for their import (see
+/// `scenebuilds.rs`): a hidden folder of the maps folder.
+#[cfg(feature = "downloads")]
+fn scene_builds(library: &Library) -> std::path::PathBuf {
+    library.maps_folder().join(crate::scenebuilds::BUILDS_DIR)
+}
+
+/// Fetches a map's 3D model, or one of its pieces (`field`, added after
+/// the pieces kept in `build`), for an importer, as the app (see
+/// `scenebuilds.rs`); the web app has followed the site's rules and
+/// `robots.txt` first. Only the app's own window may ask.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_fetch_model<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    url: String,
+    build: Option<String>,
+    field: Option<String>,
+) -> Result<crate::scenebuilds::FetchedModel, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    crate::keep::reading();
+    let builds = scene_builds(&library);
+    crate::scenebuilds::fetch_model_part(&url, &builds, build.as_deref(), field.as_deref()).await
+}
+
+/// Builds a model `import_fetch_model` kept with Atlas's 3D builder. Not on
+/// Android, which has no builder.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_build_scene<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    build: String,
+    request: crate::scenebuilds::BuildRequest,
+) -> Result<crate::scenebuilds::SceneBuilt, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = (library, build, request);
+        Err(NOT_ON_THIS_DEVICE.to_owned())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let builds = scene_builds(&library);
+        crate::keep::reading();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::scenebuilds::build_scene(&builds, &build, &request)
+        })
+        .await
+        .map_err(|error| error.to_string())
+    }
+}
+
+/// Throws away models and builds no saved import named.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_discard_scenes<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    builds: Vec<String>,
+) -> Result<(), String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    let folder = scene_builds(&library);
+    tauri::async_runtime::spawn_blocking(move || crate::scenebuilds::discard(&folder, &builds))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(feature = "downloads")]
 #[tauri::command]
 pub async fn tiles_snapshot(

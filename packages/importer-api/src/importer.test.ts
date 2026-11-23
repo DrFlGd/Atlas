@@ -18,6 +18,7 @@ import {
   checkOutcome,
   checkPageObservations,
   checkPictureTiles,
+  checkSceneModelRequest,
   findCatalogueImporter,
   findGameImporter,
   findImporter,
@@ -30,6 +31,7 @@ import {
   pageKey,
   pageMeasureStep,
   pageTilesFit,
+  sceneBuildsOf,
   sameSite,
   siteNameOf,
   tileAddressReader,
@@ -401,6 +403,96 @@ describe('outcome checks', () => {
     });
     expect(checkOutcome({ ...good, summary: { ...good.summary, leftOut: [''] } }).ok).toBe(false);
     expect('cutPictures' in checkOutcome({ ...good, cutPictures: [] })).toBe(false);
+  });
+});
+
+describe('a map that is a 3D model', () => {
+  const request = {
+    folder: 'harbour',
+    pieces: {
+      urls: [
+        'https://maps.example.net/w/harbour/m-0.json',
+        'https://maps.example.net/w/harbour/m-1.json',
+      ],
+      field: 'data',
+    },
+    axes: ['+x', '-z', '+y'],
+    drop: ['Invisible*'],
+    water: -1.5,
+    sky: '#10182A',
+    floors: [
+      { id: 'f1', heights: [-5, 3] },
+      { id: 'f2', heights: [3, 12] },
+    ],
+  };
+
+  it('takes a request in bounds, one file or its pieces', () => {
+    expect(checkSceneModelRequest(request)).toEqual({ ...request, sky: '#10182a' });
+    const { pieces: _pieces, ...rest } = request;
+    expect(
+      checkSceneModelRequest({ ...rest, url: 'https://maps.example.net/w/harbour/m.glb' }),
+    ).toMatchObject({ url: 'https://maps.example.net/w/harbour/m.glb' });
+  });
+
+  it('says plainly why a request is refused', () => {
+    const refused = (change: Record<string, unknown>) =>
+      checkSceneModelRequest({ ...request, ...change });
+    expect(refused({ folder: '../x' })).toBe('The map’s folder is not one this app takes.');
+    expect(refused({ url: 'https://maps.example.net/m.glb' })).toBe(
+      'The model must be one file or its pieces.',
+    );
+    expect(refused({ pieces: { urls: ['file:///m.json'], field: 'data' } })).toBe(
+      'The model’s pieces are not addresses this app reads.',
+    );
+    expect(refused({ pieces: { urls: request.pieces.urls, field: 'a.b' } })).toBe(
+      'The field of the model’s pieces is not a field name.',
+    );
+    expect(refused({ axes: ['+x', '+x', '+y'] })).toBe(
+      'The axes must name each of x, y and z once.',
+    );
+    expect(refused({ scale: 0 })).toBe('The scale must be a number above 0.');
+    expect(refused({ offset: [1, 2] })).toBe('The offset must be three numbers.');
+    expect(refused({ sky: 'blue' })).toBe('The sky must be a colour written #rrggbb.');
+    expect(
+      refused({
+        floors: [
+          { id: 'f1', heights: [3, -5] },
+          { id: 'f2', heights: [3, 12] },
+        ],
+      }),
+    ).toBe('Each floor needs an id of its own and its heights, lowest first.');
+    expect(checkSceneModelRequest(null)).toBe('The request is not one.');
+  });
+
+  it('keeps the builds a pack’s 3D maps use, each once, and passes them through the outcome check', async () => {
+    const good = await demo.convert(page('east'), context());
+    if (!good.ok) throw new Error('expected a pack');
+    const pack = structuredClone(good.pack);
+    pack.maps[0]!.worldTransform = { a: 0.25, b: 0, c: 0, d: -0.25, e: -50, f: 40 };
+    pack.maps[0]!.scene = {
+      cells: [
+        {
+          id: '0-0',
+          bounds: [-50, -60, 50, 40],
+          lods: [{ level: 0, file: 'scene/harbour/0-0.0.glb' }],
+        },
+      ],
+    };
+    const builds = [
+      { build: 'b-1', folder: 'harbour' },
+      // The same folder twice, a folder no map uses, and names of other forms: left out.
+      { build: 'b-2', folder: 'harbour' },
+      { build: 'b-3', folder: 'elsewhere' },
+      { build: '../b', folder: 'harbour' },
+      'text',
+    ];
+    expect(sceneBuildsOf(builds, pack)).toEqual([{ build: 'b-1', folder: 'harbour' }]);
+    expect(sceneBuildsOf('none', pack)).toEqual([]);
+    expect(checkOutcome({ ...good, pack, sceneBuilds: builds })).toMatchObject({
+      ok: true,
+      sceneBuilds: [{ build: 'b-1', folder: 'harbour' }],
+    });
+    expect('sceneBuilds' in checkOutcome({ ...good, sceneBuilds: builds })).toBe(false);
   });
 });
 

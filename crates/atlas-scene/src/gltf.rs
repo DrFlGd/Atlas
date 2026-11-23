@@ -18,6 +18,10 @@ pub struct Material {
     /// It has a base colour texture. Textures are left out for now (their
     /// place is [`crate::textures`]); the material keeps its colour.
     pub textured: bool,
+    /// The average colour of its base colour texture (linear RGB), when the
+    /// texture is a PNG or JPEG picture in the file that could be read; the
+    /// builder may keep it in place of the texture ([`crate::textures`]).
+    pub texture_color: Option<[f32; 3]>,
 }
 
 impl Default for Material {
@@ -27,6 +31,7 @@ impl Default for Material {
             color: [1.0, 1.0, 1.0, 1.0],
             double_sided: false,
             textured: false,
+            texture_color: None,
         }
     }
 }
@@ -343,7 +348,33 @@ fn material_of(value: &Value) -> Material {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         textured: pbr.and_then(|p| p.get("baseColorTexture")).is_some(),
+        texture_color: None,
     }
+}
+
+/// The bytes of the picture a material's base colour texture shows, when
+/// it is in the file's binary chunk.
+fn texture_bytes<'a>(json: &Value, bin: &'a [u8], material: &Value) -> Option<&'a [u8]> {
+    let texture = material
+        .get("pbrMetallicRoughness")?
+        .get("baseColorTexture")?
+        .get("index")?
+        .as_u64()? as usize;
+    let image = list(json, "textures")
+        .get(texture)?
+        .get("source")?
+        .as_u64()? as usize;
+    let view = list(json, "images")
+        .get(image)?
+        .get("bufferView")?
+        .as_u64()? as usize;
+    let view = list(json, "bufferViews").get(view)?;
+    if view.get("buffer").and_then(Value::as_u64).unwrap_or(0) != 0 {
+        return None;
+    }
+    let offset = view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let length = view.get("byteLength")?.as_u64()? as usize;
+    bin.get(offset..offset.checked_add(length)?)
 }
 
 /// Reads a `.glb` file's triangle meshes, every node transform applied.
@@ -354,6 +385,17 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
         materials: list(&json, "materials").iter().map(material_of).collect(),
         ..Model::default()
     };
+    // Each texture's average colour, each picture read once.
+    let mut averages: std::collections::HashMap<(usize, usize), Option<[f32; 3]>> =
+        std::collections::HashMap::new();
+    for (material, value) in model.materials.iter_mut().zip(list(&json, "materials")) {
+        if let Some(bytes) = texture_bytes(&json, bin, value) {
+            let key = (bytes.as_ptr() as usize, bytes.len());
+            material.texture_color = *averages
+                .entry(key)
+                .or_insert_with(|| crate::textures::average_colour(bytes));
+        }
+    }
     let fallback_material = model.materials.len();
     model.materials.push(Material::default());
 

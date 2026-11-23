@@ -989,10 +989,116 @@ function rulesPictureMapPartSchema<L extends z.ZodType>(licence: L) {
   });
 }
 
-/** The forms of a part: by its reader, and for `rules` its type (and for a map, its form). */
-type PartForm = 'builtIn' | 'wiki' | 'guide' | 'map' | 'pictures';
+/**
+ * The third form of a map part read by `rules` (`models`): a game whose
+ * maps are 3D models, each with its locations in a data file of its own.
+ * See "Maps that are 3D models" in the guide.
+ */
 
-/** Which of the five forms of a part a value is meant to be: by its reader, and for `rules` its type. */
+/** The axes of a 3D model a file names, as a scene's `axes`. */
+export const MODEL_AXES = ['+x', '-x', '+y', '-y', '+z', '-z'] as const;
+/** Maps one `models.maps` lists at most. */
+export const MAX_MODEL_MAPS = 200;
+/** Name patterns one `models.model.drop` lists at most. */
+export const MAX_MODEL_DROP = 50;
+/** Changes of names one `models.names` lists at most. */
+export const MAX_MODEL_NAMES = 100;
+/** The id of a map of `models.maps`: what stands for `{map}` in the part's addresses. */
+export const MODEL_MAP_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
+/** The mark of a piece's number in the address of a model's pieces. */
+/** The field of a model's piece that holds its text: one name at the top of the piece's file. */
+export const MODEL_PIECE_FIELD = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+export const MODEL_PIECE_MARK = '{n}';
+
+const modelAxis = z.enum(MODEL_AXES);
+/** How coordinates become the world's: as a scene's `axes`, `scale` and `offset`. */
+const lineUpFields = {
+  axes: z.tuple([modelAxis, modelAxis, modelAxis]).optional(),
+  scale: z.number().gt(0).max(1_000_000).optional(),
+  offset: z.tuple([z.number(), z.number(), z.number()]).optional(),
+};
+const hexColour = z.string().regex(/^#[0-9a-f]{6}$/u, 'must be a colour written #rrggbb');
+
+const modelsSchema = z.strictObject({
+  /** The game's maps, in the order they are listed: `id` stands for `{map}`. */
+  maps: z
+    .array(
+      z.strictObject({
+        id: z
+          .string()
+          .regex(MODEL_MAP_ID_PATTERN, 'must be 1 to 64 of a-z, 0-9, _ and -, such as east-isle'),
+        name: text(200),
+      }),
+    )
+    .min(1)
+    .max(MAX_MODEL_MAPS),
+  /** The page of the site that shows the game's maps: read once when the maps are listed. */
+  list: address,
+  model: z.strictObject({
+    /** The model of one map, a glTF binary file, with `{map}`. */
+    file: address,
+    /**
+     * Where the data says the model comes in pieces instead: `count` the
+     * number of pieces in the data, `file` the address of one (with `{map}`
+     * and `{n}`, from 0), `path` the base64 text of its share in that file.
+     */
+    pieces: z.strictObject({ count: dataPath, file: address, path: dataPath }).optional(),
+    ...lineUpFields,
+    drop: once(text(100), 'pattern').max(MAX_MODEL_DROP).optional(),
+    water: dataPath.optional(),
+    sky: hexColour.optional(),
+  }),
+  floors: z.strictObject({ path: dataPath, min: dataPath, max: dataPath }).optional(),
+  types: z.strictObject({
+    path: dataPath,
+    id: dataPath,
+    name: dataPath.optional(),
+    color: dataPath.optional(),
+    shown: dataPath.optional(),
+    names: z.record(z.string().min(1).max(200), text(80)).optional(),
+    found: foundSchema.optional(),
+  }),
+  locations: z.strictObject({
+    path: dataPath,
+    fields: z.strictObject({
+      id: dataPath.optional(),
+      type: dataPath,
+      name: dataPath.optional(),
+      x: dataPath,
+      y: dataPath,
+      z: dataPath,
+      flag: dataPath.optional(),
+    }),
+  }),
+  /** How the locations' x, y and z become the world's; as the model's when absent. */
+  position: z.strictObject(lineUpFields).optional(),
+  /** Changes of the locations' names, in order: `find` at the start, end, anywhere or the whole name, `put` in its place. */
+  names: z
+    .array(
+      z.strictObject({
+        find: text(200),
+        put: z.string().max(200),
+        at: z.enum(['start', 'end', 'anywhere', 'whole']).optional(),
+      }),
+    )
+    .max(MAX_MODEL_NAMES)
+    .optional(),
+});
+
+export type RulesModels = z.infer<typeof modelsSchema>;
+
+function rulesModelMapPartSchema<L extends z.ZodType>(licence: L) {
+  return z.strictObject({
+    ...rulesFields(licence),
+    type: z.literal('map'),
+    models: modelsSchema,
+  });
+}
+
+/** The forms of a part: by its reader, and for `rules` its type (and for a map, its form). */
+type PartForm = 'builtIn' | 'wiki' | 'guide' | 'map' | 'pictures' | 'models';
+
+/** Which of the six forms of a part a value is meant to be: by its reader, and for `rules` its type. */
 function partFormOf(value: unknown): PartForm {
   const record = (typeof value === 'object' && value !== null ? value : {}) as {
     reader?: unknown;
@@ -1000,7 +1106,10 @@ function partFormOf(value: unknown): PartForm {
   };
   const { reader: name, type } = record;
   if (name !== RULES_READER) return 'builtIn';
-  if (type === 'map') return Object.hasOwn(record, 'list') ? 'pictures' : 'map';
+  if (type === 'map') {
+    if (Object.hasOwn(record, 'models')) return 'models';
+    return Object.hasOwn(record, 'list') ? 'pictures' : 'map';
+  }
   return type === 'guide' ? 'guide' : 'wiki';
 }
 
@@ -1011,6 +1120,7 @@ function partSchemas<L extends z.ZodType>(licence: L) {
     guide: rulesGuidePartSchema(licence),
     map: rulesMapPartSchema(licence),
     pictures: rulesPictureMapPartSchema(licence),
+    models: rulesModelMapPartSchema(licence),
   };
 }
 
@@ -1087,6 +1197,7 @@ const partSchema = z.union([
   fullParts.guide,
   fullParts.map,
   fullParts.pictures,
+  fullParts.models,
 ]);
 
 /** A site file, as the JSON Schema describes it. */
@@ -1110,6 +1221,8 @@ export type RulesGuidePart = z.infer<typeof fullParts.guide>;
 export type RulesMapPart = z.infer<typeof fullParts.map>;
 /** A map part read by `rules` whose maps are whole pictures listed on a page (`list`). */
 export type RulesPictureMapPart = z.infer<typeof fullParts.pictures>;
+/** A map part read by `rules` whose maps are 3D models (`models`). */
+export type RulesModelMapPart = z.infer<typeof fullParts.models>;
 export type SitePart = z.infer<typeof partSchema>;
 export type SiteFile = z.infer<typeof siteFileSchema>;
 export type ReaderDefaultsFile = z.infer<typeof readerDefaultsFileSchema>;
@@ -1142,12 +1255,17 @@ export function refusalCovers(refusal: SiteRefusal, host: string): boolean {
 /** Whether a part is read by `rules`, the general reader. */
 export const readByRules = (
   part: SitePart,
-): part is RulesWikiPart | RulesGuidePart | RulesMapPart | RulesPictureMapPart =>
+): part is
+  RulesWikiPart | RulesGuidePart | RulesMapPart | RulesPictureMapPart | RulesModelMapPart =>
   part.reader === RULES_READER;
 
 /** Whether a part is a map part read by `rules` whose maps are whole pictures listed on a page. */
 export const isPictureMapPart = (part: SitePart): part is RulesPictureMapPart =>
   part.reader === RULES_READER && part.type === 'map' && 'list' in part;
+
+/** Whether a part is a map part read by `rules` whose maps are 3D models (`models`). */
+export const isModelMapPart = (part: SitePart): part is RulesModelMapPart =>
+  part.reader === RULES_READER && part.type === 'map' && 'models' in part;
 
 /** Whether a part is a map part read by `rules` from its data (`data`, `maps`, `locations`…). */
 export const isDataMapPart = (part: SitePart): part is RulesMapPart =>
@@ -1922,6 +2040,104 @@ function pictureMapProblems(part: RulesPictureMapPart, at: Path): SiteRulesProbl
   return problems;
 }
 
+/** Why an address of a 3D model is not one, or null: on `hosts`, with `{map}`, and `{n}` where it is the address of a piece. */
+function modelAddressProblem(
+  text: string,
+  hosts: readonly string[],
+  piece: boolean,
+): string | null {
+  const marks = text.split(MODEL_PIECE_MARK).length - 1;
+  if (piece && marks !== 1)
+    return `must hold ${MODEL_PIECE_MARK} once: the number of the piece, from 0`;
+  if (!piece && marks > 0) return `may hold ${MODEL_PIECE_MARK} only in the address of a piece`;
+  const plain = text.replace(MODEL_PIECE_MARK, '0');
+  const found = piecesOf(plain);
+  if (found.problem) return found.problem;
+  if (/[?#]/u.test(plain)) return 'must be an address without ? or #';
+  if (found.pieces.some((name) => name !== 'map') || !found.pieces.includes('map')) {
+    return 'must hold {map}, and no other piece, so each map has its own';
+  }
+  return addressProblem(plain, hosts);
+}
+
+/** Whether three axes name each of x, y and z once. */
+const axesOnce = (axes: readonly string[]) => new Set(axes.map((axis) => axis[1])).size === 3;
+
+/**
+ * The problems of a map part of 3D models that its fields' forms alone do
+ * not show: a start that is each map's data file (`{map}`, no other piece),
+ * fetched only, addresses of models on the site with `{map}` (and `{n}` for
+ * a piece), each map once, and axes that name x, y and z once each.
+ */
+function modelMapProblems(
+  part: RulesModelMapPart,
+  at: Path,
+  hosts: readonly string[],
+): SiteRulesProblem[] {
+  const problems: SiteRulesProblem[] = [];
+  const add = (path: Path, message: string | null) => {
+    if (message) problems.push({ field: fieldPath([...at, ...path]), message });
+  };
+  const left = part.reading.ways.filter((way) => way !== 'fetch');
+  if (left.length > 0) {
+    add(
+      ['reading', 'ways'],
+      `may offer only "fetch" for a map part of 3D models: the app reads each map's data and model by itself, so ${left.map((way) => JSON.stringify(way)).join(' and ')} cannot read it`,
+    );
+  }
+  const start = piecesOf(part.start).pieces;
+  if (!start.includes('map') || start.length !== 1 || part.start.includes('#')) {
+    add(['start'], 'must hold {map}, and no other piece or #: it is the address of one map’s data');
+  }
+  const { models } = part;
+  add(
+    ['models', 'list'],
+    addressProblem(models.list, hosts) ??
+      (/[{}]/u.test(models.list)
+        ? 'must be one address, without { or }'
+        : /^\/?(?:[?#]|$)/u.test(models.list)
+          ? 'must be a page other than the site’s home page, which is the site’s list of games'
+          : null),
+  );
+  add(['models', 'model', 'file'], modelAddressProblem(models.model.file, hosts, false));
+  if (models.model.pieces) {
+    add(
+      ['models', 'model', 'pieces', 'file'],
+      modelAddressProblem(models.model.pieces.file, hosts, true),
+    );
+    if (!MODEL_PIECE_FIELD.test(models.model.pieces.path)) {
+      add(
+        ['models', 'model', 'pieces', 'path'],
+        'must be the name of one field of the piece’s file, such as "data"',
+      );
+    }
+  }
+  const seen = new Set<string>();
+  models.maps.forEach((map, n) => {
+    if (seen.has(map.id))
+      add(
+        ['models', 'maps', n, 'id'],
+        `${JSON.stringify(map.id)} is listed twice; list each map once`,
+      );
+    seen.add(map.id);
+  });
+  if (models.model.axes && !axesOnce(models.model.axes)) {
+    add(['models', 'model', 'axes'], 'must name each of x, y and z once');
+  }
+  if (models.position?.axes && !axesOnce(models.position.axes)) {
+    add(['models', 'position', 'axes'], 'must name each of x, y and z once');
+  }
+  for (const [path, value] of [
+    [['models', 'types', 'path'], models.types.path],
+    [['models', 'locations', 'path'], models.locations.path],
+    [['models', 'floors', 'path'], models.floors?.path],
+  ] as const) {
+    if (value !== undefined && !namesEvery(value))
+      add(path, 'must name every entry of a list, with [*]');
+  }
+  return problems;
+}
+
 /**
  * The problems of the `mapLinks` of a part that their fields' forms alone
  * do not show: each entry names where the id is in exactly one way, and
@@ -2067,6 +2283,10 @@ function siteFileProblems(file: SiteFile): SiteRulesProblem[] {
     }
     if (isPictureMapPart(part)) {
       problems.push(...pictureMapProblems(part, at));
+      return;
+    }
+    if (isModelMapPart(part)) {
+      problems.push(...modelMapProblems(part, at, hosts));
       return;
     }
     if (part.type === 'map') {
