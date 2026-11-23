@@ -277,10 +277,10 @@ fn taking_it_out_removes_only_what_atlas_wrote() {
     let done = state::want(&ctx, None).unwrap();
     assert_eq!(done, Some(state::Applied::Removed));
     assert_eq!(setup.shortcuts(), others(), "only Atlas's shortcut went");
-    assert_eq!(
-        setup.grid_files(),
-        ["2345p.png".to_owned(), format!("{id}_logo.png")]
-    );
+    // grid_files is sorted by name, and the id depends on the test's folder.
+    let mut kept = vec!["2345p.png".to_owned(), format!("{id}_logo.png")];
+    kept.sort();
+    assert_eq!(setup.grid_files(), kept);
     let s = state::load(&setup.data);
     assert_eq!((s.wanted, s.written), (None, None));
     assert!(!state::waiting(&ctx, &state::load(&setup.data)));
