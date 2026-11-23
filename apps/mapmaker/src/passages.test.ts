@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampAlignment, compareKey, startAlignment } from './compare';
+import { clampAlignment, compareKey, startAlignment } from './alignment';
 import {
   floorAtPixel,
   methodEntry,

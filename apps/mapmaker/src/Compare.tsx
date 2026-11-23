@@ -8,7 +8,7 @@ import {
 } from 'react';
 import type { MadeArea } from './report';
 import { errorText, type CompareAlignment, type ComparePicture, type Shell } from './shell';
-import { clampAlignment, compareKey, startAlignment } from './compare';
+import { clampAlignment, compareKey, startAlignment } from './alignment';
 
 /**
  * "Compare with a picture…": a picture the player chooses (PNG or JPEG, say another map of the area) beside or over
