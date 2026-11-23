@@ -416,7 +416,7 @@ fn weld(model: &Model, kept: &[usize], transform: &Transform, crease_angle: f64)
                 })
             })
             .collect();
-        for triangle in part.indices.chunks_exact(3) {
+        for triangle in part.indices.as_chunks::<3>().0 {
             let mut corners = [
                 triangle[0] as usize,
                 triangle[1] as usize,

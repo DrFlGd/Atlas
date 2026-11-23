@@ -423,7 +423,9 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
                 return Err("a mesh's positions are not three numbers each".to_owned());
             }
             let positions: Vec<[f64; 3]> = raw
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| {
                     let m = &matrix;
                     [
@@ -468,7 +470,7 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
                 return Err("a mesh names a vertex it does not have".to_owned());
             }
             if flip {
-                for triangle in indices.chunks_exact_mut(3) {
+                for triangle in indices.as_chunks_mut::<3>().0 {
                     triangle.swap(1, 2);
                 }
             }

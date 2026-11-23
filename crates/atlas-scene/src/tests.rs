@@ -281,7 +281,7 @@ fn lines_a_z_up_model_up_with_the_world() {
         assert_eq!(bin[at + v * 4 + 1] as i8, 127);
     }
     let part = &read.parts[0];
-    for t in part.indices.chunks_exact(3) {
+    for t in part.indices.as_chunks::<3>().0 {
         let [a, b, c] = [0, 1, 2].map(|k| part.positions[t[k] as usize]);
         let up = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
         assert!(up > 0.0, "a triangle faces down");

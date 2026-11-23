@@ -214,7 +214,7 @@ fn write_pyramid(
     let max_zoom = pyramid_max_zoom(picture.width as u32, picture.height as u32, tile);
     let t = tile as usize;
     let mut blank = vec![0u8; t * t * 3];
-    for pixel in blank.chunks_exact_mut(3) {
+    for pixel in blank.as_chunks_mut::<3>().0 {
         pixel.copy_from_slice(&background);
     }
     let blank_png = encode_png(&blank, tile)?;
@@ -244,7 +244,7 @@ fn write_pyramid(
                         &level.rgb[(sy * level.width + sx0) * 3..(sy * level.width + sx1) * 3];
                     let to = &mut data[row * t * 3..row * t * 3 + from.len()];
                     to.copy_from_slice(from);
-                    if empty && from.chunks_exact(3).any(|p| p != background) {
+                    if empty && from.as_chunks::<3>().0.iter().any(|p| *p != background) {
                         empty = false;
                     }
                 }
