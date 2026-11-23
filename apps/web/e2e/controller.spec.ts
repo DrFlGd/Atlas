@@ -248,14 +248,15 @@ test('on the map the left stick moves it and the triggers zoom, with a crosshair
   await expect(page.getByTestId('pad-reticle')).toBeVisible();
   await expect(hints(page)).toBeVisible();
   await expect(hints(page)).toHaveAttribute('data-context', 'map');
-  await expect(hints(page).locator('.pad-hint-label')).toHaveText([
-    'Move',
-    'Zoom',
-    'Open',
-    'Found',
-    'Filters',
-    'Sections',
-  ]);
+  // Key letters beside buttons hide while the controller is in use.
+  await expect(page.getByTestId('nearest-unfound').locator('kbd')).toHaveCount(0);
+  // A and X show only while there is a location under the crosshair.
+  const held = (await heldLocation(page)) !== '';
+  await expect(hints(page).locator('.pad-hint-label')).toHaveText(
+    held
+      ? ['Move', 'Zoom', 'Open', 'Found', 'Filters', 'Sections']
+      : ['Move', 'Zoom', 'Filters', 'Sections'],
+  );
   // Up on the stick moves the map up.
   const across = await mapStatus(page);
   await setSticks(page, [0, -1, 0, 0]);

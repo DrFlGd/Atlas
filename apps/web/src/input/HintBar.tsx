@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useAtlas } from '../state/store';
 import { hintsFor } from './bindings';
 import { PadGlyphs } from './PadGlyph';
-import { glyphStyle, hintsShown, usePad } from './padState';
+import { glyphStyle, hintsShown, reticleTarget, usePad } from './padState';
 
 /**
  * The bar of the controller's buttons at the foot of the screen, as a
@@ -19,6 +19,11 @@ export function HintBar() {
   const context = usePad((s) => s.context);
   const style = usePad(glyphStyle);
   const lists = useAtlas((s) => (s.game && !s.game.checklists.isEmpty ? 'Lists' : null));
+  // On the map, A and X act on the location under the crosshair (X also on
+  // the one open): drawn again as the map moves, so they show only when
+  // there is one to act on.
+  useAtlas((s) => s.view);
+  const selected = useAtlas((s) => s.selectedId);
   const bar = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,7 +48,13 @@ export function HintBar() {
   }, [shown, context]);
 
   if (!shown) return null;
-  const hints = hintsFor(context, { lists });
+  const underCrosshair = context === 'map' && reticleTarget() !== null;
+  const hints = hintsFor(context, { lists }).filter((hint) => {
+    if (context !== 'map') return true;
+    if (hint.id === 'open-location') return underCrosshair;
+    if (hint.id === 'mark-found') return underCrosshair || selected !== null;
+    return true;
+  });
   return (
     <div
       ref={bar}

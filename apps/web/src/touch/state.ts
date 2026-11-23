@@ -2,6 +2,7 @@ import { overridesShowingOnly, type SearchEntry, type VisibilityOverrides } from
 import { create } from 'zustand';
 import { canKeepScreenOn, keepScreenOn } from '../androidBars';
 import { keyboardHintsOffered } from '../features';
+import { usePad } from '../input/padState';
 import { notify, saveSetting, setFound, setOverrides } from '../state/actions';
 import { hasListsSection, hasMap } from '../state/guides';
 import { useOwnLists } from '../state/ownLists';
@@ -290,5 +291,8 @@ export function setKeepScreenOn(on: boolean): void {
 export function useKeyHints(): boolean {
   const offered = useAtlas(keyboardHintsOffered);
   const mouse = useTouch((s) => s.input === 'mouse');
-  return offered && mouse;
+  // While a controller is in use, its own hint bar shows the buttons: key
+  // letters beside buttons would only point at keys out of reach.
+  const pad = usePad((s) => s.source === 'pad');
+  return offered && mouse && !pad;
 }
