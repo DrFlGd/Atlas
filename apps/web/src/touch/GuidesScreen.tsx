@@ -55,6 +55,7 @@ import { AddToBuildBar, AddToBuildButton } from './AddToBuild';
 import { useAddToBuild } from './buildChoice';
 import { GuideLinksReview } from './GuideLinksReview';
 import { BAR_KEY, setGuidesBarOpen, useGuidesBar } from './guidesBar';
+import { keyLabel, keysOf as bindingKeys } from '../input/bindings';
 import { GuidesFromGames, TitleMaps } from './GuidesFromGames';
 import { ContinueReading, PreviousNext, SourceSwitcher } from './GuideSources';
 import { typingOrDialog, withKey } from './keys';
@@ -394,8 +395,8 @@ function pagesOfSource(game: LoadedGame, view: SourceView): readonly GuideEntry[
   return view.shown ? sourcePages(game, view.shown) : guidesOf(game).contents.pages();
 }
 
-/** The key that opens the landing page of the source shown, as "Home" does. */
-const HOME_KEY = 'h';
+/** The key that opens the landing page of the source shown, as "Home" does (see `input/bindings.ts`). */
+const HOME_KEY = bindingKeys('guides-home')[0]!;
 
 /** H opens the landing page, but while typing, in a dialog, or with a key held with it. */
 function useHomeKey(view: SourceView) {
@@ -425,8 +426,8 @@ function HomeButton({ game, view }: { game: LoadedGame; view: SourceView }) {
       type="button"
       className="touch-icon-button"
       aria-label="Home"
-      title={withKey('Home', 'H', hints)}
-      aria-keyshortcuts="H"
+      title={withKey('Home', keyLabel(HOME_KEY), hints)}
+      aria-keyshortcuts={keyLabel(HOME_KEY)}
       aria-current={here ? 'page' : undefined}
       data-testid="guides-home-button"
       onClick={() => {

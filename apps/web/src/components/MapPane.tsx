@@ -22,6 +22,8 @@ import {
   pickedOnMap,
   useLocationEditor,
 } from '../touch/locations/locationEditorState';
+import { setPadMap, setShownMarkers } from '../input/padState';
+import { Reticle } from '../input/Reticle';
 import { DownloadPanel, MapImagesButton } from './DownloadPanel';
 import { downloadPercent } from './downloadFormat';
 import { UiIcon } from './icons';
@@ -136,7 +138,9 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
       }),
     ];
     setMap(view);
+    setPadMap({ view, container });
     return () => {
+      setPadMap(null);
       unsubscribe.forEach((off) => {
         off();
       });
@@ -199,6 +203,8 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
   // showing a new layer clears its markers and fits the view.
   useEffect(() => {
     if (layerShown) map.setMarkers(markers);
+    // The controller's crosshair holds one of the locations drawn.
+    setShownMarkers(layerShown ? markers : []);
   }, [map, markers, layerShown]);
 
   useEffect(() => {
@@ -275,6 +281,7 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
   return (
     <div className="map-area">
       <div ref={containerRef} className="map-pane" data-testid="map" />
+      <Reticle />
       {touchMode ? null : <LayerSwitcher />}
       {fingers ? null : <MarkerTooltip />}
       <TileNotice />

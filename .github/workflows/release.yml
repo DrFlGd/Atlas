@@ -183,6 +183,16 @@ jobs:
 
           On Linux and the Steam Deck, download **Atlas.AppImage**, put it in the **Applications** folder of your home folder in place of the older one, and make sure **Is executable** is ticked under **Properties**, then **Permissions**.
 
+          ## New in 0.28.0
+
+          - **Use a controller on the map.** The left stick moves the map, and the right stick moves it at a third of the speed for finer aim. RT zooms in and LT zooms out. A crosshair in the middle picks the nearest location: press A to open it, X to mark it found, and the D-pad to jump to the next location. Y opens the types and filters, R3 shows the whole map and L3 goes to the next level.
+          - **Switch sections with the bumpers.** LB and RB go between Map, Guides, Lists, Progress and Games from any screen. In a guide, LT and RT turn the pages, and the right stick scrolls. Menu opens Settings and View opens the key guide.
+          - **Button hints.** When you use a controller, a bar at the bottom shows what its buttons do on that screen. It hides again when you use the mouse, touch or keys.
+          - **Keys and controller.** The key guide now has a Keyboard column and a Controller column. On the keyboard, W A S D move the map, + and - zoom, and Q and E switch sections.
+          - **Settings, Controller.** Choose when the hints show, the button names (letters or shapes), how fast the map moves, and whether up and down are turned around. A line says whether a controller is detected.
+
+          This version has passed the automatic checks only. It has not been tried with a controller on a real Windows PC or Steam Deck yet.
+
           ## New in 0.27.0
 
           - **Atlas updates itself.** A few seconds after it starts, Atlas looks for a newer version. When there is one, a notice shows what is new, with **Install now**, **Later** and **Skip this version**. **Install now** saves your changes, installs the update and starts Atlas again. **Settings** has an **Updates** group with **Check for updates**, and a switch to stop the look at the start.

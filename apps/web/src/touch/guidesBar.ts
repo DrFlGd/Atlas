@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { keyLabel, keysOf } from '../input/bindings';
 import { saveSetting } from '../state/actions';
 import { SETTINGS, progressStore } from '../state/services';
 
@@ -16,8 +17,8 @@ export interface GuidesBarState {
 
 export const useGuidesBar = create<GuidesBarState>()(() => ({ open: true, chosen: false }));
 
-/** The key that folds the bar and brings it back, as its buttons do. */
-export const BAR_KEY = 'B';
+/** The key that folds the bar and brings it back, as its buttons do (see `input/bindings.ts`). */
+export const BAR_KEY = keyLabel(keysOf('guides-bar')[0]!);
 
 /** What is kept, as whether the bar is open: open unless it was folded. */
 export function parseBarOpen(value: unknown): boolean {

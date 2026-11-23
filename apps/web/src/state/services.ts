@@ -104,6 +104,8 @@ export const SETTINGS = {
   updateSkipped: 'updateSkipped',
   /** Whether the Android app keeps the screen on while it is shown. */
   keepScreenOn: 'keepScreenOn',
+  /** The settings of a controller: hints, glyphs, map speed, up and down (see `input/padState.ts`). */
+  controller: 'controller',
   /** The game save linked to a profile (see `state/saves.ts`). */
   saveLink: (profileId: string) => `saveLink:${profileId}`,
   /** Which map shows which game world, as the person chose. */

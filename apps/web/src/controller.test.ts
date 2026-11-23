@@ -102,6 +102,11 @@ describe('padDirection', () => {
     expect(padDirection([0.3, 0.3], none)).toBeNull();
     expect(padDirection([], none)).toBeNull();
   });
+
+  it('reads the D-pad alone on the map, where the left stick moves the map', () => {
+    expect(padDirection([0.9, 0], none, true)).toBeNull();
+    expect(padDirection([0.9, 0], (b) => b === 13, true)).toBe('down');
+  });
 });
 
 describe('repeatDue', () => {
@@ -111,5 +116,10 @@ describe('repeatDue', () => {
     expect(repeatDue(1400, 1000, 1000)).toBe(true);
     expect(repeatDue(1450, 1000, 1400)).toBe(false);
     expect(repeatDue(1520, 1000, 1400)).toBe(true);
+  });
+
+  it('can repeat more slowly, as from location to location', () => {
+    expect(repeatDue(1520, 1000, 1400, 220)).toBe(false);
+    expect(repeatDue(1620, 1000, 1400, 220)).toBe(true);
   });
 });

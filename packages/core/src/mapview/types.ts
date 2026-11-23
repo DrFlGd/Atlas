@@ -214,8 +214,16 @@ export interface MapView {
    * Other layers that had no tiles are looked at again when next shown.
    */
   refreshTiles(): void;
-  /** Moves the view, animated unless `animate` is false. */
-  flyTo(target: FlyToTarget, options?: { animate?: boolean }): void;
+  /**
+   * Moves the view, animated unless `animate` is false. With `exact`, the
+   * zoom is kept as given instead of rounded to the map's zoom steps, so a
+   * controller can zoom smoothly a little at a time.
+   */
+  flyTo(target: FlyToTarget, options?: { animate?: boolean; exact?: boolean }): void;
+  /** Moves the view to a point without changing the zoom, gliding unless `animate` is false. */
+  panTo(target: PixelPoint, options?: { animate?: boolean }): void;
+  /** Shows the whole layer, animated unless `animate` is false. */
+  fitLayer(options?: { animate?: boolean }): void;
   /** Called with the marker id when the user clicks a marker, or null when they click empty map. */
   onSelect(listener: (markerId: string | null) => void): Unsubscribe;
   /**

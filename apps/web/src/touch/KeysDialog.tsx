@@ -1,13 +1,22 @@
 import { useEffect, useId, useRef } from 'react';
 import { UiIcon } from '../components/icons';
+import { CONTEXTS, guideRows, keyLabel, wordsOf } from '../input/bindings';
+import { PadGlyphs } from '../input/PadGlyph';
+import { glyphStyle, usePad } from '../input/padState';
 import { useAtlas } from '../state/store';
-import { keyList, MOUSE_HELP } from './keys';
+import { MOUSE_HELP } from './keys';
 import { setKeysOpen, useTouch } from './state';
 
-/** The list of keys, and what the mouse does on the map: the `?` key, or the keyboard button. */
+/**
+ * The guide of keys and controller, and what the mouse does on the map: the
+ * `?` key, View on a controller, or the keyboard button. Each context has
+ * a table of what can be done there, with its keys and its controller
+ * buttons, from the one table of them (`input/bindings.ts`).
+ */
 export function KeysDialog() {
   const open = useTouch((s) => s.keysOpen);
   const game = useAtlas((s) => s.game);
+  const style = usePad(glyphStyle);
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const lists = game && !game.checklists.isEmpty ? 'Lists' : null;
@@ -36,24 +45,61 @@ export function KeysDialog() {
       {open ? (
         <div className="dialog-body">
           <header className="dialog-head">
-            <h2 id={titleId}>Keys and mouse</h2>
+            <h2 id={titleId}>Keys and controller</h2>
             <button type="button" className="icon-button" aria-label="Close" onClick={close}>
               <UiIcon name="close" />
             </button>
           </header>
-          <h3 className="section-title">Keyboard</h3>
-          <dl className="keys-list">
-            {keyList(lists).map((entry) => (
-              <div key={entry.what} className="keys-row">
-                <dt>
-                  {entry.keys.map((key) => (
-                    <kbd key={key}>{key}</kbd>
-                  ))}
-                </dt>
-                <dd>{entry.what}</dd>
-              </div>
-            ))}
-          </dl>
+          {CONTEXTS.map((context) => {
+            const rows = guideRows(context.id, { lists });
+            if (rows.length === 0) return null;
+            return (
+              <section
+                key={context.id}
+                className="keys-group"
+                aria-labelledby={`${titleId}-${context.id}`}
+                data-testid={`keys-${context.id}`}
+              >
+                <h3 className="section-title" id={`${titleId}-${context.id}`}>
+                  {context.title}
+                </h3>
+                <table className="keys-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">What</th>
+                      <th scope="col">Keyboard</th>
+                      <th scope="col">Controller</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={row.id} data-action={row.id}>
+                        <td>{wordsOf(row, { lists })}</td>
+                        <td className="keys-cell">
+                          {row.keys.length > 0 ? (
+                            row.keys.map((key) => <kbd key={key}>{keyLabel(key)}</kbd>)
+                          ) : (
+                            <span className="muted" aria-label="None">
+                              –
+                            </span>
+                          )}
+                        </td>
+                        <td className="keys-cell keys-pad">
+                          {row.pad.length > 0 ? (
+                            <PadGlyphs buttons={row.pad} style={style} />
+                          ) : (
+                            <span className="muted" aria-label="None">
+                              –
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            );
+          })}
           <h3 className="section-title">Mouse, on the map</h3>
           <dl className="keys-list keys-list-mouse">
             {MOUSE_HELP.map((entry) => (
@@ -63,6 +109,10 @@ export function KeysDialog() {
               </div>
             ))}
           </dl>
+          <p className="muted small keys-note">
+            The controller works where Atlas sees one: Settings says whether it does. Where Steam
+            Input sends keys instead, the keys above work.
+          </p>
         </div>
       ) : null}
     </dialog>

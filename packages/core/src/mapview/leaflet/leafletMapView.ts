@@ -630,8 +630,30 @@ export function createLeafletMapView(
       if (destroyed || !layer) return;
       const center = toLatLng(target.x, target.y);
       const zoom = target.zoom ?? map.getZoom();
-      if (flyOptions.animate === false) map.setView(center, zoom, { animate: false });
-      else map.flyTo(center, zoom);
+      if (flyOptions.exact) {
+        // Leaflet rounds a zoom to its steps unless the step is 0.
+        const snap = map.options.zoomSnap;
+        map.options.zoomSnap = 0;
+        try {
+          map.setView(center, zoom, { animate: false });
+        } finally {
+          map.options.zoomSnap = snap;
+        }
+      } else if (flyOptions.animate === false) {
+        map.setView(center, zoom, { animate: false });
+      } else {
+        map.flyTo(center, zoom);
+      }
+    },
+
+    panTo(target: PixelPoint, panOptions = {}) {
+      if (destroyed || !layer) return;
+      map.panTo(toLatLng(target.x, target.y), { animate: panOptions.animate !== false });
+    },
+
+    fitLayer(fitOptions = {}) {
+      if (destroyed || !layer) return;
+      map.fitBounds(imageBounds(layer), { animate: fitOptions.animate !== false });
     },
 
     onSelect(listener): Unsubscribe {

@@ -12,6 +12,7 @@ import { useOwnPages } from '../state/ownPages';
 import type { LoadedGame } from '../state/store';
 import { GuidesFromGames } from './GuidesFromGames';
 import { typingOrDialog } from './keys';
+import { keysOf } from '../input/bindings';
 import { openPlace } from './reader';
 import type { SourceView } from './sourceView';
 import '../styles/guideSources.css';
@@ -202,9 +203,8 @@ function SourcesMenu({
 // ---------------------------------------------------------------------------
 // Reading a guide in order
 
-/** Keys that turn the pages of a guide: `[` the previous page, `]` the next. */
-export const PREVIOUS_KEY = '[';
-export const NEXT_KEY = ']';
+/** Keys that turn the pages of a guide: `[` the previous page, `]` the next (see `input/bindings.ts`). */
+const [PREVIOUS_KEY, NEXT_KEY] = keysOf('turn-page') as [string, string];
 
 /**
  * At the end of a page of a guide (or on its landing page): the page

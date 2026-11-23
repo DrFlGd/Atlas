@@ -2248,7 +2248,55 @@
 }
 
 .keys-dialog {
-  width: min(480px, calc(100% - 24px));
+  width: min(720px, calc(100% - 24px));
+}
+
+.keys-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.keys-table th {
+  padding: 0 8px 6px 0;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.keys-table td {
+  padding: 6px 8px 6px 0;
+  border-top: 1px solid var(--atlas-border);
+  vertical-align: middle;
+}
+
+.keys-table th:nth-child(2),
+.keys-table th:nth-child(3),
+.keys-cell {
+  width: 9em;
+  white-space: nowrap;
+}
+
+.keys-cell kbd + kbd {
+  margin-left: 4px;
+}
+
+.keys-pad .pad-glyphs {
+  gap: 5px;
+}
+
+.keys-note {
+  margin: 12px 0 0;
+}
+
+@media (max-width: 520px) {
+  .keys-table th:nth-child(2),
+  .keys-table th:nth-child(3),
+  .keys-cell {
+    width: auto;
+    white-space: normal;
+  }
 }
 
 .keys-dialog .section-title {
