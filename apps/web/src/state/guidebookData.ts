@@ -78,10 +78,11 @@ export function titleKey(title: string): string {
  * on its guidebooks.
  */
 export function joinGuidebooks(
-  packs: readonly Pick<ListedPack, 'id' | 'title' | 'gameTitle' | 'guidebooks'>[],
+  packs: readonly Pick<ListedPack, 'id' | 'title' | 'gameTitle' | 'guidebooks' | 'magazines'>[],
   groups: readonly GameGroup[],
 ): Map<string, string[]> {
-  const games = packs.filter((pack) => !pack.guidebooks);
+  // A pack of magazines is no game.
+  const games = packs.filter((pack) => !pack.guidebooks && !pack.magazines);
   const groupOf = new Map<string, GameGroup>();
   for (const group of groups) {
     for (const member of group.members) groupOf.set(member.gameId, group);

@@ -592,6 +592,13 @@ export interface ListedPack {
    * here, so they can add more and remove them. Absent counts as false.
    */
   guidebooksByAtlas?: boolean;
+  /**
+   * A pack of the issues of a magazine (PDF and CBZ files, see
+   * `state/magazines.ts`), which another app wrote: no game, but issues
+   * listed on the shelf of magazines and with the games they cover.
+   * Absent counts as false.
+   */
+  magazines?: boolean;
 }
 
 /** A PDF or CBZ file picked for "Add a guidebook…", served by the shell while it is picked. */

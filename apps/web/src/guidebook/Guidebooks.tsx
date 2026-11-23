@@ -17,6 +17,9 @@ import {
   useGuidebooks,
 } from '../state/guidebooks';
 import { numberFormat } from '../state/derived';
+import { isIssue, issueName } from '../state/magazineData';
+import { useMagazineHits } from '../state/magazines';
+import { IssuesOfGame, MagazineLayer } from './Magazines';
 import '../styles/editor.css';
 import '../styles/guidebooks.css';
 
@@ -46,6 +49,8 @@ export function GuidebookLayer() {
   }, [guidebooks]);
   return (
     <>
+      {/* The shelf of magazines first, so the reader opened from it is over it. */}
+      <MagazineLayer />
       {open ? (
         <Suspense fallback={null}>
           <GuidebookReader />
@@ -151,7 +156,8 @@ export function GuidebookList({
 
 /**
  * Guides of a game that has only guidebooks to read (a pack of guidebooks
- * that joins no game opens on them): their list, and search in their text.
+ * that joins no game opens on them), or only issues of magazines that
+ * cover it: their lists, and search in their text.
  */
 export function GuidebooksAlone({
   game,
@@ -165,6 +171,9 @@ export function GuidebooksAlone({
 }) {
   const [query, setQuery] = useState('');
   const hits = useGuidebookHits(game.entry.id, query);
+  const magazineHits = useMagazineHits(game.entry.id, query);
+  const guidebooks = useGameGuidebooks(game.entry.id).length > 0;
+  const words = guidebooks ? 'the guidebooks' : 'the magazines';
   return (
     <div
       className={`guides ${wide ? 'guides-wide' : 'guides-compact'} guides-no-menu`}
@@ -177,8 +186,8 @@ export function GuidebooksAlone({
           <input
             type="search"
             className="guides-search-input"
-            placeholder="Search the guidebooks"
-            aria-label="Search the guidebooks"
+            placeholder={`Search ${words}`}
+            aria-label={`Search ${words}`}
             data-testid="guidebooks-search"
             value={query}
             onChange={(event) => {
@@ -187,54 +196,66 @@ export function GuidebooksAlone({
           />
         </div>
         {query.trim() ? (
-          hits.length > 0 ? (
-            <GuidebookResults hits={hits} query={query} />
+          hits.length > 0 || magazineHits.length > 0 ? (
+            <>
+              <GuidebookResults hits={hits} query={query} />
+              <GuidebookResults hits={magazineHits} query={query} heading="In magazines" />
+            </>
           ) : (
             <p className="guidebooks-lead" role="status">
-              No page of the guidebooks has “{query.trim()}”.
+              No page of {words} has “{query.trim()}”.
             </p>
           )
         ) : null}
         <GuidebookList gameId={game.entry.id} gameTitle={game.pack.manifest.title} />
+        <IssuesOfGame gameId={game.entry.id} />
         {children}
       </div>
     </div>
   );
 }
 
-/** Results of a search in a game's guidebooks: each page found, which opens the reader there. */
+/**
+ * Results of a search in a game's guidebooks, or in the pages about it in
+ * the issues of magazines that cover it: each page found, which opens the
+ * reader there.
+ */
 export function GuidebookResults({
   hits,
   query,
   compact = false,
+  heading = 'In guidebooks',
 }: {
   hits: readonly GuidebookHit[];
   query: string;
   /** Fewer, in the search of the map. */
   compact?: boolean;
+  heading?: 'In guidebooks' | 'In magazines';
 }) {
   if (hits.length === 0) return null;
   const shown = compact ? hits.slice(0, 5) : hits;
+  const magazines = heading === 'In magazines';
   return (
     <section
       className="guidebook-results"
-      aria-label="In guidebooks"
-      data-testid="guidebook-results"
+      aria-label={heading}
+      data-testid={magazines ? 'magazine-results' : 'guidebook-results'}
     >
-      <h2 className="touch-group-title">In guidebooks</h2>
+      <h2 className="touch-group-title">{heading}</h2>
       <ul className="touch-plain-list guides-entries">
         {shown.map((hit) => (
           <li key={`${hit.guidebook.key}|${hit.page}`} className="guides-result-row">
             <button
               type="button"
               className="guides-entry guides-result"
-              data-testid="guidebook-result"
+              data-testid={magazines ? 'magazine-result' : 'guidebook-result'}
               onClick={() => {
                 openGuidebook(hit.guidebook, hit.page, query);
               }}
             >
               <span className="guides-result-title">
-                {hit.guidebook.title}, page {numberFormat.format(hit.page)}
+                {isIssue(hit.guidebook) ? issueName(hit.guidebook) : hit.guidebook.title}, page{' '}
+                {numberFormat.format(hit.page)}
               </span>
               <span className="guides-result-line">
                 <Marked hit={hit} />
@@ -246,8 +267,9 @@ export function GuidebookResults({
       {hits.length > shown.length ? (
         <p className="guidebooks-lead">
           {numberFormat.format(hits.length - shown.length)} more{' '}
-          {hits.length - shown.length === 1 ? 'page' : 'pages'} in guidebooks. Find in a guidebook
-          lists them all.
+          {hits.length - shown.length === 1 ? 'page' : 'pages'} in{' '}
+          {magazines ? 'magazines. Find in an issue' : 'guidebooks. Find in a guidebook'} lists them
+          all.
         </p>
       ) : null}
     </section>

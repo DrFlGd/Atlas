@@ -9,6 +9,7 @@ import { parseId, type GuideEntry, type OwnPages, type Picture } from '@atlas/sc
 import type { GuidePicture } from '../markdown';
 import { guideSearchText } from '../markdown';
 import { useGameGuidebooks } from './guidebooks';
+import { useGameCoverage } from './magazines';
 import { useGuideLinks, useGuideGamesOffered, type OtherGuides } from './guideLinks';
 import { ownPagesOf, useOwnPages } from './ownPages';
 import { ownPictureUrl } from './ownPictures';
@@ -124,7 +125,9 @@ export function useGuidesSection(game: LoadedGame | null): boolean {
   );
   // A game's guidebooks are read in Guides too.
   const guidebooks = useGameGuidebooks(game?.entry.id).length > 0;
-  return hasGuidePages(game) || (offered && hasMap(game)) || guidebooks;
+  // And the issues of magazines that cover it.
+  const magazines = useGameCoverage(game?.entry.id).length > 0;
+  return hasGuidePages(game) || (offered && hasMap(game)) || guidebooks || magazines;
 }
 
 /** Whether a game has a map: a game of guides and lists only has none. */

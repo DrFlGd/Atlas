@@ -1,0 +1,176 @@
+/* ---------------------------------------------------------------------------
+ * The shelf of magazines (guidebook/Magazines.tsx): the whole window, a bar
+ * above, and a grid of magazine titles or of one title's issues, each with
+ * its cover. In both themes through the theme's tokens; larger targets for
+ * fingers. The bar's buttons are the reader's (guidebooks.css). */
+
+.mz-shelf {
+  box-sizing: border-box;
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  overflow: hidden;
+}
+
+.mz-shelf[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.mz-shelf::backdrop {
+  background: var(--atlas-bg);
+}
+
+.mz-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+}
+
+.mz-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.mz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.mz-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mz-card:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.mz-card:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+.mz-card[aria-current='true'] {
+  border-color: var(--atlas-accent);
+}
+
+.mz-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mz-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mz-card-facts {
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+/* A cover keeps a page's shape, whatever the picture's. */
+.mz-cover {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface);
+  object-fit: cover;
+}
+
+.mz-cover-small {
+  flex: none;
+  width: 40px;
+}
+
+.mz-cover-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--atlas-border);
+  color: var(--atlas-muted);
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  overflow: hidden;
+}
+
+.mz-cover-small.mz-cover-none {
+  font-size: 13px;
+}
+
+.magazine-coverage {
+  margin: 16px 0;
+}
+
+.guides-landing .magazine-coverage {
+  margin: 8px 0 16px;
+}
+
+/* A phone: two issues side by side, and less room around them. */
+@media (max-width: 499px) {
+  .mz-body {
+    padding: 12px;
+  }
+
+  .mz-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+/* Fingers, and the layout made for them on a computer: larger targets. */
+@media (pointer: coarse) {
+  .mz-bar .gb-button,
+  .mz-bar .gb-icon-button {
+    min-height: 48px;
+  }
+
+  .mz-bar .gb-icon-button {
+    min-width: 48px;
+  }
+}
+
+.touch[data-input='touch'] .mz-bar .gb-button,
+.touch[data-input='touch'] .mz-bar .gb-icon-button {
+  min-height: 48px;
+}
+
+.touch[data-input='touch'] .mz-bar .gb-icon-button {
+  min-width: 48px;
+}

@@ -41,6 +41,8 @@ export interface AndroidShell {
   open: { name: string; contents: string } | null;
   /** One's own files the next pack file import gives back. */
   importMine: { ownLists?: string; ownLocations?: string } | null;
+  /** More packs imported into the maps folder, listed after the demo (`ListedPack`). */
+  more?: Record<string, unknown>[];
 }
 
 /** Commands only the desktop shell has, or that need folders: never called on Android. */
@@ -113,8 +115,9 @@ export function installAndroidShell(desktopOnly: string[]) {
             bundled: false,
             imported: null,
           },
+          ...(shell.more ?? []),
         ]
-      : [],
+      : (shell.more ?? []),
     hidden: [],
     locations: [],
     busy: [],

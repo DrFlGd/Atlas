@@ -410,6 +410,20 @@
   }
 }
 
+/* The layout made for fingers on a computer (a Steam Deck), whose system
+ * may still report a mouse: the same larger targets. */
+.touch[data-input='touch'] .gb-button,
+.touch[data-input='touch'] .gb-icon-button,
+.touch[data-input='touch'] .gb-page-input,
+.touch[data-input='touch'] .gb-find-input,
+.touch[data-input='touch'] .gb-entry {
+  min-height: 44px;
+}
+
+.touch[data-input='touch'] .gb-icon-button {
+  min-width: 44px;
+}
+
 /* ---------------------------------------------------------------------------
  * Guidebooks in Guides and the Library: each one's title and facts, and
  * the ways to open, add and remove them. */
