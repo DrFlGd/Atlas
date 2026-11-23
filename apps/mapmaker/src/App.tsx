@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { FloorsPanel } from './FloorsPanel';
 import {
   CATEGORY_LABELS,
   SOURCE_LABELS,
   areaNotes,
   boundsText,
+  canAdjustFloors,
+  cutsLine,
+  floorRangeText,
   categoryCounts,
   count,
   floorPreviewFile,
@@ -12,6 +16,7 @@ import {
   makeSuggestedFileName,
   makeSummaryLine,
   sceneLines,
+  waitingCuts,
   plural,
   previewFile,
   sourceDetails,
@@ -26,7 +31,15 @@ import {
   type MarkerCategory,
   type Report,
 } from './report';
-import { errorText, shell, type AppInfo, type CheckStatus, type SavedReport } from './shell';
+import {
+  errorText,
+  shell,
+  type AppInfo,
+  type CheckStatus,
+  type FloorEntry,
+  type FloorOverrides,
+  type SavedReport,
+} from './shell';
 
 const SOURCES: GeometrySourceName[] = ['collision', 'navmesh', 'mapPieces'];
 const POLL_MS = 300;
@@ -62,6 +75,8 @@ function MapMaker() {
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedReport | null>(null);
   const [make3d, setMake3d] = useState(true);
+  const [overrides, setOverrides] = useState<FloorOverrides>({});
+  const [adjusting, setAdjusting] = useState<string | null>(null);
 
   useEffect(() => {
     void api.appInfo().then(
@@ -74,7 +89,13 @@ function MapMaker() {
         setProblem(errorText(error));
       },
     );
-    void api.checkStatus().then(setStatus, () => undefined);
+    // The last make's report, from when the app was open before, so its floors can be adjusted.
+    void api.restoreLastMake().then(setStatus, () => {
+      void api.checkStatus().then(setStatus, () => undefined);
+    });
+    api.floorOverridesRead().then(setOverrides, (error: unknown) => {
+      setProblem(`Your floor cuts could not be read: ${errorText(error)}`);
+    });
   }, [api]);
 
   const running = status?.state === 'running' || status?.state === 'cancelling';
@@ -137,8 +158,30 @@ function MapMaker() {
     }
   }, [api, status]);
 
-  const report = status?.state === 'done' ? status.report : null;
-  const what = status?.kind === 'make' ? 'making of the map' : 'check';
+  const remake = useCallback(
+    async (area: string) => {
+      setProblem(null);
+      setSaved(null);
+      try {
+        setStatus(await api.remakeStart(area, make3d));
+      } catch (error) {
+        setProblem(errorText(error));
+      }
+    },
+    [api, make3d],
+  );
+
+  // A make's report stays shown while one of its areas is made again, and when that fails.
+  const report = status?.report ?? null;
+  const what =
+    status?.kind === 'make'
+      ? 'making of the map'
+      : status?.kind === 'remake'
+        ? 'making of the area again'
+        : 'check';
+  const adjusted = isMakeReport(report)
+    ? report.areas.find((area) => area.key === adjusting)
+    : null;
 
   return (
     <main className="mm-page">
@@ -252,11 +295,20 @@ function MapMaker() {
         </p>
       )}
 
-      {status?.state === 'failed' && <Failure status={status} />}
+      {status?.state === 'failed' && (
+        <Failure
+          status={status}
+          onMakeAll={
+            status.kind === 'remake' && status.errorCode ? () => void start('make') : undefined
+          }
+        />
+      )}
       {status?.state === 'cancelled' && (
         <p className="mm-alert">
-          The {what} was stopped. Nothing was changed in the maps folder. Press a button above to
-          start again.
+          The {what} was stopped. Nothing was changed in the maps folder.{' '}
+          {status.kind === 'remake'
+            ? 'Your map pack is as it was.'
+            : 'Press a button above to start again.'}
         </p>
       )}
 
@@ -323,8 +375,44 @@ function MapMaker() {
               )}
             </p>
           </section>
-          {isMakeReport(report) ? <MakeResults report={report} /> : <Results report={report} />}
+          {isMakeReport(report) ? (
+            <MakeResults
+              key={`${status?.runId ?? 0}:${report.updatedAt ?? report.createdAt}`}
+              report={report}
+              ownFor={report.options?.floorOverrides?.usedFor ?? []}
+              saved={overrides[report.game.id] ?? {}}
+              running={running}
+              onAdjust={setAdjusting}
+            />
+          ) : (
+            <Results report={report} />
+          )}
         </>
+      )}
+      {isMakeReport(report) && adjusted && (
+        <FloorsPanel
+          key={`${adjusted.key}:${report.updatedAt ?? report.createdAt}`}
+          api={api}
+          area={adjusted}
+          game={report.game.id}
+          status={status}
+          make3d={make3d}
+          remadeAt={
+            report.remade?.area === adjusted.key
+              ? new Date(report.remade.at).toLocaleTimeString()
+              : null
+          }
+          onClose={() => {
+            setAdjusting(null);
+          }}
+          onOverrides={setOverrides}
+          onRemake={remake}
+          onCancel={() => void cancel()}
+          onMakeAll={() => {
+            setAdjusting(null);
+            void start('make');
+          }}
+        />
       )}
     </main>
   );
@@ -354,11 +442,31 @@ function Progress({ status }: { status: CheckStatus }) {
   );
 }
 
-function Failure({ status }: { status: CheckStatus }) {
+function Failure({
+  status,
+  onMakeAll,
+}: {
+  status: CheckStatus;
+  onMakeAll?: (() => void) | undefined;
+}) {
+  const title =
+    status.kind === 'make'
+      ? 'Making the map'
+      : status.kind === 'remake'
+        ? 'Making the area again'
+        : 'The check';
   return (
     <section className="mm-card mm-bad-card" role="alert">
-      <h2>{status.kind === 'make' ? 'Making the map' : 'The check'} stopped with an error</h2>
+      <h2>{title} stopped with an error</h2>
       <p>{status.error ?? 'The file reader stopped unexpectedly.'}</p>
+      {status.kind === 'remake' && <p>Your map pack was left as it was.</p>}
+      {onMakeAll && (
+        <div className="mm-row">
+          <button type="button" className="button button-primary" onClick={onMakeAll}>
+            Make map (all areas)
+          </button>
+        </div>
+      )}
       {status.helperOutput.length > 0 && (
         <details>
           <summary>Details for the thread</summary>
@@ -581,15 +689,41 @@ const PREVIEW_LEGEND: [MarkerCategory, string][] = [
   ['souls', 'var(--mm-dot-souls)'],
 ];
 
-function MakeResults({ report }: { report: MakeReport }) {
+interface Adjusting {
+  /** Areas whose floors are the player's own cuts. */
+  ownFor: string[];
+  /** The player's floor cuts as saved now, by area. */
+  saved: Record<string, FloorEntry>;
+  running: boolean;
+  onAdjust: (area: string) => void;
+}
+
+function MakeResults({ report, ...adjusting }: { report: MakeReport } & Adjusting) {
   const summary = report.summary;
   const made = report.areas.filter((area) => !area.skipped);
   const threeD = report.areas.some((area) => area.scene);
+  const remade = report.remade;
+  const ownFile = report.options?.floorOverrides;
   return (
     <>
       <section className="mm-card" aria-labelledby="result-title">
         <h2 id="result-title">{gameHeadline(report.game)}</h2>
         <p>{makeSummaryLine(report)}</p>
+        {remade && (
+          <p className="small">
+            {remade.name} was made again at {new Date(remade.at).toLocaleTimeString()}; the other
+            areas are as the make before made them.
+          </p>
+        )}
+        {ownFile && ownFile.usedFor.length > 0 && (
+          <p className="small">
+            Your floor cuts were used for {plural(ownFile.usedFor.length, 'area')}:{' '}
+            {ownFile.usedFor
+              .map((key) => report.areas.find((area) => area.key === key)?.name ?? key)
+              .join(', ')}
+            .
+          </p>
+        )}
         {summary && <p className="small">{categoryCounts(summary.markersByCategory)}.</p>}
         {report.warnings.length > 0 && (
           <>
@@ -617,20 +751,41 @@ function MakeResults({ report }: { report: MakeReport }) {
             </thead>
             <tbody>
               {report.areas.map((area) => (
-                <MadeAreaRow key={area.id} area={area} threeD={threeD} />
+                <MadeAreaRow key={area.id} area={area} threeD={threeD} {...adjusting} />
               ))}
             </tbody>
           </table>
         </div>
       </section>
-      {made.length > 0 && <FloorPreviews areas={made} />}
+      {made.length > 0 && <FloorPreviews areas={made} {...adjusting} />}
     </>
   );
 }
 
-function MadeAreaRow({ area, threeD }: { area: MadeArea; threeD: boolean }) {
+function AdjustButton({ area, running, onAdjust }: { area: MadeArea } & Adjusting) {
+  if (!canAdjustFloors(area)) return null;
+  return (
+    <button
+      type="button"
+      className="button mm-adjust"
+      disabled={running}
+      onClick={() => {
+        onAdjust(area.key);
+      }}
+    >
+      Adjust floors
+    </button>
+  );
+}
+
+function MadeAreaRow({
+  area,
+  threeD,
+  ...adjusting
+}: { area: MadeArea; threeD: boolean } & Adjusting) {
   const notes = areaNotes(area);
   const floors = area.floors ?? [];
+  const cuts = cutsLine(area);
   return (
     <tr>
       <th scope="row">
@@ -640,12 +795,31 @@ function MadeAreaRow({ area, threeD }: { area: MadeArea; threeD: boolean }) {
       <td>
         {floors.length === 0
           ? '–'
-          : floors.map((floor) => (
-              <div key={floor.index} className="small">
-                {floor.name}
-                <span className="muted"> · {count(floor.areaSquareMetres)} m²</span>
-              </div>
-            ))}
+          : [...floors].reverse().map((floor) => {
+              const range = floorRangeText(floor);
+              return (
+                <div key={floor.index} className="small">
+                  {floor.name}
+                  <span className="muted">
+                    {' '}
+                    · {count(floor.areaSquareMetres)} m²{range ? ` · ${range}` : ''}
+                  </span>
+                </div>
+              );
+            })}
+        {cuts && (
+          <div className="small muted mm-cuts">
+            {cuts}
+            {adjusting.ownFor.includes(area.key) ? ' · your floor cuts' : ''}
+          </div>
+        )}
+        {waitingCuts(area, adjusting.saved[area.key], adjusting.ownFor.includes(area.key)) && (
+          <div className="small mm-tone-warn">
+            Your saved floor cuts are not in this map yet: press Adjust floors, then Make this area
+            again.
+          </div>
+        )}
+        <AdjustButton area={area} {...adjusting} />
       </td>
       <td className="small">
         {area.markers ? (
@@ -683,7 +857,7 @@ function MadeAreaRow({ area, threeD }: { area: MadeArea; threeD: boolean }) {
   );
 }
 
-function FloorPreviews({ areas }: { areas: MadeArea[] }) {
+function FloorPreviews({ areas, ...adjusting }: { areas: MadeArea[] } & Adjusting) {
   const api = shell!;
   const [images, setImages] = useState<Record<string, string>>({});
   const loading = useRef(new Set<string>());
@@ -725,9 +899,10 @@ function FloorPreviews({ areas }: { areas: MadeArea[] }) {
       </ul>
       <div className="mm-previews">
         {areas.flatMap((area) =>
-          (area.floors ?? []).map((floor) => {
+          (area.floors ?? []).map((floor, index) => {
             const file = floorPreviewFile(floor);
             if (!file) return null;
+            const range = floorRangeText(floor);
             return (
               <figure key={file} className="mm-preview">
                 {images[file] ? (
@@ -737,7 +912,12 @@ function FloorPreviews({ areas }: { areas: MadeArea[] }) {
                 )}
                 <figcaption className="small">
                   {area.name}
-                  <span className="muted"> · {floor.name}</span>
+                  <span className="muted">
+                    {' '}
+                    · {floor.name}
+                    {range ? ` (${range})` : ''}
+                  </span>
+                  {index === 0 && <AdjustButton area={area} {...adjusting} />}
                 </figcaption>
               </figure>
             );

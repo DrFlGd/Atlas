@@ -194,3 +194,53 @@ def test_output_folder_rules(tmp_path: Path) -> None:
     for bad in (game, game / "sub", tmp_path):
         with pytest.raises(UnsafeOutputError):
             check_output_folder(bad, game)
+
+
+def test_make_an_area_again_and_its_floor_views(dsr_map_folder: Path, tmp_path: Path) -> None:
+    """As the app runs them: Make map, then the Adjust floors views (one answer per request, while standard input
+    stays open), then Make this area again with the player's floor cuts."""
+    out, maps = tmp_path / "out", tmp_path / "Maps"
+    made = helper("make", str(dsr_map_folder), "--out", str(out), "--maps-folder", str(maps), "--no-3d")
+    assert made.returncode == 0, made.stderr[-2000:]
+
+    env = {**os.environ, "PYTHONPATH": str(PACKAGE_ROOT), "PYTHONIOENCODING": "utf-8"}
+    process = subprocess.Popen(
+        [sys.executable, "-m", "atlas_gamefiles", "floor-views", str(out), "--area", "m15_01"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=env,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    try:
+        assert json.loads(process.stdout.readline())["event"] == "ready"
+        for request_id, cuts in ((1, [4.5]), (2, [])):
+            process.stdin.write(json.dumps({"id": request_id, "cuts": cuts}) + "\n")
+            process.stdin.flush()
+            answer = json.loads(process.stdout.readline())
+            assert answer["event"] == "views" and answer["id"] == request_id
+            assert len(answer["floors"]) == len(cuts) + 1
+        process.stdin.close()
+        assert process.wait(60) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+    own = tmp_path / "floor-overrides.json"
+    own.write_text(json.dumps({"dark-souls-remastered": {"m15_01": {"cuts": []}}}), encoding="utf-8")
+    again = helper(
+        "make", str(dsr_map_folder), "--out", str(out), "--maps-folder", str(maps), "--no-3d",
+        "--remake", "m15_01", "--floor-overrides", str(own),
+    )
+    assert again.returncode == 0, again.stderr[-2000:]
+    events = lines(again.stdout)
+    assert next(e for e in events if e["event"] == "pack")["replaced"] == "m15_01"
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert report["options"]["floorOverrides"]["usedFor"] == ["m15_01"]
+
+    assert helper("make", str(dsr_map_folder), "--out", str(out), "--remake", "../x").returncode == 2
+    missing = helper("make", str(dsr_map_folder), "--out", str(tmp_path / "out2"), "--maps-folder", str(tmp_path / "none"), "--remake", "m15_01")
+    assert missing.returncode == 2
+    assert lines(missing.stdout)[-1]["code"] == "pack-missing"

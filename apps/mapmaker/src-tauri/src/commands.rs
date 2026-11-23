@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
@@ -14,8 +15,9 @@ use tokio::sync::oneshot;
 
 use crate::{
     checks::{self, Checks, Job, Status},
-    maps,
-    settings::{self, Settings},
+    floorviews::FloorViews,
+    maps, overrides,
+    settings::{self, LastMake, Settings},
 };
 
 /// The report saved last, which "Show in folder" reveals.
@@ -48,6 +50,18 @@ fn settings_file<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
         .app_config_dir()
         .map(|dir| dir.join("settings.json"))
         .map_err(|error| error.to_string())
+}
+
+fn floor_overrides_file<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(overrides::FILE_NAME))
+        .map_err(|error| error.to_string())
+}
+
+/// The player's floor cuts file for the helper, when there is one.
+fn floor_overrides_for_helper<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    floor_overrides_file(app).ok().filter(|file| file.is_file())
 }
 
 async fn chosen_path(
@@ -151,8 +165,208 @@ pub fn make_start<R: Runtime>(
         maps_folder,
         three_d: make_3d,
         scene_builder: checks::find_scene_builder(),
+        floor_overrides: floor_overrides_for_helper(&app),
     };
     start(&app, &checks, folder, job, "makes")
+}
+
+/// Starts making one area (`mAA_BB`) of the last make again, with the player's floor cuts, and putting its new map
+/// in place of the old one in the pack that make installed.
+#[tauri::command]
+pub fn remake_start<R: Runtime>(
+    app: AppHandle<R>,
+    checks: State<'_, Checks>,
+    views: State<'_, FloorViews>,
+    area: String,
+    make_3d: bool,
+) -> Result<Status, String> {
+    let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
+    let (folder, out_dir, _) = checks
+        .last_make()
+        .ok_or("Make the map first: then its areas can be made again.")?;
+    if !folder.is_dir() {
+        return Err(format!(
+            "The game folder {} is not there any more. Choose it and press Make map.",
+            folder.display()
+        ));
+    }
+    let helper = checks::find_helper().ok_or(
+        "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
+    )?;
+    // The views read the area's floor data, which the run writes anew.
+    views.close();
+    let job = Job::Remake {
+        maps_folder: viewer_maps_folder(&app)?,
+        three_d: make_3d,
+        scene_builder: checks::find_scene_builder(),
+        floor_overrides: floor_overrides_for_helper(&app),
+        area: key,
+    };
+    checks.start(&helper, job, &folder, &out_dir)
+}
+
+/// Shows the report of the last make of an earlier session again, when the app has just opened.
+#[tauri::command]
+pub fn restore_last_make<R: Runtime>(app: AppHandle<R>, checks: State<'_, Checks>) -> Status {
+    if let (Ok(file), Ok(maps_folder)) = (settings_file(&app), viewer_maps_folder(&app)) {
+        if let Some(last) = settings::read(&file).last_make {
+            checks.restore(Path::new(&last.folder), Path::new(&last.out), &maps_folder);
+        }
+    }
+    checks.status()
+}
+
+/// The player's floor cuts: `{game: {mAA_BB: {cuts, names}}}`.
+#[tauri::command]
+pub fn floor_overrides_read<R: Runtime>(app: AppHandle<R>) -> Result<Value, String> {
+    overrides::read(&floor_overrides_file(&app)?).map(Value::Object)
+}
+
+/// Sets one area's floor cuts and names, or with no `entry` removes them ("Back to automatic"). Returns them all.
+#[tauri::command]
+pub fn floor_overrides_set<R: Runtime>(
+    app: AppHandle<R>,
+    game: String,
+    area: String,
+    entry: Option<Value>,
+) -> Result<Value, String> {
+    overrides::set_area(&floor_overrides_file(&app)?, &game, &area, entry.as_ref())
+        .map(Value::Object)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FloorCutsFile {
+    name: String,
+    areas: usize,
+    /// After a load: the player's floor cuts with those of the file.
+    overrides: Option<Value>,
+}
+
+/// "Save my floor cuts to a file…": asks where, and writes the game's floor cuts there. `None` when the dialog
+/// was closed.
+#[tauri::command]
+pub async fn floor_overrides_save_file<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    game: String,
+) -> Result<Option<FloorCutsFile>, String> {
+    if !overrides::is_game(&game) {
+        return Err(format!("{game} is not a game."));
+    }
+    let (contents, areas) = overrides::export(&floor_overrides_file(&app)?, &game)?;
+    if areas == 0 {
+        return Err("You have not set any floor cuts yet.".to_owned());
+    }
+    let mut dialog = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Save your floor cuts")
+        .set_file_name(format!("atlas-floor-cuts-{game}.json"))
+        .add_filter("Floor cuts", &["json"]);
+    if let Ok(documents) = window.path().document_dir() {
+        dialog = dialog.set_directory(documents);
+    }
+    let Some(mut path) = chosen_path(|done| dialog.save_file(done)).await? else {
+        return Ok(None);
+    };
+    if path.extension().is_none() {
+        path.set_extension("json");
+    }
+    let text = serde_json::to_string_pretty(&contents).map_err(|error| error.to_string())?;
+    fs::write(
+        &path,
+        text + "
+",
+    )
+    .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
+    Ok(Some(FloorCutsFile {
+        name: file_name(&path),
+        areas,
+        overrides: None,
+    }))
+}
+
+/// "Load floor cuts from a file…": asks for a file and takes its floor cuts in (they replace the player's for the
+/// same areas). `None` when the dialog was closed.
+#[tauri::command]
+pub async fn floor_overrides_load_file<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+) -> Result<Option<FloorCutsFile>, String> {
+    let mut dialog = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Load floor cuts")
+        .add_filter("Floor cuts", &["json"]);
+    if let Ok(documents) = window.path().document_dir() {
+        dialog = dialog.set_directory(documents);
+    }
+    let Some(path) = chosen_path(|done| dialog.pick_file(done)).await? else {
+        return Ok(None);
+    };
+    let (games, areas) = overrides::import(&floor_overrides_file(&app)?, &path)?;
+    Ok(Some(FloorCutsFile {
+        name: file_name(&path),
+        areas,
+        overrides: Some(Value::Object(games)),
+    }))
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Opens the Adjust floors views of an area of the last make (see floorviews.rs): its `ready` line.
+#[tauri::command]
+pub async fn floor_views_open(
+    checks: State<'_, Checks>,
+    views: State<'_, FloorViews>,
+    area: String,
+) -> Result<Value, String> {
+    let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
+    let (_, out_dir, _) = checks.last_make().ok_or("Make the map first.")?;
+    let helper = checks::find_helper().ok_or(
+        "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
+    )?;
+    let views = views.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || views.open(&helper, &out_dir, &key))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// The Adjust floors views for these cuts and names.
+#[tauri::command]
+pub async fn floor_views_request(
+    views: State<'_, FloorViews>,
+    area: String,
+    cuts: Vec<f64>,
+    names: Vec<String>,
+) -> Result<Value, String> {
+    let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
+    let cuts: Vec<f64> = cuts
+        .into_iter()
+        .filter(|c| c.is_finite())
+        .take(32)
+        .collect();
+    let names: Vec<String> = names
+        .into_iter()
+        .take(33)
+        .map(|name| name.chars().take(80).collect())
+        .collect();
+    let views = views.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || views.request(&key, &cuts, &names))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn floor_views_close(views: State<'_, FloorViews>) {
+    views.close();
 }
 
 fn start<R: Runtime>(
@@ -177,15 +391,25 @@ fn start<R: Runtime>(
         .map_err(|error| error.to_string())?
         .join(runs);
     let out_dir = checks::new_run_folder(&base)?;
+    let is_make = matches!(job, Job::Make { .. });
     let status = checks.start(&helper, job, &folder_path, &out_dir)?;
     let file = settings_file(app)?;
-    let mut settings = settings::read(&file);
-    if settings.last_folder.as_deref() != Some(folder.as_str()) {
-        settings = Settings {
-            last_folder: Some(folder),
-            ..settings
-        };
-        let _ = settings::write(&file, &settings);
+    let settings = settings::read(&file);
+    let last_make = if is_make {
+        Some(LastMake {
+            folder: folder.clone(),
+            out: out_dir.display().to_string(),
+        })
+    } else {
+        settings.last_make.clone()
+    };
+    let changed = Settings {
+        last_folder: Some(folder),
+        last_make,
+        ..settings.clone()
+    };
+    if changed != settings {
+        let _ = settings::write(&file, &changed);
     }
     Ok(status)
 }

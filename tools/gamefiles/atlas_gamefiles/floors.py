@@ -380,16 +380,68 @@ def _stacked_with(surfaces: Surfaces, members: np.ndarray, floors: np.ndarray, t
     return bool((np.abs(surfaces.height[other[chosen]] - surfaces.height[member[chosen]]) >= clearance).any())
 
 
-def plan_floors(
-    triangles: np.ndarray, config: dict[str, tp.Any] | None = None, overrides: dict[str, tp.Any] | None = None
-) -> FloorPlan:
+PROFILE_STEP = 0.5  # metres per bar of the height profile
+PROFILE_BARS = 800  # at most; a taller area gets taller bars
+
+
+def height_profile(heights: np.ndarray, cell: float) -> dict[str, tp.Any]:
+    """How much walkable floor there is at each height: square metres (seen from above) per `step` metres, from
+    `low` up (bar i covers low + i * step to low + (i + 1) * step). For the Map Maker's Adjust floors panel."""
+    if len(heights) == 0:
+        return {"low": 0.0, "high": 0.0, "step": PROFILE_STEP, "areas": []}
+    bottom, top = float(heights.min()), float(heights.max())
+    step = PROFILE_STEP
+    while (top - bottom) / step > PROFILE_BARS:
+        step *= 2
+    low = math.floor(bottom / step) * step
+    bars = max(1, int(math.floor((top - low) / step)) + 1)
+    index = np.clip(((heights - low) / step).astype(np.int64), 0, bars - 1)
+    areas = np.bincount(index, minlength=bars) * cell * cell
+    return {"low": round(low, 2), "high": round(low + bars * step, 2), "step": step, "areas": [int(round(a)) for a in areas]}
+
+
+@dataclass
+class Prepared:
+    """What finding floors works out before any cut, kept to plan the same triangles again with other cuts (the
+    Adjust floors panel redraws its views from it)."""
+
+    settings: dict[str, float]
+    triangles: np.ndarray
+    walkable: np.ndarray
+    walls: np.ndarray
+    flipped: bool
+    walk_index: np.ndarray
+    surfaces: Surfaces | None
+    surface_of_sample: np.ndarray
+    sample_tri: np.ndarray
+    auto: list[float]
+    notes: list[dict[str, tp.Any]]
+
+
+def prepare(triangles: np.ndarray, config: dict[str, tp.Any] | None = None) -> Prepared:
     settings = settings_from(config)
-    overrides = overrides or {}
     triangles = np.asarray(triangles, dtype=np.float32).reshape(-1, 3, 3)
     walkable, walls, flipped = classify(triangles, settings) if len(triangles) else (
         np.zeros(0, bool), np.zeros(0, bool), False
     )
     walk_index = np.flatnonzero(walkable)
+    empty = np.zeros(0, dtype=np.int64)
+    if len(walk_index) == 0:
+        return Prepared(settings, triangles, walkable, walls, flipped, walk_index, None, empty, empty, [], [])
+    surfaces, surface_of_sample, sample_tri = build_surfaces(triangles[walk_index], settings["cell"])
+    auto, notes = auto_cuts(surfaces, settings)
+    return Prepared(settings, triangles, walkable, walls, flipped, walk_index, surfaces, surface_of_sample, sample_tri, auto, notes)
+
+
+def plan_floors(
+    triangles: np.ndarray | Prepared, config: dict[str, tp.Any] | None = None, overrides: dict[str, tp.Any] | None = None
+) -> FloorPlan:
+    """The floors of `triangles` (or of triangles prepared before, with `prepare`, whose settings then apply)."""
+    prepared = triangles if isinstance(triangles, Prepared) else prepare(triangles, config)
+    settings = prepared.settings
+    overrides = overrides or {}
+    triangles = prepared.triangles
+    walkable, walls, flipped, walk_index = prepared.walkable, prepared.walls, prepared.flipped, prepared.walk_index
     triangle_floor = np.full(len(triangles), -1, dtype=np.int32)
     report: dict[str, tp.Any] = {
         "triangles": int(len(triangles)),
@@ -398,16 +450,18 @@ def plan_floors(
         "windingFlipped": flipped,
         "settings": settings,
     }
-    if len(walk_index) == 0:
+    if prepared.surfaces is None:
+        report["profile"] = height_profile(np.zeros(0), settings["cell"])
         return FloorPlan([], [], walkable, walls, triangle_floor, [], None, flipped, report)
     walk_tris = triangles[walk_index]
-    cell = settings["cell"]
-    surfaces, surface_of_sample, sample_tri = build_surfaces(walk_tris, cell)
-    auto, notes = auto_cuts(surfaces, settings)
+    surfaces, surface_of_sample, sample_tri = prepared.surfaces, prepared.surface_of_sample, prepared.sample_tri
+    auto, notes = prepared.auto, prepared.notes
     cuts = apply_overrides(list(auto), overrides)
     report["automaticCuts"] = notes
+    report["profile"] = height_profile(surfaces.height, settings["cell"])
     if cuts != [round(c, 3) for c in auto]:
         report["cutsFromConfig"] = True
+    asked = list(cuts)
 
     moved_total = 0
     while True:
@@ -426,6 +480,9 @@ def plan_floors(
         cuts = [c for i, c in enumerate(cuts) if i != (drop - 1 if drop > 0 else 0)]
     surfaces.floor = floors
     report["piecesKeptWhole"] = moved_total
+    dropped = [round(c, 2) for c in asked if c not in cuts]
+    if dropped:
+        report["cutsDropped"] = dropped  # cuts that left a floor with nothing on it
     triangle_floor[walk_index] = tri_floor
 
     _, area = normals(triangles)

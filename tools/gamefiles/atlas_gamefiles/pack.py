@@ -10,6 +10,10 @@ The pack is a self-contained folder: its JSON files, `tiles/<area>/<floor>/{z}/{
 heights (`height`, the game's y) and, where it has two floors or more, each floor's heights on its layer (`heights`). It is
 written next to its final place (a hidden `.<id>.making` folder in the maps folder) and then swapped in, so Atlas
 never sees half a pack; a pack folder of the same id that the Map Maker did not write is never replaced.
+
+Making one area again (the Map Maker's "Make this area again") writes that area's new files in a hidden
+`.<id>.remake-<area>` folder beside the pack, merges its map into the installed pack's JSON (`merge_area`) and swaps
+the area's folders and the JSON files in (`swap_area`); every other map and its files stay as they were.
 """
 
 from __future__ import annotations
@@ -123,6 +127,53 @@ def duplicate_ids(pack: dict[str, tp.Any]) -> list[str]:
                 found.append(f"{name}: {item_id}")
             seen.add(item_id)
     return found
+
+
+CHECKLISTS = (
+    ("bonfires", "All bonfires", "Every bonfire, area by area."),
+    ("bosses", "Bosses", "Every boss on these maps."),
+    ("items", "Items by area", "Every item pickup in the world, area by area (consumables and souls too)."),
+    ("rings", "Rings", "Every ring lying in the world."),
+    ("keys", "Key items", "Keys and other key items lying in the world."),
+)
+
+
+def checklist(pack_id: str, order: int) -> dict[str, tp.Any]:
+    list_key, name, description = CHECKLISTS[order]
+    return {"id": f"{pack_id}:checklist:{list_key}", "name": name, "description": description, "order": order, "kind": "checklist"}
+
+
+def category_lists(pack_id: str, used: set[str]) -> tuple[list[dict[str, tp.Any]], list[dict[str, tp.Any]]]:
+    """The category groups and categories of the categories `used` (by their short ids), in Atlas's order."""
+    groups_used = {c[1] for c in CATEGORIES if c[0] in used}
+    groups = [
+        {"id": f"{pack_id}:catgroup:{gid}", "name": name, "order": order} for gid, name, order in GROUPS if gid in groups_used
+    ]
+    categories = [
+        {
+            "id": f"{pack_id}:cat:{cid}",
+            "groupId": f"{pack_id}:catgroup:{group}",
+            "name": name,
+            "icon": icon,
+            "color": colour,
+            "trackable": trackable,
+            "defaultVisible": visible,
+        }
+        for cid, group, name, icon, colour, trackable, visible in CATEGORIES
+        if cid in used
+    ]
+    return groups, categories
+
+
+def content_counts(maps: list, layers: list, locations: list, categories: list, regions: list, guides: list) -> dict[str, int]:
+    return {
+        "maps": len(maps),
+        "layers": len(layers),
+        "locations": len(locations),
+        "categories": len(categories),
+        "regions": len(regions),
+        "guides": len(guides),
+    }
 
 
 def build_pack(
@@ -264,38 +315,15 @@ def build_pack(
             if marker.category == "key":
                 lists["keys"].append((area.name, name, location_id))
 
-    groups_used = {c[1] for c in CATEGORIES if c[0] in used_categories}
-    category_groups = [
-        {"id": ident("catgroup", gid), "name": name, "order": order} for gid, name, order in GROUPS if gid in groups_used
-    ]
-    categories = [
-        {
-            "id": ident("cat", cid),
-            "groupId": ident("catgroup", group),
-            "name": name,
-            "icon": icon,
-            "color": colour,
-            "trackable": trackable,
-            "defaultVisible": visible,
-        }
-        for cid, group, name, icon, colour, trackable, visible in CATEGORIES
-        if cid in used_categories
-    ]
+    category_groups, categories = category_lists(pack_id, set(used_categories))
 
     checklists, checklist_items = [], []
-    definitions = (
-        ("bonfires", "All bonfires", "Every bonfire, area by area."),
-        ("bosses", "Bosses", "Every boss on these maps."),
-        ("items", "Items by area", "Every item pickup in the world, area by area (consumables and souls too)."),
-        ("rings", "Rings", "Every ring lying in the world."),
-        ("keys", "Key items", "Keys and other key items lying in the world."),
-    )
-    for order, (list_key, name, description) in enumerate(definitions):
+    for order, (list_key, name, description) in enumerate(CHECKLISTS):
         entries = lists.get(list_key, [])
         if not entries:
             continue
         list_id = ident("checklist", list_key)
-        checklists.append({"id": list_id, "name": name, "description": description, "order": order, "kind": "checklist"})
+        checklists.append(checklist(pack_id, order))
         for number, (section, item_name, location_id) in enumerate(entries):
             checklist_items.append(
                 {
@@ -325,14 +353,7 @@ def build_pack(
         "updated": stamp,
         "writtenBy": {"name": WRITER, "version": __version__},
         "contents": {
-            "counts": {
-                "maps": len(maps),
-                "layers": len(layers),
-                "locations": len(locations),
-                "categories": len(categories),
-                "regions": len(regions),
-                "guides": len(guides),
-            },
+            "counts": content_counts(maps, layers, locations, categories, regions, guides),
             "maps": [
                 {
                     "id": ident("map", area.key),
@@ -460,3 +481,198 @@ def install(staging: Path, target: Path) -> None:
             old.rename(target)
         raise
     shutil.rmtree(old, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Making one area again: its map put in place of the old one in the installed pack, the rest left as it was.
+
+
+def read_pack_json(folder: Path) -> dict[str, tp.Any]:
+    """The manifest and every collection of the pack in `folder`. Raises OSError or ValueError."""
+    pack: dict[str, tp.Any] = {"manifest": json.loads((folder / "manifest.json").read_text(encoding="utf-8-sig"))}
+    for name, file in FILES.items():
+        path = folder / file
+        items = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else []
+        if not isinstance(items, list):
+            raise ValueError(f"{file} is not a list")
+        pack[name] = items
+    if not isinstance(pack["manifest"], dict):
+        raise ValueError("manifest.json is not a JSON object")
+    return pack
+
+
+def _splice(items: list[tp.Any], new: list[tp.Any], belongs: tp.Callable[[tp.Any], bool]) -> list[tp.Any]:
+    """`items` with those that `belongs` picks replaced by `new`, at the place of the first of them (else at the
+    end)."""
+    out: list[tp.Any] = []
+    placed = False
+    for item in items:
+        if isinstance(item, dict) and belongs(item):
+            if not placed:
+                out.extend(new)
+                placed = True
+            continue
+        out.append(item)
+    if not placed:
+        out.extend(new)
+    return out
+
+
+def merge_area(old: dict[str, tp.Any], part: dict[str, tp.Any], pack_id: str, key: str) -> dict[str, tp.Any]:
+    """The pack `old` with the map of area `key` (its map, layers, regions, locations and guides, and its entries
+    in the checklists) replaced by those of `part`, a pack of that area alone (`build_pack` of it). Every other
+    map and its things stay as they were, in their order and with their ids: a checklist entry of the area keeps
+    its id when it is for the same location, so the player's ticks stay. Entities, categories and checklists are
+    those the merged pack uses; the manifest's contents are counted again."""
+    map_id = f"{pack_id}:map:{key}"
+    gone = {loc.get("id") for loc in old["locations"] if isinstance(loc, dict) and loc.get("mapId") == map_id}
+    merged: dict[str, tp.Any] = {}
+    merged["maps"] = _splice(old["maps"], part["maps"], lambda item: item.get("id") == map_id)
+    for name in ("layers", "regions", "locations"):
+        merged[name] = _splice(old[name], part[name], lambda item: item.get("mapId") == map_id)
+    merged["guides"] = _splice(
+        old["guides"], part["guides"], lambda item: any(i in gone for i in item.get("locationIds", []))
+    )
+
+    # Checklists: per list, the area's entries replaced where they were.
+    checklists, items = [], []
+    old_lists = {c.get("id"): c for c in old["checklists"] if isinstance(c, dict)}
+    for order, (list_key, _, _) in enumerate(CHECKLISTS):
+        list_id = f"{pack_id}:checklist:{list_key}"
+        old_items = [i for i in old["checklistItems"] if isinstance(i, dict) and i.get("checklistId") == list_id]
+        new_items = [i for i in part["checklistItems"] if i.get("checklistId") == list_id]
+
+        def belongs(item: dict[str, tp.Any]) -> bool:
+            return any(i in gone for i in item.get("locationIds", []))
+
+        ids_by_place = {tuple(i.get("locationIds", [])): i["id"] for i in old_items if belongs(i)}
+        numbers = [_item_number(i.get("id", "")) for i in old_items]
+        next_number = max([n for n in numbers if n is not None], default=0) + 1
+        renamed = []
+        for item in new_items:
+            item_id = ids_by_place.pop(tuple(item.get("locationIds", [])), None)
+            if item_id is None:
+                item_id = f"{pack_id}:checkitem:{list_key}-{next_number}"
+                next_number += 1
+            renamed.append({**item, "id": item_id})
+        spliced = [{**item, "order": n} for n, item in enumerate(_splice(old_items, renamed, belongs))]
+        if spliced:
+            checklists.append(old_lists.get(list_id) or checklist(pack_id, order))
+            items.extend(spliced)
+    merged["checklists"] = checklists
+    merged["checklistItems"] = items
+
+    referenced = {e for loc in merged["locations"] for e in loc.get("entityIds", [])}
+    referenced |= {e for item in items for e in item.get("entityIds", [])}
+    entities, seen = [], set()
+    for entity in [*old["entities"], *part["entities"]]:
+        entity_id = entity.get("id") if isinstance(entity, dict) else None
+        if entity_id in referenced and entity_id not in seen:
+            entities.append(entity)
+            seen.add(entity_id)
+    merged["entities"] = entities
+    used = {str(loc.get("categoryId", "")).rsplit(":", 1)[-1] for loc in merged["locations"]}
+    merged["categoryGroups"], merged["categories"] = category_lists(pack_id, used)
+    merged["links"] = old.get("links", [])
+    merged["presets"] = old.get("presets", [])
+
+    manifest = dict(old["manifest"])
+    contents = dict(manifest.get("contents") or {})
+    contents["maps"] = _splice(
+        list(contents.get("maps") or []), part["manifest"]["contents"]["maps"], lambda item: item.get("id") == map_id
+    )
+    contents["counts"] = content_counts(
+        merged["maps"], merged["layers"], merged["locations"], merged["categories"], merged["regions"], merged["guides"]
+    )
+    manifest["contents"] = contents
+    manifest["updated"] = part["manifest"]["updated"]
+    manifest["writtenBy"] = part["manifest"]["writtenBy"]
+    merged["manifest"] = manifest
+    return merged
+
+
+def _item_number(item_id: str) -> int | None:
+    tail = item_id.rsplit("-", 1)[-1]
+    return int(tail) if tail.isdigit() else None
+
+
+def swap_area(staging: Path, target: Path, key: str, pack: dict[str, tp.Any]) -> None:
+    """Puts the area's new files (`tiles/<key>/` and `scene/<key>/` in `staging`) and the merged pack's JSON in
+    place in the installed pack `target`, all by renames in the same folder:
+
+    1. every JSON file is written next to its place first (`.<name>.partial`);
+    2. the area's old folders are moved aside, into a hidden `.<id>.remake-old` folder beside the pack, and its
+       new ones moved in;
+    3. each JSON file is swapped in (a copy of the old one kept aside), the manifest last.
+
+    Any failure puts back what was moved and swapped, so the pack is as it was, and raises PackRefused. Then the
+    old files are deleted. Other maps' files are never touched."""
+    texts = {file: collection_text(pack[name]) for name, file in FILES.items()}
+    texts["manifest.json"] = json.dumps(pack["manifest"], indent=2, ensure_ascii=False) + "\n"
+    folders = [("tiles", key), ("scene", key.lower())]
+    backup = target.with_name(f".{target.name}.remake-old")
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    partials: list[Path] = []
+    aside: list[tuple[str, str]] = []
+    moved_in: list[tuple[str, str]] = []
+    swapped: list[str] = []
+    try:
+        backup.mkdir(parents=True)
+        for file, text in texts.items():
+            partial = target / f".{file}.partial"
+            partial.write_text(text, encoding="utf-8")
+            partials.append(partial)
+        for sub, name in folders:
+            old = target / sub / name
+            if old.exists():
+                (backup / sub).mkdir(parents=True, exist_ok=True)
+                old.rename(backup / sub / name)
+                aside.append((sub, name))
+        for sub, name in folders:
+            new = staging / sub / name
+            if new.exists():
+                (target / sub).mkdir(exist_ok=True)
+                new.rename(target / sub / name)
+                moved_in.append((sub, name))
+        for file in texts:  # the manifest last
+            current = target / file
+            if current.exists():
+                shutil.copy2(current, backup / file)
+            (target / f".{file}.partial").replace(current)
+            swapped.append(file)
+    except OSError as error:
+        restored = True
+        for file in reversed(swapped):
+            restored &= _quietly(lambda file=file: (backup / file).replace(target / file))
+        for sub, name in reversed(moved_in):
+            restored &= _quietly(lambda sub=sub, name=name: (target / sub / name).rename(staging / sub / name))
+        for sub, name in reversed(aside):
+            restored &= _quietly(lambda sub=sub, name=name: (backup / sub / name).rename(target / sub / name))
+        if restored:
+            shutil.rmtree(backup, ignore_errors=True)
+        else:
+            raise PackRefused(
+                f"The new map of this area could not be put in the map pack ({error}), and the old one could not all "
+                f"be put back: its files are in {backup}. Press Make map to make the whole map again."
+            ) from error
+        raise PackRefused(
+            f"The new map of this area could not be put in the map pack ({error}), so the pack was left as it was. "
+            "If Atlas is open, close it and make the area again."
+        ) from error
+    finally:
+        for partial in partials:
+            partial.unlink(missing_ok=True)
+    shutil.rmtree(backup, ignore_errors=True)
+    for sub, _ in folders:
+        folder = target / sub
+        if folder.is_dir() and not any(folder.iterdir()):
+            _quietly(folder.rmdir)
+
+
+def _quietly(action: tp.Callable[[], tp.Any]) -> bool:
+    try:
+        action()
+    except OSError:
+        return False
+    return True

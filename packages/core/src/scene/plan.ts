@@ -134,14 +134,16 @@ export interface SceneBudget {
 }
 
 /**
- * The budgets per kind of device: a phone about 2 million triangles and
- * 300 MB of textures, a Steam Deck and a computer about twice that. They
- * stay under what the 3D trial in Settings found devices hold at a good
- * frame rate, leaving a margin for the dots, the map beside the view and
- * the rest of the page; the trial's reports keep them honest.
+ * The budgets per kind of device: about 4 million triangles and 600 MB of
+ * textures on a phone, a Steam Deck and a computer alike, for now (a phone
+ * ran the 3D trial in Settings smoothly to 4 million triangles and 683 MB;
+ * a Steam Deck's run will set the handheld's). They stay under what the
+ * trial found devices hold at a good frame rate, leaving a margin for the
+ * dots, the map beside the view and the rest of the page; the trial's
+ * reports keep them honest.
  */
 export const SCENE_BUDGETS: Readonly<Record<DeviceClass, SceneBudget>> = {
-  phone: { triangles: 2_000_000, textureBytes: 300 << 20, maxPixelRatio: 1.5, reach: 6, loads: 2 },
+  phone: { triangles: 4_000_000, textureBytes: 600 << 20, maxPixelRatio: 1.5, reach: 6, loads: 2 },
   handheld: { triangles: 4_000_000, textureBytes: 600 << 20, maxPixelRatio: 1, reach: 8, loads: 3 },
   computer: { triangles: 4_000_000, textureBytes: 600 << 20, maxPixelRatio: 2, reach: 8, loads: 4 },
 };

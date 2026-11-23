@@ -4,7 +4,9 @@
                     [--collision-sample N] [--navmesh-sample N] [--map-piece-sample N]
                     [--source-budget S] [--source-time-limit S] [--heartbeat S]
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
-                    [--config <file>] [--no-3d] [--scene-builder <atlas-scene program>]
+                    [--config <file>] [--floor-overrides <file>] [--remake <area>] [--no-3d]
+                    [--scene-builder <atlas-scene program>]
+    atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB>
     atlas-gamefiles --version
 
 The sample sizes and time limits have defaults for Phase 0; the options are there for testing (the app does not
@@ -12,11 +14,15 @@ set them).
 
 Standard output carries JSON lines only (see events.py): `start`, `game`, `areas`, `progress`, `area`, `warning`,
 then `done` (exit code 0), `cancelled` (exit code 3) or `error` (exit code 1). Standard error carries anything else.
+`make --remake` makes one area again in place of its map in the pack made before into the same output folder; an
+`error` it cannot start with has a `code` (see make.MakeError). `floor-views` answers the Adjust floors panel's
+requests, one JSON line each way (see floorviews.py).
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import threading
 import traceback
@@ -96,6 +102,20 @@ def parser() -> argparse.ArgumentParser:
     make.add_argument("--stdin-cancel", action="store_true", help="as for check")
     make.add_argument("--areas", default="", help="only these areas, comma-separated (m10_01_00_00 or m10_01)")
     make.add_argument("--config", type=Path, default=None, help="another config file (for tuning by hand)")
+    make.add_argument(
+        "--floor-overrides",
+        type=Path,
+        default=None,
+        help="the player's own floor cuts and names ({game: {mAA_BB: {cuts, names}}}); per area they replace the "
+        "config's floorOverrides; an unreadable file is warned about and left out",
+    )
+    make.add_argument(
+        "--remake",
+        default=None,
+        metavar="AREA",
+        help="make only this area (mAA_BB) again and put its map in place of the old one in the pack made before "
+        "into this output folder, leaving the rest of the pack as it is",
+    )
     make.add_argument("--no-3d", action="store_true", help="make the flat maps only, without their 3D models")
     make.add_argument(
         "--scene-builder",
@@ -109,6 +129,9 @@ def parser() -> argparse.ArgumentParser:
         default=None,
         help="seconds after which an area's geometry still being read is stopped (default 300)",
     )
+    views = commands.add_parser("floor-views", help="redraw an area's floors from given cuts (for the Map Maker)")
+    views.add_argument("out", type=Path, help="the output folder of a make (it holds floor-data/)")
+    views.add_argument("--area", required=True, help="the area, mAA_BB")
     return root
 
 
@@ -145,10 +168,22 @@ def main(argv: list[str] | None = None) -> int:
     block_network()
     events = claim_stdout()
     token = CancelToken()
-    if args.stdin_cancel:
+    if getattr(args, "stdin_cancel", False):  # floor-views reads its standard input itself
         watch_stdin(token)
-    areas = [a.strip() for a in args.areas.split(",") if a.strip()]
+    areas = [a.strip() for a in getattr(args, "areas", "").split(",") if a.strip()]
+    if args.command == "floor-views":
+        from .floorviews import serve
+
+        try:
+            return serve(args.out, args.area, events)
+        except Exception as error:
+            traceback.print_exc()
+            events.emit("error", message=f"{type(error).__name__}: {error}")
+            return EXIT_ERROR
     if args.command == "make":
+        if args.remake and not re.fullmatch(r"m\d\d_\d\d(_\d\d_\d\d)?", args.remake.lower()):
+            events.emit("error", message=f"{args.remake} is not an area (mAA_BB).")
+            return EXIT_USAGE
         return run_make(args, events, token, areas)
     try:
         checker = Checker(
@@ -193,11 +228,16 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
             config_file=args.config,
             make_3d=not args.no_3d,
             scene_builder=args.scene_builder,
+            floor_overrides_file=args.floor_overrides,
+            remake=args.remake,
         ).run()
     except Cancelled:
-        events.emit("cancelled", message="Stopped before the end; no map pack was written.")
+        events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
         return EXIT_CANCELLED
-    except (UnsafeOutputError, MakeError) as error:
+    except MakeError as error:
+        events.emit("error", message=str(error), **({"code": error.code} if error.code else {}))
+        return EXIT_USAGE
+    except UnsafeOutputError as error:
         events.emit("error", message=str(error))
         return EXIT_USAGE
     except Exception as error:

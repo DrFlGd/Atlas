@@ -333,3 +333,335 @@ h3 {
 .mm-preview figcaption {
   margin-top: 4px;
 }
+
+.mm-adjust {
+  height: 28px;
+  margin-top: 6px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.mm-preview figcaption .mm-adjust {
+  display: flex;
+}
+
+.mm-cuts {
+  margin-top: 4px;
+}
+
+/* Adjust floors: a panel over the page. */
+.mm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16px;
+  overflow-y: auto;
+  background: rgba(5, 7, 10, 0.6);
+}
+
+.mm-fp {
+  width: min(1180px, 100%);
+  padding: 16px 18px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-surface);
+  box-shadow: var(--atlas-shadow);
+}
+
+.mm-fp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mm-fp-head h2 {
+  margin: 0;
+}
+
+.mm-fp-head h2:focus {
+  outline: none;
+}
+
+.mm-fp-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr);
+  gap: 18px;
+  margin-top: 8px;
+}
+
+@media (max-width: 860px) {
+  .mm-fp-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mm-fp-axes .button[aria-pressed='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.mm-fp-chart {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  height: 380px;
+  margin-top: 10px;
+}
+
+.mm-fp-axis {
+  position: relative;
+}
+
+.mm-fp-axis span {
+  position: absolute;
+  right: 8px;
+  transform: translateY(-50%);
+  color: var(--atlas-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.mm-fp-plot {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28% minmax(0, 1fr);
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: #161a20;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.mm-fp-bars {
+  width: 100%;
+  height: 100%;
+  border-right: 1px solid var(--atlas-border);
+}
+
+.mm-fp-side {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.mm-fp-side img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  image-rendering: pixelated;
+}
+
+.mm-fp-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  cursor: pointer;
+}
+
+.mm-fp-band-on {
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 3px 0 0 var(--atlas-accent);
+}
+
+.mm-fp-cut {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22px;
+  transform: translateY(-50%);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.mm-fp-cut::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 2px dashed var(--atlas-focus);
+}
+
+.mm-fp-handle {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+  padding: 1px 8px;
+  border: 1px solid var(--atlas-focus);
+  border-radius: 999px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.mm-fp-cut:hover .mm-fp-handle,
+.mm-fp-handle:focus-visible {
+  background: var(--atlas-focus);
+  color: #1a1404;
+}
+
+.mm-fp-top {
+  margin: 12px 0 0;
+}
+
+.mm-fp-top img,
+.mm-fp-top .mm-preview-empty {
+  display: block;
+  width: 100%;
+  height: 340px;
+  aspect-ratio: auto;
+  object-fit: contain;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: #161a20;
+  image-rendering: pixelated;
+}
+
+.mm-fp-top .mm-preview-empty {
+  height: 240px;
+}
+
+.mm-fp-state {
+  min-height: 1.4em;
+  color: var(--atlas-muted);
+}
+
+.mm-fp-side-panel h3 {
+  margin-top: 0;
+}
+
+.mm-fp-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mm-fp-floor {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+}
+
+.mm-fp-floor-on {
+  border-color: var(--atlas-accent);
+}
+
+.mm-fp-swatch {
+  flex: none;
+  width: 12px;
+  border-radius: 3px;
+}
+
+.mm-fp-floor-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.mm-fp-name {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.mm-fp input {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.mm-fp-buttons {
+  margin-top: 6px;
+  gap: 6px;
+}
+
+.mm-fp-buttons .button,
+.mm-fp-cutrow .button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.mm-fp-cutrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 6px 22px;
+  padding: 4px 0 4px 10px;
+  border-left: 2px dashed var(--atlas-focus);
+}
+
+.mm-fp-cutrow label,
+.mm-fp-add label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mm-fp-height {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mm-fp-height input {
+  width: 84px;
+}
+
+.mm-fp-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mm-fp-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+}
+
+.mm-fp-foot .mm-row + .mm-row,
+.mm-fp-foot p + .mm-row {
+  margin-top: 8px;
+}
+
+.mm-fp-progress {
+  margin-bottom: 10px;
+}
+
+.mm-fp-progress .mm-row {
+  margin-top: 6px;
+}
+
+@media (max-width: 520px) {
+  .mm-overlay {
+    padding: 0;
+  }
+
+  .mm-fp {
+    border-radius: 0;
+    padding: 14px 16px;
+  }
+
+  .mm-fp-chart {
+    height: 300px;
+  }
+}
