@@ -1,9 +1,10 @@
 // @ts-check
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   androidCommands,
   androidEnv,
@@ -95,6 +96,8 @@ test('a build with downloads turns on the shell feature', () => {
     'build',
     '--config',
     'src-tauri/tauri.build.conf.json',
+    '--config',
+    'src-tauri/tauri.steam.conf.json',
     '--debug',
   ]);
   assert.deepEqual(tauriArgs({ identity: true, downloads: true, extra: ['--no-bundle'] }), [
@@ -141,6 +144,8 @@ test('the update files are signed for the plain viewer, and a release needs the 
     'build',
     '--config',
     'src-tauri/tauri.build.conf.json',
+    '--config',
+    'src-tauri/tauri.steam.conf.json',
     '--config',
     'src-tauri/tauri.updater.conf.json',
   ]);
@@ -198,4 +203,18 @@ test('an Android build is a viewer with folder tiles and no importers', () => {
   assert.throws(() => androidEnv({ ATLAS_ENABLE_DOWNLOADS: '1' }), /viewer/);
   assert.throws(() => androidEnv({ ATLAS_BUNDLE_IMPORTERS: 'x.js' }), /no importers/);
   assert.throws(() => androidEnv({ ATLAS_APP_NAME: 'X', ATLAS_APP_IDENTIFIER: 'a.b' }), /android/);
+});
+
+test('the pictures for Steam that the viewer bundles are there', async () => {
+  const shell = fileURLToPath(new URL('../src-tauri/', import.meta.url));
+  const config = /** @type {{ bundle: { resources: Record<string, string> } }} */ (
+    JSON.parse(await readFile(join(shell, 'tauri.steam.conf.json'), 'utf8'))
+  );
+  const sources = Object.keys(config.bundle.resources);
+  // The five pictures the shell copies into Steam (`steam::state::ART`).
+  assert.equal(sources.length, 5);
+  for (const source of sources) await access(join(shell, source));
+  // No two names that differ only by case, which Windows cannot hold in one folder.
+  const names = await readdir(join(shell, '../steam-art'));
+  assert.equal(new Set(names.map((name) => name.toLowerCase())).size, names.length);
 });

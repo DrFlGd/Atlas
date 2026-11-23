@@ -67,6 +67,9 @@ pub mod saves;
 pub mod settings;
 // The person's site rules files, for importers (commands in a build with downloads).
 pub mod sites;
+// Atlas in Steam: adding itself to Steam as a non-Steam game, with its
+// pictures (the app without downloads, on Windows and Linux).
+pub mod steam;
 pub mod styles;
 pub mod tiles;
 // Updating the viewer itself (on Windows and Linux, without downloads).
@@ -222,6 +225,9 @@ macro_rules! viewer_commands {
             updates::update_download,
             updates::update_progress,
             updates::update_install,
+            steam::steam_status,
+            steam::steam_set,
+            steam::steam_restart,
             $($more)*
         ]
     };
@@ -462,6 +468,10 @@ pub fn run() {
                     );
                 }
             });
+            // Atlas in Steam: what waited for Steam to close is written
+            // now if Steam is closed (see `steam`).
+            #[cfg(not(target_os = "android"))]
+            steam::at_start(app_data.clone());
             // How the window starts, and where (see `background`).
             #[cfg(not(target_os = "android"))]
             let start = background::shell::prepare(app, &app_data, start_background);

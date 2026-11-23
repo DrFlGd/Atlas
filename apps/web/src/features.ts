@@ -148,3 +148,13 @@ export function steamLaunchOffered(state: Pick<AtlasState, 'app'>): SteamLaunch 
       return null;
   }
 }
+
+/**
+ * Whether Settings has "Atlas in Steam" (adding Atlas itself to Steam with
+ * its artwork): in the desktop app without downloads, where its shell says
+ * so (Windows and Linux). Not in the Android app, a browser or the app
+ * with downloads.
+ */
+export function steamShortcutOffered(state: Pick<AtlasState, 'app'>): boolean {
+  return !__ATLAS_DOWNLOADS__ && readsPackFilesOnly(state) && state.app?.steam === true;
+}
