@@ -138,7 +138,7 @@ jobs:
           commit="$(git rev-parse --short HEAD)"
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas Map Maker $VERSION for Windows. It makes Atlas map packs from the game files on your own PC: **Make map** builds a Dark Souls Remastered pack (height-shaded floors, bonfires, items, bosses and checklists) and puts it in the Atlas maps folder; **Check game files** reports what map data can be read (Dark Souls Remastered and Bloodborne). It only reads the game folder, never changes or copies anything in it, and makes no network requests.
+          Atlas Map Maker $VERSION for Windows. It makes Atlas map packs from the game files on your own PC: **Make map** builds a Dark Souls Remastered pack (height-shaded floors, bonfires, items, bosses and checklists) and puts it in the Atlas maps folder. New in 0.3.0: with **Also make 3D maps** ticked (it is on by default), each area also gets a 3D model made from the game's collision, coloured by height, with every location at its real height; open the area in Atlas 0.32.0 or later and press **3D**. The report has a **3D model** column for each area; **Check game files** reports what map data can be read (Dark Souls Remastered and Bloodborne). It only reads the game folder, never changes or copies anything in it, and makes no network requests.
 
           ## How to install and test
 
