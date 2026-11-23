@@ -1,0 +1,151 @@
+{
+  "$comment": "Names and numbers for making Bloodborne maps (version 1.09). No game data: area names (Soulstruct's Bloodborne map names), boss names and model numbers (Soulstruct's character model names), how lamps are registered, item category rules and tuning numbers only. Unchecked against real files until a player's first make: the report lists bosses not found and lamps not placed.",
+  "packId": "bloodborne",
+  "title": "Bloodborne",
+  "skipAreas": ["m29", "m30", "m99"],
+  "mainAreas": [
+    "m21_00",
+    "m21_01",
+    "m22_00",
+    "m23_00",
+    "m24_00",
+    "m24_01",
+    "m24_02",
+    "m25_00",
+    "m26_00",
+    "m27_00",
+    "m28_00",
+    "m32_00",
+    "m33_00",
+    "m34_00",
+    "m35_00",
+    "m36_00"
+  ],
+  "areas": {
+    "m21_00": { "name": "Hunter's Dream" },
+    "m21_01": { "name": "Abandoned Old Workshop" },
+    "m22_00": { "name": "Hemwick Charnel Lane" },
+    "m23_00": { "name": "Old Yharnam" },
+    "m24_00": { "name": "Cathedral Ward" },
+    "m24_01": { "name": "Central Yharnam" },
+    "m24_02": { "name": "Upper Cathedral Ward" },
+    "m25_00": { "name": "Cainhurst Castle" },
+    "m26_00": { "name": "Nightmare of Mensis" },
+    "m27_00": { "name": "Forbidden Woods" },
+    "m28_00": { "name": "Yahar'gul, Unseen Village" },
+    "m32_00": { "name": "Byrgenwerth" },
+    "m33_00": { "name": "Nightmare Frontier" },
+    "m34_00": { "name": "Hunter's Nightmare" },
+    "m35_00": { "name": "Research Hall" },
+    "m36_00": { "name": "Fishing Hamlet" }
+  },
+  "floors": {
+    "$comment": "As in dark-souls-remastered.json, plus: method (passages: automatic passages; cuts: cut heights), band (metres: walkable ground in one plan cell is grouped by fixed height bands of this size), overlap (metres: one walkable surface over another by more than this is an overlapping place), navSupport (metres: a navmesh triangle is kept where collision ground lies this close under its centre and two corners), minPassageArea (square metres: smaller overlapping places are left alone).",
+    "method": "passages",
+    "cell": 1.0,
+    "clearance": 3.0,
+    "minStackedArea": 150,
+    "maxFloors": 5,
+    "minFloorHeight": 4.0,
+    "walkableSlope": 50,
+    "wallSlope": 70,
+    "wallCutHeight": 1.3,
+    "band": 3.0,
+    "overlap": 2.4,
+    "navSupport": 1.2,
+    "minPassageArea": 6
+  },
+  "floorOverrides": {
+    "$comment": "Per area (mAA_BB): names (lowest first), splitAt, mergeAt or cuts (for the cuts method), method (passages or cuts), passages ([{x, z, show: upper or lower}])."
+  },
+  "navmesh": {
+    "$comment": "Bloodborne's navmeshes are placed by their .nva table, then by the map's offset (its MSB MapOffset event): applyMapOffset auto tries both and keeps the way that puts more navmesh on collision ground; true or false forces one.",
+    "applyMapOffset": "auto"
+  },
+  "scene": {
+    "$comment": "3D maps (Also make 3D maps), as in dark-souls-remastered.json.",
+    "drop": [],
+    "cellTriangles": 60000
+  },
+  "render": {
+    "pixelsPerMetre": 8,
+    "minPixelsPerMetre": 2,
+    "maxImageSize": 6144,
+    "marginMetres": 12,
+    "tileSize": 256,
+    "tileFormat": "webp",
+    "tileQuality": 85,
+    "lowerFloorOpacity": 0.4
+  },
+  "categoryNames": {
+    "$comment": "The words Atlas shows for these marker types in this game.",
+    "bonfire": "Lamp"
+  },
+  "checklistNames": {
+    "bonfires": ["All lamps", "Every lamp, area by area."],
+    "rings": ["Accessories", "Every accessory lying in the world."]
+  },
+  "bonfires": {
+    "$comment": "Lamps: each run of the common event commonEvent in an area's event script (RunEvent) names the lamp object by its argument objectArg (from 0) and its lit flag by its argument flagArg plus flagAdd.",
+    "commonEvent": 7000,
+    "objectArg": 1,
+    "flagArg": 3,
+    "flagAdd": 10
+  },
+  "bonfireNames": {
+    "$comment": "Names for lamps, by the lamp object's entity id or its flag, when the game's place names do not give a good one."
+  },
+  "bosses": [
+    { "name": "Cleric Beast", "models": [5000], "areas": ["m24_01"], "flag": null },
+    { "name": "Father Gascoigne", "models": [2710, 2720], "areas": ["m24_01"], "flag": null },
+    { "name": "Vicar Amelia", "models": [5020], "areas": ["m24_00"], "flag": null },
+    { "name": "Blood-Starved Beast", "models": [2090], "areas": ["m23_00"], "flag": null },
+    { "name": "Darkbeast Paarl", "models": [5080], "areas": ["m23_00"], "flag": null },
+    { "name": "Witch of Hemwick", "models": [2100], "areas": ["m22_00"], "flag": null },
+    { "name": "Shadow of Yharnam", "models": [2120], "areas": ["m27_00"], "flag": null },
+    { "name": "Rom, the Vacuous Spider", "models": [5100], "areas": ["m32_00"], "flag": null },
+    { "name": "The One Reborn", "models": [5070], "areas": ["m28_00"], "flag": null },
+    { "name": "Martyr Logarius", "models": [2320], "areas": ["m25_00"], "flag": null },
+    { "name": "Amygdala", "models": [5120], "areas": ["m33_00"], "flag": null },
+    { "name": "Celestial Emissary", "models": [2570], "areas": ["m24_02"], "flag": null },
+    {
+      "name": "Ebrietas, Daughter of the Cosmos",
+      "models": [2510],
+      "areas": ["m24_02"],
+      "flag": null
+    },
+    { "name": "Mergo's Wet Nurse", "models": [5510], "areas": ["m26_00"], "flag": null },
+    { "name": "Gehrman, the First Hunter", "models": [8040], "areas": ["m21_00"], "flag": null },
+    { "name": "Moon Presence", "models": [5400], "areas": ["m21_00"], "flag": null },
+    { "name": "Ludwig", "models": [4510], "areas": ["m34_00"], "flag": null },
+    { "name": "Laurence, the First Vicar", "models": [4500], "areas": ["m34_00"], "flag": null },
+    { "name": "Living Failures", "models": [4030], "areas": ["m35_00"], "flag": null },
+    {
+      "name": "Lady Maria of the Astral Clocktower",
+      "models": [4520],
+      "areas": ["m35_00"],
+      "flag": null
+    },
+    { "name": "Orphan of Kos", "models": [4540, 4541], "areas": ["m36_00"], "flag": null }
+  ],
+  "characters": {
+    "$comment": "Character models (cNNNN as numbers) that are never markers. drops: false leaves enemy drops out (Bloodborne maps fixed pickups only).",
+    "ignoreModels": [],
+    "drops": false
+  },
+  "items": {
+    "$comment": "As in dark-souls-remastered.json, plus: followLotChain (a treasure gives the lots numbered after its own, up to this many, while they exist), requireFlag (lots without a picked-up flag are left out), skipHidden (treasure that an event shows later is left out: scripted rewards), gemCategory (blood gems and runes), nameRules ([part of the item's name, category], checked before the goods type).",
+    "followLotChain": 32,
+    "requireFlag": true,
+    "skipHidden": true,
+    "gemCategory": "upgrade",
+    "nameRules": [
+      ["Coldblood", "souls"],
+      ["Blood Echoes", "souls"]
+    ],
+    "goodsRanges": [],
+    "goodsTypes": { "0": "consumable", "1": "key", "2": "upgrade", "5": "other" },
+    "fallbackGoodsRanges": [],
+    "weaponRanges": []
+  }
+}

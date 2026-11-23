@@ -2,7 +2,10 @@
 //!
 //! The file holds, per game and then per area (`mAA_BB`), what the helper's config holds under `floorOverrides`
 //! (tools/gamefiles/config/<game>.json): `cuts` (every cut height in metres, in place of the automatic ones),
-//! `splitAt`, `mergeAt` and `names` (lowest first, an empty name for "as the Map Maker names it"). The Adjust floors
+//! `splitAt`, `mergeAt` and `names` (lowest first, an empty name for "as the Map Maker names it"), and since
+//! version 2 of the file (its top-level `version`), `method` (`passages` or `cuts`: how the area's floors are
+//! found) and `passages` (`[{x, z, show}]`: in the overlapping place at x, z, whether the main floor shows the
+//! `upper` or the `lower` storey). Files without `version` (version 1) load as before. The Adjust floors
 //! panel writes one area's entry at a time; Make map and Make this area again give the file to the helper
 //! (`--floor-overrides`), where per area the player's entry replaces the shipped one. "Save my floor cuts to a
 //! file…" writes one game's entries to a file of the same shape, and "Load floor cuts from a file…" takes such a
@@ -20,9 +23,12 @@ const MAX_CUTS: usize = 32;
 const MAX_NAMES: usize = 33;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_HEIGHT: f64 = 100_000.0;
+const MAX_PASSAGES: usize = 256;
+/// The version of the file this app writes (`version` at the top).
+pub const FILE_VERSION: u64 = 2;
 /// A larger file is not read.
 pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
-const COMMENT: &str = "Atlas Map Maker floor cuts: per game, per area (mAA_BB): cuts (every cut height in metres, lowest first, in place of the automatic ones), names (of the floors, lowest first; empty for the Map Maker's own name).";
+const COMMENT: &str = "Atlas Map Maker floor cuts: per game, per area (mAA_BB): cuts (every cut height in metres, lowest first, in place of the automatic ones), names (of the floors, lowest first; empty for the Map Maker's own name), method (passages: automatic passages, or cuts), passages (per overlapping place at x, z: show the upper or the lower storey on the main floor).";
 
 /// Whether `id` is a game id: 1 to 64 of `a`–`z`, `0`–`9` and `-`.
 pub fn is_game(id: &str) -> bool {
@@ -72,6 +78,33 @@ pub fn clean_entry(value: &Value) -> Option<Value> {
             if !kept.is_empty() || key == "cuts" {
                 entry.insert(key.to_owned(), Value::Array(kept));
             }
+        }
+    }
+    if let Some(method) = object.get("method").and_then(Value::as_str) {
+        if crate::settings::is_floor_method(method) {
+            entry.insert("method".to_owned(), Value::String(method.to_owned()));
+        }
+    }
+    if let Some(Value::Array(passages)) = object.get("passages") {
+        let kept: Vec<Value> = passages
+            .iter()
+            .take(MAX_PASSAGES)
+            .filter_map(|item| {
+                let show = item.get("show").and_then(Value::as_str)?;
+                if show != "upper" && show != "lower" {
+                    return None;
+                }
+                let at = |key: &str| {
+                    item.get(key)
+                        .and_then(Value::as_f64)
+                        .filter(|v| v.is_finite() && v.abs() < MAX_HEIGHT)
+                        .map(|v| (v * 100.0).round() / 100.0)
+                };
+                Some(json!({ "x": at("x")?, "z": at("z")?, "show": show }))
+            })
+            .collect();
+        if !kept.is_empty() {
+            entry.insert("passages".to_owned(), Value::Array(kept));
         }
     }
     if let Some(Value::Array(names)) = object.get("names") {
@@ -153,6 +186,7 @@ fn write(file: &Path, games: &Map<String, Value>) -> Result<(), String> {
     }
     let mut out = Map::new();
     out.insert("$comment".to_owned(), Value::String(COMMENT.to_owned()));
+    out.insert("version".to_owned(), json!(FILE_VERSION));
     out.extend(games.clone());
     let text =
         serde_json::to_string_pretty(&Value::Object(out)).map_err(|error| error.to_string())?;
@@ -202,7 +236,10 @@ pub fn export(file: &Path, game: &str) -> Result<(Value, usize), String> {
     let games = read(file)?;
     let areas = games.get(game).cloned().unwrap_or_else(|| json!({}));
     let count = areas.as_object().map_or(0, Map::len);
-    Ok((json!({ "$comment": COMMENT, game: areas }), count))
+    Ok((
+        json!({ "$comment": COMMENT, "version": FILE_VERSION, game: areas }),
+        count,
+    ))
 }
 
 /// Takes in a floor cuts file (`other`): its entries replace the player's for the same areas. Returns every game's
@@ -269,6 +306,16 @@ mod tests {
             json!({"cuts": []})
         );
         assert_eq!(clean_entry(&json!({"names": ["", ""]})), None);
+        assert_eq!(
+            clean_entry(&json!({"method": "passages", "passages": [
+                {"x": 1.234, "z": -2, "show": "lower"},
+                {"x": 1, "z": 2, "show": "sideways"},
+                {"x": "a", "z": 2, "show": "upper"}
+            ]}))
+            .unwrap(),
+            json!({"method": "passages", "passages": [{"x": 1.23, "z": -2.0, "show": "lower"}]})
+        );
+        assert_eq!(clean_entry(&json!({"method": "stairs"})), None);
         assert_eq!(clean_entry(&json!([1])), None);
         let long = "x".repeat(500);
         let cleaned = clean_entry(&json!({ "names": [long] })).unwrap();
@@ -296,7 +343,12 @@ mod tests {
         .unwrap();
         assert_eq!(games["g"]["m15_01"]["cuts"], json!([4.5]));
         set_area(&file, "g", "m10_01", Some(&json!({"cuts": []}))).unwrap();
-        assert!(fs::read_to_string(&file).unwrap().contains("$comment"));
+        let written: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(written.get("$comment").is_some());
+        assert_eq!(written["version"], json!(FILE_VERSION));
+        // A version 1 file (no `version`) and a version 2 file read alike.
+        assert_eq!(read(&file).unwrap()["g"]["m15_01"]["cuts"], json!([4.5]));
+        assert!(read(&file).unwrap().get("version").is_none());
         let (exported, count) = export(&file, "g").unwrap();
         assert_eq!(count, 2);
         assert_eq!(exported["g"]["m10_01"], json!({"cuts": []}));

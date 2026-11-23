@@ -1,8 +1,8 @@
 """`make`: make an Atlas map pack from the game files, and a report of how it went.
 
 For each real area (debug maps skipped): read the map layout and the event script (markers, see world.py), read
-every collision file in the file reader process (the navmesh when there is no collision), find the floors
-(floors.py), draw each floor and cut it into tiles (render.py, tiles.py), and put each marker on its floor. With 3D
+every collision file in the file reader process (and the navmesh: for automatic passages, or in place of collision
+when there is none), find the floors (cut heights, floors.py, or automatic passages, passages.py), draw each floor and cut it into tiles (render.py, tiles.py), and put each marker on its floor. With 3D
 maps on (the default), also make the area's 3D model with the Atlas scene builder (scene.py). Then write the pack
 (pack.py) into the shared maps folder, where Atlas finds it, and the report.
 
@@ -27,15 +27,24 @@ import numpy as np
 
 from . import REPORT_VERSION, TOOL_NAME, __version__
 from .check import CancelToken, _now, display_path, game_dict
-from .config import area_config, chosen_floor_overrides, floor_overrides, is_skipped, load_config, load_floor_overrides
+from .config import (
+    area_config,
+    chosen_floor_overrides,
+    floor_method,
+    floor_overrides,
+    is_skipped,
+    load_config,
+    load_floor_overrides,
+)
 from .content import GameContent, read_content
-from .detect import DSR, detect
+from .detect import BLOODBORNE, DSR, detect, map_version_refusal
 from .events import Events
-from .floors import apply_overrides, locate, plan_floors, support_fraction
+from .floors import FloorPlan, Prepared, apply_overrides, locate, plan_floors, prepare, support_fraction
 from .floorviews import save_floor_data
 from .games import PROFILES, Area, GameProfile, list_areas, newest_versions
 from .geometry import Cancelled, SourceResult, rotation_matrix
 from .msb import load_msb
+from .passages import plan_passages, prepare_passages, support_navmesh
 from .pack import (
     AreaOut,
     LayerOut,
@@ -95,6 +104,7 @@ class MapMaker:
         floor_overrides_file: Path | None = None,
         remake: str | None = None,
         style: str | None = None,
+        floor_method: str | None = None,
     ):
         self.folder = Path(folder)
         self.out = Path(out)
@@ -112,6 +122,8 @@ class MapMaker:
         self.scene_builder = scene_builder
         self.builder: Path | None = None
         self.steps = STEPS
+        # How floors are found when an area does not choose (config.floor_method): None for the config's.
+        self.floor_method = floor_method if floor_method in ("passages", "cuts") else None
         # The player's own floor overrides (the Map Maker's floor-overrides.json), by area key; per area they
         # replace the config's entry. The areas that used them, for the report.
         self.floor_overrides_file = Path(floor_overrides_file) if floor_overrides_file else None
@@ -153,8 +165,11 @@ class MapMaker:
         events.emit("game", game=game_dict(detection))
         if not detection.supported or detection.root is None:
             raise MakeError(detection.reason or f"{detection.title} is not supported.")
-        if detection.game != DSR:
+        if detection.game not in (DSR, BLOODBORNE):
             raise MakeError(f"Making maps of {detection.title} comes in a later version. Check game files works.")
+        refusal = map_version_refusal(detection)
+        if refusal:
+            raise MakeError(refusal, code="game-version")
         root = detection.root
         check_output_folder(self.out, root)
         if self.maps_folder is not None:
@@ -210,6 +225,11 @@ class MapMaker:
         areas = [a for a in all_areas if not is_skipped(config, a.id)]
         areas, older = newest_versions(areas)
         skipped += older
+        # A config with `mainAreas` (Bloodborne's sixteen) makes those, in that order; the others are skipped.
+        main_areas = [str(k).lower() for k in config.get("mainAreas", []) if isinstance(k, str)]
+        if main_areas:
+            skipped += [a.id for a in areas if a.id[:6].lower() not in main_areas]
+            areas = sorted((a for a in areas if a.id[:6].lower() in main_areas), key=lambda a: main_areas.index(a.id[:6].lower()))
         # Every area's map layout is read (see below), but only these are made.
         wanted = {self.remake} if self.remake else self.only_areas
         made_areas = [a for a in areas if a.id in wanted or a.id[:6] in wanted] if wanted else list(areas)
@@ -248,6 +268,7 @@ class MapMaker:
                 "mapStyle": self.style.id,
                 "tileFormat": fmt,
                 "floors": config.get("floors", {}),
+                "floorMethod": floor_method(config, None, self.floor_method),
                 "config": self.config_file.name if self.config_file else f"{detection.game}.json (built in)",
                 "floorOverrides": self.own_overrides_report(),
                 "threeD": {
@@ -275,7 +296,7 @@ class MapMaker:
             events.progress(0.03 + 0.02 * index / len(areas), f"{area.name}: reading the map layout and event script")
             try:
                 msbs[area.id] = load_msb(profile, area)
-                worlds[area.id] = extract_area(area, msbs[area.id], root, content, config, bonfire_models)
+                worlds[area.id] = extract_area(area, msbs[area.id], root, content, config, bonfire_models, profile)
             except Cancelled:
                 raise
             except Exception as error:
@@ -283,7 +304,7 @@ class MapMaker:
         for area in made_areas:
             world = worlds[area.id]
             if isinstance(world, AreaContent) and world.report["bonfires"]["method"].startswith("fallback") and bonfire_models:
-                worlds[area.id] = extract_area(area, msbs[area.id], root, content, config, bonfire_models)
+                worlds[area.id] = extract_area(area, msbs[area.id], root, content, config, bonfire_models, profile)
         msbs.clear()
 
         start, span = 0.05, 0.9
@@ -305,9 +326,9 @@ class MapMaker:
         title = str(config.get("title", detection.title))
         if self.remake:
             assert previous_report is not None
-            return self.replace_area(report, previous_report, outs, target, pack_id, title, detection, content)
+            return self.replace_area(report, previous_report, outs, target, pack_id, title, detection, content, config)
         events.progress(0.96, "Writing the map pack")
-        pack = build_pack(pack_id, title, detection.version or "", outs, content, created=previous.get("created"))
+        pack = build_pack(pack_id, title, detection.version or "", outs, content, created=previous.get("created"), labels=config)
         duplicates = duplicate_ids(pack)
         if duplicates:
             raise MakeError(
@@ -409,6 +430,7 @@ class MapMaker:
         title: str,
         detection: tp.Any,
         content: GameContent,
+        config: dict[str, tp.Any],
     ) -> dict[str, tp.Any]:
         """Puts the area just made in place of its map in the installed pack (see pack.replace_area), and the
         report of the last make, with this area's entry replaced, in place of the report."""
@@ -420,7 +442,7 @@ class MapMaker:
         events = self.events
         events.progress(0.95, "Writing the new map of the area")
         manifest = existing_pack(target) or {}
-        part = build_pack(pack_id, title, detection.version or "", outs, content, created=manifest.get("created"))
+        part = build_pack(pack_id, title, detection.version or "", outs, content, created=manifest.get("created"), labels=config)
         write_pack_json(self.staging, part)
         check_part = None
         if self.builder is not None and any(area.scene for area in outs):
@@ -538,22 +560,28 @@ class MapMaker:
             self.emit_area(entry, index, count)
             return entry, None
         entry.update(world.report)
+        overrides, source = chosen_floor_overrides(config, self.own_overrides, area.id)
+        method = floor_method(config, overrides, self.floor_method)
 
-        # Geometry: every collision file, else the navmesh.
+        # Geometry: every collision file, else the navmesh. Automatic passages also read the navmesh beside the
+        # collision (passages.py keeps it where collision ground lies under it).
         geometry: dict[str, tp.Any] = {}
         mesh = np.zeros((0, 3, 3), dtype=np.float32)
+        nav: np.ndarray | None = None
         owners = np.zeros(0, dtype=np.int32)
         owner_names: list[str] = []
         used = None
-        for source in ("collision", "navmesh"):
+        for source_kind in ("collision", "navmesh"):
             self.token.stop()
+            if used is not None and method != "passages":
+                break
 
-            def told(within: float, text: str, source: str = source) -> None:
+            def told(within: float, text: str) -> None:
                 say("geometry", within, text)
 
-            told(0.0, f"reading {source}")
+            told(0.0, f"reading {source_kind}")
             job = SourceJob(
-                source,
+                source_kind,
                 profile.game,
                 area,
                 root,
@@ -568,29 +596,40 @@ class MapMaker:
             except Cancelled:
                 raise
             except Exception as error:
-                result, triangles = SourceResult(source, status="failed"), None
+                result, triangles = SourceResult(source_kind, status="failed"), None
                 result.add_error(error)
-            geometry[source] = source_summary(result)
+            geometry[source_kind] = source_summary(result)
             if result.status == "timed-out":
-                self.warn(f"{area.name}: reading {source} was stopped after {result.time_limit:g} s ({result.stopped_on})")
-            if triangles is not None and len(triangles):
-                mesh = np.asarray(triangles, dtype=np.float32)
+                self.warn(f"{area.name}: reading {source_kind} was stopped after {result.time_limit:g} s ({result.stopped_on})")
+            if triangles is None or not len(triangles):
+                continue
+            triangles = np.asarray(triangles, dtype=np.float32)
+            if source_kind == "navmesh" and profile.navmesh_kind == "hkx":
+                triangles, geometry["navmeshPlacement"] = place_navmesh(
+                    triangles, mesh if used else None, world, config
+                )
+            if used is None:
+                mesh = triangles
                 owners = result.owners_array()
                 owner_names = list(result.owner_names)
-                used = source
-                break
-        entry["geometry"] = {"used": used, **geometry}
+                used = source_kind
+            else:
+                nav = triangles
+        entry["geometry"] = {"used": used, "navmeshForPassages": nav is not None, **geometry}
         if used is None:
             self.warn(f"{area.name}: no collision or navmesh could be read; the map shows markers only")
 
         # Floors.
         self.token.stop()
         say("floors", 0.0, f"finding floors in {len(mesh):,} triangles")
-        overrides, source = chosen_floor_overrides(config, self.own_overrides, area.id)
         if source == "yours":
             self.used_own.append(key)
-        plan = plan_floors(mesh, config.get("floors"), overrides)
-        describe_cuts(plan, overrides, source, floor_overrides(config, area.id))
+        shipped = floor_overrides(config, area.id)
+        plan = find_floors(mesh, nav, config, overrides, method)
+        if method == "passages":
+            describe_passages(plan, overrides, source, shipped)
+        else:
+            describe_cuts(plan, overrides, source, shipped)
         if used == "collision" and len(owners) == len(mesh):
             entry["placement"] = placement_check(mesh, owners, owner_names, world, config)
 
@@ -623,7 +662,9 @@ class MapMaker:
         pixels = frame.to_pixels(marker_xz) if len(marker_xz) else np.zeros((0, 2))
         for marker, (px, py) in zip(world.markers, pixels):
             marker.pixel = (float(px), float(py))
-        if plan.floors:
+        if plan.method == "passages":
+            main = min(plan.main, max(len(plan.floors) - 1, 0))
+        elif plan.floors:
             main = max(plan.floors, key=lambda f: f.area).index
         else:
             main = 0
@@ -649,8 +690,10 @@ class MapMaker:
                 [(m.position, m.category) for m in world.markers],
                 config.get("floors"),
                 (float(low), float(high)),
-                floor_overrides(config, area.id),
+                shipped,
                 opacity,
+                nav=nav,
+                method=method,
             )
         layers_out: list[LayerOut] = []
         floor_entries = []
@@ -791,7 +834,10 @@ class MapMaker:
                 leftover.unlink(missing_ok=True)
         built = done.get("report", {})
         scene = done.get("scene")
-        heights = floor_heights(plan.cuts, len(plan.floors), float(mesh[:, :, 1].min()), float(mesh[:, :, 1].max()))
+        if plan.method == "passages":
+            heights = [list(h) for h in plan.heights] if plan.heights and len(plan.heights) >= 2 else None
+        else:
+            heights = floor_heights(plan.cuts, len(plan.floors), float(mesh[:, :, 1].min()), float(mesh[:, :, 1].max()))
         entry.update(
             {
                 "made": True,
@@ -914,6 +960,86 @@ def describe_cuts(plan: tp.Any, overrides: dict[str, tp.Any], source: str | None
         "cuts": [round(c, 2) for c in apply_overrides(list(auto), shipped)],
         "names": [str(n) for n in shipped_names] if shipped_names else None,
     }
+
+
+def find_floors(
+    mesh: np.ndarray,
+    nav: np.ndarray | None,
+    config: dict[str, tp.Any],
+    overrides: dict[str, tp.Any],
+    method: str,
+    prepared: Prepared | None = None,
+) -> FloorPlan:
+    """An area's floors by cut heights (floors.py) or automatic passages (passages.py)."""
+    prepared = prepared if prepared is not None else prepare(mesh, config.get("floors"))
+    if method == "passages":
+        return plan_passages(prepare_passages(prepared, nav, config.get("floors")), overrides=overrides)
+    return plan_floors(prepared, overrides=overrides)
+
+
+def describe_passages(plan: tp.Any, overrides: dict[str, tp.Any], source: str | None, shipped: dict[str, tp.Any]) -> None:
+    """As describe_cuts, for automatic passages: the override used, and what the area has without the player's own
+    (the shipped config's choices)."""
+    report = plan.report
+    report["cutList"] = []
+    report["overrides"] = {"from": source, **overrides} if source else None
+    shipped_names = shipped.get("names") if isinstance(shipped.get("names"), list) else None
+    report["shipped"] = {
+        "cuts": [],
+        "names": [str(n) for n in shipped_names] if shipped_names else None,
+        "passages": [p for p in shipped.get("passages", []) if isinstance(p, dict)] if isinstance(shipped.get("passages"), list) else [],
+    }
+
+
+def map_offset_transform(offset: dict[str, tp.Any], inverse: bool = False) -> tp.Callable[[np.ndarray], np.ndarray]:
+    """The map's offset (its MSB MapOffset event: a move and a turn about the vertical) as a function on (n, 3, 3)
+    triangles, or its inverse."""
+    move = np.asarray(offset.get("translate", (0.0, 0.0, 0.0)), dtype=np.float64)
+    turn = rotation_matrix((0.0, float(offset.get("rotateY", 0.0)), 0.0))
+
+    def apply(triangles: np.ndarray) -> np.ndarray:
+        points = triangles.reshape(-1, 3).astype(np.float64)
+        moved = (points - move) @ turn if inverse else points @ turn.T + move
+        return moved.reshape(-1, 3, 3).astype(np.float32)
+
+    return apply
+
+
+def place_navmesh(
+    nav: np.ndarray, collision: np.ndarray | None, world: AreaContent, config: dict[str, tp.Any]
+) -> tuple[np.ndarray, dict[str, tp.Any]]:
+    """Bloodborne's navmesh, placed by its table, then by the map's offset or not (config `navmesh.applyMapOffset`:
+    true, false or auto). Auto tries the navmesh as placed, with the offset and with its inverse, and keeps the way
+    that puts the most navmesh on collision ground (or, without collision, the most bonfires and pickups on the
+    navmesh)."""
+    offset = world.report.get("mapOffset")
+    setting = (config.get("navmesh") or {}).get("applyMapOffset", "auto")
+    info: dict[str, tp.Any] = {"mapOffset": offset, "setting": setting}
+    still = not offset or not any(abs(v) > 1e-4 for v in [*offset.get("translate", ()), offset.get("rotateY", 0.0)])
+    if still or setting is False:
+        info["chosen"] = "as placed"
+        return nav, info
+    ways = {"as placed": nav, "with the map offset": map_offset_transform(offset)(nav)}
+    if setting is True:
+        info["chosen"] = "with the map offset"
+        return ways["with the map offset"], info
+    ways["with the inverse map offset"] = map_offset_transform(offset, inverse=True)(nav)
+    scores: dict[str, float | None] = {}
+    if collision is not None and len(collision):
+        prepared = prepare(collision, config.get("floors"))
+        step = max(1, len(nav) // 4000)
+        reach = float((config.get("floors") or {}).get("navSupport", 1.2))
+        for name, triangles in ways.items():
+            scores[name] = round(float(support_navmesh(prepared, triangles[::step], reach).mean()), 3)
+    else:
+        points = np.array([m.position for m in world.markers if m.kind in ("bonfire", "item")], dtype=np.float64)
+        for name, triangles in ways.items():
+            value = support_fraction(triangles, points.reshape(-1, 3), config.get("floors"))
+            scores[name] = None if value is None else round(value, 3)
+    info["scores"] = scores
+    chosen = max(ways, key=lambda name: (scores.get(name) or 0.0, name == "as placed"))
+    info["chosen"] = chosen
+    return ways[chosen], info
 
 
 def scene_summary(areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any] | None:

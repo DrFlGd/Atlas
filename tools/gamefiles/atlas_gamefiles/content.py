@@ -2,7 +2,8 @@
 kind of item each goods row is, the characters' names and drops, and the game's own text (item names and
 descriptions, place names, character names).
 
-Dark Souls Remastered only for now. Nothing here is written anywhere but into the player's own pack and report:
+Dark Souls Remastered and Bloodborne (their item categories are numbered differently, see games.GameProfile).
+Nothing here is written anywhere but into the player's own pack and report:
 the report holds counts, ids and error messages, never text.
 """
 
@@ -86,7 +87,7 @@ class GameContent:
     seconds: float = 0.0
 
     def item_name(self, kind: str, item_id: int) -> str | None:
-        table = self.text.get(NAME_TABLES[kind], {})
+        table = self.text.get(NAME_TABLES.get(kind, ""), {})
         name = table.get(item_id)
         if name:
             return name
@@ -108,12 +109,12 @@ class GameContent:
         return None
 
     def item_description(self, kind: str, item_id: int) -> str | None:
-        for table in DESCRIPTION_TABLES[kind]:
+        for table in DESCRIPTION_TABLES.get(kind, ()):
             text = self.text.get(table, {}).get(item_id)
             if text:
                 return text
         if kind == "weapon":
-            for table in DESCRIPTION_TABLES[kind]:
+            for table in DESCRIPTION_TABLES.get(kind, ()):
                 text = self.text.get(table, {}).get(item_id - item_id % 100)
                 if text:
                     return text
@@ -153,15 +154,18 @@ def clean_text(text: str | None) -> str | None:
     return text
 
 
-def _lot_from_row(lot_id: int, row: tp.Any) -> Lot:
+def _lot_from_row(lot_id: int, row: tp.Any, profile: GameProfile | None = None) -> Lot:
     items: list[LotItem] = []
     nothing = 0
     for slot in range(1, 9):
-        item_id = int(getattr(row, f"Item{slot}ID", 0) or 0)
+        item_id = int(getattr(row, f"Item{slot}ID", getattr(row, f"Item{slot}", 0)) or 0)
         category = int(getattr(row, f"Item{slot}Category", 0) or 0)
         chance = int(getattr(row, f"Item{slot}ChancePoints", 0) or 0)
         count = int(getattr(row, f"Item{slot}Count", 0) or 0)
-        kind = KIND_OF_CATEGORY.get(category & 0xF0000000) if category >= 0 else None
+        if profile is not None:
+            kind = profile.lot_kind(category)
+        else:
+            kind = KIND_OF_CATEGORY.get(category & 0xF0000000) if category >= 0 else None
         if item_id <= 0 or kind is None:
             nothing += chance
             continue
@@ -197,18 +201,13 @@ def _read_params(profile: GameProfile, root: Path, content: GameContent) -> None
         from soulstruct.base.params.param import TypedParam
         from soulstruct.containers import Binder
 
-        if profile.game == "dark-souls-remastered":
-            from soulstruct.darksouls1r.params.paramdef import EQUIP_PARAM_GOODS_ST, ITEMLOT_PARAM_ST, NPC_PARAM_ST
-        else:  # pragma: no cover - Bloodborne maps come later
-            from soulstruct.bloodborne.params.paramdef import EQUIP_PARAM_GOODS_ST, ITEMLOT_PARAM_ST, NPC_PARAM_ST
-
+        row_types = profile.param_row_types()
         binder = Binder.from_path(path)
     except Exception as error:
         for name in wanted.values():
             content.sources[name] = {"ok": False, "error": _error(error)}
         return
     entries = {entry_basename(e.path or "").lower().split(".")[0]: e for e in binder.entries}
-    row_types = {"ItemLotParam": ITEMLOT_PARAM_ST, "EquipParamGoods": EQUIP_PARAM_GOODS_ST, "NpcParam": NPC_PARAM_ST}
     for key, name in wanted.items():
         entry = entries.get(key)
         if entry is None:
@@ -218,7 +217,7 @@ def _read_params(profile: GameProfile, root: Path, content: GameContent) -> None
             param = TypedParam(row_types[name]).from_bytes(entry.data)
             rows = param.rows
             if name == "ItemLotParam":
-                content.lots = {int(lot_id): _lot_from_row(int(lot_id), row) for lot_id, row in rows.items()}
+                content.lots = {int(lot_id): _lot_from_row(int(lot_id), row, profile) for lot_id, row in rows.items()}
             elif name == "EquipParamGoods":
                 content.goods_types = {int(i): int(getattr(row, "GoodType", 0) or 0) for i, row in rows.items()}
             else:
@@ -254,9 +253,12 @@ def _read_text(profile: GameProfile, root: Path, content: GameContent) -> None:
                 cleaned = clean_text(text)
                 if cleaned:
                     table[int(text_id)] = cleaned
+        # Bloodborne's item text has no patch tables of Dark Souls Remastered's numbers.
+        patches = profile.game == "dark-souls-remastered"
         for name, (base, patch) in TEXT_TABLES.items():
             merged = dict(by_id.get(base, {}))
-            merged.update(by_id.get(patch, {}))
+            if patches:
+                merged.update(by_id.get(patch, {}))
             content.text[name] = merged
         content.sources["itemText"] = {"ok": True, "tables": len(by_id)}
     except Exception as error:

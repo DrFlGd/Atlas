@@ -18,6 +18,10 @@ export function Floors3D(props: {
   looks: readonly MarkerLook[];
   label: string;
   describe: (index: number) => string;
+  /** Automatic passages (see floors3d.ts). */
+  triangleFloors?: Uint8Array | null;
+  clipHeight?: number | null;
+  places?: readonly { x: number; y: number; z: number; chosen: boolean }[];
 }) {
   const { model, markers } = props;
   const box = useRef<HTMLDivElement>(null);
@@ -49,9 +53,31 @@ export function Floors3D(props: {
   }, [model, markers]);
 
   const { cuts, selected, hideAbove, showMarkers, outlines, looks } = props;
+  const { triangleFloors, clipHeight, places } = props;
   useEffect(() => {
-    scene?.update({ cuts, selected, hideAbove, showMarkers, outlines, looks });
-  }, [scene, cuts, selected, hideAbove, showMarkers, outlines, looks]);
+    scene?.update({
+      cuts,
+      selected,
+      hideAbove,
+      showMarkers,
+      outlines,
+      looks,
+      triangleFloors: triangleFloors ?? null,
+      clipHeight: clipHeight ?? null,
+      places: places ?? [],
+    });
+  }, [
+    scene,
+    cuts,
+    selected,
+    hideAbove,
+    showMarkers,
+    outlines,
+    looks,
+    triangleFloors,
+    clipHeight,
+    places,
+  ]);
 
   const keys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!scene) return;
@@ -136,7 +162,8 @@ export function Floors3D(props: {
   );
 }
 
-/** The section: the whole area from one side, coloured for the cuts as they change (no wait for the helper). */
+/** The section: the whole area from one side, coloured for the cuts as they change (no wait for the helper), or
+ * with automatic passages, by each pixel's floor (`pixelFloors`). */
 export function SectionPicture(props: {
   section: Section;
   low: number;
@@ -144,8 +171,9 @@ export function SectionPicture(props: {
   cuts: readonly number[];
   selected: number;
   label: string;
+  pixelFloors?: Uint8Array | null;
 }) {
-  const { section, low, high, cuts, selected } = props;
+  const { section, low, high, cuts, selected, pixelFloors } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
   const pixels = useRef<{ text: string; bytes: Uint8Array } | null>(null);
   useEffect(() => {
@@ -164,9 +192,10 @@ export function SectionPicture(props: {
       high,
       cuts,
       selected,
+      pixelFloors,
     );
     context.putImageData(new ImageData(painted, section.columns, section.rows), 0, 0);
-  }, [section, low, high, cuts, selected]);
+  }, [section, low, high, cuts, selected, pixelFloors]);
   return <canvas ref={canvas} className="mm-fp-section" role="img" aria-label={props.label} />;
 }
 

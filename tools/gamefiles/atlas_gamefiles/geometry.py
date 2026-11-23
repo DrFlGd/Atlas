@@ -4,9 +4,11 @@ Sources, in the order the map plan prefers them:
 
 - collision: the walkable floors and walls (`hAA_BB_CC_DD.hkxbhd` + `.hkxbdt` in `map/mAA_BB_CC_DD/`). Dark Souls
   Remastered stores Havok 2015 `hkp` meshes, which soulstruct-havok's `MapCollisionModel` reads. Bloodborne stores
-  Havok 2014 `hknp` compressed meshes: here they are only parsed, and their triangles are not decoded yet;
-- navmesh: walkable triangles only. Dark Souls Remastered: `.nvm` files in `mAA_BB_CC_DD.nvmbnd.dcx`. Bloodborne:
-  Havok navmeshes in `.nvmhktbnd.dcx`, only parsed here;
+  Havok 2014 `hknp` compressed meshes, which our own decoder reads (havok2014.py); its update ships changed files in
+  `hAA_BB_CC_DD.hkxbhd.patch` + `.hkxbdt.patch`, whose entries replace those of the same name;
+- navmesh: walkable triangles only. Dark Souls Remastered: `.nvm` files in `mAA_BB_CC_DD.nvmbnd.dcx`, placed by the
+  MSB's navmesh parts. Bloodborne: Havok navmeshes (`hkaiNavMesh`) in `mAA_BB_CC_DD.nvmhktbnd.dcx`, decoded by
+  havok2014.py and placed by `mAA_BB_CC_DD.nva.dcx` (the map's offset, from its MSB, is applied by the caller);
 - map pieces: the visual models (`.flver`), sampled, since there are hundreds per area and they only matter for an
   optional overview picture.
 
@@ -21,6 +23,7 @@ worker.py), which the check can stop if a file takes far too long.
 from __future__ import annotations
 
 import math
+import re
 import time
 import typing as tp
 from dataclasses import dataclass, field
@@ -266,6 +269,8 @@ def read_collision(
     budget: float = 0.0,
     names: PartNames | None = None,
 ) -> SourceResult:
+    if profile.collision_kind == "bloodborne":
+        return read_bloodborne_collision(area, root, instances, feedback, sample, budget, names)
     started = time.monotonic()
     result = SourceResult("collision")
     folder = area.map_folder
@@ -350,6 +355,8 @@ def read_navmesh(
     budget: float = 0.0,
     names: PartNames | None = None,
 ) -> SourceResult:
+    if profile.navmesh_kind == "hkx":
+        return read_bloodborne_navmesh(area, root, instances, feedback, sample, budget)
     started = time.monotonic()
     result = SourceResult("navmesh")
     folder = area.map_folder
@@ -420,6 +427,198 @@ def read_navmesh(
                 f"{result.read} of {result.entries} navmesh files parse as Havok files; reading their triangles "
                 "is planned for a later phase."
             )
+    result.seconds = time.monotonic() - started
+    return result
+
+
+# --- Bloodborne -------------------------------------------------------------------------------------------------
+
+
+def _binder_entries(path: Path, bdt: Path | None = None) -> dict[str, tp.Any]:
+    """A split binder's entries by their file name's stem (lower case)."""
+    from soulstruct.containers import Binder
+
+    binder = Binder.from_path(path, bdt_path=bdt) if bdt is not None else Binder.from_path(path)
+    return {entry_basename(entry.path or "").split(".")[0].lower(): entry for entry in binder.entries}
+
+
+def bloodborne_collision_model(stem: str, area_id: str, models: tp.Iterable[str]) -> str | None:
+    """The MSB model a Bloodborne collision entry holds: `h21_00_00_00_000100` (the map's prefix, then the model's
+    number) is `h000100`; an entry named as a model is that model; else the model whose name and `_` start it."""
+    stem = stem.lower()
+    prefix = "h" + area_id[1:].lower() + "_"
+    by_lower = {model.lower(): model for model in models}
+    if stem in by_lower:
+        return by_lower[stem]
+    if stem.startswith(prefix):
+        candidate = "h" + stem[len(prefix):]
+        if candidate in by_lower:
+            return by_lower[candidate]
+    for lower, model in by_lower.items():
+        if stem.startswith(lower + "_"):
+            return model
+    return None
+
+
+def read_bloodborne_collision(
+    area: Area,
+    root: Path,
+    instances: Instances,
+    feedback: Feedback,
+    sample: int = 0,
+    budget: float = 0.0,
+    names: PartNames | None = None,
+) -> SourceResult:
+    """Bloodborne's collision: every entry of `hAA_BB_CC_DD.hkxbhd`, those of its `.patch` binder replacing entries
+    of the same name, decoded with havok2014.py and placed by the MSB collision parts of its model."""
+    from .havok2014 import collision_triangles
+
+    started = time.monotonic()
+    result = SourceResult("collision", format="Havok 2014 hknp compressed mesh (HKX in HKXBHD/HKXBDT), our decoder")
+    folder = area.map_folder
+    stem = "h" + area.id[1:]
+    base = files_matching(folder, re.escape(stem) + r"\.hkxbhd") or files_matching(folder, r"h\d\d_\d\d_\d\d_\d\d\.hkxbhd")
+    if folder is None or not base:
+        result.status = "missing"
+        result.note = f"no hAA_BB_CC_DD.hkxbhd collision file in map/{area.id}"
+        return result
+    patch = files_matching(folder, re.escape(base[0].name) + r"\.patch")
+    patch_data = files_matching(folder, re.escape(base[0].name[:-3]) + r"bdt\.patch")
+    try:
+        feedback.opening(base[0].name)
+        opened = time.monotonic()
+        entries = _binder_entries(base[0])
+        result.files.append(_relative(base[0], root))
+        replaced = 0
+        if patch and patch_data:
+            patched = _binder_entries(patch[0], patch_data[0])
+            replaced = sum(1 for key in patched if key in entries)
+            entries.update(patched)
+            result.files.append(_relative(patch[0], root))
+        result.open_seconds = time.monotonic() - opened
+        feedback.opened(base[0].name, result.open_seconds)
+    except Cancelled:
+        raise
+    except Exception as error:
+        result.add_error(error)
+        result.status = "failed"
+        result.seconds = time.monotonic() - started
+        return result
+    named = sorted(
+        (key, entry) for key, entry in entries.items() if entry_basename(entry.path or "").lower().split(".", 1)[-1] in ("hkx", "hkx.dcx")
+    )
+    result.entries = len(named)
+    chosen = even_sample(named, sample)
+    feedback.planned(len(named), len(chosen))
+    _sample_note(result, len(chosen), "collision files")
+    if replaced:
+        note = f"{replaced} collision files replaced by the update's .patch binder"
+        result.note = f"{result.note}; {note}" if result.note else note[0].upper() + note[1:]
+    for key, entry in _files(result, chosen, feedback, budget, started, "collision files"):
+        try:
+            local = collision_triangles(entry.data)
+        except Exception as error:
+            result.failed += 1
+            result.add_error(f"{key}: {type(error).__name__}: {error}")
+            continue
+        result.read += 1
+        result.triangles += len(local)
+        result.vertices += len(local) * 3
+        model = bloodborne_collision_model(key, area.id, instances)
+        if model is None or not len(local):
+            result.unplaced += 1 if model is None else 0
+            continue
+        _place_instances(result, local, instances, model, names)
+    result.finish()
+    result.seconds = time.monotonic() - started
+    return result
+
+
+def navmesh_model_number(stem: str) -> int | None:
+    """The model number of a Bloodborne navmesh entry (`..._000123` -> 123)."""
+    match = re.search(r"_(\d+)$", stem)
+    return int(match.group(1)) if match else None
+
+
+def read_bloodborne_navmesh(
+    area: Area,
+    root: Path,
+    instances: Instances,
+    feedback: Feedback,
+    sample: int = 0,
+    budget: float = 0.0,
+) -> SourceResult:
+    """Bloodborne's navmesh: each `hkaiNavMesh` of `mAA_BB_CC_DD.nvmhktbnd.dcx`, decoded with havok2014.py and placed
+    by the map's navmesh placement table (`.nva.dcx`), or else by the MSB's navmesh parts. In the map's own frame:
+    the caller applies the map's offset."""
+    from .havok2014 import navmesh_triangles, nva_placements
+
+    started = time.monotonic()
+    result = SourceResult("navmesh", format="Havok navmesh (hkaiNavMesh in NVMHKTBND), our decoder")
+    folder = area.map_folder
+    binders = files_matching(folder, r".*\.nvmhktbnd(\.dcx)?")
+    if folder is None or not binders:
+        result.status = "missing"
+        result.note = f"no navmesh binder in map/{area.id}"
+        return result
+    result.files.append(_relative(binders[0], root))
+    try:
+        binder = _open_binder(result, binders[0], feedback)
+    except Cancelled:
+        raise
+    except Exception as error:
+        result.add_error(error)
+        result.status = "failed"
+        result.seconds = time.monotonic() - started
+        return result
+    placements: list[tp.Any] = []
+    tables = files_matching(folder, r".*\.nva(\.dcx)?")
+    if tables:
+        try:
+            placements = nva_placements(tables[0].read_bytes())
+            result.files.append(_relative(tables[0], root))
+        except Exception as error:
+            result.add_error(f"{tables[0].name}: {type(error).__name__}: {error}")
+    entries = [e for e in binder.entries if ".hkx" in entry_basename(e.path or "").lower()]
+    result.entries = len(entries)
+    named = [(entry_basename(entry.path or f"entry {index}"), entry) for index, entry in enumerate(entries)]
+    chosen = even_sample(named, sample)
+    feedback.planned(len(entries), len(chosen))
+    _sample_note(result, len(chosen), "navmesh files")
+    by_model: dict[int, list[tp.Any]] = {}
+    for placement in placements:
+        by_model.setdefault(int(placement.model), []).append(placement)
+    for name, entry in _files(result, chosen, feedback, budget, started, "navmesh files"):
+        try:
+            local = navmesh_triangles(entry.data)
+        except Exception as error:
+            result.failed += 1
+            result.add_error(f"{name}: {type(error).__name__}: {error}")
+            continue
+        result.read += 1
+        result.triangles += len(local)
+        result.vertices += len(local) * 3
+        if not len(local):
+            continue
+        stem = name.split(".")[0]
+        number = navmesh_model_number(stem)
+        placed = by_model.get(number, []) if number is not None else []
+        if placed:
+            for placement in placed:
+                rotation = tuple(math.degrees(r) for r in placement.rotation)
+                scaled = local * np.asarray(placement.scale, dtype=np.float32)
+                result.mesh.append(place(scaled, placement.position, rotation))  # type: ignore[arg-type]
+            continue
+        model = next((m for m in instances if number is not None and navmesh_model_number(m) == number), None)
+        model = model or next((m for m in instances if stem.lower().startswith(m.lower())), None)
+        if model is None:
+            result.unplaced += 1
+            continue
+        _place_instances(result, local, instances, model)
+    result.finish()
+    if placements:
+        note = f"placed by {len(placements)} entries of the navmesh placement table"
+        result.note = f"{result.note}; {note}" if result.note else note[0].upper() + note[1:]
     result.seconds = time.monotonic() - started
     return result
 

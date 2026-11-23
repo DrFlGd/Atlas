@@ -32,9 +32,36 @@ class GameProfile:
     param_path: tuple[str, ...]
     text_path: tuple[str, ...]
     # How collision HKX entries are stored: "dsr" (Havok 2015, hkp meshes Soulstruct reads) or "bloodborne"
-    # (Havok 2014, hknp compressed meshes that need a decoder of our own, planned for a later phase).
+    # (Havok 2014, hknp compressed meshes, decoded by our own havok2014.py).
     collision_kind: str
-    navmesh_kind: str  # "nvm" (DSR) or "hkx" (Bloodborne .nvmhktbnd)
+    navmesh_kind: str  # "nvm" (DSR) or "hkx" (Bloodborne .nvmhktbnd, decoded by havok2014.py)
+    # ItemLotParam's item category numbers: Dark Souls packs them in the top bits (0x10000000 armour, ...),
+    # Bloodborne numbers them (0 weapon, 1 armour, 2 accessory, 4 goods).
+    lot_category_mask: int = 0xF0000000
+    lot_categories: tuple[tuple[int, str], ...] = (
+        (0, "weapon"), (0x10000000, "armour"), (0x20000000, "ring"), (0x40000000, "goods"),
+    )  # fmt: skip
+
+    def character_models(self) -> dict[int, str]:
+        """Soulstruct's names of the game's character models (names only), by model number."""
+        if self.game == DSR:
+            from soulstruct.darksouls1ptde.constants import CHARACTER_MODELS
+        else:
+            from soulstruct.bloodborne.constants import CHARACTER_MODELS
+        return dict(CHARACTER_MODELS)
+
+    def emevd_class(self) -> type:
+        if self.game == DSR:
+            from soulstruct.darksouls1r.events import EMEVD
+        else:
+            from soulstruct.bloodborne.events import EMEVD
+        return EMEVD
+
+    def lot_kind(self, category: int) -> str | None:
+        """The kind of item (weapon, armour, ring, goods, gem) of an ItemLotParam category number, or None."""
+        if category < 0:
+            return None
+        return dict(self.lot_categories).get(category & self.lot_category_mask)
 
     def msb_class(self) -> type:
         if self.game == DSR:
@@ -42,6 +69,13 @@ class GameProfile:
         else:
             from soulstruct.bloodborne.maps import MSB
         return MSB
+
+    def param_row_types(self) -> dict[str, type]:
+        if self.game == DSR:
+            from soulstruct.darksouls1r.params.paramdef import EQUIP_PARAM_GOODS_ST, ITEMLOT_PARAM_ST, NPC_PARAM_ST
+        else:
+            from soulstruct.bloodborne.params.paramdef import EQUIP_PARAM_GOODS_ST, ITEMLOT_PARAM_ST, NPC_PARAM_ST
+        return {"ItemLotParam": ITEMLOT_PARAM_ST, "EquipParamGoods": EQUIP_PARAM_GOODS_ST, "NpcParam": NPC_PARAM_ST}
 
     def item_lot_row_type(self) -> type:
         if self.game == DSR:
@@ -84,6 +118,8 @@ PROFILES = {
         text_path=("msg", "engus", "item.msgbnd.dcx"),
         collision_kind="bloodborne",
         navmesh_kind="hkx",
+        lot_category_mask=-1,
+        lot_categories=((0, "weapon"), (1, "armour"), (2, "ring"), (4, "goods"), (8, "gem")),
     ),
 }
 

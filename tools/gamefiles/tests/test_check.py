@@ -129,18 +129,11 @@ def test_only_some_areas(dsr_folder: Path, tmp_path: Path) -> None:
 
 
 def test_bloodborne_report(bloodborne_folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mocks, because Soulstruct cannot write Bloodborne MSBs or Havok 2014 meshes (see fixtures.py): the made-up
-    `.msb.dcx` is read with the Dark Souls class, and the mesh reader refuses the collision files as it refuses real
-    Bloodborne ones, so the check falls back to parsing them as Havok files."""
+    """A mock, because Soulstruct cannot write Bloodborne MSBs (see fixtures.py): the made-up `.msb.dcx` is read with
+    the Dark Souls class. The collision and navmesh are made-up Havok 2014 files, read by our own decoder."""
     from soulstruct.darksouls1r.maps import MSB as DarkSoulsMSB
-    from soulstruct.havok.fromsoft.shared import map_collision
 
     monkeypatch.setattr(type(PROFILES["bloodborne"]), "msb_class", lambda self: DarkSoulsMSB)
-
-    def refuse(cls, data):
-        raise ValueError("Cannot import `MapCollisionModel` from HKX with Havok version: 'hk_2014.1.0-r1'")
-
-    monkeypatch.setattr(map_collision.MapCollisionModel, "from_bytes", classmethod(refuse))
 
     before = snapshot(bloodborne_folder)
     # The mock does not reach a child process, so the geometry is read in this one.
@@ -154,15 +147,14 @@ def test_bloodborne_report(bloodborne_folder: Path, tmp_path: Path, monkeypatch:
     assert ward["treasures"] == 2
     assert ward["bonfireCandidates"]["method"].startswith("distinct lamp ids")
     collision = ward["geometry"]["collision"]
-    assert collision["status"] == "not-decoded"
+    assert collision["status"] == "ok", collision
     assert collision["read"] == 2
-    assert "decoder" in collision["note"]
-    assert collision["havokClasses"]
-    assert ward["geometry"]["navmesh"]["status"] == "not-decoded"
-    assert ward["preview"]["geometry"] == "none (parts only)"
+    assert "replaced by the update's .patch binder" in collision["note"]
+    assert "our decoder" in collision["format"]
+    navmesh = ward["geometry"]["navmesh"]
+    assert navmesh["status"] == "ok", navmesh
+    assert "placement table" in navmesh["note"]
     assert report["summary"]["mainAreas"]["found"] == 1
-    assert report["summary"]["recommendedGeometry"] is None
-    # The made-up param file holds Dark Souls rows; whether or not they read, the check goes on.
     assert "itemLots" in report["gameData"]
 
 

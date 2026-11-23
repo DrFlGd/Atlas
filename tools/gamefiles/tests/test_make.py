@@ -226,11 +226,6 @@ def test_never_writes_into_the_game_folder(dsr_map_folder: Path, tmp_path: Path)
         make(dsr_map_folder, dsr_map_folder / "out", tmp_path / "Maps")
 
 
-def test_bloodborne_is_refused_for_now(bloodborne_folder: Path, tmp_path: Path) -> None:
-    with pytest.raises(MakeError, match="later version"):
-        make(bloodborne_folder, tmp_path / "out", tmp_path / "Maps")
-
-
 def test_cancel_leaves_the_installed_pack_as_it_was(dsr_map_folder: Path, tmp_path: Path) -> None:
     maps = tmp_path / "Maps"
     make(dsr_map_folder, tmp_path / "out1", maps, only_areas=["m15_01"])

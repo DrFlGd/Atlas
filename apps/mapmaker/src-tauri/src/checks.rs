@@ -67,6 +67,8 @@ pub enum Job {
         floor_overrides: Option<PathBuf>,
         /// How the floors are drawn (settings::MAP_STYLES).
         map_style: String,
+        /// How floors are found when an area does not choose (settings::FLOOR_METHODS); `None`: the game's config.
+        floor_method: Option<String>,
     },
     /// Make one area (`mAA_BB`) again, in place of its map in the pack the make in the same output folder made.
     Remake {
@@ -75,6 +77,7 @@ pub enum Job {
         scene_builder: Option<PathBuf>,
         floor_overrides: Option<PathBuf>,
         map_style: String,
+        floor_method: Option<String>,
         area: String,
     },
 }
@@ -596,6 +599,7 @@ impl Checks {
             scene_builder,
             floor_overrides,
             map_style,
+            floor_method,
         }
         | Job::Remake {
             maps_folder,
@@ -603,6 +607,7 @@ impl Checks {
             scene_builder,
             floor_overrides,
             map_style,
+            floor_method,
             ..
         } = &job
         {
@@ -620,6 +625,9 @@ impl Checks {
                 command.arg("--floor-overrides").arg(file);
             }
             command.arg("--map-style").arg(map_style);
+            if let Some(method) = floor_method {
+                command.arg("--floor-method").arg(method);
+            }
         }
         if let Job::Remake { area, .. } = &job {
             command.arg("--remake").arg(area);
@@ -857,6 +865,7 @@ impl Checks {
                 scene_builder: None,
                 floor_overrides: None,
                 map_style: "shaded".into(),
+                floor_method: None,
             },
             folder: folder.to_path_buf(),
             out_dir: out_dir.to_path_buf(),
@@ -1140,6 +1149,7 @@ mod tests {
                     scene_builder: None,
                     floor_overrides: None,
                     map_style: "shaded".into(),
+                    floor_method: None,
                 },
                 &base,
                 &outside,
@@ -1279,6 +1289,7 @@ echo '{"event":"done"}'
                         scene_builder,
                         floor_overrides: None,
                         map_style: "shaded".into(),
+                        floor_method: None,
                     },
                     &game,
                     out,
@@ -1397,6 +1408,7 @@ echo '{"event":"done"}'
                 scene_builder: None,
                 floor_overrides: Some(base.join("floor-overrides.json")),
                 map_style: "shaded".into(),
+                floor_method: Some("passages".into()),
                 area: "m15_01".to_owned(),
             };
             let status = checks.start(&script, job, &game, &out).unwrap();
@@ -1429,6 +1441,7 @@ echo '{"event":"done"}'
         assert!(
             args.contains("--no-3d --floor-overrides")
                 && args.contains("--remake m15_01")
+                && args.contains("--floor-method passages")
                 && args.contains("--stdin-cancel"),
             "{args}"
         );
@@ -1448,6 +1461,7 @@ echo '{"event":"done"}'
             scene_builder: None,
             floor_overrides: None,
             map_style: "shaded".into(),
+            floor_method: None,
             area: "m15_01".to_owned(),
         };
         assert!(checks

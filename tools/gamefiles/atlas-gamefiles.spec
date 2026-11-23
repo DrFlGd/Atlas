@@ -30,6 +30,11 @@ hidden = [
     "soulstruct.havok.fromsoft.shared.map_collision",
     "soulstruct.flver",
     "soulstruct.darksouls1r.events",
+    # Bloodborne: its event scripts (lamps), character and map names, read lazily (games.py).
+    "soulstruct.bloodborne.events",
+    "soulstruct.bloodborne.constants",
+    "soulstruct.bloodborne.maps.constants",
+    "soulstruct.dcx",
     "scipy.ndimage",
     "scipy.sparse",
     "scipy.sparse.csgraph",

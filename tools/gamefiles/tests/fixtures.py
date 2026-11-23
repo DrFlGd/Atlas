@@ -10,8 +10,8 @@ What Soulstruct 2.6.0 cannot write is noted where it matters:
   reader's failure path); the success path is tested with a mock in test_geometry.py;
 - Bloodborne MSB files: Soulstruct's Bloodborne MSB writer leaves part offsets unfilled, so the fixture's
   `.msb.dcx` files are Dark Souls Remastered MSBs, and the tests read them with the Dark Souls class (a mock);
-- Bloodborne collision (Havok 2014 hknp meshes): not written; the fixture reuses a Havok 2015 mesh, and the test
-  makes the mesh reader refuse it, as it refuses real Bloodborne files.
+- Bloodborne collision and navmesh (Havok 2014 hknp meshes, hkaiNavMesh) and the navmesh placement table (.nva):
+  Soulstruct does not write them, so havok_fixtures.py writes them byte by byte, holding made-up triangles.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def fake_exe(path: Path, version: tuple[int, int, int, int] = (1, 3, 1, 0)) -> N
     path.write_bytes(b"MZ made-up test file\0" + b"\0" * 4000 + block + b"\0" * 64)
 
 
-def make_msb(stem: str, *, with_geometry_parts: bool) -> MSB:
+def make_msb(stem: str, *, with_geometry_parts: bool, collision: str = "h0000B1", navmesh: str = "n0000B1") -> MSB:
     msb = MSB()
     area, block = int(stem[1:3]), int(stem[4:6])
     base = area * 100000 + block * 10000
@@ -83,13 +83,13 @@ def make_msb(stem: str, *, with_geometry_parts: bool) -> MSB:
     if with_geometry_parts:
         msb.map_pieces.new(name="m0000B1", model=msb.auto_map_piece_model("m0000B1", stem))
         msb.collisions.new(
-            name="h0000B1",
-            model=msb.auto_collision_model("h0000B1", stem),
+            name=collision,
+            model=msb.auto_collision_model(collision, stem),
             translate=Vector3((5.0, 0.0, 0.0)),
             rotate=Vector3((0.0, 90.0, 0.0)),
             attached_bonfire=base + 950,
         )
-        msb.navmeshes.new(name="n0000B1", model=msb.auto_navmesh_model("n0000B1", stem))
+        msb.navmeshes.new(name=navmesh, model=msb.auto_navmesh_model(navmesh, stem))
     return msb
 
 
@@ -191,8 +191,75 @@ def param_sfo(entries: dict[str, str]) -> bytes:
     return header + index + keys + values
 
 
+BB_LOTS = {
+    # lot: (item category, item id, count, flag); Bloodborne numbers its categories (4 goods, 1 armour, 8 gems).
+    ITEM_LOTS[0]: (4, 1000, 2, 52400000),
+    ITEM_LOTS[0] + 1: (8, 3000, 1, 0),  # given with the lot before it (a chain)
+    ITEM_LOTS[1]: (1, 10000, 1, 52400010),
+    ITEM_LOTS[2]: (4, 2000, 1, 0),  # no flag: left out
+}
+BB_TEXT = {10: {1000: "Made-up Vial", 2000: "Made-up Bell"}, 12: {10000: "Made-up Hat"}}
+BB_EVENT_SCRIPT = """
+from soulstruct.bloodborne.events import *
+from soulstruct.bloodborne.events.instructions import *
+
+
+@ContinueOnRest(0)
+def Constructor():
+    RunEvent(7000, slot=0, args=(2400950, 2401960, 0, 12401000), arg_types="iiii")
+"""
+
+
+def bloodborne_binders() -> tuple[Binder, Binder]:
+    """Made-up Bloodborne item lots, goods and characters (Bloodborne's row layouts), and item names."""
+    from soulstruct.bloodborne.params import paramdef
+
+    lots = {
+        lot_id: paramdef.ITEMLOT_PARAM_ST(Item1=item, Item1Category=category, Item1Count=count, Item1ChancePoints=100, ItemFlag=flag)
+        for lot_id, (category, item, count, flag) in BB_LOTS.items()
+    }
+    goods = {1000: paramdef.EQUIP_PARAM_GOODS_ST(GoodType=0), 2000: paramdef.EQUIP_PARAM_GOODS_ST(GoodType=1)}
+    entries = []
+    for index, (file, row_type, rows) in enumerate(
+        (
+            ("ItemLotParam", paramdef.ITEMLOT_PARAM_ST, lots),
+            ("EquipParamGoods", paramdef.EQUIP_PARAM_GOODS_ST, goods),
+            ("NpcParam", paramdef.NPC_PARAM_ST, {}),
+        )
+    ):
+        param = TypedParam(row_type)(param_type=row_type.__name__, rows=rows)
+        entries.append(BinderEntry(data=param.to_bytes(), entry_id=index, path=f"N:\\SPRJ\\data\\Param\\param\\GameParam\\{file}.param"))
+    params = Binder(version=BinderVersion.V3, v4_info=None, dcx_type=DCXType.DCX_DFLT_10000_44_9, entries=entries)
+    texts = [
+        BinderEntry(data=FMG(entries=names).to_bytes(), entry_id=entry_id, path=f"N:\\SPRJ\\data\\Msg\\engUS\\made_up_{entry_id}.fmg")
+        for entry_id, names in BB_TEXT.items()
+    ]
+    text = Binder(version=BinderVersion.V3, v4_info=None, dcx_type=DCXType.DCX_DFLT_10000_44_9, entries=texts)
+    return params, text
+
+
+def write_split_binder(folder: Path, name: str, entries: dict[str, bytes], suffix: str = "") -> None:
+    """A split collision binder (`name`.hkxbhd and .hkxbdt) of raw entries; `suffix` (".patch") names it as an
+    update's binder."""
+    binder = HKXBHD(map_stem="m" + name[1:])
+    for index, (stem, data) in enumerate(entries.items()):
+        binder.entries.append(BinderEntry(data=data, entry_id=index, path=f"N:\\SPRJ\\data\\INTERROOT_ps4\\map\\{stem}.hkx"))
+    work = folder / ".writing"
+    work.mkdir()
+    binder.write(work / f"{name}.hkxbhd")
+    for written in sorted(work.iterdir()):
+        written.replace(folder / (written.name + suffix))
+    work.rmdir()
+
+
 def make_bloodborne(root: Path) -> Path:
-    """A dump-shaped folder: eboot.bin, sce_sys/param.sfo and dvdroot_ps4 with one area. See the module notes."""
+    """A dump-shaped folder: eboot.bin, sce_sys/param.sfo and dvdroot_ps4 with one area (Cathedral Ward's name and
+    numbers, everything in it made up): its collision (an hknp mesh, with an update's .patch binder replacing one
+    entry by the bridge over a street of bridge_over_street), its navmesh and placement table, item tables, item
+    names and an event script registering a lamp. See the module notes."""
+    from havok_fixtures import compressed_mesh_file, navmesh_file, nva_file
+    from soulstruct.bloodborne.events import EMEVD as BloodborneEMEVD
+
     root.mkdir(parents=True, exist_ok=True)
     (root / "eboot.bin").write_bytes(b"not a program: made-up test file")
     (root / "sce_sys").mkdir()
@@ -202,25 +269,41 @@ def make_bloodborne(root: Path) -> Path:
     data = root / "dvdroot_ps4"
     studio = data / "map" / "MapStudio"
     studio.mkdir(parents=True)
-    msb = make_msb(CATHEDRAL_WARD, with_geometry_parts=True)
+    msb = make_msb(CATHEDRAL_WARD, with_geometry_parts=True, collision="h000100", navmesh="n000100")
     msb.dcx_type = DCXType.DCX_DFLT_10000_44_9
     msb.write(studio / f"{CATHEDRAL_WARD}.msb.dcx")
     ward = data / "map" / CATHEDRAL_WARD
     ward.mkdir(parents=True)
-    write_collision(ward, CATHEDRAL_WARD, "A24")
+    name = "h" + CATHEDRAL_WARD[1:]
+    write_split_binder(
+        ward,
+        name,
+        {f"{name}_000100": compressed_mesh_file(quad(-40, 40, -40, 40, 0.0)), f"{name}_000101": compressed_mesh_file(quad(-5, 5, -5, 5, 0.0))},
+    )
+    write_split_binder(ward, name, {f"{name}_000100": compressed_mesh_file(bridge_over_street())}, suffix=".patch")
+    # The navmesh: the same ground a little above it, plus a made-up short cut floating in the air (dropped), placed
+    # by the table where the MSB places the collision (5, 0, 0, turned a quarter about the vertical).
+    ground = [[(x, y + 0.1, z) for x, y, z in triangle] for triangle in bridge_over_street()]
+    ground.append([(-30.0, 20.0, -30.0), (-30.0, 20.0, -20.0), (-20.0, 20.0, -30.0)])
     navmeshes = Binder(
         version=BinderVersion.V3,
         v4_info=None,
         dcx_type=DCXType.DCX_DFLT_10000_44_9,
         entries=[
-            BinderEntry(
-                data=collision_model("n0000B0").to_bytes(), entry_id=0, path="N:\\SPRJ\\data\\n0000B0A24.hkx.dcx"
-            )
+            BinderEntry(data=navmesh_file(ground), entry_id=0, path=f"N:\\SPRJ\\data\\INTERROOT_ps4\\map\\{CATHEDRAL_WARD}\\n{CATHEDRAL_WARD[1:]}_000100.hkx")
         ],
     )
     navmeshes.write(ward / f"{CATHEDRAL_WARD}.nvmhktbnd.dcx")
+    (ward / f"{CATHEDRAL_WARD}.nva").write_bytes(nva_file([(100, 100, (5.0, 0.0, 0.0), (0.0, math.pi / 2, 0.0))]))
+    params, text = bloodborne_binders()
     (data / "param" / "gameparam").mkdir(parents=True)
-    item_lot_binder().write(data / "param" / "gameparam" / "gameparam.parambnd.dcx")
+    params.write(data / "param" / "gameparam" / "gameparam.parambnd.dcx")
+    (data / "msg" / "engus").mkdir(parents=True)
+    text.write(data / "msg" / "engus" / "item.msgbnd.dcx")
+    (data / "event").mkdir()
+    script = BloodborneEMEVD.from_evs_string(BB_EVENT_SCRIPT, map_name=CATHEDRAL_WARD)
+    script.dcx_type = DCXType.DCX_DFLT_10000_44_9
+    (data / "event" / f"{CATHEDRAL_WARD}.emevd.dcx").write_bytes(script.to_bytes())
     return root
 
 
@@ -530,7 +613,23 @@ def make_dsr_map(root: Path) -> Path:
     return root
 
 
+def bridge_over_street() -> Triangles:
+    """A made-up street (0 m, running north) between two raised plazas (8 m), each with a ramp down to the street at
+    its south end, a ramp from the east plaza down to the street's north end, and a bridge at 8 m joining the
+    plazas across the street (x 20 to 40, z 26 to 34). Every coordinate is invented."""
+    t: Triangles = []
+    t += slab(20, 40, -50, 100, 0.0)
+    for x0, x1 in ((0, 20), (40, 60)):
+        t += slab(x0, x1, -50, -40, 0.0)
+        t += ramp(x0, x1, -40, 0, 0.0, 8.0)
+        t += slab(x0, x1, 0, 60, 8.0)
+    t += ramp(40, 60, 60, 100, 8.0, 0.0)
+    t += slab(20, 40, 26, 34, 8.0)
+    return t
+
+
 if __name__ == "__main__":
     kind, target = sys.argv[1], Path(sys.argv[2])
     {"dsr": make_dsr, "dsr-map": make_dsr_map, "bloodborne": make_bloodborne}[kind](target)
     print(f"Wrote a made-up {kind} folder to {target}")
+
