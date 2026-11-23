@@ -204,7 +204,7 @@ fn stem_of(name: &str) -> Option<&str> {
     is_stem(stem).then_some(stem)
 }
 
-fn is_stem(stem: &str) -> bool {
+pub(crate) fn is_stem(stem: &str) -> bool {
     (1..=MAX_GUIDEBOOK_NAME).contains(&stem.len())
         && stem.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
         && stem

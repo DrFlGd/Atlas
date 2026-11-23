@@ -64,13 +64,26 @@
 //! }
 //! ```
 
+//! # Writing a pack of magazines
+//!
+//! From version 10, a pack file can hold the issues of one magazine, each a
+//! PDF or a CBZ with the text of its pages, a small JPEG of its cover and
+//! the games it covers with their pages. An app that keeps magazines
+//! writes one per magazine title with [`write_magazine_pack`], under the
+//! id `magazines-<name>`; Atlas only reads it. An app that reads version 9
+//! at most refuses it as a file in a newer format.
+
 mod guidebook;
+mod magazine;
+mod magazine_write;
 mod pdf;
 mod read;
 mod write;
 
 #[cfg(test)]
 mod guidebook_tests;
+#[cfg(test)]
+mod magazine_tests;
 #[cfg(test)]
 mod tests;
 
@@ -81,6 +94,13 @@ pub use guidebook::{
     MAX_GUIDEBOOK_BYTES, MAX_GUIDEBOOK_NAME, MAX_GUIDEBOOK_PAGES, MAX_GUIDEBOOK_TEXT_BYTES,
     MAX_GUIDEBOOK_TITLE,
 };
+pub use magazine::{
+    is_issue_date, is_issue_name, issue_cover_name, issue_name_of, issue_text_name, IssueFacts,
+    IssueGame, MagazineFacts, MagazineList, COVER_SIDE, MAGAZINE_DIR, MAGAZINE_LIST_FILE,
+    MAGAZINE_LIST_FORMAT, MAGAZINE_PACK_PREFIX, MAX_COVER_BYTES, MAX_GAME_PAGE_RUNS, MAX_ISSUES,
+    MAX_ISSUE_GAMES, MAX_MAGAZINE_NAME, MAX_MAGAZINE_TITLE,
+};
+pub use magazine_write::{write_magazine_pack, MagazinePack, NewIssue};
 pub use read::{read_header, read_header_from, read_preview, read_preview_from};
 pub use write::{
     guidebook_pages, rewrite_guidebook_pack, write_guidebook_pack, GuidebookPack, NewGuidebook,
@@ -97,7 +117,13 @@ pub const FORMAT: &str = "atlas-pack-file";
 /// The newest version of the format this crate reads. A file is written at
 /// the lowest version that can hold what it carries, so an older app reads
 /// every file it can, and refuses a newer one with a message.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
+/// A file with the issues of a magazine (`magazines/`, see
+/// [`IssueFacts`]). Only a pack of magazines is written in it: every other
+/// file stays at the version of what else it carries, so an app made
+/// before it reads it, and refuses a pack of magazines as a file in a newer
+/// format.
+pub const VERSION_WITH_MAGAZINES: u32 = 10;
 /// A file with routes (`routes.json`, or the person's own under `mine/`)
 /// or with pictures of its types of location. Only a file that carries one
 /// of them is written in it: every other file stays at the version of what
@@ -262,6 +288,15 @@ pub struct Header {
     /// leaves them out of a file of an older version.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guidebooks: Vec<GuidebookFacts>,
+    /// The magazine whose issues the file carries (version 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magazine: Option<MagazineFacts>,
+    /// The issues the file carries, each a PDF or CBZ file with the text
+    /// of its pages, its cover and the games it covers (version 10).
+    /// [`parse_header`] checks them and leaves them out of a file of an
+    /// older version.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<IssueFacts>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -288,7 +323,8 @@ impl Header {
 
     /// Where the pack came from, in one word: `source.origin` when the
     /// file says, else what older files say of it: a file that carries
-    /// guidebooks is [`Origin::Guidebooks`], one read from web pages
+    /// guidebooks is [`Origin::Guidebooks`], one that carries issues of a
+    /// magazine [`Origin::Magazines`], one read from web pages
     /// (`source.kind` `web-pages`) [`Origin::Site`], one whose pack was
     /// written by Atlas Map Maker (`pack.writtenBy.name`)
     /// [`Origin::MapMaker`], and another one an Atlas app made
@@ -300,6 +336,9 @@ impl Header {
         }
         if !self.guidebooks.is_empty() {
             return Some(Origin::Guidebooks);
+        }
+        if !self.issues.is_empty() {
+            return Some(Origin::Magazines);
         }
         if self.source.kind == SourceKind::WebPages {
             return Some(Origin::Site);
@@ -394,6 +433,8 @@ pub enum Origin {
     MapMaker,
     /// A pack of guidebooks (`guidebooks`).
     Guidebooks,
+    /// A pack of the issues of a magazine (`magazines`, version 10).
+    Magazines,
     /// A word this crate does not know (from a newer file); see
     /// [`Header::origin`].
     #[serde(other)]
@@ -408,6 +449,7 @@ impl Origin {
             Origin::MadeInAtlas => "made-in-atlas",
             Origin::MapMaker => "map-maker",
             Origin::Guidebooks => "guidebooks",
+            Origin::Magazines => "magazines",
             Origin::Other => "other",
         }
     }
@@ -749,6 +791,14 @@ pub fn parse_header(text: &str) -> Result<Header, Refusal> {
         header.guidebooks.clear();
     } else {
         guidebook::check_guidebooks(&header.guidebooks).map_err(Refusal::damaged)?;
+    }
+    // Magazines only from the version that has them.
+    if header.version < VERSION_WITH_MAGAZINES {
+        header.magazine = None;
+        header.issues.clear();
+    } else {
+        magazine::check_issues(header.magazine.as_ref(), &header.issues)
+            .map_err(Refusal::damaged)?;
     }
     Ok(header)
 }

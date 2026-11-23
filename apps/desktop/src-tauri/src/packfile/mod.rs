@@ -1222,16 +1222,26 @@ pub struct Analysis {
     /// The pack is a pack of guidebooks (it has `guidebooks.json`), which
     /// is passed on as the pack file it came in, never exported.
     pub guidebooks: bool,
+    /// The pack is a pack of magazines (it has `magazines.json`), which
+    /// is passed on as the pack file it came in, never exported.
+    pub magazines: bool,
 }
 
 /// Why a pack of guidebooks is not exported.
 pub const GUIDEBOOKS_NOT_EXPORTED: &str =
     "Guidebooks are not exported. To pass them on, copy the pack file they came in.";
 
+/// Why a pack of magazines is not exported.
+pub const MAGAZINES_NOT_EXPORTED: &str =
+    "Magazines are not exported. To pass them on, copy the pack file they came in.";
+
 /// Why a pack cannot be exported at all, in plain words; none when it can.
 pub fn refusal(analysis: &Analysis) -> Option<String> {
     if analysis.guidebooks {
         return Some(GUIDEBOOKS_NOT_EXPORTED.to_owned());
+    }
+    if analysis.magazines {
+        return Some(MAGAZINES_NOT_EXPORTED.to_owned());
     }
     let archives: Vec<String> = analysis
         .layers
@@ -1285,6 +1295,7 @@ pub fn analyse(source: &PackSource) -> Result<Analysis, String> {
         plans,
         statuses,
         guidebooks: present(atlas_pack::GUIDEBOOK_LIST_FILE),
+        magazines: present(atlas_pack::MAGAZINE_LIST_FILE),
     })
 }
 

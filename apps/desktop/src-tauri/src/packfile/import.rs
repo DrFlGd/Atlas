@@ -531,7 +531,8 @@ pub(crate) struct Rules {
     previews: HashSet<String>,
     /// The guidebooks the description lists, and their text, the only ones
     /// it may hold: each entry name with its size when the description
-    /// gives it (a guidebook's file).
+    /// gives it (a guidebook's file). The issues of a magazine are held
+    /// alike: each issue's file with its size, its text and its cover.
     guidebooks: HashMap<String, Option<u64>>,
     /// The manifest says the game was made in the app (`madeInApp`).
     pub(crate) made_in_app: bool,
@@ -607,6 +608,14 @@ impl Rules {
             guidebooks.insert(guidebook.file.clone(), Some(guidebook.bytes));
             if let Some(text) = &guidebook.text {
                 guidebooks.insert(text.clone(), None);
+            }
+        }
+        // The issues of a magazine, their text and covers, likewise (the
+        // crate leaves them out of a version before magazines).
+        for issue in &header.issues {
+            guidebooks.insert(issue.file.clone(), Some(issue.bytes));
+            for name in issue.text.iter().chain(&issue.cover) {
+                guidebooks.insert(name.clone(), None);
             }
         }
         if layers.iter().any(|layer| layer.kind == TileKind::Pmtiles) {
