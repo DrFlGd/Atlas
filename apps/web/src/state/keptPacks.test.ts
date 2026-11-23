@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { KeptPackRow, KeptPacksStatus } from '../desktop';
 import {
+  defaultFolderText,
   resetKeptPacks,
   rowDetails,
   statusLine,
@@ -25,6 +26,7 @@ const status = (more: Partial<KeptPacksStatus> = {}): KeptPacksStatus => ({
   on: true,
   folder: 'Maps and Guides',
   folderIsDefault: false,
+  folderDefaultFrom: 'gameRepo',
   folderChosen: true,
   schedule: 'start',
   running: false,
@@ -41,6 +43,18 @@ describe('kept packs', () => {
   beforeEach(() => {
     resetKeptPacks();
     useAtlas.setState({ notice: null });
+  });
+
+  it('say where the default folder comes from', () => {
+    expect(defaultFolderText(status())).toBeNull();
+    expect(defaultFolderText(status({ folderIsDefault: true, folderChosen: false }))).toBe(
+      'Default: Game Repo’s Maps and Guides folder',
+    );
+    expect(
+      defaultFolderText(
+        status({ folderIsDefault: true, folderChosen: false, folderDefaultFrom: 'packsFolder' }),
+      ),
+    ).toBe('Default: the packs folder');
   });
 
   it('say the state in one line', () => {

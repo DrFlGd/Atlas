@@ -61,9 +61,12 @@ pub async fn kept_packs_choose_folder<R: Runtime>(
             );
         }
         let setting = keeper.setting();
-        // The packs folder chosen in the dialog is the default: it follows
-        // a change of the packs folder.
-        let folder = (!same_path(&folder, &library.packs_folder())).then_some(folder);
+        // The default folder chosen in the dialog (Game Repo's Maps and
+        // Guides folder, or the packs folder when Game Repo is not here) is
+        // kept as the default: it follows a library Game Repo switches to,
+        // or a change of the packs folder.
+        let (default, _) = keeper.default_folder();
+        let folder = (!same_path(&folder, &default)).then_some(folder);
         keeper
             .set(Setting {
                 on: true,

@@ -18,9 +18,10 @@ use serde_json::{json, Value};
 use super::{
     fingerprint,
     folder::{self, Copy, HeaderCache, NEW_PACKS_FOLDER, PART_ENDING},
+    gamerepo::{self, GameRepo, Paths, APP_FOLDER, CONFIG_FILE, DEFAULT_LIBRARY, MAPS_AND_GUIDES},
     plan::{decide, Action, Game},
     store::{Record, Schedule, Setting, Store, Written},
-    Activity, Keeper, Parts, RowState, Status, Timing, NOT_READ_HERE,
+    Activity, DefaultFrom, Keeper, Parts, RowState, Status, Timing, NOT_READ_HERE,
 };
 use crate::{
     library::Library,
@@ -480,7 +481,14 @@ struct World {
 
 impl World {
     fn new(name: &str) -> Self {
+        Self::with(name, |_| Paths::default())
+    }
+
+    /// A world whose keeper looks for Game Repo where `game_repo` says,
+    /// given the world's own folder.
+    fn with(name: &str, game_repo: impl FnOnce(&Path) -> Paths) -> Self {
         let dir = TempDir::new(name);
+        let game_repo = game_repo(&dir.0);
         let (library, registry) = library_with(&dir.0, Vec::new());
         let library = Arc::new(library);
         let game = library.maps_folder().join(ID);
@@ -561,6 +569,7 @@ impl World {
                     start_delay: Duration::ZERO,
                     retry: Duration::from_millis(300),
                 },
+                game_repo,
                 probe,
                 tell,
             },
@@ -609,11 +618,16 @@ impl World {
     }
 
     fn turn_on(&self, folder: &Path) -> Status {
+        self.turn_on_in(Some(folder))
+    }
+
+    /// On in `folder`, or in the default folder.
+    fn turn_on_in(&self, folder: Option<&Path>) -> Status {
         self.after_run(|| {
             self.keeper
                 .set(Setting {
                     on: true,
-                    folder: Some(folder.to_path_buf()),
+                    folder: folder.map(Path::to_path_buf),
                     schedule: Schedule::Start,
                 })
                 .unwrap();
@@ -635,6 +649,13 @@ impl World {
 
     /// Every pack file under the folder, and every unfinished one.
     fn files(&self) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        files_in(&self.repo)
+    }
+}
+
+/// Every pack file under `folder`, and every unfinished one.
+fn files_in(folder: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    {
         fn walk(dir: &Path, packs: &mut Vec<PathBuf>, parts: &mut Vec<PathBuf>) {
             for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
                 let path = entry.path();
@@ -649,7 +670,7 @@ impl World {
             }
         }
         let (mut packs, mut parts) = (Vec::new(), Vec::new());
-        walk(&self.repo, &mut packs, &mut parts);
+        walk(folder, &mut packs, &mut parts);
         packs.sort();
         (packs, parts)
     }
@@ -1048,6 +1069,7 @@ fn writes_into_the_packs_folder_and_follows_it_when_it_changes() {
     });
     let old = world.library.packs_folder();
     assert!(status.folder_is_default && !status.folder_chosen);
+    assert_eq!(status.folder_default_from, DefaultFrom::PacksFolder);
     assert_eq!(PathBuf::from(&status.folder), old);
     let row = World::row(&status);
     assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
@@ -1103,4 +1125,340 @@ fn writes_into_the_packs_folder_and_follows_it_when_it_changes() {
     world.keeper.packs_folder_changed(&third);
     assert_eq!(world.keeper.setting().folder, None);
     assert_eq!(world.keeper.folder(), world.library.packs_folder());
+}
+
+// ---------------------------------------------------------------------------
+// Game Repo's Maps and Guides folder, the default
+
+/// Game Repo's settings file under `dir`, and a home folder there.
+fn game_repo_paths(dir: &Path) -> Paths {
+    Paths {
+        config: Some(dir.join("settings").join(APP_FOLDER).join(CONFIG_FILE)),
+        home: Some(dir.join("home")),
+    }
+}
+
+/// Writes Game Repo's settings file with `settings`.
+fn put_game_repo(paths: &Paths, settings: &Value) {
+    put_json(paths.config.as_ref().unwrap(), settings);
+}
+
+#[test]
+fn game_repo_is_found_by_its_settings_file_read_as_untrusted() {
+    let dir = TempDir::new("keep-gamerepo-find");
+    let paths = game_repo_paths(&dir.0);
+    let config = paths.config.clone().unwrap();
+    let home = paths.home.clone().unwrap();
+    let library = dir.0.join("Drive").join("My Games");
+
+    // Nowhere to look, or no settings file: Game Repo is not here.
+    assert_eq!(gamerepo::find(&Paths::default()), GameRepo::NotHere);
+    assert_eq!(gamerepo::find(&paths), GameRepo::NotHere);
+    // A settings file that is no JSON object, too large or a folder: the same.
+    for bytes in [&b"{ not json"[..], b"[1, 2]", b"\"library\"", b"null"] {
+        put(&config, bytes);
+        assert_eq!(gamerepo::find(&paths), GameRepo::NotHere);
+    }
+    let mut large = br#"{"library": null, "pad": ""#.to_vec();
+    large.resize((1 << 20) + 10, b'x');
+    large.extend_from_slice(b"\"}");
+    put(&config, &large);
+    assert_eq!(gamerepo::find(&paths), GameRepo::NotHere);
+    fs::remove_file(&config).unwrap();
+    fs::create_dir_all(&config).unwrap();
+    assert_eq!(gamerepo::find(&paths), GameRepo::NotHere);
+    fs::remove_dir(&config).unwrap();
+
+    // Its library: that Maps and Guides folder, there or not.
+    put_game_repo(
+        &paths,
+        &json!({"library": library.display().to_string(), "theme": "dark"}),
+    );
+    assert_eq!(
+        gamerepo::find(&paths),
+        GameRepo::Here {
+            library: library.clone(),
+            folder: library.join(MAPS_AND_GUIDES),
+        }
+    );
+    // A byte order mark first is read too.
+    let mut marked = "\u{feff}".as_bytes().to_vec();
+    marked.extend_from_slice(&fs::read(&config).unwrap());
+    put(&config, &marked);
+    assert!(matches!(gamerepo::find(&paths), GameRepo::Here { .. }));
+
+    // No library, or none: Game Repo in the home folder.
+    for settings in [json!({}), json!({"library": null})] {
+        put_game_repo(&paths, &settings);
+        let library = home.join(DEFAULT_LIBRARY);
+        assert_eq!(
+            gamerepo::find(&paths),
+            GameRepo::Here {
+                folder: library.join(MAPS_AND_GUIDES),
+                library,
+            }
+        );
+    }
+    // Without a home folder known, that library cannot be used.
+    let homeless = Paths {
+        home: None,
+        ..paths.clone()
+    };
+    assert!(matches!(gamerepo::find(&homeless), GameRepo::Unusable(_)));
+
+    // A library Atlas cannot use: Game Repo is here, but its library is not.
+    let up = library.join("..").join("Other");
+    let long = dir.0.join("x".repeat(4100));
+    for value in [
+        json!(""),
+        json!("Relative Library"),
+        json!(up.display().to_string()),
+        json!(long.display().to_string()),
+        json!(format!("{}\u{0}", library.display())),
+        json!(42),
+        json!(["a"]),
+        json!({"path": library.display().to_string()}),
+    ] {
+        put_game_repo(&paths, &json!({ "library": value }));
+        match gamerepo::find(&paths) {
+            GameRepo::Unusable(why) => {
+                assert!(why.contains("not a full path Atlas can use"), "{why}");
+                assert!(why.chars().count() < 300, "{why}");
+            }
+            other => panic!("{value}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn game_repos_settings_are_where_the_system_keeps_them() {
+    let dir = TempDir::new("keep-gamerepo-env");
+    let home = dir.0.join("home");
+    let settings = dir.0.join("settings");
+    let env = |vars: Vec<(&'static str, PathBuf)>| {
+        move |name: &str| {
+            vars.iter()
+                .find(|(var, _)| *var == name)
+                .map(|(_, value)| value.clone().into_os_string())
+        }
+    };
+    let all = vec![
+        ("USERPROFILE", home.clone()),
+        ("HOME", home.clone()),
+        ("APPDATA", settings.clone()),
+        ("XDG_CONFIG_HOME", settings.clone()),
+    ];
+    let paths = Paths::from_env(env(all));
+    let found = |base: PathBuf| Paths {
+        config: Some(base.join(APP_FOLDER).join(CONFIG_FILE)),
+        home: Some(home.clone()),
+    };
+    // Without the folder of settings named, where the system keeps it in
+    // the home folder.
+    let home_only = Paths::from_env(env(vec![
+        ("USERPROFILE", home.clone()),
+        ("HOME", home.clone()),
+        ("APPDATA", PathBuf::new()),
+        ("XDG_CONFIG_HOME", PathBuf::from("relative")),
+    ]));
+    if cfg!(windows) {
+        assert_eq!(paths, found(settings.clone()));
+        assert_eq!(home_only, found(home.join("AppData").join("Roaming")));
+    } else if cfg!(target_os = "macos") {
+        let support = home.join("Library").join("Application Support");
+        assert_eq!(paths, found(support.clone()));
+        assert_eq!(home_only, found(support));
+    } else if cfg!(any(target_os = "android", target_os = "ios")) {
+        assert_eq!(paths, Paths::default());
+    } else {
+        assert_eq!(paths, found(settings.clone()));
+        assert_eq!(home_only, found(home.join(".config")));
+    }
+    // Nothing named: nowhere to look.
+    assert_eq!(Paths::from_env(|_| None), Paths::default());
+}
+
+#[test]
+fn without_game_repo_the_default_is_the_packs_folder() {
+    // Somewhere to look, but no settings file: Game Repo is not here.
+    let world = World::with("keep-gamerepo-none", game_repo_paths);
+    let status = world.turn_on_in(None);
+    assert!(status.problem.is_none(), "{status:#?}");
+    assert!(status.folder_is_default);
+    assert_eq!(status.folder_default_from, DefaultFrom::PacksFolder);
+    assert_eq!(PathBuf::from(&status.folder), world.library.packs_folder());
+    let row = World::row(&status);
+    assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
+    assert!(PathBuf::from(row.path.unwrap()).starts_with(world.library.packs_folder()));
+    assert!(!world.dir.0.join("home").exists());
+}
+
+#[test]
+fn writes_into_game_repos_maps_and_guides_folder_by_default() {
+    let world = World::with("keep-gamerepo-library", game_repo_paths);
+    let paths = game_repo_paths(&world.dir.0);
+    // Its library is there; its Maps and Guides folder not yet.
+    let library = world.dir.0.join("Drive").join("Games Library");
+    fs::create_dir_all(&library).unwrap();
+    put_game_repo(&paths, &json!({"library": library.display().to_string()}));
+    let maps_and_guides = library.join(MAPS_AND_GUIDES);
+    assert_eq!(
+        world.keeper.default_folder(),
+        (maps_and_guides.clone(), DefaultFrom::GameRepo)
+    );
+
+    let status = world.turn_on_in(None);
+    assert!(status.problem.is_none(), "{status:#?}");
+    assert!(status.folder_is_default && !status.folder_chosen);
+    assert_eq!(status.folder_default_from, DefaultFrom::GameRepo);
+    assert_eq!(PathBuf::from(&status.folder), maps_and_guides);
+    let row = World::row(&status);
+    assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
+    let (packs, parts) = files_in(&maps_and_guides);
+    assert_eq!(packs.len(), 1);
+    assert!(parts.is_empty());
+    assert_eq!(
+        packs[0].parent(),
+        Some(maps_and_guides.join(NEW_PACKS_FOLDER).as_path())
+    );
+    assert_eq!(world.record().folder, Some(maps_and_guides.clone()));
+    // Nothing went into the packs folder.
+    assert!(files_in(&world.library.packs_folder()).0.is_empty());
+
+    // Without a library in its settings: Game Repo in the home folder.
+    let home_library = world.dir.0.join("home").join(DEFAULT_LIBRARY);
+    fs::create_dir_all(&home_library).unwrap();
+    put_game_repo(&paths, &json!({"library": null}));
+    let status = world.after_run(|| {
+        world.keeper.write_all();
+    });
+    let home_folder = home_library.join(MAPS_AND_GUIDES);
+    assert_eq!(PathBuf::from(&status.folder), home_folder);
+    assert_eq!(World::row(&status).state, RowState::UpToDate, "{status:#?}");
+    assert_eq!(files_in(&home_folder).0.len(), 1);
+    // The pack in the library left behind stays as it was.
+    assert_eq!(files_in(&maps_and_guides).0, packs);
+
+    // A folder the person chose wins over Game Repo's.
+    let status = world.turn_on(&world.repo);
+    assert!(!status.folder_is_default && status.folder_chosen);
+    assert_eq!(status.folder_default_from, DefaultFrom::GameRepo);
+    assert_eq!(PathBuf::from(&status.folder), world.repo);
+    assert_eq!(world.files().0.len(), 1);
+    assert_eq!(world.keeper.folder(), world.repo);
+    // And a change of the packs folder leaves Game Repo's default alone.
+    world.turn_on_in(None);
+    let old = world.library.packs_folder();
+    world
+        .library
+        .propose_packs_folder(&world.dir.0.join("New Packs"))
+        .unwrap();
+    world.library.apply_packs_folder(false).unwrap();
+    world.keeper.packs_folder_changed(&old);
+    assert_eq!(world.keeper.setting().folder, None);
+    assert_eq!(world.keeper.folder(), home_folder);
+}
+
+#[test]
+fn a_missing_game_repo_library_writes_nothing_and_makes_nothing() {
+    let world = World::with("keep-gamerepo-missing", game_repo_paths);
+    let paths = game_repo_paths(&world.dir.0);
+    let drive = world.dir.0.join("Unplugged");
+    let library = drive.join("Games Library");
+    put_game_repo(&paths, &json!({"library": library.display().to_string()}));
+
+    let status = world.turn_on_in(None);
+    assert_eq!(status.folder_default_from, DefaultFrom::GameRepo);
+    let problem = status.problem.clone().expect("a problem");
+    assert!(problem.contains("Game Repo's library folder"), "{problem}");
+    assert!(problem.contains("cannot be found"), "{problem}");
+    assert!(status.notice.is_some());
+    assert!(!drive.exists(), "nothing is made");
+    assert!(world.record().packs.is_empty());
+    // Never into the packs folder instead.
+    assert!(files_in(&world.library.packs_folder()).0.is_empty());
+
+    // Once the library is there again, its Maps and Guides folder is made
+    // and the packs are written by themselves.
+    fs::create_dir_all(&library).unwrap();
+    let status = world.wait("written once the library is back", |status| {
+        status.problem.is_none() && World::row(status).state == RowState::UpToDate
+    });
+    assert_eq!(
+        files_in(&library.join(MAPS_AND_GUIDES)).0.len(),
+        1,
+        "{status:#?}"
+    );
+}
+
+#[test]
+fn an_unusable_game_repo_library_falls_back_to_the_packs_folder() {
+    let world = World::with("keep-gamerepo-unusable", game_repo_paths);
+    put_game_repo(
+        &game_repo_paths(&world.dir.0),
+        &json!({"library": "Relative Library"}),
+    );
+    let status = world.turn_on_in(None);
+    assert!(status.problem.is_none(), "{status:#?}");
+    assert_eq!(status.folder_default_from, DefaultFrom::PacksFolder);
+    assert_eq!(PathBuf::from(&status.folder), world.library.packs_folder());
+    assert_eq!(World::row(&status).state, RowState::UpToDate, "{status:#?}");
+    assert_eq!(files_in(&world.library.packs_folder()).0.len(), 1);
+}
+
+#[test]
+fn the_default_moving_to_game_repo_is_a_change_of_folder() {
+    let world = World::with("keep-gamerepo-switch", game_repo_paths);
+    let paths = game_repo_paths(&world.dir.0);
+    // On with the default before Game Repo is here: the packs folder.
+    let status = world.turn_on_in(None);
+    assert_eq!(status.folder_default_from, DefaultFrom::PacksFolder);
+    let old = files_in(&world.library.packs_folder()).0;
+    assert_eq!(old.len(), 1, "{status:#?}");
+    let old_bytes = fs::read(&old[0]).unwrap();
+
+    // Game Repo arrives (as at the first start after this update): the
+    // packs are written anew into its folder, and those in the packs folder
+    // stay where they are, as they are.
+    let library = world.dir.0.join("Games Library");
+    fs::create_dir_all(library.join(MAPS_AND_GUIDES)).unwrap();
+    put_game_repo(&paths, &json!({"library": library.display().to_string()}));
+    let status = world.after_run(|| {
+        world.keeper.write_all();
+    });
+    let maps_and_guides = library.join(MAPS_AND_GUIDES);
+    assert_eq!(status.folder_default_from, DefaultFrom::GameRepo);
+    assert_eq!(PathBuf::from(&status.folder), maps_and_guides);
+    let row = World::row(&status);
+    assert_eq!(row.state, RowState::UpToDate, "{status:#?}");
+    let new = files_in(&maps_and_guides).0;
+    assert_eq!(new.len(), 1);
+    assert_eq!(row.path, Some(new[0].display().to_string()));
+    let record = world.record();
+    assert_eq!(record.folder, Some(maps_and_guides.clone()));
+    assert_eq!(record.packs[ID].path, new[0]);
+    assert_eq!(files_in(&world.library.packs_folder()).0, old);
+    assert_eq!(fs::read(&old[0]).unwrap(), old_bytes);
+
+    // The next check keeps to Game Repo's folder and does not write the
+    // pack again.
+    let written_at = record.packs[ID].written_at.clone();
+    let status = world.after_run(|| {
+        world.keeper.write_all();
+    });
+    assert_eq!(World::row(&status).state, RowState::UpToDate);
+    assert_eq!(world.record().packs[ID].written_at, written_at);
+    assert_eq!(files_in(&maps_and_guides).0, new);
+
+    // Game Repo gone again: back to the packs folder, and the pack in Game
+    // Repo's folder stays where it is.
+    fs::remove_file(paths.config.as_ref().unwrap()).unwrap();
+    let status = world.after_run(|| {
+        world.keeper.write_all();
+    });
+    assert_eq!(status.folder_default_from, DefaultFrom::PacksFolder);
+    assert_eq!(PathBuf::from(&status.folder), world.library.packs_folder());
+    assert_eq!(world.record().folder, Some(world.library.packs_folder()));
+    assert_eq!(files_in(&world.library.packs_folder()).0, old);
+    assert_eq!(files_in(&maps_and_guides).0, new);
 }

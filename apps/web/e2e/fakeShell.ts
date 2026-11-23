@@ -304,6 +304,7 @@ interface KeptPacksState {
   on: boolean;
   folder: string;
   folderIsDefault: boolean;
+  folderDefaultFrom: 'gameRepo' | 'packsFolder';
   folderChosen: boolean;
   schedule: string;
   running: boolean;
@@ -376,6 +377,7 @@ function installFakeShell({
         on: false,
         folder: '/maps/packs',
         folderIsDefault: true,
+        folderDefaultFrom: 'packsFolder',
         folderChosen: false,
         schedule: 'start',
         running: false,
@@ -1432,11 +1434,24 @@ export const setPacksFolder = (page: Page, change: Partial<MockShell['packsFolde
 /** The folder the person chooses in the next folder dialog of the kept packs, and the games listed. */
 export const setKeptPacks = (
   page: Page,
-  kept: { pick: string | null; games: Record<string, unknown>[] },
+  {
+    status,
+    ...kept
+  }: {
+    pick?: string | null;
+    games?: Record<string, unknown>[];
+    /** Changes to what `kept_packs_status` answers, sent with the next answer. */
+    status?: Partial<KeptPacksState>;
+  },
 ) =>
-  page.evaluate((kept) => {
-    Object.assign((window as unknown as { __mockShell: MockShell }).__mockShell.keptPacks, kept);
-  }, kept);
+  page.evaluate(
+    ({ kept, status }) => {
+      const shell = (window as unknown as { __mockShell: MockShell }).__mockShell.keptPacks;
+      Object.assign(shell, kept);
+      Object.assign(shell.status, status ?? {});
+    },
+    { kept, status },
+  );
 
 export const setMock = (
   page: Page,

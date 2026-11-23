@@ -54,6 +54,32 @@ async function openKeptPacks(page: Page) {
 const row = (page: Page, id: string) =>
   page.locator(`[data-testid="kept-pack-row"][data-id="${id}"]`);
 
+test('names Game Repo’s Maps and Guides folder as the default when Game Repo is on this computer', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await setUp(page, true);
+  await setKeptPacks(page, {
+    status: {
+      folder: '/home/test/Game Repo/Maps and Guides',
+      folderDefaultFrom: 'gameRepo',
+    },
+  });
+  const section = await openKeptPacks(page);
+  // On with no folder chosen: in Game Repo's folder, without a dialog.
+  await section.getByTestId('kept-packs-switch').click({ force: true });
+  await expect(section.getByTestId('kept-packs-switch')).toBeChecked();
+  await expect(section.getByTestId('kept-packs-folder')).toHaveText(
+    '/home/test/Game Repo/Maps and GuidesDefault: Game Repo’s Maps and Guides folder',
+  );
+
+  // A folder chosen: no default named.
+  await setKeptPacks(page, { pick: '/media/usb/Packs' });
+  await section.getByTestId('kept-packs-choose').click();
+  await expect(section.getByTestId('kept-packs-folder')).toHaveText('/media/usb/Packs');
+  expect(realErrors(errors)).toEqual([]);
+});
+
 test('turns on in the packs folder or in a folder chosen in the dialog, lists each game and writes one again', async ({
   page,
 }) => {
