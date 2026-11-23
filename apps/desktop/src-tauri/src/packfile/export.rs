@@ -15,8 +15,10 @@ use super::{
     card::{read_card, site_name},
     categories_without_pictures, count_contents, describe_pack, pack_file_entries, plan_images,
     preview::make_previews,
-    refusal, shared_pictures_with, smaller, space, type_picture_ids, unavailable, AppInfo, Counts,
-    DirCache, Entry, EntryData, Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop,
+    refusal,
+    scene::{scene_export, MAPS_FILE, VERSION_WITH_SCENES},
+    shared_pictures_with, smaller, space, type_picture_ids, unavailable, AppInfo, Counts, DirCache,
+    Entry, EntryData, Header, ImagesFacts, LayerFacts, Mine, PackSource, Progress, Stop,
     CATEGORIES_FILE, FORMAT, HEADER_FILE, MINE_PICTURES_DIR, PICTURES_FILE, ROUTES_FILE,
     VERSION_WITHOUT_MINE, VERSION_WITH_PREVIEWS, VERSION_WITH_ROUTES,
 };
@@ -231,6 +233,12 @@ pub fn write_part(
             );
         }
     }
+    // The 3D maps: the levels of detail this detail picks, and `maps.json`
+    // naming only what the file carries.
+    let scenes = scene_export(&source.root, detail)?;
+    for map in &mut maps {
+        map.scene = scenes.maps.contains(&map.id);
+    }
     let mut entries: Vec<Entry> = previews
         .into_iter()
         .map(|preview| Entry {
@@ -252,6 +260,13 @@ pub fn write_part(
                     data: EntryData::Bytes(list),
                 });
             }
+        } else if entry.name == MAPS_FILE && scenes.maps_json.is_some() {
+            let bytes = scenes.maps_json.clone().unwrap_or_default();
+            entries.push(Entry {
+                name: entry.name,
+                size: bytes.len() as u64,
+                data: EntryData::Bytes(bytes),
+            });
         } else if entry.name == CATEGORIES_FILE && categories.is_some() {
             let bytes = categories.clone().unwrap_or_default();
             entries.push(Entry {
@@ -296,6 +311,8 @@ pub fn write_part(
         });
     }
     entries.extend(image_entries);
+    let with_scenes = !scenes.maps.is_empty();
+    entries.extend(scenes.files);
     entries.extend(pictures.map(|pictures| pictures.files).unwrap_or_default());
     for (name, _, text) in mine.files() {
         entries.push(Entry {
@@ -321,7 +338,9 @@ pub fn write_part(
         format: FORMAT.to_owned(),
         // The lowest version that holds what the file carries, so an older
         // app reads every file it can.
-        version: if with_routes || with_type_pictures {
+        version: if with_scenes {
+            carried.max(VERSION_WITH_SCENES)
+        } else if with_routes || with_type_pictures {
             carried.max(VERSION_WITH_ROUTES)
         } else if with_previews {
             carried.max(VERSION_WITH_PREVIEWS)

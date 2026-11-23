@@ -209,6 +209,7 @@ test('the classic keys work and are shown, and Esc closes what is on top', async
   // Each context with its keys (and its controller buttons, see controller.spec.ts).
   await expect(keys.locator('kbd')).toHaveText([
     ...['W', 'A', 'S', 'D', '-', '+', 'Enter', 'F', 'N', '0', 'L'],
+    ...[',', '.', 'Page Down', 'Page Up', 'V'],
     ...['[', ']', 'H', 'B'],
     ...['N', 'F'],
     ...['\u2191', '\u2193', '\u2190', '\u2192', 'Enter', 'Page Up', 'Page Down'],

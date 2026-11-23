@@ -152,6 +152,11 @@ const UI_PATHS = {
   // The larger view of a picture (PictureViewer.tsx).
   zoomIn: 'M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10zM12.2 12.2L16.5 16.5M6.5 8.5h4M8.5 6.5v4',
   zoomOut: 'M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10zM12.2 12.2L16.5 16.5M6.5 8.5h4',
+  // The 3D view (components/SceneTools.tsx).
+  cube: 'M10 2.5l7 4v7l-7 4l-7-4v-7zM3 6.5l7 4l7-4M10 10.5v7',
+  fromAbove: 'M10 2v7M7 6l3 3l3-3M3 13.5l7-3.5l7 3.5l-7 3.5z',
+  recenter: 'M3.5 10a6.5 6.5 0 1 0 2-4.7M3.5 3v3.5H7M10 8a2 2 0 1 1 0 4a2 2 0 1 1 0-4z',
+  cut: 'M2.5 9.5h15M5 13l5 3l5-3M5 6l5-3l5 3',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

@@ -185,6 +185,15 @@ jobs:
 
           To start Atlas from your Steam library, open **Settings** in Atlas and press **Add Atlas to Steam** under **Atlas in Steam**. Atlas adds itself as a non-Steam game, with its own artwork, on Windows and on the Steam Deck. **Atlas-Steam-artwork.zip** has the same pictures, with a note on which goes where, if you would rather set them by hand.
 
+          ## New in 0.31.0
+
+          - **3D maps.** A map can now come with a 3D model. It opens in 3D, with a **2D | 3D** switch beside the map. Turn, move and zoom with the mouse, touch or a controller. **View from above** looks straight down, and **Back to the start** returns to the first view. Where a map has floors, pick one and everything above it is cut away. **Cut** hides everything above a height, or what is between you and a location. Pressing a location opens its card, as on the flat map, and search and **Show on the map** take you to it in 3D.
+          - **Try it on Mossgate Keep**, a made-up 3D map in the demo pack, with a keep of two storeys and a cave.
+          - **3D trial.** In **Settings**, **3D trial** draws a heavy test scene, measures how smoothly this device shows it, and saves a short report. Please run it and send the report: it decides how much detail Atlas loads on each device.
+          - Pack files that hold a 3D model are version 11. Older versions of Atlas ask for a newer one.
+
+          This version has passed the automatic checks only. 3D maps have not been tried on a real device yet.
+
           ## New in 0.30.0
 
           - **Atlas in Steam.** In **Settings**, **Atlas in Steam**, press **Add Atlas to Steam** and Atlas adds itself to your Steam library as a non-Steam game, with its own grid, wide, hero, logo and icon pictures. Steam has to be closed while it writes: if it is open, press **Restart Steam and add it**. If you added Atlas to Steam by hand before, Atlas only adds the pictures to that entry and keeps any you set yourself. **Take Atlas out of Steam** removes it again.

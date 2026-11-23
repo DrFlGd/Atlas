@@ -184,6 +184,13 @@ describe('padContext', () => {
     expect(padContext({ ...base, mapShown: false })).toBe('menus');
   });
 
+  it('moves the 3D view where it is shown in place of the map', () => {
+    expect(padContext({ ...base, scene: true })).toBe('scene');
+    expect(padContext({ ...base, scene: true, focus: 'map' })).toBe('scene');
+    expect(padContext({ ...base, scene: true, focus: 'card' })).toBe('card');
+    expect(padContext({ ...base, scene: true, section: 'lists' })).toBe('lists');
+  });
+
   it('reads in Guides, and is in a list in Lists', () => {
     expect(padContext({ ...base, section: 'guides' })).toBe('reading');
     expect(padContext({ ...base, section: 'lists' })).toBe('lists');

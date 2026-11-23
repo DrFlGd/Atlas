@@ -6,6 +6,7 @@ import { FilterPane } from './components/FilterPane';
 import { UiIcon } from './components/icons';
 import { MapPageStatus } from './components/MapPageStatus';
 import { MapPane } from './components/MapPane';
+import { ClassicSceneNote } from './components/MapStage';
 import { MapsDialog } from './components/MapsDialog';
 import { PackArrivalNote } from './components/PackArrivalNote';
 import { PictureViewer } from './components/PictureViewer';
@@ -17,6 +18,7 @@ import { UpdateNotice } from './components/UpdateNotice';
 import { TopBar } from './components/TopBar';
 import { downloadsOffered, touchUiOffered } from './features';
 import { loadPadSettings } from './input/padState';
+import { loadSceneSettings } from './state/scene3d';
 import { useShortcuts } from './keyboard';
 import { NARROW_QUERY, boot, moveMap, onWidthClassChange, setPane } from './state/actions';
 import { checklistScreenTitle, showLeftTab } from './state/checklists';
@@ -154,7 +156,10 @@ export function App() {
   // The settings of a controller, once the store with the settings is open.
   const configured = useAtlas((s) => s.config !== null);
   useEffect(() => {
-    if (configured) void loadPadSettings();
+    if (configured) {
+      void loadPadSettings();
+      void loadSceneSettings();
+    }
   }, [configured]);
 
   useViewHashSync();
@@ -260,6 +265,7 @@ function Shell() {
       )}
       <main className="map-main" aria-label="Map area">
         {hasMap(game) ? <MapPane /> : <NoMap hasPages={hasChecklists} />}
+        {hasMap(game) ? <ClassicSceneNote /> : null}
         {__ATLAS_DOWNLOADS__ && pageViews ? <MapPageStatus /> : null}
       </main>
       <SidePane name="details" title="Details">

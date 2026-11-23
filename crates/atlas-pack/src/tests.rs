@@ -178,11 +178,11 @@ fn refuses_a_newer_version_and_what_is_no_pack_file() {
     assert_eq!(error.kind(), RefusalKind::NewerFormat);
     assert_eq!(
         error.what(),
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 11)."
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 12)."
     );
     assert_eq!(
         error.to_string(),
-        "This pack file was made by Atlas 9.1.0 x in a newer format (version 11). A newer version of this app is needed to open it."
+        "This pack file was made by Atlas 9.1.0 x in a newer format (version 12). A newer version of this app is needed to open it."
     );
     assert_eq!(String::from(error.clone()), error.to_string());
     for (key, value) in [
@@ -492,4 +492,59 @@ fn reads_a_version_9_description_with_the_maps_icons() {
     assert_eq!(header.contents.type_pictures, 0);
     let written = serde_json::to_value(header.contents).unwrap();
     assert!(written.get("typePictures").is_none());
+}
+
+#[test]
+fn reads_a_version_11_description_with_a_3d_map() {
+    let mut scene = header_v7();
+    scene["version"] = json!(VERSION_WITH_SCENES);
+    scene["maps"][0]["scene"] = json!(true);
+    let header = parse_header(&scene.to_string()).unwrap();
+    assert_eq!(header.version, 11);
+    assert!(header.maps[0].scene);
+    let written = serde_json::to_value(&header.maps[0]).unwrap();
+    assert_eq!(written["scene"], true);
+    // A map without one writes none.
+    let written = serde_json::to_value(&header.maps[1]).unwrap();
+    assert!(written.get("scene").is_none());
+    // A description of a version before 3D maps has none.
+    let mut older = header_v7();
+    older["maps"][0]["scene"] = json!(true);
+    assert!(!parse_header(&older.to_string()).unwrap().maps[0].scene);
+}
+
+#[test]
+fn picks_the_levels_of_a_3d_map_by_detail() {
+    assert_eq!(Detail::Full.scene_levels(&[2, 0, 1]), vec![0, 1, 2]);
+    assert_eq!(Detail::Standard.scene_levels(&[0, 1, 2]), vec![1, 2]);
+    assert_eq!(Detail::Overview.scene_levels(&[0, 1, 2]), vec![2]);
+    // A cell always keeps a level.
+    assert_eq!(Detail::Standard.scene_levels(&[0]), vec![0]);
+    assert_eq!(Detail::Overview.scene_levels(&[0]), vec![0]);
+    assert_eq!(Detail::Standard.scene_levels(&[1, 1]), vec![1]);
+    assert!(Detail::Full.scene_levels(&[]).is_empty());
+}
+
+#[test]
+fn tells_safe_names_of_model_files() {
+    for good in [
+        "scene/c0/lod0.glb",
+        "scene/neighbours.glb",
+        "scene/a/b/c/d/e.glb",
+    ] {
+        assert!(is_scene_file_name(good), "{good}");
+    }
+    for bad in [
+        "scene/C0/lod0.glb",
+        "scene/../x.glb",
+        "scene/.hidden/x.glb",
+        "scene/a.gltf",
+        "scene/.glb",
+        "scene//x.glb",
+        "models/x.glb",
+        "scene/a/b/c/d/e/f.glb",
+        "scene\\x.glb",
+    ] {
+        assert!(!is_scene_file_name(bad), "{bad}");
+    }
 }

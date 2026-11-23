@@ -4,7 +4,7 @@ import { CONTEXTS, guideRows, keyLabel, wordsOf } from '../input/bindings';
 import { PadGlyphs } from '../input/PadGlyph';
 import { glyphStyle, usePad } from '../input/padState';
 import { useAtlas } from '../state/store';
-import { MOUSE_HELP } from './keys';
+import { MOUSE_HELP, MOUSE_HELP_3D } from './keys';
 import { setKeysOpen, useTouch } from './state';
 
 /**
@@ -103,6 +103,15 @@ export function KeysDialog() {
           <h3 className="section-title">Mouse, on the map</h3>
           <dl className="keys-list keys-list-mouse">
             {MOUSE_HELP.map((entry) => (
+              <div key={entry.action} className="keys-row">
+                <dt>{entry.action}</dt>
+                <dd>{entry.what}</dd>
+              </div>
+            ))}
+          </dl>
+          <h3 className="section-title">Mouse, in the 3D view</h3>
+          <dl className="keys-list keys-list-mouse">
+            {MOUSE_HELP_3D.map((entry) => (
               <div key={entry.action} className="keys-row">
                 <dt>{entry.action}</dt>
                 <dd>{entry.what}</dd>

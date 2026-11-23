@@ -60,7 +60,7 @@ test.describe('on a phone', () => {
     const everything = home.getByTestId('list-link').first();
     await expect(everything).toHaveAttribute('data-checklist-id', 'atlas:everything');
     await expect(everything).toContainText('Everything');
-    await expect(everything.locator('[data-total]')).toHaveAttribute('data-total', '5041');
+    await expect(everything.locator('[data-total]')).toHaveAttribute('data-total', '5070');
     await expect(
       home.locator('section', { hasText: 'Routes' }).getByTestId('list-link'),
     ).toHaveText([new RegExp(ROUTE)]);

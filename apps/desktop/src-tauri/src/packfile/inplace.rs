@@ -703,6 +703,7 @@ impl Table {
                 Kind::Image
                 | Kind::Marker
                 | Kind::Picture
+                | Kind::Scene
                 | Kind::Guidebook
                 | Kind::GuidebookText => Serve::Bytes,
                 Kind::Mine(_) | Kind::MinePicture | Kind::Preview => Serve::No,

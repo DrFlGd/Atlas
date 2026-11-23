@@ -32,6 +32,7 @@ import { NewGameButton, OwnGameActions } from './OwnGames';
 import { setKeepScreenOn, setKeysOpen, useKeyHints, useTouch } from './state';
 import { GroupTitle, SwitchTrack } from './widgets';
 import { ControllerSettings } from './ControllerSettings';
+import { SceneTrialRow } from './SceneTrial';
 import { usePad } from '../input/padState';
 
 /**
@@ -744,6 +745,7 @@ export function Settings({ withLog = true }: { withLog?: boolean }) {
         </button>
       ) : null}
       <ControllerSettings />
+      <SceneTrialRow />
       {desktop && withLog ? (
         <button
           type="button"

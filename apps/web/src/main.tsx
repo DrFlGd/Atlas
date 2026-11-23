@@ -7,6 +7,7 @@ import { desktop, openLinksOutside } from './desktop';
 import './styles/theme.css';
 import './styles/app.css';
 import './styles/pad.css';
+import './styles/scene.css';
 
 // In the desktop app, links to other sites open in the system browser.
 if (desktop) openLinksOutside(desktop);

@@ -77,8 +77,16 @@ import {
   type ContextFacts,
   type Point,
 } from './input/padMath';
-import { markersOnScreen, padMap, reticleTarget, usePad, type InputSource } from './input/padState';
+import {
+  markersOnScreen,
+  padMap,
+  padScene,
+  reticleTarget,
+  usePad,
+  type InputSource,
+} from './input/padState';
 import { notify, select, setPane, showMap, toggleFound } from './state/actions';
+import { floorsOfMap, floorStep, pickFloor, requestSceneView } from './state/scene3d';
 import { useAtlas } from './state/store';
 
 export type Direction = 'up' | 'down' | 'left' | 'right';
@@ -219,7 +227,7 @@ const FOCUSABLE = [
 ].join(',');
 
 /** The map, whose arrow keys move it (Leaflet's). */
-const MAP = '.leaflet-container';
+const MAP = '.leaflet-container, .scene-view';
 
 /** Elements that use the arrow keys themselves without stopping them. */
 function ownsArrows(element: HTMLElement): boolean {
@@ -527,6 +535,7 @@ function contextFacts(): ContextFacts {
     section: shell ? (shell.dataset.section ?? null) : null,
     mapShown: box !== undefined && box.width > 0 && box.height > 0,
     focus: !active ? 'none' : active.closest(MAP) ? 'map' : active.closest(CARD) ? 'card' : 'other',
+    scene: document.querySelector('.scene-view') !== null,
   };
 }
 
@@ -572,6 +581,11 @@ function used(source: InputSource): void {
 
 /** Moves the map by screen pixels and zooms it by levels, at once. */
 function nudgeMap(dx: number, dy: number, dz: number): void {
+  const scene = padScene();
+  if (scene) {
+    scene.nudge(dx, dy, dz);
+    return;
+  }
   const map = padMap();
   const view = map?.view.getView();
   if (!map || !view) return;
@@ -604,20 +618,42 @@ function markUnderReticle(): void {
 /** Moves the crosshair to the next location in a direction, and the map with it. */
 function jump(direction: Direction): void {
   const seen = markersOnScreen();
+  const scene = padScene();
   const map = padMap();
-  if (!seen || !map) return;
+  if (!seen || (!map && !scene)) return;
   const held = snapTarget(seen.center, seen.points);
   const from: Point = held >= 0 ? seen.points[held]! : seen.center;
   const index = jumpTarget(from, direction, seen.points, held);
   if (index < 0) return;
-  const marker = seen.markers[index]!;
-  map.view.panTo({ x: marker.x, y: marker.y });
+  const id = seen.markers[index]!.id;
+  if (scene) {
+    scene.lookAt(id);
+    return;
+  }
+  const marker = useAtlas.getState().game?.pack.locations.get(id);
+  if (map && marker) map.view.panTo({ x: marker.x, y: marker.y });
+}
+
+/** The floor below or above, where the map shown has floors, in 2D or in 3D. */
+function stepFloor(by: -1 | 1): boolean {
+  const name = floorStep(by, padScene() !== null);
+  if (name) notify(`Floor: ${name}`);
+  return name !== null;
 }
 
 /** Shows the next level of the map shown, where it has levels. */
 function nextLevel(): void {
   const { game, mapId, layerId } = useAtlas.getState();
   if (!game || !mapId) return;
+  // In 3D, the floors in turn, then all of them.
+  const floors = floorsOfMap(useAtlas.getState(), mapId);
+  if (padScene() && floors.length > 0) {
+    if (!stepFloor(1)) {
+      pickFloor(floors[0]!.id);
+      notify(`Floor: ${floors[0]!.name}`);
+    }
+    return;
+  }
   const layers = game.pack.layersOf(mapId);
   if (layers.length < 2) return;
   const at = layers.findIndex((layer) => layer.id === layerId);
@@ -628,6 +664,10 @@ function nextLevel(): void {
 
 /** Shows the whole map. */
 function wholeMap(): void {
+  if (padScene()) {
+    requestSceneView('recenter');
+    return;
+  }
   padMap()?.view.fitLayer();
 }
 
@@ -744,7 +784,7 @@ function press(): void {
   }
   markMoving();
   // The map itself and a text field: nothing to press.
-  if (active.matches(MAP) || isTypingTarget(active)) return;
+  if (active.closest(MAP) || isTypingTarget(active)) return;
   active.click();
 }
 
@@ -763,7 +803,8 @@ function backToMap(): boolean {
  */
 function back(): void {
   markMoving();
-  const moving = refreshContext() === 'map';
+  const now = refreshContext();
+  const moving = now === 'map' || now === 'scene';
   if (window.atlasBack) {
     if (!window.atlasBack() && !leaveMap(moving)) backToMap();
     return;
@@ -802,6 +843,12 @@ function run(action: ActionId, by: -1 | 1): void {
     case 'level':
       nextLevel();
       return;
+    case 'from-above':
+      padScene()?.fromAbove();
+      return;
+    case 'floor':
+      stepFloor(by === 1 ? 1 : -1);
+      return;
     case 'turn-page':
       turnPage(by);
       return;
@@ -838,6 +885,8 @@ let keyFrameAt = 0;
 
 /** How fast the map's keys move it: as a controller's stick leaned most of the way. */
 const KEY_LEAN = 0.8;
+/** How fast the 3D view turns at full lean of a stick, or with its keys held, in radians a second. */
+const TURN_RATE = 2.2;
 
 function keyLoop(now: number): void {
   keyFrame = 0;
@@ -857,6 +906,9 @@ function keyLoop(now: number): void {
     invertY,
   );
   nudgeMap(step.x, step.y, zoomStep(zoomOut, zoomIn, seconds));
+  // The 3D view turns with its keys held.
+  const turn = (heldKeys.has('.') ? 1 : 0) - (heldKeys.has(',') ? 1 : 0);
+  if (turn !== 0) padScene()?.turn(turn * TURN_RATE * Math.min(seconds, 0.1), 0);
   keyFrame = requestAnimationFrame(keyLoop);
 }
 
@@ -892,8 +944,14 @@ function mapKeys(event: KeyboardEvent, active: HTMLElement | null): boolean {
     switchSection(keyName(event.key) === 'q' ? -1 : 1);
     return true;
   }
-  if (context !== 'map') return false;
   const name = keyName(event.key);
+  // The floors of a map shown in 2D go up and down with the keys of the 3D view.
+  if (context === 'map' && (name === 'PageUp' || name === 'PageDown')) {
+    return floorsOfMap(useAtlas.getState(), useAtlas.getState().mapId).length > 0
+      ? stepFloor(name === 'PageUp' ? 1 : -1) || true
+      : false;
+  }
+  if (context !== 'map' && context !== 'scene') return false;
   switch (action) {
     case 'pan':
       holdKey(name);
@@ -901,7 +959,7 @@ function mapKeys(event: KeyboardEvent, active: HTMLElement | null): boolean {
       return true;
     case 'zoom':
       // Leaflet zooms with these itself while the map has the focus.
-      if (active) return false;
+      if (active && context === 'map') return false;
       if (!event.repeat) nudgeMap(0, 0, name === '+' ? 0.25 : -0.25);
       holdKey(name);
       usePad.setState({ mapKeys: true });
@@ -915,6 +973,15 @@ function mapKeys(event: KeyboardEvent, active: HTMLElement | null): boolean {
       return true;
     case 'level':
       nextLevel();
+      return true;
+    case 'turn':
+      holdKey(name);
+      return true;
+    case 'floor':
+      if (!event.repeat) stepFloor(name === 'PageUp' ? 1 : -1);
+      return true;
+    case 'from-above':
+      padScene()?.fromAbove();
       return true;
     default:
       return false;
@@ -1154,7 +1221,8 @@ function poll(now: number): void {
       refreshContext();
     }
     const context = usePad.getState().context;
-    const onMap = context === 'map';
+    const inScene = context === 'scene';
+    const onMap = context === 'map' || inScene;
 
     // The D-pad, and the left stick off the map: moving between buttons, or locations.
     const direction = padDirection(pad.axes, isPressed, onMap);
@@ -1162,7 +1230,9 @@ function poll(now: number): void {
       direction === before.direction ? before : { ...before, direction, since: now, last: -1 };
     if (direction && repeatDue(now, state.since, state.last, onMap ? JUMP_REPEAT_MS : REPEAT_MS)) {
       state.last = now;
-      if (padAction(context, 'dpad') === 'jump') jump(direction);
+      if (inScene && (direction === 'up' || direction === 'down')) {
+        stepFloor(direction === 'up' ? 1 : -1);
+      } else if (onMap) jump(direction);
       else moveFocus(direction);
     }
 
@@ -1185,7 +1255,12 @@ function poll(now: number): void {
     const triggerAction = padAction(context, 'rt');
     if (triggerAction === 'zoom' || padAction(context, 'ls') === 'pan') {
       const { speed, invertY } = usePad.getState();
-      const step = panStep(left, right, seconds, speed, invertY);
+      // In the 3D view the right stick turns the camera rather than panning finely.
+      const step = panStep(left, inScene ? { x: 0, y: 0 } : right, seconds, speed, invertY);
+      if (inScene && (right.x !== 0 || right.y !== 0)) {
+        const dt = Math.min(seconds, 0.1) * TURN_RATE;
+        padScene()?.turn(right.x * dt, (invertY ? -right.y : right.y) * dt);
+      }
       const dz = triggerAction === 'zoom' ? zoomStep(lt, rt, seconds) : 0;
       if (step.x !== 0 || step.y !== 0 || dz !== 0) nudgeMap(step.x, step.y, dz);
     } else if (padAction(context, 'rs') === 'scroll') {

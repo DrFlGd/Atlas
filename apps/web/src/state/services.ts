@@ -106,6 +106,10 @@ export const SETTINGS = {
   keepScreenOn: 'keepScreenOn',
   /** The settings of a controller: hints, glyphs, map speed, up and down (see `input/padState.ts`). */
   controller: 'controller',
+  /** Whether maps with a 3D model are shown in 3D or in 2D (see `state/scene3d.ts`). */
+  sceneView: 'sceneView',
+  /** The report of the last 3D trial on this device (see `touch/SceneTrial.tsx`). */
+  sceneTrial: 'sceneTrial',
   /** The game save linked to a profile (see `state/saves.ts`). */
   saveLink: (profileId: string) => `saveLink:${profileId}`,
   /** Which map shows which game world, as the person chose. */

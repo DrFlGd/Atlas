@@ -8,14 +8,14 @@
  */
 
 /** Where an action applies, as the guide groups them. */
-export type Context = 'map' | 'reading' | 'lists' | 'menus' | 'everywhere';
+export type Context = 'map' | 'scene' | 'reading' | 'lists' | 'menus' | 'everywhere';
 
 /**
- * What the controller is doing now (see `padContext`): moving the map, in
- * the card of a location, reading a guide, in a list, or moving between
+ * What the controller is doing now (see `padContext`): moving the map,
+ * moving the 3D view of a map with a model, in the card of a location, reading a guide, in a list, or moving between
  * buttons of a menu, a dialog or any other screen.
  */
-export type PadContext = 'map' | 'card' | 'reading' | 'lists' | 'menus';
+export type PadContext = 'map' | 'scene' | 'card' | 'reading' | 'lists' | 'menus';
 
 /**
  * A control of the controller, in the standard layout every web view
@@ -51,6 +51,9 @@ export type ActionId =
   | 'filters'
   | 'reset-view'
   | 'level'
+  | 'turn'
+  | 'floor'
+  | 'from-above'
   | 'turn-page'
   | 'guides-home'
   | 'guides-bar'
@@ -167,7 +170,7 @@ export const BINDINGS: readonly Binding[] = [
     context: 'map',
     keys: ['0'],
     pad: ['r3'],
-    what: 'Show the whole map',
+    what: 'Show the whole map (in the 3D view: back to where it started)',
     hint: 'Whole map',
   },
   {
@@ -177,6 +180,32 @@ export const BINDINGS: readonly Binding[] = [
     pad: ['l3'],
     what: 'The next level of the map, where it has levels',
     hint: 'Level',
+  },
+  // The 3D view of a map with a model: the map's own keys and buttons move
+  // it as they move the map, with these besides.
+  {
+    id: 'turn',
+    context: 'scene',
+    keys: [',', '.'],
+    pad: ['rs'],
+    what: 'Turn the 3D view left or right (the right stick turns and tilts it)',
+    hint: 'Turn',
+  },
+  {
+    id: 'floor',
+    context: 'scene',
+    keys: ['PageDown', 'PageUp'],
+    pad: ['dpad'],
+    what: 'The floor below or above, where the map has floors (on the D-pad: down or up; on the 2D map the keys work too)',
+    hint: 'Floor',
+  },
+  {
+    id: 'from-above',
+    context: 'scene',
+    keys: ['v'],
+    pad: ['r3'],
+    what: 'View from above',
+    hint: 'From above',
   },
   // Guides and guidebooks.
   {
@@ -312,6 +341,7 @@ export function wordsOf(item: Binding, words: Words): string {
 /** The order the guide shows the contexts in, with their headings. */
 export const CONTEXTS: readonly { id: Context; title: string }[] = [
   { id: 'map', title: 'Map' },
+  { id: 'scene', title: '3D view' },
   { id: 'reading', title: 'Guides and guidebooks' },
   { id: 'lists', title: 'Lists' },
   { id: 'menus', title: 'Menus, dialogs and other screens' },
@@ -328,6 +358,7 @@ export function guideRows(context: Context, words: Words): Binding[] {
 /** Where the controller looks for a button's action, most particular first. */
 const LOOKUP: Readonly<Record<PadContext, readonly Context[]>> = {
   map: ['map', 'everywhere'],
+  scene: ['scene', 'map', 'everywhere'],
   card: ['menus', 'everywhere'],
   reading: ['reading', 'menus', 'everywhere'],
   lists: ['lists', 'menus', 'everywhere'],
@@ -363,6 +394,7 @@ export function keyAction(context: PadContext, key: string): ActionId | null {
 /** What the hint bar shows in each context, most needed first. */
 export const HINTS: Readonly<Record<PadContext, readonly ActionId[]>> = {
   map: ['pan', 'zoom', 'open-location', 'mark-found', 'filters', 'sections'],
+  scene: ['pan', 'turn', 'zoom', 'open-location', 'floor', 'sections'],
   card: ['move-focus', 'press', 'mark-found', 'back', 'sections'],
   reading: ['move-focus', 'scroll', 'turn-page', 'press', 'back', 'sections'],
   lists: ['move-focus', 'scroll', 'press', 'back', 'sections', 'keys-guide'],

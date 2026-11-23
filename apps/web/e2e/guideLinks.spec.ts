@@ -67,7 +67,7 @@ test.describe('on a computer', () => {
     await expect(page.getByTestId('links-done')).toHaveCount(0);
     // Each row says what it would link to, and how many locations.
     await expect(row(page, 'Waystones').getByTestId('link-target-text')).toHaveText(
-      /Waystone \(type\) · 120 locations/,
+      /Waystone \(type\) · 122 locations/,
     );
     await expect(row(page, 'Stone wardens').getByTestId('link-target-text')).toHaveText(
       /Stone warden \(location name\) · 128 locations/,
@@ -274,7 +274,7 @@ test.describe('on a phone', () => {
     await expect(page.getByTestId('from-the-wiki')).toContainText('Waystones');
     await page.getByTestId('read-wiki-page').click();
     await expect(page.getByTestId('guides-page').locator('h1')).toHaveText('Waystones');
-    await expect(page.getByTestId('guides-on-map')).toContainText('On the map: 120 locations');
+    await expect(page.getByTestId('guides-on-map')).toContainText('On the map: 122 locations');
     expect(errors).toEqual([]);
   });
 });

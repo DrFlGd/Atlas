@@ -64,6 +64,16 @@
 //! }
 //! ```
 
+//! # 3D maps
+//!
+//! From version 11, a map of a pack may have a 3D model (`scene` in its
+//! `maps.json`): square cells, each with glTF binary files at several levels
+//! of detail under `scene/`. Only a file that carries a scene is written in
+//! it, so an app that reads version 10 at most refuses it as a file in a
+//! newer format, and opens every other file. The detail a file is written
+//! at also picks which levels of each cell go in ([`Detail::scene_levels`]).
+//! A map with a scene is marked `scene` in the description's `maps`.
+
 //! # Writing a pack of magazines
 //!
 //! From version 10, a pack file can hold the issues of one magazine, each a
@@ -117,7 +127,17 @@ pub const FORMAT: &str = "atlas-pack-file";
 /// The newest version of the format this crate reads. A file is written at
 /// the lowest version that can hold what it carries, so an older app reads
 /// every file it can, and refuses a newer one with a message.
-pub const VERSION: u32 = 10;
+pub const VERSION: u32 = 11;
+/// A file with a 3D map: a map whose `maps.json` entry has a `scene`, with
+/// the model files it names (`scene/…`). Only such a file is written in
+/// it: every other file stays at the version of what else it carries, so
+/// an app made before it reads it, and refuses a 3D map as a file in a
+/// newer format.
+pub const VERSION_WITH_SCENES: u32 = 11;
+/// Where a pack keeps the model files of its 3D maps.
+pub const SCENE_DIR: &str = "scene/";
+/// A model file larger than this is not one.
+pub const MAX_SCENE_FILE_BYTES: u64 = 256 << 20;
 /// A file with the issues of a magazine (`magazines/`, see
 /// [`IssueFacts`]). Only a pack of magazines is written in it: every other
 /// file stays at the version of what else it carries, so an app made
@@ -222,6 +242,57 @@ impl Detail {
             Detail::Full => 0,
         }
     }
+
+    /// The levels of detail of a 3D map's cell a file at this detail holds,
+    /// finest (lowest) first, from the levels the cell has: every level at
+    /// `Full`; every level but 0 at `Standard`; the coarsest alone at
+    /// `Overview`. A cell always keeps at least one level, so a cell whose
+    /// only level is 0 keeps it at `Standard`. Empty only when the cell has
+    /// none.
+    pub fn scene_levels(self, levels: &[u8]) -> Vec<u8> {
+        let mut sorted = levels.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let Some(&coarsest) = sorted.last() else {
+            return sorted;
+        };
+        match self {
+            Detail::Full => sorted,
+            Detail::Standard => {
+                let kept: Vec<u8> = sorted.into_iter().filter(|&level| level >= 1).collect();
+                if kept.is_empty() {
+                    vec![coarsest]
+                } else {
+                    kept
+                }
+            }
+            Detail::Overview => vec![coarsest],
+        }
+    }
+}
+
+/// Whether `name` is an entry name a model file of a 3D map may have:
+/// `scene/` and up to five segments of lower case letters, digits, `_`,
+/// `.` and `-`, each starting with a letter or a digit and at most 64
+/// characters, the last ending in `.glb`. Lower case only, so no two names
+/// differ only by case.
+pub fn is_scene_file_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(SCENE_DIR) else {
+        return false;
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    let plain = |segment: &str| {
+        (1..=64).contains(&segment.len())
+            && segment.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && segment.chars().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-')
+            })
+    };
+    (1..=5).contains(&segments.len())
+        && segments.iter().all(|segment| plain(segment))
+        && segments
+            .last()
+            .is_some_and(|last| last.ends_with(".glb") && last.len() > 4)
 }
 
 /// The app that wrote a file.
@@ -549,6 +620,10 @@ pub struct MapFacts {
     /// file holds one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    /// From version 11: the map has a 3D model in the file (`scene` in
+    /// `maps.json`). Absent when it has none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scene: bool,
 }
 
 /// How a pack's pages are read.
@@ -785,6 +860,12 @@ pub fn parse_header(text: &str) -> Result<Header, Refusal> {
         .is_some_and(|name| !is_preview_name(name))
     {
         header.cover = None;
+    }
+    // 3D maps only from the version that has them.
+    if header.version < VERSION_WITH_SCENES {
+        for map in &mut header.maps {
+            map.scene = false;
+        }
     }
     // Guidebooks only from the version that has them.
     if header.version < VERSION_WITH_GUIDEBOOKS {

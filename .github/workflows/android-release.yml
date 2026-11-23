@@ -192,6 +192,15 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.31.0
+
+          - **3D maps.** A map can now come with a 3D model. It opens in 3D, with a **2D | 3D** switch beside the map. Turn, move and zoom with the mouse, touch or a controller. **View from above** looks straight down, and **Back to the start** returns to the first view. Where a map has floors, pick one and everything above it is cut away. **Cut** hides everything above a height, or what is between you and a location. Pressing a location opens its card, as on the flat map, and search and **Show on the map** take you to it in 3D.
+          - **Try it on Mossgate Keep**, a made-up 3D map in the demo pack, with a keep of two storeys and a cave.
+          - **3D trial.** In **Settings**, **3D trial** draws a heavy test scene, measures how smoothly this device shows it, and saves a short report. Please run it and send the report: it decides how much detail Atlas loads on each device.
+          - Pack files that hold a 3D model are version 11. Older versions of Atlas ask for a newer one.
+
+          This version has passed the automatic checks only. 3D maps have not been tried on a real device yet.
+
           ## New in 0.30.0
 
           - **Controller.** Key letters beside buttons hide while a controller is in use, and the hint bar on the map shows A Open and X Found only when there is a location to act on.

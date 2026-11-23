@@ -91,10 +91,14 @@ test('renames maps and levels in the game details of the Library', async ({ page
   await expect(card.getByTestId('map-names-map')).toHaveText([
     /The Sundered Isle/,
     /The Hollow Deep/,
+    /Mossgate Keep/,
   ]);
   await expect(card.getByTestId('map-names-level')).toHaveText([
     /Upper galleries/,
     /Lower galleries/,
+    /Caves/,
+    /Ground floor/,
+    /Upper floor/,
   ]);
   await card.locator(`[data-testid="rename-map"][data-id="${DEEP}"]`).click();
   await rename(page, 'The pit');

@@ -27,7 +27,8 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "worker-src": "'self' blob:",
         "style-src": "'self'",
         "img-src": "'self' data: blob: atlas-pack: http://atlas-pack.localhost",
         "connect-src": "'self' atlas-pack: http://atlas-pack.localhost",

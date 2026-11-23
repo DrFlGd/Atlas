@@ -15,8 +15,9 @@ The entries come in this order:
 3. The pack's JSON files, such as `manifest.json`, `maps.json`, `layers.json`, `locations.json`, `guides.json`, `sections.json`, `pictures.json` and, from version 9, `routes.json`. They are deflated. A `routes.json` that holds no route is left out.
 4. The status file of each layer whose images can be downloaded, `offline-tiles/<layer>.json`.
 5. The map images, at the paths each layer's own `url` gives, with an empty `.404` marker for an image the map server did not have. They are stored.
-6. The pictures the pages show, in `pictures/`, that may be passed on, and those kept for the person's own use that they asked for: their downloaded photos, and from version 9 the map's icons (the pictures the pack's types name, see "The map's icons").
-7. Only when the person asked for it: their own lists, locations, pages, notes, routes (from version 9, `mine/my-routes.json`) and photos, and the title the game is shown under with other games, under `mine/`.
+6. From version 11, the model files of the pack's 3D maps, `scene/…/<name>.glb`: the levels of detail the file's `detail` picks, and each map's `neighbours` model (see "3D maps"). They are stored.
+7. The pictures the pages show, in `pictures/`, that may be passed on, and those kept for the person's own use that they asked for: their downloaded photos, and from version 9 the map's icons (the pictures the pack's types name, see "The map's icons").
+8. Only when the person asked for it: their own lists, locations, pages, notes, routes (from version 9, `mine/my-routes.json`) and photos, and the title the game is shown under with other games, under `mine/`.
 
 A pack of guidebooks (version 8, see "Guidebooks") holds, after the description, `manifest.json` and `guidebooks.json` (deflated), then each guidebook's text file and its file (both stored). It holds nothing else.
 
@@ -43,7 +44,7 @@ Every entry has the time the file was made, in UTC.
 | `personalUse`    | Optional, only ever `true`: the pack's manifest says it is kept for the person's own use. A file with it is not to be passed on to others.                                                                                                                                                                                                                                                                                                     |
 | `source`         | Where the data came from. `kind` is `web-pages`, `app` or `unknown`. Optional: `name`, the name of the site the pages were read from (see below); `origin`, where the pack came from in one word (see below); `importer` (`id` and `title`); `pages`, each page read with `url`, `mapId` and `importedAt`; `newestPageAt` and `oldestPageAt`.                                                                                                  |
 | `contents`       | Counts: `maps`, `layers`, `locations`, `categories`, `regions`, `checklists` and `guides`, and optionally `typePictures` (from version 9), the types drawn with a picture of their own that the file carries; absent when there are none.                                                                                                                                                                                                      |
-| `maps`           | Optional. One entry per map, in the order of the pack's `maps.json`: `id`, `name`, `width` and `height` of its most detailed image in pixels, `locations` (how many the pack has on it), and `preview`, the entry name of its small picture when the file holds one.                                                                                                                                                                           |
+| `maps`           | Optional. One entry per map, in the order of the pack's `maps.json`: `id`, `name`, `width` and `height` of its most detailed image in pixels, `locations` (how many the pack has on it), and `preview`, the entry name of its small picture when the file holds one. From version 11, `scene`: `true` for a map whose 3D model is in the file (absent otherwise).                                                                              |
 | `guides`         | Optional. The pack's pages, with `title`, `type` and `pages`. `type` is `guide` for pages read in order (the manifest's `pagesInOrder`) and `wiki` for pages read as a collection. A pack's pages are one source of pages, so there is one entry at most. A game of maps whose pages are only the notes of its locations has none.                                                                                                             |
 | `cover`          | Optional. The entry name of the small picture to show for the file: that of the first map that has one.                                                                                                                                                                                                                                                                                                                                        |
 | `images`         | The map images in the file: `detail`, `files`, `bytes`, and per layer what it holds (`levels`, `files`, `bytes`, `complete`, `full`, `downloadable`, `downloadedAt`).                                                                                                                                                                                                                                                                          |
@@ -176,8 +177,64 @@ A file is written at the lowest version that can hold what it carries. So an old
 | 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).                                                                                                                                                                                                        |
 | 9       | Routes: the pack's `routes.json` holding a route, or the person's own routes (`mine/my-routes.json`, counted as `routes` in `mine`). The map's icons: types that name a picture (`picture` in `categories.json`), with those pictures (counted as `typePictures` in `contents`). |
 | 10      | Magazines: the issues of one magazine (`magazines/`, `magazines.json`, and the `magazine` and `issues` fields).                                                                                                                                                                  |
+| 11      | 3D maps: a map with a model (`scene` in `maps.json`, its files under `scene/`, and `scene` in the description's `maps`); heights of locations and floors (see "3D maps").                                                                                                        |
 
-The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, only a file that carries routes or the map's icons is version 9, and only a pack of magazines is version 10; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
+The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, only a file that carries routes or the map's icons is version 9, only a pack of magazines is version 10, and only a file that carries a 3D map's model is version 11; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
+
+## 3D maps
+
+A map of a pack may have a 3D model. It stays an ordinary map: its images, layers, locations, areas, lists and routes are those of any map, and an app that knows nothing of 3D shows it in 2D as before. Three optional fields of the pack's JSON files make it 3D. They are written strictly (no field that is not listed, every value in its bounds) and read tolerantly: a reader leaves out what it cannot read and keeps the rest, so a scene it cannot read leaves the map in 2D.
+
+**`height` on a location** (`locations.json`): a number, the location's height in the game's world, in the units of its map's `worldTransform`. With its `x` and `y` it gives the location's place in 3D. A location without a height is put on whatever the model has below it (in a floor, below the floor's top).
+
+**`heights` on a layer** (`layers.json`): `[min, max]`, two numbers, min not above max: the heights of the world the layer shows. A layer with `heights` is a floor. A map whose layers have fewer than two floors has none; its floors are shown lowest first (by `min`, then `max`, then their order in `layers.json`). Choosing a floor in the 3D view shows its locations and cuts the model away above its `max`. Floors are optional: a 3D map without them is shown whole, with a free height cut. A location's height never depends on its layer.
+
+**`scene` on a map** (`maps.json`): the model. A map with a `scene` must have a `worldTransform`.
+
+| Field        | What it holds                                                                                                                                                                                       |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `axes`       | Optional. Three of `+x`, `-x`, `+y`, `-y`, `+z`, `-z`, naming each of the model's axes once: the axis that gives world x, world y and height, with its direction. `["+x", "-z", "+y"]` when absent. |
+| `scale`      | Optional. World units per model unit, above 0; 1 when absent.                                                                                                                                       |
+| `offset`     | Optional. `[x, y, height]` in world units, added after scaling; `[0, 0, 0]` when absent.                                                                                                            |
+| `heights`    | Optional. `[min, max]`, the heights the model spans, for the free height cut.                                                                                                                       |
+| `cells`      | 1 to 4,096 cells (below).                                                                                                                                                                           |
+| `water`      | Optional. The height of open water, drawn as a level plane over the whole map.                                                                                                                      |
+| `sky`        | Optional. The sky's colour, `#rrggbb`.                                                                                                                                                              |
+| `camera`     | Optional. Where the 3D view starts: `target`, `[x, y, height]` in world units, the point looked at; `distance` from the camera to it, above 0; `yaw` and `pitch` in degrees (below).                |
+| `neighbours` | Optional. A model file of what lies around the cells (distant hills, a coast), drawn whole and never cut into cells. Every file of a pack has it, whatever its detail.                              |
+
+A cell is a square part of the model:
+
+| Field     | What it holds                                                                                                                                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`      | 1 to 64 of `a`–`z`, `0`–`9`, `_` and `-`, starting with a letter or digit; unique on its map.                                                                                                                               |
+| `bounds`  | `[minX, minY, maxX, maxY]` in world units, min below max, a square (its sides equal within one millionth of a side).                                                                                                        |
+| `heights` | Optional. `[min, max]`, the heights the cell holds, so an app can tell how far it is from the camera before loading it.                                                                                                     |
+| `lods`    | 1 to 8 levels of detail, finest first: `level` (0 to 7, 0 the finest, each level higher than the one before), `file` (a model file) and optionally `triangles`, how many the file has, never more than the level before it. |
+
+A model file's name is `scene/` and up to five folders and a name, each of `a`–`z`, `0`–`9`, `_`, `.` and `-`, starting with a letter or digit, at most 64 characters, the last ending in `.glb`. Lower case only, so no two names differ only by case on any system. A file is named once in the whole pack, by one level of one cell or as one map's `neighbours`. A model file is glTF 2.0 binary (`.glb`), at most 256 MB, with everything in it (no other file named by a `uri`). It may use `EXT_meshopt_compression` for its meshes and `KHR_texture_basisu` (KTX2) for its textures; Atlas carries the decoders of both, so it fetches nothing from elsewhere. Materials are drawn simply, with their base colour, texture and vertex colours, lit by the sky, the sun and a light at the camera, without shadows.
+
+**Coordinates.** For a point (X, Y, Z) of a model file, after every node transform of the file,
+
+    world x = scale × pick(axes[0]) + offset[0]
+    world y = scale × pick(axes[1]) + offset[1]
+    height  = scale × pick(axes[2]) + offset[2]
+
+where `pick("+x")` is X, `pick("-z")` is −Z, and so on. The default is glTF's own: Y up, and world y pointing away from the model's +Z, as most exporters write a Z-up world into glTF. A map pixel (px, py) is at world (x, y) through its map's `worldTransform`, so a point of the model is drawn above the map pixel its world x and y lead back to, and the 3D view seen straight from above is the 2D map, north where the map image has it. The camera's `yaw` is where it looks, in degrees clockwise from the map image's up (−360 to 360); its `pitch` how far it looks down, from 0 (level) to 90 (straight down).
+
+**Which levels a file holds.** A pack file's `detail` picks the levels of each cell that go in, and a cell keeps at least one:
+
+| `detail`   | The levels of each cell                                    |
+| ---------- | ---------------------------------------------------------- |
+| `overview` | The coarsest alone.                                        |
+| `standard` | Every level but 0; level 0 when it is the cell's only one. |
+| `full`     | Every level.                                               |
+
+The file's `maps.json` names only the levels it holds. A level whose file is missing from the pack folder is left out, a cell left with no level is left out, and a scene left with no cell is left out, so the map is shown in 2D. Only a file that then still has a scene is version 11, and its description marks each such map `scene: true`.
+
+**Checks.** Besides the schema: a layer's `heights` and a cell's `heights` are ordered; a map with a `scene` has a `worldTransform`; cells have unique ids and square bounds; each cell's levels are finest first, each level once, and their `triangles` never grow; every model file is named once in the pack. The pipeline's `validate-pack` also checks that each model file is there and starts as a glTF binary file does (`glTF`, version 2, the length it says). A reader of a pack file takes a `scene/` entry only from version 11, only when `maps.json` names it, and only up to 256 MB. A model is as untrusted as any entry: a level the 3D view cannot read is left out of the view, and the cells around it are still shown.
+
+**How Atlas shows it.** Atlas shows a map with a model in 3D in the standard layout, with "2D" one press away (the choice is kept on the device), where the device has WebGL 2; otherwise in 2D, with a note that says why. It loads the cells near the camera finely and those far coarsely, within a budget of triangles and texture memory set by the kind of device (a phone, a handheld such as a Steam Deck, or a computer), and loads coarser levels when frames come slowly.
 
 ## Guidebooks
 
@@ -329,6 +386,7 @@ Treat every pack file as untrusted.
 - Take a small picture only when its name is a safe `preview/<name>.jpg` name, the description lists it, it comes right after the description, it is at most 512 KB, and it starts as a JPEG does. Stop looking for small pictures at the first entry that is not one.
 - Read every entry with a limit on its size, and check that its size is the one the archive says.
 - Read only stored or deflated entries.
+- From version 11, take a model file (`scene/`) only as "3D maps" says: named by `maps.json`, and at most 256 MB.
 - Never load anything from a web address because a file names it.
 
 ## Reading a pack file where it lies

@@ -1,0 +1,265 @@
+/*
+ * The 3D view of a map with a model (src/scene/, components/MapStage.tsx
+ * and SceneTools.tsx): the canvas, the switch between 2D and 3D, and the
+ * view's tools down one side of the map.
+ */
+
+.scene-area {
+  background: var(--atlas-map-backdrop);
+}
+
+.scene-view {
+  overflow: hidden;
+}
+
+.scene-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+}
+
+.scene-canvas:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: -2px;
+}
+
+.scene-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--atlas-muted);
+}
+
+.scene-side {
+  position: absolute;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  right: calc(12px + var(--atlas-inset-right, 0px));
+  top: calc(var(--atlas-inset-top, 0px) + 128px + var(--touch-toast-h, 0px));
+  max-height: calc(100% - 260px);
+  pointer-events: none;
+}
+
+.touch[data-arrangement='wide'] .scene-side {
+  right: auto;
+  left: 16px;
+  top: calc(var(--atlas-inset-top, 0px) + 84px + var(--touch-toast-h, 0px));
+  align-items: flex-start;
+  max-height: calc(100% - 180px);
+}
+
+.scene-side > * {
+  pointer-events: auto;
+}
+
+.scene-switch,
+.scene-floors,
+.scene-buttons,
+.scene-cuts,
+.scene-note {
+  border: 1px solid var(--atlas-border);
+  background: var(--atlas-surface-translucent);
+  box-shadow: var(--atlas-shadow);
+  color: var(--atlas-text);
+}
+
+.scene-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+}
+
+.scene-switch-button,
+.scene-floor,
+.scene-tool {
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.scene-switch-button {
+  min-width: 44px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.scene-switch-button[aria-pressed='true'],
+.scene-floor[aria-pressed='true'] {
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+}
+
+.scene-switch-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.scene-floors {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+  overflow-y: auto;
+}
+
+.scene-floor {
+  padding: 0 12px;
+  border-radius: 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.scene-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+}
+
+.scene-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.scene-tool[aria-pressed='true'] {
+  color: var(--atlas-accent);
+}
+
+.scene-switch-button:hover:not(:disabled, [aria-pressed='true']),
+.scene-floor:hover:not([aria-pressed='true']),
+.scene-tool:hover {
+  background: var(--atlas-surface-hover);
+}
+
+/* On a narrow screen the tools are icons; their names are read out. */
+.touch:not([data-arrangement='wide']) .scene-tool {
+  width: 40px;
+  min-height: 40px;
+  justify-content: center;
+  padding: 0;
+}
+
+.touch:not([data-arrangement='wide']) .scene-tool span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.scene-cuts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 220px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+}
+
+.scene-cut {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scene-cut input[type='range'] {
+  width: 100%;
+  accent-color: var(--atlas-accent);
+}
+
+.scene-cut-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.scene-cut-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--atlas-accent);
+}
+
+.scene-cut-note {
+  margin: 0;
+  font-size: 13px;
+}
+
+.scene-note {
+  max-width: 260px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.scene-note-classic {
+  position: absolute;
+  z-index: 1000;
+  left: 50%;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100% - 32px));
+  transform: translateX(-50%);
+}
+
+/* Settings › 3D trial */
+
+.scene-trial-dialog {
+  width: min(640px, calc(100% - 24px));
+}
+
+.scene-trial-stage {
+  position: relative;
+  height: 220px;
+  margin: 12px 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+  background: var(--atlas-map-backdrop);
+  overflow: hidden;
+}
+
+.scene-trial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.scene-trial-report pre {
+  max-height: 260px;
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
