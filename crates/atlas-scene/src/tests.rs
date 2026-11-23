@@ -49,6 +49,7 @@ fn ground(n: usize, names: &[&str]) -> Part {
         material: 0,
         positions,
         colors: Some(colors),
+        uvs: None,
         indices,
     }
 }
@@ -57,6 +58,7 @@ fn model(parts: Vec<Part>) -> Model {
     Model {
         materials: vec![Material::default()],
         parts,
+        images: Vec::new(),
         skipped_primitives: 0,
     }
 }
@@ -241,6 +243,7 @@ fn lines_a_z_up_model_up_with_the_world() {
             [100.0, 5.0, 210.0],
         ],
         colors: None,
+        uvs: None,
         indices: vec![0, 2, 1, 0, 3, 2],
     };
     let built = build(
@@ -471,7 +474,7 @@ fn textures_are_left_out_with_a_warning() {
     model.materials[0].textured = true;
     let built = build(&model, &Options::new("scene/t"), &dir, &mut quiet()).unwrap();
     assert_eq!(built.report.textures_left_out, 1);
-    assert!(built.report.warnings[0].contains("later version"));
+    assert!(built.report.warnings[0].contains("not kept in this build"));
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -544,8 +547,14 @@ fn png_of(width: u32, height: u32, colours: &[[u8; 4]]) -> Vec<u8> {
 
 /// A made-up model of one triangle whose material's colour is in a texture.
 fn textured_glb(picture: &[u8]) -> Vec<u8> {
+    textured_glb_with(picture, json!({}))
+}
+
+/// [`textured_glb`] with texture coordinates, and `extra` fields of its material.
+fn textured_glb_with(picture: &[u8], extra: Value) -> Vec<u8> {
     let positions: [f32; 9] = [0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, -4.0];
     let indices: [u16; 4] = [0, 1, 2, 0];
+    let uvs: [f32; 6] = [0.0, 0.0, 2.0, 0.0, 0.0, 2.0];
     let mut bin = Vec::new();
     for v in positions {
         bin.extend(v.to_le_bytes());
@@ -553,27 +562,38 @@ fn textured_glb(picture: &[u8]) -> Vec<u8> {
     for i in indices {
         bin.extend(i.to_le_bytes());
     }
+    // The indices (four, the last for padding) end at 44, a 4-byte boundary.
+    for v in uvs {
+        bin.extend(v.to_le_bytes());
+    }
     let image_at = bin.len();
     bin.extend(picture);
     while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
+    let mut material = json!({ "name": "Tiles", "pbrMetallicRoughness": {
+        "baseColorTexture": { "index": 0 }, "baseColorFactor": [1, 1, 0.5, 1] } });
+    for (key, value) in extra.as_object().unwrap() {
+        material[key] = value.clone();
+    }
     let document = json!({
         "asset": { "version": "2.0" },
         "scenes": [{ "nodes": [0] }],
         "nodes": [{ "name": "Floor", "mesh": 0 }],
-        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }] }],
-        "materials": [{ "name": "Tiles", "pbrMetallicRoughness": {
-            "baseColorTexture": { "index": 0 }, "baseColorFactor": [1, 1, 0.5, 1] } }],
-        "textures": [{ "source": 0 }],
-        "images": [{ "bufferView": 2, "mimeType": "image/png" }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0, "TEXCOORD_0": 2 }, "indices": 1, "material": 0 }] }],
+        "materials": [material],
+        "samplers": [{ "wrapS": 33071, "wrapT": 10497 }],
+        "textures": [{ "source": 0, "sampler": 0 }],
+        "images": [{ "bufferView": 3, "mimeType": "image/png" }],
         "accessors": [
             { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
             { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+            { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2" },
         ],
         "bufferViews": [
             { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
             { "buffer": 0, "byteOffset": 36, "byteLength": 6 },
+            { "buffer": 0, "byteOffset": 44, "byteLength": 24 },
             { "buffer": 0, "byteOffset": image_at, "byteLength": picture.len() },
         ],
         "buffers": [{ "byteLength": bin.len() }],
@@ -637,6 +657,7 @@ fn keeps_a_textures_average_colour_when_asked() {
     .unwrap();
     assert_eq!(colour_of(&plain)[..3], [1.0, 1.0, 0.5]);
     assert!(plain.report.warnings[0].contains("keep their colour only"));
+    assert_eq!(plain.report.texture_bytes, 0);
     // Averaged: times the texture's average colour.
     let averaged = build(
         &model,
@@ -684,4 +705,152 @@ fn reads_a_jpeg_textures_average_colour() {
         let want = ((srgb / 255.0 + 0.055) / 1.055).powf(2.4);
         assert!((got - want).abs() < 0.02, "{average:?}");
     }
+}
+
+#[test]
+fn keeps_textures_smaller_for_coarser_levels_with_their_wrap_and_alpha() {
+    // 64 by 64 pixels: a checkerboard, with a transparent hole in one corner.
+    let mut pixels = Vec::new();
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let on = ((x / 8) + (y / 8)) % 2 == 0;
+            let alpha = if x < 8 && y < 8 { 0 } else { 255 };
+            pixels.push(if on {
+                [220, 40, 40, alpha]
+            } else {
+                [30, 30, 200, alpha]
+            });
+        }
+    }
+    let picture = png_of(64, 64, &pixels);
+    let raw = textured_glb_with(&picture, json!({ "alphaMode": "MASK", "alphaCutoff": 0.4 }));
+    let model = read_glb(&raw).unwrap();
+    let texture = model.materials[0].texture.unwrap();
+    assert_eq!(texture.wrap, [gltf::WRAP_CLAMP, gltf::WRAP_REPEAT]);
+    assert_eq!(model.images.len(), 1);
+    assert_eq!(model.parts[0].uvs.as_ref().unwrap()[1], [2.0, 0.0]);
+
+    // A bad maximum size is refused.
+    let dir = temp("keep");
+    for bad in [0, 100, 4, 16384] {
+        let error = build(
+            &model,
+            &options(
+                json!({ "folder": "scene/bad", "textures": { "mode": "keep", "maxSize": bad } }),
+            ),
+            &dir,
+            &mut quiet(),
+        )
+        .unwrap_err();
+        assert!(error.contains("power of two"), "{error}");
+    }
+
+    // Kept at its own size and its own bytes at the finest level, smaller after.
+    let built = build(
+        &model,
+        &options(json!({
+            "folder": "scene/kept",
+            "compress": false,
+            "textures": { "mode": "keep" },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert_eq!(built.report.textures_kept, 1);
+    assert_eq!(built.report.textures_left_out, 0);
+    assert!(built.report.texture_bytes > 0);
+    assert_eq!(built.report.cell_textures.len(), built.report.files);
+    assert_eq!(built.report.cell_textures[0].pictures, 1);
+    let picture_of = |bytes: &[u8]| -> (Value, Vec<u8>) {
+        let (json, bin) = split_glb(bytes).unwrap();
+        let view = &json["bufferViews"][json["images"][0]["bufferView"].as_u64().unwrap() as usize];
+        let start = view["byteOffset"].as_u64().unwrap() as usize;
+        let length = view["byteLength"].as_u64().unwrap() as usize;
+        let picture = bin[start..start + length].to_vec();
+        (json, picture)
+    };
+    let file = built.scene["cells"][0]["lods"][0]["file"].as_str().unwrap();
+    let bytes = fs::read(dir.join(file)).unwrap();
+    let (json, kept) = picture_of(&bytes);
+    assert_eq!(
+        kept, picture,
+        "the finest level holds the picture's own bytes"
+    );
+    let material = &json["materials"][0];
+    assert_eq!(material["alphaMode"], "MASK");
+    assert!((material["alphaCutoff"].as_f64().unwrap() - 0.4).abs() < 1e-6);
+    // The colour stays the material's own: the texture is multiplied by it.
+    assert_eq!(material["pbrMetallicRoughness"]["baseColorFactor"][2], 0.5);
+    assert_eq!(
+        material["pbrMetallicRoughness"]["baseColorTexture"]["index"],
+        0
+    );
+    assert_eq!(json["samplers"][0]["wrapS"], gltf::WRAP_CLAMP);
+    assert_eq!(json["samplers"][0]["wrapT"], gltf::WRAP_REPEAT);
+    assert_eq!(
+        json["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"],
+        2
+    );
+    assert_eq!(json["images"][0]["mimeType"], "image/png");
+    // The file reads back with its texture coordinates as they were.
+    let again = read_glb(&bytes).unwrap();
+    let uvs = again.parts[0].uvs.as_ref().unwrap();
+    assert!(uvs.contains(&[2.0, 0.0]) && uvs.contains(&[0.0, 2.0]));
+    assert!(built.rendered.is_none());
+
+    // With maxSize, the finest level is made that size, as a PNG that keeps its transparency.
+    let smaller = build(
+        &model,
+        &options(json!({
+            "folder": "scene/smaller",
+            "compress": false,
+            "textures": { "mode": "keep", "maxSize": 32 },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    let file = smaller.scene["cells"][0]["lods"][0]["file"]
+        .as_str()
+        .unwrap();
+    let (json, kept) = picture_of(&fs::read(dir.join(file)).unwrap());
+    assert_eq!(json["images"][0]["mimeType"], "image/png");
+    let kept = image::load_from_memory(&kept).unwrap();
+    assert_eq!((kept.width(), kept.height()), (32, 32));
+    assert_eq!(kept.to_rgba8().get_pixel(0, 0).0[3], 0);
+
+    // Coarser levels: half the size each, at least 32; JPEG only there, when opaque and smaller.
+    let noisy: Vec<[u8; 4]> = (0..128u32 * 128)
+        .map(|i| {
+            let v = (i.wrapping_mul(2_654_435_761) >> 13) as u8;
+            [v, v / 2 + 60, 255 - v, 255]
+        })
+        .collect();
+    let noisy = png_of(128, 128, &noisy);
+    let keep: textures::TextureOptions = serde_json::from_value(json!({ "mode": "keep" })).unwrap();
+    let finest = textures::picture_at(&noisy, &keep, 0).unwrap();
+    assert_eq!(
+        (finest.width, finest.mime, finest.bytes == noisy),
+        (128, "image/png", true)
+    );
+    let coarser = textures::picture_at(&noisy, &keep, 1).unwrap();
+    assert_eq!(
+        (coarser.width, coarser.height, coarser.mime),
+        (64, 64, "image/jpeg")
+    );
+    assert!(textures::encode(b"not a picture", 64, true).is_none());
+    assert!(textures::picture_at(b"not a picture", &keep, 0).is_none());
+    assert_eq!(
+        [0, 1, 2, 3, 9].map(|level| keep.side_at(512, level)),
+        [512, 256, 128, 64, 32]
+    );
+    let capped: textures::TextureOptions =
+        serde_json::from_value(json!({ "mode": "keep", "maxSize": 256 })).unwrap();
+    assert_eq!(
+        [0, 1, 4].map(|level| capped.side_at(2048, level)),
+        [256, 128, 32]
+    );
+    assert_eq!(capped.side_at(16, 0), 16);
+    let _ = fs::remove_dir_all(&dir);
 }

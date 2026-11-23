@@ -40,8 +40,8 @@ pub const MAX_MODEL_BYTES: u64 = 1 << 30;
 pub const MAX_PIECE_BYTES: u64 = 256 << 20;
 /// How long the request for one file may take, all of it.
 const TIMEOUT: Duration = Duration::from_secs(600);
-/// The raw model, as fetched or joined.
-const MODEL_FILE: &str = "model.glb";
+/// The raw model, as fetched, joined, or sent by the importer (`gamefolders.rs`).
+pub const MODEL_FILE: &str = "model.glb";
 /// The pieces' base64 text, joined in order, until the model is built.
 const PIECES_FILE: &str = "model.b64";
 /// The pack folder of a build: `scene/<folder>/` and `tiles/<folder>/`.
@@ -282,6 +282,15 @@ pub struct BuildRequest {
     pub sky: Option<String>,
     #[serde(default)]
     pub floors: Vec<BuildFloor>,
+    /// `keep` keeps the model's textures (at their own size in the finest
+    /// level, smaller copies in coarser ones); anything else, or none,
+    /// keeps each texture's average colour.
+    #[serde(default)]
+    pub textures: Option<String>,
+    /// With `keep`: the longest side of a picture at the finest level, a
+    /// power of two; none keeps each picture's own size.
+    #[serde(default)]
+    pub texture_size: Option<u32>,
 }
 
 /// What building a kept model gave, as the web app reads it: the scene and
@@ -327,7 +336,14 @@ pub fn options_of(request: &BuildRequest) -> Result<atlas_scene::Options, String
     let mut options = serde_json::json!({
         "folder": format!("scene/{}", request.folder),
         "drop": request.drop,
-        "textures": { "mode": "average" },
+        "textures": if request.textures.as_deref() == Some("keep") {
+            match request.texture_size {
+                Some(size) => serde_json::json!({ "mode": "keep", "maxSize": size }),
+                None => serde_json::json!({ "mode": "keep" }),
+            }
+        } else {
+            serde_json::json!({ "mode": "average" })
+        },
         "render": {
             "folder": format!("tiles/{}", request.folder),
             "floors": if request.floors.len() >= 2 { serde_json::json!(request.floors) } else { serde_json::json!([]) },

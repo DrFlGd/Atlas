@@ -6,7 +6,8 @@ with the Map Maker, next to this helper. For each area this module:
 1. writes the collision triangles as a raw glTF binary file (`raw_glb`) in the report folder: one node per collision
    part (named after it, so the config's `scene.drop` patterns can leave parts out), positions in the game's own
    coordinates (x, height y, z), each corner coloured as the flat map colours its floor: by height on the same ramp,
-   darker on steep slopes and walls. The triangles are turned so that floors face up;
+   darker on steep slopes and walls, with one material seen from both sides. The triangles are turned so that floors
+   face up;
 2. runs `atlas-scene build` on it: the model is lined up with the map (world x is the game's x, world y its z, height
    its y, as the map's `worldTransform` reads them), cut into square cells with simpler levels of detail and
    compressed, into the pack's `scene/<area>/` folder, and checked;
@@ -121,7 +122,12 @@ def raw_glb(triangles: np.ndarray, colours: np.ndarray, owners: np.ndarray, owne
             accessors.append(accessor)
         index = int(owners[start])
         name = owner_names[index] if 0 <= index < len(owner_names) else f"part {index}"
-        meshes.append({"name": name, "primitives": [{"attributes": {"POSITION": len(accessors) - 2, "COLOR_0": len(accessors) - 1}}]})
+        meshes.append(
+            {
+                "name": name,
+                "primitives": [{"attributes": {"POSITION": len(accessors) - 2, "COLOR_0": len(accessors) - 1}, "material": 0}],
+            }
+        )
         nodes.append({"name": name, "mesh": len(meshes) - 1})
     document = {
         "asset": {"version": "2.0", "generator": "Atlas Map Maker"},
@@ -129,6 +135,9 @@ def raw_glb(triangles: np.ndarray, colours: np.ndarray, owners: np.ndarray, owne
         "scenes": [{"nodes": list(range(len(nodes)))}],
         "nodes": nodes,
         "meshes": meshes,
+        # Collision is seen from both sides: its walls face either way, and the 3D view draws each
+        # surface on the sides its material says.
+        "materials": [{"name": "collision", "doubleSided": True, "pbrMetallicRoughness": {"metallicFactor": 0, "roughnessFactor": 1}}],
         "accessors": accessors,
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],

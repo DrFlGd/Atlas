@@ -27,6 +27,9 @@ pub mod background;
 mod commands;
 mod downloads;
 pub mod gamefiles;
+// A game's own files on this computer, read for an importer's 3D maps.
+#[cfg(feature = "downloads")]
+mod gamefolders;
 pub mod gamegroups;
 // Guidebooks (PDF and CBZ files) in packs of their own, and adding one.
 pub mod guidebooks;
@@ -268,6 +271,11 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::import_fetch_model,
         commands::import_build_scene,
         commands::import_discard_scenes,
+        gamefolders::commands::import_folder_pick,
+        gamefolders::commands::import_folder_list,
+        gamefolders::commands::import_folder_read,
+        gamefolders::commands::import_folder_close,
+        gamefolders::commands::import_keep_model,
         commands::library_style_texts,
         commands::download_settings_get,
         commands::download_settings_set,
@@ -344,7 +352,9 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_fs::init());
     #[cfg(feature = "downloads")]
-    let builder = builder.manage(pageview::PageViews::default());
+    let builder = builder
+        .manage(pageview::PageViews::default())
+        .manage(Arc::new(gamefolders::GameFolders::default()));
     builder
         .invoke_handler(invoke_handler())
         .register_asynchronous_uri_scheme_protocol(PACK_SCHEME, move |ctx, request, responder| {

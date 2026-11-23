@@ -152,11 +152,23 @@ async function importerEntry(path) {
         problems.push(`${key} is missing`);
     }
     // A page is read by the importer's page reader, or by the app fetching
-    // the addresses the importer names.
+    // the addresses the importer names; an importer of game files only
+    // reads a folder on this computer (`gameFiles`), and no page.
     const fetch = /** @type {{ addresses?: unknown } | undefined} */ (importer.fetch);
     const readsByFetching = typeof fetch === 'object' && typeof fetch?.addresses === 'function';
-    if (!readsByFetching && (typeof importer.pageReader !== 'string' || importer.pageReader === ''))
-      problems.push('pageReader is missing (and there is no fetch.addresses)');
+    const files = /** @type {{ survey?: unknown, build?: unknown } | undefined} */ (
+      importer.gameFiles
+    );
+    const readsGameFiles =
+      typeof files === 'object' &&
+      typeof files?.survey === 'function' &&
+      typeof files?.build === 'function';
+    if (
+      !readsByFetching &&
+      !readsGameFiles &&
+      (typeof importer.pageReader !== 'string' || importer.pageReader === '')
+    )
+      problems.push('pageReader is missing (and there is no fetch.addresses or gameFiles)');
     for (const key of ['matches', 'convert']) {
       if (typeof importer[key] !== 'function') problems.push(`${key} is not a function`);
     }

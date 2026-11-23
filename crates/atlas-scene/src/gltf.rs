@@ -2,11 +2,43 @@
 //! it. Its triangle meshes are read with their positions, vertex colours and
 //! materials, every node transform applied, so each part comes out in the
 //! model's own coordinates (see [`crate::Axes`] for how those become the
-//! world's). Normals, texture coordinates and the rest are not read: the
-//! builder works its own normals out, and textures wait for a later version
-//! (see [`Material::textured`]).
+//! world's). Normals and the rest are not read: the builder works its own
+//! normals out. Each material's base colour texture is read with the
+//! picture it shows (a PNG or JPEG picture in the file), its sampler's
+//! wrap and its alpha mode, and each part's texture coordinates for it, for
+//! a builder that keeps textures (see [`crate::textures`]).
 
 use serde_json::Value;
+
+/// How a material's alpha is used, as glTF's `alphaMode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum AlphaMode {
+    /// Alpha is ignored.
+    #[default]
+    Opaque,
+    /// A cutout: drawn where alpha is at least the cutoff, not at all elsewhere.
+    Mask(f32),
+    /// Blended with what is behind.
+    Blend,
+}
+
+/// glTF's sampler wrap: repeat.
+pub const WRAP_REPEAT: u32 = 10497;
+/// glTF's sampler wrap: clamp to the edge.
+pub const WRAP_CLAMP: u32 = 33071;
+/// glTF's sampler wrap: mirrored repeat.
+pub const WRAP_MIRROR: u32 = 33648;
+
+/// A material's base colour texture, when its picture is in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextureRef {
+    /// The picture, in [`Model::images`].
+    pub image: usize,
+    /// The sampler's wrap along u and v (`WRAP_*`).
+    pub wrap: [u32; 2],
+    /// The texture coordinates it reads (`TEXCOORD_<n>`).
+    pub tex_coord: usize,
+}
 
 /// A material of the raw model, as far as the builder keeps it.
 #[derive(Clone, Debug, PartialEq)]
@@ -15,13 +47,16 @@ pub struct Material {
     /// Linear RGBA, 0 to 1.
     pub color: [f32; 4],
     pub double_sided: bool,
-    /// It has a base colour texture. Textures are left out for now (their
-    /// place is [`crate::textures`]); the material keeps its colour.
+    /// It has a base colour texture. Unless the builder keeps textures
+    /// ([`crate::textures`]), it is left out and the material keeps its colour.
     pub textured: bool,
     /// The average colour of its base colour texture (linear RGB), when the
     /// texture is a PNG or JPEG picture in the file that could be read; the
     /// builder may keep it in place of the texture ([`crate::textures`]).
     pub texture_color: Option<[f32; 3]>,
+    /// The texture and its picture, when the picture is in the file.
+    pub texture: Option<TextureRef>,
+    pub alpha_mode: AlphaMode,
 }
 
 impl Default for Material {
@@ -32,6 +67,8 @@ impl Default for Material {
             double_sided: false,
             textured: false,
             texture_color: None,
+            texture: None,
+            alpha_mode: AlphaMode::Opaque,
         }
     }
 }
@@ -46,6 +83,9 @@ pub struct Part {
     pub positions: Vec<[f64; 3]>,
     /// Linear RGBA per vertex, when the primitive has `COLOR_0`.
     pub colors: Option<Vec<[f32; 4]>>,
+    /// Texture coordinates per vertex, those the material's texture reads,
+    /// when it has one and the primitive has them.
+    pub uvs: Option<Vec<[f32; 2]>>,
     /// Three per triangle.
     pub indices: Vec<u32>,
 }
@@ -56,6 +96,9 @@ pub struct Part {
 pub struct Model {
     pub materials: Vec<Material>,
     pub parts: Vec<Part>,
+    /// The pictures the materials' textures show, as they are in the file
+    /// (PNG or JPEG bytes), each once.
+    pub images: Vec<Vec<u8>>,
     /// Primitives that are not triangles (points, lines), left out.
     pub skipped_primitives: usize,
 }
@@ -349,21 +392,45 @@ fn material_of(value: &Value) -> Material {
             .unwrap_or(false),
         textured: pbr.and_then(|p| p.get("baseColorTexture")).is_some(),
         texture_color: None,
+        texture: None,
+        alpha_mode: match value.get("alphaMode").and_then(Value::as_str) {
+            Some("MASK") => AlphaMode::Mask(
+                value
+                    .get("alphaCutoff")
+                    .and_then(Value::as_f64)
+                    .filter(|v| v.is_finite())
+                    .map_or(0.5, |v| v.clamp(0.0, 1.0) as f32),
+            ),
+            Some("BLEND") => AlphaMode::Blend,
+            _ => AlphaMode::Opaque,
+        },
     }
 }
 
-/// The bytes of the picture a material's base colour texture shows, when
-/// it is in the file's binary chunk.
-fn texture_bytes<'a>(json: &Value, bin: &'a [u8], material: &Value) -> Option<&'a [u8]> {
-    let texture = material
+/// The picture a material's base colour texture shows, when it is in the
+/// file's binary chunk: its image's index and bytes, the sampler's wrap
+/// along u and v, and the texture coordinates it reads.
+fn texture_of<'a>(
+    json: &Value,
+    bin: &'a [u8],
+    material: &Value,
+) -> Option<(usize, &'a [u8], [u32; 2], usize)> {
+    let info = material
         .get("pbrMetallicRoughness")?
-        .get("baseColorTexture")?
-        .get("index")?
-        .as_u64()? as usize;
-    let image = list(json, "textures")
-        .get(texture)?
-        .get("source")?
-        .as_u64()? as usize;
+        .get("baseColorTexture")?;
+    let texture = info.get("index")?.as_u64()? as usize;
+    let tex_coord = index_of(info, "texCoord").unwrap_or(0);
+    let texture = list(json, "textures").get(texture)?;
+    let image = texture.get("source")?.as_u64()? as usize;
+    let sampler = index_of(texture, "sampler").and_then(|s| list(json, "samplers").get(s));
+    let wrap_of = |key: &str| {
+        sampler
+            .and_then(|s| s.get(key))
+            .and_then(Value::as_u64)
+            .and_then(|w| u32::try_from(w).ok())
+            .filter(|w| [WRAP_REPEAT, WRAP_CLAMP, WRAP_MIRROR].contains(w))
+            .unwrap_or(WRAP_REPEAT)
+    };
     let view = list(json, "images")
         .get(image)?
         .get("bufferView")?
@@ -374,7 +441,13 @@ fn texture_bytes<'a>(json: &Value, bin: &'a [u8], material: &Value) -> Option<&'
     }
     let offset = view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
     let length = view.get("byteLength")?.as_u64()? as usize;
-    bin.get(offset..offset.checked_add(length)?)
+    let bytes = bin.get(offset..offset.checked_add(length)?)?;
+    Some((
+        image,
+        bytes,
+        [wrap_of("wrapS"), wrap_of("wrapT")],
+        tex_coord,
+    ))
 }
 
 /// Reads a `.glb` file's triangle meshes, every node transform applied.
@@ -385,15 +458,27 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
         materials: list(&json, "materials").iter().map(material_of).collect(),
         ..Model::default()
     };
-    // Each texture's average colour, each picture read once.
-    let mut averages: std::collections::HashMap<(usize, usize), Option<[f32; 3]>> =
+    // Each texture's average colour and its picture, each picture read once.
+    let mut averages: std::collections::HashMap<usize, (usize, Option<[f32; 3]>)> =
         std::collections::HashMap::new();
     for (material, value) in model.materials.iter_mut().zip(list(&json, "materials")) {
-        if let Some(bytes) = texture_bytes(&json, bin, value) {
-            let key = (bytes.as_ptr() as usize, bytes.len());
-            material.texture_color = *averages
-                .entry(key)
-                .or_insert_with(|| crate::textures::average_colour(bytes));
+        if let Some((image, bytes, wrap, tex_coord)) = texture_of(&json, bin, value) {
+            let (index, average) = *averages.entry(image).or_insert_with(|| {
+                model.images.push(bytes.to_vec());
+                (
+                    model.images.len() - 1,
+                    crate::textures::average_colour(bytes),
+                )
+            });
+            material.texture_color = average;
+            // Only a picture the builder can read is kept as a texture.
+            if average.is_some() {
+                material.texture = Some(TextureRef {
+                    image: index,
+                    wrap,
+                    tex_coord,
+                });
+            }
         }
     }
     let fallback_material = model.materials.len();
@@ -498,6 +583,31 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
                 }
                 None => None,
             };
+            let material = index_of(primitive, "material")
+                .filter(|m| *m < fallback_material)
+                .unwrap_or(fallback_material);
+            let uvs = match model.materials[material].texture.map(|t| t.tex_coord) {
+                Some(set) => match attributes.and_then(|a| index_of(a, &format!("TEXCOORD_{set}")))
+                {
+                    Some(accessor) => {
+                        let (raw, components) = reader.accessor(accessor)?;
+                        if components != 2 {
+                            return Err(
+                                "a mesh's texture coordinates are not two numbers each".to_owned()
+                            );
+                        }
+                        let uvs: Vec<[f32; 2]> = raw
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|uv| [uv[0] as f32, uv[1] as f32])
+                            .collect();
+                        (uvs.len() == positions.len()).then_some(uvs)
+                    }
+                    None => None,
+                },
+                None => None,
+            };
             let mut indices: Vec<u32> = match index_of(primitive, "indices") {
                 Some(accessor) => reader
                     .accessor(accessor)?
@@ -516,9 +626,6 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
                     triangle.swap(1, 2);
                 }
             }
-            let material = index_of(primitive, "material")
-                .filter(|m| *m < fallback_material)
-                .unwrap_or(fallback_material);
             let mut part_names = names.clone();
             if let Some(name) = mesh.get("name").and_then(Value::as_str) {
                 part_names.push(name.to_owned());
@@ -531,6 +638,7 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
                 material,
                 positions,
                 colors,
+                uvs,
                 indices,
             });
         }

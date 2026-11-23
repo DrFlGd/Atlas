@@ -234,6 +234,16 @@ export interface MockShell {
     /** The commands called, with their arguments, in order. */
     calls: string[];
   };
+  /**
+   * "Make a 3D map from game files": the folder the person picks in the
+   * next folder dialog (null: they close it), its files as text by path,
+   * how long a build of one model takes, and the calls made.
+   */
+  gameFolder: {
+    pick: { name: string; files: Record<string, string> } | null;
+    buildMs: number;
+    calls: string[];
+  };
   /** Settings, "Keep packs for Game Repo up to date" (a build with downloads). */
   keptPacks: {
     /** What `kept_packs_status` answers (`KeptPacksStatus`). */
@@ -372,6 +382,7 @@ function installFakeShell({
       left: [],
       calls: [],
     },
+    gameFolder: { pick: null, buildMs: 0, calls: [] },
     keptPacks: {
       status: {
         on: false,
@@ -1170,6 +1181,84 @@ function installFakeShell({
       case 'made_pack_open':
       case 'made_pack_close':
       case 'made_pack_mine_take':
+      case 'import_folder_pick': {
+        shell.gameFolder.calls.push(command);
+        const picked = shell.gameFolder.pick;
+        return picked ? { token: 'folder-1', name: picked.name } : null;
+      }
+      case 'import_folder_list': {
+        const files = shell.gameFolder.pick?.files ?? {};
+        const path = typeof args.path === 'string' ? args.path : '';
+        shell.gameFolder.calls.push(`${command} ${path}`);
+        const prefix = path === '' ? '' : `${path}/`;
+        const entries = new Map<string, { name: string; folder: boolean; size: number }>();
+        for (const [file, text] of Object.entries(files)) {
+          if (!file.startsWith(prefix)) continue;
+          const rest = file.slice(prefix.length);
+          const cut = rest.indexOf('/');
+          const name = cut < 0 ? rest : rest.slice(0, cut);
+          if (!entries.has(name)) {
+            entries.set(name, { name, folder: cut >= 0, size: cut >= 0 ? 0 : text.length });
+          }
+        }
+        return [...entries.values()].sort((a, b) => a.name.localeCompare(b.name));
+      }
+      case 'import_folder_read': {
+        const path = typeof args.path === 'string' ? args.path : '';
+        shell.gameFolder.calls.push(`${command} ${path}`);
+        const text = shell.gameFolder.pick?.files[path];
+        // Tauri rejects with the command's error value, a string.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (text === undefined) throw 'That file is not in the folder.';
+        return new TextEncoder().encode(text);
+      }
+      case 'import_folder_close':
+        shell.gameFolder.calls.push(command);
+        return null;
+      case 'import_keep_model': {
+        shell.gameFolder.calls.push(command);
+        return `local-${shell.gameFolder.calls.filter((c) => c === command).length}`;
+      }
+      case 'import_build_scene': {
+        const request = args.request as { folder: string; floors?: { id: string }[] };
+        shell.gameFolder.calls.push(`${command} ${request.folder}`);
+        await new Promise((resolve) => setTimeout(resolve, shell.gameFolder.buildMs));
+        const floors =
+          (request.floors?.length ?? 0) >= 2 ? request.floors!.map((f) => f.id) : ['all'];
+        return {
+          ok: true,
+          scene: {
+            axes: ['+x', '+y', '+z'],
+            heights: [-2, 6],
+            cells: [
+              {
+                id: '0-0',
+                bounds: [-20, -20, 20, 20],
+                lods: [{ level: 0, file: `scene/${request.folder}/0-0/lod0.glb`, triangles: 12 }],
+              },
+            ],
+          },
+          rendered: {
+            width: 400,
+            height: 400,
+            worldTransform: { a: 0.1, b: 0, c: 0, d: -0.1, e: -20, f: 20 },
+            layers: floors.map((id) => ({
+              id,
+              url: `tiles/${request.folder}/${id}/{z}/{x}/{y}.png`,
+              minZoom: 0,
+              maxZoom: 1,
+              tileSize: 256,
+            })),
+          },
+          triangles: 12,
+          warnings: [],
+          problem: null,
+          message: null,
+        };
+      }
+      case 'import_discard_scenes':
+        shell.gameFolder.calls.push(command);
+        return null;
       case 'made_pack_mine_choose':
         // Tauri rejects with the command's error value, a string.
         // eslint-disable-next-line @typescript-eslint/only-throw-error
@@ -1456,7 +1545,10 @@ export const setKeptPacks = (
 export const setMock = (
   page: Page,
   patch: Partial<
-    Pick<MockShell, 'hold' | 'close' | 'check' | 'lag' | 'extra' | 'slowSources' | 'styleTexts'>
+    Pick<
+      MockShell,
+      'hold' | 'close' | 'check' | 'lag' | 'extra' | 'slowSources' | 'styleTexts' | 'gameFolder'
+    >
   >,
 ) =>
   page.evaluate((patch) => {

@@ -129,8 +129,10 @@ const COMMANDS: &[&str] = &[
 /// The commands of a build with the `downloads` feature: "Download map
 /// images", measuring an imported map's picture, "View map page and save
 /// images as I browse", reading pages for importers that fetch them, reading
-/// back a game's kept style sheets to lay its saved pages out, and the
-/// Sites folder of the person's site rules files.
+/// back a game's kept style sheets to lay its saved pages out, the 3D models
+/// of maps an importer reads (fetched, or made from a game's own files in a
+/// folder the person picks) and their builds, and the Sites folder of the
+/// person's site rules files.
 const DOWNLOAD_COMMANDS: &[&str] = &[
     "tiles_plan",
     "tiles_start",
@@ -154,6 +156,14 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "import_fetch_picture",
     "import_cut_picture",
     "import_discard_pictures",
+    "import_fetch_model",
+    "import_build_scene",
+    "import_discard_scenes",
+    "import_folder_pick",
+    "import_folder_list",
+    "import_folder_read",
+    "import_folder_close",
+    "import_keep_model",
     "library_style_texts",
     "download_settings_get",
     "download_settings_set",

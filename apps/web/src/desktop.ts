@@ -1476,6 +1476,25 @@ export interface ShellBuildRequest {
   water?: number;
   sky?: string;
   floors?: { id: string; heights: [number, number] }[];
+  /** `keep` keeps the model's textures; otherwise each one's average colour. */
+  textures?: 'average' | 'keep';
+  /** With `keep`: the longest side of a picture in the finest level; none keeps its own. */
+  textureSize?: number;
+}
+
+/** A game's folder the person picked (see {@link DesktopBridge.tiles.pickGameFolder}). */
+export interface ShellGameFolder {
+  /** The shell's name for it, for the calls that read it. */
+  token: string;
+  /** The folder's own name, to show. */
+  name: string;
+}
+
+/** One entry of a picked game folder. */
+export interface ShellFolderEntry {
+  name: string;
+  folder: boolean;
+  size: number;
 }
 
 /** What {@link DesktopBridge.tiles.buildScene} gave. */
@@ -1633,6 +1652,20 @@ export interface DesktopBridge {
     buildScene(build: string, request: ShellBuildRequest): Promise<ShellSceneBuilt>;
     /** Throws away kept models and builds that no saved import names. */
     discardScenes(builds: string[]): Promise<void>;
+    /**
+     * Keeps a part of a raw model an importer made from a game's own files,
+     * added after the parts kept in `build` (none: a new build); resolves to
+     * the build's name, for {@link buildScene}.
+     */
+    keepModel(part: Uint8Array, build: string | null): Promise<string>;
+    /** Asks for a game's folder in the system's dialog; null when it was closed. */
+    pickGameFolder(): Promise<ShellGameFolder | null>;
+    /** The entries of a folder inside a picked game folder (`''` for itself). */
+    listGameFolder(token: string, path: string): Promise<ShellFolderEntry[]>;
+    /** Bytes of a file inside a picked game folder. */
+    readGameFile(token: string, path: string, start: number, length: number): Promise<Uint8Array>;
+    /** Forgets a picked game folder. */
+    closeGameFolder(token: string): Promise<void>;
     /** "Download location photos": the pictures a pack lists to be fetched later. */
     photosPlan(packId: string): Promise<PhotoPlan>;
     photosStart(packId: string): Promise<DownloadSnapshot>;
@@ -2108,7 +2141,11 @@ export interface DesktopBridge {
   };
 }
 
-type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+type Invoke = (
+  command: string,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
+) => Promise<unknown>;
 
 /** Listens to one of the shell's events; resolves to a function that stops. */
 export type Listen = (event: string, handler: (payload: unknown) => void) => Promise<() => void>;
@@ -2140,6 +2177,11 @@ function noDownloads(): DesktopBridge['tiles'] {
     fetchModel: missing,
     buildScene: missing,
     discardScenes: missing,
+    keepModel: missing,
+    pickGameFolder: missing,
+    listGameFolder: missing,
+    readGameFile: missing,
+    closeGameFolder: missing,
     photosPlan: missing,
     photosStart: missing,
     photosStartAgain: missing,
@@ -2214,6 +2256,17 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
           fetchModel: (url, build, field) => call('import_fetch_model', { url, build, field }),
           buildScene: (build, request) => call('import_build_scene', { build, request }),
           discardScenes: (builds) => call('import_discard_scenes', { builds }),
+          keepModel: (part, build) =>
+            invoke('import_keep_model', part, { headers: { 'x-atlas-build': build ?? '' } }).catch(
+              (error: unknown) => {
+                throw new Error(typeof error === 'string' ? error : String(error));
+              },
+            ) as Promise<string>,
+          pickGameFolder: () => call('import_folder_pick'),
+          listGameFolder: (token, path) => call('import_folder_list', { token, path }),
+          readGameFile: (token, path, start, length) =>
+            call<unknown>('import_folder_read', { token, path, start, length }).then(bytesOf),
+          closeGameFolder: (token) => call('import_folder_close', { token }),
           photosPlan: (packId) => call('photos_plan', { packId }),
           photosStart: (packId) => call('photos_start', { packId }),
           photosStartAgain: (packId) => call('photos_start_again', { packId }),

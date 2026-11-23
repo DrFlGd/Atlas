@@ -874,6 +874,10 @@ function sceneModels(
     // What an importer hands over is checked as it is, whatever its type says.
     const request = checkSceneModelRequest(given);
     if (typeof request === 'string') return failed('failed', request);
+    // A model made on this computer is only for a game files build (`gameFiles.ts`).
+    if (request.model !== undefined) {
+      return failed('failed', 'This app reads a model of a page from its site only.');
+    }
     const addresses = request.url !== undefined ? [request.url] : (request.pieces?.urls ?? []);
     if (!addresses.every((address) => sameSite(pageUrl, address))) {
       return failed('failed', 'This app reads a model only on the site of the page read.');
