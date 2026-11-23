@@ -246,6 +246,7 @@ describe('desktop bridge', () => {
     await bridge.tiles.start('demo', 'standard');
     await bridge.tiles.pause('demo');
     await bridge.saveTextFile('a.json', '{}');
+    await bridge.saveTrialReport('atlas-3d-trial.txt', 'Atlas 3D trial');
     await bridge.openExternal('https://example.com/');
     await bridge.tiles.setSettings({
       parallel: 2,
@@ -324,6 +325,7 @@ describe('desktop bridge', () => {
       ['tiles_start', { packId: 'demo', detail: 'standard' }],
       ['tiles_pause', { packId: 'demo' }],
       ['save_text_file', { suggestedName: 'a.json', contents: '{}' }],
+      ['trial_report_save', { suggestedName: 'atlas-3d-trial.txt', contents: 'Atlas 3D trial' }],
       ['open_external', { url: 'https://example.com/' }],
       [
         'download_settings_set',

@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "open_external",
     "save_text_file",
     "open_text_file",
+    "trial_report_save",
     "library_list",
     "library_open_pack",
     "library_add_folder",

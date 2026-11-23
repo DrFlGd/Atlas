@@ -110,7 +110,7 @@ function SceneTrialDialog({ onClose }: { onClose: () => void }) {
     if (!report) return;
     const name = 'atlas-3d-trial.txt';
     if (desktop) {
-      const done = await desktop.saveTextFile(name, report);
+      const done = await desktop.saveTrialReport(name, report);
       if (done) setSaved(`Saved as ${done.name}.`);
       return;
     }
@@ -156,8 +156,9 @@ function SceneTrialDialog({ onClose }: { onClose: () => void }) {
           </button>
         </header>
         <p className="muted">
-          Draws a made-up 3D scene, heavier at each step, for about 15 seconds, and measures how
-          many frames a second this device shows. It stops by itself when frames come too slowly.
+          Draws a made-up 3D scene, heavier at each step, for up to about half a minute, and
+          measures how many frames a second this device shows. It stops by itself when frames come
+          too slowly or a step fails.
         </p>
         <div ref={stage} className="scene-trial-stage" aria-hidden="true" />
         <div className="scene-trial-actions">
