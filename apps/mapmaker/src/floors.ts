@@ -172,3 +172,162 @@ export function heightTicks(low: number, high: number): number[] {
   }
   return ticks;
 }
+
+/** The floor a height is on by the cuts alone (0 below the lowest cut). */
+export function bandOf(cuts: readonly number[], height: number): number {
+  return cuts.filter((cut) => cut < height).length;
+}
+
+/** How near a marker may lie to a cut before the panel points it out, in metres: things lie at walking height,
+ * so a cut through a cluster of them is likely in the wrong place. */
+export const NEAR_CUT = 1;
+
+/** The cut within `NEAR_CUT` of a height, if any. */
+export function cutNear(cuts: readonly number[], height: number): number | null {
+  let best: number | null = null;
+  for (const cut of cuts) {
+    if (
+      Math.abs(cut - height) <= NEAR_CUT &&
+      (best === null || Math.abs(cut - height) < Math.abs(best - height))
+    )
+      best = cut;
+  }
+  return best;
+}
+
+/** The words for each type of marker, one of them. */
+export const MARKER_TYPES: Record<string, string> = {
+  bonfire: 'Bonfire',
+  boss: 'Boss',
+  npc: 'NPC',
+  drop: 'Guaranteed drop',
+  weapon: 'Weapon',
+  armour: 'Armour',
+  ring: 'Ring',
+  spell: 'Spell',
+  key: 'Key item',
+  upgrade: 'Upgrade material',
+  other: 'Other item',
+  consumable: 'Consumable',
+  souls: 'Souls',
+};
+
+export function markerTypeText(type: string): string {
+  return MARKER_TYPES[type] ?? 'Other item';
+}
+
+/** What the panel says about a marker for some cuts: the floor it is put on, and what to look at. */
+export interface MarkerCheck {
+  /** The floor it is put on (by the surface under it, or by its height without one). */
+  floor: number;
+  /** A cut within `NEAR_CUT` of it, or null. */
+  nearCut: number | null;
+  /** Put on another floor than its height alone gives (it stands on a surface across a cut). */
+  otherFloor: boolean;
+  /** No walkable surface under it: it goes by its height. */
+  noSurface: boolean;
+}
+
+export function checkMarker(
+  cuts: readonly number[],
+  height: number,
+  placed: { floor: number; surface: number | null } | undefined,
+): MarkerCheck {
+  const byHeight = bandOf(cuts, height);
+  const floor = placed?.floor ?? byHeight;
+  return {
+    floor,
+    nearCut: cutNear(cuts, height),
+    otherFloor: placed !== undefined && floor !== byHeight,
+    noSurface: placed?.surface === null,
+  };
+}
+
+/** Bytes from base64. */
+export function fromBase64(text: string): Uint8Array {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function rgbOf(hex: string): [number, number, number] {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+/**
+ * The section's pixels (see floorviews.py: 0 nothing, 1 to 127 walls by how many stand there, 128 to 255 walkable
+ * floor by how near) coloured for the cuts: each row in the colour of the floor its height is on, the selected
+ * floor brightest. RGBA, rows from the top height down.
+ */
+export function paintSection(
+  pixels: Uint8Array,
+  columns: number,
+  rows: number,
+  low: number,
+  high: number,
+  cuts: readonly number[],
+  selected: number,
+): Uint8ClampedArray<ArrayBuffer> {
+  const out = new Uint8ClampedArray(columns * rows * 4);
+  const background = [22, 26, 32];
+  for (let row = 0; row < rows; row++) {
+    const height = high - ((row + 0.5) / rows) * (high - low);
+    const band = bandOf(cuts, height);
+    const [r, g, b] = rgbOf(floorColour(band));
+    const dim = band === selected ? 1 : 0.62;
+    for (let column = 0; column < columns; column++) {
+      const value = pixels[row * columns + column] ?? 0;
+      const at = (row * columns + column) * 4;
+      let shade: [number, number, number];
+      if (value >= 128) {
+        const near = 0.55 + (0.45 * (value - 128)) / 127;
+        shade = [
+          r * near * dim + 40 * (1 - dim),
+          g * near * dim + 40 * (1 - dim),
+          b * near * dim + 40 * (1 - dim),
+        ];
+      } else if (value > 0) {
+        // Walls: the floor's colour greyed, light where many stand one behind another.
+        const t = 0.34 + (0.56 * value) / 127;
+        const grey = (r + g + b) / 3;
+        shade = [0, 1, 2].map((k) => {
+          const base = [r, g, b][k]! * 0.45 + grey * 0.55;
+          return background[k]! + (base - background[k]!) * t * (0.75 + 0.25 * dim);
+        }) as [number, number, number];
+      } else {
+        shade = background as [number, number, number];
+      }
+      out[at] = shade[0];
+      out[at + 1] = shade[1];
+      out[at + 2] = shade[2];
+      out[at + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/** A marker's look in the views: 0 plain, 1 within `NEAR_CUT` of a cut, 2 on another floor than its height gives
+ * or with no floor under it. */
+export type MarkerLook = 0 | 1 | 2;
+
+export function lookOf(check: MarkerCheck): MarkerLook {
+  if (check.otherFloor || check.noSurface) return 2;
+  return check.nearCut === null ? 0 : 1;
+}
+
+const NORTH = ['north up', 'north to the right', 'north down', 'north to the left'];
+
+/** Where north is on a floor seen from above, turned `turn` quarters clockwise. */
+export function northText(turn: number): string {
+  return NORTH[((turn % 4) + 4) % 4]!;
+}
+
+/** Where a marker's note goes beside its dot (at `x`, `y` as fractions of the view): above it, or below it near the
+ * top; to its right near the left edge, to its left near the right edge. A CSS transform. */
+export function tipPlace(x: number, y: number): string {
+  const across = x < 0.25 ? '-8%' : x > 0.75 ? '-92%' : '-50%';
+  const down = y < 0.2 ? '14px' : 'calc(-100% - 12px)';
+  return `translate(${across}, ${down})`;
+}

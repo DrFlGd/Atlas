@@ -37,16 +37,21 @@
 import {
   GAME_ID_PATTERN,
   MAX_SITE_NAME_LENGTH,
+  SCENE_AXES,
   checkPackIntegrity,
   idOf,
   isAllowedRemoteUrl,
+  isAxesPermutation,
   packDataSchema,
   type PackData,
+  type Scene,
+  type WorldTransform,
 } from '@atlas/schema';
 import { z } from 'zod';
 import { MAX_PAGE_FETCHES, type PageFetch, type ReadingWay } from './fetching';
 import type { PageLayoutRequest } from './layoutNotes';
 import {
+  MODEL_PIECE_FIELD,
   RULES_READER,
   checkShippedSiteRules,
   isSiteFile,
@@ -383,6 +388,29 @@ export interface ImportContext {
    * no saved pack names is thrown away.
    */
   wholePicture?(request: WholePictureRequest): Promise<WholePicture>;
+  /**
+   * Optional: fetches the raw 3D model of one map and builds it with
+   * Atlas's one 3D builder into the map's model files and its pictures
+   * drawn from above (see {@link SceneModelRequest}), for an importer
+   * whose site keeps each map as a 3D model. Only an app that downloads
+   * offers it, in its desktop builds; an importer must check that it is
+   * there.
+   *
+   * The app asks for the model, or each of its pieces in order, as it asks
+   * for every page it reads by itself in a go: never an address the site's
+   * rules file keeps it off, the site's live `robots.txt` first, its own
+   * pause before each request, its own name (`Atlas/<version>`), no
+   * cookies, and redirects on the same site only. A refusal ends the
+   * answer with `stop`: the importer then stops too, with a failure that
+   * has `stop`, and the app reads no more of the go. Pieces are joined
+   * back into one model, which the builder lines up with the world, cuts
+   * into cells with levels of detail, compresses and draws from above,
+   * one picture per floor asked. One model at a time; it never rejects.
+   * Nothing is written into a pack until the importer names the build in
+   * {@link ImportSuccess.sceneBuilds} and the pack is saved; a build no
+   * saved pack names is thrown away.
+   */
+  sceneModel?(request: SceneModelRequest): Promise<SceneModel>;
 }
 
 /** The sizes the pictures of a site's pages can be kept at (see {@link ImportContext.pictureSize}). */
@@ -684,6 +712,284 @@ export function cutPicturesOf(value: unknown, pack: PackData): CutPictureUse[] {
     kept.push({ picture, folder });
   }
   return kept;
+}
+
+// ---------------------------------------------------------------------------
+// A map that is a 3D model (optional)
+
+/** The most pieces one model may come in ({@link SceneModelRequest.pieces}). The desktop shell enforces the same. */
+export const SCENE_MODEL_MAX_PIECES = 200;
+/** The largest model the app takes, as a glTF binary file once joined. The desktop shell enforces the same. */
+export const SCENE_MODEL_MAX_BYTES = 1024 * 1024 * 1024;
+/** The form of a map's folder of a built model ({@link SceneModelRequest.folder}). */
+export const SCENE_FOLDER_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** The form of the app's name for a build ({@link SceneBuildUse.build}). */
+export const SCENE_BUILD_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** Builds one import names at most. */
+export const MAX_SCENE_BUILDS = 200;
+/** Floors one build draws at most. */
+export const MAX_SCENE_FLOORS = 64;
+
+/** A floor of a map whose model the app draws from above ({@link SceneModelRequest.floors}). */
+export interface SceneFloorRequest {
+  /** Its folder among the map's pictures: 1 to 64 of `a`–`z`, `0`–`9`, `_` and `-`. */
+  id: string;
+  /** `[min, max]`, the heights of the world it shows, in world units. */
+  heights: [number, number];
+}
+
+/**
+ * What an importer asks {@link ImportContext.sceneModel}: the raw model of
+ * one map, where to get it, how it lines up with the game's world, and the
+ * floors to draw. The app builds it with Atlas's one 3D builder (see
+ * "Building a 3D map" in `docs/pack-file-format.md`), so it comes out as
+ * every 3D map does.
+ */
+export interface SceneModelRequest {
+  /**
+   * The model: a glTF binary file (`.glb`) with everything in it. Each
+   * address `https` (plain `http` only on this computer, for tests), with
+   * no user name or password, on the site of the page being read.
+   */
+  url?: string;
+  /**
+   * Or the model in pieces: each address a JSON file whose value at `field`
+   * (a field name of its top object) is text in base64, the pieces' texts
+   * joined in this order being the base64 of the model. At most
+   * {@link SCENE_MODEL_MAX_PIECES}. Exactly one of `url` and `pieces`.
+   */
+  pieces?: { urls: string[]; field: string };
+  /**
+   * The map's folder in the pack: its model files go in `scene/<folder>/`
+   * and its pictures in `tiles/<folder>/` (see {@link SCENE_FOLDER_PATTERN}).
+   */
+  folder: string;
+  /** As the builder's options (and a scene's fields): which axis gives world x, world y and height. */
+  axes?: [string, string, string];
+  /** World units per model unit. */
+  scale?: number;
+  /** `[x, y, height]` in world units, added after scaling. */
+  offset?: [number, number, number];
+  /** Name patterns of parts never seen in game (`*`, `?`, any case), left out. */
+  drop?: string[];
+  /** The height of open water, in world units. */
+  water?: number;
+  /** The sky's colour, `#rrggbb`. */
+  sky?: string;
+  /**
+   * The floors to draw from above, one picture each, lowest first; none
+   * (or fewer than two) draws the whole map once, as the floor `all`. At
+   * most {@link MAX_SCENE_FLOORS}.
+   */
+  floors?: SceneFloorRequest[];
+}
+
+/** One picture of a built map, drawn from above ({@link SceneModel}). */
+export interface SceneLayer {
+  /** The floor's id as asked, or `all`. */
+  id: string;
+  /** `tiles/<folder>/<id>/{z}/{x}/{y}.png`, a layer's `tiles.url`. */
+  url: string;
+  minZoom: number;
+  maxZoom: number;
+  tileSize: number;
+}
+
+/**
+ * Why a model was not built:
+ *
+ * - `stop`: the site refused, asked to slow down, or its `robots.txt` does
+ *   not allow the address; `message` says which, and the go ends.
+ * - `kept-off`: the site's rules file keeps the app off the address.
+ * - `missing`: the site has no model there (404, 410, an answer that is
+ *   not one, a piece without its field).
+ * - `format`: the file is not a glTF binary file the builder reads.
+ * - `size`: it is larger than {@link SCENE_MODEL_MAX_BYTES}.
+ * - `failed`: anything else, such as a model with nothing left to show or
+ *   a full disk.
+ * - `cancelled`: the session was stopped meanwhile.
+ */
+export type SceneModelProblem =
+  'stop' | 'kept-off' | 'missing' | 'format' | 'size' | 'failed' | 'cancelled';
+
+/** What {@link ImportContext.sceneModel} gave. */
+export type SceneModel =
+  | {
+      ok: true;
+      /** The app's name for the build, to name in {@link ImportSuccess.sceneBuilds}. */
+      build: string;
+      /** The scene to put on the map (`maps.json`), its files under `scene/<folder>/`. */
+      scene: Scene;
+      /** The size of the map's pictures, in pixels. */
+      width: number;
+      height: number;
+      /** Map pixel to world x and y, the map's `worldTransform`. */
+      worldTransform: WorldTransform;
+      /** The pictures drawn, one for each floor asked (or `all`), in that order. */
+      layers: SceneLayer[];
+      /** Triangles of the finest level, all cells together. */
+      triangles: number;
+      /** What the builder said of the model, in plain sentences (textures left out, say). */
+      warnings: string[];
+    }
+  | {
+      ok: false;
+      problem: SceneModelProblem;
+      /** One plain sentence for the person, about the model. */
+      message: string;
+    };
+
+/** A build a pack's map uses (see {@link ImportSuccess.sceneBuilds}). */
+export interface SceneBuildUse {
+  /** The app's name for the build ({@link SceneModel}). */
+  build: string;
+  /** The map's folder it was built for: `scene/<folder>/` and `tiles/<folder>/`. */
+  folder: string;
+}
+
+/**
+ * The builds of an import as the app takes them (see
+ * {@link ImportSuccess.sceneBuilds}): each named once, each folder once and
+ * the folder of a map of `pack` whose scene's files are all under
+ * `scene/<folder>/`, at most {@link MAX_SCENE_BUILDS}, in the order given;
+ * anything else is left out.
+ */
+export function sceneBuildsOf(value: unknown, pack: PackData): SceneBuildUse[] {
+  if (!Array.isArray(value)) return [];
+  const folders = new Set(
+    pack.maps.flatMap((map) => {
+      if (!map.scene) return [];
+      const files = [
+        ...map.scene.cells.flatMap((cell) => cell.lods.map((lod) => lod.file)),
+        ...(map.scene.neighbours ? [map.scene.neighbours] : []),
+      ];
+      const folder = /^scene\/([^/]+)\//.exec(files[0] ?? '')?.[1];
+      return folder && files.every((file) => file.startsWith(`scene/${folder}/`)) ? [folder] : [];
+    }),
+  );
+  const kept: SceneBuildUse[] = [];
+  for (const entry of value as unknown[]) {
+    if (kept.length >= MAX_SCENE_BUILDS) break;
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { build, folder } = entry as { build?: unknown; folder?: unknown };
+    if (typeof build !== 'string' || typeof folder !== 'string') continue;
+    if (!SCENE_BUILD_PATTERN.test(build) || !SCENE_FOLDER_PATTERN.test(folder)) continue;
+    if (!folders.has(folder)) continue;
+    if (kept.some((k) => k.build === build || k.folder === folder)) continue;
+    kept.push({ build, folder });
+  }
+  return kept;
+}
+
+/**
+ * Checks what an importer asks {@link ImportContext.sceneModel}, as the
+ * app takes it: the request in bounds, or a plain sentence why not.
+ * Addresses are checked for their form only; the app checks each against
+ * the site's rules file and `robots.txt` when it asks for it.
+ */
+export function checkSceneModelRequest(value: unknown): SceneModelRequest | string {
+  if (typeof value !== 'object' || value === null) return 'The request is not one.';
+  const request = value as Record<string, unknown>;
+  const { url, pieces, folder, axes, scale, offset, drop, water, sky, floors } = request;
+  if (typeof folder !== 'string' || !SCENE_FOLDER_PATTERN.test(folder)) {
+    return 'The map’s folder is not one this app takes.';
+  }
+  const out: SceneModelRequest = { folder };
+  if ((url === undefined) === (pieces === undefined)) {
+    return 'The model must be one file or its pieces.';
+  }
+  if (url !== undefined) {
+    if (typeof url !== 'string' || !isAllowedPageUrl(url))
+      return 'This app does not read that address.';
+    out.url = url;
+  } else {
+    const given = pieces as { urls?: unknown; field?: unknown } | null;
+    const urls = given?.urls;
+    const field = given?.field;
+    if (
+      !Array.isArray(urls) ||
+      urls.length === 0 ||
+      urls.length > SCENE_MODEL_MAX_PIECES ||
+      !urls.every((u) => typeof u === 'string' && isAllowedPageUrl(u))
+    ) {
+      return 'The model’s pieces are not addresses this app reads.';
+    }
+    if (typeof field !== 'string' || !MODEL_PIECE_FIELD.test(field)) {
+      return 'The field of the model’s pieces is not a field name.';
+    }
+    out.pieces = { urls: urls as string[], field };
+  }
+  if (axes !== undefined) {
+    if (
+      !Array.isArray(axes) ||
+      axes.length !== 3 ||
+      !axes.every((a) => typeof a === 'string' && (SCENE_AXES as readonly string[]).includes(a)) ||
+      !isAxesPermutation(axes as string[])
+    ) {
+      return 'The axes must name each of x, y and z once.';
+    }
+    out.axes = axes as [string, string, string];
+  }
+  if (scale !== undefined) {
+    if (typeof scale !== 'number' || !(scale > 0) || !Number.isFinite(scale)) {
+      return 'The scale must be a number above 0.';
+    }
+    out.scale = scale;
+  }
+  if (offset !== undefined) {
+    if (
+      !Array.isArray(offset) ||
+      offset.length !== 3 ||
+      !offset.every((v) => typeof v === 'number' && Number.isFinite(v))
+    ) {
+      return 'The offset must be three numbers.';
+    }
+    out.offset = offset as [number, number, number];
+  }
+  if (drop !== undefined) {
+    if (
+      !Array.isArray(drop) ||
+      drop.length > 100 ||
+      !drop.every((d) => typeof d === 'string' && d.length > 0 && d.length <= 200)
+    ) {
+      return 'The parts to leave out must be up to 100 name patterns.';
+    }
+    out.drop = drop as string[];
+  }
+  if (water !== undefined) {
+    if (typeof water !== 'number' || !Number.isFinite(water))
+      return 'The water’s height must be a number.';
+    out.water = water;
+  }
+  if (sky !== undefined) {
+    if (typeof sky !== 'string' || !/^#[0-9a-f]{6}$/i.test(sky))
+      return 'The sky must be a colour written #rrggbb.';
+    out.sky = sky.toLowerCase();
+  }
+  if (floors !== undefined) {
+    if (!Array.isArray(floors) || floors.length > MAX_SCENE_FLOORS)
+      return 'There are too many floors.';
+    const ids = new Set<string>();
+    const kept: SceneFloorRequest[] = [];
+    for (const floor of floors as unknown[]) {
+      const { id, heights } = (floor ?? {}) as { id?: unknown; heights?: unknown };
+      if (
+        typeof id !== 'string' ||
+        !SCENE_FOLDER_PATTERN.test(id) ||
+        ids.has(id) ||
+        !Array.isArray(heights) ||
+        heights.length !== 2 ||
+        !heights.every((h) => typeof h === 'number' && Number.isFinite(h)) ||
+        !((heights[0] as number) <= (heights[1] as number))
+      ) {
+        return 'Each floor needs an id of its own and its heights, lowest first.';
+      }
+      ids.add(id);
+      kept.push({ id, heights: [heights[0] as number, heights[1] as number] });
+    }
+    out.floors = kept;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1106,6 +1412,14 @@ export interface ImportSuccess {
    * `pack` (see {@link cutPicturesOf}).
    */
   cutPictures?: CutPictureUse[];
+  /**
+   * Optional, for maps made from 3D models ({@link ImportContext.sceneModel}):
+   * the builds the pack's maps use, each put into the pack's folder as
+   * `scene/<folder>/` and `tiles/<folder>/` when the pack is saved, in place
+   * of what was there. The app leaves out an entry that names no map of
+   * `pack` with a scene in that folder (see {@link sceneBuildsOf}).
+   */
+  sceneBuilds?: SceneBuildUse[];
   /**
    * Optional: the name of the site the page was read from, as the importer
    * shows it to the person (for a site described by a site rules file, the
@@ -1854,6 +2168,8 @@ const outcomeSchema = z.discriminatedUnion('ok', [
     pictureFiles: z.unknown().optional(),
     // Checked against the pack, entry by entry (`cutPicturesOf`).
     cutPictures: z.unknown().optional(),
+    // Checked against the pack, entry by entry (`sceneBuildsOf`).
+    sceneBuilds: z.unknown().optional(),
     // Kept when it is a name (`siteNameOf`).
     site: z.unknown().optional(),
     pack: z.unknown(),
@@ -2022,6 +2338,7 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
     pictureFiles: files,
     pageAddress: arrived,
     cutPictures: cuts,
+    sceneBuilds: builds,
     site: siteGiven,
     ...rest
   } = success;
@@ -2032,9 +2349,11 @@ export function checkOutcome(value: unknown, pageUrl?: string): ImportOutcome {
   const writtenAgain = writtenAgainLinks(again, pageUrl);
   const pictureFiles = pictureFilesOf(files, pack.data);
   const cutPictures = cutPicturesOf(cuts, pack.data);
+  const sceneBuilds = sceneBuildsOf(builds, pack.data);
   return {
     ...rest,
     ...(cutPictures.length > 0 ? { cutPictures } : {}),
+    ...(sceneBuilds.length > 0 ? { sceneBuilds } : {}),
     ...(site ? { site } : {}),
     ...(pageAddress ? { pageAddress } : {}),
     ...(links.length > 0 ? { links } : {}),

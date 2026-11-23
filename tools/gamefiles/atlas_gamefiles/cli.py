@@ -4,8 +4,8 @@
                     [--collision-sample N] [--navmesh-sample N] [--map-piece-sample N]
                     [--source-budget S] [--source-time-limit S] [--heartbeat S]
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
-                    [--config <file>] [--floor-overrides <file>] [--remake <area>] [--no-3d]
-                    [--scene-builder <atlas-scene program>]
+                    [--config <file>] [--floor-overrides <file>] [--remake <area>] [--map-style <style>]
+                    [--no-3d] [--scene-builder <atlas-scene program>]
     atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB>
     atlas-gamefiles --version
 
@@ -115,6 +115,13 @@ def parser() -> argparse.ArgumentParser:
         metavar="AREA",
         help="make only this area (mAA_BB) again and put its map in place of the old one in the pack made before "
         "into this output folder, leaving the rest of the pack as it is",
+    )
+    make.add_argument(
+        "--map-style",
+        default=None,
+        metavar="STYLE",
+        help="how the floors are drawn: shaded (by height, the default) or outlines (by height, with the walls and "
+        "the edges of the walkable floor as clear lines); textured and textured-outlines are not available yet",
     )
     make.add_argument("--no-3d", action="store_true", help="make the flat maps only, without their 3D models")
     make.add_argument(
@@ -230,6 +237,7 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
             scene_builder=args.scene_builder,
             floor_overrides_file=args.floor_overrides,
             remake=args.remake,
+            style=args.map_style,
         ).run()
     except Cancelled:
         events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")

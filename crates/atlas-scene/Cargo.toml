@@ -31,6 +31,10 @@ serde_json = "1"
 meshopt = "=0.7.0"
 # PNG map image tiles, in pure Rust. MIT OR Apache-2.0.
 png = "=0.18.1"
+# Reading a model's JPEG textures for their average colour (`textures`),
+# in pure Rust. MIT OR Apache-2.0 OR Zlib.
+zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
+zune-core = { version = "=0.5.3", default-features = false, features = ["std"] }
 
 [profile.release]
 codegen-units = 1

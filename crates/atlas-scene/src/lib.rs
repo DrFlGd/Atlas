@@ -578,12 +578,21 @@ pub fn build(
         primitives_skipped: model.skipped_primitives,
         ..Report::default()
     };
+    let averaged = options.textures.mode == textures::TextureMode::Average;
     if report.textures_left_out > 0 {
-        report.warnings.push(format!(
-            "{} materials have a texture; textures come in a later version, so they keep their colour only",
-            report.textures_left_out
-        ));
+        report.warnings.push(if averaged {
+            format!(
+                "{} materials have a texture; textures come in a later version, so they keep their texture's average colour",
+                report.textures_left_out
+            )
+        } else {
+            format!(
+                "{} materials have a texture; textures come in a later version, so they keep their colour only",
+                report.textures_left_out
+            )
+        });
     }
+    let materials = textures::materials_for(model, &options.textures);
 
     // 2. What is never seen.
     progress(0.02, "leaving out what is never seen");
@@ -689,7 +698,7 @@ pub fn build(
     if target.exists() {
         fs::remove_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
     }
-    let materials: &[Material] = &model.materials;
+    let materials: &[Material] = &materials;
     let mut cells: Vec<Value> = Vec::new();
     let mut local = vec![u32::MAX; welded.positions.len()];
     let mut level_reports: Vec<LevelReport> = (0..=options.levels.len())

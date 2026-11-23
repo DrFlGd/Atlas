@@ -64,6 +64,8 @@ mod picturecuts;
 pub mod receive;
 mod removal;
 pub mod saves;
+#[cfg(feature = "downloads")]
+mod scenebuilds;
 pub mod settings;
 // The person's site rules files, for importers (commands in a build with downloads).
 pub mod sites;
@@ -263,6 +265,9 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::import_fetch_picture,
         commands::import_cut_picture,
         commands::import_discard_pictures,
+        commands::import_fetch_model,
+        commands::import_build_scene,
+        commands::import_discard_scenes,
         commands::library_style_texts,
         commands::download_settings_get,
         commands::download_settings_set,

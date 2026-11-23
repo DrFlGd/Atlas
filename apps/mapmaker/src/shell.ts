@@ -2,7 +2,7 @@
  * The commands of the Map Maker's desktop shell (`src-tauri`). Like the Atlas viewer, the page has no dependency on
  * Tauri: inside the shell, Tauri injects an `invoke` function. In a plain browser `shell` is null.
  */
-import type { AnyReport, HeightProfile } from './report';
+import type { AnyReport, HeightProfile, MapStyleId } from './report';
 
 export interface AppInfo {
   version: string;
@@ -11,6 +11,8 @@ export interface AppInfo {
   sceneBuilderFound: boolean;
   /** "Also make 3D maps", as last chosen (on by default). */
   make3d: boolean;
+  /** "Map style", as last chosen. */
+  mapStyle: MapStyleId;
   lastFolder: string | null;
   /** Where Steam usually installs Dark Souls Remastered, when that folder exists on this computer. */
   typicalFolder: string | null;
@@ -84,16 +86,39 @@ export interface FloorViewsReady {
   shipped: FloorEntry;
   /** The area's cuts without the player's own. */
   shippedCuts: number[];
+  /** The heights the panel shows, bottom and top. */
+  heights: { low: number; high: number };
+  model: AreaModel;
+  /** The area seen from the south (`x`) and from the east (`z`). */
+  section: { x: Section; z: Section };
+  markers: AreaMarker[];
 }
 
-export interface SideView {
-  /** A `data:` URL, or null without walkable floor. */
-  image: string | null;
-  /** Its heights, bottom and top, and what it spans across (metres). */
-  low: number;
-  high: number;
+/** The area's triangles: each corner's x, height and z as 16-bit steps from `min` to `max`, base64. */
+export interface AreaModel {
+  triangles: number;
+  min: [number, number, number];
+  max: [number, number, number];
+  positions: string;
+}
+
+/** The whole area from one side, a byte a pixel (see floorviews.py), rows from the top height down. */
+export interface Section {
+  columns: number;
+  rows: number;
+  /** What it spans across, in metres: west to east from the south, south to north from the east. */
   from: number;
   to: number;
+  pixels: string;
+}
+
+/** A marker of the area: where it is (x east, y height, z north) and its type. */
+export interface AreaMarker {
+  x: number;
+  y: number;
+  z: number;
+  type: string;
+  colour: string;
 }
 
 export interface ViewedFloor {
@@ -107,7 +132,7 @@ export interface ViewedFloor {
   top: string | null;
 }
 
-/** The views for some cuts: the floors they give, and the side views. */
+/** The views for some cuts: the floors they give, and where each marker is put. */
 export interface FloorViews {
   id: number;
   cuts: number[];
@@ -115,7 +140,8 @@ export interface FloorViews {
   mainFloor: number;
   profile: HeightProfile;
   floors: ViewedFloor[];
-  side: { x: SideView; z: SideView };
+  /** Per marker of `FloorViewsReady.markers`: its floor, and the height of the surface under it (null: none). */
+  markers: { floor: number; surface: number | null }[];
   seconds: number;
 }
 
@@ -127,15 +153,20 @@ export interface Shell {
   checkStart(folder: string): Promise<CheckStatus>;
   checkStatus(): Promise<CheckStatus>;
   checkCancel(): Promise<void>;
-  makeStart(folder: string, make3d: boolean): Promise<CheckStatus>;
-  remakeStart(area: string, make3d: boolean): Promise<CheckStatus>;
+  makeStart(folder: string, make3d: boolean, mapStyle: MapStyleId): Promise<CheckStatus>;
+  remakeStart(area: string, make3d: boolean, mapStyle: MapStyleId): Promise<CheckStatus>;
   restoreLastMake(): Promise<CheckStatus>;
   floorOverridesRead(): Promise<FloorOverrides>;
   floorOverridesSet(game: string, area: string, entry: FloorEntry | null): Promise<FloorOverrides>;
   floorOverridesSaveFile(game: string): Promise<FloorCutsFile | null>;
   floorOverridesLoadFile(): Promise<FloorCutsFile | null>;
   floorViewsOpen(area: string): Promise<FloorViewsReady>;
-  floorViewsRequest(area: string, cuts: number[], names: string[]): Promise<FloorViews>;
+  floorViewsRequest(
+    area: string,
+    cuts: number[],
+    names: string[],
+    outlines: boolean,
+  ): Promise<FloorViews>;
   floorViewsClose(): Promise<void>;
   revealPack(): Promise<void>;
   previewImage(file: string): Promise<string>;
@@ -152,8 +183,10 @@ export function createShell(invoke: Invoke): Shell {
     checkCancel: async () => {
       await invoke('check_cancel');
     },
-    makeStart: (folder, make3d) => invoke('make_start', { folder, make3d }) as Promise<CheckStatus>,
-    remakeStart: (area, make3d) => invoke('remake_start', { area, make3d }) as Promise<CheckStatus>,
+    makeStart: (folder, make3d, mapStyle) =>
+      invoke('make_start', { folder, make3d, mapStyle }) as Promise<CheckStatus>,
+    remakeStart: (area, make3d, mapStyle) =>
+      invoke('remake_start', { area, make3d, mapStyle }) as Promise<CheckStatus>,
     restoreLastMake: () => invoke('restore_last_make') as Promise<CheckStatus>,
     floorOverridesRead: () => invoke('floor_overrides_read') as Promise<FloorOverrides>,
     floorOverridesSet: (game, area, entry) =>
@@ -163,8 +196,8 @@ export function createShell(invoke: Invoke): Shell {
     floorOverridesLoadFile: () =>
       invoke('floor_overrides_load_file') as Promise<FloorCutsFile | null>,
     floorViewsOpen: (area) => invoke('floor_views_open', { area }) as Promise<FloorViewsReady>,
-    floorViewsRequest: (area, cuts, names) =>
-      invoke('floor_views_request', { area, cuts, names }) as Promise<FloorViews>,
+    floorViewsRequest: (area, cuts, names, outlines) =>
+      invoke('floor_views_request', { area, cuts, names, outlines }) as Promise<FloorViews>,
     floorViewsClose: async () => {
       await invoke('floor_views_close');
     },

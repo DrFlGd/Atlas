@@ -547,6 +547,48 @@ pub struct SaveImport {
     /// the pack's `tiles/<folder>/`, in place of what was there.
     #[serde(default)]
     pub cut_pictures: Vec<CutPictureUse>,
+    /// 3D models of maps the app built for this import (see
+    /// `scenebuilds.rs`), each map's model files and pictures moved from
+    /// the hidden folder of builds into the pack's `scene/<folder>/` and
+    /// `tiles/<folder>/`, in place of what was there.
+    #[serde(default)]
+    pub scene_builds: Vec<SceneBuildUse>,
+}
+
+/// A build an import's map uses: the app's name of the build, and the
+/// map's folder it was built for.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneBuildUse {
+    pub build: String,
+    pub folder: String,
+}
+
+/// The hidden folder of the maps folder that holds builds until their
+/// import is saved (`scenebuilds::BUILDS_DIR`), and a build's pack folder.
+const SCENE_BUILDS_DIR: &str = ".importing-scene-builds";
+const SCENE_BUILT_PACK: &str = "pack";
+/// The folder of a pack that holds its 3D models.
+const SCENE_FOLDER: &str = "scene";
+
+/// Whether a build's name and folder are of the forms the importer contract
+/// gives them (`SCENE_BUILD_PATTERN` and `SCENE_FOLDER_PATTERN`).
+fn usable_build(build: &SceneBuildUse) -> bool {
+    let name = &build.build;
+    let folder = &build.folder;
+    (1..=64).contains(&name.len())
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && (1..=64).contains(&folder.len())
+        && folder
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && folder
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
 }
 
 /// A cut an import's layer uses: the app's name of the cut, and the folder
@@ -1834,6 +1876,23 @@ impl Library {
                 ));
             }
         }
+        let builds = self.maps_folder().join(SCENE_BUILDS_DIR);
+        for build in &request.scene_builds {
+            if !usable_build(build)
+                || !is_real_dir(
+                    &builds
+                        .join(&build.build)
+                        .join(SCENE_BUILT_PACK)
+                        .join(SCENE_FOLDER)
+                        .join(&build.folder),
+                )
+            {
+                return Err(format!(
+                    "The 3D model of scene/{} is not there any more, so the game was not saved. Read the page again.",
+                    build.folder
+                ));
+            }
+        }
         let manifest = request
             .files
             .get(MANIFEST_FILE)
@@ -1920,6 +1979,31 @@ impl Library {
                     cut.folder
                 ));
             }
+        }
+
+        // The 3D models of maps built for this import, and their pictures drawn from above.
+        for build in &request.scene_builds {
+            let built = builds.join(&build.build).join(SCENE_BUILT_PACK);
+            for top in [SCENE_FOLDER, crate::owngame::TILES_DIR] {
+                let source = built.join(top).join(&build.folder);
+                if !is_real_dir(&source) {
+                    continue;
+                }
+                let target = dir.join(top).join(&build.folder);
+                let moved = fs::create_dir_all(dir.join(top))
+                    .and_then(|()| match fs::symlink_metadata(&target) {
+                        Ok(_) => fs::remove_dir_all(&target),
+                        Err(_) => Ok(()),
+                    })
+                    .and_then(|()| move_tree(&source, &target));
+                if let Err(error) = moved {
+                    return Err(format!(
+                        "Could not keep the 3D model of {top}/{}: {error}",
+                        build.folder
+                    ));
+                }
+            }
+            let _ = fs::remove_dir_all(builds.join(&build.build));
         }
 
         // Pictures the pack no longer lists (another name after a page was
@@ -3520,6 +3604,60 @@ mod tests {
             refresh_bundled: false,
             pictures: BTreeMap::new(),
             cut_pictures: Vec::new(),
+            scene_builds: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn moves_the_built_models_into_the_pack_and_refuses_a_build_that_is_gone() {
+        let s = setup("library-import-scenes", Vec::new());
+        let builds = s.library.maps_folder().join(SCENE_BUILDS_DIR);
+        let build = |name: &str| {
+            let pack = builds.join(name).join(SCENE_BUILT_PACK);
+            fs::create_dir_all(pack.join("scene/east/c0")).unwrap();
+            fs::write(pack.join("scene/east/c0/lod0.glb"), name).unwrap();
+            fs::create_dir_all(pack.join("tiles/east/all/0/0")).unwrap();
+            fs::write(pack.join("tiles/east/all/0/0/0.png"), name).unwrap();
+        };
+        build("a1-0");
+        let mut request = import("isles", "map-east");
+        request.scene_builds = vec![SceneBuildUse {
+            build: "a1-0".into(),
+            folder: "east".into(),
+        }];
+        let dir = s.library.save_import(&request).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("scene/east/c0/lod0.glb")).unwrap(),
+            "a1-0"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("tiles/east/all/0/0/0.png")).unwrap(),
+            "a1-0"
+        );
+        assert!(!builds.join("a1-0").exists());
+        // A new build for the same map takes the place of the old one, whole.
+        build("b2-0");
+        fs::write(dir.join("scene/east/c0/lod1.glb"), "old").unwrap();
+        request.scene_builds[0].build = "b2-0".into();
+        s.library.save_import(&request).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("scene/east/c0/lod0.glb")).unwrap(),
+            "b2-0"
+        );
+        assert!(!dir.join("scene/east/c0/lod1.glb").exists());
+        // A build that is not there, or a name or folder of another form: nothing is saved.
+        for (name, folder) in [
+            ("c3-0", "east"),
+            ("../x", "east"),
+            ("b2-0", "../up"),
+            ("b2-0", "East"),
+        ] {
+            let mut bad = import("isles", "map-west");
+            bad.scene_builds = vec![SceneBuildUse {
+                build: name.into(),
+                folder: folder.into(),
+            }];
+            assert!(s.library.save_import(&bad).is_err(), "{name} {folder}");
         }
     }
 

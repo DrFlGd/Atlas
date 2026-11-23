@@ -443,17 +443,64 @@ h3 {
 }
 
 .mm-fp-side {
+  position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
 }
 
-.mm-fp-side img {
+.mm-fp-section {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: fill;
-  image-rendering: pixelated;
+}
+
+/* A marker in the section: a dot of its type's colour; a yellow ring near a cut, a white one on another floor. */
+.mm-fp-dot {
+  position: absolute;
+  z-index: 2;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 1.5px solid #0b0d10;
+  border-radius: 50%;
+  transform: translate(-50%, -100%);
+  cursor: pointer;
+}
+
+.mm-fp-dot-near {
+  width: 13px;
+  height: 13px;
+  border: 2.5px solid #ffd54d;
+}
+
+.mm-fp-dot-odd {
+  width: 13px;
+  height: 13px;
+  border: 2.5px solid #ffffff;
+}
+
+.mm-fp-dot:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+.mm-fp-tip {
+  position: absolute;
+  z-index: 4;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 12px));
 }
 
 .mm-fp-band {
@@ -510,24 +557,129 @@ h3 {
 }
 
 .mm-fp-top {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
 }
 
-.mm-fp-top img,
+.mm-fp-top-box,
 .mm-fp-top .mm-preview-empty {
-  display: block;
-  width: 100%;
-  height: 340px;
-  aspect-ratio: auto;
-  object-fit: contain;
+  display: grid;
+  place-items: center;
+  height: 420px;
+  margin-top: 8px;
   border: 1px solid var(--atlas-border);
   border-radius: var(--atlas-radius-small);
   background: #161a20;
+}
+
+.mm-fp-top-box:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+.mm-fp-top-box {
+  position: relative;
+}
+
+.mm-fp-top-picture {
+  position: absolute;
+  inset: 6px;
+  display: block;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+  object-fit: contain;
   image-rendering: pixelated;
 }
 
-.mm-fp-top .mm-preview-empty {
+.mm-fp-3d {
+  margin-top: 10px;
+}
+
+.mm-fp-3d-tools {
+  align-items: center;
+}
+
+.mm-fp-3d-tools .button[aria-pressed='true'] {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.mm-fp-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mm-fp-pick select {
+  min-height: 34px;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.mm-fp-3d-view {
+  position: relative;
+  height: 440px;
+  margin-top: 8px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+  background: #161a20;
+  overflow: hidden;
+}
+
+.mm-fp-3d-canvas {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.mm-fp-3d-canvas:focus-visible {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: -2px;
+}
+
+.mm-fp-3d-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+}
+
+.mm-fp-3d-reset {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.mm-fp-3d .mm-preview-empty {
+  display: grid;
+  place-items: center;
   height: 240px;
+  margin-top: 8px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-small);
+}
+
+/* Full 3D: the 3D view fills the window, over the panel. */
+.mm-fp-3d-full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--atlas-surface);
+}
+
+.mm-fp-3d-full .mm-fp-3d-view {
+  flex: 1;
+  height: auto;
+  min-height: 0;
 }
 
 .mm-fp-state {
@@ -664,4 +816,33 @@ h3 {
   .mm-fp-chart {
     height: 300px;
   }
+
+  .mm-fp-3d-view,
+  .mm-fp-top-box {
+    height: 340px;
+  }
+
+  .mm-fp-tip {
+    white-space: normal;
+    width: 220px;
+  }
+}
+
+/* "Map style": a choice of how the floors are drawn. */
+.mm-style {
+  display: grid;
+  gap: 4px;
+  max-width: 560px;
+  margin: 10px 0;
+}
+
+.mm-style select {
+  min-height: 34px;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
 }

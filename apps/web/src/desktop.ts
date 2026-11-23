@@ -829,6 +829,11 @@ export interface SaveImportRequest {
    * each moved into the pack's `tiles/<folder>/`.
    */
   cutPictures?: { picture: string; folder: string }[];
+  /**
+   * 3D models of maps built for this import (`ImportSuccess.sceneBuilds`),
+   * each moved into the pack's `scene/<folder>/` and `tiles/<folder>/`.
+   */
+  sceneBuilds?: { build: string; folder: string }[];
 }
 
 /** What the shell found when it looked at the import window. */
@@ -1446,6 +1451,52 @@ export interface ShellPictureCut {
   message: string | null;
 }
 
+/** One answer to {@link DesktopBridge.tiles.fetchModel}. */
+export interface ShellFetchedModel {
+  url: string;
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  retryAfter: string | null;
+  /** The shell's name of the build it kept the answer in, for a successful answer it kept whole. */
+  build: string | null;
+  /** The answer was larger than the shell keeps, so it was not kept. */
+  tooLarge: boolean;
+  /** A piece that is not JSON with text at its field. */
+  noField: boolean;
+}
+
+/** How the shell builds a kept model (a checked `SceneModelRequest` without its addresses). */
+export interface ShellBuildRequest {
+  folder: string;
+  axes?: [string, string, string];
+  scale?: number;
+  offset?: [number, number, number];
+  drop?: string[];
+  water?: number;
+  sky?: string;
+  floors?: { id: string; heights: [number, number] }[];
+}
+
+/** What {@link DesktopBridge.tiles.buildScene} gave. */
+export interface ShellSceneBuilt {
+  ok: boolean;
+  /** The scene for `maps.json`. */
+  scene: unknown;
+  /** The pictures drawn from above: `width`, `height`, `worldTransform` and `layers`. */
+  rendered: {
+    width: number;
+    height: number;
+    worldTransform: { a: number; b: number; c: number; d: number; e: number; f: number };
+    layers: { id: string; url: string; minZoom: number; maxZoom: number; tileSize: number }[];
+  } | null;
+  triangles: number;
+  warnings: string[];
+  /** Why it was not built: `format`, `size`, `missing` or `failed`. */
+  problem: string | null;
+  message: string | null;
+}
+
 /** One answer to {@link DesktopBridge.tiles.fetchPage}. */
 export interface ShellFetchedPage {
   url: string;
@@ -1571,6 +1622,17 @@ export interface DesktopBridge {
     cutPicture(picture: string): Promise<ShellPictureCut>;
     /** Throws away kept pictures and cuts that no saved import names. */
     discardPictures(pictures: string[]): Promise<void>;
+    /**
+     * Reads a map's 3D model, or one of its pieces (`field`: added after the
+     * pieces kept in `build`), for an importer, as the app, and keeps it
+     * until it is built (`ImportContext.sceneModel`): the answer, whatever
+     * its status. Rejects when the site could not be reached.
+     */
+    fetchModel(url: string, build: string | null, field: string | null): Promise<ShellFetchedModel>;
+    /** Builds a model `fetchModel` kept with Atlas's 3D builder. */
+    buildScene(build: string, request: ShellBuildRequest): Promise<ShellSceneBuilt>;
+    /** Throws away kept models and builds that no saved import names. */
+    discardScenes(builds: string[]): Promise<void>;
     /** "Download location photos": the pictures a pack lists to be fetched later. */
     photosPlan(packId: string): Promise<PhotoPlan>;
     photosStart(packId: string): Promise<DownloadSnapshot>;
@@ -2075,6 +2137,9 @@ function noDownloads(): DesktopBridge['tiles'] {
     fetchPicture: missing,
     cutPicture: missing,
     discardPictures: missing,
+    fetchModel: missing,
+    buildScene: missing,
+    discardScenes: missing,
     photosPlan: missing,
     photosStart: missing,
     photosStartAgain: missing,
@@ -2146,6 +2211,9 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
           fetchPicture: (url) => call('import_fetch_picture', { url }),
           cutPicture: (picture) => call('import_cut_picture', { picture }),
           discardPictures: (pictures) => call('import_discard_pictures', { pictures }),
+          fetchModel: (url, build, field) => call('import_fetch_model', { url, build, field }),
+          buildScene: (build, request) => call('import_build_scene', { build, request }),
+          discardScenes: (builds) => call('import_discard_scenes', { builds }),
           photosPlan: (packId) => call('photos_plan', { packId }),
           photosStart: (packId) => call('photos_start', { packId }),
           photosStartAgain: (packId) => call('photos_start_again', { packId }),

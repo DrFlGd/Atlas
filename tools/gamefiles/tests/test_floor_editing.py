@@ -4,6 +4,7 @@ a made-up game folder only (tests/fixtures.py)."""
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import zipfile
@@ -16,7 +17,7 @@ import fixtures
 from atlas_gamefiles.config import chosen_floor_overrides, clean_floor_entry, load_floor_overrides
 from atlas_gamefiles.events import Events
 from atlas_gamefiles.floors import height_profile, plan_floors, prepare
-from atlas_gamefiles.floorviews import data_file, serve
+from atlas_gamefiles.floorviews import AreaViews, data_file, save_floor_data, serve
 from atlas_gamefiles.make import MakeError, MapMaker
 from atlas_gamefiles.pack import PackRefused, duplicate_ids, merge_area, read_pack_json, swap_area
 from atlas_gamefiles.worker import InlineRunner
@@ -162,12 +163,51 @@ def test_views_redraw_the_floors_from_given_cuts(made) -> None:
     for floor in first["floors"]:
         assert floor["top"].startswith("data:image/png;base64,") and floor["colour"].startswith("#")
     assert sum(f["markers"] for f in first["floors"]) == area(report, "m15_01")["markers"]["total"]
+    assert len(first["markers"]) == len(ready["markers"]) == area(report, "m15_01")["markers"]["total"]
+    model = ready["model"]
+    steps = np.frombuffer(base64.b64decode(model["positions"]), dtype="<u2")
+    assert model["triangles"] > 0 and len(steps) == model["triangles"] * 9
     for axis in ("x", "z"):
-        side = first["side"][axis]
-        assert side["image"].startswith("data:image/png;base64,") and side["low"] < side["high"] and side["from"] < side["to"]
+        section = ready["section"][axis]
+        pixels = np.frombuffer(base64.b64decode(section["pixels"]), dtype=np.uint8)
+        assert len(pixels) == section["rows"] * section["columns"] and section["from"] < section["to"]
+        assert (pixels >= 128).any(), "walkable floor is drawn"
+    assert ready["heights"]["low"] <= ready["profile"]["low"] and ready["heights"]["high"] >= ready["profile"]["high"]
     assert len(lines[2]["floors"]) == 1
     assert lines[3]["event"] == "error" and lines[3]["id"] is None
     assert lines[4]["cuts"] == [4.5] and lines[4]["dropped"] == [30.0]
+
+
+def test_views_of_a_made_up_keep(tmp_path: Path) -> None:
+    """A made-up area with storeys, stairs, a ramp and an overhang: its section shows walls and floors, its model
+    comes back whole, and its markers are put on floors; one on the stairs lies near the cut between storeys."""
+    triangles, markers = fixtures.made_up_keep()
+    mesh = np.array(triangles, dtype=np.float32)
+    plan = plan_floors(mesh)
+    save_floor_data(tmp_path, "m99_01", "Made-up Keep", mesh, plan, markers, None, (-3.0, 22.0), {}, 0.4)
+    views = AreaViews(data_file(tmp_path, "m99_01"))
+    ready = views.ready()
+    model = ready["model"]
+    corners = np.frombuffer(base64.b64decode(model["positions"]), dtype="<u2").reshape(-1, 3).astype(np.float64)
+    low, high = np.array(model["min"]), np.array(model["max"])
+    decoded = low + corners / 65535 * (high - low)
+    assert model["triangles"] == len(mesh) and np.abs(decoded - mesh.reshape(-1, 3)).max() < 0.01
+    section = ready["section"]["x"]
+    pixels = np.frombuffer(base64.b64decode(section["pixels"]), dtype=np.uint8).reshape(section["rows"], section["columns"])
+    walls, floors = (pixels > 0) & (pixels < 128), pixels >= 128
+    assert walls.sum() > floors.sum() > 0
+    # The keep's floors at 0, 5, 10 and 15 m show as lines in the section.
+    rows = [int((ready["heights"]["high"] - h) / (ready["heights"]["high"] - ready["heights"]["low"]) * section["rows"]) for h in (0, 5, 10, 15)]
+    assert all(floors[max(r - 2, 0) : r + 3].any() for r in rows)
+    assert [m["type"] for m in ready["markers"]] == [category for _, category in markers]
+    answer = views.views([1.75, 6.75, 13.25], None)
+    placed = answer["markers"]
+    assert len(placed) == len(markers)
+    on_stairs = [i for i, ((x, y, z), _) in enumerate(markers) if -28 < x < -18 and -20 < z < -14][0]
+    assert abs(markers[on_stairs][0][1] - 1.75) < 1.0 and placed[on_stairs]["surface"] is not None
+    plain = views.views([1.75, 6.75, 13.25], None)["floors"][1]["top"]
+    outlined = views.views([1.75, 6.75, 13.25], None, outlines=True)["floors"][1]["top"]
+    assert plain != outlined
 
 
 def test_views_need_the_floor_data_of_a_make(tmp_path: Path) -> None:
@@ -383,3 +423,31 @@ def test_swap_area_puts_everything_back_when_it_fails(tmp_path: Path, monkeypatc
     assert snapshot(target) == before
     assert (staging / "tiles" / "b" / "f0" / "new.webp").is_file()
     assert sorted(p.name for p in tmp_path.iterdir()) == [".p.remake-b", "p"]
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Map styles.
+
+
+def test_map_styles_draw_outlines_and_refuse_textures(dsr_map_folder: Path, tmp_path: Path) -> None:
+    from atlas_gamefiles.render import MAP_STYLES, OUTLINE, Frame, draw_layer, map_style
+
+    triangles = np.array(fixtures.quad(0, 10, 0, 10, 0.0), dtype=np.float32)
+    colours = np.full((len(triangles), 3), 90, dtype=np.uint8)
+    walls = np.array([[[2.0, 2.0], [8.0, 2.0]]])
+    frame = Frame(-2.0, 12.0, 8.0, 112, 112)
+    shaded = np.asarray(draw_layer(frame, triangles, colours, walls, map_style("shaded")))
+    outlined = np.asarray(draw_layer(frame, triangles, colours, walls, map_style("outlines")))
+    is_outline = lambda picture: (picture[:, :, :3] == OUTLINE).all(axis=2)  # noqa: E731
+    assert not is_outline(shaded).any() and is_outline(outlined).sum() > 100
+    assert map_style(None).id == "shaded"
+    for name in ("textured", "textured-outlines", "watercolour"):
+        with pytest.raises(ValueError):
+            map_style(name)
+    assert not MAP_STYLES["textured"].available and MAP_STYLES["textured"].note
+
+    with pytest.raises(MakeError) as refused:
+        MapMaker(dsr_map_folder, tmp_path / "out", Events(io.StringIO()), style="textured")
+    assert refused.value.code == "map-style" and "textures" in str(refused.value)
+    report, _ = make(dsr_map_folder, tmp_path / "out", tmp_path / "Maps", only_areas=["m15_01"], style="outlines")
+    assert report["options"]["mapStyle"] == "outlines" and area(report, "m15_01")["mapStyle"] == "outlines"

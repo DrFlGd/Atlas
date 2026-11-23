@@ -170,8 +170,15 @@ impl FloorViews {
         Ok(ready)
     }
 
-    /// The views for `cuts` (heights in metres) and `names` (lowest first). Blocks until they are drawn.
-    pub fn request(&self, area: &str, cuts: &[f64], names: &[String]) -> Result<Value, String> {
+    /// The views for `cuts` (heights in metres) and `names` (lowest first), the floors from above with `outlines`
+    /// or without. Blocks until they are drawn.
+    pub fn request(
+        &self,
+        area: &str,
+        cuts: &[f64],
+        names: &[String],
+        outlines: bool,
+    ) -> Result<Value, String> {
         let mut inner = lock(&self.inner);
         let viewer = inner
             .as_mut()
@@ -179,7 +186,8 @@ impl FloorViews {
             .ok_or("The floor views are not open for this area.")?;
         viewer.next_id += 1;
         let id = viewer.next_id;
-        let line = json!({ "id": id, "cuts": cuts, "names": names }).to_string();
+        let line =
+            json!({ "id": id, "cuts": cuts, "names": names, "outlines": outlines }).to_string();
         let sent = viewer
             .stdin
             .write_all(format!("{line}\n").as_bytes())
@@ -277,14 +285,15 @@ done
         let ready = views.open(&script, &base, "m15_01").unwrap();
         assert_eq!(ready["area"], "m15_01");
         let answer = views
-            .request("m15_01", &[4.5, 12.0], &["Low".to_owned()])
+            .request("m15_01", &[4.5, 12.0], &["Low".to_owned()], true)
             .unwrap();
         assert_eq!(answer["seen"]["cuts"], json!([4.5, 12.0]));
         assert_eq!(answer["seen"]["names"], json!(["Low"]));
-        assert_eq!(views.request("m15_01", &[], &[]).unwrap()["id"], 2);
-        assert!(views.request("m10_01", &[], &[]).is_err());
+        assert_eq!(answer["seen"]["outlines"], json!(true));
+        assert_eq!(views.request("m15_01", &[], &[], false).unwrap()["id"], 2);
+        assert!(views.request("m10_01", &[], &[], false).is_err());
         views.close();
-        assert!(views.request("m15_01", &[], &[]).is_err());
+        assert!(views.request("m15_01", &[], &[], false).is_err());
         let _ = fs::remove_dir_all(&base);
     }
 }

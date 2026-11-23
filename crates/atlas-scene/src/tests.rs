@@ -528,3 +528,160 @@ fn a_large_model_gets_cells_of_about_the_wanted_size() {
     assert!(ids.len() >= 4, "{ids:?}");
     let _ = fs::remove_dir_all(Path::new(&dir));
 }
+
+/// A made-up PNG of `width` by `height` pixels of `colours` (RGBA), row by row.
+fn png_of(width: u32, height: u32, colours: &[[u8; 4]]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&colours.concat()).unwrap();
+    }
+    bytes
+}
+
+/// A made-up model of one triangle whose material's colour is in a texture.
+fn textured_glb(picture: &[u8]) -> Vec<u8> {
+    let positions: [f32; 9] = [0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, -4.0];
+    let indices: [u16; 4] = [0, 1, 2, 0];
+    let mut bin = Vec::new();
+    for v in positions {
+        bin.extend(v.to_le_bytes());
+    }
+    for i in indices {
+        bin.extend(i.to_le_bytes());
+    }
+    let image_at = bin.len();
+    bin.extend(picture);
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "scenes": [{ "nodes": [0] }],
+        "nodes": [{ "name": "Floor", "mesh": 0 }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }] }],
+        "materials": [{ "name": "Tiles", "pbrMetallicRoughness": {
+            "baseColorTexture": { "index": 0 }, "baseColorFactor": [1, 1, 0.5, 1] } }],
+        "textures": [{ "source": 0 }],
+        "images": [{ "bufferView": 2, "mimeType": "image/png" }],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
+            { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+        ],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 6 },
+            { "buffer": 0, "byteOffset": image_at, "byteLength": picture.len() },
+        ],
+        "buffers": [{ "byteLength": bin.len() }],
+    });
+    let mut json_bytes = serde_json::to_vec(&document).unwrap();
+    while !json_bytes.len().is_multiple_of(4) {
+        json_bytes.push(b' ');
+    }
+    let total = 12 + 8 + json_bytes.len() + 8 + bin.len();
+    let mut out = Vec::new();
+    out.extend(b"glTF");
+    out.extend(2u32.to_le_bytes());
+    out.extend((total as u32).to_le_bytes());
+    out.extend((json_bytes.len() as u32).to_le_bytes());
+    out.extend(b"JSON");
+    out.extend(&json_bytes);
+    out.extend((bin.len() as u32).to_le_bytes());
+    out.extend(b"BIN\0");
+    out.extend(&bin);
+    out
+}
+
+#[test]
+fn keeps_a_textures_average_colour_when_asked() {
+    // Half white, half black: the average is half the light, in linear terms.
+    let picture = png_of(2, 1, &[[255, 255, 255, 255], [0, 0, 0, 255]]);
+    let average = textures::average_colour(&picture).unwrap();
+    assert!(
+        average.iter().all(|v| (v - 0.5).abs() < 1e-3),
+        "{average:?}"
+    );
+    // A transparent pixel counts for nothing.
+    let clear = png_of(2, 1, &[[255, 0, 0, 255], [0, 0, 255, 0]]);
+    assert_eq!(textures::average_colour(&clear).unwrap(), [1.0, 0.0, 0.0]);
+    assert_eq!(textures::average_colour(b"not a picture"), None);
+
+    let model = read_glb(&textured_glb(&picture)).unwrap();
+    assert!(model.materials[0].textured);
+    let kept = model.materials[0].texture_color.unwrap();
+    assert!((kept[0] - 0.5).abs() < 1e-3);
+
+    let dir = temp("textures");
+    let colour_of = |built: &Built| -> Vec<f64> {
+        let file = built.scene["cells"][0]["lods"][0]["file"].as_str().unwrap();
+        let bytes = fs::read(dir.join(file)).unwrap();
+        let (json, _) = split_glb(&bytes).unwrap();
+        json["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    // Left out: the material's own colour.
+    let plain = build(
+        &model,
+        &options(json!({ "folder": "scene/plain" })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert_eq!(colour_of(&plain)[..3], [1.0, 1.0, 0.5]);
+    assert!(plain.report.warnings[0].contains("keep their colour only"));
+    // Averaged: times the texture's average colour.
+    let averaged = build(
+        &model,
+        &options(json!({ "folder": "scene/averaged", "textures": { "mode": "average" } })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    let colour = colour_of(&averaged);
+    assert!(
+        (colour[0] - 0.5).abs() < 1e-3 && (colour[2] - 0.25).abs() < 1e-3,
+        "{colour:?}"
+    );
+    assert!(averaged.report.warnings[0].contains("average colour"));
+}
+
+/// A made-up JPEG: 8 by 8 pixels of one orange (200, 100, 50), as hex.
+const ORANGE_JPEG: &[&str] = &[
+    "ffd8ffe000104a46494600010100000100010000ffdb0043000201010101010201010102020202020403020202020504",
+    "040304060506060605060606070908060709070606080b08090a0a0a0a0a06080b0c0b0a0c090a0a0affdb0043010202",
+    "02020202050303050a0706070a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "0a0a0a0a0a0a0a0a0a0a0a0a0a0affc00011080008000803012200021101031101ffc4001f0000010501010101010100",
+    "000000000000000102030405060708090a0bffc400b5100002010303020403050504040000017d010203000411051221",
+    "31410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a",
+    "434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a9293949596979899",
+    "9aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1",
+    "f2f3f4f5f6f7f8f9faffc4001f0100030101010101010101010000000000000102030405060708090a0bffc400b51100",
+    "020102040403040705040400010277000102031104052131061241510761711322328108144291a1b1c109233352f015",
+    "6272d10a162434e125f11718191a262728292a35363738393a434445464748494a535455565758595a63646566676869",
+    "6a737475767778797a82838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4",
+    "c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9faffda000c03010002110311003f00cf",
+    "a28a2bf95cfed83fffd9",
+];
+
+#[test]
+fn reads_a_jpeg_textures_average_colour() {
+    let hex: String = ORANGE_JPEG.concat();
+    let bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    let average = textures::average_colour(&bytes).unwrap();
+    // sRGB 200, 100 and 50, in linear terms, within what JPEG keeps.
+    for (got, srgb) in average.iter().zip([200.0f32, 100.0, 50.0]) {
+        let want = ((srgb / 255.0 + 0.055) / 1.055).powf(2.4);
+        assert!((got - want).abs() < 0.02, "{average:?}");
+    }
+}

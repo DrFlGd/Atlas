@@ -7,5 +7,6 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   server: { port: 1430, strictPort: true },
-  build: { outDir: 'dist', sourcemap: false },
+  // three.js (the Adjust floors 3D view) is its own chunk, loaded when the view is first shown.
+  build: { outDir: 'dist', sourcemap: false, chunkSizeWarningLimit: 700 },
 });
