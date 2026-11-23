@@ -185,6 +185,16 @@ jobs:
 
           To start Atlas from your Steam library, open **Settings** in Atlas and press **Add Atlas to Steam** under **Atlas in Steam**. Atlas adds itself as a non-Steam game, with its own artwork, on Windows and on the Steam Deck. **Atlas-Steam-artwork.zip** has the same pictures, with a note on which goes where, if you would rather set them by hand.
 
+          ## New in 0.32.0
+
+          - **3D trial goes further.** It now has ten steps, up to 16 million triangles and 1.7 GB of textures, and stops by itself when frames come too slowly. Each step says how much graphics memory it used. **Save the report as a file** has its own save window.
+          - **More detail in 3D.** Using your trial reports, a phone now loads up to about 2 million triangles and 300 MB of textures at once, the Steam Deck and PCs about twice that. When frames recover, the detail steps back up.
+          - **Back from 3D, the 2D map is where you left it.**
+          - **Mossgate Keep** no longer shows thin lines between the pieces of its model.
+          - Ready for 3D maps made by **Atlas Map Maker 0.3.0**, which turns each Dark Souls Remastered area into a 3D map.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.31.0
 
           - **3D maps.** A map can now come with a 3D model. It opens in 3D, with a **2D | 3D** switch beside the map. Turn, move and zoom with the mouse, touch or a controller. **View from above** looks straight down, and **Back to the start** returns to the first view. Where a map has floors, pick one and everything above it is cut away. **Cut** hides everything above a height, or what is between you and a location. Pressing a location opens its card, as on the flat map, and search and **Show on the map** take you to it in 3D.

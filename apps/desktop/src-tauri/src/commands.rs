@@ -358,6 +358,16 @@ const LIST_FILE: TextFileKind = TextFileKind {
     fallback_name: "atlas-list.atlaslist",
 };
 
+/// The report of the 3D trial in Settings: plain text, named `.txt`.
+const TRIAL_REPORT_FILE: TextFileKind = TextFileKind {
+    save_title: "Save the 3D trial report",
+    open_title: "Open a 3D trial report",
+    filter: "Text",
+    extensions: &["txt"],
+    what: "a 3D trial report",
+    fallback_name: "atlas-3d-trial.txt",
+};
+
 /// Asks where to save a progress export and writes it there. `None` when
 /// the person closes the dialog.
 ///
@@ -371,6 +381,18 @@ pub async fn save_text_file<R: Runtime>(
     contents: String,
 ) -> Result<Option<SavedFile>, String> {
     save_text(app, window, &PROGRESS_FILE, suggested_name, contents).await
+}
+
+/// Asks where to save the 3D trial's report and writes it there, as
+/// [`save_text_file`] does for progress, as a text file.
+#[tauri::command]
+pub async fn trial_report_save<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    suggested_name: String,
+    contents: String,
+) -> Result<Option<SavedFile>, String> {
+    save_text(app, window, &TRIAL_REPORT_FILE, suggested_name, contents).await
 }
 
 /// Asks where to save one of the person's own lists and writes it there,
@@ -3350,6 +3372,23 @@ mod tests {
         assert_eq!(safe_file_name("../../etc/passwd"), "etcpasswd");
         assert_eq!(safe_file_name("..."), "atlas-progress.json");
         assert_eq!(safe_file_name("a\\b:c.json"), "abc.json");
+    }
+
+    #[test]
+    fn the_trial_report_is_saved_as_text() {
+        assert_eq!(TRIAL_REPORT_FILE.save_title, "Save the 3D trial report");
+        assert_eq!(TRIAL_REPORT_FILE.extensions, ["txt"]);
+        assert_eq!(
+            safe_file_name_or(
+                "atlas-3d-trial-2026-11-23.txt",
+                TRIAL_REPORT_FILE.fallback_name
+            ),
+            "atlas-3d-trial-2026-11-23.txt"
+        );
+        assert_eq!(
+            safe_file_name_or("..", TRIAL_REPORT_FILE.fallback_name),
+            "atlas-3d-trial.txt"
+        );
     }
 
     #[test]

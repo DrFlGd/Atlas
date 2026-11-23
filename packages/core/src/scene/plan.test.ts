@@ -3,6 +3,7 @@ import {
   cellBox,
   deviceClass,
   nextBias,
+  nextTextureBias,
   planCells,
   SCENE_BUDGETS,
   sceneBudget,
@@ -74,7 +75,15 @@ describe('device budgets', () => {
     const small = sceneBudget({ ...computer, platform: 'android', deviceMemory: 2 });
     expect(small.triangles).toBe(SCENE_BUDGETS.phone.triangles / 2);
     expect(SCENE_BUDGETS.phone.triangles).toBeLessThan(SCENE_BUDGETS.handheld.triangles);
-    expect(SCENE_BUDGETS.handheld.triangles).toBeLessThan(SCENE_BUDGETS.computer.triangles);
+    expect(SCENE_BUDGETS.handheld.triangles).toBeLessThanOrEqual(SCENE_BUDGETS.computer.triangles);
+  });
+
+  it('gives a phone about 2 million triangles and 300 MB of textures, the others about twice', () => {
+    expect(SCENE_BUDGETS.phone).toMatchObject({ triangles: 2_000_000, textureBytes: 300 << 20 });
+    for (const other of [SCENE_BUDGETS.handheld, SCENE_BUDGETS.computer]) {
+      expect(other.triangles).toBe(2 * SCENE_BUDGETS.phone.triangles);
+      expect(other.textureBytes).toBe(2 * SCENE_BUDGETS.phone.textureBytes);
+    }
   });
 });
 
@@ -145,5 +154,28 @@ describe('stepping the detail by frame rate', () => {
     expect(nextBias(0, Array(30).fill(10))).toBe(0);
     expect(nextBias(1, Array(30).fill(30))).toBe(1);
     expect(nextBias(0, Array(5).fill(60))).toBe(0);
+  });
+
+  it('steps back up, one level at a time, once frames recover', () => {
+    let bias = 0;
+    for (let i = 0; i < 5; i++) bias = nextBias(bias, Array(30).fill(60));
+    expect(bias).toBe(3);
+    const seen = [];
+    for (let i = 0; i < 4; i++) {
+      bias = nextBias(bias, Array(30).fill(16.7));
+      seen.push(bias);
+    }
+    expect(seen).toEqual([2, 1, 0, 0]);
+  });
+});
+
+describe('stepping the detail by texture memory', () => {
+  const budget = { textureBytes: 400 };
+  it('steps down over the budget, and back up once well under it', () => {
+    expect(nextTextureBias(0, 401, budget)).toBe(1);
+    expect(nextTextureBias(3, 900, budget)).toBe(3);
+    expect(nextTextureBias(1, 300, budget)).toBe(1);
+    expect(nextTextureBias(1, 99, budget)).toBe(0);
+    expect(nextTextureBias(0, 0, budget)).toBe(0);
   });
 });

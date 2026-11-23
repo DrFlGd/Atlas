@@ -210,7 +210,8 @@ jobs:
           retention-days: 7
 
   # The Map Maker's game file reader (tools/gamefiles, GPL-3.0): its tests,
-  # on made-up game folders only. Windows only, like the Map Maker itself; add
+  # on made-up game folders only, with the 3D builder (crates/atlas-scene)
+  # built for the 3D tests. Windows only, like the Map Maker itself; add
   # `ubuntu-latest` to the matrix to test on Linux too.
   gamefiles:
     name: Game file reader tests (${{ matrix.os }})
@@ -233,8 +234,22 @@ jobs:
           cache: pip
           cache-dependency-path: tools/gamefiles/requirements*.txt
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/atlas-scene -> target
+
+      - name: Build the 3D builder
+        working-directory: crates/atlas-scene
+        run: cargo build --release --locked
+
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+      # The 3D tests must run here, not be skipped.
+      - name: Tests
+        env:
+          ATLAS_SCENE_REQUIRED: '1'
+        run: python -m pytest -q
 
   # Builds Atlas Map Maker with its helper and tries it on a made-up Dark
   # Souls Remastered folder: on Windows the unsigned installer (uploaded) and
@@ -329,20 +344,39 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/mapmaker/src-tauri -> target
+          workspaces: |
+            apps/mapmaker/src-tauri -> target
+            crates/atlas-scene -> target
 
       - run: pnpm install --frozen-lockfile
 
-      # Make map with the built helper on a made-up game folder (invented
-      # layouts, meshes and names; no game data), started the way the app
-      # starts it, then validate the pack it installed against @atlas/schema:
-      # manifest, every data file, the tile pyramids and every tile.
+      # The 3D builder (crates/atlas-scene, MIT) that the Map Maker carries
+      # next to its helper: format, lint, tests on made-up models, and the
+      # program the installer takes.
+      - name: 3D builder format, lint, unit tests and build
+        working-directory: crates/atlas-scene
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+          cargo build --release --locked
+          ls -l target/release
+
+      # Make map with the built helper and 3D builder on a made-up game folder
+      # (invented layouts, meshes and names; no game data), started the way the
+      # app starts it, then validate the pack it installed against
+      # @atlas/schema: manifest, every data file, the tile pyramids and every
+      # tile, and the 3D models.
       - name: Make a map pack from a made-up folder and validate it
         run: |
           helper=tools/gamefiles/dist/atlas-gamefiles
-          if [ "$RUNNER_OS" = Windows ]; then helper=tools/gamefiles/dist/atlas-gamefiles.exe; fi
+          builder=crates/atlas-scene/target/release/atlas-scene
+          if [ "$RUNNER_OS" = Windows ]; then
+            helper=tools/gamefiles/dist/atlas-gamefiles.exe
+            builder=crates/atlas-scene/target/release/atlas-scene.exe
+          fi
           python tools/gamefiles/tests/fixtures.py dsr-map "$RUNNER_TEMP/made-up-dsr-map"
-          node apps/mapmaker/e2e/helper.js "$helper" "$RUNNER_TEMP/made-up-dsr-map" "$RUNNER_TEMP/make" --make "$RUNNER_TEMP/Maps"
+          node apps/mapmaker/e2e/helper.js "$helper" "$RUNNER_TEMP/made-up-dsr-map" "$RUNNER_TEMP/make" --make "$RUNNER_TEMP/Maps" --scene-builder "$builder"
           pnpm --filter @atlas/pipeline validate-pack "$RUNNER_TEMP/Maps/dark-souls-remastered"
 
       - name: Rust format, lint and unit tests
@@ -354,10 +388,14 @@ jobs:
 
       - name: Build the Map Maker (Windows installer)
         if: runner.os == 'Windows'
+        env:
+          ATLAS_SCENE_BUILDER: crates/atlas-scene/target/release/atlas-scene.exe
         run: pnpm --filter @atlas/mapmaker desktop:build
 
       - name: Build the Map Maker (Linux, no bundle)
         if: runner.os == 'Linux'
+        env:
+          ATLAS_SCENE_BUILDER: crates/atlas-scene/target/release/atlas-scene
         run: pnpm --filter @atlas/mapmaker desktop:build --no-bundle
 
       - name: Start-up test (Windows)

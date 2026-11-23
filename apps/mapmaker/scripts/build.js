@@ -1,17 +1,18 @@
 // @ts-check
 /**
- * `pnpm --filter @atlas/mapmaker desktop:build`: builds Atlas Map Maker with its helper.
+ * `pnpm --filter @atlas/mapmaker desktop:build`: builds Atlas Map Maker with its helper and its 3D builder.
  *
  * The helper is the single-file `atlas-gamefiles` program built from tools/gamefiles with PyInstaller (see the
- * README there). This script copies it to `src-tauri/binaries/atlas-gamefiles-<target triple>[.exe]`, the name
- * Tauri expects for a sidecar, then runs `tauri build` with `src-tauri/tauri.build.conf.json`, which lists it under
- * `bundle.externalBin`, so the installer puts it next to the app. Plain `cargo` builds and tests do not read that
- * file, so they need no helper.
+ * README there); the 3D builder is the `atlas-scene` program built from crates/atlas-scene. This script copies each
+ * to `src-tauri/binaries/<name>-<target triple>[.exe]`, the name Tauri expects for a sidecar, then runs `tauri
+ * build` with `src-tauri/tauri.build.conf.json`, which lists both under `bundle.externalBin`, so the installer puts
+ * them next to the app. Plain `cargo` builds and tests do not read that file, so they need neither.
  *
  *   ATLAS_GAMEFILES_HELPER=tools/gamefiles/dist/atlas-gamefiles.exe pnpm --filter @atlas/mapmaker desktop:build
  *
- * Without ATLAS_GAMEFILES_HELPER, the helper is taken from tools/gamefiles/dist/. Other arguments are passed on to
- * `tauri build`.
+ * Without ATLAS_GAMEFILES_HELPER, the helper is taken from tools/gamefiles/dist/. Without ATLAS_SCENE_BUILDER, the
+ * 3D builder is built here (`cargo build --release --locked` in crates/atlas-scene). Other arguments are passed on
+ * to `tauri build`.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { chmod, copyFile, mkdir, stat } from 'node:fs/promises';
@@ -24,12 +25,13 @@ const repoRoot = here('../../../');
 /**
  * The file name Tauri looks for: `atlas-gamefiles-x86_64-pc-windows-msvc.exe`. Exported for tests.
  * @param {string} triple
+ * @param {string} [name]
  */
-export function sidecarName(triple) {
+export function sidecarName(triple, name = 'atlas-gamefiles') {
   if (!/^[a-z0-9_]+(-[a-z0-9_]+){2,3}$/.test(triple)) {
     throw new Error(`"${triple}" is not a target triple like x86_64-pc-windows-msvc.`);
   }
-  return `atlas-gamefiles-${triple}${triple.includes('windows') ? '.exe' : ''}`;
+  return `${name}-${triple}${triple.includes('windows') ? '.exe' : ''}`;
 }
 
 /**
@@ -73,6 +75,32 @@ export function helperSource(value, platform) {
   );
 }
 
+/**
+ * Where the 3D builder is: ATLAS_SCENE_BUILDER (relative to the repository root), or null to build it in
+ * crates/atlas-scene. Exported for tests.
+ * @param {string | undefined} value
+ */
+export function sceneBuilderSource(value) {
+  const path = value?.trim();
+  if (!path) return null;
+  return isAbsolute(path) ? path : resolve(repoRoot, path);
+}
+
+/**
+ * Where `cargo build --release` in crates/atlas-scene puts the 3D builder. Exported for tests.
+ * @param {NodeJS.Platform} platform
+ */
+export function builtSceneBuilder(platform) {
+  return join(
+    repoRoot,
+    'crates',
+    'atlas-scene',
+    'target',
+    'release',
+    `atlas-scene${platform === 'win32' ? '.exe' : ''}`,
+  );
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const triple =
     process.env.TAURI_ENV_TARGET_TRIPLE ??
@@ -89,6 +117,30 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await copyFile(source, target);
   await chmod(target, 0o755);
   console.log(`Helper: ${source} -> ${target}`);
+  let builder = sceneBuilderSource(process.env.ATLAS_SCENE_BUILDER);
+  if (!builder) {
+    execFileSync(
+      'cargo',
+      [
+        'build',
+        '--release',
+        '--locked',
+        '--manifest-path',
+        join(repoRoot, 'crates', 'atlas-scene', 'Cargo.toml'),
+      ],
+      { stdio: 'inherit' },
+    );
+    builder = builtSceneBuilder(process.platform);
+  }
+  await stat(builder).catch(() => {
+    throw new Error(
+      `No 3D builder at ${builder}. Build it in crates/atlas-scene, or set ATLAS_SCENE_BUILDER.`,
+    );
+  });
+  const builderTarget = join(binaries, sidecarName(triple, 'atlas-scene'));
+  await copyFile(builder, builderTarget);
+  await chmod(builderTarget, 0o755);
+  console.log(`3D builder: ${builder} -> ${builderTarget}`);
   const child = spawn('tauri', tauriArgs(process.argv.slice(2)), {
     stdio: 'inherit',
     shell: process.platform === 'win32',

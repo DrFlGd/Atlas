@@ -2,8 +2,9 @@
 
 For each real area (debug maps skipped): read the map layout and the event script (markers, see world.py), read
 every collision file in the file reader process (the navmesh when there is no collision), find the floors
-(floors.py), draw each floor and cut it into tiles (render.py, tiles.py), and put each marker on its floor. Then
-write the pack (pack.py) into the shared maps folder, where Atlas finds it, and the report.
+(floors.py), draw each floor and cut it into tiles (render.py, tiles.py), and put each marker on its floor. With 3D
+maps on (the default), also make the area's 3D model with the Atlas scene builder (scene.py). Then write the pack
+(pack.py) into the shared maps folder, where Atlas finds it, and the report.
 
 Only the output folder and the maps folder are written to; the game folder is only read. The report holds counts,
 ids, heights, file names and error messages, and small preview pictures: no game text.
@@ -48,6 +49,7 @@ from .pack import (
 )
 from .render import BACKGROUND, compose, draw_layer, make_frame, preview_png, triangle_colours
 from .safety import UnsafeOutputError, check_output_folder, is_inside, prepare_soulstruct
+from .scene import BuilderFailed, check_pack, corner_colours, find_builder, floor_heights, raw_glb, run_builder
 from .tiles import tile_format, write_pyramid
 from .worker import READER_LOG, ProcessRunner, Runner, SourceJob, clean_text
 from .world import AreaContent, extract_area
@@ -55,8 +57,10 @@ from .world import AreaContent, extract_area
 ZIP_NAME = "atlas-make-report.zip"
 LOG_LIMIT = 200_000
 TIME_LIMIT = 300.0  # seconds one area's geometry may take in the file reader
-# Share of an area's progress for each step.
+# Share of an area's progress for each step, without and with its 3D model.
 STEPS = {"layout": 0.05, "geometry": 0.45, "floors": 0.1, "render": 0.4}
+STEPS_3D = {"layout": 0.05, "geometry": 0.4, "floors": 0.1, "render": 0.3, "scene": 0.15}
+SCENE_WORK = "scene-work"
 
 
 class MakeError(Exception):
@@ -74,6 +78,8 @@ class MapMaker:
         only_areas: tp.Sequence[str] = (),
         runner: Runner | None = None,
         config_file: Path | None = None,
+        make_3d: bool = True,
+        scene_builder: Path | None = None,
     ):
         self.folder = Path(folder)
         self.out = Path(out)
@@ -87,6 +93,10 @@ class MapMaker:
         self.started = time.monotonic()
         self.import_seconds: float | None = None
         self.staging: Path | None = None
+        self.make_3d = make_3d
+        self.scene_builder = scene_builder
+        self.builder: Path | None = None
+        self.steps = STEPS
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
@@ -133,6 +143,12 @@ class MapMaker:
         pack_id = str(config.get("packId", detection.game))
         render_settings = dict(config.get("render", {}))
         fmt = tile_format(str(render_settings.get("tileFormat", "webp")))
+        if self.make_3d:
+            self.builder = find_builder(self.scene_builder)
+            if self.builder is None:
+                self.warn("3D maps were not made: the 3D builder (atlas-scene) that comes with the Map Maker is missing")
+            else:
+                self.steps = STEPS_3D
 
         # Where the pack goes: refuse early, before any work, when the place is taken by a pack not ours.
         if self.maps_folder is not None:
@@ -186,6 +202,11 @@ class MapMaker:
                 "tileFormat": fmt,
                 "floors": config.get("floors", {}),
                 "config": self.config_file.name if self.config_file else f"{detection.game}.json (built in)",
+                "threeD": {
+                    "asked": self.make_3d,
+                    "builder": self.builder.name if self.builder else None,
+                    "settings": config.get("scene", {}),
+                },
             },
             "content": content.to_report(),
             "skippedAreas": skipped,
@@ -242,6 +263,12 @@ class MapMaker:
                 f"(first: {duplicates[0]}). Please save the report and send it."
             )
         write_pack_json(self.staging, pack)
+        check_3d = None
+        if self.builder is not None and any(area.scene for area in outs):
+            events.progress(0.97, "Checking the 3D maps")
+            check_3d = check_pack(self.builder, self.staging)
+            for problem in check_3d.get("problems", [])[:5]:
+                self.warn(f"The 3D check found a problem: {problem}")
         installed = False
         if self.maps_folder is not None:
             try:
@@ -264,6 +291,7 @@ class MapMaker:
             "tileFormat": fmt,
             "tiles": sum(layer["tiles"]["files"] for area in report["areas"] for layer in area.get("floors", [])),
             "tileBytes": sum(layer["tiles"]["bytes"] for area in report["areas"] for layer in area.get("floors", [])),
+            "check3d": check_3d,
         }
         events.emit("pack", folder=str(target), id=pack_id, installed=installed, counts=counts)
         report["summary"] = self.summary(report["areas"])
@@ -287,13 +315,14 @@ class MapMaker:
     ) -> tuple[dict[str, tp.Any], AreaOut | None]:
         label = f"{area.name} ({index + 1} of {count})"
         key = area.id[:6]
+        steps = self.steps
         offsets, total = {}, 0.0
-        for step, weight in STEPS.items():
+        for step, weight in steps.items():
             offsets[step] = total
             total += weight
 
         def say(step: str, within: float, text: str) -> None:
-            fraction = area_start + area_span * (offsets[step] + STEPS[step] * min(max(within, 0.0), 1.0))
+            fraction = area_start + area_span * (offsets[step] + steps[step] * min(max(within, 0.0), 1.0))
             self.events.progress(fraction, f"{label}: {text}", area=area.id, step=step)
 
         started = time.monotonic()
@@ -448,6 +477,16 @@ class MapMaker:
             )
             del picture
 
+        # The 3D model.
+        scene = None
+        heights = None
+        if self.builder is not None:
+            scene, heights, entry["scene"] = self.make_scene(
+                area, key, mesh, owners, owner_names, plan, float(low), float(high), config, not_on_floor, say
+            )
+        elif self.make_3d:
+            entry["scene"] = {"made": False, "reason": "the 3D builder is missing"}
+
         by_category = Counter(m.category for m in world.markers)
         entry["frame"] = frame.to_report()
         entry["floorPlan"] = plan.report
@@ -463,8 +502,88 @@ class MapMaker:
         }
         entry["seconds"] = round(time.monotonic() - started, 1)
         self.emit_area(entry, index, count)
-        area_out = AreaOut(key, area.id, area.name, frame, layers_out, main, world.markers, place_names)
+        area_out = AreaOut(key, area.id, area.name, frame, layers_out, main, world.markers, place_names, scene, heights)
         return entry, area_out
+
+    def make_scene(
+        self,
+        area: Area,
+        key: str,
+        mesh: np.ndarray,
+        owners: np.ndarray,
+        owner_names: list[str],
+        plan: tp.Any,
+        low: float,
+        high: float,
+        config: dict[str, tp.Any],
+        not_on_floor: list[dict[str, tp.Any]],
+        say: tp.Callable[[str, float, str], None],
+    ) -> tuple[dict[str, tp.Any] | None, list[list[float]] | None, dict[str, tp.Any]]:
+        """The area's 3D model, through the scene builder: its scene, its floors' heights (None without storeys)
+        and its report entry. A model that cannot be made leaves the area in 2D, with a warning."""
+        assert self.builder is not None and self.staging is not None
+        started = time.monotonic()
+        entry: dict[str, tp.Any] = {"made": False, "trianglesBefore": int(len(mesh))}
+        if not len(mesh):
+            entry["reason"] = "no geometry was read"
+            return None, None, entry
+        settings = config.get("scene", {}) if isinstance(config.get("scene"), dict) else {}
+        say("scene", 0.0, f"making the 3D model of {len(mesh):,} triangles")
+        work = self.out / SCENE_WORK
+        work.mkdir(exist_ok=True)
+        raw = work / f"{key}.glb"
+        try:
+            colours = corner_colours(mesh, low, high, plan.flipped)
+            raw.write_bytes(raw_glb(mesh, colours, owners, owner_names, plan.flipped))
+            del colours
+            options: dict[str, tp.Any] = {
+                "folder": f"scene/{key.lower()}",
+                # The map's world x is the game's x, its y the game's z, and height the game's y.
+                "axes": ["+x", "+z", "+y"],
+                "drop": [str(p) for p in settings.get("drop", []) if isinstance(p, str)],
+            }
+            for name in ("cellSize", "cellTriangles", "levels", "creaseAngle", "sky"):
+                if name in settings:
+                    options[name] = settings[name]
+            job = {"input": raw.name, "pack": str(self.staging.resolve()), "options": options}
+            done = run_builder(
+                self.builder,
+                job,
+                work,
+                key,
+                lambda fraction, text: say("scene", fraction, f"3D model: {text}"),
+                self.token.stop,
+            )
+        except BuilderFailed as error:
+            entry["reason"] = str(error)
+            self.warn(f"{area.name}: the 3D model was not made ({error}); the map stays 2D")
+            return None, None, entry
+        finally:
+            for leftover in (raw, work / f"{key}.job.json"):
+                leftover.unlink(missing_ok=True)
+        built = done.get("report", {})
+        scene = done.get("scene")
+        heights = floor_heights(plan.cuts, len(plan.floors), float(mesh[:, :, 1].min()), float(mesh[:, :, 1].max()))
+        entry.update(
+            {
+                "made": True,
+                "trianglesAfter": built.get("triangles"),
+                "trianglesDropped": built.get("trianglesDropped"),
+                "trianglesCleaned": built.get("trianglesCleaned"),
+                "levels": built.get("levels"),
+                "cells": built.get("cells"),
+                "cellSize": built.get("cellSize"),
+                "files": built.get("files"),
+                "bytes": built.get("bytes"),
+                "builderSeconds": built.get("seconds"),
+                "seconds": round(time.monotonic() - started, 1),
+                "floors": heights,
+                "noSurfaceUnder": len(not_on_floor),
+                "noSurfaceUnderList": [item["key"] for item in not_on_floor[:40]],
+                "warnings": built.get("warnings", []),
+            }
+        )
+        return scene, heights, entry
 
     def emit_area(self, entry: dict[str, tp.Any], index: int, count: int) -> None:
         geometry = entry.get("geometry", {})
@@ -479,6 +598,7 @@ class MapMaker:
             floors=len(entry.get("floors", [])),
             markers=entry.get("markers", {}).get("total", 0),
             skipped=entry.get("skipped"),
+            scene=entry["scene"].get("made") if isinstance(entry.get("scene"), dict) else None,
         )
 
     def summary(self, areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any]:
@@ -495,6 +615,7 @@ class MapMaker:
             "markersByCategory": dict(sorted(categories.items())),
             "notOnFloor": sum(a.get("markers", {}).get("notOnFloor", 0) for a in made),
             "geometry": dict(Counter(a.get("geometry", {}).get("used") or "none" for a in made)),
+            "threeD": scene_summary(made),
         }
 
     def diagnostics(self) -> dict[str, tp.Any]:
@@ -513,6 +634,7 @@ class MapMaker:
         }
 
     def finish(self, report: dict[str, tp.Any], target: Path) -> dict[str, tp.Any]:
+        shutil.rmtree(self.out / SCENE_WORK, ignore_errors=True)
         report["elapsedSeconds"] = round(time.monotonic() - self.started, 1)
         self.runner.close()
         report["diagnostics"] = self.diagnostics()
@@ -544,6 +666,25 @@ class MapMaker:
             warnings=len(self.warnings),
         )
         return report
+
+
+def scene_summary(areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any] | None:
+    """The 3D side of a make, over all areas: None when 3D maps were off."""
+    scenes = [a["scene"] for a in areas if isinstance(a.get("scene"), dict)]
+    if not scenes:
+        return None
+    made = [s for s in scenes if s.get("made")]
+    return {
+        "areasMade": len(made),
+        "areasNotMade": len(scenes) - len(made),
+        "trianglesBefore": sum(s.get("trianglesBefore", 0) for s in made),
+        "trianglesAfter": sum(s.get("trianglesAfter") or 0 for s in made),
+        "cells": sum(s.get("cells") or 0 for s in made),
+        "files": sum(s.get("files") or 0 for s in made),
+        "bytes": sum(s.get("bytes") or 0 for s in made),
+        "seconds": round(sum(s.get("seconds") or 0 for s in made), 1),
+        "noSurfaceUnder": sum(s.get("noSurfaceUnder") or 0 for s in made),
+    }
 
 
 def _empty_floor():
@@ -601,7 +742,8 @@ README_TEXT = f"""Atlas Map Maker: make map report
 
 report.json says how the map pack was made from the game folder: per area, the geometry read, the floors found
 (height ranges, area, wall lines), the markers by category and those not standing on a floor, the bonfire,
-treasure and character counts, and how the collision meshes were placed (placement). previews/ holds a small
+treasure and character counts, how the collision meshes were placed (placement), and its 3D model (scene:
+triangles before and after, cells, levels of detail, file sizes, time taken, markers with no surface under them). previews/ holds a small
 picture of each floor with a dot per marker. {READER_LOG} is the log of the file reader process.
 
 It holds no game files and no game text: only counts, ids, heights, file names and error messages. The map pack

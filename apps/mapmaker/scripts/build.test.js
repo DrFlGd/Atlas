@@ -2,12 +2,35 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isAbsolute } from 'node:path';
-import { helperSource, hostTriple, sidecarName, tauriArgs } from './build.js';
+import {
+  builtSceneBuilder,
+  helperSource,
+  hostTriple,
+  sceneBuilderSource,
+  sidecarName,
+  tauriArgs,
+} from './build.js';
 
 test('the sidecar is named after the target triple', () => {
   assert.equal(sidecarName('x86_64-pc-windows-msvc'), 'atlas-gamefiles-x86_64-pc-windows-msvc.exe');
   assert.equal(sidecarName('x86_64-unknown-linux-gnu'), 'atlas-gamefiles-x86_64-unknown-linux-gnu');
+  assert.equal(
+    sidecarName('x86_64-pc-windows-msvc', 'atlas-scene'),
+    'atlas-scene-x86_64-pc-windows-msvc.exe',
+  );
   assert.throws(() => sidecarName('../evil'));
+});
+
+test('the 3D builder is built in crates/atlas-scene unless named', () => {
+  assert.equal(sceneBuilderSource(undefined), null);
+  assert.equal(sceneBuilderSource('  '), null);
+  assert.ok(
+    isAbsolute(sceneBuilderSource('crates/atlas-scene/target/release/atlas-scene.exe') ?? ''),
+  );
+  assert.match(
+    builtSceneBuilder('win32'),
+    /crates[\\/]atlas-scene[\\/]target[\\/]release[\\/]atlas-scene\.exe$/,
+  );
 });
 
 test('the host triple comes from rustc -vV', () => {

@@ -23,6 +23,8 @@ use serde_json::Value;
 
 /// The helper's file name, without `.exe`.
 pub const HELPER_NAME: &str = "atlas-gamefiles";
+/// The 3D builder's file name, without `.exe` (built from crates/atlas-scene, installed next to the app).
+pub const SCENE_BUILDER_NAME: &str = "atlas-scene";
 /// What the helper writes in its output folder.
 pub const REPORT_FILE: &str = "report.json";
 pub const ZIP_FILE: &str = "atlas-check-report.zip";
@@ -50,8 +52,13 @@ pub enum State {
 pub enum Job {
     /// Report what map data can be read.
     Check,
-    /// Make a map pack and install it in `maps_folder` (the folder the Atlas viewer reads packs from).
-    Make { maps_folder: PathBuf },
+    /// Make a map pack and install it in `maps_folder` (the folder the Atlas viewer reads packs from); with
+    /// `three_d`, with 3D maps, made by `scene_builder` (or the one the helper finds itself).
+    Make {
+        maps_folder: PathBuf,
+        three_d: bool,
+        scene_builder: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -228,8 +235,13 @@ impl Progress {
                         } else {
                             format!(" (from {used})")
                         };
+                        let model = match event.get("scene").and_then(Value::as_bool) {
+                            Some(true) => ", with a 3D model",
+                            Some(false) => ", no 3D model",
+                            None => "",
+                        };
                         format!(
-                            "{name}: {floors} floor{}, {markers} marker{}{from}",
+                            "{name}: {floors} floor{}, {markers} marker{}{from}{model}",
                             plural(floors),
                             plural(markers)
                         )
@@ -353,6 +365,24 @@ pub fn find_helper() -> Option<PathBuf> {
     let candidate = exe
         .parent()?
         .join(format!("{HELPER_NAME}{}", std::env::consts::EXE_SUFFIX));
+    candidate.is_file().then_some(candidate)
+}
+
+/// The 3D builder next to the app's executable, where the installer puts it. A debug build may name another one
+/// with `ATLAS_SCENE_BUILDER`, for development.
+pub fn find_scene_builder() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("ATLAS_SCENE_BUILDER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.join(format!(
+        "{SCENE_BUILDER_NAME}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     candidate.is_file().then_some(candidate)
 }
 
@@ -491,7 +521,7 @@ impl Checks {
             Job::Check => {
                 command.arg("check");
             }
-            Job::Make { maps_folder } => {
+            Job::Make { maps_folder, .. } => {
                 if is_inside(maps_folder, folder) || is_inside(folder, maps_folder) {
                     return Err("The maps folder and the game folder overlap; the Map Maker never writes into the game folder.".to_owned());
                 }
@@ -499,8 +529,22 @@ impl Checks {
             }
         }
         command.arg(folder).arg("--out").arg(out_dir);
-        if let Job::Make { maps_folder } = &job {
+        if let Job::Make {
+            maps_folder,
+            three_d,
+            scene_builder,
+        } = &job
+        {
             command.arg("--maps-folder").arg(maps_folder);
+            match (three_d, scene_builder) {
+                (false, _) => {
+                    command.arg("--no-3d");
+                }
+                (true, Some(builder)) => {
+                    command.arg("--scene-builder").arg(builder);
+                }
+                (true, None) => {}
+            }
         }
         command
             .arg("--stdin-cancel")
@@ -934,6 +978,8 @@ mod tests {
                 Path::new("missing-helper"),
                 Job::Make {
                     maps_folder: base.join("Maps"),
+                    three_d: true,
+                    scene_builder: None,
                 },
                 &base,
                 &outside,
@@ -1001,6 +1047,12 @@ mod tests {
             r#"{"event":"area","name":"Test","geometry":{},"floors":0,"markers":0,"skipped":"a debug map"}"#,
         );
         progress.apply_line(
+            r#"{"event":"area","name":"Darkroot","used":"collision","floors":1,"markers":3,"scene":true}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"area","name":"Depths","used":"collision","floors":1,"markers":2,"scene":false}"#,
+        );
+        progress.apply_line(
             r#"{"event":"pack","folder":"/maps/dark-souls-remastered","id":"dark-souls-remastered","installed":true}"#,
         );
         let texts: Vec<_> = progress
@@ -1014,6 +1066,8 @@ mod tests {
                 "Anor Londo: 2 floors, 9 markers (from collision)",
                 "Firelink Shrine: 1 floor, 1 marker (no floor plan could be read: markers only)",
                 "Test: skipped (a debug map)",
+                "Darkroot: 1 floor, 3 markers (from collision), with a 3D model",
+                "Depths: 1 floor, 2 markers (from collision), no 3D model",
                 "Map pack installed in /maps/dark-souls-remastered",
             ]
         );
@@ -1037,11 +1091,13 @@ mod tests {
         fs::create_dir_all(&game).unwrap();
         fs::create_dir_all(&out).unwrap();
         let script = base.join("helper.sh");
-        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps
+        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice: --scene-builder and
+        // the builder, or --no-3d. The script writes down what it was given.
         fs::write(
             &script,
             r#"#!/bin/sh
 [ "$1" = make ] && [ "$5" = --maps-folder ] || exit 9
+echo "$7 $8" > "$4/three-d.txt"
 mkdir -p "$6/p"
 echo "{\"event\":\"pack\",\"folder\":\"$6/p\"}"
 echo '{"kind":"make"}' > "$4/report.json"
@@ -1052,30 +1108,44 @@ echo '{"event":"done"}'
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
 
         let checks = Checks::default();
-        checks
-            .start(
-                &script,
-                Job::Make {
-                    maps_folder: maps.clone(),
-                },
-                &game,
-                &out,
-            )
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let status = loop {
-            let status = checks.status();
-            if !matches!(status.state, State::Running | State::Cancelling)
-                || Instant::now() > deadline
-            {
-                break status;
+        let run = |three_d: bool, scene_builder: Option<PathBuf>, out: &Path| {
+            fs::create_dir_all(out).unwrap();
+            checks
+                .start(
+                    &script,
+                    Job::Make {
+                        maps_folder: maps.clone(),
+                        three_d,
+                        scene_builder,
+                    },
+                    &game,
+                    out,
+                )
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let status = checks.status();
+                if !matches!(status.state, State::Running | State::Cancelling)
+                    || Instant::now() > deadline
+                {
+                    break status;
+                }
+                thread::sleep(Duration::from_millis(50));
             }
-            thread::sleep(Duration::from_millis(50));
         };
+        let status = run(true, Some(PathBuf::from("/builder")), &out);
         assert_eq!(status.state, State::Done, "{status:?}");
         assert_eq!(status.kind, Kind::Make);
         assert_eq!(checks.pack_folder().unwrap(), maps.join("p"));
         assert!(checks.report_zip().unwrap().ends_with(MAKE_ZIP_FILE));
+        let given = |out: &Path| fs::read_to_string(out.join("three-d.txt")).unwrap();
+        assert_eq!(given(&out).trim(), "--scene-builder /builder");
+        let flat = base.join("out-flat");
+        assert_eq!(
+            run(false, Some(PathBuf::from("/builder")), &flat).state,
+            State::Done
+        );
+        assert_eq!(given(&flat).trim(), "--no-3d --stdin-cancel");
         let _ = fs::remove_dir_all(&base);
     }
 }

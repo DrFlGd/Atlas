@@ -11,6 +11,7 @@ import {
   isMakeReport,
   makeSuggestedFileName,
   makeSummaryLine,
+  sceneLines,
   plural,
   previewFile,
   sourceDetails,
@@ -60,12 +61,14 @@ function MapMaker() {
   const [status, setStatus] = useState<CheckStatus | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedReport | null>(null);
+  const [make3d, setMake3d] = useState(true);
 
   useEffect(() => {
     void api.appInfo().then(
       (appInfo) => {
         setInfo(appInfo);
         setFolder((current) => current ?? appInfo.lastFolder);
+        setMake3d(appInfo.make3d);
       },
       (error: unknown) => {
         setProblem(errorText(error));
@@ -103,12 +106,12 @@ function MapMaker() {
       setProblem(null);
       setSaved(null);
       try {
-        setStatus(await (kind === 'make' ? api.makeStart(folder) : api.checkStart(folder)));
+        setStatus(await (kind === 'make' ? api.makeStart(folder, make3d) : api.checkStart(folder)));
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, folder],
+    [api, folder, make3d],
   );
 
   const cancel = useCallback(async () => {
@@ -215,11 +218,31 @@ function MapMaker() {
             </button>
           )}
         </div>
+        <label className="mm-check">
+          <input
+            id="make-3d"
+            type="checkbox"
+            checked={make3d}
+            onChange={(event) => {
+              setMake3d(event.target.checked);
+            }}
+            disabled={running}
+          />
+          Also make 3D maps
+        </label>
         <p className="muted small">
           Make map reads every area (a few minutes for Dark Souls Remastered) and puts the map pack
           in <span className="mono">{info?.mapsFolder ?? 'the Atlas maps folder'}</span>, replacing
-          one it made before. Check game files only reports what can be read.
+          one it made before. With 3D maps, each area also gets a 3D model of its ground and walls,
+          in the same colours as its map, which Atlas shows with its 2D | 3D switch; it takes a
+          little longer. Check game files only reports what can be read.
         </p>
+        {make3d && info && !info.sceneBuilderFound && (
+          <p className="mm-alert" role="status">
+            The 3D builder that comes with the Map Maker (atlas-scene) is missing, so the maps will
+            be flat. Please reinstall the app.
+          </p>
+        )}
         {status && status.state !== 'idle' && <Progress status={status} />}
       </section>
 
@@ -561,6 +584,7 @@ const PREVIEW_LEGEND: [MarkerCategory, string][] = [
 function MakeResults({ report }: { report: MakeReport }) {
   const summary = report.summary;
   const made = report.areas.filter((area) => !area.skipped);
+  const threeD = report.areas.some((area) => area.scene);
   return (
     <>
       <section className="mm-card" aria-labelledby="result-title">
@@ -587,12 +611,13 @@ function MakeResults({ report }: { report: MakeReport }) {
                 <th scope="col">Area</th>
                 <th scope="col">Floors</th>
                 <th scope="col">Markers</th>
+                {threeD && <th scope="col">3D model</th>}
                 <th scope="col">To look at</th>
               </tr>
             </thead>
             <tbody>
               {report.areas.map((area) => (
-                <MadeAreaRow key={area.id} area={area} />
+                <MadeAreaRow key={area.id} area={area} threeD={threeD} />
               ))}
             </tbody>
           </table>
@@ -603,7 +628,7 @@ function MakeResults({ report }: { report: MakeReport }) {
   );
 }
 
-function MadeAreaRow({ area }: { area: MadeArea }) {
+function MadeAreaRow({ area, threeD }: { area: MadeArea; threeD: boolean }) {
   const notes = areaNotes(area);
   const floors = area.floors ?? [];
   return (
@@ -632,6 +657,17 @@ function MadeAreaRow({ area }: { area: MadeArea }) {
           '–'
         )}
       </td>
+      {threeD && (
+        <td className="small">
+          {area.scene
+            ? sceneLines(area.scene).map((line, index) => (
+                <div key={index} className={index === 0 ? undefined : 'muted'}>
+                  {line}
+                </div>
+              ))
+            : '–'}
+        </td>
+      )}
       <td className="small">
         {notes.length === 0 ? (
           <span className="mm-tone-good">Nothing</span>

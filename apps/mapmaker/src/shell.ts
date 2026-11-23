@@ -7,6 +7,10 @@ import type { AnyReport } from './report';
 export interface AppInfo {
   version: string;
   helperFound: boolean;
+  /** The 3D builder (atlas-scene) that comes with the Map Maker is there. */
+  sceneBuilderFound: boolean;
+  /** "Also make 3D maps", as last chosen (on by default). */
+  make3d: boolean;
   lastFolder: string | null;
   /** Where Steam usually installs Dark Souls Remastered, when that folder exists on this computer. */
   typicalFolder: string | null;
@@ -59,7 +63,7 @@ export interface Shell {
   checkStart(folder: string): Promise<CheckStatus>;
   checkStatus(): Promise<CheckStatus>;
   checkCancel(): Promise<void>;
-  makeStart(folder: string): Promise<CheckStatus>;
+  makeStart(folder: string, make3d: boolean): Promise<CheckStatus>;
   revealPack(): Promise<void>;
   previewImage(file: string): Promise<string>;
   saveReport(suggestedName: string): Promise<SavedReport | null>;
@@ -75,7 +79,7 @@ export function createShell(invoke: Invoke): Shell {
     checkCancel: async () => {
       await invoke('check_cancel');
     },
-    makeStart: (folder) => invoke('make_start', { folder }) as Promise<CheckStatus>,
+    makeStart: (folder, make3d) => invoke('make_start', { folder, make3d }) as Promise<CheckStatus>,
     revealPack: async () => {
       await invoke('reveal_pack');
     },

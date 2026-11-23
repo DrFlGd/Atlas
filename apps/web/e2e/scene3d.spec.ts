@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { collectErrors, openMap } from './helpers';
+import { collectErrors, mapStatus, openMap } from './helpers';
+import { mapSettled } from './touch';
 
 /**
  * The 3D view of a map with a model: the demo's Mossgate Keep, a made-up
@@ -77,6 +78,24 @@ test('opens a map with a model in 3D, switches floors and opens a location from 
   await page.getByTestId('scene-mode-2d').click();
   await expect(page.getByTestId('scene-view')).toHaveCount(0);
   await expect(page.getByTestId('map')).toBeVisible();
+  await mapSettled(page);
+  // Moved on the 2D map, it is where it was after a look in 3D.
+  const box2d = (await page.getByTestId('map').boundingBox())!;
+  await page.mouse.move(box2d.x + box2d.width * 0.3, box2d.y + box2d.height * 0.4);
+  const fitted = (await mapStatus(page)).zoom;
+  await page.mouse.wheel(0, 400);
+  await expect.poll(async () => (await mapStatus(page)).zoom).toBeLessThan(fitted);
+  await mapSettled(page);
+  const kept = await mapStatus(page);
+  await page.getByTestId('scene-mode-3d').click();
+  await expect(page.getByTestId('scene-view')).toBeVisible();
+  await page.getByTestId('scene-mode-2d').click();
+  await expect(page.getByTestId('map')).toBeVisible();
+  await mapSettled(page);
+  const back = await mapStatus(page);
+  expect(back.zoom).toBeCloseTo(kept.zoom, 1);
+  expect(Math.abs(back.x - kept.x)).toBeLessThanOrEqual(2);
+  expect(Math.abs(back.y - kept.y)).toBeLessThanOrEqual(2);
   await page.getByTestId('scene-mode-3d').click();
   await expect(page.getByTestId('scene-view')).toBeVisible();
 

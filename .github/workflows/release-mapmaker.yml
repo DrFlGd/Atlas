@@ -94,13 +94,26 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/mapmaker/src-tauri -> target
+          workspaces: |
+            apps/mapmaker/src-tauri -> target
+            crates/atlas-scene -> target
 
       - run: pnpm install --frozen-lockfile
+
+      # The 3D builder the installer carries next to the helper: its tests on
+      # made-up models, then the helper's 3D tests with it.
+      - name: Test and build the 3D builder
+        run: |
+          cargo test --locked --manifest-path crates/atlas-scene/Cargo.toml
+          cargo build --release --locked --manifest-path crates/atlas-scene/Cargo.toml
+          cd tools/gamefiles
+          ATLAS_SCENE_REQUIRED=1 python -m pytest -q tests/test_scene.py
 
       # Lint, type checks and the app's tests run on every pull request
       # (ci.yml). No signing keys are set: the installer is unsigned.
       - name: Build the Map Maker
+        env:
+          ATLAS_SCENE_BUILDER: crates/atlas-scene/target/release/atlas-scene.exe
         run: pnpm --filter @atlas/mapmaker desktop:build
 
       - name: Start-up test of the app window
@@ -125,7 +138,7 @@ jobs:
           commit="$(git rev-parse --short HEAD)"
           # No backticks below: this heredoc expands variables.
           cat > release/notes.md <<EOF
-          Atlas Map Maker $VERSION for Windows. It makes Atlas map packs from the game files on your own PC: **Make map** builds a Dark Souls Remastered pack (height-shaded floors, bonfires, items, bosses and checklists) and puts it in the Atlas maps folder; **Check game files** reports what map data can be read (Dark Souls Remastered and Bloodborne). It only reads the game folder, never changes or copies anything in it, and makes no network requests.
+          Atlas Map Maker $VERSION for Windows. It makes Atlas map packs from the game files on your own PC: **Make map** builds a Dark Souls Remastered pack (height-shaded floors, bonfires, items, bosses and checklists) and puts it in the Atlas maps folder. New in 0.3.0: with **Also make 3D maps** ticked (it is on by default), each area also gets a 3D model made from the game's collision, coloured by height, with every location at its real height; open the area in Atlas 0.32.0 or later and press **3D**. The report has a **3D model** column for each area; **Check game files** reports what map data can be read (Dark Souls Remastered and Bloodborne). It only reads the game folder, never changes or copies anything in it, and makes no network requests.
 
           ## How to install and test
 

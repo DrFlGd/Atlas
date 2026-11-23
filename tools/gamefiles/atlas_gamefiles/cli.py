@@ -4,7 +4,7 @@
                     [--collision-sample N] [--navmesh-sample N] [--map-piece-sample N]
                     [--source-budget S] [--source-time-limit S] [--heartbeat S]
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
-                    [--config <file>]
+                    [--config <file>] [--no-3d] [--scene-builder <atlas-scene program>]
     atlas-gamefiles --version
 
 The sample sizes and time limits have defaults for Phase 0; the options are there for testing (the app does not
@@ -96,6 +96,13 @@ def parser() -> argparse.ArgumentParser:
     make.add_argument("--stdin-cancel", action="store_true", help="as for check")
     make.add_argument("--areas", default="", help="only these areas, comma-separated (m10_01_00_00 or m10_01)")
     make.add_argument("--config", type=Path, default=None, help="another config file (for tuning by hand)")
+    make.add_argument("--no-3d", action="store_true", help="make the flat maps only, without their 3D models")
+    make.add_argument(
+        "--scene-builder",
+        type=Path,
+        default=None,
+        help="the 3D builder program (atlas-scene); by default ATLAS_SCENE_BUILDER, or the one next to this program",
+    )
     make.add_argument(
         "--source-time-limit",
         type=float,
@@ -184,6 +191,8 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
             only_areas=areas,
             runner=worker.ProcessRunner(time_limit=limit),
             config_file=args.config,
+            make_3d=not args.no_3d,
+            scene_builder=args.scene_builder,
         ).run()
     except Cancelled:
         events.emit("cancelled", message="Stopped before the end; no map pack was written.")

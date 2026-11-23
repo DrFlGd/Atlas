@@ -6,6 +6,8 @@ import {
   isMakeReport,
   makeSuggestedFileName,
   makeSummaryLine,
+  sceneLines,
+  sizeText,
   type MadeArea,
   type MadeFloor,
   type MakeReport,
@@ -106,6 +108,51 @@ describe('make reports', () => {
     expect(areaNotes(area({ geometry: { used: null } }))[0]).toContain('markers only');
     expect(areaNotes(area({ geometry: { used: 'navmesh' } }))[0]).toContain('navmesh');
     expect(areaNotes(area({ skipped: 'a debug map' }))).toEqual(['Left out: a debug map']);
+  });
+
+  it('tell of the 3D models', () => {
+    const summary = makeReport().summary!;
+    const threeD = {
+      areasMade: 2,
+      areasNotMade: 0,
+      trianglesBefore: 900_000,
+      trianglesAfter: 880_000,
+      cells: 30,
+      files: 90,
+      bytes: 25 * 1024 * 1024,
+      seconds: 40,
+      noSurfaceUnder: 0,
+    };
+    expect(makeSummaryLine(makeReport({ summary: { ...summary, threeD } }))).toBe(
+      '2 areas drawn, 4 floors, 17 markers, 3D models of 2 areas (25 MB), 1 area left out.',
+    );
+    expect(sizeText(2_500)).toBe('2 KB');
+    expect(sizeText(5.25 * 1024 * 1024)).toBe('5.3 MB');
+    expect(
+      sceneLines({
+        made: true,
+        trianglesBefore: 120_000,
+        trianglesAfter: 118_500,
+        levels: [
+          { level: 0, cells: 4, triangles: 118_500, bytes: 2_000_000 },
+          { level: 1, cells: 4, triangles: 35_000, bytes: 700_000 },
+          { level: 2, cells: 4, triangles: 9_400, bytes: 200_000 },
+        ],
+        cells: 4,
+        files: 12,
+        bytes: 2_900_000,
+        seconds: 3.42,
+      }),
+    ).toEqual([
+      '120,000 triangles read, 118,500 in the model',
+      'Levels of detail: 118,500, 35,000, 9,400 triangles',
+      '4 cells, 12 files, 2.8 MB',
+      '3.4 s',
+    ]);
+    expect(sceneLines(undefined)).toEqual([]);
+    const failed = { made: false, reason: 'it was stopped after 600 s', trianglesBefore: 5 };
+    expect(sceneLines(failed)).toEqual(['Not made: it was stopped after 600 s']);
+    expect(areaNotes(area({ scene: failed }))).toEqual(['No 3D model: it was stopped after 600 s']);
   });
 
   it('suggest a file name and accept only preview files', () => {

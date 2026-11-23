@@ -324,6 +324,12 @@ export function installAndroidShell(desktopOnly: string[]) {
         });
         // The name the save screen gave it.
         return Promise.resolve({ name: 'atlas-progress.json' });
+      case 'trial_report_save':
+        shell.saved.push({
+          suggestedName: args.suggestedName as string,
+          contents: args.contents as string,
+        });
+        return Promise.resolve({ name: args.suggestedName as string });
       case 'open_text_file':
         return Promise.resolve(shell.open);
       default:

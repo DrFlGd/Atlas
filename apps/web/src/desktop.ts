@@ -1533,6 +1533,8 @@ export interface DesktopBridge {
   openExternal(url: string): Promise<void>;
   /** Asks where to save, then saves. Null when the dialog was closed. */
   saveTextFile(suggestedName: string, contents: string): Promise<{ name: string } | null>;
+  /** Saves the 3D trial's report as a text file (`.txt`), as `saveTextFile` saves progress. */
+  saveTrialReport(suggestedName: string, contents: string): Promise<{ name: string } | null>;
   /** Asks for a file and reads it. Null when the dialog was closed. */
   openTextFile(): Promise<{ name: string; contents: string } | null>;
   /** Only in a build with downloads; see `downloadsOffered` in `features.ts`. */
@@ -2125,6 +2127,8 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
     info: () => call('desktop_info'),
     openExternal: (url) => call('open_external', { url }),
     saveTextFile: (suggestedName, contents) => call('save_text_file', { suggestedName, contents }),
+    saveTrialReport: (suggestedName, contents) =>
+      call('trial_report_save', { suggestedName, contents }),
     openTextFile: () => call('open_text_file'),
     tiles: __ATLAS_DOWNLOADS__
       ? {

@@ -108,6 +108,7 @@ macro_rules! viewer_commands {
             commands::open_external,
             commands::save_text_file,
             commands::open_text_file,
+            commands::trial_report_save,
             commands::library_list,
             commands::library_open_pack,
             commands::library_add_folder,

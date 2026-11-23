@@ -6,11 +6,13 @@
  *
  *   node apps/mapmaker/e2e/helper.js <helper> <made-up game folder> <output folder> [--cancel]
  *   node apps/mapmaker/e2e/helper.js <helper> <made-up game folder> <output folder> --make <maps folder>
+ *        [--scene-builder <atlas-scene program>]
  *
  * Without `--cancel`: the check must end with `done`, and collision and navmesh must have been read in at least one
  * area. With `--cancel`: writes `cancel` once the geometry reading starts, and the check must end with `cancelled`
  * (exit code 3) within 30 seconds. With `--make`: runs Make map instead (`make … --maps-folder`), which must end with
- * `done` after a `pack` line, with the pack's manifest in the maps folder and floors drawn from collision.
+ * `done` after a `pack` line, with the pack's manifest in the maps folder and floors drawn from collision; with
+ * `--scene-builder` too (as the app passes it), with 3D models that pass the builder's own check.
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
@@ -21,6 +23,8 @@ const [helperArg, folderArg, outArg] = process.argv.slice(2, 5);
 const cancel = process.argv.includes('--cancel');
 const makeAt = process.argv.indexOf('--make');
 const mapsArg = makeAt > 0 ? process.argv[makeAt + 1] : undefined;
+const builderAt = process.argv.indexOf('--scene-builder');
+const builderArg = builderAt > 0 ? process.argv[builderAt + 1] : undefined;
 if (makeAt > 0 && !mapsArg) {
   console.error('--make needs the maps folder');
   process.exit(2);
@@ -43,8 +47,18 @@ await mkdir(out, { recursive: true });
 const started = Date.now();
 const seconds = () => ((Date.now() - started) / 1000).toFixed(1);
 const maps = mapsArg ? resolve(mapsArg) : null;
+const builder = builderArg ? resolve(builderArg) : null;
 const args = maps
-  ? ['make', folder, '--out', out, '--maps-folder', maps, '--stdin-cancel']
+  ? [
+      'make',
+      folder,
+      '--out',
+      out,
+      '--maps-folder',
+      maps,
+      ...(builder ? ['--scene-builder', builder] : []),
+      '--stdin-cancel',
+    ]
   : ['check', folder, '--out', out, '--stdin-cancel'];
 const child = spawn(helper, args, {
   cwd: out,
@@ -104,6 +118,16 @@ if (cancel) {
   check(report.kind === 'make', 'the report is a make report');
   check(report.summary.floors > 0 && report.summary.markers > 0, 'floors and markers were made');
   check((report.summary.geometry.collision ?? 0) > 0, 'floors were drawn from collision');
+  if (builder) {
+    check(
+      (report.summary.threeD?.areasMade ?? 0) > 0,
+      `3D models were made (${JSON.stringify(report.summary.threeD)})`,
+    );
+    check(
+      Array.isArray(report.pack.check3d?.problems) && report.pack.check3d.problems.length === 0,
+      `the 3D check found no problem (${JSON.stringify(report.pack.check3d)})`,
+    );
+  }
 } else {
   check(last?.event === 'done' && code === 0, 'the check ended with "done" (exit code 0)');
   const report = JSON.parse(await readFile(join(out, 'report.json'), 'utf8'));
