@@ -25,3 +25,10 @@ export const MOUSE_HELP: readonly { action: string; what: string }[] = [
   { action: 'Right-click a location', what: 'Mark it found, or not found, at once' },
   { action: 'Scroll wheel', what: 'Zoom in and out' },
 ];
+
+/** What the mouse does in the 3D view of a map, besides pointing at and pressing locations. */
+export const MOUSE_HELP_3D: readonly { action: string; what: string }[] = [
+  { action: 'Drag', what: 'Move the view' },
+  { action: 'Drag with the right button', what: 'Turn and tilt the view' },
+  { action: 'Scroll wheel', what: 'Zoom in and out, toward the pointer' },
+];

@@ -330,7 +330,7 @@ function LayerSwitcher() {
 }
 
 /** The name of the marker under the pointer. */
-function MarkerTooltip() {
+export function MarkerTooltip() {
   const hover = useAtlas((s) => s.hover);
   const location = useAtlas((s) => (s.hover ? s.game?.pack.locations.get(s.hover.id) : undefined));
   if (!hover || !location) return null;

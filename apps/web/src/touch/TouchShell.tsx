@@ -8,7 +8,8 @@ import { UiIcon, type UiIconName } from '../components/icons';
 import { MapPageStatus } from '../components/MapPageStatus';
 import { PackArrivalNote } from '../components/PackArrivalNote';
 import { UpdateNotice } from '../components/UpdateNotice';
-import { MapPane, type TouchMapOptions } from '../components/MapPane';
+import { type TouchMapOptions } from '../components/MapPane';
+import { MapStage } from '../components/MapStage';
 import { MapsDialog } from '../components/MapsDialog';
 import { ProfileDialog } from '../components/ProfileDialog';
 import { downloadsOffered, keyboardHintsOffered } from '../features';
@@ -36,6 +37,7 @@ import { libraryOffered, setLibraryHost } from '../state/libraryView';
 import { LibraryScreen } from '../library/LibraryScreen';
 import { ExitButton } from '../library/ExitAtlas';
 import { SettingsScreen } from '../library/SettingsScreen';
+import { pickFloor, useScene3d, useSceneShown } from '../state/scene3d';
 import { useAtlas } from '../state/store';
 import { handleBack, mapMoved, revealSelection, revealWhenSettled } from './back';
 import type { Section } from './backStack';
@@ -225,7 +227,7 @@ export function TouchShell({
     ((wide && section !== 'guides' && !page) || (section === 'map' && !search && !filters));
   const map = mapShown ? (
     <main className="touch-map" aria-label="Map">
-      <MapPane touch={mapOptions} />
+      <MapStage touch={mapOptions} />
       {wide ? (
         <WideMapControls
           editing={editorMode === 'edit'}
@@ -950,6 +952,8 @@ function MapChip() {
   const mapId = useAtlas((s) => s.mapId);
   const layerId = useAtlas((s) => s.layerId);
   const open = useTouch((s) => s.mapsMenu);
+  const inScene = useSceneShown();
+  const allFloors = useScene3d((s) => s.allFloors);
   const gameId = game?.entry.id ?? null;
   const { group, names, others } = useOtherSources(gameId);
   if (!game || !mapId) return null;
@@ -957,10 +961,12 @@ function MapChip() {
   const layers = game.pack.layersOf(mapId);
   if (maps.length < 2 && layers.length < 2 && others.length === 0) return null;
   const layer = layers.length > 1 ? game.pack.layers.get(layerId ?? '') : undefined;
+  // In the 3D view, every floor may be shown at once.
+  const layerName = inScene && allFloors && layer?.heights ? 'All floors' : layer?.name;
   const source = group && gameId ? names.get(gameId) : undefined;
   const mapName = game.pack.maps.get(mapId)?.name;
   // Cut short on a narrow screen: the whole of it shows on hover.
-  const chipText = [source, mapName, layer?.name].filter(Boolean).join(' · ');
+  const chipText = [source, mapName, layerName].filter(Boolean).join(' · ');
   return (
     <button
       type="button"
@@ -980,7 +986,7 @@ function MapChip() {
           </span>
         ) : null}
         {mapName}
-        {layer ? <span className="muted"> · {layer.name}</span> : null}
+        {layerName ? <span className="muted"> · {layerName}</span> : null}
       </span>
       <UiIcon name="chevronDown" size={14} strokeWidth={2} />
     </button>
@@ -1099,7 +1105,7 @@ function MapsMenu({ wide }: { wide: boolean }) {
                   summary.layer(layer.id),
                   layer.id === layerId,
                   () => {
-                    showMap(mapId, layer.id);
+                    pickFloor(layer.id);
                   },
                   renamable(layer.id, 'level'),
                 ),

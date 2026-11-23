@@ -199,11 +199,13 @@ export interface ContextFacts {
   mapShown: boolean;
   /** Where the focus is. */
   focus: 'none' | 'map' | 'card' | 'other';
+  /** The map is shown in 3D (its model, see `src/scene/`). Absent: no. */
+  scene?: boolean;
 }
 
 /**
  * What the controller does now: move the map while the map is shown and
- * nothing else has the focus; the card of a location while the focus is
+ * nothing else has the focus (the 3D view, when the map is shown in 3D); the card of a location while the focus is
  * in it; reading in Guides and in a guidebook; a list in Lists; and
  * otherwise moving between buttons.
  */
@@ -212,7 +214,9 @@ export function padContext(facts: ContextFacts): PadContext {
   if (facts.overlay) return 'menus';
   if (facts.focus === 'card') return 'card';
   const onMap = facts.section === null || facts.section === 'map';
-  if (onMap && facts.mapShown && (facts.focus === 'none' || facts.focus === 'map')) return 'map';
+  if (onMap && facts.mapShown && (facts.focus === 'none' || facts.focus === 'map')) {
+    return facts.scene ? 'scene' : 'map';
+  }
   if (facts.section === 'guides') return 'reading';
   if (facts.section === 'lists') return 'lists';
   return 'menus';

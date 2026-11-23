@@ -25,8 +25,17 @@ export function useVisibleCategories(): ReadonlySet<string> {
 
 /** The markers to draw on the active layer: filtered, styled, and always including the selection. */
 export function useLayerMarkers(): readonly MapMarker[] {
-  const game = useAtlas((s) => s.game);
   const layerId = useAtlas((s) => s.layerId);
+  return useMarkersOn(layerId ?? '');
+}
+
+/**
+ * The markers of some layers, as `useLayerMarkers` makes them for one: the
+ * 3D view draws those of every floor at once. `layerIds` is a list joined
+ * by new lines, so that the same layers give the same markers.
+ */
+export function useMarkersOn(layerIds: string): readonly MapMarker[] {
+  const game = useAtlas((s) => s.game);
   const overrides = useAtlas((s) => s.overrides);
   const hideFound = useAtlas((s) => s.hideFound);
   const listOnly = useAtlas((s) => s.listOnly);
@@ -44,7 +53,7 @@ export function useLayerMarkers(): readonly MapMarker[] {
   );
   const revision = useAtlas((s) => (pictures ? s.tileRevision : 0));
   return useMemo(() => {
-    if (!game || !layerId) return [];
+    if (!game || !layerIds) return [];
     const filter = markerFilter({ game, overrides, hideFound, found, listOnly, notesOnly }, noted);
     const typePicture = pictures
       ? (category: Category) => {
@@ -52,15 +61,17 @@ export function useLayerMarkers(): readonly MapMarker[] {
           return url ? `${url}#${revision}` : null;
         }
       : undefined;
-    return layerMarkers(game.pack, layerId, {
-      filter,
-      alwaysInclude: selectedId,
-      noted,
-      typePicture,
-    });
+    return layerIds.split('\n').flatMap((layerId) =>
+      layerMarkers(game.pack, layerId, {
+        filter,
+        alwaysInclude: selectedId,
+        noted,
+        typePicture,
+      }),
+    );
   }, [
     game,
-    layerId,
+    layerIds,
     overrides,
     hideFound,
     found,

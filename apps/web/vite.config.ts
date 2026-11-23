@@ -25,7 +25,9 @@ export default defineConfig({
     sourcemap: true,
     // React DOM, Leaflet, Zod, Dexie and markdown-it make up most of the
     // main bundle, so the default 500 kB warning is expected. The save
-    // reader and the "Game save" dialog are chunks of their own.
+    // reader and the "Game save" dialog are chunks of their own, and so is
+    // the 3D view (three.js), loaded only when a map with a model is shown;
+    // its KTX2 transcoder is emitted beside it, as three.js names it.
     chunkSizeWarningLimit: 950,
   },
 });

@@ -104,7 +104,8 @@ export function hintsShown(state: Pick<PadState, 'hints' | 'padId' | 'source'>):
 
 /** Whether the crosshair shows on the map now. */
 export function reticleShown(state: Pick<PadState, 'padId' | 'source' | 'context' | 'mapKeys'>) {
-  if (state.context !== 'map' && state.context !== 'card') return false;
+  if (state.context !== 'map' && state.context !== 'scene' && state.context !== 'card')
+    return false;
   return (state.source === 'pad' && state.padId !== null) || state.mapKeys;
 }
 
@@ -113,6 +114,36 @@ export function reticleShown(state: Pick<PadState, 'padId' | 'source' | 'context
 
 let shownMap: { view: MapView; container: HTMLElement } | null = null;
 let shownMarkers: readonly MapMarker[] = [];
+
+/**
+ * The 3D view, while it is shown in place of the map (`src/scene/`): what
+ * the controller and the map's keys move and turn, and the locations it
+ * draws, where they are on the screen.
+ */
+export interface PadScene {
+  container: HTMLElement;
+  /** The locations drawn and in front of the camera, with where each is in the view's box. */
+  onScreen(): { ids: readonly string[]; points: readonly { x: number; y: number }[] };
+  /** Moves by screen pixels and zooms by levels (as the 2D map's levels: 1 is twice as near). */
+  nudge(dx: number, dy: number, dz: number): void;
+  /** Turns round the point looked at, and tilts, in radians. */
+  turn(yaw: number, pitch: number): void;
+  /** Moves the point looked at to a location. */
+  lookAt(id: string): void;
+  /** Looks straight down. */
+  fromAbove(): void;
+}
+
+let shownScene: PadScene | null = null;
+
+/** The 3D view the controller moves, while one is shown (`src/scene/` says). */
+export function setPadScene(scene: PadScene | null): void {
+  shownScene = scene;
+}
+
+export function padScene(): PadScene | null {
+  return shownScene;
+}
 
 /** The map the controller moves, while one is shown (`MapPane` says). */
 export function setPadMap(map: { view: MapView; container: HTMLElement } | null): void {
@@ -130,12 +161,23 @@ export function setShownMarkers(markers: readonly MapMarker[]): void {
 
 /** The locations drawn on the map, with where each is in the map's box, in screen pixels. */
 export function markersOnScreen(): {
-  markers: readonly MapMarker[];
+  markers: readonly Pick<MapMarker, 'id'>[];
   points: { x: number; y: number }[];
   center: { x: number; y: number };
   /** Screen pixels per image pixel. */
   scale: number;
 } | null {
+  const scene = shownScene;
+  if (scene) {
+    const box = scene.container.getBoundingClientRect();
+    const seen = scene.onScreen();
+    return {
+      markers: seen.ids.map((id) => ({ id })),
+      points: [...seen.points],
+      center: { x: box.width / 2, y: box.height / 2 },
+      scale: 1,
+    };
+  }
   const map = shownMap;
   const view = map?.view.getView();
   if (!map || !view) return null;
@@ -155,8 +197,26 @@ export function markersOnScreen(): {
 }
 
 /** The location the crosshair holds now, while it shows: its marker and where it is on the screen. */
-export function reticleTarget(): { marker: MapMarker; x: number; y: number } | null {
+export function reticleTarget(): { marker: Pick<MapMarker, 'id'>; x: number; y: number } | null {
   if (!reticleShown(usePad.getState())) return null;
+  const scene = shownScene;
+  if (scene) {
+    const box = scene.container.getBoundingClientRect();
+    const seen = scene.onScreen();
+    const cx = box.width / 2;
+    const cy = box.height / 2;
+    let best = -1;
+    let bestDistance = SNAP_RADIUS * SNAP_RADIUS;
+    seen.points.forEach((point, i) => {
+      const distance = (point.x - cx) ** 2 + (point.y - cy) ** 2;
+      if (distance < bestDistance) {
+        best = i;
+        bestDistance = distance;
+      }
+    });
+    if (best < 0) return null;
+    return { marker: { id: seen.ids[best]! }, x: seen.points[best]!.x, y: seen.points[best]!.y };
+  }
   const map = shownMap;
   const view = map?.view.getView();
   if (!map || !view) return null;

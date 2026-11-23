@@ -14,7 +14,7 @@ import {
   type PadContext,
 } from './bindings';
 
-const PAD_CONTEXTS: PadContext[] = ['map', 'card', 'reading', 'lists', 'menus'];
+const PAD_CONTEXTS: PadContext[] = ['map', 'scene', 'card', 'reading', 'lists', 'menus'];
 
 describe('the table of keys and buttons', () => {
   it('names each action once, with words and something to press', () => {
@@ -60,6 +60,7 @@ describe('the table of keys and buttons', () => {
   it('lists every context in the guide, C only where there are lists', () => {
     expect(CONTEXTS.map((context) => context.id)).toEqual([
       'map',
+      'scene',
       'reading',
       'lists',
       'menus',
@@ -102,6 +103,16 @@ describe('padAction', () => {
     expect(padAction('menus', 'y')).toBeNull();
   });
 
+  it('moves the 3D view as the map, and turns it, changes floors and looks down besides', () => {
+    expect(padAction('scene', 'ls')).toBe('pan');
+    expect(padAction('scene', 'rt')).toBe('zoom');
+    expect(padAction('scene', 'a')).toBe('open-location');
+    expect(padAction('scene', 'x')).toBe('mark-found');
+    expect(padAction('scene', 'rs')).toBe('turn');
+    expect(padAction('scene', 'dpad')).toBe('floor');
+    expect(padAction('scene', 'r3')).toBe('from-above');
+  });
+
   it('turns pages with the triggers when reading, and scrolls a page elsewhere', () => {
     expect(padAction('reading', 'lt')).toBe('turn-page');
     expect(padAction('lists', 'rt')).toBe('scroll-page');
@@ -137,6 +148,12 @@ describe('keyAction', () => {
     expect(keyAction('menus', 'Enter')).toBe('press');
     expect(keyAction('reading', 'q')).toBe('sections');
     expect(keyAction('reading', ']')).toBe('turn-page');
+    expect(keyAction('scene', 'w')).toBe('pan');
+    expect(keyAction('scene', '.')).toBe('turn');
+    expect(keyAction('scene', 'PageUp')).toBe('floor');
+    expect(keyAction('scene', 'v')).toBe('from-above');
+    expect(keyAction('scene', '0')).toBe('reset-view');
+    expect(keyAction('map', 'v')).toBeNull();
   });
 });
 
