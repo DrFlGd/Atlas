@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pyramidLevel } from '@atlas/core';
 import {
@@ -6,8 +6,10 @@ import {
   MANIFEST_FILE,
   MAP_COLLECTIONS,
   PACK_COLLECTIONS,
+  MAX_SCENE_FILE_BYTES,
   checkPackIntegrity,
   packDataSchema,
+  sceneFiles,
 } from '@atlas/schema';
 
 /** What {@link validatePackFolder} found: every problem, one per line, and what it checked. */
@@ -21,7 +23,8 @@ export interface FolderReport {
  * Checks a pack folder on disk as a tool that writes packs must leave it:
  * each JSON file against the pack schema (strict, so an unknown field or an
  * unknown list type is a problem, although the app would skip it), the
- * pack's integrity rules, that every picture's file is there, and, for
+ * pack's integrity rules, that every picture's file is there, that every
+ * model file a map's scene names is there and is glTF 2.0 binary, and, for
  * every layer whose tiles are a `{z}/{x}/{y}` folder, that every tile of
  * its pyramid is there. A game with no map may leave out every map file.
  *
@@ -116,5 +119,40 @@ export async function validatePackFolder(dir: string): Promise<FolderReport> {
       problems.push(`${picture.id}: ${picture.file} is missing`);
     }
   }
+  for (const map of pack.maps) {
+    if (!map.scene) continue;
+    for (const file of sceneFiles(map.scene)) {
+      const problem = await checkModelFile(join(dir, file));
+      if (problem) problems.push(`${map.id}: ${file} ${problem}`);
+    }
+  }
   return { problems, files, tilesChecked };
+}
+
+/**
+ * Checks that a model file a scene names is there and is glTF 2.0 binary
+ * (`.glb`): its header says `glTF`, version 2 and the file's own length,
+ * within {@link MAX_SCENE_FILE_BYTES}. The model itself is not read.
+ */
+export async function checkModelFile(path: string): Promise<string | null> {
+  let handle;
+  try {
+    handle = await open(path, 'r');
+  } catch {
+    return 'is missing';
+  }
+  try {
+    const { size } = await handle.stat();
+    if (size > MAX_SCENE_FILE_BYTES) return 'is too large';
+    const header = Buffer.alloc(12);
+    const { bytesRead } = await handle.read(header, 0, 12, 0);
+    if (bytesRead < 12 || header.toString('latin1', 0, 4) !== 'glTF') {
+      return 'is not a glTF binary file';
+    }
+    if (header.readUInt32LE(4) !== 2) return 'is not glTF version 2';
+    if (header.readUInt32LE(8) !== size) return 'does not have the length its header gives';
+    return null;
+  } finally {
+    await handle.close();
+  }
 }

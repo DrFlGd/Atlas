@@ -12,6 +12,7 @@ import { addUnderground, tintAsCave } from './underground';
 import { addPhotos, photoFiles } from './photos';
 import { addWiki, wikiPictureFiles } from './wiki';
 import { addRoutes } from './routes';
+import { addKeep, keepImages, keepScene, KEEP_IMAGE } from './keep';
 
 export type TileFormat = 'pmtiles' | 'xyz';
 
@@ -101,21 +102,27 @@ export async function buildDemoPack(
     locationCount: options.locationCount,
     tiles,
   });
+  // The 3D map: its models and the scene that names them.
+  const keep = await keepScene();
   const data = assertValidPack(
-    addRoutes(
-      addPhotos(
-        addWiki(
-          addChecklists(
-            addUnderground(surface, {
-              seed: options.seed,
-              size: UNDERGROUND_SIZE,
-              tileSize: options.tileSize,
-              locationsPerLayer: options.undergroundLocations,
-              layers: underground,
-            }),
+    addKeep(
+      addRoutes(
+        addPhotos(
+          addWiki(
+            addChecklists(
+              addUnderground(surface, {
+                seed: options.seed,
+                size: UNDERGROUND_SIZE,
+                tileSize: options.tileSize,
+                locationsPerLayer: options.undergroundLocations,
+                layers: underground,
+              }),
+            ),
           ),
         ),
       ),
+      keep.scene,
+      { tileSize: options.tileSize, tiles: (local) => tileSource(`tiles/${local}`) },
     ),
   );
   const contentMs = lap();
@@ -129,7 +136,11 @@ export async function buildDemoPack(
     { data: image, width: options.size, height: options.size, channels: 3 },
     { tileSize: options.tileSize },
   );
-  const deepPyramids = [];
+  const deepPyramids: {
+    path: string;
+    pyramid: Awaited<ReturnType<typeof cutPyramid>>;
+    size?: number;
+  }[] = [];
   for (const layer of underground) {
     const relief = tintAsCave(renderTerrain(layer.terrain, UNDERGROUND_SIZE), layer.tint);
     deepPyramids.push({
@@ -138,6 +149,16 @@ export async function buildDemoPack(
         { data: relief, width: UNDERGROUND_SIZE, height: UNDERGROUND_SIZE, channels: 3 },
         { tileSize: options.tileSize },
       ),
+    });
+  }
+  for (const [local, relief] of keepImages()) {
+    deepPyramids.push({
+      path: `tiles/${local}`,
+      pyramid: await cutPyramid(
+        { data: relief, width: KEEP_IMAGE, height: KEEP_IMAGE, channels: 3 },
+        { tileSize: options.tileSize },
+      ),
+      size: KEEP_IMAGE,
     });
   }
   const tilesMs = lap();
@@ -149,9 +170,13 @@ export async function buildDemoPack(
   const pictures = new Map([...(await wikiPictureFiles()), ...(await photoFiles())]);
   if (pictures.size > 0) await mkdir(join(staging, 'pictures'), { recursive: true });
   for (const [path, png] of pictures) await writeFile(join(staging, path), png);
+  for (const [path, glb] of keep.files) {
+    await mkdir(join(staging, path, '..'), { recursive: true });
+    await writeFile(join(staging, path), glb);
+  }
   const layerPyramids = [
     { path: LAYER_TILE_PATH, pyramid, size: options.size },
-    ...deepPyramids.map((deep) => ({ ...deep, size: UNDERGROUND_SIZE })),
+    ...deepPyramids.map((deep) => ({ size: UNDERGROUND_SIZE, ...deep })),
   ];
   for (const layer of layerPyramids) {
     if (options.tileFormat === 'pmtiles') {
