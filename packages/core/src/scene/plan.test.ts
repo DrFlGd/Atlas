@@ -74,15 +74,13 @@ describe('device budgets', () => {
     expect(sceneBudget(computer)).toEqual(SCENE_BUDGETS.computer);
     const small = sceneBudget({ ...computer, platform: 'android', deviceMemory: 2 });
     expect(small.triangles).toBe(SCENE_BUDGETS.phone.triangles / 2);
-    expect(SCENE_BUDGETS.phone.triangles).toBeLessThan(SCENE_BUDGETS.handheld.triangles);
+    expect(SCENE_BUDGETS.phone.triangles).toBeLessThanOrEqual(SCENE_BUDGETS.handheld.triangles);
     expect(SCENE_BUDGETS.handheld.triangles).toBeLessThanOrEqual(SCENE_BUDGETS.computer.triangles);
   });
 
-  it('gives a phone about 2 million triangles and 300 MB of textures, the others about twice', () => {
-    expect(SCENE_BUDGETS.phone).toMatchObject({ triangles: 2_000_000, textureBytes: 300 << 20 });
-    for (const other of [SCENE_BUDGETS.handheld, SCENE_BUDGETS.computer]) {
-      expect(other.triangles).toBe(2 * SCENE_BUDGETS.phone.triangles);
-      expect(other.textureBytes).toBe(2 * SCENE_BUDGETS.phone.textureBytes);
+  it('gives a phone, a Steam Deck and a computer 4 million triangles and 600 MB of textures', () => {
+    for (const budget of [SCENE_BUDGETS.phone, SCENE_BUDGETS.handheld, SCENE_BUDGETS.computer]) {
+      expect(budget).toMatchObject({ triangles: 4_000_000, textureBytes: 600 << 20 });
     }
   });
 });
