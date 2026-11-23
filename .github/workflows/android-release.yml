@@ -192,6 +192,13 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.33.0
+
+          - **More detail in 3D on phones.** Using your new trial report, a phone now loads up to about 4 million triangles and 600 MB of textures at once, the same as the Steam Deck and PCs. Detail still steps down by itself when frames come too slowly.
+          - Ready for 3D maps read by **Atlas Importer 0.33.0** from a fan map made of 3D models, and for areas remade in **Atlas Map Maker 0.4.0** after you adjust their floors.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.32.0
 
           - **3D trial goes further.** It now has ten steps, up to 16 million triangles and 1.7 GB of textures, and stops by itself when frames come too slowly. Each step says how much graphics memory it used. **Save the report as a file** has its own save window.
