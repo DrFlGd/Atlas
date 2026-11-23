@@ -192,6 +192,10 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.30.0
+
+          - **Controller.** Key letters beside buttons hide while a controller is in use, and the hint bar on the map shows A Open and X Found only when there is a location to act on.
+
           ## New in 0.29.0
 
           - **Magazines.** Magazines come in a pack of their own, one per magazine, written by the app that keeps them. **Magazines** beside the list of games opens a shelf of every magazine, then its issues, newest first, with covers. An issue opens in the guidebook reader, with **Games in this issue** in its contents.

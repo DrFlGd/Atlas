@@ -120,6 +120,9 @@ const COMMANDS: &[&str] = &[
     "update_download",
     "update_progress",
     "update_install",
+    "steam_status",
+    "steam_set",
+    "steam_restart",
 ];
 
 /// The commands of a build with the `downloads` feature: "Download map

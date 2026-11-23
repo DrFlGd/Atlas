@@ -428,6 +428,17 @@ Releasing an update: the `Release` workflow signs the installer and the AppImage
 
 The same shell builds an Android app (Android 10 and later), a viewer with the demo pack: `pnpm android:build --target aarch64` writes an unsigned APK, CI builds and checks one on every run, and the `Android release` workflow (run by hand) attaches a signed one to a draft release `android-v<version>`. See [apps/desktop/README.md](apps/desktop/README.md#android).
 
+### Add Atlas to Steam
+
+On Windows and on Linux or the Steam Deck (from `Atlas.AppImage`), the viewer adds itself to Steam as a non-Steam game, with its own artwork, so it can be started from the Steam library and from Game Mode:
+
+1. Open **Settings** in Atlas and find **Atlas in Steam**. It says which Steam folder and Steam user it found; with several users, choose one.
+2. Press **Add Atlas to Steam**. While Steam is closed, Atlas is added at once: **Atlas is in Steam with its artwork**.
+3. While Steam is running, Steam's files cannot be written, so Atlas says **Waiting for Steam to close**. Press **Restart Steam and add it**: Atlas closes Steam, adds itself and starts Steam again. In Game Mode on a Steam Deck, Steam comes back by itself, and Atlas closes with it. If you close Steam yourself instead, Atlas adds itself as soon as it sees Steam closed, while Settings is open or at its next start.
+4. **Take Atlas out of Steam** takes out exactly what Atlas added.
+
+How it works (`apps/desktop/src-tauri/src/steam/`, following the approach of Game Repo's `gamerepo-steam`): Atlas writes one shortcut, tagged `Atlas`, into `userdata/<user>/config/shortcuts.vdf`, and every other shortcut stays byte for byte as it was; it backs the file up first (`shortcuts.vdf.atlas-<time>`, the newest five kept) and writes only while Steam is closed. The pictures (`apps/desktop/steam-art/`, bundled with the viewer) go into `userdata/<user>/config/grid/`, named by the shortcut's id, and never over a picture that is there. If you added Atlas to Steam by hand already, Atlas adds no second shortcut and only puts its pictures under yours. What Atlas wrote is kept in `steam.json` in its app data folder, so taking it out removes only that; a picture you set yourself in its place since stays. **Restart Steam and add it** starts Atlas again as a helper (`--steam-helper`) that outlives Steam, and writes what it did to `steam-restart.log` in the same folder. On Linux without an AppImage, Atlas does not add itself and says so. Every release also has `Atlas-Steam-artwork.zip`, the same pictures with a note on which goes where, for setting them by hand.
+
 ## Map Maker
 
 `apps/mapmaker` is Atlas Map Maker, a separate Windows app for making Atlas maps from a player's own game files: Dark Souls Remastered first, then Bloodborne. Its first version only checks the game folder and reports what map data can be read (areas, treasure, item lots, collision, navmesh and map pieces), with a top-down preview of each area and a report to save. It runs `tools/gamefiles`, a Python program built with PyInstaller, as a sidecar. They only read the chosen game folder: they never write into it, copy game files from it or make network requests, and no game files or data from them are in this repository. See [apps/mapmaker/README.md](apps/mapmaker/README.md) and [tools/gamefiles/README.md](tools/gamefiles/README.md). The `Release Map Maker` workflow publishes its installer under `mapmaker-v*` tags, separately from the viewer's releases.

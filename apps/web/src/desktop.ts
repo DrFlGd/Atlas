@@ -389,6 +389,12 @@ export interface DesktopInfo {
    */
   steamLaunch?: SteamLaunch;
   /**
+   * Settings has "Atlas in Steam" (`steam`): Atlas adds itself to Steam as
+   * a non-Steam game with its artwork (see the shell's `steam` module). In
+   * the app without downloads on Windows and Linux. Absent counts as false.
+   */
+  steam?: boolean;
+  /**
    * Whether this copy updates itself (`itself`, with whether it looks for
    * an update when it starts) or where its updates come from
    * (`elsewhere`); see the shell's `updates` module. On a desktop only:
@@ -441,6 +447,41 @@ export type SteamLaunch =
   | { state: 'appImage'; path: string; line: string }
   | { state: 'usual'; line: string }
   | { state: 'refused'; path: string };
+
+/** A user signed in to Steam on this computer. */
+export interface SteamUser {
+  /** The user's folder under Steam's `userdata`. */
+  id: string;
+  /** The name shown in Steam, or empty. */
+  name: string;
+  /** Signed in most recently. */
+  recent: boolean;
+}
+
+/** Atlas in Steam, as the shell's `steam` module tells it. */
+export interface SteamStatus {
+  /** Steam's folder, or null when Steam is not on this computer. */
+  folder: string | null;
+  running: boolean;
+  /** The Steam Deck's Game Mode: Steam comes back by itself after it closes. */
+  gameMode: boolean;
+  /** The users signed in to Steam here, the most recent first. */
+  users: SteamUser[];
+  /** The user Atlas writes for. */
+  user: string | null;
+  /** Why Atlas cannot add itself here, in a sentence, or null. */
+  refused: string | null;
+  /** The person wants Atlas in Steam. */
+  wanted: boolean;
+  /** What is wanted is not written yet: Steam is running. */
+  waiting: boolean;
+  /** Atlas is in Steam as wanted. */
+  inSteam: boolean;
+  /** Atlas was in Steam already (added by hand): only its artwork was added. */
+  byHand: boolean;
+  /** The kinds of picture left as the person's own (`grid`, `wide`, `hero`, `logo`, `icon`). */
+  kept: string[];
+}
 
 /**
  * The settings of "Atlas in the background", with what the system says
@@ -1898,6 +1939,22 @@ export interface DesktopBridge {
     exit(): Promise<void>;
   };
   /**
+   * Atlas in Steam, where `DesktopInfo.steam` says so (the shell's `steam`
+   * module); elsewhere each answers why not.
+   */
+  steam: {
+    /** What Steam and its users are here, and whether Atlas is in Steam. */
+    status(): Promise<SteamStatus>;
+    /**
+     * Adds Atlas to Steam with its artwork (`on`), for `user` when one is
+     * chosen, or takes it out. Written at once while Steam is closed, else
+     * it waits; the status after it, or why not.
+     */
+    set(on: boolean, user?: string): Promise<SteamStatus>;
+    /** Closes Steam, writes what waits and starts Steam again. */
+    restart(): Promise<void>;
+  };
+  /**
    * Updating Atlas itself, where `DesktopInfo.updates` says it does (the
    * shell's `updates` module); elsewhere each answers why not.
    */
@@ -2291,6 +2348,11 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
       pauseHotkey: (paused) => call('background_pause_hotkey', { paused }),
       takeShow: () => call<unknown>('background_take_show').then(showRequestFrom, () => null),
       exit: () => call('app_exit'),
+    },
+    steam: {
+      status: () => call('steam_status'),
+      set: (on, user) => call('steam_set', { on, user: user ?? null }),
+      restart: () => call('steam_restart'),
     },
     updates: {
       check: () => call('update_check'),

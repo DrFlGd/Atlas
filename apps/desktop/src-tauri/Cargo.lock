@@ -215,10 +215,11 @@ dependencies = [
 
 [[package]]
 name = "atlas-desktop"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "atlas-pack",
  "auto-launch",
+ "crc32fast",
  "flate2",
  "httpdate",
  "image",

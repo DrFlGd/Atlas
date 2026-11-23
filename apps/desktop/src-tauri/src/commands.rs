@@ -117,6 +117,10 @@ pub struct DesktopInfo {
     #[cfg(target_os = "linux")]
     #[serde(skip_serializing_if = "Option::is_none")]
     steam_launch: Option<crate::linux::SteamLaunch>,
+    /// Settings has "Atlas in Steam" (`steam_status`, `steam_set`,
+    /// `steam_restart`): adding Atlas itself to Steam with its pictures, in
+    /// the app without downloads on Windows and Linux.
+    steam: bool,
     /// Whether this copy updates itself, and whether it looks at its start,
     /// or where its updates come from (see `updates`). On a desktop only;
     /// absent on Android.
@@ -166,6 +170,7 @@ pub fn desktop_info<R: Runtime>(app: AppHandle<R>) -> DesktopInfo {
         #[cfg(target_os = "linux")]
         steam_launch: (!Downloads::in_build())
             .then(|| crate::linux::steam_launch(crate::linux::appimage_now().as_deref())),
+        steam: crate::steam::OFFERED,
         updates: app.try_state::<crate::updates::Way>().map(|way| way.0),
     }
 }

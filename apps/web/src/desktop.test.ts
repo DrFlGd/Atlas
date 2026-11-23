@@ -623,6 +623,28 @@ describe('old folders', () => {
   });
 });
 
+describe('Atlas in Steam', () => {
+  it('reads and changes it through its commands', async () => {
+    const calls: [string, unknown][] = [];
+    const bridge = createBridge((command, args) => {
+      calls.push([command, args]);
+      return Promise.resolve(null);
+    });
+    await bridge.steam.status();
+    await bridge.steam.set(true);
+    await bridge.steam.set(true, '1234');
+    await bridge.steam.set(false);
+    await bridge.steam.restart();
+    expect(calls).toEqual([
+      ['steam_status', undefined],
+      ['steam_set', { on: true, user: null }],
+      ['steam_set', { on: true, user: '1234' }],
+      ['steam_set', { on: false, user: null }],
+      ['steam_restart', undefined],
+    ]);
+  });
+});
+
 describe('Atlas in the background', () => {
   it('reads and changes its settings through their commands', async () => {
     const calls: [string, unknown][] = [];

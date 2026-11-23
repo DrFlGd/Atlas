@@ -183,6 +183,16 @@ jobs:
 
           On Linux and the Steam Deck, download **Atlas.AppImage**, put it in the **Applications** folder of your home folder in place of the older one, and make sure **Is executable** is ticked under **Properties**, then **Permissions**.
 
+          To start Atlas from your Steam library, open **Settings** in Atlas and press **Add Atlas to Steam** under **Atlas in Steam**. Atlas adds itself as a non-Steam game, with its own artwork, on Windows and on the Steam Deck. **Atlas-Steam-artwork.zip** has the same pictures, with a note on which goes where, if you would rather set them by hand.
+
+          ## New in 0.30.0
+
+          - **Atlas in Steam.** In **Settings**, **Atlas in Steam**, press **Add Atlas to Steam** and Atlas adds itself to your Steam library as a non-Steam game, with its own grid, wide, hero, logo and icon pictures. Steam has to be closed while it writes: if it is open, press **Restart Steam and add it**. If you added Atlas to Steam by hand before, Atlas only adds the pictures to that entry and keeps any you set yourself. **Take Atlas out of Steam** removes it again.
+          - **Controller.** Key letters beside buttons hide while a controller is in use, and the hint bar on the map shows A Open and X Found only when there is a location to act on.
+          - **Atlas Importer.** **Keep packs for Game Repo up to date** now uses Game Repo's **Maps and Guides** folder by default when Game Repo is on the PC.
+
+          This version has passed the automatic checks only. Adding Atlas to a real Steam has not been tried yet.
+
           ## New in 0.29.0
 
           - **Magazines.** Magazines come in a pack of their own, one per magazine, written by the app that keeps them. **Magazines** beside the list of games opens a shelf of every magazine, then its issues, newest first, with covers. An issue opens in the guidebook reader, with **Games in this issue** in its contents.
@@ -471,6 +481,23 @@ jobs:
           EOF
           cat release/notes.md
 
+      # Atlas's pictures for Steam, for setting them by hand (Atlas puts them
+      # into Steam itself from Settings, "Atlas in Steam").
+      - name: Pack the Steam artwork
+        shell: pwsh
+        run: |
+          $art = 'apps/desktop/steam-art'
+          $files = @(
+            "$art/atlas-steam-grid-600x900.jpg",
+            "$art/atlas-steam-wide-920x430.jpg",
+            "$art/atlas-steam-hero-3840x1240.jpg",
+            "$art/atlas-steam-logo-1280x720.png",
+            "$art/atlas-steam-icon-512.png",
+            "$art/README.md"
+          )
+          Compress-Archive -Path $files -DestinationPath release/Atlas-Steam-artwork.zip -Force
+          Get-Item release/Atlas-Steam-artwork.zip
+
       - name: Upload the installer as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
@@ -501,12 +528,12 @@ jobs:
           # repository's latest, so /releases/latest/download/latest.json
           # leads to it.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG exists: replacing its installer, signature and notes."
-            gh release upload "$TAG" "release/$ASSET" "release/$ASSET.sig" \
+            echo "Release $TAG exists: replacing its installer, signature, Steam artwork and notes."
+            gh release upload "$TAG" "release/$ASSET" "release/$ASSET.sig" release/Atlas-Steam-artwork.zip \
               --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release/notes.md
           else
-            gh release create "$TAG" "release/$ASSET" "release/$ASSET.sig" \
+            gh release create "$TAG" "release/$ASSET" "release/$ASSET.sig" release/Atlas-Steam-artwork.zip \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Atlas $VERSION" \

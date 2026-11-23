@@ -1,6 +1,6 @@
 [package]
 name = "atlas-desktop"
-version = "0.29.0"
+version = "0.30.0"
 description = "Atlas desktop shell"
 edition = "2021"
 license = "MIT"
@@ -92,6 +92,10 @@ tauri-plugin-global-shortcut = "2.4.1"
 # when Atlas runs as administrator and leaves the program's path without
 # quotes, and it has no setting for either.
 auto-launch = "0.6.0"
+# Atlas in Steam (src/steam/): Steam's id of a non-Steam shortcut is a
+# CRC32 of its program and name (MIT OR Apache-2.0, already in the build
+# through flate2).
+crc32fast = "1.5.0"
 
 # Updating the viewer itself (src/updates/), on Windows and Linux: reads
 # latest.json of the repository's newest release, checks the download's

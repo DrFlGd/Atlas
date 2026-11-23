@@ -276,6 +276,16 @@ export interface MockShell {
     calls: { command: string; args: Record<string, unknown> }[];
   };
   /**
+   * Settings, "Atlas in Steam" (the app without downloads on Windows and
+   * Linux), as the shell's `steam` module answers it: its status
+   * (`SteamStatus`), changed by `steam_set` and `steam_restart` as the
+   * shell would change it, and the commands called with their arguments.
+   */
+  steam: {
+    status: Record<string, unknown>;
+    calls: { command: string; args: Record<string, unknown> }[];
+  };
+  /**
    * Updating Atlas itself, as the shell's `updates` module answers it:
    * what `update_check` finds (an `UpdateCheck`), or the sentence it
    * fails with; the sentence the download fails with, if set; and the
@@ -321,6 +331,7 @@ function installFakeShell({
   background,
   packsFolder,
   steamLaunch,
+  steam,
   exit,
   updates,
 }: {
@@ -333,6 +344,7 @@ function installFakeShell({
   background: boolean;
   packsFolder: boolean;
   steamLaunch: Record<string, string> | null;
+  steam: Record<string, unknown> | null;
   exit: boolean;
   updates: { way: Record<string, unknown>; platform: string } | null;
 }) {
@@ -392,6 +404,7 @@ function installFakeShell({
       calls: [],
     },
     guidebooks: { pick: null, added: null, calls: [] },
+    steam: { status: steam ?? {}, calls: [] },
     updates: { check: { state: 'upToDate', version: '0.26.0' }, downloadFails: null, calls: [] },
   };
   /** The kept packs' state after a change: listed when on, with a new serial. */
@@ -708,6 +721,7 @@ function installFakeShell({
           sites: downloads,
           ...(background ? { background: true } : {}),
           ...(steamLaunch ? { steamLaunch } : {}),
+          ...(steam ? { steam: true } : {}),
           ...(exit ? { exit: true } : {}),
           ...(updates ? { updates: updates.way } : {}),
         };
@@ -742,6 +756,28 @@ function installFakeShell({
         // The real shell ends the app here; the stand-in only notes the call.
         shell.background.calls.push({ command, args });
         return null;
+      case 'steam_status':
+        return structuredClone(shell.steam.status);
+      case 'steam_set': {
+        // Written at once while Steam is closed; else it waits.
+        const kept = shell.steam;
+        kept.calls.push({ command, args });
+        const status = kept.status;
+        const on = args.on === true;
+        if (typeof args.user === 'string') status.user = args.user;
+        status.wanted = on;
+        status.waiting = status.running === true;
+        status.inSteam = on && status.running !== true;
+        return structuredClone(status);
+      }
+      case 'steam_restart': {
+        // The helper closes Steam, writes and starts it again.
+        const kept = shell.steam;
+        kept.calls.push({ command, args });
+        kept.status.waiting = false;
+        kept.status.inSteam = kept.status.wanted;
+        return null;
+      }
       case 'background_state':
       case 'background_set':
       case 'background_set_hotkey':
@@ -1159,6 +1195,7 @@ export async function setUp(
     packsFolder = false,
     served = {},
     steamLaunch = null,
+    steam = null,
     exit = false,
     pages = {},
     importers = [],
@@ -1178,6 +1215,11 @@ export async function setUp(
      * (`DesktopInfo::steam_launch`, see the shell's `linux.rs`).
      */
     steamLaunch?: Record<string, string> | null;
+    /**
+     * The shell offers "Atlas in Steam" (`DesktopInfo::steam`), and this is
+     * what `steam_status` answers first (a `SteamStatus`).
+     */
+    steam?: Record<string, unknown> | null;
     /** The shell offers "Exit Atlas" whatever the settings (`DesktopInfo::exit`, on Linux). */
     exit?: boolean;
     /**
@@ -1289,6 +1331,7 @@ export async function setUp(
     background,
     packsFolder,
     steamLaunch,
+    steam,
     exit,
     updates,
   });

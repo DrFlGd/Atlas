@@ -1,0 +1,12 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "resources": {
+      "../steam-art/atlas-steam-grid-600x900.jpg": "steam-art/atlas-steam-grid-600x900.jpg",
+      "../steam-art/atlas-steam-wide-920x430.jpg": "steam-art/atlas-steam-wide-920x430.jpg",
+      "../steam-art/atlas-steam-hero-3840x1240.jpg": "steam-art/atlas-steam-hero-3840x1240.jpg",
+      "../steam-art/atlas-steam-logo-1280x720.png": "steam-art/atlas-steam-logo-1280x720.png",
+      "../steam-art/atlas-steam-icon-512.png": "steam-art/atlas-steam-icon-512.png"
+    }
+  }
+}

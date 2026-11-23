@@ -30,6 +30,11 @@
  * never writes them: such an app does not update itself from the viewer's
  * releases.
  *
+ * A build without downloads also bundles Atlas's pictures for Steam
+ * (`src-tauri/tauri.steam.conf.json`, from `steam-art/`), which Settings,
+ * "Atlas in Steam", copies into Steam; the app with downloads has no such
+ * setting.
+ *
  * Other arguments are passed on to `tauri build`.
  *
  * `node scripts/build.js android` (`pnpm --filter @atlas/desktop
@@ -163,6 +168,8 @@ export function updaterArtifacts(env, { identity, downloads }) {
  */
 export function tauriArgs({ identity, downloads, updater = false, extra }) {
   const args = ['build', '--config', 'src-tauri/tauri.build.conf.json'];
+  // The viewer's pictures for Steam ("Atlas in Steam", see src-tauri/src/steam/).
+  if (!downloads) args.push('--config', 'src-tauri/tauri.steam.conf.json');
   if (identity) args.push('--config', 'src-tauri/tauri.identity.conf.json');
   if (updater) args.push('--config', 'src-tauri/tauri.updater.conf.json');
   if (downloads) args.push('--features', 'downloads');
