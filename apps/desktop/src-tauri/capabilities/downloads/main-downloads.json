@@ -29,6 +29,7 @@
     "allow-import-fetch-model",
     "allow-import-build-scene",
     "allow-import-discard-scenes",
+    "allow-import-reuse-model",
     "allow-import-folder-pick",
     "allow-import-folder-list",
     "allow-import-folder-read",

@@ -411,6 +411,13 @@ export interface ImportContext {
    * Nothing is written into a pack until the importer names the build in
    * {@link ImportSuccess.sceneBuilds} and the pack is saved; a build no
    * saved pack names is thrown away.
+   *
+   * The original model is kept with the saved game, beside its saved
+   * pages (never in a pack file), in place of the one kept before for the
+   * same `folder`. In a game built again ({@link ImportContext.rebuild})
+   * the app fetches nothing: it builds the map from the model the game
+   * keeps for `folder`, as the rest of the request says now (its addresses
+   * unused), and answers `missing` for a map whose model is not kept.
    */
   sceneModel?(request: SceneModelRequest): Promise<SceneModel>;
 }

@@ -1480,6 +1480,12 @@ export interface ShellBuildRequest {
   textures?: 'average' | 'keep';
   /** With `keep`: the longest side of a picture in the finest level; none keeps its own. */
   textureSize?: number;
+  /**
+   * Keeps the original model with the build once built, for the save to
+   * keep with the game (`import/models/<folder>.glb`), so the map can be
+   * built again without a download ({@link DesktopBridge.tiles.reuseModel}).
+   */
+  keepModel?: boolean;
 }
 
 /** A game's folder the person picked (see {@link DesktopBridge.tiles.pickGameFolder}). */
@@ -1652,6 +1658,13 @@ export interface DesktopBridge {
     buildScene(build: string, request: ShellBuildRequest): Promise<ShellSceneBuilt>;
     /** Throws away kept models and builds that no saved import names. */
     discardScenes(builds: string[]): Promise<void>;
+    /**
+     * Makes a build of the original model the game `packId` keeps for its
+     * map `folder` (kept by a save of a build with `keepModel`), to build
+     * it again with {@link buildScene} without a download: the build's
+     * name, or null when the game keeps no model for that map.
+     */
+    reuseModel(packId: string, folder: string): Promise<string | null>;
     /**
      * Keeps a part of a raw model an importer made from a game's own files,
      * added after the parts kept in `build` (none: a new build); resolves to
@@ -2177,6 +2190,7 @@ function noDownloads(): DesktopBridge['tiles'] {
     fetchModel: missing,
     buildScene: missing,
     discardScenes: missing,
+    reuseModel: missing,
     keepModel: missing,
     pickGameFolder: missing,
     listGameFolder: missing,
@@ -2256,6 +2270,7 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
           fetchModel: (url, build, field) => call('import_fetch_model', { url, build, field }),
           buildScene: (build, request) => call('import_build_scene', { build, request }),
           discardScenes: (builds) => call('import_discard_scenes', { builds }),
+          reuseModel: (packId, folder) => call('import_reuse_model', { packId, folder }),
           keepModel: (part, build) =>
             invoke('import_keep_model', part, { headers: { 'x-atlas-build': build ?? '' } }).catch(
               (error: unknown) => {

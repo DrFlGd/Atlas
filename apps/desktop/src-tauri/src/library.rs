@@ -571,6 +571,89 @@ const SCENE_BUILT_PACK: &str = "pack";
 /// The folder of a pack that holds its 3D models.
 const SCENE_FOLDER: &str = "scene";
 
+/// The folder of a game's saved pages (`import/`) that keeps the original
+/// model of each of its 3D maps fetched from a site, `<folder>.glb`, to
+/// build the map again without a download (`scenebuilds::kept_model_path`).
+const SOURCE_MODELS_DIR: &str = "models";
+/// The file a build keeps its original model in (`scenebuilds::MODEL_FILE`).
+const SCENE_SOURCE_MODEL: &str = "model.glb";
+
+/// Keeps the original model a build kept (`keepModel`) with the game in
+/// `dir`, as `import/models/<folder>.glb`, in place of the one kept
+/// before: renamed, or copied whole through a `.part` file then renamed.
+/// A build with no model (a model made from game files, say) removes the
+/// one kept before, which no longer matches the map. Nothing is left
+/// half-written; a model that cannot be kept is noted and the map stays
+/// saved, only to be read again from its site to build it again.
+fn keep_source_model(dir: &Path, build: &Path, folder: &str) {
+    let models = dir.join(IMPORT_DIR).join(SOURCE_MODELS_DIR);
+    let target = models.join(format!("{folder}.glb"));
+    let source = build.join(SCENE_SOURCE_MODEL);
+    if !fs::symlink_metadata(&source).is_ok_and(|meta| meta.is_file()) {
+        let _ = fs::remove_file(&target);
+        return;
+    }
+    let part = models.join(format!(".{folder}.glb.part"));
+    let kept = fs::create_dir_all(&models).and_then(|()| {
+        if fs::rename(&source, &target).is_ok() {
+            return Ok(());
+        }
+        fs::copy(&source, &part)?;
+        fs::rename(&part, &target)
+    });
+    if let Err(error) = kept {
+        let _ = fs::remove_file(&part);
+        let _ = fs::remove_file(&target);
+        activity::warn(
+            Area::Import,
+            format!("Could not keep the original 3D model of scene/{folder}: {error}"),
+        );
+    }
+}
+
+/// Removes the original models a game keeps (`import/models/`) for maps
+/// that its `maps.json`, as just written, gives no 3D model in that folder.
+fn remove_unused_source_models(dir: &Path, maps_json: &str) {
+    let models = dir.join(IMPORT_DIR).join(SOURCE_MODELS_DIR);
+    let Ok(entries) = fs::read_dir(&models) else {
+        return;
+    };
+    let Ok(serde_json::Value::Array(maps)) = serde_json::from_str::<serde_json::Value>(maps_json)
+    else {
+        return;
+    };
+    let folders: HashSet<String> = maps
+        .iter()
+        .filter_map(|map| map.get("scene"))
+        .flat_map(|scene| {
+            let cells = scene
+                .get("cells")
+                .and_then(|c| c.as_array())
+                .into_iter()
+                .flatten();
+            let files = cells
+                .filter_map(|cell| cell.get("lods").and_then(|l| l.as_array()))
+                .flatten()
+                .filter_map(|lod| lod.get("file").and_then(|f| f.as_str()));
+            files
+                .chain(scene.get("neighbours").and_then(|n| n.as_str()))
+                .filter_map(|file| file.strip_prefix("scene/")?.split('/').next())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let used = name
+            .strip_suffix(".glb")
+            .is_some_and(|folder| folders.contains(folder));
+        if !used && fs::symlink_metadata(entry.path()).is_ok_and(|meta| meta.is_file()) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    let _ = fs::remove_dir(&models);
+}
+
 /// Whether a build's name and folder are of the forms the importer contract
 /// gives them (`SCENE_BUILD_PATTERN` and `SCENE_FOLDER_PATTERN`).
 fn usable_build(build: &SceneBuildUse) -> bool {
@@ -2003,7 +2086,12 @@ impl Library {
                     ));
                 }
             }
+            keep_source_model(&dir, &builds.join(&build.build), &build.folder);
             let _ = fs::remove_dir_all(builds.join(&build.build));
+        }
+        // Original models kept for maps the game has no 3D model of any more.
+        if let Some(maps) = request.files.get("maps.json") {
+            remove_unused_source_models(&dir, maps);
         }
 
         // Pictures the pack no longer lists (another name after a page was
@@ -3659,6 +3747,87 @@ mod tests {
             }];
             assert!(s.library.save_import(&bad).is_err(), "{name} {folder}");
         }
+    }
+
+    #[test]
+    fn keeps_the_original_model_of_a_built_map_with_the_saved_pages() {
+        let s = setup("library-import-source-models", Vec::new());
+        let builds = s.library.maps_folder().join(SCENE_BUILDS_DIR);
+        let build = |name: &str, model: Option<&str>| {
+            let pack = builds.join(name).join(SCENE_BUILT_PACK);
+            fs::create_dir_all(pack.join("scene/east/c0")).unwrap();
+            fs::write(pack.join("scene/east/c0/lod0.glb"), name).unwrap();
+            if let Some(model) = model {
+                fs::write(builds.join(name).join(SCENE_SOURCE_MODEL), model).unwrap();
+            }
+        };
+        let maps = |folders: &[&str]| {
+            let maps: Vec<_> = folders
+                .iter()
+                .map(|folder| {
+                    serde_json::json!({ "id": format!("isles:map:{folder}"), "scene": {
+                        "cells": [{ "id": "c0", "bounds": [0, 0, 1, 1],
+                            "lods": [{ "level": 0, "file": format!("scene/{folder}/c0/lod0.glb") }] }]
+                    } })
+                })
+                .collect();
+            serde_json::to_string(&maps).unwrap()
+        };
+        let kept = |dir: &Path, folder: &str| {
+            fs::read_to_string(
+                dir.join(IMPORT_DIR)
+                    .join(SOURCE_MODELS_DIR)
+                    .join(format!("{folder}.glb")),
+            )
+            .ok()
+        };
+        let mut request = import("isles", "map-east");
+        request.files.insert("maps.json".into(), maps(&["east"]));
+        request.scene_builds = vec![SceneBuildUse {
+            build: "a1-0".into(),
+            folder: "east".into(),
+        }];
+        build("a1-0", Some("first model"));
+        let dir = s.library.save_import(&request).unwrap();
+        assert_eq!(kept(&dir, "east").as_deref(), Some("first model"));
+        assert!(!builds.join("a1-0").exists());
+        // A refresh replaces it, and leaves no other file beside it.
+        build("b2-0", Some("second model"));
+        request.scene_builds[0].build = "b2-0".into();
+        s.library.save_import(&request).unwrap();
+        assert_eq!(kept(&dir, "east").as_deref(), Some("second model"));
+        let names: Vec<_> = fs::read_dir(dir.join(IMPORT_DIR).join(SOURCE_MODELS_DIR))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["east.glb"]);
+        // A save that builds nothing keeps it; another map's save too.
+        request.scene_builds.clear();
+        request
+            .files
+            .insert("maps.json".into(), maps(&["east", "west"]));
+        s.library.save_import(&request).unwrap();
+        assert_eq!(kept(&dir, "east").as_deref(), Some("second model"));
+        // A build without its model (made from game files) lets the old one go.
+        build("c3-0", None);
+        request.scene_builds = vec![SceneBuildUse {
+            build: "c3-0".into(),
+            folder: "east".into(),
+        }];
+        s.library.save_import(&request).unwrap();
+        assert_eq!(kept(&dir, "east"), None);
+        // A map that has no 3D model any more lets its model go.
+        build("d4-0", Some("third model"));
+        request.scene_builds[0].build = "d4-0".into();
+        s.library.save_import(&request).unwrap();
+        assert_eq!(kept(&dir, "east").as_deref(), Some("third model"));
+        request.scene_builds.clear();
+        request.files.insert("maps.json".into(), maps(&["west"]));
+        s.library.save_import(&request).unwrap();
+        assert_eq!(kept(&dir, "east"), None);
+        assert!(!dir.join(IMPORT_DIR).join(SOURCE_MODELS_DIR).exists());
+        assert!(dir.join(IMPORT_DIR).is_dir());
     }
 
     #[test]

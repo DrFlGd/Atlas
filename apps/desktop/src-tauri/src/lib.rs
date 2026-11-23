@@ -271,6 +271,7 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         commands::import_fetch_model,
         commands::import_build_scene,
         commands::import_discard_scenes,
+        commands::import_reuse_model,
         gamefolders::commands::import_folder_pick,
         gamefolders::commands::import_folder_list,
         gamefolders::commands::import_folder_read,

@@ -159,6 +159,7 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "import_fetch_model",
     "import_build_scene",
     "import_discard_scenes",
+    "import_reuse_model",
     "import_folder_pick",
     "import_folder_list",
     "import_folder_read",

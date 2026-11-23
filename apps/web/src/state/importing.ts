@@ -55,6 +55,7 @@ import {
   type WholePictureRequest,
   type SceneModel,
   type SceneModelProblem,
+  type SceneModelRequest,
   checkSceneModelRequest,
   type ReadingWay,
   type SavedSource,
@@ -913,35 +914,100 @@ function sceneModels(
         if (id !== session) return failed('cancelled', 'The session was stopped.');
       }
       if (build === null) return failed('missing', 'The site has no model at its address.');
-      const { url: _url, pieces: _pieces, ...how } = request;
-      const built = await shell.tiles.buildScene(build, how);
-      if (!built.ok || !built.rendered) {
-        const problem = (['format', 'size', 'missing'] as const).find((p) => p === built.problem);
-        return failed(problem ?? 'failed', built.message ?? 'The model could not be built.');
-      }
-      const scene = sceneSchema.safeParse(built.scene);
-      if (!scene.success)
-        return failed('failed', 'The model was built into a scene this app cannot show.');
-      return {
-        ok: true,
-        build,
-        scene: scene.data,
-        width: built.rendered.width,
-        height: built.rendered.height,
-        worldTransform: built.rendered.worldTransform,
-        layers: built.rendered.layers.map(({ id: floor, url, minZoom, maxZoom, tileSize }) => ({
-          id: floor,
-          url,
-          minZoom,
-          maxZoom,
-          tileSize,
-        })),
-        triangles: built.triangles,
-        warnings: built.warnings.slice(0, 20),
-      };
+      // The original model is kept with the game once saved, to build it again without a download.
+      return await builtScene(shell.tiles, build, request);
     } catch (error) {
       if (id !== session) return failed('cancelled', 'The session was stopped.');
       return failed('failed', `It could not be read: ${errorText(error)}`);
+    }
+  };
+}
+
+/**
+ * Builds the model kept in `build` as `request` says (its addresses left
+ * out), keeping the original model with the build for the save to keep
+ * with the game: the scene the importer gets, or why there is none.
+ */
+async function builtScene(
+  tiles: Pick<NonNullable<typeof desktop>['tiles'], 'buildScene'>,
+  build: string,
+  request: SceneModelRequest,
+): Promise<SceneModel> {
+  const { url: _url, pieces: _pieces, model: _model, ...how } = request;
+  const built = await tiles.buildScene(build, { ...how, keepModel: true });
+  if (!built.ok || !built.rendered) {
+    const problem = (['format', 'size', 'missing'] as const).find((p) => p === built.problem);
+    return {
+      ok: false,
+      problem: problem ?? 'failed',
+      message: built.message ?? 'The model could not be built.',
+    };
+  }
+  const scene = sceneSchema.safeParse(built.scene);
+  if (!scene.success) {
+    return {
+      ok: false,
+      problem: 'failed',
+      message: 'The model was built into a scene this app cannot show.',
+    };
+  }
+  return {
+    ok: true,
+    build,
+    scene: scene.data,
+    width: built.rendered.width,
+    height: built.rendered.height,
+    worldTransform: built.rendered.worldTransform,
+    layers: built.rendered.layers.map(({ id: floor, url, minZoom, maxZoom, tileSize }) => ({
+      id: floor,
+      url,
+      minZoom,
+      maxZoom,
+      tileSize,
+    })),
+    triangles: built.triangles,
+    warnings: built.warnings.slice(0, 20),
+  };
+}
+
+/** Why a map is not built again: the game keeps no model for it. */
+export const NO_KEPT_MODEL =
+  'No model of this map is kept with the game, so it is built again only when it is read again from its site.';
+
+/**
+ * How an importer's convert call has the 3D models of maps built again,
+ * in a game `packId` built again from its saved pages, in go `id`: from
+ * the original model the game keeps for the map's folder, with nothing
+ * fetched (the request's addresses are not used). A map whose model is
+ * not kept is not built. `builds` gathers the builds made, as
+ * {@link sceneModels} does. Exported for tests.
+ */
+export function keptSceneModels(
+  tiles: Pick<NonNullable<typeof desktop>['tiles'], 'reuseModel' | 'buildScene'>,
+  packId: string,
+  isCurrent: () => boolean,
+  builds: string[],
+): (request: unknown) => Promise<SceneModel> {
+  const failed = (problem: SceneModelProblem, message: string): SceneModel => ({
+    ok: false,
+    problem,
+    message,
+  });
+  return async (given) => {
+    const request = checkSceneModelRequest(given);
+    if (typeof request === 'string') return failed('failed', request);
+    if (request.model !== undefined) {
+      return failed('failed', 'This app reads a model of a page from its site only.');
+    }
+    try {
+      const build = await tiles.reuseModel(packId, request.folder);
+      if (build === null) return failed('missing', NO_KEPT_MODEL);
+      builds.push(build);
+      if (!isCurrent()) return failed('cancelled', 'The session was stopped.');
+      return await builtScene(tiles, build, request);
+    } catch (error) {
+      if (!isCurrent()) return failed('cancelled', 'The session was stopped.');
+      return failed('failed', `It could not be built again: ${errorText(error)}`);
     }
   };
 }
@@ -2061,9 +2127,9 @@ export function importContext(
           pictureTiles: (request: PictureTilesRequest) =>
             measurePicture(request, rebuilt, onMeasuring, rebuilt ? undefined : observations),
           ...(observations && !rebuilt ? { pageObservations: observations } : {}),
-          // Nothing is fetched for a game built again.
+          // Nothing is fetched for a game built again: its 3D maps come from the models it keeps.
           ...(site.wholePicture && !rebuilt ? { wholePicture: site.wholePicture } : {}),
-          ...(site.sceneModel && !rebuilt ? { sceneModel: site.sceneModel } : {}),
+          ...(site.sceneModel ? { sceneModel: site.sceneModel } : {}),
         }
       : {}),
   };
@@ -2172,7 +2238,14 @@ async function convertAndSave(
   const wholePicture = fetching
     ? wholePictures(shell, importer, page.url, session, cuts)
     : undefined;
-  const sceneModel = fetching ? sceneModels(shell, importer, page.url, session, builds) : undefined;
+  // A game built again builds its 3D maps from the models it keeps; nothing is fetched.
+  const go = session;
+  const keptIn = rebuilt && __ATLAS_DOWNLOADS__ && downloadsOffered(useAtlas.getState());
+  const sceneModel = fetching
+    ? sceneModels(shell, importer, page.url, session, builds)
+    : keptIn && turn.held
+      ? keptSceneModels(shell.tiles, turn.held, () => go === session, builds)
+      : undefined;
   try {
     return await convertPage(importer, page, rebuilt, show, onMeasuring, turn, {
       ...(wholePicture ? { wholePicture } : {}),
