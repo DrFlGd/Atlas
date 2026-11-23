@@ -1464,6 +1464,12 @@ export interface KeptPacksStatus {
   /** The folder, to show; the page never names one. */
   folder: string;
   folderIsDefault: boolean;
+  /**
+   * Where the default folder comes from, a folder chosen or not: Game
+   * Repo's Maps and Guides folder when Game Repo is on this computer, else
+   * the packs folder.
+   */
+  folderDefaultFrom: 'gameRepo' | 'packsFolder';
   /** The person chose a folder in the folder dialog. */
   folderChosen: boolean;
   schedule: KeptPacksSchedule;

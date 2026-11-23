@@ -493,6 +493,7 @@ fn start_keeper(
         downloads: downloads.clone(),
         app: commands::app_info(app.handle()),
         timing: keep::Timing::default(),
+        game_repo: keep::gamerepo::Paths::of_this_computer(),
         probe: Box::new(move || keep::Activity {
             downloads: probe_downloads.active_packs().into_iter().collect(),
             import_window: probe_app
