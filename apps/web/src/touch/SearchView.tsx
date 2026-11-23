@@ -11,6 +11,7 @@ import { GlyphBadge, UiIcon, type UiIconName } from '../components/icons';
 import { VirtualList } from '../components/VirtualList';
 import { GuidebookResults } from '../guidebook/Guidebooks';
 import { useGuidebookHits } from '../state/guidebooks';
+import { useMagazineHits } from '../state/magazines';
 import { goToLocation } from '../state/actions';
 import { openChecklist, openChecklistItem, openGuide } from '../state/checklists';
 import { numberFormat, useSummary } from '../state/derived';
@@ -276,6 +277,12 @@ function Results({ game, query }: { game: LoadedGame; query: string }) {
     query,
     20,
   );
+  // And the pages about the game in the issues of magazines that cover it.
+  const magazineHits = useMagazineHits(
+    scope === 'all' || scope === 'lists' ? game.entry.id : null,
+    query,
+    20,
+  );
   const count = rows.length >= LIMIT ? `More than ${numberFormat.format(LIMIT)}` : `${rows.length}`;
   return (
     <>
@@ -295,14 +302,15 @@ function Results({ game, query }: { game: LoadedGame; query: string }) {
         ))}
       </div>
       <p className="touch-search-summary" role="status" data-testid="search-summary">
-        {rows.length === 0 && guidebookHits.length > 0
-          ? 'Nothing on the map matches. Pages of guidebooks do.'
+        {rows.length === 0 && guidebookHits.length + magazineHits.length > 0
+          ? `Nothing on the map matches. Pages of ${guidebookHits.length > 0 ? 'guidebooks' : 'magazines'} do.`
           : rows.length === 0
             ? 'Nothing matches.'
             : `${count} result${rows.length === 1 ? '' : 's'}${places ? ', nearest to the middle of the map first' : ''}`}
       </p>
       <div className="touch-scroll touch-search-list" data-scroll-root>
         <GuidebookResults hits={guidebookHits} query={query} compact />
+        <GuidebookResults hits={magazineHits} query={query} compact heading="In magazines" />
         {rows.length > 0 ? (
           <VirtualList
             items={rows}

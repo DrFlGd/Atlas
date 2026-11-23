@@ -500,3 +500,7 @@ pub async fn guidebook_remove<R: Runtime>(
 
 #[cfg(all(test, not(target_os = "android")))]
 mod tests;
+
+// Packs of magazines are another app's, read as guidebooks are.
+#[cfg(all(test, not(target_os = "android")))]
+mod magazine_tests;

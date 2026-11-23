@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { rowMarkdown } from '@atlas/schema';
 import { guideHeadings, guideSearchText, renderGuideMarkdown } from './markdown';
 
 const options = {
@@ -20,7 +21,7 @@ describe('layout forms', () => {
   it('sets blocks side by side with their shares of the width, as classes', () => {
     const html = render(lines('::: side 1:3', '- Menu', '::: next', '## News', 'Text.', '::: end'));
     expect(shape(html)).toEqual([
-      'div.guide-form.guide-side.guide-side-2',
+      'div.guide-form.guide-side.guide-side-2.guide-side-short',
       'div.guide-side-block.guide-share-1',
       'ul',
       'li',
@@ -107,6 +108,78 @@ describe('layout forms', () => {
       '::: end',
     );
     expect(render(large)).not.toContain('guide-columns-pictures');
+  });
+
+  it('keeps an item of a row of several lines as its lines, beside the pictures it starts with', () => {
+    const row = rowMarkdown([
+      '[![stone](demo:picture:stone "=24")](demo:guide:a) ![stone](demo:picture:stone "=24")\n[Harbour](demo:guide:a)\n2.4.1\nSince spring',
+      '![stone](demo:picture:stone "=24") Fens\n- not a list',
+      '![stone](demo:picture:stone "=24") Gates',
+    ]);
+    const html = render(row);
+    expect(html).toContain('<ul class="guide-row-pictures">');
+    const items = html.split('<li>').slice(1);
+    // The pictures, then the lines in a span of their own, no break before the first.
+    expect(items[0]).toMatch(
+      /^<button[^>]*><span class="guide-picture inline"><img [^>]*><\/span><\/button> <span class="guide-picture inline"><img [^>]*><\/span> <span class="guide-row-lines"><button[^>]*>Harbour<\/button><br>\n2\.4\.1<br>\nSince spring<\/span><\/li>/u,
+    );
+    // Words on the pictures' line stay the first line; a further line is never a block.
+    expect(items[1]).toContain('<span class="guide-row-lines">Fens<br>\n- not a list</span>');
+    expect(html).not.toContain('<ul>');
+    // An item of one line is as before.
+    expect(items[2]).not.toContain('guide-row-lines');
+    // Without pictures, the lines alone.
+    expect(render(rowMarkdown(['Harbour\n2.4.1', 'Gates']))).toContain(
+      '<li><span class="guide-row-lines">Harbour<br>\n2.4.1</span></li>',
+    );
+  });
+
+  it('marks blocks side by side that hold only short lines, to stay side by side where narrow', () => {
+    const lists = render(
+      lines(
+        '::: side',
+        '[Early](demo:guide:a)',
+        '- ![stone](demo:picture:stone "=24") Ash\n- Elm',
+        '::: next',
+        '#### Late',
+        '1. Oak\n2. Yew',
+        '::: end',
+      ),
+    );
+    expect(lists).toContain('<div class="guide-form guide-side guide-side-2 guide-side-short">');
+    // A long line, an item of more than a line, a table or a form in a block: as before.
+    const long = 'Words '.repeat(15);
+    for (const other of [
+      long,
+      '- Ash\n\n  More of it.',
+      '| a |\n| --- |\n| b |',
+      lines('::: row', '- a\n- b', '::: end'),
+    ]) {
+      expect(render(lines('::: side', '- Ash', '::: next', other, '::: end'))).not.toContain(
+        'guide-side-short',
+      );
+    }
+  });
+
+  it('fills columns by count with a list of lines, and one list a column with as many lists', () => {
+    const items = Array.from({ length: 21 }, (_, i) => `- Item ${i}`).join('\n');
+    const html = render(lines('::: columns 4', items, '::: end'));
+    // Six in each column, as balanced columns of lines hold them.
+    expect(
+      [...html.matchAll(/<li( class="guide-column-start")?>Item (\d+)/gu)]
+        .filter((m) => m[1])
+        .map((m) => m[2]),
+    ).toEqual(['6', '12', '18']);
+    const apart = render(lines('::: columns 3', '- a\n- b\n- c', '* d', '- e\n- f', '::: end'));
+    expect(apart.match(/<ul class="guide-column-start">/gu)).toHaveLength(2);
+    expect(apart).not.toContain('<li class=');
+    // Items of more than a line, or lists not as many as the columns: the browser balances them.
+    expect(render(lines('::: columns 2', '- a\n\n  More.\n- b\n- c', '::: end'))).not.toContain(
+      'guide-column-start',
+    );
+    expect(render(lines('::: columns 3', '- a\n- b', '* c', '::: end'))).not.toContain(
+      'guide-column-start',
+    );
   });
 
   it('nests forms two deep and more, and keeps every mark working inside', () => {

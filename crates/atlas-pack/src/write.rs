@@ -25,7 +25,7 @@ use crate::{
 /// The most entries a CBZ file may have, pictures or not.
 pub const MAX_CBZ_PICTURES: usize = 20_000;
 /// The pack's manifest, as a pack folder has it.
-const MANIFEST_FILE: &str = "manifest.json";
+pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 /// A ZIP entry larger than this needs ZIP64 records.
 const ZIP32_LIMIT: u64 = 0xFFFF_FFFF;
 
@@ -35,7 +35,7 @@ const ZIP32_LIMIT: u64 = 0xFFFF_FFFF;
 pub struct WriteError(String);
 
 impl WriteError {
-    fn new(what: impl Into<String>) -> Self {
+    pub(crate) fn new(what: impl Into<String>) -> Self {
         Self(what.into())
     }
 
@@ -215,7 +215,7 @@ fn is_picture_entry(name: &str) -> bool {
         .any(|known| extension.eq_ignore_ascii_case(known))
 }
 
-fn type_of(file: &Path) -> Result<GuidebookType, WriteError> {
+pub(crate) fn type_of(file: &Path) -> Result<GuidebookType, WriteError> {
     file.file_name()
         .and_then(|name| name.to_str())
         .and_then(GuidebookType::of_file_name)
@@ -228,7 +228,11 @@ fn type_of(file: &Path) -> Result<GuidebookType, WriteError> {
 }
 
 /// Checks that a file starts as its type does.
-fn check_start(path: &Path, file: &mut File, file_type: GuidebookType) -> Result<(), WriteError> {
+pub(crate) fn check_start(
+    path: &Path,
+    file: &mut File,
+    file_type: GuidebookType,
+) -> Result<(), WriteError> {
     let mut start = Vec::with_capacity(1024);
     Read::by_ref(file)
         .take(1024)
@@ -253,19 +257,19 @@ fn check_start(path: &Path, file: &mut File, file_type: GuidebookType) -> Result
     }
 }
 
-fn shown(file: &Path) -> String {
+pub(crate) fn shown(file: &Path) -> String {
     file.file_name().map_or_else(
         || file.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
 }
 
-fn cannot_read(file: &Path, error: &io::Error) -> WriteError {
+pub(crate) fn cannot_read(file: &Path, error: &io::Error) -> WriteError {
     WriteError::new(format!("Could not read {}: {error}", shown(file)))
 }
 
 /// What goes into the file after the description, in order.
-enum Source<'a> {
+pub(crate) enum Source<'a> {
     Bytes(Vec<u8>),
     /// A new guidebook file, of this many bytes.
     File(&'a Path, u64),
@@ -273,11 +277,11 @@ enum Source<'a> {
     Kept(String),
 }
 
-struct Entry<'a> {
-    name: String,
-    deflate: bool,
-    size: u64,
-    source: Source<'a>,
+pub(crate) struct Entry<'a> {
+    pub(crate) name: String,
+    pub(crate) deflate: bool,
+    pub(crate) size: u64,
+    pub(crate) source: Source<'a>,
 }
 
 type Existing<'a> = (&'a Path, &'a Header, &'a dyn Fn(&GuidebookFacts) -> bool);
@@ -530,6 +534,8 @@ fn write_pack(
         bytes: entries.iter().map(|entry| entry.size).sum(),
         mine: None,
         guidebooks: list,
+        magazine: None,
+        issues: Vec::new(),
     };
     let header_bytes = to_json(&header)?;
 
@@ -552,11 +558,11 @@ fn write_pack(
 }
 
 /// One of the JSON files, with a sentence when it cannot be written.
-fn to_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, WriteError> {
+pub(crate) fn to_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, WriteError> {
     serde_json::to_vec_pretty(value).map_err(|error| WriteError::new(error.to_string()))
 }
 
-fn write_archive(
+pub(crate) fn write_archive(
     part: &Path,
     header: &[u8],
     entries: &[Entry<'_>],
@@ -627,7 +633,7 @@ fn write_archive(
 }
 
 /// `<target>.part`.
-fn part_path(target: &Path) -> PathBuf {
+pub(crate) fn part_path(target: &Path) -> PathBuf {
     let mut name = target.as_os_str().to_owned();
     name.push(".part");
     PathBuf::from(name)
@@ -646,7 +652,7 @@ fn next_version(version: &str) -> String {
 }
 
 /// Now, as an ISO 8601 date and time in UTC and as a ZIP time.
-fn now() -> (String, DateTime) {
+pub(crate) fn now() -> (String, DateTime) {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());

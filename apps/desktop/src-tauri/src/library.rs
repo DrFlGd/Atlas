@@ -160,6 +160,9 @@ pub const PACK_FILES: &[&str] = &[
     // A pack of guidebooks: the list of its guidebooks (see the
     // `atlas-pack` crate and `guidebooks.rs`).
     "guidebooks.json",
+    // A pack of the issues of a magazine: the list of its issues and the
+    // games they cover (see the `atlas-pack` crate).
+    "magazines.json",
     // Routes: ordered paths on the maps (see `routes.ts` in the schema
     // package). A pack file carries it only when it holds a route.
     "routes.json",
@@ -323,6 +326,11 @@ pub struct ListedPack {
     /// wrote.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub guidebooks_by_atlas: bool,
+    /// The pack is a pack of the issues of a magazine (see the `atlas-pack`
+    /// crate): no game, but issues the web app lists on its shelf of
+    /// magazines and with the games they cover. Atlas never changes one.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub magazines: bool,
 }
 
 /// When a pack file's pack was changed last and when the file was made,
@@ -1218,6 +1226,7 @@ impl Library {
             guidebooks_by_atlas: head.guidebooks
                 && head.written_by.as_deref() == Some(crate::guidebooks::WRITTEN_BY),
             guidebooks: head.guidebooks,
+            magazines: head.magazines,
         }
     }
 

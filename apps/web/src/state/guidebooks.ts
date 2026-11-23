@@ -215,7 +215,8 @@ const withSlash = (url: string) => (url.endsWith('/') ? url : `${url}/`);
 /** The reader closes when its guidebook is no longer listed (removed, or its pack gone). */
 function closeIfGone(): void {
   const open = get().open;
-  if (!open) return;
+  // An issue of a magazine is listed with its magazine (see `magazines.ts`).
+  if (!open || 'issue' in open.guidebook) return;
   const still = get().lists[open.guidebook.packId]?.guidebooks.some(
     (guidebook) => guidebook.key === open.guidebook.key && guidebook.bytes === open.guidebook.bytes,
   );

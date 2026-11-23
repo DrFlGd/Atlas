@@ -26,9 +26,14 @@
  *   no title bar.
  * - `::: row` opens a row: a list inside it is set on one line, its items
  *   with a dot between them (or, when each starts with a small picture,
- *   the picture beside each), wrapping to further lines where narrow.
+ *   the picture beside each), wrapping to further lines where narrow. An
+ *   item of several lines (line breaks in it) is a block of those lines,
+ *   one under another, the small pictures it starts with beside them.
  * - `::: columns 3` opens a list flowed in that many columns, a whole
- *   number counted as at least 2 and at most {@link MAX_COLUMNS}.
+ *   number counted as at least 2 and at most {@link MAX_COLUMNS}. A list
+ *   whose every item is one line fills the columns in turn, as many items
+ *   in each as the first holds; as many lists as columns are one list a
+ *   column.
  * - `::: centred` opens a block set in the middle.
  * - `::: end` closes the form opened last that is still open.
  * - Forms nest: a form may stand in a block of another, at most
@@ -326,9 +331,33 @@ export function cardMarkdown(title: string | null, body: string, level = 3): str
   return wrapped('::: card', [[heading, tidy(body)].filter((part) => part !== '').join('\n\n')]);
 }
 
-/** A row of short items, each item's Markdown on one line. */
+/** A line that would start a block of its own after a line of text (a list, a heading, a quote, code, a rule): escaped. */
+const BLOCK_START = /^(?:[-*+](?=\s|$)|#{1,6}(?=\s|$)|>|`{3}|~{3}|=+\s*$|-+\s*$|(?:[*_]\s*){3,}$)/u;
+const NUMBERED = /^(\d{1,9})([.)])(?=\s|$)/u;
+
+/** A line of an item after its first, as the line it is and no block. */
+function continuationLine(line: string): string {
+  const numbered = NUMBERED.exec(line);
+  if (numbered) return `${numbered[1]}\\${numbered[2]}${line.slice(numbered[0].length)}`;
+  return BLOCK_START.test(line) ? `\\${line}` : line;
+}
+
+/**
+ * A row of short items, each item's Markdown on one line; an item's line
+ * breaks (`\n`) are kept as Markdown line breaks, so an item the page
+ * shows as a block of lines (a name over a number) stays one.
+ */
 export function rowMarkdown(items: readonly string[]): string {
-  const lines = items.map((item) => item.replace(/\s+/gu, ' ').trim()).filter(Boolean);
+  const lines = items
+    .map((item) =>
+      item
+        .split(/\r\n|\r|\n/u)
+        .map((line) => line.replace(/\s+/gu, ' ').trim())
+        .filter(Boolean)
+        .map((line, i) => (i === 0 ? line : continuationLine(line)))
+        .join('  \n  '),
+    )
+    .filter(Boolean);
   return wrapped('::: row', [lines.map((item) => `- ${item}`).join('\n')]);
 }
 

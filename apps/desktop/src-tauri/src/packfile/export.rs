@@ -360,6 +360,9 @@ pub fn write_part(
         mine: mine_facts,
         // A pack of guidebooks is not exported (see `export_refusal`).
         guidebooks: Vec::new(),
+        // Nor is a pack of magazines.
+        magazine: None,
+        issues: Vec::new(),
     };
     let mut header_bytes = serde_json::to_vec_pretty(&header).expect("the header serialises");
     header_bytes.push(b'\n');

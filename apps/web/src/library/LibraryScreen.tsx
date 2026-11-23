@@ -35,6 +35,8 @@ import type { TagGroup, TaggedRow } from '../state/gameTags';
 import { sourceToOpenNow, useTitleRows } from '../state/gameGroups';
 import { listedPages, loadWikiNotes, useWikiNotes } from '../state/wikiNotes';
 import { NewGameButton } from '../touch/OwnGames';
+import { MagazinesButton } from '../guidebook/Magazines';
+import { useHasMagazines } from '../state/magazines';
 import { GamePane } from './GamePane';
 import { DownloadsPanel, DownloadsStrip } from './DownloadsPanel';
 import { KeptPacksLine } from './KeptPacks';
@@ -61,6 +63,7 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
   const downloads = useAtlas(downloadsOffered);
   const downloadsOpen = useLibrary((s) => s.downloads);
   const reader = useAtlas(readsPackFilesOnly);
+  const magazines = useHasMagazines();
 
   useEffect(() => {
     void loadAllGameFacts();
@@ -135,6 +138,11 @@ export function LibraryScreen({ mode }: { mode: 'section' | 'window' }) {
           <div className="library-side-body touch-scroll" data-scroll-root>
             <AddArea />
             <GameList openId={pane === 'game' ? openId : null} />
+            {magazines ? (
+              <div className="library-side-tools-block">
+                <MagazinesButton variant="library" />
+              </div>
+            ) : null}
             <SideTools updatable={updatable.size > 0} />
           </div>
         </aside>

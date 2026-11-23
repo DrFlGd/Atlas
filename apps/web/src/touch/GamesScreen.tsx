@@ -5,6 +5,7 @@ import { MineOfferLine, OpenForEditingConfirm } from '../components/MadePackConf
 import { GamesListBar, GamesSections, TagChips, TagsDialog } from '../components/GameListTools';
 import { useRowWords, useGamesList } from '../state/gamesList';
 import { ShowWithAnotherForm, SourcesLine, TitleSourcesPanel } from '../components/GameTitles';
+import { MagazinesButton } from '../guidebook/Magazines';
 import { UiIcon } from '../components/icons';
 import { PackSummary } from '../components/PackSummary';
 import { PackDetailsView } from '../components/PackFacts';
@@ -98,6 +99,7 @@ export function GamesScreen() {
               list={list}
             />
           </div>
+          <MagazinesButton variant="touch" />
           {canMake ? <NewGameButton /> : null}
           {canImport && reader ? (
             <>

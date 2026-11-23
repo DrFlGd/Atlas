@@ -33,7 +33,8 @@ export function catalogFrom(bundled: readonly PackEntry[], listing: Listing | nu
   if (!listing) return [...bundled];
   // A pack of guidebooks of a game here by its title is read with that game, not listed apart.
   const joined = joinGuidebooks(joinable(listing.packs, bundled), []);
-  const packs = listing.packs.filter((pack) => !joined.has(pack.id));
+  // A pack of magazines is no game: its issues are on the shelf of magazines.
+  const packs = listing.packs.filter((pack) => !joined.has(pack.id) && !pack.magazines);
   const listed = new Map(packs.map((pack) => [pack.id, pack]));
   const entry = (pack: { id: string; url: string; title: string }): PackEntry => ({
     id: pack.id,

@@ -1,6 +1,6 @@
 # The Atlas pack file format
 
-A pack file (`.atlaspack`) holds a map, a wiki, a guide or a guidebook for a game in one file: the pack folder of one game, its map images up to a chosen level of detail, and the pictures its pages show. Atlas writes one with **Export** and reads one where it lies, or takes it in with **Import map pack file** (the desktop app without downloads copies it into its packs folder with **Add a pack file** instead and reads it there). Another app can show a card for a pack file and pass it on without unpacking it. This page says what is in the file and how to read it safely.
+A pack file (`.atlaspack`) holds a map, a wiki, a guide or a guidebook for a game in one file, or the issues of a magazine: the pack folder of one game, its map images up to a chosen level of detail, and the pictures its pages show. Atlas writes one with **Export** and reads one where it lies, or takes it in with **Import map pack file** (the desktop app without downloads copies it into its packs folder with **Add a pack file** instead and reads it there). Another app can show a card for a pack file and pass it on without unpacking it. This page says what is in the file and how to read it safely.
 
 Every name in the examples is made up.
 
@@ -19,6 +19,8 @@ The entries come in this order:
 7. Only when the person asked for it: their own lists, locations, pages, notes, routes (from version 9, `mine/my-routes.json`) and photos, and the title the game is shown under with other games, under `mine/`.
 
 A pack of guidebooks (version 8, see "Guidebooks") holds, after the description, `manifest.json` and `guidebooks.json` (deflated), then each guidebook's text file and its file (both stored). It holds nothing else.
+
+A pack of magazines (version 10, see "Magazines") holds, after the description, `manifest.json` and `magazines.json` (deflated), then the cover of each issue that has one, then each issue's text file and its file (all stored). It holds nothing else.
 
 Every entry has the time the file was made, in UTC.
 
@@ -138,8 +140,9 @@ It is absent when the pack has none of these. The importer's `title` is never ta
 | `made-in-atlas` | was made in Atlas (its manifest says `madeInApp`).                           |
 | `map-maker`     | was made with Atlas Map Maker (the pack's `writtenBy` is `Atlas Map Maker`). |
 | `guidebooks`    | is a pack of guidebooks (see "Guidebooks").                                  |
+| `magazines`     | is a pack of the issues of a magazine (see "Magazines", version 10).         |
 
-Atlas writes it into every pack file it exports when it knows, and into every pack of guidebooks. It is optional: a reader must take a value it does not know as unknown, not refuse the file. A file without it is read with the same rules in the same order: a pack of guidebooks is `guidebooks`, one with `source.kind` `web-pages` is `site`, one whose `pack.writtenBy.name` is `Atlas Map Maker` is `map-maker`, and one whose `exportedBy.name` is `Atlas` or starts with `Atlas ` is `made-in-atlas`. Otherwise nothing is known. `Header::origin()` in the crate reads it so.
+Atlas writes it into every pack file it exports when it knows, and into every pack of guidebooks. It is optional: a reader must take a value it does not know as unknown, not refuse the file. A file without it is read with the same rules in the same order: a pack of guidebooks is `guidebooks`, a pack of magazines is `magazines`, one with `source.kind` `web-pages` is `site`, one whose `pack.writtenBy.name` is `Atlas Map Maker` is `map-maker`, and one whose `exportedBy.name` is `Atlas` or starts with `Atlas ` is `made-in-atlas`. Otherwise nothing is known. `Header::origin()` in the crate reads it so.
 
 The field needs no new version. Atlas 0.23.0 and 0.24.0 were checked: their reader of the description has no rule against fields it does not know (no `deny_unknown_fields`, in `source` either), and a version 7 description with `source.origin` reads as before, so they open such a file.
 
@@ -172,8 +175,9 @@ A file is written at the lowest version that can hold what it carries. So an old
 | 7       | Small pictures of the maps (`preview/`).                                                                                                                                                                                                                                         |
 | 8       | Guidebooks (`guidebooks/`, `guidebooks.json` and the `guidebooks` field).                                                                                                                                                                                                        |
 | 9       | Routes: the pack's `routes.json` holding a route, or the person's own routes (`mine/my-routes.json`, counted as `routes` in `mine`). The map's icons: types that name a picture (`picture` in `categories.json`), with those pictures (counted as `typePictures` in `contents`). |
+| 10      | Magazines: the issues of one magazine (`magazines/`, `magazines.json`, and the `magazine` and `issues` fields).                                                                                                                                                                  |
 
-The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, and only a file that carries routes or the map's icons is version 9; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
+The fields `game`, `personalUse`, `maps`, `guides`, `cover`, `source.name` and `source.origin` are optional and need no new version: a file without small pictures stays at the version of what else it carries. An older reader ignores them. Only a pack of guidebooks is version 8, only a file that carries routes or the map's icons is version 9, and only a pack of magazines is version 10; every other file stays at the version of what it carries, so the apps that read version 7 read it. A pack whose `routes.json` is empty is written without it, at the version of what else it carries.
 
 ## Guidebooks
 
@@ -234,6 +238,75 @@ An example of the description's part, for a made-up game:
 The checks a reader makes, besides those below: at most 100 guidebooks; each `file` a name as above, listed once; `pages` and `bytes` within their bounds (a file at most 16 GB, its text at most 64 MB); the file and its text stored, not deflated, the file of exactly `bytes`; a `text` that names the guidebook's own text file. A file over 4 GB is written with ZIP64 records. A PDF or CBZ is untrusted as any file is: Atlas reads it in parts, never whole, with bounds on what it reads, and a damaged one shows a sentence. Atlas runs no script a PDF holds, and opens a link to a web page only in the system browser.
 
 A pack of guidebooks is not exported: to pass guidebooks on, copy the pack file they came in.
+
+## Magazines
+
+A magazine's issues come from another app that keeps them, in a pack file of their own per magazine title, a pack of magazines (version 10). Atlas only reads it: where it lies in the packs folder, or, in the Android app, imported as any pack file. It never changes one, never exports one, never reads a CBR file (an issue arrives as a CBZ) and never reads text out of pictures. A pack of magazines is of no game: it is not listed with the games, but on the shelf of magazines, and each issue is listed with the games it covers.
+
+An app that reads version 9 at most (Atlas 0.26 and 0.27; 0.25 reads version 8) refuses a pack of magazines as a file in a newer format, with the sentence that names the app that made it, and lists it with that reason in the Library. It is not read in part.
+
+The pack's id is `magazines-` and a name of the magazine (`magazines-marsh-monthly`), a pack id as above. The pack holds:
+
+- `manifest.json`, with `gameId` the pack's id, `title` the magazine's title, and `writtenBy` the app that wrote it.
+- `magazines.json`: the list, `{ "format": "atlas-magazines", "version": 1, "magazine": { … }, "issues": [ … ] }`, as in the description.
+- For each issue, its file `magazines/<name>.pdf` or `magazines/<name>.cbz`, stored as it is. `<name>` is 1 to 80 lower case letters, digits, `-` and `_`, starting with a letter or a digit, made from the issue's date and title.
+- When the text of its pages is known, `magazines/<name>.text.json`, stored, in the format of a guidebook's text (`atlas-guidebook-text`, see "Guidebooks").
+- When it has one, its cover, `magazines/<name>.cover.jpg`, stored: a JPEG of at most 512 KB, best at most 512 pixels on its longest side. The covers come right after `magazines.json`, so a list of the issues can be shown from the start of the file.
+
+The description's `magazine`: `title` (1 to 200 characters) and, optionally, `publisher` (at most 100). Each issue in `issues` and in `magazines.json`:
+
+| Field    | What it is                                                                                                 |
+| -------- | ---------------------------------------------------------------------------------------------------------- |
+| `file`   | Its entry name, `magazines/<name>.pdf` or `.cbz`. The extension says which it is.                          |
+| `title`  | How it is shown, such as `Issue 42`: 1 to 200 characters.                                                  |
+| `date`   | Optional. When it came out: `YYYY-MM` or `YYYY-MM-DD`. Issues are shown newest first.                      |
+| `number` | Optional. Its number, which orders issues of the same date.                                                |
+| `pages`  | Its pages: a PDF's pages, a CBZ's pictures. 1 to 100,000.                                                  |
+| `bytes`  | The size of its file. At most 16 GB.                                                                       |
+| `text`   | Optional. The entry name of the text of its pages, `magazines/<name>.text.json`, with the same name.       |
+| `cover`  | Optional. The entry name of its cover, `magazines/<name>.cover.jpg`, with the same name.                   |
+| `games`  | Optional. The games it covers, at most 200, each `{ "title", "system"?, "gameId"?, "pages" }` (see below). |
+
+A game an issue covers has a `title` (1 to 200 characters), optionally the `system` it is for (at most 100) and its Atlas game id `gameId` (a pack id), and `pages`: the runs of pages about it, 1 to 50 of them, each `[first, last]` within the issue (one page is `[12, 12]`). Atlas lists the issue with a game of this device:
+
+1. When the entry has a `gameId` and a game here has that id: that game, and every game the person put under one title with it.
+2. Otherwise: every game whose title (its own, the title its pack file shows it under, or the title the person put it under) is the entry's title, compared without regard to case, space and punctuation, as guidebooks join their game. When the entry and the game both name a system, they must be the same, compared the same way.
+
+```json
+{
+  "format": "atlas-pack-file",
+  "version": 10,
+  "packId": "magazines-marsh-monthly",
+  "title": "Marsh Monthly",
+  "exportedBy": { "name": "Fen Shelf", "version": "3.1.0", "platform": "windows" },
+  "source": { "kind": "unknown", "origin": "magazines" },
+  "magazine": { "title": "Marsh Monthly", "publisher": "Reed Press" },
+  "issues": [
+    {
+      "file": "magazines/2026-04-issue-41.pdf",
+      "title": "Issue 41",
+      "date": "2026-04",
+      "number": 41,
+      "pages": 84,
+      "bytes": 48000000,
+      "text": "magazines/2026-04-issue-41.text.json",
+      "cover": "magazines/2026-04-issue-41.cover.jpg",
+      "games": [
+        {
+          "title": "Hollow Marsh",
+          "gameId": "hollow-marsh",
+          "pages": [
+            [12, 15],
+            [40, 40]
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+The checks a reader makes, besides those below: a `magazine` with a title when there are issues; at most 1,000 issues; each `file` a name as above, listed once; a `date` as above; `pages` and `bytes` within their bounds (its text at most 64 MB, its cover at most 512 KB); the file, its text and its cover stored, the file of exactly `bytes`; a `text` and a `cover` that name the issue's own; each game as above. An issue is untrusted as a guidebook is, and read the same way.
 
 ## What is never in a pack file
 
@@ -356,3 +429,4 @@ fn write(packs_folder: &Path) -> Result<(), String> {
 - `rewrite_guidebook_pack(existing, keep, pack, target)` writes such a pack again with the guidebooks `keep` keeps and those of `pack` after them, copying the kept ones as they are; the pack's version goes up by one. Atlas uses it to add a guidebook to a game's pack and to take one out, and only on the packs it wrote (`pack.writtenBy.name` `Atlas`).
 - `guidebook_pages(file)` counts a guidebook file's pages only.
 - `parse_guidebook_text(bytes, pages)` checks a text file, and `GuidebookText::of_pages(pages)` makes one.
+- `write_magazine_pack(pack, target)` writes a complete pack of magazines (version 10, see "Magazines") at `target`, as `<target>.part` renamed to `target` when it is complete, and returns its description. `pack` is a `MagazinePack`: its id (`magazines-` and a name), the `MagazineFacts` (title, publisher), the app that writes it, and each `NewIssue`: its file, title, date, number, pages (counted when none), text by page, cover (a JPEG file) and games (`IssueGame`). It refuses with a `WriteError`, one plain sentence, and writes nothing, when something does not fit the bounds above. Write a magazine again under the same id, at the same place, to change it: the new file replaces the old one whole.

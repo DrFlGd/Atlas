@@ -40,6 +40,8 @@ import { canLinkPages, linkedTargets, locationsText, targetText } from '../state
 import { guidesOf, hasGuidePages, hasMap, pictureOf } from '../state/guides';
 import { useGameGuidebooks, useGuidebookHits } from '../state/guidebooks';
 import { GuidebookList, GuidebookResults, GuidebooksAlone } from '../guidebook/Guidebooks';
+import { IssuesOfGame } from '../guidebook/Magazines';
+import { useGameCoverage, useMagazineHits } from '../state/magazines';
 import {
   isSourceHome,
   madeLandingOf,
@@ -139,9 +141,10 @@ export function GuidesScreen({ wide }: { wide: boolean }) {
   // The person's own pages and changes change what is shown.
   useOwnPages((s) => s.own);
   const guidebooks = useGameGuidebooks(game?.entry.id);
+  const coverage = useGameCoverage(game?.entry.id);
   if (!game) return null;
-  // A game whose guidebooks are all it has to read.
-  if (!editing && !hasGuidePages(game) && guidebooks.length > 0) {
+  // A game whose guidebooks, or issues of magazines about it, are all it has to read.
+  if (!editing && !hasGuidePages(game) && (guidebooks.length > 0 || coverage.length > 0)) {
     return (
       <GuidebooksAlone game={game} wide={wide}>
         {hasMap(game) ? <GuidesFromGames game={game} /> : null}
@@ -1562,6 +1565,7 @@ function LandingFoot({ game }: { game: LoadedGame }) {
   return (
     <>
       <GuidebookList gameId={game.entry.id} gameTitle={game.pack.manifest.title} />
+      <IssuesOfGame gameId={game.entry.id} />
       <GuidesRoutes />
       {canLinkPages(game) ? (
         <button
@@ -2379,6 +2383,7 @@ function SearchResults({
 }) {
   const hits = useMemo(() => guidesOf(game).search.search(query, 100), [game, query]);
   const guidebookHits = useGuidebookHits(game.entry.id, query);
+  const magazineHits = useMagazineHits(game.entry.id, query);
   // A page of another source than the one shown says which, so the choice of source hides none.
   const elsewhere = (guideId: string): string | null => {
     if (view.sources.length < 2) return null;
@@ -2389,8 +2394,8 @@ function SearchResults({
     <div className="guides-results" data-testid="guides-results">
       <h1 className="guides-title">Search</h1>
       <p className="guides-lead" aria-live="polite">
-        {hits.length === 0 && guidebookHits.length > 0
-          ? `No guide page has “${query.trim()}”. These pages of guidebooks have it.`
+        {hits.length === 0 && guidebookHits.length + magazineHits.length > 0
+          ? `No guide page has “${query.trim()}”. These pages of ${guidebookHits.length > 0 ? 'guidebooks' : 'magazines'} have it.`
           : hits.length === 0
             ? `No page has “${query.trim()}”.`
             : `${hits.length === 100 ? 'The first 100' : hits.length} page${hits.length === 1 ? '' : 's'} with “${query.trim()}”`}
@@ -2419,6 +2424,7 @@ function SearchResults({
         ))}
       </ul>
       <GuidebookResults hits={guidebookHits} query={query} />
+      <GuidebookResults hits={magazineHits} query={query} heading="In magazines" />
     </div>
   );
 }

@@ -43,6 +43,8 @@ import { canChangeGuideLinks, useGuideLinks, type OtherGuides } from '../state/g
 import { hasMap } from '../state/guides';
 import { guidebookChangesOffered, useGameGuidebooks } from '../state/guidebooks';
 import { GuidebookList } from '../guidebook/Guidebooks';
+import { IssuesOfGame } from '../guidebook/Magazines';
+import { useGameCoverage } from '../state/magazines';
 import { updateGame, wikiSourceOf, type WikiSource } from '../state/importing';
 import { useSourceNames, useTitleOf } from '../state/gameGroups';
 import {
@@ -119,6 +121,7 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
   const { tags, tagGroups } = useTagsOfGame(id);
   const several = useAtlas((s) => s.catalog.length > 1);
   const guidebooks = useGameGuidebooks(id);
+  const coverage = useGameCoverage(id);
   const guidebookChanges = useAtlas(guidebookChangesOffered);
   // A wiki read page by page: its own screen, once its importer is known.
   const [wiki, setWiki] = useState<WikiSource | null>(null);
@@ -308,6 +311,15 @@ export function GamePane({ id, updatable }: { id: string; updatable: boolean }) 
                   : 'A guidebook is a published guide you have as one file, a PDF or a CBZ. Add a guidebook copies it into a pack file of its own in the packs folder, and it is read here.'}
               </p>
               <GuidebookList gameId={id} gameTitle={title} heading={null} />
+            </Card>
+          ) : null}
+          {coverage.length > 0 ? (
+            <Card icon="library" title="In magazines" testId="library-magazines-card">
+              <p className="library-card-state">
+                Issues of magazines about this game, from the app that keeps your magazines. Press
+                one to read it from the first page about the game.
+              </p>
+              <IssuesOfGame gameId={id} heading={null} />
             </Card>
           ) : null}
           {__ATLAS_DOWNLOADS__ && downloads && details ? (

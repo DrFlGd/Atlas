@@ -48,6 +48,9 @@ pub struct ManifestHead {
     /// The pack is a pack of guidebooks: a pack file whose description
     /// lists guidebooks, or a pack folder with `guidebooks.json`.
     pub guidebooks: bool,
+    /// The pack is a pack of the issues of a magazine: a pack file whose
+    /// description lists issues, or a pack folder with `magazines.json`.
+    pub magazines: bool,
     /// The name of the app that wrote the pack (`writtenBy.name`), when
     /// it says: trimmed, at most 100 characters.
     pub written_by: Option<String>,
@@ -139,6 +142,7 @@ pub fn read_head(dir: &Path) -> Result<ManifestHead, String> {
         fs::read_to_string(&path).map_err(|error| format!("cannot read manifest.json: {error}"))?;
     let mut head = head_of_text(&text)?;
     head.guidebooks = dir.join(atlas_pack::GUIDEBOOK_LIST_FILE).is_file();
+    head.magazines = dir.join(atlas_pack::MAGAZINE_LIST_FILE).is_file();
     Ok(head)
 }
 
@@ -185,6 +189,7 @@ pub fn head_of_text(text: &str) -> Result<ManifestHead, String> {
             .map(str::to_owned),
         game_title: None,
         guidebooks: false,
+        magazines: false,
         written_by: written_by_name(raw.written_by.as_ref()),
     })
 }
@@ -234,6 +239,7 @@ pub fn head_of_header(header: &atlas_pack::Header) -> Result<ManifestHead, Strin
             .filter(|name| !name.is_empty() && name.chars().count() <= 200 && *name != title)
             .map(str::to_owned),
         guidebooks: !header.guidebooks.is_empty(),
+        magazines: !header.issues.is_empty(),
         written_by: written_by_name(header.pack.written_by.as_ref()),
     })
 }

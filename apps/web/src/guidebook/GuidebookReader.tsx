@@ -17,6 +17,7 @@ import {
   type OpenGuidebook,
 } from '../state/guidebooks';
 import { numberFormat } from '../state/derived';
+import { dateWords, isIssue, issueName, pagesWords, type Issue } from '../state/magazineData';
 import { openCbz, type CbzBook } from './cbz';
 import {
   clampZoom,
@@ -43,6 +44,8 @@ import '../styles/guidebooks.css';
  * jump, and search in its text with the pages found and, in a PDF whose
  * text says where it is, the words marked on the page. The page each
  * guidebook was left at is remembered on this device (see `guidebooks.ts`).
+ * An issue of a magazine is read the same way, its contents the games it
+ * covers with their pages, before the PDF's own.
  *
  * It is a modal dialog: Esc closes it, and the Android app's Back goes
  * back to the page before a jump, then closes it.
@@ -94,6 +97,10 @@ const LETTER: Size = { width: 612, height: 792 };
 
 function Reader({ open }: { open: OpenGuidebook }) {
   const { guidebook } = open;
+  const issue = isIssue(guidebook) ? guidebook : null;
+  /** What it is called in the sentences the reader shows. */
+  const noun = issue ? 'issue' : 'guidebook';
+  const title = issue ? issueName(issue) : guidebook.title;
   const dialog = useRef<HTMLDialogElement>(null);
   const view = useRef<HTMLDivElement>(null);
   const [book, setBook] = useState<Book | null>(null);
@@ -400,16 +407,18 @@ function Reader({ open }: { open: OpenGuidebook }) {
   const slots: number[] = [];
   if (book) for (let n = shown.first; n <= shown.last; n++) slots.push(n);
 
-  const outlineOffered = book?.type === 'pdf';
+  // An issue's contents are the games it covers, with or without the PDF's own.
+  const outlineOffered = book?.type === 'pdf' || (issue !== null && issue.issue.games.length > 0);
   return (
     <dialog
       ref={dialog}
       className="gb-reader"
-      aria-label={guidebook.title}
+      aria-label={title}
       data-testid="guidebook-reader"
       data-mode={mode}
       data-page={page}
       data-type={guidebook.type}
+      data-kind={issue ? 'issue' : 'guidebook'}
       onKeyDown={onKey}
       onCancel={(event) => {
         event.preventDefault();
@@ -437,15 +446,19 @@ function Reader({ open }: { open: OpenGuidebook }) {
         </button>
         <div className="gb-heading">
           <h1 className="gb-title" data-testid="guidebook-title">
-            {guidebook.title}
+            {title}
           </h1>
-          <p className="gb-facts">{guidebookFacts({ ...guidebook, pages })}</p>
+          <p className="gb-facts">
+            {[issue ? dateWords(issue.issue.date) : null, guidebookFacts({ ...guidebook, pages })]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
         </div>
         <button
           type="button"
           className="gb-icon-button"
-          aria-label="Close the guidebook"
-          title="Close the guidebook (Esc)"
+          aria-label={`Close the ${noun}`}
+          title={`Close the ${noun} (Esc)`}
           data-testid="guidebook-close"
           onClick={closeGuidebook}
         >
@@ -603,6 +616,7 @@ function Reader({ open }: { open: OpenGuidebook }) {
             known={textKnown}
             reading={reading ?? null}
             type={guidebook.type}
+            noun={noun}
             onStep={(step) => {
               const to = nextHit(hitPages, page, step);
               if (to !== null) goTo(to, false);
@@ -615,9 +629,10 @@ function Reader({ open }: { open: OpenGuidebook }) {
         ) : null}
       </header>
       <div className="gb-body">
-        {panel === 'contents' && book?.type === 'pdf' ? (
+        {panel === 'contents' && book && outlineOffered ? (
           <Contents
-            book={book.pdf}
+            book={book.type === 'pdf' ? book.pdf : null}
+            issue={issue}
             page={page}
             onGo={(n) => {
               goTo(n, true);
@@ -647,7 +662,7 @@ function Reader({ open }: { open: OpenGuidebook }) {
             </p>
           ) : !book ? (
             <p className="gb-wait" role="status">
-              Opening the guidebook…
+              Opening the {noun}…
             </p>
           ) : (
             <div
@@ -773,6 +788,7 @@ function FindBar({
   known,
   reading,
   type,
+  noun,
   onStep,
   listShown,
   onList,
@@ -783,6 +799,7 @@ function FindBar({
   known: boolean;
   reading: { done: number; total: number } | null;
   type: Guidebook['type'];
+  noun: 'guidebook' | 'issue';
   onStep: (step: 1 | -1) => void;
   listShown: boolean;
   onList: () => void;
@@ -796,8 +813,8 @@ function FindBar({
     ? `Reading the text of the pages for search: ${numberFormat.format(reading.done)} of ${numberFormat.format(reading.total)}.`
     : !known
       ? type === 'cbz'
-        ? 'This guidebook has no text to search: its pages are pictures.'
-        : 'The text of this guidebook could not be read, so it cannot be searched.'
+        ? `This ${noun} has no text to search: its pages are pictures.`
+        : `The text of this ${noun} could not be read, so it cannot be searched.`
       : !words
         ? ''
         : hits.length === 0
@@ -810,8 +827,8 @@ function FindBar({
         ref={input}
         type="search"
         className="gb-find-input"
-        placeholder="Find in this guidebook"
-        aria-label="Find in this guidebook"
+        placeholder={`Find in this ${noun}`}
+        aria-label={`Find in this ${noun}`}
         data-testid="guidebook-find"
         value={query}
         onChange={(event) => {
@@ -919,18 +936,24 @@ function Snippet({ hit }: { hit: GuidebookHit }) {
   return <span className="gb-entry-line">{parts}</span>;
 }
 
-/** The PDF's own contents (its outline), each item a link to its page. */
+/**
+ * The contents: an issue's games, each with the pages about it, and the
+ * PDF's own contents (its outline), each item a link to its page.
+ */
 function Contents({
   book,
+  issue,
   page,
   onGo,
 }: {
-  book: PdfBook;
+  book: PdfBook | null;
+  issue: Issue | null;
   page: number;
   onGo: (page: number) => void;
 }) {
   const [items, setItems] = useState<OutlineItem[] | null>(null);
   useEffect(() => {
+    if (!book) return;
     let current = true;
     void book.outline().then((read) => {
       if (current) setItems(read);
@@ -939,16 +962,53 @@ function Contents({
       current = false;
     };
   }, [book]);
+  const games = issue?.issue.games ?? [];
   return (
     <nav className="gb-side" aria-label="Contents" data-testid="guidebook-contents">
-      <h2 className="gb-side-title">Contents</h2>
-      {items === null ? (
-        <p className="gb-side-note">Reading the contents…</p>
-      ) : items.length === 0 ? (
-        <p className="gb-side-note">This guidebook has no list of contents of its own.</p>
-      ) : (
-        <OutlineLevel items={items} page={page} onGo={onGo} />
-      )}
+      {games.length > 0 ? (
+        <>
+          <h2 className="gb-side-title">Games in this issue</h2>
+          <ul className="gb-list">
+            {games.map((game, index) => {
+              const first = game.pages[0]?.[0] ?? 1;
+              const here = game.pages.some(([from, to]) => page >= from && page <= to);
+              return (
+                <li key={index}>
+                  <button
+                    type="button"
+                    className="gb-entry"
+                    aria-current={here ? 'page' : undefined}
+                    data-testid="issue-game"
+                    onClick={() => {
+                      onGo(first);
+                    }}
+                  >
+                    <span className="gb-entry-title">
+                      {game.title}
+                      {game.system ? ` (${game.system})` : ''}
+                    </span>
+                    <span className="gb-entry-page">{pagesWords(game.pages)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      ) : null}
+      {book ? (
+        <>
+          <h2 className="gb-side-title">Contents</h2>
+          {items === null ? (
+            <p className="gb-side-note">Reading the contents…</p>
+          ) : items.length === 0 ? (
+            <p className="gb-side-note">
+              This {issue ? 'issue' : 'guidebook'} has no list of contents of its own.
+            </p>
+          ) : (
+            <OutlineLevel items={items} page={page} onGo={onGo} />
+          )}
+        </>
+      ) : null}
     </nav>
   );
 }

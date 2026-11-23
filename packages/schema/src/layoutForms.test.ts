@@ -204,6 +204,33 @@ describe('writing the forms', () => {
     }
   });
 
+  it('keeps the line breaks of a row’s item, each further line no block of its own', () => {
+    const row = rowMarkdown([
+      '![Lamp](demo:picture:lamp "=24")\n[Harbour](demo:guide:harbour)\n2.4.1\nSince  spring',
+      'Gates',
+      'Fens\n- not a list\n# no heading\n3. no number\n---',
+    ]);
+    expect(row).toBe(
+      [
+        '::: row',
+        '',
+        '- ![Lamp](demo:picture:lamp "=24")  ',
+        '  [Harbour](demo:guide:harbour)  ',
+        '  2.4.1  ',
+        '  Since spring',
+        '- Gates',
+        '- Fens  ',
+        '  \\- not a list  ',
+        '  \\# no heading  ',
+        '  3\\. no number  ',
+        '  \\---',
+        '',
+        '::: end',
+      ].join('\n'),
+    );
+    expect(layoutFormsIn(row).forms).toHaveLength(1);
+  });
+
   it('nests forms written inside forms', () => {
     const text = cardMarkdown(
       'Menu',

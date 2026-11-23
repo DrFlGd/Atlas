@@ -1,7 +1,7 @@
 [package]
 name = "atlas-pack"
 version = "0.1.0"
-description = "Reads the description and small pictures of an Atlas pack file (.atlaspack) without unpacking it, and writes a pack file of guidebooks"
+description = "Reads the description and small pictures of an Atlas pack file (.atlaspack) without unpacking it, and writes a pack file of guidebooks or of magazines"
 edition = "2021"
 license = "MIT"
 rust-version = "1.90"
