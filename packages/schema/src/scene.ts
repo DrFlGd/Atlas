@@ -93,7 +93,7 @@ function lenientArray<T extends z.ZodType>(item: T): z.ZodArray<T> {
     .transform((list) =>
       list.flatMap((value) => {
         const parsed = item.safeParse(value);
-        return parsed.success ? [parsed.data as z.output<T>] : [];
+        return parsed.success ? [parsed.data] : [];
       }),
     )
     .refine((list) => list.length > 0, 'has nothing that can be read') as unknown as z.ZodArray<T>;

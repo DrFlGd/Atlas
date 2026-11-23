@@ -55,8 +55,13 @@ const TUNNEL = { from: 184, to: 136, y: 195, half: 2, high: 3.5 } as const;
 /** The floors: each a layer of the map with its map image. */
 export const KEEP_FLOORS = [
   { local: 'keep-caves', name: 'Caves', heights: [-12, -4] },
-  { local: 'keep-ground', name: 'Ground floor', heights: [-4, KEEP.base + STOREY] },
-  { local: 'keep-upper', name: 'Upper floor', heights: [KEEP.base + STOREY, 40] },
+  // Each storey is cut just under the floor above it, so its rooms show from above.
+  { local: 'keep-ground', name: 'Ground floor', heights: [-4, KEEP.base + STOREY - 0.25] },
+  {
+    local: 'keep-upper',
+    name: 'Upper floor',
+    heights: [KEEP.base + STOREY - 0.25, KEEP.base + 2 * STOREY - 0.25],
+  },
 ] as const satisfies readonly { local: string; name: string; heights: [number, number] }[];
 
 // ---------------------------------------------------------------------------
@@ -117,6 +122,10 @@ function groundColour(h: number, slope: number): [number, number, number] {
 /** World x, y, height to model coordinates (glTF's own axes: Y up, -Z north). */
 const model = (x: number, y: number, h: number): [number, number, number] => [x, h, -y];
 
+/** An sRGB value (0 to 1) as a linear one, 0 to 255. */
+const linear = (v: number) =>
+  Math.round(255 * (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+
 class MeshBuilder {
   positions: number[] = [];
   normals: number[] = [];
@@ -130,12 +139,8 @@ class MeshBuilder {
   vertex(p: readonly number[], n: readonly number[], c: readonly number[]): number {
     this.positions.push(p[0]!, p[1]!, p[2]!);
     this.normals.push(n[0]!, n[1]!, n[2]!);
-    this.colors.push(
-      Math.round(c[0]! * 255),
-      Math.round(c[1]! * 255),
-      Math.round(c[2]! * 255),
-      255,
-    );
+    // glTF reads vertex colours as linear; the colours here are chosen as sRGB.
+    this.colors.push(linear(c[0]!), linear(c[1]!), linear(c[2]!), 255);
     return this.vertexCount - 1;
   }
 
@@ -145,12 +150,8 @@ class MeshBuilder {
     colour: readonly number[],
     inside: readonly number[],
   ): void {
-    let [a, b, c, d] = corners as unknown as [
-      readonly number[],
-      readonly number[],
-      readonly number[],
-      readonly number[],
-    ];
+    const [a, c] = [corners[0]!, corners[2]!];
+    let [b, d] = [corners[1]!, corners[3]!];
     let n = cross(sub(b, a), sub(c, a));
     const centre = [0, 1, 2].map((k) => (a[k]! + b[k]! + c[k]! + d[k]!) / 4);
     if (dot(n, sub(centre, inside)) < 0) {
@@ -281,13 +282,15 @@ function groundMesh(cx: number, cy: number, segments: number): MeshBuilder {
       const [bx, by] = edge[k + 1]!;
       const ha = groundHeight(ax, ay);
       const hb = groundHeight(bx, by);
-      const colour = groundColour(Math.min(ha, hb), 1);
+      const colour = groundColour(Math.min(ha, hb), 0);
       const inside = [middle[0], (ha + hb) / 2, middle[2]];
       mesh.quad(
         [model(ax, ay, ha), model(bx, by, hb), model(bx, by, hb - 3), model(ax, ay, ha - 3)],
         colour,
         inside,
       );
+      // Lit as the ground it hangs from, so a seam between levels does not show.
+      mesh.normals.splice(-12, 12, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
     }
   }
   return mesh;
