@@ -1256,6 +1256,10 @@ function installFakeShell({
           message: null,
         };
       }
+      case 'import_reuse_model':
+        // This stand-in keeps no models: a build again finds none kept.
+        shell.gameFolder.calls.push(command);
+        return null;
       case 'import_discard_scenes':
         shell.gameFolder.calls.push(command);
         return null;
