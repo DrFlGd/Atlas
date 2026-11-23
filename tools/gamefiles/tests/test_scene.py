@@ -167,7 +167,9 @@ def test_make_writes_a_3d_model_per_area(made_3d, builder: Path) -> None:
 
 
 def test_make_reports_the_3d_side(made_3d) -> None:
-    report, _, _, out = made_3d
+    report, events, _, out = made_3d
+    lines = {e["id"][:6]: e.get("scene") for e in events if e["event"] == "area"}
+    assert lines["m15_01"] is True and lines["m10_02"] is False
     anor = next(a for a in report["areas"] if a["key"] == "m15_01")["scene"]
     assert anor["made"] is True
     assert anor["trianglesBefore"] > 0 and 0 < anor["trianglesAfter"] <= anor["trianglesBefore"]

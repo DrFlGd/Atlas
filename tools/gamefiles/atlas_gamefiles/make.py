@@ -598,6 +598,7 @@ class MapMaker:
             floors=len(entry.get("floors", [])),
             markers=entry.get("markers", {}).get("total", 0),
             skipped=entry.get("skipped"),
+            scene=entry["scene"].get("made") if isinstance(entry.get("scene"), dict) else None,
         )
 
     def summary(self, areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any]:

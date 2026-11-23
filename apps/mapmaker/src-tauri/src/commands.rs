@@ -27,6 +27,10 @@ pub struct LastSaved(pub Mutex<Option<PathBuf>>);
 pub struct AppInfo {
     version: String,
     helper_found: bool,
+    /// The 3D builder (atlas-scene) is installed next to the app.
+    scene_builder_found: bool,
+    /// "Also make 3D maps", as last chosen (on by default).
+    make_3d: bool,
     last_folder: Option<String>,
     typical_folder: Option<String>,
     /// Where Make map installs the pack: the Atlas viewer's maps folder.
@@ -68,6 +72,8 @@ pub fn app_info<R: Runtime>(app: AppHandle<R>) -> Result<AppInfo, String> {
     Ok(AppInfo {
         version: app.package_info().version.to_string(),
         helper_found: checks::find_helper().is_some(),
+        scene_builder_found: checks::find_scene_builder().is_some(),
+        make_3d: settings.make_3d(),
         last_folder: settings.last_folder,
         typical_folder: settings::typical_folder(),
         maps_folder: viewer_maps_folder(&app)
@@ -125,16 +131,28 @@ pub fn check_start<R: Runtime>(
     start(&app, &checks, folder, Job::Check, "checks")
 }
 
-/// Starts making the map pack of `folder`, installed in the Atlas viewer's maps folder. Its report goes to a new
-/// folder in the app's own data.
+/// Starts making the map pack of `folder`, installed in the Atlas viewer's maps folder, with 3D maps when
+/// `make_3d` ("Also make 3D maps", which is remembered). Its report goes to a new folder in the app's own data.
 #[tauri::command]
 pub fn make_start<R: Runtime>(
     app: AppHandle<R>,
     checks: State<'_, Checks>,
     folder: String,
+    make_3d: bool,
 ) -> Result<Status, String> {
     let maps_folder = viewer_maps_folder(&app)?;
-    start(&app, &checks, folder, Job::Make { maps_folder }, "makes")
+    let file = settings_file(&app)?;
+    let mut settings = settings::read(&file);
+    if settings.make_3d() != make_3d {
+        settings.make_3d = Some(make_3d);
+        let _ = settings::write(&file, &settings);
+    }
+    let job = Job::Make {
+        maps_folder,
+        three_d: make_3d,
+        scene_builder: checks::find_scene_builder(),
+    };
+    start(&app, &checks, folder, job, "makes")
 }
 
 fn start<R: Runtime>(
@@ -165,6 +183,7 @@ fn start<R: Runtime>(
     if settings.last_folder.as_deref() != Some(folder.as_str()) {
         settings = Settings {
             last_folder: Some(folder),
+            ..settings
         };
         let _ = settings::write(&file, &settings);
     }

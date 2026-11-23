@@ -140,6 +140,21 @@ h3 {
   gap: 10px;
 }
 
+.mm-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  cursor: pointer;
+}
+
+.mm-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--atlas-accent);
+}
+
 .mm-path {
   flex: 1 1 320px;
   min-width: 0;

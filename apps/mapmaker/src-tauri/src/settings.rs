@@ -1,4 +1,5 @@
-//! The Map Maker's one setting: the last game folder, in `settings.json` in the app's config folder.
+//! The Map Maker's settings, in `settings.json` in the app's config folder: the last game folder, and whether Make
+//! map also makes 3D maps.
 
 use std::{fs, path::Path};
 
@@ -8,6 +9,15 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub last_folder: Option<String>,
+    /// "Also make 3D maps"; on when never chosen.
+    #[serde(rename = "make3d", skip_serializing_if = "Option::is_none")]
+    pub make_3d: Option<bool>,
+}
+
+impl Settings {
+    pub fn make_3d(&self) -> bool {
+        self.make_3d.unwrap_or(true)
+    }
 }
 
 pub fn read(file: &Path) -> Settings {
@@ -50,12 +60,19 @@ mod tests {
             std::env::temp_dir().join(format!("atlas-mapmaker-settings-{}", std::process::id()));
         let file = dir.join("settings.json");
         assert_eq!(read(&file), Settings::default());
+        assert!(read(&file).make_3d(), "3D maps are on until turned off");
         let settings = Settings {
             last_folder: Some(r"C:\Games\DARK SOULS REMASTERED".into()),
+            make_3d: Some(false),
         };
         write(&file, &settings).unwrap();
         assert_eq!(read(&file), settings);
-        assert!(fs::read_to_string(&file).unwrap().contains("lastFolder"));
+        assert!(!read(&file).make_3d());
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains("lastFolder") && text.contains("make3d"),
+            "{text}"
+        );
         fs::write(&file, "not json").unwrap();
         assert_eq!(read(&file), Settings::default());
         let _ = fs::remove_dir_all(&dir);

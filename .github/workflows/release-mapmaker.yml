@@ -94,13 +94,26 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/mapmaker/src-tauri -> target
+          workspaces: |
+            apps/mapmaker/src-tauri -> target
+            crates/atlas-scene -> target
 
       - run: pnpm install --frozen-lockfile
+
+      # The 3D builder the installer carries next to the helper: its tests on
+      # made-up models, then the helper's 3D tests with it.
+      - name: Test and build the 3D builder
+        run: |
+          cargo test --locked --manifest-path crates/atlas-scene/Cargo.toml
+          cargo build --release --locked --manifest-path crates/atlas-scene/Cargo.toml
+          cd tools/gamefiles
+          ATLAS_SCENE_REQUIRED=1 python -m pytest -q tests/test_scene.py
 
       # Lint, type checks and the app's tests run on every pull request
       # (ci.yml). No signing keys are set: the installer is unsigned.
       - name: Build the Map Maker
+        env:
+          ATLAS_SCENE_BUILDER: crates/atlas-scene/target/release/atlas-scene.exe
         run: pnpm --filter @atlas/mapmaker desktop:build
 
       - name: Start-up test of the app window

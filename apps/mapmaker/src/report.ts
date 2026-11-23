@@ -328,6 +328,29 @@ export interface MadeFloor {
   preview: string;
 }
 
+/** An area's 3D model, as Make map reports it (with "Also make 3D maps"). */
+export interface MadeScene {
+  made: boolean;
+  /** Why it was not made. */
+  reason?: string;
+  /** Triangles read from the game, and of the model's finest level once cleaned. */
+  trianglesBefore: number;
+  trianglesAfter?: number;
+  trianglesDropped?: number;
+  /** Each level of detail over all cells, finest first. */
+  levels?: { level: number; cells: number; triangles: number; bytes: number }[];
+  cells?: number;
+  cellSize?: number;
+  files?: number;
+  bytes?: number;
+  seconds?: number;
+  /** Each floor's [min, max] heights, when the area has storeys. */
+  floors?: [number, number][] | null;
+  /** Markers with no surface under them. */
+  noSurfaceUnder?: number;
+  warnings?: string[];
+}
+
 export interface MadeArea {
   id: string;
   key: string;
@@ -365,6 +388,7 @@ export interface MadeArea {
     withFlag: number;
     placeNames: number;
   };
+  scene?: MadeScene;
   seconds?: number;
 }
 
@@ -394,6 +418,18 @@ export interface MakeReport {
     markers: number;
     markersByCategory: Partial<Record<MarkerCategory, number>>;
     notOnFloor: number;
+    /** The 3D models over all areas; null or absent when 3D maps were off. */
+    threeD?: {
+      areasMade: number;
+      areasNotMade: number;
+      trianglesBefore: number;
+      trianglesAfter: number;
+      cells: number;
+      files: number;
+      bytes: number;
+      seconds: number;
+      noSurfaceUnder: number;
+    } | null;
   } | null;
   warnings: string[];
   elapsedSeconds: number;
@@ -418,15 +454,42 @@ export function categoryCounts(counts: Partial<Record<MarkerCategory, number>>):
 export function makeSummaryLine(report: MakeReport): string {
   const summary = report.summary;
   if (!summary) return report.game.reason ?? 'No map could be made from this folder.';
+  const threeD = summary.threeD;
   const parts = [
     `${plural(summary.areasMade, 'area')} drawn`,
     plural(summary.floors, 'floor'),
     plural(summary.markers, 'marker'),
+    threeD ? `3D models of ${plural(threeD.areasMade, 'area')} (${sizeText(threeD.bytes)})` : null,
     summary.areasSkipped.length > 0
       ? `${plural(summary.areasSkipped.length, 'area')} left out`
       : null,
   ];
   return `${parts.filter(Boolean).join(', ')}.`;
+}
+
+/** "640 KB", "12.5 MB": a file size in plain words. */
+export function sizeText(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${count(Math.max(1, Math.round(bytes / 1024)))} KB`;
+  const mb = bytes / (1024 * 1024);
+  return `${mb < 10 ? mb.toFixed(1) : count(Math.round(mb))} MB`;
+}
+
+/**
+ * An area's 3D model in a few lines: triangles before and after (and per level of detail),
+ * cells, size and time. Empty when 3D maps were off.
+ */
+export function sceneLines(scene: MadeScene | undefined): string[] {
+  if (!scene) return [];
+  if (!scene.made) return [`Not made: ${scene.reason ?? 'unknown reason'}`];
+  const levels = scene.levels ?? [];
+  return [
+    `${count(scene.trianglesBefore)} triangles read, ${count(scene.trianglesAfter ?? 0)} in the model`,
+    levels.length > 1
+      ? `Levels of detail: ${levels.map((level) => count(level.triangles)).join(', ')} triangles`
+      : null,
+    `${plural(scene.cells ?? 0, 'cell')}, ${plural(scene.files ?? 0, 'file')}, ${sizeText(scene.bytes ?? 0)}`,
+    `${secondsText(scene.seconds ?? 0)} s`,
+  ].filter((line): line is string => line !== null);
 }
 
 /** What to look at in an area of a made map, in plain words; empty when all went as expected. */
@@ -454,6 +517,8 @@ export function areaNotes(area: MadeArea): string[] {
     );
   if (area.placement && !area.placement.verdict.startsWith('placed by part'))
     notes.push(`Collision placement: ${area.placement.verdict}`);
+  if (area.scene && !area.scene.made && area.geometry?.used)
+    notes.push(`No 3D model: ${area.scene.reason ?? 'unknown reason'}`);
   return notes;
 }
 
