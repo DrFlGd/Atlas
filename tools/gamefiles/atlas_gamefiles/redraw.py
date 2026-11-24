@@ -56,7 +56,7 @@ STAGING = ".{}.redraw"
 BACKUP = ".{}.redraw-old"
 WORK = "redraw-work"
 UNPACK_TIME_LIMIT = 600.0
-AREA_KEY = re.compile(r"m\d\d_\d\d")
+AREA_KEY = re.compile(r"m\d\d_\d\d|model")  # a game area, or the one map made from a model (model.py)
 # A layer's tiles: a plain folder path, then `{z}/{x}/{y}.<png|webp>`.
 TILE_URL = re.compile(r"^((?:[A-Za-z0-9_][A-Za-z0-9_.\-]*/)+)\{z\}/\{x\}/\{y\}\.(png|webp)$")
 

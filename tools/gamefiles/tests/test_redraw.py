@@ -249,3 +249,28 @@ def test_textured_styles_draw_with_the_builder(made_pack: Path, builder: Path, t
     assert MapFrame(0.5, 0.25, -0.25, 0.5, 10.0, 20.0, width=100, height=80).box() is None
     assert MapFrame(0.5, 0.0, 0.0, -0.5, 10.0, 20.0, width=100, height=80).box() == {"xMin": 10.0, "zMax": 20.0, "scale": 2.0}
 
+
+
+def test_a_map_made_from_a_model_is_drawn_again_with_its_cuts(builder: Path, tmp_path: Path) -> None:  # noqa: F811
+    # The made-up house (tests/model_fixtures.py), made into a pack from its OBJ file, then drawn again in its own
+    # textures from the pack alone with the player's cut for it (under its pack id, area `model`): its three floors
+    # become two, layers and all, and the pack stays valid.
+    import model_fixtures
+    from atlas_gamefiles.model import ModelMapMaker
+
+    model = model_fixtures.write_obj(tmp_path / "model")
+    maps = tmp_path / "Maps"
+    ModelMapMaker(model, tmp_path / "made", Events(io.StringIO()), maps_folder=maps, scene_builder=builder, name="House").run()
+    pack = maps / "house"
+    assert len(load(pack, "layers.json")) == 3
+    own = tmp_path / "floor-overrides.json"
+    own.write_text(json.dumps({"house": {"model": {"cuts": [2.0]}}}), encoding="utf-8")
+    report, events = redraw(pack, tmp_path / "out", builder, style="textured", floor_overrides_file=own)
+    line = next(e for e in events if e["event"] == "map")
+    assert line["redrawn"] is True and line["floors"] == 2 and line["floorsFrom"] == "yours"
+    assert report["maps"][0]["mapStyle"] == "textured", report["warnings"]
+    layers = load(pack, "layers.json")
+    assert [layer["id"] for layer in layers] == ["house:layer:model-f0", "house:layer:model-f1"]
+    assert [layer["heights"][1] for layer in layers][0] == pytest.approx(2.0)
+    assert not (pack / "tiles" / "model" / "f2").exists()
+    assert check_pack(builder, pack)["problems"] == []

@@ -1277,6 +1277,45 @@ mod tests {
     }
 
     #[test]
+    fn drawing_a_pack_again_says_what_became_of_each_map() {
+        let mut progress = Progress::default();
+        progress.apply_line(r#"{"event":"maps","count":3}"#);
+        progress.apply_line(
+            r#"{"event":"map","id":"p:map:a","name":"Low Town","redrawn":true,"floors":2,"floorsFrom":"pack"}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"map","id":"p:map:b","name":"High Town","redrawn":true,"floors":1,"floorsFrom":"yours"}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"map","id":"p:map:c","name":"Shrine","redrawn":false,"reason":"it has no 3D model"}"#,
+        );
+        let texts: Vec<&str> = progress
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "3 maps with a 3D model to draw again",
+                "Low Town: drawn again, 2 floors",
+                "High Town: drawn again, 1 floor, with your floor cuts",
+                "Shrine: left as it was (it has no 3D model)",
+            ]
+        );
+        assert_eq!(
+            Job::Redraw {
+                scene_builder: None,
+                floor_overrides: None,
+                map_style: "floors".into(),
+                floor_method: None,
+            }
+            .kind(),
+            Kind::Redraw
+        );
+    }
+
+    #[test]
     fn unsupported_game_is_reported_with_its_reason() {
         let mut progress = Progress::default();
         progress.apply_line(r#"{"event":"game","game":{"title":"Unknown","supported":false,"reason":"No game here."}}"#);
