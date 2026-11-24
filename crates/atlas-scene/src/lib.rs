@@ -25,7 +25,17 @@
 //!    another cell (or another material) never move, so cells at different
 //!    levels meet without gaps; normals are worked out on the whole model
 //!    first (split where faces meet at more than `creaseAngle`), so no seam
-//!    shows between cells.
+//!    shows between cells. With [`Options::one_cell`], a small model is
+//!    kept whole instead: one cell over all of it, so each picture is in
+//!    its files once and the 3D view loads it as one piece, as a site's
+//!    own viewer of such a model does. It still gets its coarser levels.
+//!    Its coarser levels are made as close to it as a cut model's cells
+//!    would be. A model too large for that (more than
+//!    [`ONE_CELL_MAX_TRIANGLES`] triangles or [`ONE_CELL_MAX_MATERIALS`]
+//!    materials, pictures that take more than
+//!    [`ONE_CELL_MAX_PICTURE_BYTES`] once loaded, or a finest file that
+//!    could pass 256 MB) is cut into cells as before, with a warning that
+//!    says which limit it passed.
 //! 5. **Compresses** each file with `EXT_meshopt_compression`. Textures are
 //!    left out, kept as their average colour, or kept as pictures in each
 //!    file that uses them, smaller for coarser levels ([`textures`]).
@@ -80,6 +90,16 @@ use textures::TextureOptions;
 
 /// A cell whose finest file holds more bytes of pictures than this is named in a warning.
 pub const LARGE_CELL_TEXTURES: u64 = 64 << 20;
+
+/// A model of more triangles (at its finest level) is never kept as one
+/// cell ([`Options::one_cell`]): the 3D view holds about 4 million at once.
+pub const ONE_CELL_MAX_TRIANGLES: usize = 3_000_000;
+/// A model of more materials is never kept as one cell: each is drawn by itself.
+pub const ONE_CELL_MAX_MATERIALS: usize = 300;
+/// A model whose pictures take more bytes than this once loaded is never
+/// kept as one cell: the 3D view's smallest budget for pictures (600 MB,
+/// halved on a device of 2 GB or less).
+pub const ONE_CELL_MAX_PICTURE_BYTES: u64 = 300 << 20;
 
 /// The program's name and version, written into each model file.
 pub const GENERATOR: &str = concat!("Atlas scene builder ", env!("CARGO_PKG_VERSION"));
@@ -145,6 +165,18 @@ pub struct Options {
     /// is absent.
     #[serde(default = "default_cell_triangles")]
     pub cell_triangles: usize,
+    /// Keep the model whole, as one cell over all of it, when it is small
+    /// enough: at most [`ONE_CELL_MAX_TRIANGLES`] triangles and
+    /// [`ONE_CELL_MAX_MATERIALS`] materials, pictures that take at most
+    /// [`ONE_CELL_MAX_PICTURE_BYTES`] once loaded (each picture counted
+    /// once, 4 bytes a pixel and a third more for its smaller copies), and
+    /// a finest file that stays under 256 MB. Each picture is then in each
+    /// of the cell's files once, and `cellSize` (or `cellTriangles`) only
+    /// says how close its coarser levels keep to it, as for a cell of that
+    /// side. A larger model is cut into cells as without it, with a warning
+    /// that says which limit it passed. Off by default.
+    #[serde(default)]
+    pub one_cell: bool,
     /// The coarser levels, finest first; a level that saves little is left out.
     #[serde(default = "default_levels")]
     pub levels: Vec<Level>,
@@ -241,6 +273,8 @@ pub struct Report {
     /// The cells were made smaller than the triangles alone ask, so that
     /// each holds fewer pictures (textures `keep`, `cellBytes`).
     pub cells_smaller_for_textures: bool,
+    /// The model was kept whole, as one cell ([`Options::one_cell`]).
+    pub one_cell: bool,
     /// Primitives that are not triangles.
     pub primitives_skipped: usize,
     pub warnings: Vec<String>,
@@ -678,6 +712,84 @@ fn fit_cells_to_pictures(
     side
 }
 
+/// The pictures the kept triangles show, each once: their bytes in the
+/// raw model, and the bytes they take once loaded for drawing at the
+/// finest level (4 bytes a pixel, a third more for their smaller copies;
+/// a picture whose size cannot be read counts as its file's bytes).
+fn kept_picture_bytes(model: &Model, welded: &Welded, options: &TextureOptions) -> (u64, u64) {
+    let used: HashSet<u32> = welded.materials.iter().copied().collect();
+    let images: HashSet<usize> = used
+        .into_iter()
+        .filter_map(|m| model.materials.get(m as usize)?.texture)
+        .map(|texture| texture.image)
+        .collect();
+    images
+        .into_iter()
+        .filter_map(|image| model.images.get(image))
+        .map(|bytes| (bytes.len() as u64, loaded_picture_bytes(bytes, options)))
+        .fold((0, 0), |(a, b), (c, d)| (a + c, b + d))
+}
+
+/// The bytes a picture takes once loaded for drawing at the finest level:
+/// its width times its height (made smaller by `maxSize` when given) times
+/// 4, and a third more for its smaller copies; its file's bytes when its
+/// size cannot be read.
+fn loaded_picture_bytes(bytes: &[u8], options: &TextureOptions) -> u64 {
+    let size = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok());
+    let Some((width, height)) = size.filter(|(w, h)| *w > 0 && *h > 0) else {
+        return bytes.len() as u64;
+    };
+    let own = width.max(height);
+    let scale = options.side_at(own, 0) as f64 / own as f64;
+    let pixels = (width as f64 * scale).ceil() * (height as f64 * scale).ceil();
+    (pixels * 4.0 * 4.0 / 3.0).ceil() as u64
+}
+
+/// What a model kept whole holds, to tell whether it may be one cell.
+#[derive(Clone, Copy, Debug)]
+struct Whole {
+    /// Triangles at the finest level.
+    triangles: usize,
+    /// Materials its triangles use: one primitive each.
+    materials: usize,
+    /// Bytes its pictures take once loaded (see [`loaded_picture_bytes`]).
+    picture_bytes: u64,
+    /// The most bytes its finest file could take, unpacked.
+    file_bytes: u64,
+}
+
+/// Why a model may not be kept as one cell, one phrase for each limit it
+/// passes; none when it may.
+fn too_large_for_one_cell(whole: Whole) -> Vec<String> {
+    let mut passed = Vec::new();
+    if whole.triangles > ONE_CELL_MAX_TRIANGLES {
+        passed.push(format!(
+            "{} triangles, more than {ONE_CELL_MAX_TRIANGLES}",
+            whole.triangles
+        ));
+    }
+    if whole.materials > ONE_CELL_MAX_MATERIALS {
+        passed.push(format!(
+            "{} materials, more than {ONE_CELL_MAX_MATERIALS}",
+            whole.materials
+        ));
+    }
+    if whole.picture_bytes > ONE_CELL_MAX_PICTURE_BYTES {
+        passed.push(format!(
+            "pictures that take {} MB once loaded, more than {} MB",
+            whole.picture_bytes.div_ceil(1 << 20),
+            ONE_CELL_MAX_PICTURE_BYTES >> 20
+        ));
+    }
+    if whole.file_bytes > check::MAX_FILE_BYTES {
+        passed.push("a finest file that could pass 256 MB".to_owned());
+    }
+    passed
+}
+
 /// Builds the model into the pack folder `pack`; see the crate's description.
 pub fn build(
     model: &Model,
@@ -796,9 +908,14 @@ pub fn build(
         }
     }
     let extent = (high[0] - low[0]).max(high[1] - low[1]).max(1e-3);
-    let mut side = match options.cell_size {
-        Some(size) if size.is_finite() && size > 0.0 => size,
-        Some(_) => return Err("cellSize must be above 0".to_owned()),
+    if let Some(size) = options.cell_size {
+        if !(size.is_finite() && size > 0.0) {
+            return Err("cellSize must be above 0".to_owned());
+        }
+    }
+    // The side cells get from `cellSize` or `cellTriangles`.
+    let chosen_side = match options.cell_size {
+        Some(size) => size,
         None => {
             let wanted =
                 (welded.triangles.len() as f64 / options.cell_triangles.max(1) as f64).sqrt();
@@ -806,21 +923,54 @@ pub fn build(
             (extent / across).max(extent.min(16.0)).ceil()
         }
     };
-    let grid = |side: f64| {
-        (
-            (((high[0] - low[0]) / side).floor() as usize + 1).max(1),
-            (((high[1] - low[1]) / side).floor() as usize + 1).max(1),
-        )
+    // Kept whole when asked and small enough: one cell over all of it.
+    let mut too_large = Vec::new();
+    if options.one_cell {
+        let (file_picture_bytes, picture_bytes) = if keeping {
+            kept_picture_bytes(model, &welded, &options.textures)
+        } else {
+            (0, 0)
+        };
+        // Positions, normals, colours and texture coordinates, 32-bit
+        // indices and the pictures, unpacked, with a megabyte to spare.
+        let vertex_bytes = 12 + 12 + if has_colors { 16 } else { 0 } + if keeping { 8 } else { 0 };
+        let whole = Whole {
+            triangles: welded.triangles.len(),
+            materials: welded.materials.iter().collect::<HashSet<_>>().len(),
+            picture_bytes,
+            file_bytes: welded.positions.len() as u64 * vertex_bytes
+                + welded.triangles.len() as u64 * 12
+                + file_picture_bytes
+                + (1 << 20),
+        };
+        too_large = too_large_for_one_cell(whole);
+        report.one_cell = too_large.is_empty();
+    }
+    // The cells' side, how many across and down, and the side their
+    // coarser levels are made for: a cell's own, or, for a model kept
+    // whole, the side its cells would have had, so its coarser levels are
+    // as close to it as a cut model's.
+    let (side, columns, rows, detail_side) = if report.one_cell {
+        (extent.ceil(), 1, 1, chosen_side.min(extent.ceil()))
+    } else {
+        let mut side = chosen_side;
+        let grid = |side: f64| {
+            (
+                (((high[0] - low[0]) / side).floor() as usize + 1).max(1),
+                (((high[1] - low[1]) / side).floor() as usize + 1).max(1),
+            )
+        };
+        if keeping && options.cell_size.is_none() {
+            let fitted = fit_cells_to_pictures(model, &welded, &world, low, side, options, &grid);
+            report.cells_smaller_for_textures = fitted < side;
+            side = fitted;
+        }
+        while grid(side).0 * grid(side).1 > check::MAX_CELLS {
+            side *= 1.25;
+        }
+        let (columns, rows) = grid(side);
+        (side, columns, rows, side)
     };
-    if keeping && options.cell_size.is_none() {
-        let fitted = fit_cells_to_pictures(model, &welded, &world, low, side, options, &grid);
-        report.cells_smaller_for_textures = fitted < side;
-        side = fitted;
-    }
-    while grid(side).0 * grid(side).1 > check::MAX_CELLS {
-        side *= 1.25;
-    }
-    let (columns, rows) = grid(side);
     report.cell_size = side;
     let cell_of: Vec<u32> = welded
         .triangles
@@ -934,10 +1084,14 @@ pub fn build(
             });
         let bytes = position_bytes(&positions);
         let adapter = meshopt::VertexDataAdapter::new(&bytes, 12, 0).map_err(|e| e.to_string())?;
-        let color_weight = (0.05 * side) as f32;
-        let normal_weight = (0.01 * side) as f32;
+        let color_weight = (0.05 * detail_side) as f32;
+        let normal_weight = (0.01 * detail_side) as f32;
         // Texture coordinates, when kept, weigh as a hundredth of the side per repeat.
-        let uv_weight = if keeping { (0.01 * side) as f32 } else { 0.0 };
+        let uv_weight = if keeping {
+            (0.01 * detail_side) as f32
+        } else {
+            0.0
+        };
         let attributes: Vec<f32> = (0..vertices.len())
             .flat_map(|i| {
                 let c = colors[i];
@@ -982,7 +1136,7 @@ pub fn build(
                             8 * 4,
                             &locks,
                             goal,
-                            (settings.error * side) as f32,
+                            (settings.error * detail_side) as f32,
                             flags,
                             None,
                         );
@@ -1060,6 +1214,13 @@ pub fn build(
     }
     report.cells = cells.len();
     report.triangles = level_reports[0].triangles;
+    if !too_large.is_empty() {
+        report.warnings.push(format!(
+            "the model is too large to be kept as one piece ({}), so it was cut into {} cells",
+            too_large.join("; "),
+            report.cells
+        ));
+    }
     if !pictures.unreadable.is_empty() {
         report.warnings.push(format!(
             "{} pictures of textures could not be read, so the materials that show them keep their colour only",

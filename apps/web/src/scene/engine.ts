@@ -1,9 +1,12 @@
 import {
   cellBox,
+  FIRST_FRAME_BIAS,
   MAX_BIAS,
   nextBias,
   nextTextureBias,
   planCells,
+  sampleFrames,
+  type FrameBias,
   type PlanCell,
   type SceneBudget,
   type SceneFrame,
@@ -415,20 +418,101 @@ export function lambertOf(material: THREE.Material, bothSides = false): THREE.Me
   return out;
 }
 
+/** A primitive of a loaded model: its geometry, where it stands, and its material. */
+interface Primitive {
+  geometry: THREE.BufferGeometry;
+  /** Its place in the model, or null where it stands as it is. */
+  matrix: THREE.Matrix4 | null;
+}
+
 /**
- * The meshes of a loaded model, merged into one per material (and set of
- * attributes): a cell is drawn in a few calls, whatever its file holds.
+ * A primitive's geometry to draw by itself: its own attributes, not
+ * copied (the builder's files give every primitive of a cell one set of
+ * vertices, so the cell's meshes share them, held once in memory and on
+ * the graphics card), unless it must be moved into place.
  */
-function mergeByMaterial(
+function sharedPart({ geometry, matrix }: Primitive): THREE.BufferGeometry {
+  if (matrix) {
+    const part = geometry.clone();
+    part.clearGroups();
+    part.morphAttributes = {};
+    part.applyMatrix4(matrix);
+    return part;
+  }
+  const part = new THREE.BufferGeometry();
+  for (const [name, attribute] of Object.entries(geometry.attributes)) {
+    part.setAttribute(name, attribute);
+  }
+  part.setIndex(geometry.index);
+  return part;
+}
+
+/**
+ * A primitive's geometry with only the vertices its triangles use, copied,
+ * moved into place: for merging with others of its material.
+ */
+export function compactPart({ geometry, matrix }: Primitive): THREE.BufferGeometry {
+  const index = geometry.index;
+  let part: THREE.BufferGeometry;
+  if (!index) {
+    part = geometry.clone();
+    part.clearGroups();
+    part.morphAttributes = {};
+  } else {
+    const newOf = new Map<number, number>();
+    const used: number[] = [];
+    const indices = new Uint32Array(index.count);
+    for (let i = 0; i < index.count; i++) {
+      const old = index.getX(i);
+      let at = newOf.get(old);
+      if (at === undefined) {
+        at = used.length;
+        newOf.set(old, at);
+        used.push(old);
+      }
+      indices[i] = at;
+    }
+    part = new THREE.BufferGeometry();
+    for (const [name, attribute] of Object.entries(geometry.attributes)) {
+      const size = attribute.itemSize;
+      const source = attribute.array as unknown as {
+        constructor: new (n: number) => THREE.TypedArray;
+      };
+      const array = new source.constructor(used.length * size);
+      const out = new THREE.BufferAttribute(array, size, attribute.normalized);
+      for (let v = 0; v < used.length; v++) {
+        for (let k = 0; k < size; k++) {
+          out.setComponent(v, k, attribute.getComponent(used[v]!, k));
+        }
+      }
+      part.setAttribute(name, out);
+    }
+    part.setIndex(
+      new THREE.BufferAttribute(used.length > 65535 ? indices : Uint16Array.from(indices), 1),
+    );
+  }
+  if (matrix) part.applyMatrix4(matrix);
+  return part;
+}
+
+/**
+ * The meshes of a loaded model, one per material (and set of attributes):
+ * a cell is drawn in a few calls, whatever its file holds. A material of
+ * one primitive draws it as it is, its vertices shared with the rest of
+ * the cell; the primitives of a material that has several are merged, each
+ * with only the vertices it uses.
+ */
+export function mergeByMaterial(
   root: THREE.Object3D,
   bothSides = false,
   cut = false,
   floors: FloorUniforms | null = null,
 ): Loaded {
   root.updateMatrixWorld(true);
-  const groups = new Map<string, { material: THREE.Material; parts: THREE.BufferGeometry[] }>();
+  const groups = new Map<string, { material: THREE.Material; parts: Primitive[] }>();
   const sources = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
+  const identity = new THREE.Matrix4();
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     const geometry = object.geometry as THREE.BufferGeometry;
@@ -437,36 +521,38 @@ function mergeByMaterial(
     sources.add(geometry);
     if (!material) return;
     materials.add(material);
-    const part = geometry.clone();
-    part.clearGroups();
-    part.applyMatrix4(object.matrixWorld);
-    part.morphAttributes = {};
     const key = [
       material.uuid,
-      part.index ? 'i' : 'n',
-      ...Object.keys(part.attributes).sort(),
+      geometry.index ? 'i' : 'n',
+      ...Object.keys(geometry.attributes).sort(),
     ].join('|');
     let group = groups.get(key);
     if (!group) {
       group = { material, parts: [] };
       groups.set(key, group);
     }
-    group.parts.push(part);
+    group.parts.push({
+      geometry,
+      matrix: object.matrixWorld.equals(identity) ? null : object.matrixWorld.clone(),
+    });
   });
   const group = new THREE.Group();
   const meshes: THREE.Mesh[] = [];
   const textures = new Set<THREE.Texture>();
   const lamberts = new Map<THREE.Material, THREE.MeshLambertMaterial>();
   const insides: THREE.Mesh[] = [];
+  const spheres = new Map<unknown, THREE.Sphere>();
   let triangles = 0;
   for (const { material, parts } of groups.values()) {
-    // Null when the parts cannot be merged after all: they are drawn apart.
-    const merged = (
-      parts.length === 1 ? parts[0]! : mergeGeometries(parts, false)
-    ) as THREE.BufferGeometry | null;
-    const geometries = merged ? [merged] : parts;
-    if (merged && parts.length > 1) {
-      for (const part of parts) part.dispose();
+    let geometries: THREE.BufferGeometry[];
+    if (parts.length === 1) {
+      geometries = [sharedPart(parts[0]!)];
+    } else {
+      const compact = parts.map(compactPart);
+      // Null when the parts cannot be merged after all: they are drawn apart.
+      const merged = mergeGeometries(compact, false) as THREE.BufferGeometry | null;
+      if (merged) for (const part of compact) part.dispose();
+      geometries = merged ? [merged] : compact;
     }
     let lambert = lamberts.get(material);
     if (!lambert) {
@@ -477,7 +563,15 @@ function mergeByMaterial(
       if (lambert.emissiveMap) textures.add(lambert.emissiveMap);
     }
     for (const geometry of geometries) {
-      geometry.computeBoundingSphere();
+      // Meshes that share their vertices share their bounds, worked out once.
+      const position = geometry.getAttribute('position');
+      const sphere = spheres.get(position);
+      if (sphere) {
+        geometry.boundingSphere = sphere.clone();
+      } else {
+        geometry.computeBoundingSphere();
+        if (geometry.boundingSphere) spheres.set(position, geometry.boundingSphere);
+      }
       triangles += trianglesOf(geometry);
       const mesh = new THREE.Mesh(geometry, lambert);
       mesh.matrixAutoUpdate = false;
@@ -494,6 +588,7 @@ function mergeByMaterial(
       }
     }
   }
+  // The model's own geometries were never drawn: letting them go frees no attribute the meshes share.
   for (const geometry of sources) geometry.dispose();
   for (const material of materials) material.dispose();
   let textureBytes = 0;
@@ -503,6 +598,8 @@ function mergeByMaterial(
 
 function disposeLoaded(loaded: Loaded): void {
   const materials = new Set<THREE.MeshLambertMaterial>();
+  // Meshes of a cell may share their vertices: they all go together, and
+  // the renderer lets go of a shared buffer once.
   for (const mesh of loaded.meshes) {
     mesh.geometry.dispose();
     materials.add(mesh.material as THREE.MeshLambertMaterial);
@@ -561,8 +658,14 @@ export class SceneEngine {
   private dirty = true;
   private planDue = 0;
   private biasDue = 0;
-  private bias = 0;
+  private frameBias: FrameBias = FIRST_FRAME_BIAS;
   private textureBias = 0;
+  /** When the textures' bias may step again. */
+  private textureStepDue = 0;
+  /** The textures' bias stepped and the cells it asked for are not all in yet. */
+  private textureStepped = false;
+  /** Frames still to leave out of the frame rate after a cell was put in. */
+  private settling = 0;
   private frameTimes: number[] = [];
   private lastFrame = 0;
   private lost = false;
@@ -1108,23 +1211,22 @@ export class SceneEngine {
     }
     this.dirty = false;
     if (this.lastFrame > 0) {
-      this.frameTimes.push(now - this.lastFrame);
-      if (this.frameTimes.length > 120) this.frameTimes.shift();
+      // Frames while a cell loads, or just after one is put in, say nothing of the drawing.
+      const loading = this.settling > 0 || this.cells.some((state) => state.loading !== null);
+      this.frameTimes = sampleFrames(this.frameTimes, now - this.lastFrame, loading);
+      this.settling = Math.max(0, this.settling - 1);
     }
     this.lastFrame = now;
     if (now >= this.biasDue) {
       this.biasDue = now + BIAS_MS;
-      const bias = nextBias(this.bias, this.frameTimes);
+      const frameBias = nextBias(this.frameBias, this.frameTimes);
       if (this.frameTimes.length >= 20) this.frameTimes = [];
       // Once the coarser cells are in, the textures may leave room for finer ones again.
-      const textureBias = nextTextureBias(
-        this.textureBias,
-        this.status().textureBytes,
-        this.options.budget,
-      );
-      if (bias !== this.bias || textureBias !== this.textureBias) {
-        this.bias = bias;
-        this.textureBias = textureBias;
+      const textureChanged = this.stepTextureBias(now);
+      // A level slow again once stepped back to is given up for this view (its floor).
+      const changed = frameBias.bias !== this.frameBias.bias || textureChanged;
+      this.frameBias = frameBias;
+      if (changed) {
         this.planDue = 0;
         this.report();
       }
@@ -1182,8 +1284,27 @@ export class SceneEngine {
     this.dirty = true;
   }
 
+  /**
+   * Steps the textures' bias as their memory asks, at most once a bias
+   * period and not again until the cells loading after a step are all in:
+   * they are counted only once they are in, so a second step before then
+   * would overshoot. Whether it stepped.
+   */
+  private stepTextureBias(now: number): boolean {
+    const loading = this.cells.some((state) => state.loading !== null);
+    // After a step, the next waits until the cells it asked for are all in.
+    if (this.textureStepped && !loading) this.textureStepped = false;
+    if (now < this.textureStepDue || this.textureStepped) return false;
+    const next = nextTextureBias(this.textureBias, this.status().textureBytes, this.options.budget);
+    if (next === this.textureBias) return false;
+    this.textureBias = next;
+    this.textureStepDue = now + BIAS_MS;
+    this.textureStepped = true;
+    return true;
+  }
+
   private planBias(): number {
-    return Math.min(MAX_BIAS, this.bias + this.textureBias);
+    return Math.min(MAX_BIAS, this.frameBias.bias + this.textureBias);
   }
 
   /** Loads and lets go of cells for where the camera is now. */
@@ -1242,11 +1363,7 @@ export class SceneEngine {
       state.loaded = loaded;
       this.model.add(loaded.group);
       loaded.group.updateMatrixWorld(true);
-      this.textureBias = nextTextureBias(
-        this.textureBias,
-        this.status().textureBytes,
-        this.options.budget,
-      );
+      this.stepTextureBias(performance.now());
       this.placeDots(state);
       this.placeTitles();
       this.drawRoute();
@@ -1254,6 +1371,8 @@ export class SceneEngine {
       state.failed.add(level);
     } finally {
       state.loading = null;
+      // Its upload is in the next frame drawn: that frame and the one before say nothing of the drawing.
+      this.settling = 2;
       this.dirty = true;
       this.planDue = 0;
       this.report();

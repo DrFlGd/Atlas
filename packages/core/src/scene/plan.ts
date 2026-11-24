@@ -189,9 +189,13 @@ export const UNKNOWN_TRIANGLES = 50_000;
  * follows its distance from the camera in cell sides `r`: the finest
  * within 1.5, the next to 4.5, the next to 10.5 (`floor(log2(1 + r /
  * 1.5))`), plus `bias` levels coarser when frames come slowly; past
- * `budget.reach` it is not shown. While the triangles of the plan are
- * over the budget, the farthest cell that can be coarser is made coarser,
- * and when none can, the farthest is left out.
+ * `budget.reach` it is not shown (but for a scene of one cell). A scene of one cell (a model kept whole)
+ * is not judged by distance: its level is the finest the bias and the
+ * budget allow, so it is not loaded again coarser as the camera draws
+ * back. While the triangles of the plan are over the budget, the farthest
+ * cell that can be coarser is made coarser, and when none can, the
+ * farthest is left out, but never the last one: the nearest cell stays,
+ * at its coarsest, so the view is never empty.
  */
 export function planCells(
   cells: readonly PlanCell[],
@@ -210,10 +214,12 @@ export function planCells(
       const [h0, h1] = cell.heights ?? [cy, cy];
       const dy = Math.max(h0 - cy, 0, cy - h1);
       const distance = Math.hypot(dx, dy, dz) / side;
-      const rank = Math.floor(Math.log2(1 + distance / 1.5)) + Math.max(0, bias);
+      const near = cells.length === 1 ? 0 : Math.floor(Math.log2(1 + distance / 1.5));
+      const rank = near + Math.max(0, bias);
       return { cell, distance, index: Math.min(rank, cell.levels.length - 1) };
     })
-    .filter((entry) => entry.distance <= budget.reach)
+    // A scene of one cell is shown however far the camera is from it.
+    .filter((entry) => cells.length === 1 || entry.distance <= budget.reach)
     .sort((a, b) => a.distance - b.distance);
   const triangles = (entry: (typeof entries)[number]) =>
     entry.cell.levels[entry.index]!.triangles ?? UNKNOWN_TRIANGLES;
@@ -232,8 +238,10 @@ export function planCells(
       total -= triangles(entry);
       entry.index += 1;
       total += triangles(entry);
-    } else {
+    } else if (entries.length > 1) {
       total -= triangles(entries.pop()!);
+    } else {
+      break;
     }
   }
   return entries.map((entry) => ({
@@ -254,19 +262,61 @@ export const QUICK_FRAME_MS = 1000 / 50;
 export const MAX_BIAS = 3;
 
 /**
+ * The frame rate's bias of the plan in one view: how many levels coarser
+ * it is (`bias`), the finest it may step back to (`floor`), and whether
+ * its last step was back finer (`retrying`), so a level that proves slow
+ * again then is given up.
+ */
+export interface FrameBias {
+  bias: number;
+  floor: number;
+  retrying: boolean;
+}
+
+/** The frame rate's bias as a view starts: none. */
+export const FIRST_FRAME_BIAS: FrameBias = { bias: 0, floor: 0, retrying: false };
+
+/**
  * The bias of the plan after a second or two of frames: one level coarser
  * when they came slowly, one finer again when they came quickly (and the
- * bias is above 0), else as it was. `frameMs` are the times between frames
- * drawn while the view moved; too few say nothing. Between slow and quick
- * the bias stays, so the detail does not go up and down each time.
+ * bias is above its floor), else as it was. `frameMs` are the times
+ * between frames drawn while the view moved; too few say nothing. Between
+ * slow and quick the bias stays, so the detail does not go up and down
+ * each time. A level the bias stepped back finer to that is slow again
+ * is not tried again in this view: the floor rises past it, so the detail
+ * cannot swing between a slow level and a quick one every second or two,
+ * swapping the cells each time.
  */
-export function nextBias(bias: number, frameMs: readonly number[]): number {
-  if (frameMs.length < 20) return bias;
+export function nextBias(state: FrameBias, frameMs: readonly number[]): FrameBias {
+  if (frameMs.length < 20) return state;
   const sorted = [...frameMs].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)]!;
-  if (median > SLOW_FRAME_MS) return Math.min(MAX_BIAS, bias + 1);
-  if (median < QUICK_FRAME_MS && bias > 0) return bias - 1;
-  return bias;
+  if (median > SLOW_FRAME_MS) {
+    const bias = Math.min(MAX_BIAS, state.bias + 1);
+    return { bias, floor: state.retrying ? bias : state.floor, retrying: false };
+  }
+  if (median < QUICK_FRAME_MS && state.bias > state.floor) {
+    return { ...state, bias: state.bias - 1, retrying: true };
+  }
+  // A level stepped back to that kept up is no longer on trial.
+  return state.retrying ? { ...state, retrying: false } : state;
+}
+
+/** The most frame times kept to judge the frame rate by. */
+export const FRAMES_KEPT = 120;
+
+/**
+ * The frame times to judge the frame rate by, with one more frame of `ms`
+ * (added to `frameMs` in place): none while a cell loads or was just put
+ * in the view (`loading`), so the time to download, decode and upload it
+ * is never taken for slow drawing, and a level is never given up for it;
+ * else the last {@link FRAMES_KEPT}.
+ */
+export function sampleFrames(frameMs: number[], ms: number, loading: boolean): number[] {
+  if (loading) return frameMs.length === 0 ? frameMs : [];
+  frameMs.push(ms);
+  if (frameMs.length > FRAMES_KEPT) frameMs.shift();
+  return frameMs;
 }
 
 /**

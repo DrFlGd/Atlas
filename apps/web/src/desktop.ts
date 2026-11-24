@@ -1486,6 +1486,12 @@ export interface ShellBuildRequest {
    * built again without a download ({@link DesktopBridge.tiles.reuseModel}).
    */
   keepModel?: boolean;
+  /**
+   * Keeps a small model whole, as one cell, so the 3D view loads it as one
+   * piece with each picture once; a model too large for that is cut into
+   * cells, with a warning.
+   */
+  oneCell?: boolean;
 }
 
 /** A game's folder the person picked (see {@link DesktopBridge.tiles.pickGameFolder}). */

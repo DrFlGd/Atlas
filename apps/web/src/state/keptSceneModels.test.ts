@@ -62,6 +62,7 @@ describe('building a 3D map again from the model its game keeps', () => {
       textures: 'average',
       sky: '#101820',
       keepModel: true,
+      oneCell: true,
     });
     expect(builds).toEqual(['kept-1']);
   });

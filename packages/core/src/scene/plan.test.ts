@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   cellBox,
   deviceClass,
+  FIRST_FRAME_BIAS,
+  FRAMES_KEPT,
   nextBias,
   nextTextureBias,
   planCells,
+  sampleFrames,
   SCENE_BUDGETS,
   sceneBudget,
   sceneFrame,
   UNKNOWN_TRIANGLES,
+  type FrameBias,
   type PlanCell,
 } from './plan';
 
@@ -137,33 +141,122 @@ describe('which cells to load', () => {
   });
 
   it('counts a level that does not say its triangles as a large one', () => {
-    const unknown: PlanCell[] = [{ id: 'u', box: [0, 0, 10, 10], levels: [{ level: 0 }] }];
-    expect(planCells(unknown, [5, 0, 5], { triangles: UNKNOWN_TRIANGLES - 1, reach: 8 })).toEqual(
-      [],
-    );
+    const unknown: PlanCell[] = [
+      { id: 'u', box: [0, 0, 10, 10], levels: [{ level: 0 }] },
+      { id: 'v', box: [10, 0, 20, 10], levels: [{ level: 0 }] },
+    ];
+    expect(
+      planCells(unknown, [5, 0, 5], { triangles: 2 * UNKNOWN_TRIANGLES - 1, reach: 8 }).map(
+        (p) => p.id,
+      ),
+    ).toEqual(['u']);
+  });
+
+  it('never leaves the view empty: the nearest cell stays, at its coarsest', () => {
+    const tight = planCells(row, [5, 0, 5], { triangles: 10, reach: 8 });
+    expect(tight).toEqual([{ id: 'c0', level: 2, distance: 0 }]);
+    expect(planCells([], [5, 0, 5], { triangles: 10, reach: 8 })).toEqual([]);
+  });
+
+  it('shows a scene of one cell at the finest level the bias and budget allow, near or far', () => {
+    const whole: PlanCell[] = [{ id: 'whole', box: [0, 0, 10, 10], heights: [0, 2], levels }];
+    for (const camera of [
+      [5, 0, 5],
+      [5, 30, 5],
+      [60, 10, 5],
+    ] as const) {
+      expect(planCells(whole, camera, huge)[0]!.level).toBe(0);
+      expect(planCells(whole, camera, huge, 1)[0]!.level).toBe(1);
+      expect(planCells(whole, camera, { triangles: 5_000, reach: 8 })[0]!.level).toBe(1);
+    }
+    // However far the camera, the only cell is shown: the view is never empty.
+    expect(planCells(whole, [500, 0, 5], huge)[0]!.level).toBe(0);
   });
 });
 
 describe('stepping the detail by frame rate', () => {
+  const at = (bias: number, floor = 0): FrameBias => ({ bias, floor, retrying: false });
+  const slow = Array(30).fill(60);
+  const quick = Array(30).fill(10);
   it('steps down when frames are slow, up again when quick, and waits for enough frames', () => {
-    expect(nextBias(0, Array(30).fill(60))).toBe(1);
-    expect(nextBias(3, Array(30).fill(60))).toBe(3);
-    expect(nextBias(2, Array(30).fill(10))).toBe(1);
-    expect(nextBias(0, Array(30).fill(10))).toBe(0);
-    expect(nextBias(1, Array(30).fill(30))).toBe(1);
-    expect(nextBias(0, Array(5).fill(60))).toBe(0);
+    expect(nextBias(at(0), slow).bias).toBe(1);
+    expect(nextBias(at(3), slow).bias).toBe(3);
+    expect(nextBias(at(2), quick).bias).toBe(1);
+    expect(nextBias(at(0), quick).bias).toBe(0);
+    expect(nextBias(at(1), Array(30).fill(30)).bias).toBe(1);
+    expect(nextBias(at(0), Array(5).fill(60)).bias).toBe(0);
+    expect(nextBias(FIRST_FRAME_BIAS, slow)).toEqual({ bias: 1, floor: 0, retrying: false });
   });
 
   it('steps back up, one level at a time, once frames recover', () => {
-    let bias = 0;
-    for (let i = 0; i < 5; i++) bias = nextBias(bias, Array(30).fill(60));
-    expect(bias).toBe(3);
+    let bias = FIRST_FRAME_BIAS;
+    for (let i = 0; i < 5; i++) bias = nextBias(bias, slow);
+    expect(bias.bias).toBe(3);
     const seen = [];
     for (let i = 0; i < 4; i++) {
       bias = nextBias(bias, Array(30).fill(16.7));
-      seen.push(bias);
+      seen.push(bias.bias);
     }
     expect(seen).toEqual([2, 1, 0, 0]);
+  });
+
+  it('gives up a level that is slow again once stepped back to, so it does not swing', () => {
+    // Slow at the finest level, quick one coarser: tried once more, then given up.
+    let bias = FIRST_FRAME_BIAS;
+    const seen = [];
+    for (let i = 0; i < 4; i++) {
+      bias = nextBias(bias, bias.bias === 0 ? slow : quick);
+      seen.push(bias.bias);
+    }
+    expect(seen).toEqual([1, 0, 1, 1]);
+    expect(bias.floor).toBe(1);
+    // In between, it stays where it is.
+    expect(nextBias(bias, Array(30).fill(30))).toBe(bias);
+    // It may still step coarser, and back to the floor, never past it.
+    bias = nextBias(bias, slow);
+    expect(bias).toEqual({ bias: 2, floor: 1, retrying: false });
+    bias = nextBias(nextBias(bias, quick), quick);
+    expect(bias.bias).toBe(1);
+    // A level stepped back to that is slow at once is given up.
+    expect(nextBias(at(2, 1), quick)).toEqual({ bias: 1, floor: 1, retrying: true });
+    expect(nextBias({ bias: 1, floor: 1, retrying: true }, slow)).toEqual({
+      bias: 2,
+      floor: 2,
+      retrying: false,
+    });
+    // One that kept up for a full sample is no longer on trial: a slow spell later steps
+    // coarser without giving it up.
+    const kept = nextBias({ bias: 1, floor: 1, retrying: true }, Array(30).fill(30));
+    expect(kept).toEqual({ bias: 1, floor: 1, retrying: false });
+    expect(nextBias(kept, slow)).toEqual({ bias: 2, floor: 1, retrying: false });
+    expect(nextBias({ bias: 1, floor: 0, retrying: true }, quick)).toEqual({
+      bias: 0,
+      floor: 0,
+      retrying: true,
+    });
+  });
+});
+
+describe('the frames the frame rate is judged by', () => {
+  it('keeps the last frames, and none while a cell loads', () => {
+    expect(sampleFrames([10, 20], 30, false)).toEqual([10, 20, 30]);
+    expect(sampleFrames(new Array<number>(FRAMES_KEPT).fill(10), 60, false)).toHaveLength(
+      FRAMES_KEPT,
+    );
+    expect(sampleFrames(new Array<number>(FRAMES_KEPT).fill(10), 60, false).at(-1)).toBe(60);
+    expect(sampleFrames([60, 60, 60], 60, true)).toEqual([]);
+  });
+
+  it('never gives up a level for the frames a load took', () => {
+    // Stepped back to the finest level, whose load makes frames slow for a while.
+    let frames: number[] = [];
+    let bias: FrameBias = { bias: 0, floor: 0, retrying: true };
+    for (let i = 0; i < 40; i++) frames = sampleFrames(frames, 80, i < 39);
+    bias = nextBias(bias, frames);
+    expect(bias.floor).toBe(0);
+    // Slow once it is in: given up.
+    for (let i = 0; i < 30; i++) frames = sampleFrames(frames, 80, false);
+    expect(nextBias(bias, frames)).toEqual({ bias: 1, floor: 1, retrying: false });
   });
 });
 
