@@ -17,6 +17,15 @@
    `wallCutHeight` above the floor next to it, giving the wall lines of that floor.
 
 Markers are put on the floor of the surface just below them (`locate`).
+
+**Ground area** (`automatic: "ground"` in the floor settings, for a map made from a 3D model, where floors are not
+stacked collision with a navmesh but a building's storeys, roofs and terraces): the area of the surfaces that face up
+and are nearly flat (within `groundSlope`, 30°, of straight up) is added up in `groundStep` (1 m) height steps, seen
+from above. Heights where ground piles up are floor levels: the strongest first, down to peaks under `groundShare`
+(10 %) of the largest, skipping a peak closer than `floorSeparation` (3 m) to a level already chosen. Levels closer
+than `mergeGap` are joined (the stronger kept), and each level above the lowest gets a cut `cutBelow` (1.5 m) under
+it. It is a starting point that the person moves in Adjust floors. `automatic: "none"` finds no cut (one floor), and
+`bothSides` (1) takes a surface facing down as facing up too, for a model whose surfaces face either way.
 """
 
 from __future__ import annotations
@@ -36,7 +45,17 @@ DEFAULTS: dict[str, float] = {
     "walkableSlope": 50.0,
     "wallSlope": 70.0,
     "wallCutHeight": 1.3,
+    # Ground area (models): see the module notes.
+    "groundSlope": 30.0,
+    "groundStep": 1.0,
+    "groundShare": 0.1,
+    "floorSeparation": 3.0,
+    "mergeGap": 2.0,
+    "cutBelow": 1.5,
+    "bothSides": 0.0,
 }
+# How cuts are found when none are given: stacked walkable floor (the games), ground area or none (models).
+AUTOMATIC = ("stacked", "ground", "none")
 STEP = 1.0  # metres: heights closer than this in one cell are one surface
 JOIN = 1.5  # metres: neighbouring cells' surfaces closer than this in height are joined (for connected pieces)
 SAMPLE_BUDGET = 6_000_000  # cell tests per chunk while sampling
@@ -119,8 +138,72 @@ def normals(triangles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return up, length / 2
 
 
+def automatic_of(config: dict[str, tp.Any] | None) -> str:
+    """How cuts are found when none are given: the floor settings' `automatic`, else stacked floor."""
+    value = (config or {}).get("automatic")
+    return str(value) if value in AUTOMATIC else "stacked"
+
+
+def ground_cuts(triangles: np.ndarray, flipped: bool, settings: dict[str, float]) -> tuple[list[float], list[dict[str, tp.Any]]]:
+    """Cuts by ground area (see the module notes), lowest first, and a note on each level they come from."""
+    if len(triangles) == 0:
+        return [], []
+    up, area = normals(triangles)
+    if flipped:
+        up = -up
+    if settings["bothSides"]:
+        up = np.abs(up)
+    flat = up >= math.cos(math.radians(settings["groundSlope"]))
+    if not flat.any():
+        return [], []
+    heights = triangles[flat][:, :, 1].astype(np.float64).mean(axis=1)
+    seen = area[flat] * up[flat]  # area seen from above
+    step = max(settings["groundStep"], 0.05)
+    bins = np.floor(heights / step).astype(np.int64)
+    first = int(bins.min())
+    index = bins - first
+    ground = np.bincount(index, weights=seen)
+    largest = float(ground.max())
+    if largest <= 0:
+        return [], []
+    levels: list[tuple[float, float]] = []  # (height, ground area)
+    for b in np.argsort(-ground, kind="stable"):
+        strength = float(ground[b])
+        if strength < settings["groundShare"] * largest or len(levels) >= int(settings["maxFloors"]):
+            break
+        # The level: the highest strong surface in the step (a floor's top, not the slab's underside under it).
+        inside = index == b
+        fine = np.floor((heights[inside] - (first + b) * step) / 0.1).astype(np.int64)
+        fine_area = np.bincount(fine, weights=seen[inside])
+        strong = np.flatnonzero(fine_area >= 0.5 * fine_area.max())
+        chosen = fine == strong[-1]
+        height = float((heights[inside][chosen] * seen[inside][chosen]).sum() / max(seen[inside][chosen].sum(), 1e-12))
+        if any(abs(height - h) < settings["floorSeparation"] for h, _ in levels):
+            continue
+        levels.append((height, strength))
+    levels.sort()
+    joined: list[tuple[float, float]] = []
+    for height, strength in levels:
+        if joined and height - joined[-1][0] < settings["mergeGap"]:
+            if strength > joined[-1][1]:
+                joined[-1] = (height, strength)
+            continue
+        joined.append((height, strength))
+    cuts: list[float] = []
+    notes: list[dict[str, tp.Any]] = []
+    for height, strength in joined[1:]:
+        cut = height - settings["cutBelow"]
+        if cut <= joined[0][0] or (cuts and cut <= cuts[-1]):
+            continue
+        cuts.append(round(cut, 2))
+        notes.append({"height": round(cut, 2), "level": round(height, 2), "groundArea": round(strength)})
+    return cuts, notes
+
+
 def classify(triangles: np.ndarray, settings: dict[str, float]) -> tuple[np.ndarray, np.ndarray, bool]:
     up, area = normals(triangles)
+    if settings.get("bothSides"):
+        up = np.abs(up)
     walk = math.cos(math.radians(settings["walkableSlope"]))
     facing_up = area[up >= walk].sum()
     facing_down = area[up <= -walk].sum()
@@ -434,7 +517,13 @@ def prepare(triangles: np.ndarray, config: dict[str, tp.Any] | None = None) -> P
     if len(walk_index) == 0:
         return Prepared(settings, triangles, walkable, walls, flipped, walk_index, None, empty, empty, [], [])
     surfaces, surface_of_sample, sample_tri = build_surfaces(triangles[walk_index], settings["cell"])
-    auto, notes = auto_cuts(surfaces, settings)
+    automatic = automatic_of(config)
+    if automatic == "ground":
+        auto, notes = ground_cuts(triangles, flipped, settings)
+    elif automatic == "none":
+        auto, notes = [], []
+    else:
+        auto, notes = auto_cuts(surfaces, settings)
     return Prepared(settings, triangles, walkable, walls, flipped, walk_index, surfaces, surface_of_sample, sample_tri, auto, notes)
 
 

@@ -180,13 +180,15 @@ def run_builder(
     progress: tp.Callable[[float, str], None],
     stop: tp.Callable[[], None],
     time_limit: float = TIME_LIMIT,
+    command: str = "build",
 ) -> dict[str, tp.Any]:
-    """Runs `atlas-scene build` on a job written into `work`; returns its `done` line. Calls `progress` with its
-    progress lines and `stop` often (it may raise `Cancelled`, which ends the builder at once)."""
+    """Runs `atlas-scene build` (or another of its commands that takes a job: `triangles`, `draw`) on a job written
+    into `work`; returns its `done` line. Calls `progress` with its progress lines and `stop` often (it may raise
+    `Cancelled`, which ends the builder at once)."""
     job_file = work / f"{name}.job.json"
     job_file.write_text(json.dumps(job), encoding="utf-8")
     process = subprocess.Popen(
-        [str(builder), "build", str(job_file)],
+        [str(builder), command, str(job_file)],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

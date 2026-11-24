@@ -69,7 +69,13 @@ export interface AreaReport {
 }
 
 export interface GameInfo {
-  id: 'dark-souls-remastered' | 'bloodborne' | 'dark-souls-ptde' | 'unknown';
+  /** The game, or for a map made from a 3D model, its pack id. */
+  id:
+    | 'dark-souls-remastered'
+    | 'bloodborne'
+    | 'dark-souls-ptde'
+    | 'unknown'
+    | (string & Record<never, never>);
   title: string;
   supported: boolean;
   version: string | null;
@@ -423,7 +429,15 @@ export interface FloorPlanReport {
   method?: FloorMethod;
   cuts: number[];
   cutList?: { height: number; by: CutSource }[];
-  automaticCuts?: { height: number; stackedArea: number; slicedArea: number }[];
+  /** Each automatic cut: with stacked floors, the floor area over and under it; by ground area (a 3D model), the
+   * floor level it is under and the area of ground there. */
+  automaticCuts?: {
+    height: number;
+    stackedArea?: number;
+    slicedArea?: number;
+    level?: number;
+    groundArea?: number;
+  }[];
   profile?: HeightProfile;
   /** The floor cuts used for the area, and where they came from. */
   overrides?: {
@@ -443,6 +457,8 @@ export interface FloorPlanReport {
   navmesh?: { triangles: number; kept: number; used: boolean };
   /** Cuts given that left a floor with nothing on it, so were dropped. */
   cutsDropped?: number[];
+  /** How the automatic cuts were found: `ground` (by ground area, for a 3D model), `stacked` or `none`. */
+  automatic?: 'ground' | 'stacked' | 'none';
 }
 
 /** How the floors are drawn: the helper's render.MAP_STYLES. */
@@ -469,7 +485,8 @@ export interface MadeArea {
   mapStyle?: MapStyleId;
   /** Why the area was left out (a debug map, or one the config skips). */
   skipped?: string;
-  geometry?: { used: GeometrySourceName | null } & Partial<
+  /** What the floors were drawn from: `model` for a map made from a 3D model. */
+  geometry?: { used: GeometrySourceName | 'model' | null } & Partial<
     Record<GeometrySourceName, SourceResult>
   >;
   bonfires?: { method: string; registered?: number; placed?: number; objectsNotFound?: unknown[] };
@@ -510,6 +527,10 @@ export interface MakeReport {
   toolVersion: string;
   reportVersion: number;
   kind: 'make';
+  /** `model` for a map made from a 3D model ("Make a map from a 3D model…"); none for game files. */
+  source?: 'model';
+  /** A map made from a 3D model: the model file and how it was set up. */
+  model?: MadeModel;
   createdAt: string;
   /** When an area was made again last. */
   updatedAt?: string;
@@ -560,7 +581,34 @@ export interface MakeReport {
   diagnostics?: ReportDiagnostics;
 }
 
+/** The model a map was made from (the helper's model.py report `model`). */
+export interface MadeModel {
+  file: string;
+  path: string;
+  name: string;
+  title: string;
+  up: string;
+  scale: number;
+  units: string | null;
+  textures: 'keep' | 'plain';
+  format: string;
+  triangles: number;
+  materials: number;
+  texturedMaterials: number;
+  texturesFound: number;
+  hasColours: boolean;
+  bothSides: boolean;
+  /** East to west, south to north, and height. */
+  sizeMetres: [number, number, number];
+  missingFiles: string[];
+}
+
 export type AnyReport = Report | MakeReport;
+
+/** Whether a make's report is of a map made from a 3D model. */
+export function isModelReport(report: AnyReport | null | undefined): report is MakeReport {
+  return isMakeReport(report) && report.source === 'model';
+}
 
 export function isMakeReport(report: AnyReport | null | undefined): report is MakeReport {
   return (report as MakeReport | null | undefined)?.kind === 'make';
@@ -579,6 +627,11 @@ export function makeSummaryLine(report: MakeReport): string {
   const summary = report.summary;
   if (!summary) return report.game.reason ?? 'No map could be made from this folder.';
   const threeD = summary.threeD;
+  if (report.source === 'model') {
+    const from = report.model ? ` from ${report.model.file}` : '';
+    const model = threeD ? `, with its 3D model (${sizeText(threeD.bytes)})` : '';
+    return `${plural(summary.floors, 'floor')}${from}${model}. No locations: add them in Atlas with Edit locations.`;
+  }
   const parts = [
     `${plural(summary.areasMade, 'area')} drawn`,
     plural(summary.floors, 'floor'),
@@ -682,7 +735,7 @@ export function cutsLine(area: MadeArea): string | null {
     const where =
       places.length === 0
         ? 'nothing overlaps'
-        : `${plural(places.length, 'overlapping place')}${chosen ? `, ${count(chosen)} set by you` : ''}`;
+        : `${plural(places.length, 'overlapping spot')}${chosen ? `, ${count(chosen)} set by you` : ''}`;
     return `Automatic passages: ${where}`;
   }
   const list = plan.cutList ?? plan.cuts.map((height) => ({ height, by: 'automatic' as const }));

@@ -36,6 +36,8 @@ WRITER = "Atlas Map Maker"
 PACK_VERSION = "1.0.0"
 SINCE = "1.0.0"
 HUNTERS_ATLAS = "https://github.com/MikeTat1988/HuntersAtlas"
+GAME_FILES_ATTRIBUTION = "Made with Atlas Map Maker from your own game files (private, not for sharing)"
+MODEL_ATTRIBUTION = "Made with Atlas Map Maker from a 3D model"
 
 GROUPS = (("places", "Locations", 0), ("characters", "Characters", 1), ("items", "Items", 2))
 # id, group, name, icon (Atlas's icon set), colour, trackable, shown at first
@@ -193,8 +195,10 @@ def build_pack(
     content: GameContent,
     created: str | None = None,
     labels: dict[str, tp.Any] | None = None,
+    attribution: list[dict[str, str]] | None = None,
 ) -> dict[str, tp.Any]:
-    """The pack's JSON. `labels` is the game's config, for its `categoryNames` and `checklistNames`."""
+    """The pack's JSON. `labels` is the game's config, for its `categoryNames` and `checklistNames`; `attribution`
+    replaces the manifest's (a map made from a 3D model is not made from game files)."""
     labels = labels or {}
 
     def ident(kind: str, local: str) -> str:
@@ -357,8 +361,9 @@ def build_pack(
         "title": title,
         "packVersion": PACK_VERSION,
         "gamePatch": game_patch or "unknown",
-        "attribution": [
-            {"name": "Made with Atlas Map Maker from your own game files (private, not for sharing)"},
+        "attribution": attribution
+        or [
+            {"name": GAME_FILES_ATTRIBUTION},
             {"name": "Method after Hunter's Atlas", "url": HUNTERS_ATLAS, "license": "GPL-2.0"},
         ],
         "idMigrations": {},

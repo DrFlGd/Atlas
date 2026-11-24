@@ -7,6 +7,9 @@
  * slopes grey, there are no cut planes, and "Hide what is above this floor" leaves out the floors above it and
  * what stands higher than its top; the overlapping places are shown as large white-ringed dots.
  *
+ * The setup of "Make a map from a 3D model…" shows the model here too, in its own colours (`ownColours`), with
+ * its bounds as a box.
+ *
  * Pressing an item's dot goes to it (`goTo`): the panel shows its floor and cuts the view at head height above it
  * (`cutAt`), and the view flies down to look at it from close by, a little tilted, facing the way it faced (it jumps
  * where the person asked for less motion; any move by hand stops it).
@@ -41,6 +44,8 @@ export interface FloorsSceneState {
   places?: readonly { x: number; y: number; z: number; chosen: boolean }[];
   /** After going to an item: the height everything above is left out, in place of the floor's. */
   cutAt?: number | null;
+  /** Each triangle in its own colour (the model's `colours`), not its floor's. */
+  ownColours?: boolean;
 }
 
 export interface FloorsSceneHover {
@@ -66,12 +71,15 @@ export interface FloorsScene {
 
 const MODEL_VERTEX = /* glsl */ `
 attribute float floorIndex;
+attribute vec3 ownColour;
 varying vec3 vWorld;
 varying float vFloor;
+varying vec3 vOwn;
 void main() {
   vec4 world = modelMatrix * vec4(position, 1.0);
   vWorld = world.xyz;
   vFloor = floorIndex;
+  vOwn = ownColour;
   gl_Position = projectionMatrix * viewMatrix * world;
 }
 `;
@@ -85,8 +93,10 @@ uniform float clipTop;
 uniform vec3 lightDir;
 uniform int byTriangle;
 uniform int hideFloorsAbove;
+uniform int byOwnColour;
 varying vec3 vWorld;
 varying float vFloor;
+varying vec3 vOwn;
 void main() {
   if (vWorld.y > clipTop) discard;
   int band = 0;
@@ -104,6 +114,10 @@ void main() {
       if (vWorld.y > cuts[i]) band++;
     }
     base = colours[band];
+  }
+  if (byOwnColour == 1) {
+    base = vOwn;
+    band = selected;
   }
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   float up = abs(n.y);
@@ -173,6 +187,8 @@ export function createFloorsScene(options: {
   onHover: (hover: FloorsSceneHover | null) => void;
   /** A press on the view: the marker pressed, or null for none. */
   onPick?: (index: number | null) => void;
+  /** The model's bounds drawn as a box. */
+  bounds?: boolean;
 }): FloorsScene {
   const { container, model, markers } = options;
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -203,6 +219,17 @@ export function createFloorsScene(options: {
   const floorAttribute = new THREE.BufferAttribute(vertexFloors, 1);
   geometry.setAttribute('floorIndex', floorAttribute);
   let shownFloors: Uint8Array | null = null;
+  // Each triangle's own colour, given as sRGB bytes (drawn as they are: the view does no colour conversion).
+  const own = new Float32Array(positions.length).fill(0.75);
+  if (model.colours) {
+    const bytes = fromBase64(model.colours);
+    for (let t = 0; t < own.length / 9 && t * 3 + 2 < bytes.length; t++) {
+      for (let corner = 0; corner < 3; corner++) {
+        for (let k = 0; k < 3; k++) own[t * 9 + corner * 3 + k] = bytes[t * 3 + k]! / 255;
+      }
+    }
+  }
+  geometry.setAttribute('ownColour', new THREE.BufferAttribute(own, 3));
   geometry.computeBoundingBox();
   const box =
     geometry.boundingBox ?? new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
@@ -230,9 +257,12 @@ export function createFloorsScene(options: {
       lightDir: { value: new THREE.Vector3(0.45, 0.8, 0.35).normalize() },
       byTriangle: { value: 0 },
       hideFloorsAbove: { value: 0 },
+      byOwnColour: { value: 0 },
     },
   });
   scene.add(new THREE.Mesh(geometry, modelMaterial));
+  const boundsBox = options.bounds ? new THREE.Box3Helper(box.clone(), 0xf6ecc8) : null;
+  if (boundsBox) scene.add(boundsBox);
 
   // The outlines, worked out the first time they are asked for.
   const edgeMaterial = new THREE.ShaderMaterial({
@@ -590,6 +620,7 @@ export function createFloorsScene(options: {
         floorAttribute.needsUpdate = true;
       }
       uniforms.byTriangle!.value = byTriangle ? 1 : 0;
+      uniforms.byOwnColour!.value = state.ownColours && model.colours ? 1 : 0;
       uniforms.hideFloorsAbove!.value = byTriangle && state.hideAbove ? 1 : 0;
       const floorTop = byTriangle
         ? state.hideAbove && state.clipHeight !== null && state.clipHeight !== undefined
@@ -633,6 +664,8 @@ export function createFloorsScene(options: {
       planeGeometry.dispose();
       edgeGeometry.dispose();
       geometry.dispose();
+      boundsBox?.geometry.dispose();
+      (boundsBox?.material as THREE.Material | undefined)?.dispose();
       dotGeometry.dispose();
       modelMaterial.dispose();
       edges?.geometry.dispose();

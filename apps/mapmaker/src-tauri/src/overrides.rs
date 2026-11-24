@@ -38,9 +38,16 @@ pub fn is_game(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// The area key of `area` (`m15_01` of `m15_01` or `m15_01_00_00`), when it is one.
+/// The one area of a map made from a 3D model.
+pub const MODEL_AREA: &str = "model";
+
+/// The area key of `area` (`m15_01` of `m15_01` or `m15_01_00_00`, or `model` for a map made from a 3D model),
+/// when it is one.
 pub fn area_key(area: &str) -> Option<String> {
     let area = area.to_ascii_lowercase();
+    if area == MODEL_AREA {
+        return Some(area);
+    }
     let bytes = area.as_bytes();
     let key = bytes.get(..6)?;
     let ok = key[0] == b'm'
@@ -286,7 +293,17 @@ mod tests {
     fn areas_and_games() {
         assert_eq!(area_key("m15_01").as_deref(), Some("m15_01"));
         assert_eq!(area_key("M15_01_00_00").as_deref(), Some("m15_01"));
-        for bad in ["m15", "x15_01", "m15_01_0", "m15_01/..", "", "m1a_01"] {
+        assert_eq!(area_key("model").as_deref(), Some("model"));
+        for bad in [
+            "m15",
+            "x15_01",
+            "m15_01_0",
+            "m15_01/..",
+            "",
+            "m1a_01",
+            "models",
+            "mode",
+        ] {
             assert_eq!(area_key(bad), None, "{bad}");
         }
         assert!(is_game("dark-souls-remastered"));

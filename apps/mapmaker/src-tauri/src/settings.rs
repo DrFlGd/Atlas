@@ -1,6 +1,8 @@
 //! The Map Maker's settings, in `settings.json` in the app's config folder: the last game folder, whether Make
 //! map also makes 3D maps, the map style, how floors are found, the last make (so its report, and Adjust floors,
-//! are there when the app opens again), and per area how a picture to compare with was laid over its map.
+//! are there when the app opens again; for a map made from a 3D model, the model file and how it was set up, so it
+//! can be read again), the folder a model was last chosen in, and per area how a picture to compare with was laid
+//! over its map.
 //! The player's own floor cuts are in `floor-overrides.json` beside it (see overrides.rs).
 
 use std::{fs, path::Path};
@@ -8,7 +10,7 @@ use std::{fs, path::Path};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub last_folder: Option<String>,
@@ -21,19 +23,144 @@ pub struct Settings {
     /// "Floors" (FLOOR_METHODS): how Make map finds floors; none when never chosen (as suits the game).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floor_method: Option<String>,
-    /// The last make: its game folder and output folder.
+    /// The last make: its game folder (or model file) and output folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_make: Option<LastMake>,
+    /// The folder of the 3D model chosen last ("Make a map from a 3D model…").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_model_folder: Option<String>,
     /// "Compare with a picture…": per `game:mAA_BB`, the picture and how it lies over the map (clean_alignment).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compare: Option<Map<String, Value>>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastMake {
+    /// The game folder, or for a map made from a 3D model, the model file.
     pub folder: String,
     pub out: String,
+    /// How the model was set up, for a map made from a 3D model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelSetup>,
+}
+
+/// How a 3D model is made into a map (the setup of "Make a map from a 3D model…", the helper's `make-model`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSetup {
+    /// The map's name: the pack id is made from it.
+    pub name: String,
+    /// The pack's title, as Atlas lists it.
+    pub title: String,
+    /// The model's up axis: `+y`, `+z`, `-y`, `-z`, `+x` or `-x`.
+    pub up: String,
+    /// Metres per model unit.
+    pub scale: f64,
+    /// What the scale is: `metres`, `centimetres`, `millimetres`, `inches`, `feet` or `custom`.
+    pub units: String,
+    /// `keep` the model's textures, or `plain` colours.
+    pub textures: String,
+    /// Both sides of every face drawn: `auto` (as the file says), `yes` or `no`.
+    pub double_sided: String,
+    /// How floors are found: `ground` (by ground area), `passages` or `none`.
+    pub floors: String,
+    /// Ground area: floor levels at least this far apart (metres); `None` for the helper's own.
+    #[serde(default)]
+    pub floor_separation: Option<f64>,
+    /// Ground area: levels closer than this are joined (metres).
+    #[serde(default)]
+    pub merge_gap: Option<f64>,
+    /// "Allow very large models": up to LARGEST_TRIANGLES triangles instead of DEFAULT_TRIANGLES.
+    #[serde(default)]
+    pub allow_large: bool,
+    /// How the floors are drawn (MODEL_MAP_STYLES).
+    pub map_style: String,
+}
+
+/// The triangles a model may have, and with "Allow very large models" (as atlas-scene's formats.rs).
+pub const DEFAULT_TRIANGLES: u64 = 5_000_000;
+pub const LARGEST_TRIANGLES: u64 = 50_000_000;
+pub const UP_AXES: [&str; 6] = ["+y", "+z", "-y", "-z", "+x", "-x"];
+pub const UNITS: [&str; 6] = [
+    "metres",
+    "centimetres",
+    "millimetres",
+    "inches",
+    "feet",
+    "custom",
+];
+/// A model is drawn in its own textures and colours, so the textured styles can be chosen for it.
+pub const MODEL_MAP_STYLES: [&str; 4] = ["shaded", "outlines", "textured", "textured-outlines"];
+const MODEL_FLOORS: [&str; 3] = ["ground", "passages", "none"];
+const MAX_NAME: usize = 80;
+
+fn plain_text(text: &str, what: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err(format!("Give the map {what}."));
+    }
+    if text.chars().count() > MAX_NAME || text.chars().any(char::is_control) {
+        return Err(format!(
+            "The {what} is too long, or has characters that cannot be used."
+        ));
+    }
+    Ok(())
+}
+
+impl ModelSetup {
+    /// The setup when it can be used, or what is wrong with it.
+    pub fn checked(self) -> Result<Self, String> {
+        plain_text(&self.name, "a name")?;
+        plain_text(&self.title, "a title")?;
+        let choice = |value: &str, choices: &[&str], what: &str| {
+            if choices.contains(&value) {
+                Ok(())
+            } else {
+                Err(format!("{value} is not {what}."))
+            }
+        };
+        choice(&self.up, &UP_AXES, "an up axis")?;
+        choice(&self.units, &UNITS, "a unit")?;
+        choice(
+            &self.textures,
+            &["keep", "plain"],
+            "a way of drawing textures",
+        )?;
+        choice(
+            &self.double_sided,
+            &["auto", "yes", "no"],
+            "a choice of sides",
+        )?;
+        choice(&self.floors, &MODEL_FLOORS, "a way of finding floors")?;
+        choice(&self.map_style, &MODEL_MAP_STYLES, "a map style")?;
+        if !(self.scale.is_finite() && (1e-6..=1e6).contains(&self.scale)) {
+            return Err(
+                "The scale must be a number above 0.000001 and up to 1,000,000.".to_owned(),
+            );
+        }
+        let within = |value: Option<f64>, low: f64, high: f64, what: &str| match value {
+            Some(n) if !(n.is_finite() && (low..=high).contains(&n)) => Err(format!(
+                "The {what} must be between {low} and {high} metres."
+            )),
+            _ => Ok(()),
+        };
+        within(self.floor_separation, 0.5, 50.0, "floor separation")?;
+        within(self.merge_gap, 0.0, 20.0, "merge gap")?;
+        Ok(ModelSetup {
+            name: self.name.trim().to_owned(),
+            title: self.title.trim().to_owned(),
+            ..self
+        })
+    }
+
+    /// The most triangles the helper is to read.
+    pub fn max_triangles(&self) -> u64 {
+        if self.allow_large {
+            LARGEST_TRIANGLES
+        } else {
+            DEFAULT_TRIANGLES
+        }
+    }
 }
 
 impl Settings {
@@ -214,7 +341,9 @@ mod tests {
             last_make: Some(LastMake {
                 folder: r"C:\Games\DARK SOULS REMASTERED".into(),
                 out: r"C:\Users\Someone\AppData\Local\Atlas Map Maker\makes\run-1".into(),
+                model: None,
             }),
+            last_model_folder: Some(r"C:\Users\Someone\Documents\3D Models ü".into()),
             compare: None,
         };
         settings
@@ -270,6 +399,92 @@ mod tests {
         );
         fs::write(&file, "not json").unwrap();
         assert_eq!(read(&file), Settings::default());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn setup() -> ModelSetup {
+        ModelSetup {
+            name: "  Made-up House ".into(),
+            title: "Made-up House".into(),
+            up: "+z".into(),
+            scale: 0.01,
+            units: "centimetres".into(),
+            textures: "keep".into(),
+            double_sided: "auto".into(),
+            floors: "ground".into(),
+            floor_separation: Some(3.0),
+            merge_gap: None,
+            allow_large: false,
+            map_style: "textured".into(),
+        }
+    }
+
+    #[test]
+    fn model_setups_are_checked_and_kept() {
+        let checked = setup().checked().unwrap();
+        assert_eq!(checked.name, "Made-up House", "trimmed");
+        assert_eq!(checked.max_triangles(), DEFAULT_TRIANGLES);
+        let large = ModelSetup {
+            allow_large: true,
+            ..setup()
+        };
+        assert_eq!(large.max_triangles(), LARGEST_TRIANGLES);
+        for bad in [
+            ModelSetup {
+                name: " ".into(),
+                ..setup()
+            },
+            ModelSetup {
+                title: "a\u{7}b".into(),
+                ..setup()
+            },
+            ModelSetup {
+                up: "up".into(),
+                ..setup()
+            },
+            ModelSetup {
+                scale: 0.0,
+                ..setup()
+            },
+            ModelSetup {
+                scale: f64::NAN,
+                ..setup()
+            },
+            ModelSetup {
+                floors: "stacked".into(),
+                ..setup()
+            },
+            ModelSetup {
+                floor_separation: Some(0.1),
+                ..setup()
+            },
+            ModelSetup {
+                map_style: "watercolour".into(),
+                ..setup()
+            },
+        ] {
+            assert!(bad.clone().checked().is_err(), "{bad:?}");
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "atlas-mapmaker-settings-model-{}",
+            std::process::id()
+        ));
+        let file = dir.join("settings.json");
+        let settings = Settings {
+            last_make: Some(LastMake {
+                folder: r"C:\Users\Someone\3D Models\house ü.obj".into(),
+                out: r"C:\Users\Someone\AppData\Local\Atlas Map Maker\makes\run-2".into(),
+                model: Some(checked),
+            }),
+            ..Settings::default()
+        };
+        write(&file, &settings).unwrap();
+        assert_eq!(read(&file), settings);
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains("doubleSided") && text.contains("allowLarge"),
+            "{text}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

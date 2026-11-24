@@ -1,6 +1,7 @@
 //! Atlas Map Maker: one window that checks a player's own game files with the bundled helper
 //! (`atlas-gamefiles`, tools/gamefiles), shows what map data can be read, and makes a map pack from them for the
-//! Atlas viewer, and lets the player adjust where an area's floors are cut and make that area again.
+//! Atlas viewer, and lets the player adjust where an area's floors are cut and make that area again. It also makes a
+//! map from a 3D model file (glTF, OBJ, STL or PLY), read by the bundled 3D builder (`atlas-scene`).
 
 pub mod checks;
 mod commands;
@@ -12,7 +13,7 @@ pub mod settings;
 use tauri::RunEvent;
 
 use checks::Checks;
-use commands::LastSaved;
+use commands::{ChosenModel, LastSaved};
 use floorviews::FloorViews;
 
 pub fn run() {
@@ -21,6 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(Checks::default())
         .manage(LastSaved::default())
+        .manage(ChosenModel::default())
         .manage(FloorViews::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
@@ -30,6 +32,9 @@ pub fn run() {
             commands::check_cancel,
             commands::make_start,
             commands::remake_start,
+            commands::choose_model,
+            commands::model_inspect,
+            commands::model_make_start,
             commands::restore_last_make,
             commands::floor_overrides_read,
             commands::floor_overrides_set,

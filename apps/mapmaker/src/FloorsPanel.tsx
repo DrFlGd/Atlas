@@ -81,7 +81,10 @@ interface Props {
   onOverrides: (overrides: FloorOverrides) => void;
   onRemake: (area: string, style: MapStyleId) => Promise<void>;
   onCancel: () => void;
-  onMakeAll: () => void;
+  /** Make map (all areas), offered when the area cannot be made again; none for a map made from a 3D model. */
+  onMakeAll?: (() => void) | undefined;
+  /** A map made from a 3D model: the textured styles can be chosen. */
+  model?: boolean;
 }
 
 type Axis = 'x' | 'z';
@@ -379,7 +382,7 @@ export function FloorsPanel(props: Props) {
       setBaseline(JSON.stringify(methodEntry(method, next, nextChoices, floorCount)));
       setMessage(
         passages
-          ? 'Your choices for this area are cleared: each overlapping place shows its upper storey again. Press Make this area again to redraw its map.'
+          ? 'Your choices for this area are cleared: each overlapping spot shows its upper storey again. Press Make this area again to redraw its map.'
           : 'Your cuts for this area are cleared: it has the Map Maker’s own floors again. Press Make this area again to redraw its map.',
       );
     } catch (error) {
@@ -482,7 +485,7 @@ export function FloorsPanel(props: Props) {
         {passages ? (
           <p id="fp-intro" className="muted small">
             Automatic passages keep the ground whole and split it only where one walkable surface
-            lies over another, such as a bridge over a street: each such overlapping place is listed
+            lies over another, such as a bridge over a street: each such overlapping spot is listed
             on the right, where you choose whether the main floor shows its upper storey (the
             bridge) or its lower one (the passage under it). The other storey goes on a floor of its
             own. The section, the 3D view and the floor from above follow as you go. Press Make this
@@ -497,6 +500,7 @@ export function FloorsPanel(props: Props) {
             Press Make this area again to redraw this area’s map from these floors.
           </p>
         )}
+        {!passages && groundNote(area) && <p className="small">{groundNote(area)}</p>}
 
         <div className="mm-fp-body">
           <div className="mm-fp-views">
@@ -660,7 +664,7 @@ export function FloorsPanel(props: Props) {
                             top: top(highest + 0.6),
                             height: `${((highest - lowest + 1.2) / (high - low)) * 100}%`,
                           }}
-                          aria-label={`Overlapping place ${number + 1}: the main floor shows its ${p.show === 'lower' ? 'lower' : 'upper'} storey`}
+                          aria-label={`Overlapping spot ${number + 1}: the main floor shows its ${p.show === 'lower' ? 'lower' : 'upper'} storey`}
                           onClick={() => {
                             setPlace(p.id);
                           }}
@@ -726,7 +730,7 @@ export function FloorsPanel(props: Props) {
               {AXES.find((a) => a.axis === axis)!.note}, heights stretched to fit): walkable floor
               as bright lines, walls see-through and lighter where more stand one behind another,
               {passages
-                ? ' each walkable surface in the colour of its floor, walls grey. Numbered brackets are the overlapping places.'
+                ? ' each walkable surface in the colour of its floor, walls grey. Numbered brackets are the overlapping spots.'
                 : ' each in the colour of its floor.'}
               {showItems &&
                 (passages
@@ -881,7 +885,7 @@ export function FloorsPanel(props: Props) {
                   move. With the view selected: the arrow keys turn it, + and − zoom, Home goes back
                   to the start.{' '}
                   {passages
-                    ? 'Each walkable surface is in the colour of its floor, walls and slopes grey; the chosen floor is bright. Large white dots are the overlapping places (the chosen one yellow).'
+                    ? 'Each walkable surface is in the colour of its floor, walls and slopes grey; the chosen floor is bright. Large white dots are the overlapping spots (the chosen one yellow).'
                     : 'Each cut is a see-through level in the colour of the floor above it; the chosen floor is bright.'}{' '}
                   Outlines draws the edges of the walls and floors.
                 </p>
@@ -1188,7 +1192,7 @@ export function FloorsPanel(props: Props) {
           {failedRemake && (
             <div className="mm-alert mm-bad" role="alert">
               <p>{failedRemake.error ?? 'Making the area again stopped.'}</p>
-              {failedRemake.errorCode && (
+              {failedRemake.errorCode && props.onMakeAll && (
                 <button type="button" className="button button-primary" onClick={props.onMakeAll}>
                   Make map (all areas)
                 </button>
@@ -1200,6 +1204,7 @@ export function FloorsPanel(props: Props) {
             label="Map style of this area"
             value={style}
             disabled={running}
+            model={props.model ?? false}
             onChange={setStyle}
           />
           <div className="mm-row">
@@ -1285,6 +1290,23 @@ export function FloorsPanel(props: Props) {
   );
 }
 
+/** For a map made from a 3D model, where its floors were found by ground area: the storeys and the cuts under
+ * them. Null otherwise. */
+function groundNote(area: MadeArea): string | null {
+  const plan = area.floorPlan;
+  if (plan?.automatic !== 'ground') return null;
+  const found = (plan.automaticCuts ?? []).filter((cut) => cut.level !== undefined);
+  if (found.length === 0)
+    return 'Found by ground area: no storey above the lowest has enough flat ground, so the automatic plan is one floor.';
+  const levels = found.map((cut) => heightText(cut.level!));
+  const cuts = found.map((cut) => heightText(cut.height));
+  const list = (items: string[]) =>
+    items.length === 1
+      ? items[0]!
+      : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]!}`;
+  return `Found by ground area: ${found.length === 1 ? 'a storey' : 'storeys'} at ${list(levels)}, with the automatic ${found.length === 1 ? 'cut' : 'cuts'} 1.5 m below (${list(cuts)}).`;
+}
+
 /** Automatic passages: the overlapping places, each with its Upper / Lower choice for the main floor. */
 function PlacesList(props: {
   places: readonly PassagePlace[];
@@ -1298,7 +1320,7 @@ function PlacesList(props: {
   const { places, choices } = props;
   return (
     <div className="mm-fp-places">
-      <h3>Overlapping places</h3>
+      <h3>Overlapping spots</h3>
       {places.length === 0 ? (
         <p className="small muted">
           Nothing walkable lies over anything else here, so the area is one floor.
@@ -1324,7 +1346,7 @@ function PlacesList(props: {
                   }
                 >
                   <div className="small">
-                    <strong>Place {number + 1}</strong>{' '}
+                    <strong>Spot {number + 1}</strong>{' '}
                     <span className="muted">
                       · near x {Math.round(p.x)}, z {Math.round(p.z)} · {plural(p.levels, 'storey')}{' '}
                       from {heightText(lowest).replace(/ m$/, '')} to {heightText(highest)} ·{' '}
@@ -1337,7 +1359,7 @@ function PlacesList(props: {
                   <div
                     className="mm-row"
                     role="group"
-                    aria-label={`Place ${number + 1}: the main floor shows`}
+                    aria-label={`Spot ${number + 1}: the main floor shows`}
                   >
                     <span className="small muted">Main floor shows</span>
                     {(['upper', 'lower'] as const).map((value) => (

@@ -2,7 +2,9 @@
 
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::Mutex,
 };
 
@@ -17,12 +19,30 @@ use crate::{
     checks::{self, Checks, Job, Status},
     floorviews::FloorViews,
     maps, overrides,
-    settings::{self, LastMake, Settings},
+    settings::{self, LastMake, ModelSetup, Settings},
 };
 
 /// The report saved last, which "Show in folder" reveals.
 #[derive(Default)]
 pub struct LastSaved(pub Mutex<Option<PathBuf>>);
+
+/// The 3D model chosen last with the file dialog: only it is read (`model_inspect`) and made into a map.
+#[derive(Default)]
+pub struct ChosenModel(pub Mutex<Option<PathBuf>>);
+
+impl ChosenModel {
+    fn path(&self) -> Result<PathBuf, String> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or_else(|| "Choose a model file first.".to_owned())
+    }
+}
+
+/// The model files the dialog offers. FBX and COLLADA are offered so that the person is told what to do with them
+/// (export the model as glTF or OBJ) rather than not finding the file.
+const MODEL_EXTENSIONS: [&str; 7] = ["glb", "gltf", "obj", "stl", "ply", "fbx", "dae"];
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -220,9 +240,16 @@ pub fn remake_start<R: Runtime>(
     make_3d: bool,
     map_style: Option<String>,
 ) -> Result<Status, String> {
+    let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
+    if let Some(Job::Model { setup, .. }) = checks.last_job() {
+        if key != overrides::MODEL_AREA {
+            return Err(format!("{area} is not an area of this map."));
+        }
+        views.close();
+        return model_remake_start(&app, &checks, setup, map_style);
+    }
     let settings = settings::read(&settings_file(&app)?);
     let map_style = checked_style(map_style, &settings)?;
-    let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     let (folder, out_dir, _) = checks
         .last_make()
         .ok_or("Make the map first: then its areas can be made again.")?;
@@ -255,7 +282,12 @@ pub fn remake_start<R: Runtime>(
 pub fn restore_last_make<R: Runtime>(app: AppHandle<R>, checks: State<'_, Checks>) -> Status {
     if let (Ok(file), Ok(maps_folder)) = (settings_file(&app), viewer_maps_folder(&app)) {
         if let Some(last) = settings::read(&file).last_make {
-            checks.restore(Path::new(&last.folder), Path::new(&last.out), &maps_folder);
+            checks.restore(
+                Path::new(&last.folder),
+                Path::new(&last.out),
+                &maps_folder,
+                last.model.as_ref(),
+            );
         }
     }
     checks.status()
@@ -522,6 +554,203 @@ pub fn compare_open_picture<R: Runtime>(
     picture_at(Path::new(&path))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelChoice {
+    path: String,
+    name: String,
+}
+
+/// "Make a map from a 3D model…": asks for a model file, starting in the folder of the last one. `None` when the
+/// dialog was closed.
+#[tauri::command]
+pub async fn choose_model<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    chosen: State<'_, ChosenModel>,
+) -> Result<Option<ModelChoice>, String> {
+    let file = settings_file(&app)?;
+    let mut settings = settings::read(&file);
+    let mut dialog = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Choose a 3D model")
+        .add_filter("3D models (glTF, OBJ, STL, PLY)", &MODEL_EXTENSIONS);
+    let start = settings
+        .last_model_folder
+        .clone()
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_dir())
+        .or_else(|| window.path().document_dir().ok());
+    if let Some(start) = start {
+        dialog = dialog.set_directory(start);
+    }
+    let Some(path) = chosen_path(|done| dialog.pick_file(done)).await? else {
+        return Ok(None);
+    };
+    if let Some(folder) = path.parent() {
+        settings.last_model_folder = Some(folder.display().to_string());
+        let _ = settings::write(&file, &settings);
+    }
+    *chosen
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(path.clone());
+    Ok(Some(ModelChoice {
+        name: file_name(&path),
+        path: path.display().to_string(),
+    }))
+}
+
+/// The builder's answer to `inspect` is cut off past this (a preview is at most a few megabytes).
+const MAX_INSPECT_OUTPUT: u64 = 256 * 1024 * 1024;
+
+/// Reads the chosen model with the 3D builder (`atlas-scene inspect`): what the file holds (format, triangles,
+/// materials, textures found and missing, the up axis its format suggests) and a small preview of its shape.
+/// `allow_large`: "Allow very large models".
+#[tauri::command]
+pub async fn model_inspect(
+    chosen: State<'_, ChosenModel>,
+    allow_large: Option<bool>,
+) -> Result<Value, String> {
+    let path = chosen.path()?;
+    if !path.is_file() {
+        return Err(format!(
+            "The model file {} is not there any more. Choose it again.",
+            path.display()
+        ));
+    }
+    let builder = checks::find_scene_builder().ok_or(
+        "The 3D builder that comes with the Map Maker (atlas-scene) is missing: it reads model files. Please reinstall the app.",
+    )?;
+    let most = if allow_large.unwrap_or(false) {
+        settings::LARGEST_TRIANGLES
+    } else {
+        settings::DEFAULT_TRIANGLES
+    };
+    tauri::async_runtime::spawn_blocking(move || inspect(&builder, &path, most))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn inspect(builder: &Path, model: &Path, most: u64) -> Result<Value, String> {
+    let mut command = Command::new(builder);
+    command
+        .arg("inspect")
+        .arg(model)
+        .arg("--max-triangles")
+        .arg(most.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    checks::hide_console(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not start the 3D builder: {error}"))?;
+    let mut output = String::new();
+    let read = child
+        .stdout
+        .take()
+        .map(|stdout| stdout.take(MAX_INSPECT_OUTPUT).read_to_string(&mut output));
+    checks::end_process(&mut child);
+    if let Some(Err(error)) = read {
+        return Err(format!(
+            "The 3D builder's answer could not be read: {error}"
+        ));
+    }
+    last_event(&output)
+}
+
+/// The builder's last JSON line: `inspected` is the answer, `error` says why the file cannot be read.
+fn last_event(output: &str) -> Result<Value, String> {
+    let event = output
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .ok_or("The 3D builder stopped without an answer.")?;
+    match event.get("event").and_then(Value::as_str) {
+        Some("inspected") => Ok(event),
+        Some("error") => Err(format!(
+            "The model could not be read: {}",
+            event
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("no reason given")
+        )),
+        _ => Err("The 3D builder gave an answer the Map Maker does not know.".to_owned()),
+    }
+}
+
+/// Starts making a map pack from the chosen model, set up as `setup` (remembered with the make, so that it can be
+/// made again), installed in the Atlas viewer's maps folder. Its report goes to a new folder in the app's data.
+#[tauri::command]
+pub fn model_make_start<R: Runtime>(
+    app: AppHandle<R>,
+    checks: State<'_, Checks>,
+    chosen: State<'_, ChosenModel>,
+    setup: ModelSetup,
+) -> Result<Status, String> {
+    let setup = setup.checked()?;
+    let path = chosen.path()?;
+    let job = Job::Model {
+        maps_folder: viewer_maps_folder(&app)?,
+        scene_builder: checks::find_scene_builder(),
+        floor_overrides: floor_overrides_for_helper(&app),
+        setup,
+        remake: false,
+    };
+    start(&app, &checks, path.display().to_string(), job, "makes")
+}
+
+/// Makes the last map made from a 3D model again (its one area, `model`), reading the model file again, with the
+/// player's floor cuts and, when given, another of the model map styles.
+fn model_remake_start<R: Runtime>(
+    app: &AppHandle<R>,
+    checks: &Checks,
+    mut setup: ModelSetup,
+    map_style: Option<String>,
+) -> Result<Status, String> {
+    let (file, out_dir, _) = checks
+        .last_make()
+        .ok_or("Make the map first: then it can be made again.")?;
+    if !file.is_file() {
+        return Err(format!(
+            "The model file {} is not there any more: it may have been moved or renamed. Choose it again with Make a map from a 3D model…",
+            file.display()
+        ));
+    }
+    if let Some(style) =
+        map_style.filter(|style| settings::MODEL_MAP_STYLES.contains(&style.as_str()))
+    {
+        setup.map_style = style;
+    }
+    let helper = checks::find_helper().ok_or(
+        "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
+    )?;
+    let job = Job::Model {
+        maps_folder: viewer_maps_folder(app)?,
+        scene_builder: checks::find_scene_builder(),
+        floor_overrides: floor_overrides_for_helper(app),
+        setup: setup.clone(),
+        remake: true,
+    };
+    let status = checks.start(&helper, job, &file, &out_dir)?;
+    // The setup it was made with now, for the next time the app opens.
+    if let Ok(settings_path) = settings_file(app) {
+        let mut settings = settings::read(&settings_path);
+        if let Some(last) = settings
+            .last_make
+            .as_mut()
+            .filter(|last| Path::new(&last.out) == out_dir)
+        {
+            last.model = Some(setup);
+            let _ = settings::write(&settings_path, &settings);
+        }
+    }
+    Ok(status)
+}
+
 fn start<R: Runtime>(
     app: &AppHandle<R>,
     checks: &Checks,
@@ -533,7 +762,17 @@ fn start<R: Runtime>(
         "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
     )?;
     let folder_path = PathBuf::from(&folder);
-    if !folder_path.is_dir() {
+    let model = match &job {
+        Job::Model { setup, .. } => Some(setup.clone()),
+        _ => None,
+    };
+    if model.is_some() {
+        if !folder_path.is_file() {
+            return Err(format!(
+                "The model file {folder} is not there any more. Choose it again."
+            ));
+        }
+    } else if !folder_path.is_dir() {
         return Err(format!(
             "The folder {folder} does not exist any more. Choose it again."
         ));
@@ -544,7 +783,7 @@ fn start<R: Runtime>(
         .map_err(|error| error.to_string())?
         .join(runs);
     let out_dir = checks::new_run_folder(&base)?;
-    let is_make = matches!(job, Job::Make { .. });
+    let is_make = matches!(job, Job::Make { .. } | Job::Model { .. });
     let status = checks.start(&helper, job, &folder_path, &out_dir)?;
     let file = settings_file(app)?;
     let settings = settings::read(&file);
@@ -552,12 +791,18 @@ fn start<R: Runtime>(
         Some(LastMake {
             folder: folder.clone(),
             out: out_dir.display().to_string(),
+            model: model.clone(),
         })
     } else {
         settings.last_make.clone()
     };
     let changed = Settings {
-        last_folder: Some(folder),
+        // The game folder is remembered; a model file is not one.
+        last_folder: if model.is_some() {
+            settings.last_folder.clone()
+        } else {
+            Some(folder)
+        },
         last_make,
         ..settings.clone()
     };
@@ -671,7 +916,7 @@ fn safe_file_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{checked_method, picture_kind, safe_file_name};
+    use super::{checked_method, last_event, picture_kind, safe_file_name};
 
     #[test]
     fn floor_methods_and_pictures() {
@@ -685,6 +930,22 @@ mod tests {
         assert_eq!(picture_kind(b"\x89PNG\r\n\x1a\nmore"), Some("image/png"));
         assert_eq!(picture_kind(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
         assert_eq!(picture_kind(b"GIF89a"), None);
+    }
+
+    #[test]
+    fn the_builders_answers() {
+        let answer = last_event(
+            "{\"event\":\"progress\"}\n{\"event\":\"inspected\",\"info\":{\"triangles\":12}}\n",
+        )
+        .unwrap();
+        assert_eq!(answer["info"]["triangles"], 12);
+        let refused = last_event(
+            "{\"event\":\"error\",\"message\":\"FBX files cannot be read yet. Export the model as glTF\"}",
+        )
+        .unwrap_err();
+        assert!(refused.contains("Export the model as glTF"), "{refused}");
+        assert!(last_event("").is_err());
+        assert!(last_event("{\"event\":\"other\"}").is_err());
     }
 
     #[test]
