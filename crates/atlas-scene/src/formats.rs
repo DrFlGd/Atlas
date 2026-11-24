@@ -454,10 +454,11 @@ fn read_obj(path: &Path, max: usize, info: &mut ModelInfo) -> Result<Model, Stri
         let index = model.materials.len();
         model.materials.push(Material {
             name: material.name.clone(),
+            // Kd is written as the colour shown (sRGB), as modelling programs and viewers take it.
             color: [
-                colour[0].clamp(0.0, 1.0),
-                colour[1].clamp(0.0, 1.0),
-                colour[2].clamp(0.0, 1.0),
+                srgb_to_linear(colour[0]),
+                srgb_to_linear(colour[1]),
+                srgb_to_linear(colour[2]),
                 alpha,
             ],
             double_sided: true,
