@@ -6,7 +6,7 @@
  * A cut is a height where one floor ends and the next begins; `names` has one name per floor, lowest first, and an
  * empty name means "as the Map Maker names it".
  */
-import type { FloorEntry } from './shell';
+import type { FloorEntry, RemovedPiece } from './shell';
 import type {
   FloorMethod,
   HeightProfile,
@@ -436,19 +436,23 @@ export function startMethod(area: MadeArea): FloorMethod {
   return area.floorPlan?.method === 'passages' ? 'passages' : 'cuts';
 }
 
-/** The entry written to the player's floor cuts file for the floor method chosen in the panel. */
+/** The entry written to the player's floor cuts file for the floor method chosen in the panel, with the pieces
+ * removed (when any is). */
 export function methodEntry(
   method: FloorMethod,
   draft: FloorsDraft,
   choices: readonly PassageChoice[],
   floors: number,
+  removed: readonly RemovedPiece[] = [],
 ): FloorEntry {
-  if (method === 'cuts') return { method, ...entryOf(draft) };
+  const pieces = removed.length > 0 ? { removed: removed.map((piece) => ({ ...piece })) } : {};
+  if (method === 'cuts') return { method, ...entryOf(draft), ...pieces };
   const names = padNames(draft.names, floors).map((name) => name.trim());
   return {
     method,
     passages: choices.map((choice) => ({ ...choice })),
     ...(names.some((name) => name !== '') ? { names } : {}),
+    ...pieces,
   };
 }
 

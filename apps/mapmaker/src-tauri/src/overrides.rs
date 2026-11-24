@@ -5,7 +5,10 @@
 //! `splitAt`, `mergeAt` and `names` (lowest first, an empty name for "as the Map Maker names it"), and since
 //! version 2 of the file (its top-level `version`), `method` (`passages` or `cuts`: how the area's floors are
 //! found) and `passages` (`[{x, z, show}]`: in the overlapping place at x, z, whether the main floor shows the
-//! `upper` or the `lower` storey). Files without `version` (version 1) load as before. The Adjust floors
+//! `upper` or the `lower` storey), and since version 3, `removed` (the pieces the player removed in Adjust floors:
+//! `[{part, box, triangles, area, whole}]`, the collision part's name, the piece's bounds `[x0, y0, z0, x1, y1, z1]`
+//! in metres, how many triangles and square metres it had, and `whole` for a whole part; see the helper's
+//! atlas_gamefiles/pieces.py). Files without `version` (version 1) and version 2 files load as before. The Adjust floors
 //! panel writes one area's entry at a time; Make map and Make this area again give the file to the helper
 //! (`--floor-overrides`), where per area the player's entry replaces the shipped one. "Save my floor cuts to a
 //! file…" writes one game's entries to a file of the same shape, and "Load floor cuts from a file…" takes such a
@@ -24,11 +27,13 @@ const MAX_NAMES: usize = 33;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_HEIGHT: f64 = 100_000.0;
 const MAX_PASSAGES: usize = 256;
+const MAX_REMOVED: usize = 256;
+const MAX_PART_CHARS: usize = 64;
 /// The version of the file this app writes (`version` at the top).
-pub const FILE_VERSION: u64 = 2;
+pub const FILE_VERSION: u64 = 3;
 /// A larger file is not read.
 pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
-const COMMENT: &str = "Atlas Map Maker floor cuts: per game, per area (mAA_BB): cuts (every cut height in metres, lowest first, in place of the automatic ones), names (of the floors, lowest first; empty for the Map Maker's own name), method (passages: automatic passages, or cuts), passages (per overlapping place at x, z: show the upper or the lower storey on the main floor).";
+const COMMENT: &str = "Atlas Map Maker floor cuts: per game, per area (mAA_BB): cuts (every cut height in metres, lowest first, in place of the automatic ones), names (of the floors, lowest first; empty for the Map Maker's own name), method (passages: automatic passages, or cuts), passages (per overlapping place at x, z: show the upper or the lower storey on the main floor), removed (pieces left out of the map: the collision part, the piece's bounds in metres, its triangles and area, whole for a whole part).";
 
 /// Whether `id` is a game id: 1 to 64 of `a`–`z`, `0`–`9` and `-`.
 pub fn is_game(id: &str) -> bool {
@@ -114,6 +119,17 @@ pub fn clean_entry(value: &Value) -> Option<Value> {
             entry.insert("passages".to_owned(), Value::Array(kept));
         }
     }
+    if let Some(Value::Array(removed)) = object.get("removed") {
+        let mut kept: Vec<Value> = Vec::new();
+        for piece in removed.iter().take(MAX_REMOVED).filter_map(clean_piece) {
+            if !kept.contains(&piece) {
+                kept.push(piece);
+            }
+        }
+        if !kept.is_empty() {
+            entry.insert("removed".to_owned(), Value::Array(kept));
+        }
+    }
     if let Some(Value::Array(names)) = object.get("names") {
         let names: Vec<Value> = names
             .iter()
@@ -134,6 +150,52 @@ pub fn clean_entry(value: &Value) -> Option<Value> {
         }
     }
     (!entry.is_empty()).then_some(Value::Object(entry))
+}
+
+/// One removed piece, kept to what the helper reads (atlas_gamefiles/pieces.py `clean_piece`); `None` when it is not
+/// usable.
+fn clean_piece(value: &Value) -> Option<Value> {
+    let part: String = value
+        .get("part")?
+        .as_str()?
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_PART_CHARS)
+        .collect();
+    let numbers: Vec<f64> = value
+        .get("box")?
+        .as_array()
+        .filter(|values| values.len() == 6)?
+        .iter()
+        .map(|v| v.as_f64().filter(|v| v.is_finite() && v.abs() < MAX_HEIGHT))
+        .collect::<Option<Vec<f64>>>()?
+        .into_iter()
+        .map(|v| (v * 100.0).round() / 100.0)
+        .collect();
+    if (0..3).any(|k| numbers[k + 3] < numbers[k]) {
+        return None;
+    }
+    let mut piece = Map::new();
+    piece.insert("part".to_owned(), Value::String(part.trim().to_owned()));
+    piece.insert("box".to_owned(), json!(numbers));
+    if value.get("whole") == Some(&Value::Bool(true)) {
+        piece.insert("whole".to_owned(), Value::Bool(true));
+    }
+    if let Some(count) = value
+        .get("triangles")
+        .and_then(Value::as_f64)
+        .filter(|n| n.is_finite() && (0.0..1e9).contains(n))
+    {
+        piece.insert("triangles".to_owned(), json!(count as u64));
+    }
+    if let Some(area) = value
+        .get("area")
+        .and_then(Value::as_f64)
+        .filter(|n| n.is_finite() && (0.0..1e9).contains(n))
+    {
+        piece.insert("area".to_owned(), json!((area * 100.0).round() / 100.0));
+    }
+    Some(Value::Object(piece))
 }
 
 /// Every game's entries of a file's contents, cleaned: `{game: {area: entry}}`.
@@ -333,6 +395,19 @@ mod tests {
             json!({"method": "passages", "passages": [{"x": 1.23, "z": -2.0, "show": "lower"}]})
         );
         assert_eq!(clean_entry(&json!({"method": "stairs"})), None);
+        // Version 3: removed pieces, cleaned, each once.
+        let piece = json!({"part": "h000100", "box": [1.234, 2, 3, 4, 5, 6.789], "triangles": 2, "area": 3.456});
+        assert_eq!(
+            clean_entry(&json!({"removed": [piece, piece, {"part": "x", "box": [5, 0, 0, 1, 1, 1]}, {"part": 3, "box": [0, 0, 0, 1, 1, 1]}, {"part": "y", "box": [0, 0, 0], "whole": true}, {"part": "\u{7}z", "box": [0, 0, 0, 1, 1, "a"]}]}))
+                .unwrap(),
+            json!({"removed": [{"part": "h000100", "box": [1.23, 2.0, 3.0, 4.0, 5.0, 6.79], "triangles": 2, "area": 3.46}]})
+        );
+        assert_eq!(
+            clean_entry(&json!({"removed": [{"part": "p", "box": [0, 0, 0, 1, 1, 1], "whole": true, "other": 1}]}))
+                .unwrap(),
+            json!({"removed": [{"part": "p", "box": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0], "whole": true}]})
+        );
+        assert_eq!(clean_entry(&json!({"removed": [{"part": "x"}]})), None);
         assert_eq!(clean_entry(&json!([1])), None);
         let long = "x".repeat(500);
         let cleaned = clean_entry(&json!({ "names": [long] })).unwrap();

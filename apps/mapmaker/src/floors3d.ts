@@ -10,6 +10,10 @@
  * The setup of "Make a map from a 3D model…" shows the model here too, in its own colours (`ownColours`), with
  * its bounds as a box.
  *
+ * Remove pieces (`picking`): a press on the model chooses the surface under it (`onPickSurface`, the triangle
+ * pressed, the nearest one not cut away), in place of an item. `marks` shows each triangle's part in it (pieces.ts):
+ * the chosen piece yellow, the rest of its part pale yellow, removed pieces dark red.
+ *
  * Pressing an item's dot goes to it (`goTo`): the panel shows its floor and cuts the view at head height above it
  * (`cutAt`), and the view flies down to look at it from close by, a little tilted, facing the way it faced (it jumps
  * where the person asked for less motion; any move by hand stops it).
@@ -46,6 +50,10 @@ export interface FloorsSceneState {
   cutAt?: number | null;
   /** Each triangle in its own colour (the model's `colours`), not its floor's. */
   ownColours?: boolean;
+  /** Remove pieces: a press chooses a surface, not an item. */
+  picking?: boolean;
+  /** Per triangle (pieces.ts PieceMark): 1 the chosen piece, 2 removed, 3 the rest of the chosen piece's part. */
+  marks?: Uint8Array | null;
 }
 
 export interface FloorsSceneHover {
@@ -72,14 +80,17 @@ export interface FloorsScene {
 const MODEL_VERTEX = /* glsl */ `
 attribute float floorIndex;
 attribute vec3 ownColour;
+attribute float mark;
 varying vec3 vWorld;
 varying float vFloor;
 varying vec3 vOwn;
+varying float vMark;
 void main() {
   vec4 world = modelMatrix * vec4(position, 1.0);
   vWorld = world.xyz;
   vFloor = floorIndex;
   vOwn = ownColour;
+  vMark = mark;
   gl_Position = projectionMatrix * viewMatrix * world;
 }
 `;
@@ -97,6 +108,7 @@ uniform int byOwnColour;
 varying vec3 vWorld;
 varying float vFloor;
 varying vec3 vOwn;
+varying float vMark;
 void main() {
   if (vWorld.y > clipTop) discard;
   int band = 0;
@@ -124,6 +136,9 @@ void main() {
   float light = 0.38 + 0.47 * abs(dot(n, lightDir)) + 0.15 * up;
   vec3 colour = (band == selected || band < 0) ? base : mix(base, vec3(0.46, 0.49, 0.54), 0.62) * 0.72;
   colour = mix(colour * 0.78, colour, up);
+  if (vMark > 0.5 && vMark < 1.5) colour = vec3(1.0, 0.84, 0.3);
+  else if (vMark > 1.5 && vMark < 2.5) colour = mix(colour, vec3(0.55, 0.12, 0.14), 0.75);
+  else if (vMark > 2.5) colour = mix(colour, vec3(1.0, 0.9, 0.6), 0.45);
   gl_FragColor = vec4(colour * light, 1.0);
 }
 `;
@@ -187,6 +202,8 @@ export function createFloorsScene(options: {
   onHover: (hover: FloorsSceneHover | null) => void;
   /** A press on the view: the marker pressed, or null for none. */
   onPick?: (index: number | null) => void;
+  /** Remove pieces: a press on the model, the triangle pressed (null: none). */
+  onPickSurface?: (triangle: number | null) => void;
   /** The model's bounds drawn as a box. */
   bounds?: boolean;
 }): FloorsScene {
@@ -230,6 +247,11 @@ export function createFloorsScene(options: {
     }
   }
   geometry.setAttribute('ownColour', new THREE.BufferAttribute(own, 3));
+  const vertexMarks = new Float32Array(positions.length / 3);
+  const markAttribute = new THREE.BufferAttribute(vertexMarks, 1);
+  geometry.setAttribute('mark', markAttribute);
+  let shownMarks: Uint8Array | null = null;
+  let picking = false;
   geometry.computeBoundingBox();
   const box =
     geometry.boundingBox ?? new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
@@ -260,7 +282,9 @@ export function createFloorsScene(options: {
       byOwnColour: { value: 0 },
     },
   });
-  scene.add(new THREE.Mesh(geometry, modelMaterial));
+  const modelMesh = new THREE.Mesh(geometry, modelMaterial);
+  scene.add(modelMesh);
+  const raycaster = new THREE.Raycaster();
   const boundsBox = options.bounds ? new THREE.Box3Helper(box.clone(), 0xf6ecc8) : null;
   if (boundsBox) scene.add(boundsBox);
 
@@ -488,6 +512,16 @@ export function createFloorsScene(options: {
   const onLeave = () => {
     options.onHover(null);
   };
+  // Remove pieces: the triangle under a point of the view, the nearest not cut away above the view's cut.
+  const surfaceAt = (x: number, y: number, rect: DOMRect): number | null => {
+    const pointer = new THREE.Vector2((x / rect.width) * 2 - 1, -(y / rect.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const top = modelMaterial.uniforms.clipTop!.value as number;
+    const hit = raycaster
+      .intersectObject(modelMesh, false)
+      .find((found) => found.point.y <= top && found.faceIndex !== undefined);
+    return hit?.faceIndex ?? null;
+  };
   // A press (not a drag): the nearest marker shown within reach.
   let down: { x: number; y: number; id: number } | null = null;
   const onDown = (event: PointerEvent) => {
@@ -496,12 +530,17 @@ export function createFloorsScene(options: {
   const onUp = (event: PointerEvent) => {
     const press = down;
     down = null;
-    if (press?.id !== event.pointerId || !options.onPick) return;
+    if (press?.id !== event.pointerId || !(options.onPick ?? options.onPickSurface)) return;
     if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 6) return;
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    if (picking && options.onPickSurface) {
+      options.onPickSurface(surfaceAt(x, y, rect));
+      return;
+    }
     const reach = event.pointerType === 'mouse' ? HOVER_REACH : HOVER_REACH * 2;
+    if (!options.onPick) return;
     let best: number | null = null;
     let bestDistance = reach;
     screen.forEach((p, i) => {
@@ -618,6 +657,19 @@ export function createFloorsScene(options: {
           vertexFloors[t * 3 + 2] = value;
         }
         floorAttribute.needsUpdate = true;
+      }
+      picking = state.picking ?? false;
+      canvas.style.cursor = picking ? 'crosshair' : '';
+      const marks = state.marks ?? null;
+      if (marks !== shownMarks) {
+        shownMarks = marks;
+        for (let t = 0; t < vertexMarks.length / 3; t++) {
+          const value = marks?.[t] ?? 0;
+          vertexMarks[t * 3] = value;
+          vertexMarks[t * 3 + 1] = value;
+          vertexMarks[t * 3 + 2] = value;
+        }
+        markAttribute.needsUpdate = true;
       }
       uniforms.byTriangle!.value = byTriangle ? 1 : 0;
       uniforms.byOwnColour!.value = state.ownColours && model.colours ? 1 : 0;

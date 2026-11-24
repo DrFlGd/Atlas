@@ -14,6 +14,12 @@ For each map of the pack that has a 3D model (a `scene` in `maps.json`):
    picture, as in Make map), the floors below faded, at the map's own size and `worldTransform`, and cut into the
    tiles of its layer, at the layer's own path and format.
 
+Pieces the player removed in Adjust floors (`removed` in the floor cuts file, see pieces.py) are taken out of the
+model read back (found by their place, as the parts' names are not in the pack) before step 2, so they are left out
+of the floors and the pictures; and the map's 3D model is built again without them (`atlas-scene build`, into the
+same `scene/<area>/` folder, swapped in with the pictures). A map whose model no longer has them (made after they
+were removed) keeps its 3D model as it is.
+
 A pack the Map Maker made (`writtenBy`) takes the floors as they now are: its layers' heights and names, and the
 locations on each floor (by their height, as Make map puts markers on floors), even when the floor cuts give
 another number of floors. Any other pack keeps its layers and locations: a map whose floors would change in number
@@ -48,6 +54,7 @@ from .events import Events
 from .floors import FloorPlan, locate, plan_floors, prepare
 from .pack import FILES, WRITER, collection_text, content_counts, floor_names, layer_order, now, read_pack_json
 from .passages import plan_passages, prepare_passages
+from .pieces import Found, leave_out_of_glb, removed_of
 from .render import BACKGROUND, MAP_STYLES, MapStyle, compose, draw_floor, map_style
 from .scene import CREATE_NO_WINDOW, BuilderFailed, check_pack, find_builder, floor_heights, run_builder
 from .tiles import tile_format, write_pyramid
@@ -87,11 +94,20 @@ class PackModel:
     file: Path
     colours: bool
     report: dict[str, tp.Any]
+    removed: Found | None = None
 
 
-def unpack_model(builder: Path, pack: Path, map_id: str, work: Path, stop: tp.Callable[[], None]) -> PackModel:
+def unpack_model(
+    builder: Path,
+    pack: Path,
+    map_id: str,
+    work: Path,
+    stop: tp.Callable[[], None],
+    removed: list[dict[str, tp.Any]] | None = None,
+) -> PackModel:
     """The model of `map_id` in `pack`, read out of the pack by the builder (`atlas-scene unpack`) into `work` as one
-    raw model, then read as any model file is (`atlas-scene triangles`, as Make a map from a 3D model reads one)."""
+    raw model, then read as any model file is (`atlas-scene triangles`, as Make a map from a 3D model reads one).
+    The `removed` pieces found in it are taken out of the raw model first (`removed` of the result)."""
     work.mkdir(parents=True, exist_ok=True)
     output = work / "model.glb"
     output.unlink(missing_ok=True)
@@ -119,6 +135,12 @@ def unpack_model(builder: Path, pack: Path, map_id: str, work: Path, stop: tp.Ca
             failure = str(message.get("message", ""))
     if done is None or result.returncode != 0 or not output.is_file():
         raise Skip(f"its 3D model could not be read ({failure or f'the builder ended with code {result.returncode}'})")
+    found = None
+    if removed:
+        try:
+            found = leave_out_of_glb(output, removed)
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
+            raise Skip(f"the pieces you removed could not be taken out of its 3D model ({type(error).__name__}: {error})") from None
     triangles_file = work / "triangles.bin"
     try:
         read = run_builder(
@@ -138,7 +160,7 @@ def unpack_model(builder: Path, pack: Path, map_id: str, work: Path, stop: tp.Ca
     finally:
         triangles_file.unlink(missing_ok=True)
     info = read.get("info") or {}
-    return PackModel(triangles, output, bool(info.get("hasColours")), done.get("report") or {})
+    return PackModel(triangles, output, bool(info.get("hasColours")), done.get("report") or {}, found)
 
 
 def draw_textured(
@@ -309,6 +331,7 @@ class MapWork:
     folders_in: list[str]
     folders_out: list[str]
     tiles: dict[str, dict[str, tp.Any]]  # layer id -> write_pyramid's result
+    scene: dict[str, tp.Any] | None = None  # its 3D model built again (without removed pieces), for maps.json
 
 
 def tile_folder(url: tp.Any) -> tuple[str, str] | None:
@@ -525,8 +548,12 @@ class Redrawer:
 
         say(0.0, "reading its 3D model")
         work_folder = self.out / WORK
-        model = unpack_model(builder, self.pack, map_id, work_folder, self.token.stop)
+        removed = removed_of(own.get(key)) if key is not None else []
+        model = unpack_model(builder, self.pack, map_id, work_folder, self.token.stop, removed)
         mesh = model.triangles
+        if removed:
+            found = model.removed
+            line["removedPieces"] = found.report(removed) if found else {"asked": len(removed), "found": 0, "triangles": 0}
         line.update(
             triangles=int(len(mesh)),
             cellsRead=model.report.get("cells"),
@@ -695,8 +722,68 @@ class Redrawer:
                 if new is not None and new != location.get("layerId"):
                     moved[location["id"]] = new
             line["locationsMoved"] = len(moved)
+        # Its 3D model again, without the pieces removed (when its model had them).
+        scene = None
+        if model.removed is not None:
+            say(0.95, "making its 3D model again without the pieces you removed")
+            scene, scene_folder = self.build_scene(entry, model, config, builder, work_folder, all_folders, say)
+            folders_in.append(scene_folder + "/")
         folders_out = [folder for layer in layers if (folder := all_folders[layer["id"]]) is not None and folder[0] not in folders_in]
-        return MapWork(map_id, ordered, moved, folders_in, [f for f, _ in folders_out], tiles)
+        return MapWork(map_id, ordered, moved, folders_in, [f for f, _ in folders_out], tiles, scene)
+
+    def build_scene(
+        self,
+        entry: dict[str, tp.Any],
+        model: PackModel,
+        config: dict[str, tp.Any],
+        builder: Path,
+        work: Path,
+        all_folders: dict[str, tuple[str, str] | None],
+        say: tp.Callable[[float, str], None],
+    ) -> tuple[dict[str, tp.Any], str]:
+        """Builds the map's 3D model again from the raw model (without the removed pieces) into its own folder in the
+        staging folder, as Make map builds it: the new scene for maps.json, and the folder."""
+        folders = set()
+        for cell in (entry.get("scene") or {}).get("cells") or []:
+            for lod in (cell.get("lods") or []) if isinstance(cell, dict) else []:
+                file = lod.get("file") if isinstance(lod, dict) else None
+                if isinstance(file, str) and file.count("/") >= 3:
+                    folders.add(file.rsplit("/", 2)[0])
+        if len(folders) != 1:
+            raise Skip("its 3D model's files are not in one folder, so it cannot be made again without the pieces you removed")
+        folder = folders.pop()
+        if not re.fullmatch(r"scene(/[a-z0-9][a-z0-9_.\-]{0,63}){1,3}", folder) or any(
+            found is not None and (found[0].startswith(folder + "/") or (folder + "/").startswith(found[0])) for found in all_folders.values()
+        ):
+            raise Skip("its 3D model's folder cannot be written again")
+        settings = config.get("scene") if isinstance(config.get("scene"), dict) else {}
+        options: dict[str, tp.Any] = {"folder": folder, "axes": UNPACKED_AXES, "scale": 1.0}
+        if model.report.get("textures"):
+            settings = settings.get("models") if isinstance(settings.get("models"), dict) else {}
+            options["textures"] = {"mode": "keep"}
+        for name in ("cellSize", "cellTriangles", "levels", "creaseAngle"):
+            if name in settings:
+                options[name] = settings[name]
+        old = entry.get("scene") or {}
+        for name in ("sky", "water", "camera"):
+            if name in old:
+                options[name] = old[name]
+        job = {"input": str(model.file.resolve()), "pack": str(self.staging.resolve()), "options": options}
+        try:
+            done = run_builder(
+                builder,
+                job,
+                work,
+                "scene",
+                lambda fraction, text: say(0.95 + 0.05 * fraction, f"3D model: {text}"),
+                self.token.stop,
+            )
+        except BuilderFailed as error:
+            raise Skip(f"its 3D model could not be made again without the pieces you removed ({error})") from None
+        scene = done.get("scene")
+        if not isinstance(scene, dict):
+            raise Skip("its 3D model could not be made again without the pieces you removed (the builder gave no scene)")
+        return scene, folder
 
     # -----------------------------------------------------------------------------------------------------------
 
@@ -714,6 +801,7 @@ class Redrawer:
                 continue
             layers.append(layer)
         moved = {k: v for work in done for k, v in work.moved.items()}
+        scenes = {work.map_id: work.scene for work in done if work.scene is not None}
         locations = [
             {**loc, "layerId": moved[loc["id"]]} if isinstance(loc, dict) and loc.get("id") in moved else loc
             for loc in data["locations"]
@@ -758,6 +846,12 @@ class Redrawer:
             FILES["locations"]: collection_text(locations),
             "manifest.json": json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         }
+        if scenes:
+            maps = [
+                {**item, "scene": scenes[item["id"]]} if isinstance(item, dict) and item.get("id") in scenes else item
+                for item in data["maps"]
+            ]
+            texts = {FILES["maps"]: collection_text(maps), **texts}
         swap_in(self.pack, self.staging, self.backup, texts, [f for w in done for f in w.folders_in], [f for w in done for f in w.folders_out])
 
 

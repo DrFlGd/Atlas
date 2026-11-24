@@ -3,7 +3,13 @@
  * redraw.py) when it draws a pack's 2D floors again from the pack's own 3D models, and the sentences the window
  * shows for it.
  */
-import { mapStyleLabel, plural, type MapStyleId } from './report';
+import {
+  mapStyleLabel,
+  plural,
+  removedLine,
+  type MapStyleId,
+  type RemovedPiecesReport,
+} from './report';
 import type { PackWithScenes } from './shell';
 
 /** Where a map's floors came from: the player's floor cuts, the pack's own floors, or automatic passages again. */
@@ -27,6 +33,8 @@ export interface RedrawnMap {
   levels?: Record<string, number>;
   textures?: number;
   seconds?: number;
+  /** The pieces removed in Adjust floors, found in its 3D model by their place and left out. */
+  removedPieces?: RemovedPiecesReport;
 }
 
 export interface RedrawReport {
@@ -88,6 +96,9 @@ export function redrawnMapLine(map: RedrawnMap): string {
       : null,
     map.locationsMoved ? `${plural(map.locationsMoved, 'location')} on another floor now` : null,
     map.levels && !map.levels['0'] ? 'from a coarser level of its 3D model' : null,
+    map.removedPieces && map.removedPieces.found > 0
+      ? `${removedLine(map.removedPieces)}, left out of its pictures and its 3D model`
+      : null,
   ];
   return parts.filter(Boolean).join('; ');
 }
