@@ -405,16 +405,23 @@ test('with a controller: the D-pad holds a location, A goes to it, B goes back',
     (window as unknown as { testPad: typeof pad }).testPad = pad;
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
   });
+  // The app reads the pad once a frame, and frames can be slow where WebGL runs on the CPU, so
+  // each state is held for two frames of the page rather than a fixed time.
   const press = async (button: number) => {
     for (const value of [1, 0]) {
       await page.evaluate(
-        ([index, amount]) => {
-          const pad = (window as unknown as { testPad: { buttons: unknown[] } }).testPad;
-          pad.buttons[index!] = { pressed: amount === 1, value: amount };
-        },
+        ([index, amount]) =>
+          new Promise<void>((resolve) => {
+            const pad = (window as unknown as { testPad: { buttons: unknown[] } }).testPad;
+            pad.buttons[index!] = { pressed: amount === 1, value: amount };
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                resolve();
+              });
+            });
+          }),
         [button, value],
       );
-      await page.waitForTimeout(150);
     }
   };
   await openKeep(page);
