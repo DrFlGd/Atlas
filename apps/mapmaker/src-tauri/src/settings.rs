@@ -91,7 +91,13 @@ pub const UNITS: [&str; 6] = [
     "custom",
 ];
 /// A model is drawn in its own textures and colours, so the textured styles can be chosen for it.
-pub const MODEL_MAP_STYLES: [&str; 4] = ["shaded", "outlines", "textured", "textured-outlines"];
+pub const MODEL_MAP_STYLES: [&str; 5] = [
+    "shaded",
+    "outlines",
+    "floors",
+    "textured",
+    "textured-outlines",
+];
 const MODEL_FLOORS: [&str; 3] = ["ground", "passages", "none"];
 const MAX_NAME: usize = 80;
 
@@ -284,7 +290,7 @@ pub fn clean_alignment(value: &Value) -> Option<Value> {
 }
 
 /// The map styles the helper can draw now (the textured ones need the game's textures, not read yet).
-pub const MAP_STYLES: [&str; 2] = ["shaded", "outlines"];
+pub const MAP_STYLES: [&str; 3] = ["shaded", "outlines", "floors"];
 pub const DEFAULT_MAP_STYLE: &str = "shaded";
 
 pub fn is_map_style(style: &str) -> bool {

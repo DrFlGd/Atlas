@@ -159,6 +159,8 @@ const UI_PATHS = {
   cut: 'M2.5 9.5h15M5 13l5 3l5-3M5 6l5-3l5 3',
   // A name over a point: the names of the areas.
   titles: 'M3 4h14v7H11.5L10 13.5L8.5 11H3zM6 7.5h8M10 16.5v1',
+  // Floors one above the other: each floor in its own colour.
+  floorColours: 'M10 2.5l7 3l-7 3l-7-3zM3 9.5l7 3l7-3M3 13.5l7 3l7-3',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

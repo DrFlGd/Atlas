@@ -17,7 +17,9 @@
  * Back once the card is closed) shows every floor again without that cut
  * (`leaveFocus`). The names of
  * the areas float over the view unless the person turned them off, a
- * choice kept on the device.
+ * choice kept on the device. "Floor colours" paints each floor of the model
+ * in its own colour (see `scene/floorColours.ts`), where the map has floors;
+ * also a choice kept on the device, off at first.
  */
 import { floorsOf, type Layer, type Scene } from '@atlas/schema';
 import { create } from 'zustand';
@@ -55,6 +57,8 @@ export interface Scene3dState {
   focus: SceneFocus | null;
   /** The names of the areas over the view. */
   titles: boolean;
+  /** Each floor of the model in its own colour, where the map has floors. */
+  floorColours: boolean;
 }
 
 export interface SceneFocus {
@@ -71,6 +75,7 @@ export const useScene3d = create<Scene3dState>()(() => ({
   request: null,
   focus: null,
   titles: true,
+  floorColours: false,
 }));
 
 /** Reads the person's choice of 2D or 3D, once the store with the settings is open. */
@@ -80,6 +85,8 @@ export async function loadSceneSettings(): Promise<void> {
     if (saved === '2d' || saved === '3d') useScene3d.setState({ mode: saved });
     const titles = await progressStore().getSetting(SETTINGS.sceneTitles);
     if (titles === true || titles === false) useScene3d.setState({ titles });
+    const floorColours = await progressStore().getSetting(SETTINGS.sceneFloorColours);
+    if (floorColours === true || floorColours === false) useScene3d.setState({ floorColours });
   } catch {
     // The default stands.
   }
@@ -89,6 +96,17 @@ export async function loadSceneSettings(): Promise<void> {
 export function setTitlesShown(on: boolean): void {
   useScene3d.setState({ titles: on });
   saveSetting(SETTINGS.sceneTitles, on);
+}
+
+/** Paints each floor of the 3D view in its own colour, or not, and keeps the choice. */
+export function setFloorColoursShown(on: boolean): void {
+  useScene3d.setState({ floorColours: on });
+  saveSetting(SETTINGS.sceneFloorColours, on);
+}
+
+/** Why "Floor colours" cannot be used on a map: null when it can. */
+export function floorColoursReason(floors: readonly Layer[]): string | null {
+  return floors.length === 0 ? 'This map has no floors' : null;
 }
 
 /** Shows 3D maps in 3D or in 2D, and keeps the choice. */

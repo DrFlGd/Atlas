@@ -196,6 +196,10 @@ jobs:
 
           - **Put locations on a 3D map.** **Edit locations** now works in the 3D view: press the model and a location of your own goes there, at the height of the surface you pressed and on that floor. Drag one of yours to move it, or press **Move** and then the new spot. Parts cut away by a floor or a cut cannot be pressed. With a controller, A puts a location where the crosshair points. Undo works as on the 2D map.
           - **Take locations from another pack.** In **Edit locations**, **Take locations from another pack…** puts the locations of another pack of the same game on the map shown, lined up by where they are in the game's world. On a 3D map each gets the height of the surface below it. You see first which land off the map and which have no surface below them, and one Undo takes them all back.
+          - **Floor colours in 3D.** **Floor colours** in the 3D tools paints each floor of a map's model in its own colour, darker low and lighter high within the floor, so you can see at a glance which floor a walkway or a room is on. The colours are told apart with the common types of colour blindness and match the Map Maker's **Colour by floor** map style. It works for any 3D map with floors, with nothing to download again, with the mouse, a controller or a finger, and Atlas remembers the choice. On a map without floors the button says why it does nothing.
+          - Ready for **Atlas Map Maker 0.6.0**, whose **Draw all areas again** draws a pack's 2D maps again from its own 3D maps.
+
+          This version has passed the automatic checks only.
 
           ## New in 0.34.0
 

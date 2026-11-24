@@ -34,7 +34,9 @@
 //!    to put on the map in `maps.json`, with a [`Report`].
 //!
 //! The `atlas-scene` program does the same from the command line (see
-//! "Building a 3D map" in `docs/pack-file-format.md`).
+//! "Building a 3D map" in `docs/pack-file-format.md`). [`unpack`] reads a
+//! map's model back out of a pack as one raw model, so its 2D floors can be
+//! drawn again from the pack alone.
 //!
 //! ```no_run
 //! use std::path::Path;
@@ -59,6 +61,7 @@ mod glb;
 pub mod gltf;
 pub mod render;
 pub mod textures;
+pub mod unpack;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
