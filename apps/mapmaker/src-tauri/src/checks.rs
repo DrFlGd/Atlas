@@ -62,6 +62,8 @@ pub enum State {
 }
 
 /// What the helper is asked to do.
+// A model's setup makes its variant the largest; there is one job at a time, so it is kept as it is.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     /// Report what map data can be read.
@@ -314,6 +316,31 @@ impl Progress {
                         plural(triangles)
                     ),
                 );
+            }
+            "level" => {
+                // A game level put together: how many meshes were placed, left out and not found.
+                let placed = event.get("placed").and_then(Value::as_u64).unwrap_or(0);
+                let skipped = event
+                    .get("skippedTotal")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let missing = event
+                    .get("notFoundCount")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let mut line = format!(
+                    "Placed {} mesh{} of {}",
+                    thousands(placed),
+                    if placed == 1 { "" } else { "es" },
+                    text(&event, "file")
+                );
+                if skipped > 0 {
+                    line += &format!(", left out {}", thousands(skipped));
+                }
+                if missing > 0 {
+                    line += &format!(", {} not found", thousands(missing));
+                }
+                self.push_line("game", line);
             }
             "areas" => {
                 let count = event.get("count").and_then(Value::as_u64).unwrap_or(0);
@@ -1164,6 +1191,34 @@ pub fn model_args(setup: &ModelSetup) -> Vec<String> {
     if let Some(gap) = setup.merge_gap {
         args.push(format!("--merge-gap={gap}"));
     }
+    if let Some(cut) = setup.cut_below {
+        args.push(format!("--cut-below={cut}"));
+    }
+    args.extend(level_args(
+        setup.clutter,
+        setup.leave_out_hidden,
+        setup.assets.as_deref(),
+    ));
+    args
+}
+
+/// The helper's options for a game level (`make-model`, `inspect-level`): the clutter size, whether hidden
+/// surfaces are kept, and the folder of its exported files. A model file takes no notice of them.
+pub fn level_args(
+    clutter: Option<f64>,
+    leave_out_hidden: bool,
+    assets: Option<&str>,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(size) = clutter.filter(|size| *size > 0.0) {
+        args.push(format!("--clutter={size}"));
+    }
+    if !leave_out_hidden {
+        args.push("--keep-hidden".to_owned());
+    }
+    if let Some(folder) = assets {
+        args.push(format!("--assets={folder}"));
+    }
     args
 }
 
@@ -1782,6 +1837,10 @@ echo '{"event":"done"}'
             merge_gap: None,
             allow_large: true,
             map_style: "textured".into(),
+            cut_below: None,
+            clutter: None,
+            leave_out_hidden: true,
+            assets: None,
         }
     }
 
@@ -1825,6 +1884,31 @@ echo '{"event":"done"}'
                 "--map-style=textured",
                 "--floor-separation=2.5",
             ]
+        );
+        let level = ModelSetup {
+            cut_below: Some(1.25),
+            clutter: Some(0.5),
+            leave_out_hidden: false,
+            assets: Some(r"C:\Users\Someone\FModel\Output\Exports ü".into()),
+            ..house_setup()
+        };
+        let args = model_args(&level);
+        assert_eq!(
+            &args[args.len() - 4..],
+            [
+                "--cut-below=1.25",
+                "--clutter=0.5",
+                "--keep-hidden",
+                r"--assets=C:\Users\Someone\FModel\Output\Exports ü",
+            ]
+        );
+        assert!(level_args(Some(0.0), true, None).is_empty());
+        progress.apply_line(
+            r#"{"event":"level","type":"unreal","file":"Made_Up_Level.json","placed":1234,"skippedTotal":56,"notFoundCount":7}"#,
+        );
+        assert_eq!(
+            progress.lines.last().unwrap().text,
+            "Placed 1,234 meshes of Made_Up_Level.json, left out 56, 7 not found"
         );
         let job = Job::Model {
             maps_folder: PathBuf::from("maps"),

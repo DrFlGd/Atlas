@@ -4,8 +4,9 @@
 //!
 //! [`build`] takes a raw model ([`gltf::read_glb`]: a glTF binary file of
 //! triangle meshes with vertex colours and plain materials, or any model
-//! file [`formats`] reads: glTF, OBJ, STL or PLY, as a person made or
-//! exported it) and [`Options`], and writes into a pack folder:
+//! file [`formats`] reads: glTF, OBJ, STL, PLY or ActorX, as a person made
+//! or exported it, or a game level of them put together, [`level`]) and
+//! [`Options`], and writes into a pack folder:
 //!
 //! 1. **Lines the model up** with the game's world: [`Options::axes`],
 //!    `scale` and `offset` say how the raw model's coordinates become world
@@ -59,6 +60,8 @@ pub mod draw;
 pub mod formats;
 mod glb;
 pub mod gltf;
+pub mod level;
+pub mod psk;
 pub mod render;
 pub mod textures;
 pub mod unpack;
@@ -1199,3 +1202,5 @@ pub fn read_model(
 mod tests;
 #[cfg(test)]
 mod tests_formats;
+#[cfg(test)]
+mod tests_level;

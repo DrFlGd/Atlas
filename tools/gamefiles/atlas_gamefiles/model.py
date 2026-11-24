@@ -1,11 +1,14 @@
-"""`make-model`: make an Atlas map pack from a 3D model file (glTF, OBJ, STL or PLY), made from scratch or exported
-from a modelling program, the way `make` makes one from game files.
+"""`make-model`: make an Atlas map pack from a 3D model file (glTF, OBJ, STL, PLY or ActorX), made from scratch or
+exported from a modelling program, or from a whole game level the person exported from their own game with an
+export program (an Unreal Engine level saved by FModel as JSON, a Unity scene exported as a project: levels.py), the
+way `make` makes one from game files. A level is first put together as one model (an Atlas level file, in the work
+folder), lined up already: Y up, metres.
 
 The 3D builder (`atlas-scene`, see scene.py) reads the model file: it lines it up with the map (the up axis and the
 scale the person chose) and gives its triangles (`atlas-scene triangles`). From them:
 
 1. **Floors** (floors.py): by **ground area** (the default: heights where flat ground piles up are floor levels, each
-   cut 1.5 m below; `automatic: "ground"`), by **automatic passages** (passages.py, on the model's walkable surfaces
+   cut `--cut-below` (1.5 m) below; `automatic: "ground"`), by **automatic passages** (passages.py, on the model's walkable surfaces
    alone, as it has no navmesh), or **no floors** (the whole model, one map; `automatic: "none"`). The person's own
    cuts from Adjust floors (`--floor-overrides`, under the pack's id and the area `model`) win, as for game files.
 2. **Pictures**: each floor drawn from above with everything above it cut away (render.py, tiles.py), in the chosen
@@ -43,6 +46,7 @@ from .check import CancelToken, _now, display_path
 from .config import chosen_floor_overrides, floor_method, load_floor_overrides
 from .content import GameContent
 from .events import Events
+from .levels import LevelError, assemble, default_assets, level_type, summary_lines
 from .floorviews import save_floor_data
 from .make import MakeError, _empty_floor, describe_cuts, describe_passages, find_floors, scene_summary
 from .pack import (
@@ -80,6 +84,7 @@ UP_AXES = {
 }
 FLOOR_CHOICES = ("ground", "passages", "none")
 TEXTURE_CHOICES = ("keep", "plain")
+LEVEL_NAMES = {"unreal": "Unreal Engine level (FModel)", "unity": "Unity scene"}
 DEFAULT_MAX_TRIANGLES = 5_000_000
 LARGEST_MAX_TRIANGLES = 50_000_000
 MODEL_RENDER = {"pixelsPerMetre": 8, "minPixelsPerMetre": 1, "maxImageSize": 6144, "marginMetres": 6}
@@ -129,6 +134,10 @@ class ModelMapMaker:
         style: str | None = None,
         floor_overrides_file: Path | None = None,
         remake: bool = False,
+        assets: Path | None = None,
+        clutter: float = 0.0,
+        leave_out_hidden: bool = True,
+        cut_below: float | None = None,
     ):
         self.model_file = Path(model_file)
         self.out = Path(out)
@@ -161,6 +170,20 @@ class ModelMapMaker:
             raise MakeError(str(error)[:1].upper() + str(error)[1:] + ".", code="map-style") from None
         self.floor_overrides_file = Path(floor_overrides_file) if floor_overrides_file else None
         self.remake = remake
+        # A level export: put together as one model, already standing up in metres.
+        self.level = level_type(self.model_file)
+        self.assets = Path(assets) if assets else None
+        if not (isinstance(clutter, (int, float)) and math.isfinite(clutter) and 0 <= clutter <= 1000):
+            raise MakeError("The clutter size must be a number of metres from 0 to 1000.")
+        self.clutter = float(clutter)
+        self.leave_out_hidden = bool(leave_out_hidden)
+        if cut_below is not None and not (isinstance(cut_below, (int, float)) and math.isfinite(cut_below) and 0 <= cut_below <= 20):
+            raise MakeError("The cut below each floor must be from 0 to 20 metres.")
+        self.cut_below = None if cut_below is None else float(cut_below)
+        if self.level is not None:
+            self.up, self.scale, self.units = "+y", 1.0, "metres"
+        self.input = self.model_file
+        self.level_report: dict[str, tp.Any] | None = None
         self.pack_id = pack_id_for(self.name)
         self.warnings: list[str] = []
         self.started = time.monotonic()
@@ -203,6 +226,11 @@ class ModelMapMaker:
             "floorSeparation": self.floor_separation,
             "mergeGap": self.merge_gap,
             "maxTriangles": self.max_triangles,
+            "level": self.level,
+            "assets": display_path(self.assets) if self.assets else None,
+            "clutter": self.clutter,
+            "leaveOutHidden": self.leave_out_hidden,
+            "cutBelow": self.cut_below,
         }
 
     def floor_config(self, both_sides: bool) -> dict[str, tp.Any]:
@@ -216,6 +244,8 @@ class ModelMapMaker:
             floors["floorSeparation"] = float(self.floor_separation)
         if self.merge_gap is not None:
             floors["mergeGap"] = float(self.merge_gap)
+        if self.cut_below is not None:
+            floors["cutBelow"] = float(self.cut_below)
         return floors
 
     def _run(self) -> dict[str, tp.Any]:
@@ -246,15 +276,17 @@ class ModelMapMaker:
         if refusal:
             raise MakeError(refusal)
 
-        # 1. The model's triangles, lined up with the map.
+        # 1. The model's triangles, lined up with the map (a level put together first).
         self.token.stop()
+        if self.level is not None:
+            self.assemble_level(work)
         axes = UP_AXES[self.up]
         self.say("read", 0.0, f"Reading {self.model_file.name}")
         placing = {"axes": axes, "scale": self.scale, "maxTriangles": self.max_triangles}
         try:
             done = run_builder(
                 self.builder,
-                {"input": str(self.model_file.resolve()), "output": "triangles.bin", "options": placing},
+                {"input": str(self.input.resolve()), "output": "triangles.bin", "options": placing},
                 work,
                 "triangles",
                 lambda fraction, text: self.say("read", fraction, text),
@@ -270,13 +302,16 @@ class ModelMapMaker:
         events.emit(
             "model",
             file=self.model_file.name,
-            format=info.get("formatName"),
+            format=LEVEL_NAMES.get(self.level or "", info.get("formatName")),
             triangles=int(len(mesh)),
             size=size,
             missing=info.get("missingFiles", []),
         )
         for missing in info.get("missingFiles", [])[:10]:
-            self.warn(f"{missing} is missing: it belongs with {self.model_file.name} and must be next to it; the model is made without it")
+            if self.level is not None:
+                self.warn(f"{missing} is missing from the export folder; the map is made without it")
+            else:
+                self.warn(f"{missing} is missing: it belongs with {self.model_file.name} and must be next to it; the model is made without it")
         for warning in info.get("warnings", [])[:5]:
             self.warn(str(warning))
         both_sides = self.double_sided if self.double_sided is not None else not info.get("sidesGiven", False)
@@ -472,11 +507,16 @@ class ModelMapMaker:
                 "supported": True,
                 "version": None,
                 "dataFolder": None,
-                "evidence": [f"A map made from the 3D model {self.model_file.name}"],
+                "evidence": [
+                    f"A map made from the {LEVEL_NAMES[self.level]} {self.model_file.name}"
+                    if self.level
+                    else f"A map made from the 3D model {self.model_file.name}"
+                ],
             },
             "model": {
                 **self.settings(),
-                "format": info.get("formatName"),
+                "format": LEVEL_NAMES.get(self.level or "", info.get("formatName")),
+                "levelReport": self.level_report,
                 "triangles": int(len(mesh)),
                 "parts": info.get("parts"),
                 "materials": info.get("materials"),
@@ -530,6 +570,32 @@ class ModelMapMaker:
             report["updatedAt"] = _now()
             report["remade"] = {"area": KEY, "name": self.name, "at": _now()}
         return self.finish(report, target)
+
+    def assemble_level(self, work: Path) -> None:
+        """Puts the exported level together as one model (an Atlas level file in `work`), and says what it placed,
+        left out and did not find."""
+        assert self.level is not None
+        self.say("read", 0.0, f"Placing the meshes of {self.model_file.name}")
+        try:
+            assembled = assemble(
+                self.model_file,
+                work / "level",
+                assets=self.assets,
+                clutter=self.clutter,
+                leave_out_hidden=self.leave_out_hidden,
+                stop=self.token.stop,
+            )
+        except LevelError as error:
+            raise MakeError(str(error), code="level") from error
+        self.input = assembled.file
+        self.level_report = assembled.report
+        if self.assets is None:
+            self.assets = default_assets(self.model_file, self.level)
+        self.events.emit("level", **assembled.report)
+        for line in summary_lines(assembled.report)[1:]:
+            self.warn(line)
+        for note in assembled.report.get("notes", [])[:5]:
+            self.warn(note)
 
     def not_a_game_pack(self, target: Path) -> str | None:
         """A pack the Map Maker made from game files is never replaced by a map of a model."""
@@ -585,7 +651,7 @@ class ModelMapMaker:
         floors_file = work / "floors.bin"
         plan.triangle_floor.astype("<i2").tofile(floors_file)
         job = {
-            "input": str(self.model_file.resolve()),
+            "input": str(self.input.resolve()),
             "output": "drawn",
             "options": {**placing, "colouring": "textures" if self.textures == "keep" else "plain"},
             "frame": {"xMin": frame.x_min, "zMax": frame.z_max, "scale": frame.scale, "width": frame.width, "height": frame.height},
@@ -617,7 +683,7 @@ class ModelMapMaker:
         }
         if self.double_sided is not None:
             options["doubleSided"] = self.double_sided
-        job = {"input": str(self.model_file.resolve()), "pack": str(self.staging.resolve()), "options": options}
+        job = {"input": str(self.input.resolve()), "pack": str(self.staging.resolve()), "options": options}
         try:
             done = run_builder(
                 self.builder,

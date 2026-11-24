@@ -8,9 +8,10 @@ import { fromBase64 } from './floors';
 import type { MapStyleId } from './report';
 import type { AreaModel } from './shell';
 
-/** What the builder read in a model file (atlas-scene formats.rs ModelInfo). */
+/** What the builder read in a model file (atlas-scene formats.rs ModelInfo); `level` for a game level put together
+ * by the helper. */
 export interface ModelInfo {
-  format: 'gltf' | 'obj' | 'stl' | 'ply';
+  format: 'gltf' | 'obj' | 'stl' | 'ply' | 'psk' | 'level';
   formatName: string;
   triangles: number;
   parts: number;
@@ -41,9 +42,84 @@ export interface ModelPreview {
   simplified: boolean;
 }
 
+/** What the helper placed of a game level export (levels.py Report). */
+export interface LevelReport {
+  type: 'unreal' | 'unity';
+  file: string;
+  /** The folder of its exported files. */
+  assets: string | null;
+  placed: number;
+  /** Different mesh files placed. */
+  meshes: number;
+  /** Meshes left out, by why: hidden, editorOnly, clutter, lowerDetail, noMesh, notRead. */
+  skipped: Record<string, number>;
+  skippedTotal: number;
+  notFound: { name: string; count: number }[];
+  notFoundCount: number;
+  unknownTypes: { name: string; count: number }[];
+  texturesFound: number;
+  texturesMissing: { name: string; count: number }[];
+  notes: string[];
+}
+
 export interface Inspected {
   info: ModelInfo;
   preview: ModelPreview;
+  /** A game level: what was placed, left out and not found. */
+  level?: LevelReport;
+}
+
+/** Why meshes of a level were left out, in words. */
+const SKIPPED_WORDS: Record<string, string> = {
+  hidden: 'hidden or collision-only',
+  editorOnly: 'only in the editor',
+  clutter: 'smaller than the clutter size',
+  lowerDetail: 'lower levels of detail',
+  noMesh: 'no mesh set',
+  notRead: 'mesh file could not be read',
+};
+
+/** "Unreal Engine level (FModel)" or "Unity scene". */
+export function levelTypeName(type: LevelReport['type']): string {
+  return type === 'unreal' ? 'Unreal Engine level (FModel)' : 'Unity scene';
+}
+
+/** The level's report in plain lines: placed, left out (by why), not found, not understood. */
+export function levelLines(report: LevelReport): string[] {
+  const count = (n: number) => n.toLocaleString('en-US');
+  const lines = [
+    `${count(report.placed)} ${report.placed === 1 ? 'mesh' : 'meshes'} placed (${count(report.meshes)} different).`,
+  ];
+  const skipped = Object.entries(report.skipped).filter(([, n]) => n > 0);
+  if (skipped.length > 0) {
+    lines.push(
+      `Left out: ${skipped.map(([why, n]) => `${count(n)} ${SKIPPED_WORDS[why] ?? why}`).join(', ')}.`,
+    );
+  }
+  if (report.notFoundCount > 0) {
+    const names = report.notFound.slice(0, 5).map((item) => item.name);
+    const more = report.notFound.length > 5 ? ', …' : '';
+    lines.push(
+      `Not found in the export folder: ${count(report.notFoundCount)} placed ${report.notFoundCount === 1 ? 'mesh' : 'meshes'} (${names.join(', ')}${more}). Export them too, then choose the level again.`,
+    );
+  }
+  if (report.unknownTypes.length > 0) {
+    const names = report.unknownTypes.map((item) => `${item.name} (${count(item.count)})`);
+    lines.push(`Not understood, so left out: ${names.join(', ')}.`);
+  }
+  if (report.texturesMissing.length > 0) {
+    lines.push(
+      report.texturesMissing.length === 1
+        ? 'No texture found for one material: it is drawn in a plain colour.'
+        : `No texture found for ${count(report.texturesMissing.length)} materials: they are drawn in plain colours.`,
+    );
+  }
+  return lines.concat(report.notes);
+}
+
+/** Whether a file is a game level export (by its name): the `.json` FModel saves of a level, or a Unity scene. */
+export function isLevelFile(file: string): boolean {
+  return /\.(json|unity)$/i.test(file);
 }
 
 export type UpAxis = '+y' | '+z' | '-y' | '-z' | '+x' | '-x';
@@ -102,13 +178,23 @@ export interface ModelSetup {
   mergeGap: number | null;
   allowLarge: boolean;
   mapStyle: MapStyleId;
+  /** Ground area: each floor is cut this far below it (metres); null for the helper's own. */
+  cutBelow: number | null;
+  /** A game level: meshes smaller than this (metres) are left out; null keeps them all. */
+  clutter: number | null;
+  /** A game level: hidden and collision-only surfaces are left out. */
+  leaveOutHidden: boolean;
 }
 
 /** The defaults for ground area (the helper's floors.DEFAULTS). */
 export const DEFAULT_SEPARATION = 3;
 export const DEFAULT_MERGE_GAP = 2;
+export const DEFAULT_CUT_BELOW = 1.5;
+/** The clutter size offered first, when the person chooses to leave out small clutter. */
+export const DEFAULT_CLUTTER = 0.5;
 
-/** The model's own name, from its file name: "old_mill-v2.glb" gives "old mill v2". */
+/** The model's own name, from its file name: "old_mill-v2.glb" gives "old mill v2" (and a level's "Test_Level.json",
+ * "Test Level"). */
 export function nameFromFile(file: string): string {
   const base = file.split(/[\\/]/).pop() ?? '';
   const stem = base.replace(/\.[^.]*$/, '');
@@ -189,6 +275,10 @@ export function setupProblem(setup: ModelSetup): string | null {
     return 'The floor separation must be between 0.5 and 50 metres.';
   if (setup.mergeGap !== null && !(setup.mergeGap >= 0 && setup.mergeGap <= 20))
     return 'The merge gap must be between 0 and 20 metres.';
+  if (setup.cutBelow !== null && !(setup.cutBelow >= 0 && setup.cutBelow <= 10))
+    return 'The cut below each floor must be between 0 and 10 metres.';
+  if (setup.clutter !== null && !(setup.clutter >= 0 && setup.clutter <= 100))
+    return 'The clutter size must be between 0 and 100 metres.';
   return null;
 }
 
@@ -209,6 +299,9 @@ export function startSetup(file: string, info: ModelInfo, mapStyle: MapStyleId):
     mergeGap: null,
     allowLarge: false,
     mapStyle: textured ? 'textured' : mapStyle.startsWith('textured') ? 'shaded' : mapStyle,
+    cutBelow: null,
+    clutter: null,
+    leaveOutHidden: true,
   };
 }
 

@@ -2,11 +2,15 @@ import { useCallback, useMemo, useState } from 'react';
 import { Floors3D } from './FloorViews';
 import { MapStyleChoice } from './MapStyleChoice';
 import {
+  DEFAULT_CLUTTER,
+  DEFAULT_CUT_BELOW,
   DEFAULT_MERGE_GAP,
   DEFAULT_SEPARATION,
   MODEL_FLOORS,
   UNITS,
   UP_CHOICES,
+  levelLines,
+  levelTypeName,
   packIdFor,
   previewModel,
   scaleOf,
@@ -22,14 +26,24 @@ import {
   type UpAxis,
 } from './model';
 import { count, plural, type MapStyleId } from './report';
-import { errorText, type AppInfo, type CheckStatus, type ModelChoice, type Shell } from './shell';
+import {
+  errorText,
+  type AppInfo,
+  type CheckStatus,
+  type LevelChoices,
+  type ModelChoice,
+  type Shell,
+} from './shell';
 
 const NO_MARKERS: never[] = [];
 const NO_CUTS: number[] = [];
 
 /** The file types the Map Maker reads, and what to do with the others. */
 const FORMATS_NOTE =
-  'glTF (.glb or .gltf), OBJ (with its .mtl materials file and textures), STL or PLY. FBX and COLLADA files cannot be read yet: export the model as glTF or OBJ from the program you made it in.';
+  'glTF (.glb or .gltf), OBJ (with its .mtl materials file and textures), STL, PLY or ActorX (.psk). FBX and COLLADA files cannot be read yet: export the model as glTF or OBJ from the program you made it in.';
+/** The game levels it reads. */
+const LEVELS_NOTE =
+  'It also takes a whole level you exported from your own installed game: an Unreal Engine level saved as JSON by FModel (with its meshes, materials and textures exported into the same folder), or a Unity scene (.unity) exported as a project by AssetRipper.';
 
 /** The number typed in a box, or null when it is empty (the helper's own then). */
 function typedNumber(text: string): number | null {
@@ -60,20 +74,40 @@ export function ModelSetup(props: {
   const [customScale, setCustomScale] = useState('1');
   const [separation, setSeparation] = useState('');
   const [mergeGap, setMergeGap] = useState('');
+  const [cutBelow, setCutBelow] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
+  // A game level: how it is put together, and whether that changed since it was last read.
+  const [clutterOn, setClutterOn] = useState(false);
+  const [clutterText, setClutterText] = useState(String(DEFAULT_CLUTTER));
+  const [leaveOutHidden, setLeaveOutHidden] = useState(true);
+  const [levelChanged, setLevelChanged] = useState(false);
+
+  const levelChoices = useCallback(
+    (on: boolean, text: string, hidden: boolean): LevelChoices => ({
+      clutter: on ? typedNumber(text) : null,
+      leaveOutHidden: hidden,
+    }),
+    [],
+  );
 
   const read = useCallback(
-    async (chosen: ModelChoice, allowLarge: boolean) => {
+    async (chosen: ModelChoice, allowLarge: boolean, level?: LevelChoices, keep?: Setup) => {
       setReading(true);
       setReadError(null);
       setInspected(null);
       try {
-        const answer = await api.modelInspect(allowLarge);
+        const answer = await api.modelInspect(allowLarge, chosen.level ? level : undefined);
         setInspected(answer);
+        setLevelChanged(false);
+        if (keep) {
+          setSetup({ ...keep, allowLarge });
+          return;
+        }
         setSetup({ ...startSetup(chosen.name, answer.info, props.mapStyle), allowLarge });
         setCustomScale('1');
         setSeparation('');
         setMergeGap('');
+        setCutBelow('');
       } catch (error) {
         setReadError(errorText(error));
         setSetup(null);
@@ -90,11 +124,34 @@ export function ModelSetup(props: {
       const chosen = await api.chooseModel();
       if (!chosen) return;
       setChoice(chosen);
-      await read(chosen, false);
+      setClutterOn(false);
+      setClutterText(String(DEFAULT_CLUTTER));
+      setLeaveOutHidden(true);
+      await read(chosen, false, levelChoices(false, '', true));
     } catch (error) {
       setProblem(errorText(error));
     }
-  }, [api, read]);
+  }, [api, read, levelChoices]);
+
+  /** Puts the level together again with the choices now made (or another export folder). */
+  const readLevelAgain = useCallback(
+    async (chooseFolder: boolean) => {
+      if (!choice) return;
+      setProblem(null);
+      try {
+        if (chooseFolder && (await api.chooseLevelFolder()) === null) return;
+        await read(
+          choice,
+          setup?.allowLarge ?? false,
+          levelChoices(clutterOn, clutterText, leaveOutHidden),
+          setup ?? undefined,
+        );
+      } catch (error) {
+        setProblem(errorText(error));
+      }
+    },
+    [api, choice, read, setup, levelChoices, clutterOn, clutterText, leaveOutHidden],
+  );
 
   const scale = setup ? setup.scale : 1;
   const up: UpAxis = setup?.up ?? '+y';
@@ -110,10 +167,14 @@ export function ModelSetup(props: {
 
   const make = useCallback(async () => {
     if (!setup) return;
+    const level = choice?.level ?? false;
     const wanted: Setup = {
       ...setup,
       floorSeparation: setup.floors === 'ground' ? typedNumber(separation) : null,
       mergeGap: setup.floors === 'ground' ? typedNumber(mergeGap) : null,
+      cutBelow: setup.floors === 'ground' ? typedNumber(cutBelow) : null,
+      clutter: level && clutterOn ? typedNumber(clutterText) : null,
+      leaveOutHidden: level ? leaveOutHidden : true,
     };
     const wrong = setupProblem(wanted);
     if (wrong) {
@@ -126,20 +187,33 @@ export function ModelSetup(props: {
     } catch (error) {
       setProblem(errorText(error));
     }
-  }, [api, setup, separation, mergeGap, props]);
+  }, [
+    api,
+    setup,
+    separation,
+    mergeGap,
+    cutBelow,
+    choice,
+    clutterOn,
+    clutterText,
+    leaveOutHidden,
+    props,
+  ]);
 
   const info3d = inspected?.info;
   const size = info3d && setup ? sizeMetres(info3d, setup.up, shownScale) : null;
   const hint = size ? sizeHint(size) : null;
   const tooMany = readError?.includes('Allow very large models') ?? false;
   const builderMissing = info !== null && !info.sceneBuilderFound;
+  const level = inspected?.level ?? null;
+  const shownCut = typedNumber(cutBelow) ?? DEFAULT_CUT_BELOW;
 
   return (
     <section className="mm-card" aria-labelledby="step-model">
       <h2 id="step-model">Make a map from a 3D model</h2>
       <p className="small">
         Makes a map pack from a 3D model you made or exported, such as a building or a level:{' '}
-        {FORMATS_NOTE}
+        {FORMATS_NOTE} {LEVELS_NOTE}
       </p>
       <div className="mm-row">
         <button
@@ -157,6 +231,78 @@ export function ModelSetup(props: {
           </span>
         )}
       </div>
+      {choice?.level && (
+        <fieldset className="mm-fieldset" aria-describedby="level-note">
+          <legend>Game level</legend>
+          <label className="mm-check">
+            <input
+              id="level-hidden"
+              type="checkbox"
+              checked={leaveOutHidden}
+              disabled={running || reading}
+              onChange={(event) => {
+                setLeaveOutHidden(event.target.checked);
+                setLevelChanged(true);
+              }}
+            />
+            Leave out hidden surfaces (invisible walls, collision-only, hidden and editor-only
+            objects)
+          </label>
+          <label className="mm-check">
+            <input
+              id="level-clutter"
+              type="checkbox"
+              checked={clutterOn}
+              disabled={running || reading}
+              onChange={(event) => {
+                setClutterOn(event.target.checked);
+                setLevelChanged(true);
+              }}
+            />
+            Leave out small clutter: meshes smaller than{' '}
+            <input
+              id="level-clutter-size"
+              type="text"
+              inputMode="decimal"
+              size={4}
+              value={clutterText}
+              disabled={running || reading || !clutterOn}
+              aria-label="Clutter size in metres"
+              onChange={(event) => {
+                setClutterText(event.target.value);
+                setLevelChanged(true);
+              }}
+            />{' '}
+            m
+          </label>
+          <div className="mm-row">
+            <button
+              id="level-again"
+              type="button"
+              className="button"
+              disabled={running || reading || !levelChanged}
+              onClick={() => void readLevelAgain(false)}
+            >
+              Read the level again
+            </button>
+            <button
+              id="level-folder"
+              type="button"
+              className="button"
+              disabled={running || reading}
+              onClick={() => void readLevelAgain(true)}
+            >
+              Choose the export folder…
+            </button>
+          </div>
+          <p id="level-note" className="small muted">
+            {level?.assets
+              ? `Meshes, materials and textures are looked for in ${level.assets}.`
+              : 'Meshes, materials and textures are looked for in the folder the level was exported to.'}{' '}
+            {levelChanged ? 'Press Read the level again to see the level with these choices.' : ''}
+          </p>
+        </fieldset>
+      )}
       {builderMissing && (
         <p className="mm-alert mm-bad" role="alert">
           The 3D builder that comes with the Map Maker (atlas-scene) is missing: it reads model
@@ -185,15 +331,32 @@ export function ModelSetup(props: {
       )}
       {inspected && setup && info3d && model && (
         <div className="mm-model">
+          {level && (
+            <div className="small" role="status">
+              <p>{levelTypeName(level.type)}:</p>
+              <ul className="mm-list">
+                {levelLines(level).map((line, index) => (
+                  <li key={index}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="small">
-            {info3d.formatName}: {plural(info3d.triangles, 'triangle')},{' '}
+            {level ? 'Put together' : info3d.formatName}: {plural(info3d.triangles, 'triangle')},{' '}
             {plural(info3d.materials, 'material')}
             {info3d.texturedMaterials > 0
               ? `, ${count(info3d.texturesFound)} of ${plural(info3d.texturedMaterials, 'texture')} found`
               : ', no textures'}
             {info3d.hasColours ? '' : ', no colours of its own'}.
           </p>
-          {info3d.missingFiles.length > 0 && (
+          {info3d.missingFiles.length > 0 && level && (
+            <p className="mm-alert mm-warn small">
+              Missing from the export folder: {info3d.missingFiles.slice(0, 10).join(', ')}
+              {info3d.missingFiles.length > 10 ? ', …' : ''}. The map is made without{' '}
+              {info3d.missingFiles.length === 1 ? 'it' : 'them'}.
+            </p>
+          )}
+          {info3d.missingFiles.length > 0 && !level && (
             <p className="mm-alert mm-warn small">
               Missing next to the model: {info3d.missingFiles.join(', ')}. The map is made without{' '}
               {info3d.missingFiles.length === 1 ? 'it' : 'them'}; put{' '}
@@ -246,71 +409,80 @@ export function ModelSetup(props: {
                   }}
                 />
               </div>
-              <div className="mm-style">
-                <label htmlFor="model-up">Up axis</label>
-                <select
-                  id="model-up"
-                  value={setup.up}
-                  disabled={running}
-                  aria-describedby="model-up-note"
-                  onChange={(event) => {
-                    change({ up: event.target.value as UpAxis });
-                  }}
-                >
-                  {UP_CHOICES.map((axis) => (
-                    <option key={axis.id} value={axis.id}>
-                      {axis.label}
-                    </option>
-                  ))}
-                </select>
-                <span id="model-up-note" className="small muted">
-                  {setup.up === info3d.up
-                    ? `As is usual for ${info3d.formatName.replace(/ \(.*\)$/, '')} files.`
-                    : 'Changed from what is usual for this type of file.'}{' '}
-                  Check the preview: the ground should be at the bottom.
-                </span>
-              </div>
-              <div className="mm-style">
-                <label htmlFor="model-units">Units</label>
-                <select
-                  id="model-units"
-                  value={setup.units}
-                  disabled={running}
-                  aria-describedby="model-size"
-                  onChange={(event) => {
-                    const units = event.target.value as Units;
-                    const custom = typedNumber(customScale) ?? Number.NaN;
-                    change({ units, scale: scaleOf(units, custom) });
-                  }}
-                >
-                  {UNITS.map((unit) => (
-                    <option key={unit.id} value={unit.id}>
-                      {unit.label}
-                    </option>
-                  ))}
-                </select>
-                {setup.units === 'custom' && (
-                  <label className="mm-inline small">
-                    Metres per unit{' '}
-                    <input
-                      id="model-scale"
-                      type="text"
-                      inputMode="decimal"
-                      value={customScale}
+              {!level && (
+                <>
+                  <div className="mm-style">
+                    <label htmlFor="model-up">Up axis</label>
+                    <select
+                      id="model-up"
+                      value={setup.up}
                       disabled={running}
-                      size={8}
+                      aria-describedby="model-up-note"
                       onChange={(event) => {
-                        setCustomScale(event.target.value);
-                        change({ scale: typedNumber(event.target.value) ?? Number.NaN });
+                        change({ up: event.target.value as UpAxis });
                       }}
-                    />
-                  </label>
-                )}
-                <span id="model-size" className="small">
-                  {size ? `Size: ${sizeText(size)}.` : ''}
-                  {hint ? <span className="mm-tone-warn"> {hint}</span> : null}
-                </span>
-              </div>
+                    >
+                      {UP_CHOICES.map((axis) => (
+                        <option key={axis.id} value={axis.id}>
+                          {axis.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span id="model-up-note" className="small muted">
+                      {setup.up === info3d.up
+                        ? `As is usual for ${info3d.formatName.replace(/ \(.*\)$/, '')} files.`
+                        : 'Changed from what is usual for this type of file.'}{' '}
+                      Check the preview: the ground should be at the bottom.
+                    </span>
+                  </div>
+                  <div className="mm-style">
+                    <label htmlFor="model-units">Units</label>
+                    <select
+                      id="model-units"
+                      value={setup.units}
+                      disabled={running}
+                      aria-describedby="model-size"
+                      onChange={(event) => {
+                        const units = event.target.value as Units;
+                        const custom = typedNumber(customScale) ?? Number.NaN;
+                        change({ units, scale: scaleOf(units, custom) });
+                      }}
+                    >
+                      {UNITS.map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {unit.label}
+                        </option>
+                      ))}
+                    </select>
+                    {setup.units === 'custom' && (
+                      <label className="mm-inline small">
+                        Metres per unit{' '}
+                        <input
+                          id="model-scale"
+                          type="text"
+                          inputMode="decimal"
+                          value={customScale}
+                          disabled={running}
+                          size={8}
+                          onChange={(event) => {
+                            setCustomScale(event.target.value);
+                            change({ scale: typedNumber(event.target.value) ?? Number.NaN });
+                          }}
+                        />
+                      </label>
+                    )}
+                    <span id="model-size" className="small">
+                      {size ? `Size: ${sizeText(size)}.` : ''}
+                      {hint ? <span className="mm-tone-warn"> {hint}</span> : null}
+                    </span>
+                  </div>
+                </>
+              )}
+              {level && size && (
+                <p className="small">
+                  Size: {sizeText(size)}. A level stands up and is in metres already.
+                </p>
+              )}
               <fieldset className="mm-fieldset">
                 <legend>Textures</legend>
                 <label className="mm-check">
@@ -376,7 +548,7 @@ export function ModelSetup(props: {
                 </select>
                 <span id="model-floors-note" className="small muted">
                   {setup.floors === 'ground'
-                    ? 'Finds each storey where there is much flat ground at one height, and cuts 1.5 m below it. You can move the cuts afterwards with Adjust floors.'
+                    ? `Finds each storey where there is much flat ground at one height, and cuts ${shownCut} m below it. You can move the cuts afterwards with Adjust floors.`
                     : setup.floors === 'passages'
                       ? 'Keeps the ground whole and splits it only where one walkable surface lies over another, such as a bridge over a street.'
                       : 'The whole model on one floor.'}
@@ -412,6 +584,22 @@ export function ModelSetup(props: {
                       disabled={running}
                       onChange={(event) => {
                         setMergeGap(event.target.value);
+                      }}
+                    />{' '}
+                    m
+                  </label>
+                  <label className="mm-inline small">
+                    Cut below each floor{' '}
+                    <input
+                      id="model-cut-below"
+                      type="text"
+                      inputMode="decimal"
+                      size={4}
+                      placeholder={String(DEFAULT_CUT_BELOW)}
+                      value={cutBelow}
+                      disabled={running}
+                      onChange={(event) => {
+                        setCutBelow(event.target.value);
                       }}
                     />{' '}
                     m

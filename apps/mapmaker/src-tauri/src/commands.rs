@@ -26,9 +26,10 @@ use crate::{
 #[derive(Default)]
 pub struct LastSaved(pub Mutex<Option<PathBuf>>);
 
-/// The 3D model chosen last with the file dialog: only it is read (`model_inspect`) and made into a map.
+/// The 3D model (or game level export) chosen last with the file dialog: only it is read (`model_inspect`) and
+/// made into a map; and for a level, the folder of its exported files chosen with the folder dialog, if any.
 #[derive(Default)]
-pub struct ChosenModel(pub Mutex<Option<PathBuf>>);
+pub struct ChosenModel(pub Mutex<Option<PathBuf>>, pub Mutex<Option<PathBuf>>);
 
 impl ChosenModel {
     fn path(&self) -> Result<PathBuf, String> {
@@ -38,11 +39,36 @@ impl ChosenModel {
             .clone()
             .ok_or_else(|| "Choose a model file first.".to_owned())
     }
+
+    fn assets(&self) -> Option<PathBuf> {
+        self.1
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn set_assets(&self, folder: Option<PathBuf>) {
+        *self
+            .1
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = folder;
+    }
 }
 
 /// The model files the dialog offers. FBX and COLLADA are offered so that the person is told what to do with them
-/// (export the model as glTF or OBJ) rather than not finding the file.
-const MODEL_EXTENSIONS: [&str; 7] = ["glb", "gltf", "obj", "stl", "ply", "fbx", "dae"];
+/// (export the model as glTF or OBJ) rather than not finding the file. A game level export is the `.json` of an
+/// Unreal Engine level saved by FModel or a Unity `.unity` scene, read by the helper (`inspect-level`).
+const MODEL_EXTENSIONS: [&str; 11] = [
+    "glb", "gltf", "obj", "stl", "ply", "psk", "pskx", "fbx", "dae", "json", "unity",
+];
+
+/// Whether a chosen file is a game level export (read by the helper) rather than a model file (read by the
+/// builder).
+pub fn is_level_file(path: &Path) -> bool {
+    path.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .is_some_and(|e| e == "json" || e == "unity")
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -630,6 +656,8 @@ pub fn compare_open_picture<R: Runtime>(
 pub struct ModelChoice {
     path: String,
     name: String,
+    /// A game level export, read by the helper.
+    level: bool,
 }
 
 /// "Make a map from a 3D model…": asks for a model file, starting in the folder of the last one. `None` when the
@@ -646,8 +674,11 @@ pub async fn choose_model<R: Runtime>(
         .dialog()
         .file()
         .set_parent(&window)
-        .set_title("Choose a 3D model")
-        .add_filter("3D models (glTF, OBJ, STL, PLY)", &MODEL_EXTENSIONS);
+        .set_title("Choose a 3D model or a game level export")
+        .add_filter(
+            "3D models and game levels (glTF, OBJ, STL, PLY, ActorX, FModel .json, Unity .unity)",
+            &MODEL_EXTENSIONS,
+        );
     let start = settings
         .last_model_folder
         .clone()
@@ -668,10 +699,39 @@ pub async fn choose_model<R: Runtime>(
         .0
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(path.clone());
+    chosen.set_assets(None);
     Ok(Some(ModelChoice {
         name: file_name(&path),
+        level: is_level_file(&path),
         path: path.display().to_string(),
     }))
+}
+
+/// For a game level: asks for the folder of its exported files (FModel's `Exports` folder, a Unity export's
+/// project folder), starting at the level's own folder. `None` when the dialog was closed.
+#[tauri::command]
+pub async fn choose_level_folder<R: Runtime>(
+    window: WebviewWindow<R>,
+    chosen: State<'_, ChosenModel>,
+) -> Result<Option<String>, String> {
+    let level = chosen.path()?;
+    let mut dialog = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Choose the folder of the level's exported files");
+    if let Some(start) = chosen
+        .assets()
+        .or_else(|| level.parent().map(Path::to_path_buf))
+        .filter(|folder| folder.is_dir())
+    {
+        dialog = dialog.set_directory(start);
+    }
+    let Some(folder) = chosen_path(|done| dialog.pick_folder(done)).await? else {
+        return Ok(None);
+    };
+    chosen.set_assets(Some(folder.clone()));
+    Ok(Some(folder.display().to_string()))
 }
 
 /// The builder's answer to `inspect` is cut off past this (a preview is at most a few megabytes).
@@ -680,10 +740,17 @@ const MAX_INSPECT_OUTPUT: u64 = 256 * 1024 * 1024;
 /// Reads the chosen model with the 3D builder (`atlas-scene inspect`): what the file holds (format, triangles,
 /// materials, textures found and missing, the up axis its format suggests) and a small preview of its shape.
 /// `allow_large`: "Allow very large models".
+///
+/// A game level export is put together by the helper first (`inspect-level`), with `clutter` (metres; none or 0
+/// keeps every mesh), `leave_out_hidden` (hidden and collision-only surfaces; on unless false) and the folder of its
+/// exported files chosen with `choose_level_folder`; its answer also holds what was placed, left out and not found
+/// (`level`).
 #[tauri::command]
 pub async fn model_inspect(
     chosen: State<'_, ChosenModel>,
     allow_large: Option<bool>,
+    clutter: Option<f64>,
+    leave_out_hidden: Option<bool>,
 ) -> Result<Value, String> {
     let path = chosen.path()?;
     if !path.is_file() {
@@ -700,18 +767,37 @@ pub async fn model_inspect(
     } else {
         settings::DEFAULT_TRIANGLES
     };
-    tauri::async_runtime::spawn_blocking(move || inspect(&builder, &path, most))
+    let mut command = if is_level_file(&path) {
+        let helper = checks::find_helper().ok_or(
+            "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
+        )?;
+        let clutter = clutter.filter(|size| size.is_finite() && (0.0..=100.0).contains(size));
+        let assets = chosen.assets().map(|folder| folder.display().to_string());
+        let mut command = Command::new(helper);
+        command
+            .arg("inspect-level")
+            .arg(&path)
+            .args(checks::level_args(
+                clutter,
+                leave_out_hidden.unwrap_or(true),
+                assets.as_deref(),
+            ))
+            .arg(format!("--scene-builder={}", builder.display()));
+        command
+    } else {
+        let mut command = Command::new(builder);
+        command.arg("inspect").arg(&path);
+        command
+    };
+    command.arg("--max-triangles").arg(most.to_string());
+    tauri::async_runtime::spawn_blocking(move || inspect(command))
         .await
         .map_err(|error| error.to_string())?
 }
 
-fn inspect(builder: &Path, model: &Path, most: u64) -> Result<Value, String> {
-    let mut command = Command::new(builder);
+/// Runs the builder's `inspect` (or the helper's `inspect-level`) and returns its answer.
+fn inspect(mut command: Command) -> Result<Value, String> {
     command
-        .arg("inspect")
-        .arg(model)
-        .arg("--max-triangles")
-        .arg(most.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -762,8 +848,14 @@ pub fn model_make_start<R: Runtime>(
     chosen: State<'_, ChosenModel>,
     setup: ModelSetup,
 ) -> Result<Status, String> {
-    let setup = setup.checked()?;
+    let mut setup = setup.checked()?;
     let path = chosen.path()?;
+    // The folder of a level's exported files is the one chosen with the folder dialog, never one the page names.
+    setup.assets = if is_level_file(&path) {
+        chosen.assets().map(|folder| folder.display().to_string())
+    } else {
+        None
+    };
     let job = Job::Model {
         maps_folder: viewer_maps_folder(&app)?,
         scene_builder: checks::find_scene_builder(),

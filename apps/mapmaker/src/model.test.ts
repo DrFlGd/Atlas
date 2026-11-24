@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { fromBase64 } from './floors';
 import {
   UP_AXES,
+  isLevelFile,
   lengthText,
+  levelLines,
+  levelTypeName,
   nameFromFile,
   packIdFor,
   previewModel,
@@ -12,6 +15,7 @@ import {
   sizeMetres,
   sizeText,
   startSetup,
+  type LevelReport,
   type ModelInfo,
   type ModelPreview,
   type UpAxis,
@@ -144,6 +148,10 @@ describe('a 3D model’s setup', () => {
     expect(setupProblem({ ...setup, scale: Number.NaN })).toMatch(/scale/);
     expect(setupProblem({ ...setup, floorSeparation: 0.1 })).toMatch(/separation/);
     expect(setupProblem({ ...setup, mergeGap: 30 })).toMatch(/merge gap/);
+    expect(setup).toMatchObject({ cutBelow: null, clutter: null, leaveOutHidden: true });
+    expect(setupProblem({ ...setup, cutBelow: 1.25, clutter: 0.5 })).toBeNull();
+    expect(setupProblem({ ...setup, cutBelow: -1 })).toMatch(/cut below each floor/);
+    expect(setupProblem({ ...setup, clutter: Number.NaN })).toMatch(/clutter size/);
   });
 
   it('turns and scales the preview as the map will hold it', () => {
@@ -186,5 +194,58 @@ describe('a map made from a 3D model', () => {
       '3 floors from house.obj, with its 3D model (2.0 MB). No locations: add them in Atlas with Edit locations.',
     );
     expect(isModelReport({ ...report, source: undefined })).toBe(false);
+  });
+});
+
+describe('a map made from a game level', () => {
+  const report: LevelReport = {
+    type: 'unreal',
+    file: 'Made_Up_Level.json',
+    assets: '~/FModel/Output/Exports',
+    placed: 1234,
+    meshes: 56,
+    skipped: { clutter: 300, hidden: 12, editorOnly: 0 },
+    skippedTotal: 312,
+    notFound: [
+      { name: 'Env/SM_A', count: 3 },
+      { name: 'Env/SM_B', count: 1 },
+    ],
+    notFoundCount: 4,
+    unknownTypes: [{ name: 'LandscapeComponent', count: 8 }],
+    texturesFound: 40,
+    texturesMissing: [{ name: 'MI_Glass', count: 2 }],
+    notes: ['Spline meshes are placed without their bend.'],
+  };
+
+  it('knows a level export by its name', () => {
+    expect(isLevelFile('C:\\Exports\\Game\\Content\\Maps\\Level.json')).toBe(true);
+    expect(isLevelFile('Scène Un.UNITY')).toBe(true);
+    expect(isLevelFile('house.glb')).toBe(false);
+    expect(nameFromFile('Made_Up_Level.json')).toBe('Made Up Level');
+    expect(levelTypeName('unreal')).toBe('Unreal Engine level (FModel)');
+    expect(levelTypeName('unity')).toBe('Unity scene');
+  });
+
+  it('says what was placed, left out, not found and not understood', () => {
+    expect(levelLines(report)).toEqual([
+      '1,234 meshes placed (56 different).',
+      'Left out: 300 smaller than the clutter size, 12 hidden or collision-only.',
+      'Not found in the export folder: 4 placed meshes (Env/SM_A, Env/SM_B). Export them too, then choose the level again.',
+      'Not understood, so left out: LandscapeComponent (8).',
+      'No texture found for one material: it is drawn in a plain colour.',
+      'Spline meshes are placed without their bend.',
+    ]);
+    const plain: LevelReport = {
+      ...report,
+      placed: 1,
+      meshes: 1,
+      skipped: {},
+      notFound: [],
+      notFoundCount: 0,
+      unknownTypes: [],
+      texturesMissing: [],
+      notes: [],
+    };
+    expect(levelLines(plain)).toEqual(['1 mesh placed (1 different).']);
   });
 });

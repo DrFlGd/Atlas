@@ -86,10 +86,19 @@ export interface PackWithScenes {
   madeByMapMaker: boolean;
 }
 
-/** A model file chosen with "Make a map from a 3D model…". */
+/** A model file chosen with "Make a map from a 3D model…", or a game level export (`level`: an Unreal Engine level
+ * saved by FModel as JSON, a Unity scene). */
 export interface ModelChoice {
   path: string;
   name: string;
+  level: boolean;
+}
+
+/** How a game level is put together (the helper's `inspect-level`). */
+export interface LevelChoices {
+  /** Meshes smaller than this (metres) are left out; null keeps them all. */
+  clutter: number | null;
+  leaveOutHidden: boolean;
 }
 
 export interface SavedReport {
@@ -244,8 +253,10 @@ export interface Shell {
   ): Promise<CheckStatus>;
   /** Asks for a 3D model file (null: the dialog was closed). */
   chooseModel(): Promise<ModelChoice | null>;
-  /** Reads the chosen model: what it holds and a preview of its shape. */
-  modelInspect(allowLarge: boolean): Promise<Inspected>;
+  /** Reads the chosen model (a level put together as `level` says): what it holds and a preview of its shape. */
+  modelInspect(allowLarge: boolean, level?: LevelChoices): Promise<Inspected>;
+  /** For a game level: asks for the folder of its exported files (null: the dialog was closed). */
+  chooseLevelFolder(): Promise<string | null>;
   /** Makes a map pack from the chosen model. */
   modelMakeStart(setup: ModelSetup): Promise<CheckStatus>;
   restoreLastMake(): Promise<CheckStatus>;
@@ -305,7 +316,13 @@ export function createShell(invoke: Invoke): Shell {
     redrawStart: (pack, mapStyle) =>
       invoke('redraw_start', { pack, mapStyle }) as Promise<CheckStatus>,
     chooseModel: () => invoke('choose_model') as Promise<ModelChoice | null>,
-    modelInspect: (allowLarge) => invoke('model_inspect', { allowLarge }) as Promise<Inspected>,
+    modelInspect: (allowLarge, level) =>
+      invoke('model_inspect', {
+        allowLarge,
+        clutter: level?.clutter ?? null,
+        leaveOutHidden: level?.leaveOutHidden ?? true,
+      }) as Promise<Inspected>,
+    chooseLevelFolder: () => invoke('choose_level_folder') as Promise<string | null>,
     modelMakeStart: (setup) => invoke('model_make_start', { setup }) as Promise<CheckStatus>,
     floorOverridesRead: () => invoke('floor_overrides_read') as Promise<FloorOverrides>,
     floorOverridesSet: (game, area, entry) =>

@@ -1,7 +1,7 @@
 [package]
 name = "atlas-scene"
 version = "0.2.0"
-description = "Builds the 3D model of an Atlas map from a raw glTF model or a model file (glTF, OBJ, STL, PLY): lines it up with the game's world, drops what is never seen, cuts it into square cells with levels of detail, compresses it, draws it from above and checks the result"
+description = "Builds the 3D model of an Atlas map from a raw glTF model, a model file (glTF, OBJ, STL, PLY, ActorX) or a game level of them: lines it up with the game's world, drops what is never seen, cuts it into square cells with levels of detail, compresses it, draws it from above and checks the result"
 edition = "2021"
 license = "MIT"
 rust-version = "1.90"

@@ -3,6 +3,7 @@ import { ComparePanel } from './Compare';
 import { FloorsPanel } from './FloorsPanel';
 import { MapStyleChoice } from './MapStyleChoice';
 import { ModelSetup } from './ModelSetup';
+import { levelLines } from './model';
 import { RedrawCard } from './RedrawCard';
 import {
   CATEGORY_LABELS,
@@ -464,7 +465,7 @@ function MapMaker() {
             </button>
           </div>
           <p className="muted small">
-            {isModelReport(report)
+            {isModelReport(report) && !report.model?.level
               ? 'It is made from your model: share it only if the model is yours to share.'
               : 'It is made from your game files, so keep it to yourself: do not share or upload it.'}
           </p>
@@ -882,6 +883,7 @@ function ModelLine({ report }: { report: MakeReport }) {
           ? `${plural(model.texturesFound, 'texture')} kept`
           : 'no textures'}
       {model.bothSides ? ', faces seen from both sides' : ''}.
+      {model.levelReport ? ` ${levelLines(model.levelReport).join(' ')}` : ''}
     </p>
   );
 }
