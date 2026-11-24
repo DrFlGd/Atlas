@@ -3883,3 +3883,181 @@ button.games-heading-button:hover {
 [data-input='touch'] .entry-menu-all {
   min-height: 44px;
 }
+
+/* ------------------------------------------------------------------ */
+/* A type's colour and icon (components/TypeLook.tsx): the fields of the type
+   form in Edit locations and of the dialog from the filters, in both layouts. */
+
+.locations-fieldset {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.locations-fieldset legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.locations-swatches,
+.locations-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 4px;
+}
+
+.locations-swatch,
+.locations-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.locations-swatch:hover,
+.locations-icon:hover {
+  background: var(--atlas-surface-hover);
+}
+
+.locations-swatch:has(input:checked),
+.locations-icon:has(input:checked) {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.locations-swatch:has(input:focus-visible),
+.locations-icon:has(input:focus-visible) {
+  outline: 2px solid var(--atlas-focus, var(--atlas-accent));
+  outline-offset: 2px;
+}
+
+.locations-swatch-dot {
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--atlas-bg);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--atlas-border-strong);
+}
+
+.locations-swatch-any {
+  gap: 6px;
+  grid-column: span 3;
+  padding: 0 8px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.locations-swatch-any.is-chosen {
+  border-color: var(--atlas-accent);
+  background: var(--atlas-accent-soft);
+}
+
+.locations-swatch-any:has(input:focus-visible) {
+  outline: 2px solid var(--atlas-focus, var(--atlas-accent));
+  outline-offset: 2px;
+}
+
+.locations-swatch-any input[type='color'] {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+
+.locations-swatch-any input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.locations-swatch-any input[type='color']::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.locations-swatch-any input[type='color']::-moz-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.type-look-dialog {
+  width: min(520px, calc(100% - 24px));
+}
+
+.type-look-dialog .dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.type-look-dialog .own-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.type-look-dialog .own-label {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.type-look-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-weight: 600;
+}
+
+.type-look-note {
+  margin: 0;
+}
+
+.type-look-note .glyph-badge {
+  display: inline-block;
+  margin: 0 2px;
+  vertical-align: middle;
+}
+
+.type-look-problem {
+  margin: 0;
+  color: var(--atlas-danger);
+}
+
+.type-look-dialog .row-actions {
+  margin-top: 0;
+}
+
+[data-ui='touch'] .type-look-dialog .button {
+  min-height: 44px;
+}
+
+/* The palette button beside a type in the classic filters. */
+.tree-type {
+  display: flex;
+  align-items: center;
+}
+
+.tree-type > .tree-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.type-look-button {
+  width: 28px;
+  height: 28px;
+  color: var(--atlas-muted);
+}
+
+.type-look-button:hover,
+.type-look-button:focus-visible {
+  color: var(--atlas-text);
+}

@@ -46,6 +46,16 @@ import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
  * write over them (and so over the names); one without names stays version
  * 1.
  *
+ * The person's own colour and icon of types of the game's pack
+ * (`typeLooks`): each with the id of a type of the pack, and the colour
+ * (`color`, `#rrggbb`) or the icon (`icon`), or both, that the person chose
+ * for it. As with names, the pack's type is never changed: the type is
+ * shown with them wherever it is shown (the map, the 3D view, the filters,
+ * search, cards, lists), and taking them out ("Back to the pack's own")
+ * shows the pack's again. A look of a type the pack does not have (now) is
+ * kept for when it comes back. A file with type looks is version 3, so an
+ * app older than them shows its locations and does not write over them.
+ * The person's own types are changed in place, never here.
  *
  * Written strictly and read tolerantly: one record that cannot be read is
  * left out, not the file.
@@ -53,12 +63,21 @@ import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
 
 /** What the own locations file of a game says it is. */
 export const OWN_LOCATIONS_FORMAT = 'atlas-own-locations';
-/** The newest version of the own locations file this app reads and writes: with names. */
-export const OWN_LOCATIONS_VERSION = 2;
+/** The newest version of the own locations file this app reads and writes: with type looks. */
+export const OWN_LOCATIONS_VERSION = 3;
+/** The version of a file with names of maps and levels but no type looks. */
+export const OWN_LOCATIONS_VERSION_WITH_NAMES = 2;
 /** The version of a file without names, which every app since own locations reads. */
 export const OWN_LOCATIONS_VERSION_WITHOUT_NAMES = 1;
 /** The most names of maps and levels one file may hold. */
 export const MAX_OWN_NAMES = 2000;
+/** The most type looks one file may hold. */
+export const MAX_OWN_TYPE_LOOKS = 2000;
+/** The longest icon name a type look may give (the app draws one it does not know as a pin). */
+export const MAX_ICON_NAME_LENGTH = 40;
+
+/** A colour as types have it: `#rrggbb`. */
+export const TYPE_COLOUR = /^#[0-9a-fA-F]{6}$/;
 
 /** The longest name of a location, type, group or area. */
 export const MAX_OWN_NAME_LENGTH = 200;
@@ -130,6 +149,23 @@ function ownLocationSchemas(mode: SchemaMode) {
       : z.string().max(MAX_OWN_NAME_LENGTH),
   });
 
+  /**
+   * The person's colour and icon of a type of the pack: at least one of
+   * them. Read tolerantly: a colour or icon that cannot be read is left
+   * out, and a look left with neither is left out.
+   */
+  const ownTypeLookSchema = record({
+    id: idOf('cat'),
+    color: reading
+      ? z.string().regex(TYPE_COLOUR).optional().catch(undefined)
+      : z.string().regex(TYPE_COLOUR).optional(),
+    icon: reading
+      ? z.string().trim().min(1).max(MAX_ICON_NAME_LENGTH).optional().catch(undefined)
+      : z.string().min(1).max(MAX_ICON_NAME_LENGTH).optional(),
+  }).refine((look) => look.color !== undefined || look.icon !== undefined, {
+    message: 'must give a colour or an icon',
+  });
+
   /** A person's own picture, named as `ownPictureFile` says. */
   const ownPictureSchema = (
     reading ? packReadSchemas.pictureSchema : ownRecordWriteSchemas.pictureSchema
@@ -145,7 +181,11 @@ function ownLocationSchemas(mode: SchemaMode) {
     format: z.literal(OWN_LOCATIONS_FORMAT),
     version: reading
       ? z.int().positive()
-      : z.union([z.literal(OWN_LOCATIONS_VERSION_WITHOUT_NAMES), z.literal(OWN_LOCATIONS_VERSION)]),
+      : z.union([
+          z.literal(OWN_LOCATIONS_VERSION_WITHOUT_NAMES),
+          z.literal(OWN_LOCATIONS_VERSION_WITH_NAMES),
+          z.literal(OWN_LOCATIONS_VERSION),
+        ]),
     gameId: gameIdSchema,
     updatedAt: reading ? isoTime.optional().catch(undefined) : isoTime,
     // Read one record at a time (see `readOwnLocationsFile`), so one that
@@ -164,11 +204,16 @@ function ownLocationSchemas(mode: SchemaMode) {
     names: reading
       ? z.array(z.unknown()).optional().catch(undefined)
       : z.array(ownNameSchema).max(MAX_OWN_NAMES).optional(),
+    /** The person's colours and icons of the pack's types. */
+    typeLooks: reading
+      ? z.array(z.unknown()).optional().catch(undefined)
+      : z.array(ownTypeLookSchema).max(MAX_OWN_TYPE_LOOKS).optional(),
   });
 
   return {
     ownLocationSchema,
     ownNameSchema,
+    ownTypeLookSchema,
     ownPictureSchema,
     ownTypeGroupSchema: own(pack.categoryGroupSchema),
     ownTypeSchema: own(pack.categorySchema),
@@ -195,6 +240,19 @@ export interface OwnName {
   original: string;
 }
 
+/**
+ * The person's colour and icon of a type of the game's pack, in place of
+ * the pack's: at least one of them.
+ */
+export interface OwnTypeLook {
+  /** The id of the pack's type. */
+  id: string;
+  /** `#rrggbb`, lower case. */
+  color?: string;
+  /** An icon name (see `ICON_NAMES`). */
+  icon?: string;
+}
+
 /** A game's own locations, types, type groups and areas. */
 export interface OwnLocations {
   categoryGroups: CategoryGroup[];
@@ -205,6 +263,8 @@ export interface OwnLocations {
   pictures?: Picture[];
   /** The person's names of maps and levels; absent when there are none. */
   names?: OwnName[];
+  /** The person's colours and icons of the pack's types; absent when there are none. */
+  typeLooks?: OwnTypeLook[];
 }
 
 /** Nothing of one's own yet. */
@@ -280,28 +340,42 @@ export function readOwnLocationsFile(
   if (pictures.length > 0) own.pictures = pictures;
   const names = take(parsed.data.names ?? [], read.ownNameSchema, () => []);
   if (names.length > 0) own.names = names;
+  const looks = take(parsed.data.typeLooks ?? [], read.ownTypeLookSchema, () => []).map(
+    (look): OwnTypeLook => ({
+      id: look.id,
+      ...(look.color !== undefined ? { color: look.color.toLowerCase() } : {}),
+      ...(look.icon !== undefined ? { icon: look.icon } : {}),
+    }),
+  );
+  if (looks.length > 0) own.typeLooks = looks;
   return { ok: true, file: { gameId, version: parsed.data.version, own, skipped } };
 }
 
 /** The own locations file of a game, checked strictly; throws when a record is not valid. */
 export function writeOwnLocationsFile(gameId: string, own: OwnLocations, now: Date): string {
-  const { pictures, names, ...records } = own;
+  const { pictures, names, typeLooks, ...records } = own;
   const named = names !== undefined && names.length > 0;
+  const looked = typeLooks !== undefined && typeLooks.length > 0;
   const file = ownLocationsFileSchema.parse({
     format: OWN_LOCATIONS_FORMAT,
-    version: named ? OWN_LOCATIONS_VERSION : OWN_LOCATIONS_VERSION_WITHOUT_NAMES,
+    version: looked
+      ? OWN_LOCATIONS_VERSION
+      : named
+        ? OWN_LOCATIONS_VERSION_WITH_NAMES
+        : OWN_LOCATIONS_VERSION_WITHOUT_NAMES,
     gameId,
     updatedAt: now.toISOString(),
     ...records,
     ...(pictures && pictures.length > 0 ? { pictures } : {}),
     ...(named ? { names } : {}),
+    ...(looked ? { typeLooks } : {}),
   });
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
 /**
- * How many records there are, names of maps and levels among them: for
- * messages and the map pack file's description.
+ * How many records there are, names of maps and levels and type looks
+ * among them: for messages and the map pack file's description.
  */
 export function countOwnLocations(own: OwnLocations): number {
   return (
@@ -309,6 +383,7 @@ export function countOwnLocations(own: OwnLocations): number {
     own.categories.length +
     own.categoryGroups.length +
     own.regions.length +
-    (own.names?.length ?? 0)
+    (own.names?.length ?? 0) +
+    (own.typeLooks?.length ?? 0)
   );
 }

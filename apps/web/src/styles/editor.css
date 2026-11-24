@@ -1498,60 +1498,7 @@
   color: var(--atlas-accent);
 }
 
-.locations-fieldset {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-}
-
-.locations-fieldset legend {
-  margin-bottom: 6px;
-  padding: 0;
-}
-
-.locations-swatches,
-.locations-icons {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
-  gap: 4px;
-}
-
-.locations-swatch,
-.locations-icon {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 44px;
-  border: 2px solid transparent;
-  border-radius: 12px;
-  cursor: pointer;
-}
-
-.locations-swatch:hover,
-.locations-icon:hover {
-  background: var(--atlas-surface-hover);
-}
-
-.locations-swatch:has(input:checked),
-.locations-icon:has(input:checked) {
-  border-color: var(--atlas-accent);
-  background: var(--atlas-accent-soft);
-}
-
-.locations-swatch:has(input:focus-visible),
-.locations-icon:has(input:focus-visible) {
-  outline: 2px solid var(--atlas-focus, var(--atlas-accent));
-  outline-offset: 2px;
-}
-
-.locations-swatch-dot {
-  width: 26px;
-  height: 26px;
-  border: 2px solid var(--atlas-bg);
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px var(--atlas-border-strong);
-}
+/* The colour and icon fields of a type are in app.css (`.locations-swatches`), for both layouts. */
 
 /* Take locations from another pack: what is left out, by name. */
 .take-group {

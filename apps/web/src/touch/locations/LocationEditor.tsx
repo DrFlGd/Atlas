@@ -1,6 +1,7 @@
-import { ICON_NAMES, isOwnId, type Category, type OwnLocation, type Region } from '@atlas/schema';
+import { isOwnId, type Category, type OwnLocation, type Region } from '@atlas/schema';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GlyphBadge, UiIcon } from '../../components/icons';
+import { TypeColourField, TypeIconField, TypeLookButton } from '../../components/TypeLook';
 import { goToLocation } from '../../state/actions';
 import { numberFormat } from '../../state/derived';
 import { useSceneShown } from '../../state/scene3d';
@@ -350,6 +351,10 @@ export function LocationEditorOutline({ game }: { game: LoadedGame }) {
             <UiIcon name="plus" size={18} strokeWidth={1.9} />
             New type
           </button>
+          <p className="locations-empty" data-testid="type-look-hint">
+            To give one of the game’s types another colour or icon, press the palette button beside
+            it in the filters.
+          </p>
         </section>
         <section className="locations-section" aria-labelledby={`${titleId}-areas`}>
           <h2 id={`${titleId}-areas`} className="locations-heading">
@@ -650,6 +655,13 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
                 <UiIcon name="pencil" size={16} strokeWidth={1.8} />
                 Change “{type.name}”
               </button>
+            ) : type && !isOwnId(type.id) ? (
+              <TypeLookButton
+                typeId={type.id}
+                name={type.name}
+                className="own-text-button"
+                withText
+              />
             ) : null}
           </div>
         </div>
@@ -969,9 +981,6 @@ function GameLocationNote({ game, id }: { game: LoadedGame; id: string }) {
   );
 }
 
-/** The name of an icon, for its button. */
-const iconLabel = (icon: string) => icon.charAt(0).toUpperCase() + icon.slice(1);
-
 function TypePanel({
   game,
   id,
@@ -1057,48 +1066,19 @@ function TypePanel({
               }}
             />
           </label>
-          <fieldset className="own-field locations-fieldset">
-            <legend className="own-label">Colour</legend>
-            <div className="locations-swatches" data-testid="type-colours">
-              {OWN_TYPE_COLOURS.map((colour, index) => (
-                <label key={colour} className="locations-swatch" title={`Colour ${index + 1}`}>
-                  <input
-                    type="radio"
-                    name={`${id2}-colour`}
-                    className="visually-hidden"
-                    value={colour}
-                    aria-label={`Colour ${index + 1} of ${OWN_TYPE_COLOURS.length}`}
-                    checked={form.color === colour}
-                    onChange={() => {
-                      setForm({ ...form, color: colour });
-                    }}
-                  />
-                  <span className="locations-swatch-dot" style={{ background: colour }} />
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <fieldset className="own-field locations-fieldset">
-            <legend className="own-label">Icon</legend>
-            <div className="locations-icons" data-testid="type-icons">
-              {ICON_NAMES.map((icon) => (
-                <label key={icon} className="locations-icon" title={iconLabel(icon)}>
-                  <input
-                    type="radio"
-                    name={`${id2}-icon`}
-                    className="visually-hidden"
-                    value={icon}
-                    aria-label={iconLabel(icon)}
-                    checked={form.icon === icon}
-                    onChange={() => {
-                      setForm({ ...form, icon });
-                    }}
-                  />
-                  <GlyphBadge icon={icon} color={form.color} size={30} />
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <TypeColourField
+            value={form.color}
+            onChange={(color) => {
+              setForm({ ...form, color });
+            }}
+          />
+          <TypeIconField
+            value={form.icon}
+            color={form.color}
+            onChange={(icon) => {
+              setForm({ ...form, icon });
+            }}
+          />
           <div className="own-field">
             <label className="own-label" htmlFor={`${id2}-group`}>
               Group

@@ -234,3 +234,62 @@ describe('names of maps and levels in the own locations file', () => {
     expect(() => writeOwnLocationsFile('demo', empty, NOW)).toThrow();
   });
 });
+
+describe('colours and icons of the pack’s types in the own locations file', () => {
+  const looked = (): OwnLocations => ({
+    ...own(),
+    typeLooks: [
+      { id: 'demo:cat:herb', color: '#ff00ff' },
+      { id: 'demo:cat:chest', icon: 'star' },
+      { id: 'demo:cat:waystone', color: '#123abc', icon: 'eye' },
+    ],
+  });
+
+  it('keeps them as version 3, and reads them back', () => {
+    const text = writeOwnLocationsFile('demo', looked(), NOW);
+    expect(JSON.parse(text)).toMatchObject({ version: 3 });
+    const read = readOwnLocationsFile(JSON.parse(text));
+    expect(read.ok && read.file.own).toEqual(looked());
+    expect(read.ok && read.file.version).toBe(3);
+    expect(countOwnLocations(looked())).toBe(countOwnLocations(own()) + 3);
+    // Names without looks stay version 2; neither, version 1.
+    const named = { ...own(), names: [{ id: 'demo:map:world', name: 'Home', original: 'World' }] };
+    expect(JSON.parse(writeOwnLocationsFile('demo', named, NOW))).toMatchObject({ version: 2 });
+    expect(
+      JSON.parse(writeOwnLocationsFile('demo', { ...own(), typeLooks: [] }, NOW)),
+    ).not.toHaveProperty('typeLooks');
+  });
+
+  it('refuses to write a look without a colour or an icon, or with a colour that is not #rrggbb', () => {
+    expect(() =>
+      writeOwnLocationsFile('demo', { ...own(), typeLooks: [{ id: 'demo:cat:herb' }] }, NOW),
+    ).toThrow();
+    expect(() =>
+      writeOwnLocationsFile(
+        'demo',
+        { ...own(), typeLooks: [{ id: 'demo:cat:herb', color: 'pink' }] },
+        NOW,
+      ),
+    ).toThrow();
+  });
+
+  it('reads past a look it cannot use, and keeps what it can of one', () => {
+    const value = JSON.parse(writeOwnLocationsFile('demo', looked(), NOW)) as {
+      typeLooks: unknown[];
+    };
+    value.typeLooks.push(
+      { id: 'other:cat:herb', color: '#00ff00' },
+      { id: 'demo:loc:0001', color: '#00ff00' },
+      { id: 'demo:cat:gem', color: 'green' },
+      { id: 'demo:cat:coin', color: 'green', icon: 'coin' },
+      { id: 'demo:cat:flag', color: '#ABCDEF' },
+    );
+    const read = readOwnLocationsFile(value);
+    expect(read.ok && read.file.own.typeLooks).toEqual([
+      ...looked().typeLooks!,
+      { id: 'demo:cat:coin', icon: 'coin' },
+      { id: 'demo:cat:flag', color: '#abcdef' },
+    ]);
+    expect(read.ok && read.file.skipped).toBe(3);
+  });
+});

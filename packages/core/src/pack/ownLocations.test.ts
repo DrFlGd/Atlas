@@ -27,7 +27,12 @@ import {
   removeOwnType,
   renameMapOrLevel,
   setOwnLocationPhotoSpoiler,
+  setTypeLook,
+  typeLookOf,
+  typeWithLook,
+  withTypeLooks,
 } from './ownLocations';
+import { layerMarkers } from './viewSpec';
 
 const NOW = new Date('2026-11-13T10:00:00.000Z');
 
@@ -370,5 +375,87 @@ describe('names of maps and levels', () => {
       'Up top',
       'Lair',
     ]);
+  });
+});
+
+describe('colours and icons of the pack’s types', () => {
+  const HERB = 'demo:cat:herb';
+  const PACK_LOOK = { color: '#4caf50', icon: 'leaf' };
+
+  it('keeps only what differs from the pack, and Back to the pack’s own takes it out', () => {
+    const pink = setTypeLook(own(), HERB, { color: '#FF00FF', icon: 'leaf' }, PACK_LOOK);
+    expect(pink.typeLooks).toEqual([{ id: HERB, color: '#ff00ff' }]);
+    const both = setTypeLook(pink, HERB, { color: '#ff00ff', icon: 'star' }, PACK_LOOK);
+    expect(typeLookOf(both, HERB)).toEqual({ id: HERB, color: '#ff00ff', icon: 'star' });
+    // The same again: the same data.
+    expect(setTypeLook(both, HERB, { color: '#ff00ff', icon: 'star' }, PACK_LOOK)).toBe(both);
+    // The pack's own colour and icon chosen: no look is kept.
+    expect(setTypeLook(both, HERB, PACK_LOOK, PACK_LOOK).typeLooks).toBeUndefined();
+    const back = setTypeLook(both, HERB, null, PACK_LOOK);
+    expect(back.typeLooks).toBeUndefined();
+    expect(back.locations).toBe(both.locations);
+    expect(setTypeLook(back, HERB, null, PACK_LOOK)).toBe(back);
+  });
+
+  it('shows the type with them everywhere the game is indexed, and leaves the pack as it was', () => {
+    const pack = makeFixturePack();
+    const mine = setTypeLook(own(), HERB, { color: '#ff00ff', icon: 'star' }, PACK_LOOK);
+    const { data, skipped } = mergeOwnLocations(pack, mine);
+    expect(skipped).toBe(0);
+    const loaded = indexPack(data, new URL('https://example.test/demo/'));
+    expect(loaded.categories.get(HERB)).toMatchObject({ color: '#ff00ff', icon: 'star' });
+    // The markers of the map and the 3D view are drawn with them.
+    const markers = layerMarkers(loaded, 'demo:layer:surface');
+    const herbs = markers.filter((m) => m.id.startsWith('demo:loc:0'));
+    expect(herbs.length).toBe(2);
+    expect(herbs.every((m) => m.color === '#ff00ff' && m.icon === 'star')).toBe(true);
+    // The person's own type is as they made it, after the pack's.
+    expect(loaded.categories.get('demo:cat:own.t1')).toMatchObject({ color: '#e07a2f' });
+    expect(data.categories.map((c) => c.id)).toEqual([HERB, 'demo:cat:own.t1']);
+    // The pack itself is as it was.
+    expect(pack.categories[0]).toMatchObject(PACK_LOOK);
+    // Back to the pack's own: the pack's colour and icon again.
+    const back = mergeOwnLocations(pack, setTypeLook(mine, HERB, null, PACK_LOOK));
+    expect(back.data.categories[0]).toMatchObject(PACK_LOOK);
+  });
+
+  it('changes nothing for a type the pack does not have, and keeps the look for when it comes back', () => {
+    const pack = makeFixturePack();
+    const looks = [{ id: 'demo:cat:gone', color: '#000000' }];
+    expect(withTypeLooks(pack, looks)).toBe(pack);
+    expect(withTypeLooks(pack, undefined)).toBe(pack);
+    const mine = { ...own(), typeLooks: looks };
+    expect(mergeOwnLocations(pack, mine).data.categories[0]).toBe(pack.categories[0]);
+    // A newer pack with the same type id shows it with the look.
+    const newer = {
+      ...pack,
+      categories: [...pack.categories, { ...pack.categories[0]!, id: 'demo:cat:gone' }],
+    };
+    expect(withTypeLooks(newer, looks).categories[1]).toMatchObject({ color: '#000000' });
+  });
+
+  it('draws a type with a look with it rather than the map’s own icon', () => {
+    const type = { ...makeFixturePack().categories[0]!, picture: 'demo:picture:herb' };
+    expect(typeWithLook(type, undefined)).toBe(type);
+    const shown = typeWithLook(type, { id: HERB, color: '#ff00ff' });
+    expect(shown).toMatchObject({ color: '#ff00ff', icon: 'leaf' });
+    expect(shown).not.toHaveProperty('picture');
+  });
+
+  it('are merged from a file of the same game, a look of the same type replaced', () => {
+    const mine = { ...own(), typeLooks: [{ id: HERB, color: '#ff00ff' }] };
+    const incoming: OwnLocations = {
+      categoryGroups: [],
+      categories: [],
+      regions: [],
+      locations: [],
+      typeLooks: [
+        { id: HERB, icon: 'star' },
+        { id: 'demo:cat:chest', color: '#123456' },
+      ],
+    };
+    expect(mergeOwnFiles(mine, incoming).typeLooks).toEqual(incoming.typeLooks);
+    // Deleting a map keeps the looks: they are of the game's types.
+    expect(removeOwnOfMap(mine, 'demo:map:world').typeLooks).toEqual(mine.typeLooks);
   });
 });

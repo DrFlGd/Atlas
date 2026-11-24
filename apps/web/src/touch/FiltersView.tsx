@@ -1,6 +1,7 @@
 import type { Category, CategoryGroup } from '@atlas/schema';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GlyphBadge, UiIcon } from '../components/icons';
+import { TypeLookButton } from '../components/TypeLook';
 import {
   applyPreset,
   deleteUserPreset,
@@ -410,7 +411,11 @@ function Presets() {
   );
 }
 
-/** A group of kinds: its heading switches the whole group, each row one kind. */
+/**
+ * A group of kinds: its heading switches the whole group, each row one
+ * kind; the palette button at the end of a row changes the kind's colour
+ * and icon (`TypeLook.tsx`).
+ */
 function KindGroup({ group, categories }: { group: CategoryGroup; categories: Category[] }) {
   const mapId = useAtlas((s) => s.mapId);
   const summary = useSummary();
@@ -451,35 +456,42 @@ function KindGroup({ group, categories }: { group: CategoryGroup; categories: Ca
         const on = visible.has(category.id);
         const kindTally = summary?.category(category.id, mapId);
         return (
-          <button
-            key={category.id}
-            type="button"
-            role="switch"
-            aria-checked={on}
-            className={on ? 'touch-kind-row' : 'touch-kind-row touch-kind-row-off'}
-            data-testid="kind-switch"
-            data-category={category.id}
-            onClick={() => {
-              setCategoriesVisible([category.id], !on);
-            }}
-          >
-            <GlyphBadge
-              icon={category.icon}
-              color={category.color}
+          <div key={category.id} className="touch-kind-line">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              className={on ? 'touch-kind-row' : 'touch-kind-row touch-kind-row-off'}
+              data-testid="kind-switch"
+              data-category={category.id}
+              onClick={() => {
+                setCategoriesVisible([category.id], !on);
+              }}
+            >
+              <GlyphBadge
+                icon={category.icon}
+                color={category.color}
+                typeId={category.id}
+                size={32}
+                muted={!on}
+              />
+              <span className="touch-kind-name">{category.name}</span>
+              <span className="touch-figure">
+                {kindTally
+                  ? kindTally.total > 0
+                    ? `${numberFormat.format(kindTally.found)} / ${numberFormat.format(kindTally.total)}`
+                    : numberFormat.format(kindTally.count)
+                  : ''}
+              </span>
+              <SwitchTrack on={on} />
+            </button>
+            <TypeLookButton
               typeId={category.id}
-              size={32}
-              muted={!on}
+              name={category.name}
+              className="touch-icon-button touch-kind-look"
+              size={20}
             />
-            <span className="touch-kind-name">{category.name}</span>
-            <span className="touch-figure">
-              {kindTally
-                ? kindTally.total > 0
-                  ? `${numberFormat.format(kindTally.found)} / ${numberFormat.format(kindTally.total)}`
-                  : numberFormat.format(kindTally.count)
-                : ''}
-            </span>
-            <SwitchTrack on={on} />
-          </button>
+          </div>
         );
       })}
     </section>
