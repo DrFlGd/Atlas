@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import typing as tp
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -62,8 +63,102 @@ def _model_name(part: tp.Any) -> str | None:
     return getattr(model, "name", None) if model is not None else None
 
 
-def load_msb(profile: GameProfile, area: Area) -> tp.Any:
-    return profile.msb_class().from_path(area.msb)
+def load_msb(profile: GameProfile, area: Area, notes: list[str] | None = None) -> tp.Any:
+    """The area's map layout. Read with Soulstruct's checks first; a file they turn down is read again with them
+    relaxed (lenient_layout_reading), and `notes` says so. Real Bloodborne files need that: they hold small values
+    in bytes Soulstruct expects blank, Soulstruct's check of absent data blocks measures from the start of the file
+    rather than the entry (so it turns down every such entry after the first), and its Bloodborne parts read an
+    `instance_index` they have no field for. Nothing Atlas uses is in those values."""
+    msb_class = profile.msb_class()
+    try:
+        return msb_class.from_path(area.msb)
+    except Exception as strict_error:
+        relaxed: Counter[str] = Counter()
+        try:
+            with lenient_layout_reading(relaxed):
+                msb = msb_class.from_path(area.msb)
+        except Exception:
+            raise strict_error
+        if notes is not None:
+            notes.append(lenient_note(relaxed))
+        return msb
+
+
+def lenient_note(relaxed: Counter[str]) -> str:
+    counts = [
+        (relaxed["padding"], "in bytes expected blank"),
+        (relaxed["unused"], "data blocks expected absent"),
+        (relaxed["dropped"], "with no field to hold them"),
+    ]
+    found = "; ".join(f"{count} {what}" for count, what in counts if count) or "none"
+    return f"read with relaxed checks, past values Atlas does not use: {found}"
+
+
+_INIT_FIELDS: dict[type, frozenset[str] | None] = {}
+
+
+def _init_fields(cls: type) -> frozenset[str] | None:
+    """The names an entry type's constructor takes, or None when it is not a dataclass (then nothing is dropped)."""
+    if cls not in _INIT_FIELDS:
+        import dataclasses
+
+        _INIT_FIELDS[cls] = (
+            frozenset(f.name for f in dataclasses.fields(cls) if f.init) if dataclasses.is_dataclass(cls) else None
+        )
+    return _INIT_FIELDS[cls]
+
+
+@contextmanager
+def lenient_layout_reading(relaxed: Counter[str]) -> tp.Iterator[None]:
+    """For the duration: blank-byte (`_pad`) fields accept any value; an entry's data block that Soulstruct expects
+    to be absent is checked by its offset within the entry, and skipped (counted) when present rather than refused;
+    and a value Soulstruct reads but its entry type has no field for (Bloodborne parts' `instance_index`) is dropped.
+    Every other check stays. Soulstruct 2.6 and constrata internals; if they differ, nothing is relaxed."""
+    from constrata.metadata import BinaryMetadata
+    from soulstruct.base.maps.msb.msb_entry import MSBEntry
+
+    original_validate = BinaryMetadata.__dict__.get("validate")
+    original_kwargs = MSBEntry.__dict__.get("reader_to_entry_kwargs")
+    if original_validate is None or not isinstance(original_kwargs, classmethod):
+        yield
+        return
+
+    def validate(self: tp.Any, value: tp.Any) -> None:
+        if str(getattr(self, "field_name", "")).startswith("_pad"):
+            if getattr(self, "asserted", None) and value not in self.asserted:
+                relaxed["padding"] += 1
+            return
+        original_validate(self, value)
+
+    def reader_to_entry_kwargs(cls: tp.Any, reader: tp.Any, entry_offset: int) -> dict[str, tp.Any]:
+        kwargs = cls.HEADER_STRUCT.reader_to_entry_kwargs(reader, cls, entry_offset)
+        for struct_name, struct_type in cls.STRUCTS.items():
+            try:
+                relative = kwargs.pop(f"{struct_name}_offset")
+            except KeyError:
+                raise ValueError(f"Struct offset not found for `{struct_name}` in `{cls.__name__}`.")
+            if struct_type is None:
+                if relative != 0:
+                    relaxed["unused"] += 1
+                continue
+            if relative == 0:
+                raise ValueError(f"Offset for used struct `{struct_name}` in `{cls.__name__}` is 0.")
+            reader.seek(entry_offset + relative)
+            kwargs |= struct_type.reader_to_entry_kwargs(reader, cls, entry_offset)
+        accepted = _init_fields(cls)
+        if accepted is not None:
+            for name in [name for name in kwargs if name not in accepted]:
+                kwargs.pop(name)
+                relaxed["dropped"] += 1
+        return kwargs
+
+    BinaryMetadata.validate = validate
+    MSBEntry.reader_to_entry_kwargs = classmethod(reader_to_entry_kwargs)
+    try:
+        yield
+    finally:
+        BinaryMetadata.validate = original_validate
+        MSBEntry.reader_to_entry_kwargs = original_kwargs
 
 
 def summarize(profile: GameProfile, area: Area, msb: tp.Any) -> MsbSummary:
