@@ -411,6 +411,9 @@ pub struct Companions<'a> {
     pub folder: Option<&'a std::path::Path>,
     /// The model file's name, for messages.
     pub model: &'a str,
+    /// Keep each primitive's `TEXCOORD_0` even where its material has no
+    /// texture (a level gives it one, see [`crate::level`]).
+    pub uvs: bool,
 }
 
 /// What reading a glTF model noticed that the person may want to know.
@@ -744,7 +747,11 @@ fn read_json(
             let material = index_of(primitive, "material")
                 .filter(|m| *m < fallback_material)
                 .unwrap_or(fallback_material);
-            let uvs = match model.materials[material].texture.map(|t| t.tex_coord) {
+            let uv_set = model.materials[material]
+                .texture
+                .map(|t| t.tex_coord)
+                .or(companions.uvs.then_some(0));
+            let uvs = match uv_set {
                 Some(set) => match attributes.and_then(|a| index_of(a, &format!("TEXCOORD_{set}")))
                 {
                     Some(accessor) => {

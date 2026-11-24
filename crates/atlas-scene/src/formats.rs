@@ -10,7 +10,11 @@
 //! - **STL** (`.stl`), binary or text;
 //! - **PLY** (`.ply`), text or binary, with vertex colours and texture
 //!   coordinates (per vertex, or per face corner as some programs write
-//!   them) and its `TextureFile` comment.
+//!   them) and its `TextureFile` comment;
+//! - **ActorX** (`.psk`, `.pskx`), the meshes Unreal Engine export programs
+//!   write ([`crate::psk`]), Z up in centimetres;
+//! - an **Atlas level file** (`.atlaslevel`, [`crate::level`]): many of these
+//!   files placed as a game level places them.
 //!
 //! OBJ, STL and PLY say nothing of which side of a surface is its front,
 //! and exported models often mix both windings, so their materials are seen
@@ -43,7 +47,16 @@ pub const LARGEST_MAX_TRIANGLES: usize = 50_000_000;
 pub const MAX_FILE_BYTES: u64 = 4 << 30;
 
 /// The extensions of the model files that are read, and of those that are refused with a reason.
-pub const EXTENSIONS: [&str; 5] = ["glb", "gltf", "obj", "stl", "ply"];
+pub const EXTENSIONS: [&str; 8] = [
+    "glb",
+    "gltf",
+    "obj",
+    "stl",
+    "ply",
+    "psk",
+    "pskx",
+    "atlaslevel",
+];
 
 /// How to read a model file.
 #[derive(Clone, Copy, Debug)]
@@ -195,6 +208,17 @@ fn display_name(path: &Path) -> String {
 
 /// Reads a model file of any of the formats above, by its extension.
 pub fn read_model(path: &Path, options: &ReadOptions) -> Result<(Model, ModelInfo), String> {
+    read_mesh_file(path, options, false)
+}
+
+/// Reads a model file as [`read_model`] does; with `all_uvs`, each part keeps
+/// its texture coordinates (`TEXCOORD_0`) even where its material has no
+/// picture, for a level that gives it one ([`crate::level`]).
+pub fn read_mesh_file(
+    path: &Path,
+    options: &ReadOptions,
+    all_uvs: bool,
+) -> Result<(Model, ModelInfo), String> {
     let kind = extension(path);
     let refused = match kind.as_str() {
         "fbx" => Some("FBX"),
@@ -213,7 +237,7 @@ pub fn read_model(path: &Path, options: &ReadOptions) -> Result<(Model, ModelInf
     }
     if !EXTENSIONS.contains(&kind.as_str()) {
         return Err(format!(
-            "{} is not a 3D model file that can be read. Choose a .glb, .gltf, .obj, .stl or .ply file.",
+            "{} is not a 3D model file that can be read. Choose a .glb, .gltf, .obj, .stl, .ply or .psk file.",
             display_name(path)
         ));
     }
@@ -233,7 +257,7 @@ pub fn read_model(path: &Path, options: &ReadOptions) -> Result<(Model, ModelInf
     let name = display_name(path);
     let mut info = ModelInfo {
         format: kind.clone(),
-        up: if matches!(kind.as_str(), "stl" | "ply") {
+        up: if matches!(kind.as_str(), "stl" | "ply" | "psk" | "pskx") {
             "+z"
         } else {
             "+y"
@@ -248,6 +272,7 @@ pub fn read_model(path: &Path, options: &ReadOptions) -> Result<(Model, ModelInf
             let companions = Companions {
                 folder: Some(folder),
                 model: &name,
+                uvs: all_uvs,
             };
             let mut notes = GltfNotes::default();
             let binary = bytes.starts_with(b"glTF");
@@ -270,7 +295,25 @@ pub fn read_model(path: &Path, options: &ReadOptions) -> Result<(Model, ModelInf
         }
         "obj" => {
             info.format_name = "OBJ".to_owned();
-            read_obj(path, max, &mut info)?
+            read_obj(path, max, all_uvs, &mut info)?
+        }
+        "psk" | "pskx" => {
+            let bytes = std::fs::read(path).map_err(|e| format!("{name} cannot be read: {e}"))?;
+            info.format = "psk".to_owned();
+            info.format_name = "ActorX (Unreal Engine mesh)".to_owned();
+            let mut model = crate::psk::read_psk(&bytes, max)?;
+            if !all_uvs {
+                // Its materials have no pictures of their own.
+                for part in &mut model.parts {
+                    part.uvs = None;
+                }
+            }
+            model
+        }
+        "atlaslevel" => {
+            info.format = "level".to_owned();
+            info.format_name = "Game level".to_owned();
+            crate::level::read_level(path, options, &mut info)?
         }
         "stl" => {
             let bytes = std::fs::read(path).map_err(|e| format!("{name} cannot be read: {e}"))?;
@@ -408,7 +451,7 @@ fn obj_error(error: tobj::LoadError) -> String {
 }
 
 /// An OBJ file with its materials and pictures.
-fn read_obj(path: &Path, max: usize, info: &mut ModelInfo) -> Result<Model, String> {
+fn read_obj(path: &Path, max: usize, all_uvs: bool, info: &mut ModelInfo) -> Result<Model, String> {
     let name = display_name(path);
     let folder = path.parent().unwrap_or(Path::new("."));
     let file = std::fs::File::open(path).map_err(|e| format!("{name} cannot be opened: {e}"))?;
@@ -531,7 +574,7 @@ fn read_obj(path: &Path, max: usize, info: &mut ModelInfo) -> Result<Model, Stri
                 })
                 .collect()
         });
-        let uvs = (model.materials[material].texture.is_some()
+        let uvs = ((all_uvs || model.materials[material].texture.is_some())
             && mesh.texcoords.len() == count * 2)
             .then(|| {
                 mesh.texcoords
