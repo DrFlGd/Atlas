@@ -15,6 +15,8 @@ numpy==2.5.4
 # Drawing the maps and writing their tiles (HPND licence).
 Pillow==12.3.0
 pydantic==2.14.3
+# Reading Unity scenes exported as a project (YAML), for make-model (MIT licence).
+PyYAML==6.0.3
 pydantic_core==2.50.4
 Pygments==2.21.0
 rich==15.0.0

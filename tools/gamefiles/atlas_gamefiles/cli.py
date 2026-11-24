@@ -6,11 +6,14 @@
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
                     [--config <file>] [--floor-overrides <file>] [--remake <area>] [--map-style <style>]
                     [--no-3d] [--scene-builder <atlas-scene program>]
-    atlas-gamefiles make-model <model file> --out <output folder> [--maps-folder <folder>] [--stdin-cancel]
-                    [--name <name>] [--title <title>] [--up +y|+z|-y|-z|+x|-x] [--scale <metres per unit>]
-                    [--textures keep|plain] [--double-sided auto|yes|no] [--floors ground|passages|none]
-                    [--floor-separation <m>] [--merge-gap <m>] [--max-triangles <n>] [--map-style <style>]
-                    [--floor-overrides <file>] [--remake] [--scene-builder <atlas-scene program>]
+    atlas-gamefiles make-model <model file or level export> --out <output folder> [--maps-folder <folder>]
+                    [--stdin-cancel] [--name <name>] [--title <title>] [--up +y|+z|-y|-z|+x|-x]
+                    [--scale <metres per unit>] [--textures keep|plain] [--double-sided auto|yes|no]
+                    [--floors ground|passages|none] [--floor-separation <m>] [--merge-gap <m>] [--cut-below <m>]
+                    [--max-triangles <n>] [--map-style <style>] [--floor-overrides <file>] [--remake]
+                    [--assets <export folder>] [--clutter <m>] [--keep-hidden] [--scene-builder <program>]
+    atlas-gamefiles inspect-level <level export> [--assets <export folder>] [--clutter <m>] [--keep-hidden]
+                    [--max-triangles <n>] [--scene-builder <atlas-scene program>]
     atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB, or model>
     atlas-gamefiles --version
 
@@ -19,7 +22,9 @@ set them).
 
 Standard output carries JSON lines only (see events.py): `start`, `game`, `areas`, `progress`, `area`, `warning`,
 then `done` (exit code 0), `cancelled` (exit code 3) or `error` (exit code 1). Standard error carries anything else.
-`make --remake` makes one area again in place of its map in the pack made before into the same output folder; an
+A level export is the `.json` of an Unreal Engine level saved by FModel or a Unity `.unity` scene (levels.py);
+`inspect-level` puts it together and answers with one `inspected` line as `atlas-scene inspect` does, with the
+level's report (`level`). `make --remake` makes one area again in place of its map in the pack made before into the same output folder; an
 `error` it cannot start with has a `code` (see make.MakeError). `floor-views` answers the Adjust floors panel's
 requests, one JSON line each way (see floorviews.py).
 """
@@ -152,7 +157,9 @@ def parser() -> argparse.ArgumentParser:
         help="seconds after which an area's geometry still being read is stopped (default 300)",
     )
     model = commands.add_parser("make-model", help="make an Atlas map pack from a 3D model file (glTF, OBJ, STL, PLY)")
-    model.add_argument("model", type=Path, help="the model file (.glb, .gltf, .obj, .stl or .ply)")
+    model.add_argument(
+        "model", type=Path, help="the model file (.glb, .gltf, .obj, .stl, .ply, .psk), or a level export (.json of FModel, .unity)"
+    )
     model.add_argument("--out", type=Path, required=True, help="where to write report.json, previews/ and the zip")
     model.add_argument("--maps-folder", type=Path, default=None, help="as for make")
     model.add_argument("--stdin-cancel", action="store_true", help="as for check")
@@ -176,15 +183,30 @@ def parser() -> argparse.ArgumentParser:
     )
     model.add_argument("--floor-separation", type=float, default=None, help="ground area: floor levels at least this far apart (m)")
     model.add_argument("--merge-gap", type=float, default=None, help="ground area: levels closer than this are joined (m)")
+    model.add_argument("--cut-below", type=float, default=None, help="ground area: each floor is cut this far below it (m, 1.5)")
+    add_level_options(model)
     model.add_argument("--max-triangles", type=int, default=None, help="refuse a model of more triangles (default 5,000,000)")
     model.add_argument("--map-style", default=None, metavar="STYLE", help="shaded, outlines, textured or textured-outlines")
     model.add_argument("--floor-overrides", type=Path, default=None, help="as for make (under the pack id, area model)")
     model.add_argument("--remake", action="store_true", help="make the map again in place of the one made into this output folder")
     model.add_argument("--scene-builder", type=Path, default=None, help="as for make")
+    inspect = commands.add_parser("inspect-level", help="put a level export together and say what it holds (for the Map Maker)")
+    inspect.add_argument("level", type=Path, help="the level export (.json of FModel, .unity)")
+    add_level_options(inspect)
+    inspect.add_argument("--max-triangles", type=int, default=None, help="refuse a level of more triangles (default 5,000,000)")
+    inspect.add_argument("--scene-builder", type=Path, default=None, help="as for make")
     views = commands.add_parser("floor-views", help="redraw an area's floors from given cuts (for the Map Maker)")
     views.add_argument("out", type=Path, help="the output folder of a make (it holds floor-data/)")
     views.add_argument("--area", required=True, help="the area: mAA_BB, or model for a map made from a 3D model")
     return root
+
+
+def add_level_options(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--assets", type=Path, default=None, help="a level export: the folder of its exported files (found from the level when absent)")
+    command.add_argument("--clutter", type=float, default=0.0, help="a level export: leave out meshes smaller than this (m; 0 keeps all)")
+    command.add_argument(
+        "--keep-hidden", action="store_true", help="a level export: keep hidden and collision-only surfaces (left out by default)"
+    )
 
 
 def watch_stdin(token: CancelToken) -> None:
@@ -234,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_ERROR
     if args.command == "make-model":
         return run_make_model(args, events, token)
+    if args.command == "inspect-level":
+        return run_inspect_level(args, events, token)
     if args.command == "make":
         if args.remake and not re.fullmatch(r"m\d\d_\d\d(_\d\d_\d\d)?", args.remake.lower()):
             events.emit("error", message=f"{args.remake} is not an area (mAA_BB).")
@@ -329,6 +353,10 @@ def run_make_model(args: argparse.Namespace, events: tp.Any, token: CancelToken)
             style=args.map_style,
             floor_overrides_file=args.floor_overrides,
             remake=args.remake,
+            assets=args.assets,
+            clutter=args.clutter,
+            leave_out_hidden=not args.keep_hidden,
+            cut_below=args.cut_below,
         ).run()
     except Cancelled:
         events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
@@ -337,6 +365,24 @@ def run_make_model(args: argparse.Namespace, events: tp.Any, token: CancelToken)
         events.emit("error", message=str(error), **({"code": error.code} if error.code else {}))
         return EXIT_USAGE
     except UnsafeOutputError as error:
+        events.emit("error", message=str(error))
+        return EXIT_USAGE
+    except Exception as error:
+        traceback.print_exc()
+        events.emit("error", message=f"{type(error).__name__}: {error}")
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def run_inspect_level(args: argparse.Namespace, events: tp.Any, token: CancelToken) -> int:
+    from .levels import inspect_level
+
+    try:
+        events.emit("inspected", **inspect_level(args.level, args.assets, args.clutter, not args.keep_hidden, args.max_triangles, args.scene_builder, token.stop))
+    except Cancelled:
+        events.emit("cancelled", message="Stopped.")
+        return EXIT_CANCELLED
+    except ValueError as error:
         events.emit("error", message=str(error))
         return EXIT_USAGE
     except Exception as error:
