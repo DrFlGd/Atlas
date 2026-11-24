@@ -23,6 +23,7 @@ import {
   shiftedTarget,
 } from './goTo';
 import { modelLoader, type ModelLoader } from './loader';
+import { firstKept, type ViewPoint } from './placing';
 
 /**
  * The 3D view of a map: its model, loaded cell by cell as the camera moves
@@ -49,6 +50,10 @@ import { modelLoader, type ModelLoader } from './loader';
  * are points it keeps on the model (`setTitles`) and reports where they
  * are in the view after each frame drawn (`titlesOnScreen`), for the page
  * to draw them over it (see `titles.ts`).
+ *
+ * In Edit locations (`setEditing`), a press off the dots is a point of the
+ * model (`surfaceAt`: the first surface under it that is not cut away, see
+ * `placing.ts`), and the person's own dots can be dragged over the model.
  */
 
 /** A location drawn as a dot. */
@@ -96,6 +101,13 @@ export interface SceneEvents {
   settled?(): void;
   /** A frame was drawn: the camera or what is shown may have changed. */
   frame?(): void;
+  /**
+   * In Edit locations, the model was pressed off the dots: the point of
+   * its surface there, or null where nothing is (or all of it is cut away).
+   */
+  place?(point: ViewPoint | null): void;
+  /** In Edit locations, a dot was dragged and let go of over the model (null: off it). */
+  drop?(id: string, point: ViewPoint | null): void;
 }
 
 /** A point of the view for an area's title. */
@@ -439,6 +451,8 @@ export class SceneEngine {
   private lostTimer = 0;
   private disposed = false;
   private hovered: string | null = null;
+  /** In Edit locations: the dots that can be dragged; null when not editing. */
+  private editing: ReadonlySet<string> | null = null;
   private width = 1;
   private height = 1;
 
@@ -619,6 +633,50 @@ export class SceneEngine {
   setTitles(titles: readonly SceneTitleAnchor[]): void {
     this.titles = [...titles];
     this.placeTitles();
+  }
+
+  /**
+   * Edit locations on (`draggable`: the dots that can be dragged, the
+   * person's own) or off (null): a press off the dots then places, and a
+   * press on one picks it, never going to it.
+   */
+  setEditing(draggable: ReadonlySet<string> | null): void {
+    this.editing = draggable;
+    this.canvas.style.cursor = this.cursorFor(this.hovered);
+  }
+
+  /** The mouse's pointer over a dot (or none): a hand to press, to drag one's own, or a cross to place. */
+  private cursorFor(id: string | null): string {
+    if (!this.editing) return id ? 'pointer' : '';
+    if (!id) return 'crosshair';
+    return this.editing.has(id) ? 'grab' : 'pointer';
+  }
+
+  /**
+   * The point of the model under a point of the view's box (CSS pixels):
+   * the first surface the ray from the camera meets that the cuts leave,
+   * on the model or the open water. Null where there is none.
+   */
+  surfaceAt(x: number, y: number): ViewPoint | null {
+    if (this.width <= 0 || this.height <= 0) return null;
+    this.camera.updateMatrixWorld();
+    const ndc = new THREE.Vector2((x / this.width) * 2 - 1, 1 - (y / this.height) * 2);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    this.raycaster.far = Infinity;
+    const meshes = this.meshes();
+    // A model cut open shows the backs of its surfaces: they can be pressed too.
+    if (this.cutOn()) {
+      for (const state of this.cells) if (state.loaded) meshes.push(...state.loaded.insides);
+    }
+    const hits = this.raycaster.intersectObjects(meshes, false);
+    if (this.water?.visible) hits.push(...this.raycaster.intersectObject(this.water, false));
+    const hit = firstKept(hits, this.renderer.clippingPlanes);
+    return hit ? { x: hit.point.x, y: hit.point.y, z: hit.point.z } : null;
+  }
+
+  /** The point of the model in the middle of the view: where the crosshair is. */
+  surfaceAtCentre(): ViewPoint | null {
+    return this.surfaceAt(this.width / 2, this.height / 2);
   }
 
   setSelected(id: string | null): void {
@@ -1144,6 +1202,18 @@ export class SceneEngine {
     this.writeDotStates();
   }
 
+  /** Shows a dot at a point of the model while it is dragged. */
+  private moveDot(index: number, point: ViewPoint): void {
+    const position = this.dotPositions[index];
+    const attribute = this.dotGeometry.getAttribute('position') as
+      THREE.BufferAttribute | undefined;
+    if (!position || !attribute) return;
+    position.set(point.x, point.y + DOT_LIFT, point.z);
+    attribute.setXYZ(index, position.x, position.y, position.z);
+    attribute.needsUpdate = true;
+    this.dirty = true;
+  }
+
   /** Puts the titles' points where they belong: at their height, or on what lies below. */
   private placeTitles(): void {
     const frame = this.options.frame;
@@ -1297,7 +1367,7 @@ export class SceneEngine {
         const id = this.dotAt(point.x, point.y, reach);
         if (id !== this.hovered) {
           this.hovered = id;
-          canvas.style.cursor = id ? 'pointer' : '';
+          canvas.style.cursor = this.cursorFor(id);
           this.options.events.hover(id ? this.hoverOf(id) : null);
         }
       }
@@ -1315,7 +1385,64 @@ export class SceneEngine {
         return;
       }
       if (press.button !== 0) return;
+      if (this.editing && !id) {
+        this.options.events.place?.(this.surfaceAt(point.x, point.y));
+        return;
+      }
       this.options.events.pick(id);
+    };
+    // In Edit locations, one of the person's own dots is dragged over the
+    // model: taken before the controls see the press, so the view stays.
+    let drag: {
+      id: string;
+      index: number;
+      pointer: number;
+      moved: boolean;
+      x: number;
+      y: number;
+    } | null = null;
+    let dragPoint: ViewPoint | null = null;
+    const onDragDown = (event: PointerEvent) => {
+      if (!this.editing || event.button !== 0 || drag) return;
+      const point = local(event);
+      const id = this.dotAt(point.x, point.y, reach);
+      if (!id || !this.editing.has(id)) return;
+      const index = this.dots.findIndex((dot) => dot.id === id);
+      if (index < 0) return;
+      event.stopImmediatePropagation();
+      this.flight = null;
+      drag = { id, index, pointer: event.pointerId, moved: false, ...point };
+      dragPoint = null;
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {
+        // Not captured: the drag ends where the pointer leaves the view.
+      }
+    };
+    const onDragMove = (event: PointerEvent) => {
+      if (drag?.pointer !== event.pointerId) return;
+      const point = local(event);
+      if (!drag.moved && Math.hypot(point.x - drag.x, point.y - drag.y) <= PRESS_MOVE) return;
+      drag.moved = true;
+      dragPoint = this.surfaceAt(point.x, point.y);
+      if (dragPoint) this.moveDot(drag.index, dragPoint);
+    };
+    const onDragUp = (event: PointerEvent) => {
+      if (drag?.pointer !== event.pointerId) return;
+      const done = drag;
+      drag = null;
+      event.stopImmediatePropagation();
+      if (event.type === 'pointercancel') {
+        this.placeDots();
+        return;
+      }
+      if (!done.moved) {
+        this.options.events.pick(done.id);
+        return;
+      }
+      this.options.events.drop?.(done.id, dragPoint);
+      // Back where it belongs until the store says where it went.
+      if (!dragPoint) this.placeDots();
     };
     const onLeave = () => {
       if (this.hovered) {
@@ -1339,6 +1466,10 @@ export class SceneEngine {
       clearTimeout(this.lostTimer);
       this.dirty = true;
     };
+    canvas.addEventListener('pointerdown', onDragDown, { capture: true });
+    canvas.addEventListener('pointermove', onDragMove);
+    canvas.addEventListener('pointerup', onDragUp, { capture: true });
+    canvas.addEventListener('pointercancel', onDragUp, { capture: true });
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onUp);
@@ -1349,6 +1480,10 @@ export class SceneEngine {
     canvas.addEventListener('webglcontextrestored', onRestored);
     this.cleanups.push(() => {
       clearTimeout(holdTimer);
+      canvas.removeEventListener('pointerdown', onDragDown, { capture: true });
+      canvas.removeEventListener('pointermove', onDragMove);
+      canvas.removeEventListener('pointerup', onDragUp, { capture: true });
+      canvas.removeEventListener('pointercancel', onDragUp, { capture: true });
       canvas.removeEventListener('pointerdown', onDown);
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);

@@ -21,7 +21,6 @@
  */
 import { floorsOf, type Layer, type Scene } from '@atlas/schema';
 import { create } from 'zustand';
-import { useLocationEditor } from '../touch/locations/locationEditorState';
 import { saveSetting, showMap } from './actions';
 import { useMapOverlay } from './mapOverlay';
 import { useRoutes } from './routes';
@@ -141,18 +140,18 @@ export function floorsOfMap(state: Pick<AtlasState, 'game'>, mapId: string | nul
 /**
  * Whether the map shown is shown in 3D now: it has a model, 3D is chosen
  * and the device can, and nothing that places points on the map image is
- * open (Edit locations, the list editor, a route being edited), which
- * works in 2D.
+ * open (the list editor, a route being edited), which works in 2D. Edit
+ * locations works in 3D too: a location is put on the model's surface
+ * (see `scene/sceneEditing.ts`).
  */
 export function useSceneShown(): boolean {
   const hasScene = useAtlas((s) => sceneOf(s, s.mapId) !== null);
   const mode = useScene3d((s) => s.mode);
   const webgl = useScene3d((s) => s.webgl);
   // Each hook called every time, whatever the others say.
-  const locating = useLocationEditor((s) => s.active);
   const routing = useRoutes((s) => s.editing !== null);
   const listing = useMapOverlay((s) => s.points !== null || s.pick !== null);
-  return hasScene && mode === '3d' && webgl !== 'no' && !locating && !routing && !listing;
+  return hasScene && mode === '3d' && webgl !== 'no' && !routing && !listing;
 }
 
 /**

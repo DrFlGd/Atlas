@@ -81,6 +81,7 @@ import {
   markersOnScreen,
   padMap,
   padScene,
+  reticleShown,
   reticleTarget,
   usePad,
   type InputSource,
@@ -88,6 +89,11 @@ import {
 import { notify, select, setPane, showMap, toggleFound } from './state/actions';
 import { floorsOfMap, floorStep, pickFloor, requestSceneView } from './state/scene3d';
 import { useAtlas } from './state/store';
+import {
+  clickedOnMap,
+  pickedOnMap,
+  useLocationEditor,
+} from './touch/locations/locationEditorState';
 
 export type Direction = 'up' | 'down' | 'left' | 'right';
 
@@ -603,10 +609,35 @@ function nudgeMap(dx: number, dy: number, dz: number): void {
 
 /** Opens the location under the crosshair, or moves into its card when it is open already. */
 function openUnderReticle(): void {
+  if (useLocationEditor.getState().active) {
+    placeAtReticle();
+    return;
+  }
   const target = reticleTarget();
   if (!target) return;
   if (useAtlas.getState().selectedId === target.marker.id) host.focusCard();
   else host.open(target.marker.id);
+}
+
+/**
+ * In Edit locations, A (or Enter) at the crosshair does what a press there
+ * does: opens the location it holds, or puts a new location (or the one
+ * being moved) where it points: on the 3D view's model, or on the map.
+ */
+function placeAtReticle(): void {
+  // The location being moved goes where the crosshair points, even onto another one.
+  const target = useLocationEditor.getState().moving ? null : reticleTarget();
+  if (target) {
+    pickedOnMap(target.marker.id);
+    return;
+  }
+  const scene = padScene();
+  if (scene) {
+    scene.place?.();
+    return;
+  }
+  const center = padMap()?.view.getView()?.center;
+  if (center) clickedOnMap(center);
 }
 
 /** Marks the location under the crosshair found or not found, or else the one open. */
@@ -965,7 +996,12 @@ function mapKeys(event: KeyboardEvent, active: HTMLElement | null): boolean {
       usePad.setState({ mapKeys: true });
       return true;
     case 'open-location':
-      if (!reticleTarget()) return false;
+      // In Edit locations, Enter puts a location at the crosshair while it shows.
+      if (
+        !reticleTarget() &&
+        !(useLocationEditor.getState().active && reticleShown(usePad.getState()))
+      )
+        return false;
       openUnderReticle();
       return true;
     case 'reset-view':

@@ -19,8 +19,9 @@ import { stopEditing, useEditor } from '../editor/editorState';
 
 /**
  * "Edit locations": a mode of the standard layout, entered on purpose and
- * left with Done, in which a click on the map puts a new location of the
- * person's own there, and one of theirs is changed, moved or deleted in the
+ * left with Done, in which a click on the map (or on the model of a 3D
+ * map, see `scene/placing.ts`) puts a new location of the person's own
+ * there, and one of theirs is changed, moved or deleted in the
  * panel beside the map. Locations that come with the game are not changed
  * here. Every change is kept at once, saved a moment later, and can be
  * undone.
@@ -32,6 +33,8 @@ export interface NewLocationDraft {
   layerId: string;
   x: number;
   y: number;
+  /** The height of the surface pressed in the 3D view; absent on the 2D map. */
+  height?: number | undefined;
   name: string;
   /** The type chosen; null shows "Choose a type", and the location cannot be added yet. */
   typeId: string | null;
@@ -51,7 +54,9 @@ export type EditorSidePanel =
    */
   | { kind: 'type'; id: string | null; forLocation: string | null; draft?: NewLocationDraft }
   /** An area of the map shown: a new one or one of the person's own. */
-  | { kind: 'area'; id: string | null; forLocation: string | null };
+  | { kind: 'area'; id: string | null; forLocation: string | null }
+  /** Locations of another pack of the game, to put on the map shown (`TakeLocations.tsx`). */
+  | { kind: 'take' };
 
 export interface LocationEditorState {
   active: boolean;
@@ -106,17 +111,41 @@ export function pickedOnMap(id: string): void {
   );
 }
 
-/** The map was clicked off the markers while editing: a new location, or the one being moved goes there. */
-export function clickedOnMap(point: { x: number; y: number }): void {
-  const { mapId, layerId } = useAtlas.getState();
+/**
+ * A point of the 3D view's model pressed while editing: the map pixel under
+ * it, the height of the surface there, and the level it is on (the floor
+ * its height is on, see `scene/placing.ts`).
+ */
+export interface SurfacePoint {
+  x: number;
+  y: number;
+  height: number;
+  layerId: string;
+}
+
+/**
+ * The map was clicked off the markers while editing: a new location, or the
+ * one being moved goes there. From the 3D view (`surface`), with the height
+ * of the surface pressed and the floor it is on; on the 2D map, at the
+ * level shown, with no height, so that it sits on whatever is below it.
+ */
+export function clickedOnMap(point: { x: number; y: number }, surface?: SurfacePoint): void {
+  const { mapId, layerId: shownLayer } = useAtlas.getState();
+  const layerId = surface?.layerId ?? shownLayer;
   if (!mapId || !layerId) return;
   const { moving, side } = get();
+  const x = Math.round(point.x);
+  const y = Math.round(point.y);
   if (moving) {
-    changeOwn(moving, { x: Math.round(point.x), y: Math.round(point.y) }, 'Location moved');
+    changeOwn(
+      moving,
+      surface ? { x, y, height: surface.height, layerId } : { x, y, height: undefined },
+      'Location moved',
+    );
     set({ moving: null });
     return;
   }
-  const at = { mapId, layerId, x: Math.round(point.x), y: Math.round(point.y) };
+  const at = { mapId, layerId, x, y, height: surface?.height };
   // A new location waiting for its type goes where the map was pressed now.
   if (side?.kind === 'new-location') {
     set({ side: { kind: 'new-location', draft: { ...side.draft, ...at } } });
@@ -137,7 +166,15 @@ export function clickedOnMap(point: { x: number; y: number }): void {
     set({ focusName: get().focusName + 1 });
     return;
   }
-  const location = dropOwnLocation(mapId, layerId, point.x, point.y);
+  const location = dropOwnLocation(
+    mapId,
+    layerId,
+    point.x,
+    point.y,
+    undefined,
+    undefined,
+    surface?.height,
+  );
   if (!location) return;
   openSide({ kind: 'location', id: location.id });
   set({ focusName: get().focusName + 1 });
@@ -153,6 +190,7 @@ export function addDraftLocation(draft: NewLocationDraft): boolean {
     draft.y,
     draft.name.trim() || 'New location',
     draft.typeId,
+    draft.height,
   );
   if (!location) return false;
   // An entry of a wiki page waited for it: the location is linked to its page.

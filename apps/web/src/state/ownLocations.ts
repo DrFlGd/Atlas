@@ -442,7 +442,10 @@ export function newLocationAsksType(): boolean {
 /** The name and colour of the type made when a game has none. */
 export const FIRST_TYPE = { name: 'Location', group: 'My types', icon: 'pin' } as const;
 
-/** Puts a new location of the person's own at a point of a map's level. Returns it. */
+/**
+ * Puts a new location of the person's own at a point of a map's level,
+ * with the height of the surface it was put on in 3D. Returns it.
+ */
 export function dropOwnLocation(
   mapId: string,
   layerId: string,
@@ -450,6 +453,7 @@ export function dropOwnLocation(
   y: number,
   name = 'New location',
   typeId?: string,
+  height?: number,
 ): OwnLocation | null {
   const ctx = context();
   if (!ctx || !canChangeOwnLocations()) return null;
@@ -489,10 +493,31 @@ export function dropOwnLocation(
     categoryId,
     regionId: null,
     name,
+    ...(height !== undefined && Number.isFinite(height) ? { height: roundHeight(height) } : {}),
     createdAt: now,
     updatedAt: now,
   };
   return apply(addOwnLocation(own, location), 'Location added') ? location : null;
+}
+
+/** A height as it is kept: to the centimetre, as the demo's and the builders' are. */
+export function roundHeight(height: number): number {
+  return Math.round(height * 100) / 100;
+}
+
+/**
+ * Makes a change of many records at once (taking the locations of another
+ * pack, see `takeLocations.ts`) from the game's pack data as read and the
+ * person's records now; one Undo takes all of it back. Whether anything
+ * changed.
+ */
+export function changeOwnAll(
+  make: (ctx: { gameId: string; data: PackData; own: OwnLocations }) => OwnLocations,
+  label: string,
+): boolean {
+  const ctx = context();
+  if (!ctx || !canChangeOwnLocations()) return false;
+  return apply(make({ gameId: ctx.gameId, data: ctx.data, own: ctx.own }), label);
 }
 
 /** Changes a location of the person's own. */
@@ -503,7 +528,9 @@ export function changeOwn(
 ): void {
   const { own } = get();
   if (changes.categoryId) rememberType(changes.categoryId);
-  const next = changeOwnLocation(own, id, changes, new Date());
+  const rounded =
+    changes.height !== undefined ? { ...changes, height: roundHeight(changes.height) } : changes;
+  const next = changeOwnLocation(own, id, rounded, new Date());
   apply(next, label);
 }
 
