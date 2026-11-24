@@ -185,6 +185,12 @@ jobs:
 
           To start Atlas from your Steam library, open **Settings** in Atlas and press **Add Atlas to Steam** under **Atlas in Steam**. Atlas adds itself as a non-Steam game, with its own artwork, on Windows and on the Steam Deck. **Atlas-Steam-artwork.zip** has the same pictures, with a note on which goes where, if you would rather set them by hand.
 
+          ## New in 0.35.3
+
+          - **Textures show in 3D maps.** The textures inside a 3D map's model files were refused by the desktop app's own security settings, so every textured model was drawn white in the app (and in Atlas Importer), though it was built with its textures. They now load. Maps you already have need nothing done: open them again.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.35.2
 
           - **Smoother 3D view.** The detail of a 3D map no longer swings between coarse and fine every second or two while you move it, and a slow moment while parts of the model load no longer lowers the detail for good. Each part of a model is held once in memory, however many materials it has, so large models load faster and take far less memory.
