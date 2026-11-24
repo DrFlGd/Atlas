@@ -7,6 +7,9 @@
 //! `cancel` to its standard input, which it checks between files; if it has not stopped a few seconds later, the
 //! app ends it (on Windows with its child processes, as the single-file helper runs as two processes).
 //!
+//! A map made from a 3D model (`make-model <file>`) runs the same way, with the model file in place of the game
+//! folder and the setup chosen for it (settings::ModelSetup); made again, it reads the file again.
+//!
 //! Make this area again (`make --remake <area>`) runs in the output folder of the make it changes: its report is
 //! shown all along, and stays when the run fails or is cancelled (the helper leaves the pack and the report as
 //! they were then). The last make's folders are kept in the settings, and its report is shown again when the app
@@ -25,6 +28,8 @@ use std::{
 
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::settings::ModelSetup;
 
 /// The helper's file name, without `.exe`.
 pub const HELPER_NAME: &str = "atlas-gamefiles";
@@ -53,7 +58,7 @@ pub enum State {
 }
 
 /// What the helper is asked to do.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     /// Report what map data can be read.
     Check,
@@ -80,6 +85,15 @@ pub enum Job {
         floor_method: Option<String>,
         area: String,
     },
+    /// Make a map pack from a 3D model (the run's folder is the model file), installed in `maps_folder`; with
+    /// `remake`, make it again in place of the one made into the same output folder (with the player's floor cuts).
+    Model {
+        maps_folder: PathBuf,
+        scene_builder: Option<PathBuf>,
+        floor_overrides: Option<PathBuf>,
+        setup: ModelSetup,
+        remake: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -94,8 +108,8 @@ impl Job {
     pub fn kind(&self) -> Kind {
         match self {
             Job::Check => Kind::Check,
-            Job::Make { .. } => Kind::Make,
-            Job::Remake { .. } => Kind::Remake,
+            Job::Make { .. } | Job::Model { remake: false, .. } => Kind::Make,
+            Job::Remake { .. } | Job::Model { remake: true, .. } => Kind::Remake,
         }
     }
 
@@ -103,7 +117,7 @@ impl Job {
     pub fn zip_file(&self) -> &'static str {
         match self {
             Job::Check => ZIP_FILE,
-            Job::Make { .. } | Job::Remake { .. } => MAKE_ZIP_FILE,
+            Job::Make { .. } | Job::Remake { .. } | Job::Model { .. } => MAKE_ZIP_FILE,
         }
     }
 }
@@ -120,6 +134,8 @@ pub struct Line {
 pub struct Status {
     pub state: State,
     pub kind: Kind,
+    /// A make (or making again) of a map from a 3D model: `folder` is the model file.
+    pub from_model: bool,
     pub run_id: u64,
     pub folder: Option<String>,
     pub fraction: f64,
@@ -141,6 +157,7 @@ impl Status {
         Status {
             state: State::Idle,
             kind: Kind::Check,
+            from_model: false,
             run_id: 0,
             folder: None,
             fraction: 0.0,
@@ -196,6 +213,19 @@ fn text(value: &Value, key: &str) -> String {
     }
 }
 
+/// `1234567` as `1,234,567`.
+fn thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 fn plural(count: u64) -> &'static str {
     if count == 1 {
         ""
@@ -246,6 +276,24 @@ impl Progress {
                 };
                 self.push_line("game", line);
             }
+            "model" => {
+                let triangles = event.get("triangles").and_then(Value::as_u64).unwrap_or(0);
+                let format = text(&event, "format");
+                let format = if format.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({format})")
+                };
+                self.push_line(
+                    "game",
+                    format!(
+                        "Read {}{format}: {} triangle{}",
+                        text(&event, "file"),
+                        thousands(triangles),
+                        plural(triangles)
+                    ),
+                );
+            }
             "areas" => {
                 let count = event.get("count").and_then(Value::as_u64).unwrap_or(0);
                 self.push_line("info", format!("{count} area{} to read", plural(count)));
@@ -259,15 +307,23 @@ impl Progress {
                         let floors = event.get("floors").and_then(Value::as_u64).unwrap_or(0);
                         let markers = event.get("markers").and_then(Value::as_u64).unwrap_or(0);
                         let used = text(&event, "used");
-                        let from = if used.is_empty() {
-                            " (no floor plan could be read: markers only)".to_owned()
-                        } else {
-                            format!(" (from {used})")
-                        };
                         let model = match event.get("scene").and_then(Value::as_bool) {
                             Some(true) => ", with a 3D model",
                             Some(false) => ", no 3D model",
                             None => "",
+                        };
+                        if used == "model" {
+                            // A map made from a 3D model: no markers to count.
+                            self.push_line(
+                                "area",
+                                format!("{name}: {floors} floor{}{model}", plural(floors)),
+                            );
+                            return;
+                        }
+                        let from = if used.is_empty() {
+                            " (no floor plan could be read: markers only)".to_owned()
+                        } else {
+                            format!(" (from {used})")
                         };
                         format!(
                             "{name}: {floors} floor{}, {markers} marker{}{from}{model}",
@@ -576,6 +632,9 @@ impl Checks {
                 }
                 command.arg("make");
             }
+            Job::Model { .. } => {
+                command.arg("make-model");
+            }
         }
         // Making an area again shows the report of the make it changes until it is done, and keeps it when it
         // fails or is cancelled.
@@ -631,6 +690,44 @@ impl Checks {
         }
         if let Job::Remake { area, .. } = &job {
             command.arg("--remake").arg(area);
+        }
+        if let Job::Model {
+            maps_folder,
+            scene_builder,
+            floor_overrides,
+            setup,
+            remake,
+        } = &job
+        {
+            if *remake && read_report(out_dir).is_err() {
+                return Err(
+                    "The report of the last make is gone, so the map cannot be made again. Make it from the model again."
+                        .to_owned(),
+                );
+            }
+            command.arg("--maps-folder").arg(maps_folder);
+            if let Some(builder) = scene_builder {
+                command.arg("--scene-builder").arg(builder);
+            }
+            if let Some(file) = floor_overrides {
+                command.arg("--floor-overrides").arg(file);
+            }
+            command.args(model_args(setup));
+            if *remake {
+                command.arg("--remake");
+                if let Some(run) = inner.run.as_ref().filter(|run| run.out_dir == out_dir) {
+                    previous = run
+                        .report
+                        .clone()
+                        .map(|report| (report, run.progress.pack.clone()));
+                }
+                if previous.is_none() {
+                    if let Ok(report) = read_report(out_dir) {
+                        let pack = pack_of(&report, maps_folder);
+                        previous = Some((report, pack));
+                    }
+                }
+            }
         }
         command
             .arg("--stdin-cancel")
@@ -747,6 +844,7 @@ impl Checks {
         Status {
             state: progress.state,
             kind: run.job.kind(),
+            from_model: matches!(run.job, Job::Model { .. }),
             run_id: run.id,
             folder: Some(run.folder.display().to_string()),
             fraction: progress.fraction,
@@ -841,13 +939,29 @@ impl Checks {
         Some((run.folder.clone(), run.out_dir.clone(), report))
     }
 
+    /// The job of the run shown (to make a map made from a 3D model again with the same setup).
+    pub fn last_job(&self) -> Option<Job> {
+        lock(&self.inner).run.as_ref().map(|run| run.job.clone())
+    }
+
     /// Shows the report of a make of an earlier session again (its output folder `out_dir`, of the game folder
-    /// `folder`), when nothing else is shown. False when there is something else, or no such report.
-    pub fn restore(&self, folder: &Path, out_dir: &Path, maps_folder: &Path) -> bool {
+    /// `folder`, or of the model file `folder` set up as `model`), when nothing else is shown. False when there is
+    /// something else, or no such report.
+    pub fn restore(
+        &self,
+        folder: &Path,
+        out_dir: &Path,
+        maps_folder: &Path,
+        model: Option<&ModelSetup>,
+    ) -> bool {
         let Ok(report) = read_report(out_dir) else {
             return false;
         };
         if report.get("kind").and_then(Value::as_str) != Some("make") {
+            return false;
+        }
+        let from_model = report.get("source").and_then(Value::as_str) == Some("model");
+        if from_model != model.is_some() {
             return false;
         }
         let mut inner = lock(&self.inner);
@@ -859,13 +973,22 @@ impl Checks {
         let now = Instant::now();
         inner.run = Some(Run {
             id: inner.next_id,
-            job: Job::Make {
-                maps_folder: maps_folder.to_path_buf(),
-                three_d: true,
-                scene_builder: None,
-                floor_overrides: None,
-                map_style: "shaded".into(),
-                floor_method: None,
+            job: match model {
+                Some(setup) => Job::Model {
+                    maps_folder: maps_folder.to_path_buf(),
+                    scene_builder: None,
+                    floor_overrides: None,
+                    setup: setup.clone(),
+                    remake: false,
+                },
+                None => Job::Make {
+                    maps_folder: maps_folder.to_path_buf(),
+                    three_d: true,
+                    scene_builder: None,
+                    floor_overrides: None,
+                    map_style: "shaded".into(),
+                    floor_method: None,
+                },
             },
             folder: folder.to_path_buf(),
             out_dir: out_dir.to_path_buf(),
@@ -911,6 +1034,30 @@ impl Checks {
             .map(PathBuf::from)
             .ok_or_else(|| "No map pack was made.".to_owned())
     }
+}
+
+/// The helper's `make-model` options for `setup`, each as `--option=value`, so that a name starting with `-` (or
+/// the up axis `-y`) is never taken for an option.
+pub fn model_args(setup: &ModelSetup) -> Vec<String> {
+    let mut args = vec![
+        format!("--name={}", setup.name),
+        format!("--title={}", setup.title),
+        format!("--up={}", setup.up),
+        format!("--scale={}", setup.scale),
+        format!("--units={}", setup.units),
+        format!("--textures={}", setup.textures),
+        format!("--double-sided={}", setup.double_sided),
+        format!("--floors={}", setup.floors),
+        format!("--max-triangles={}", setup.max_triangles()),
+        format!("--map-style={}", setup.map_style),
+    ];
+    if let Some(separation) = setup.floor_separation {
+        args.push(format!("--floor-separation={separation}"));
+    }
+    if let Some(gap) = setup.merge_gap {
+        args.push(format!("--merge-gap={gap}"));
+    }
+    args
 }
 
 fn read_report(out_dir: &Path) -> Result<Value, String> {
@@ -1372,7 +1519,7 @@ echo '{"event":"done"}'
         fs::create_dir_all(base.join("check")).unwrap();
         let checks = Checks::default();
         assert!(
-            !checks.restore(&game, &out, &maps),
+            !checks.restore(&game, &out, &maps, None),
             "no report: nothing to show"
         );
         fs::write(
@@ -1380,9 +1527,9 @@ echo '{"event":"done"}'
             r#"{"kind":"make","areas":[],"pack":{"id":"p","counts":{"maps":3}}}"#,
         )
         .unwrap();
-        assert!(checks.restore(&game, &out, &maps));
+        assert!(checks.restore(&game, &out, &maps, None));
         assert!(
-            !checks.restore(&game, &out, &maps),
+            !checks.restore(&game, &out, &maps, None),
             "only when nothing is shown"
         );
         let status = checks.status();
@@ -1468,6 +1615,167 @@ echo '{"event":"done"}'
             .start(&script, job, &game, &out)
             .unwrap_err()
             .contains("Make map"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    fn house_setup() -> ModelSetup {
+        ModelSetup {
+            name: "-Made-up House".into(),
+            title: "Made-up House".into(),
+            up: "-y".into(),
+            scale: 0.001,
+            units: "millimetres".into(),
+            textures: "keep".into(),
+            double_sided: "auto".into(),
+            floors: "ground".into(),
+            floor_separation: Some(2.5),
+            merge_gap: None,
+            allow_large: true,
+            map_style: "textured".into(),
+        }
+    }
+
+    #[test]
+    fn model_lines_and_options() {
+        let mut progress = Progress::default();
+        progress.apply_line(
+            r#"{"event":"model","file":"house.obj","format":"OBJ","triangles":1234567,"size":[30,7.5,22]}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"area","id":"model","name":"Made-up House","floors":3,"markers":0,"used":"model","scene":true,"skipped":null}"#,
+        );
+        let texts: Vec<&str> = progress
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Read house.obj (OBJ): 1,234,567 triangles",
+                "Made-up House: 3 floors, with a 3D model"
+            ]
+        );
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1000), "1,000");
+        let args = model_args(&house_setup());
+        assert_eq!(
+            args,
+            vec![
+                "--name=-Made-up House",
+                "--title=Made-up House",
+                "--up=-y",
+                "--scale=0.001",
+                "--units=millimetres",
+                "--textures=keep",
+                "--double-sided=auto",
+                "--floors=ground",
+                "--max-triangles=50000000",
+                "--map-style=textured",
+                "--floor-separation=2.5",
+            ]
+        );
+        let job = Job::Model {
+            maps_folder: PathBuf::from("maps"),
+            scene_builder: None,
+            floor_overrides: None,
+            setup: house_setup(),
+            remake: true,
+        };
+        assert_eq!(job.kind(), Kind::Remake);
+        assert_eq!(job.zip_file(), MAKE_ZIP_FILE);
+    }
+
+    /// A map made from a 3D model: made, shown again in a later session only with its setup, and made again from the
+    /// same file with the same setup.
+    #[cfg(unix)]
+    #[test]
+    fn makes_a_map_from_a_model_and_makes_it_again() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base =
+            std::env::temp_dir().join(format!("atlas-mapmaker-model-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let models = base.join("3D models ü");
+        let model = models.join("house.obj");
+        let out = base.join("out");
+        let maps = base.join("maps");
+        fs::create_dir_all(&models).unwrap();
+        fs::create_dir_all(&out).unwrap();
+        fs::write(&model, "v 0 0 0\n").unwrap();
+        let script = base.join("helper.sh");
+        fs::write(
+            &script,
+            concat!(
+                "#!/bin/sh\necho \"$@\" > \"$4/args.txt\"\n",
+                "echo '{\"kind\":\"make\",\"source\":\"model\",\"pack\":{\"id\":\"made-up-house\"}}' > \"$4/report.json\"\n",
+                "echo '{\"event\":\"model\",\"file\":\"house.obj\",\"format\":\"OBJ\",\"triangles\":12}'\n",
+                "echo '{\"event\":\"done\"}'\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let wait = |checks: &Checks| {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let status = checks.status();
+                if !matches!(status.state, State::Running | State::Cancelling)
+                    || Instant::now() > deadline
+                {
+                    break status;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let job = |remake: bool| Job::Model {
+            maps_folder: maps.clone(),
+            scene_builder: Some(base.join("atlas-scene")),
+            floor_overrides: Some(base.join("floor-overrides.json")),
+            setup: house_setup(),
+            remake,
+        };
+        let checks = Checks::default();
+        checks.start(&script, job(false), &model, &out).unwrap();
+        let made = wait(&checks);
+        assert_eq!(made.state, State::Done, "{:?}", made.error);
+        assert_eq!(made.kind, Kind::Make);
+        assert!(made.from_model);
+        assert_eq!(made.lines[0].text, "Read house.obj (OBJ): 12 triangles");
+        let args = fs::read_to_string(out.join("args.txt")).unwrap();
+        assert!(args.starts_with("make-model "), "{args}");
+        assert!(args.contains("3D models ü/house.obj --out"), "{args}");
+        assert!(
+            args.contains("--scene-builder")
+                && args.contains("--floor-overrides")
+                && args.contains("--up=-y")
+                && args.contains("--stdin-cancel")
+                && !args.contains("--remake"),
+            "{args}"
+        );
+        assert_eq!(checks.last_job(), Some(job(false)));
+
+        // In a later session: shown again only as a map of a model.
+        let later = Checks::default();
+        assert!(!later.restore(&model, &out, &maps, None));
+        assert!(later.restore(&model, &out, &maps, Some(&house_setup())));
+        assert!(matches!(
+            later.last_job(),
+            Some(Job::Model { remake: false, .. })
+        ));
+        later.start(&script, job(true), &model, &out).unwrap();
+        let again = wait(&later);
+        assert_eq!(again.state, State::Done);
+        assert_eq!(again.kind, Kind::Remake);
+        let args = fs::read_to_string(out.join("args.txt")).unwrap();
+        assert!(args.contains("--remake"), "{args}");
+
+        // Made again without the report of its make: refused.
+        fs::remove_file(out.join(REPORT_FILE)).unwrap();
+        assert!(later
+            .start(&script, job(true), &model, &out)
+            .unwrap_err()
+            .contains("report of the last make is gone"));
         let _ = fs::remove_dir_all(&base);
     }
 }

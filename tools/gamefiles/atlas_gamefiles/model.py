@@ -539,18 +539,22 @@ class ModelMapMaker:
         manifest = existing_pack(target)
         if manifest is None:
             raise MakeError(
-                f"The map pack is not in {display_path(target)} any more. Press Make map to make it again.",
+                f"The map pack is not in {display_path(target)} any more. Make it again with Make a map from a 3D model.",
                 code="pack-missing",
             )
         written_by = manifest.get("writtenBy") if isinstance(manifest.get("writtenBy"), dict) else {}
         if written_by.get("name") != WRITER:
-            raise MakeError("That map pack was not made by the Map Maker. Press Make map.", code="pack-other-version")
+            raise MakeError(
+                "That map pack was not made by the Map Maker. Make the map again with Make a map from a 3D model.", code="pack-other-version"
+            )
         try:
             previous = json.loads((self.out / "report.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             previous = None
         if not isinstance(previous, dict) or previous.get("source") != "model":
-            raise MakeError("The report of the last make is missing. Press Make map to make the map again.", code="report-missing")
+            raise MakeError(
+                "The report of the last make is missing. Make the map again with Make a map from a 3D model.", code="report-missing"
+            )
         return previous
 
     def load_own_overrides(self) -> dict[str, dict[str, tp.Any]]:
