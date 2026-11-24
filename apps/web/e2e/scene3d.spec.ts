@@ -335,6 +335,45 @@ test('Floor colours paints each floor of the model in its own colour, and the ch
   expect(errors).toEqual([]);
 });
 
+test('Look draws the model textured or shaded in a colour picked, and the choice is kept', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await openKeep(page);
+  const status = page.getByTestId('scene-status');
+  const view = page.getByTestId('scene-view');
+  // The keep has colours of its own: textured at first.
+  await expect(status).toHaveAttribute('data-own-look', 'true');
+  await expect(status).toHaveAttribute('data-look', 'textured');
+  await page.getByTestId('scene-look').click();
+  const panel = page.getByTestId('scene-look-panel');
+  await expect(panel.getByTestId('scene-look-textured')).toHaveAttribute('aria-pressed', 'true');
+  const textured = await view.screenshot();
+  await panel.getByTestId('scene-look-shaded').click();
+  await expect(status).toHaveAttribute('data-look', 'shaded');
+  await page.waitForTimeout(300);
+  const teal = await view.screenshot();
+  expect(teal.equals(textured)).toBe(false);
+  // Another colour, and darker walls: shaded still, drawn otherwise.
+  await panel.locator('[data-shade="sand"]').click();
+  await panel.getByTestId('scene-strong-shade').check();
+  await expect(panel.locator('[data-shade="sand"]')).toHaveAttribute('aria-pressed', 'true');
+  await page.waitForTimeout(300);
+  expect((await view.screenshot()).equals(teal)).toBe(false);
+  await expect
+    .poll(() => storedSetting(page, 'sceneLook'))
+    .toEqual({ look: 'shaded', shade: 'sand', strong: true });
+  // Kept on the device.
+  await page.reload();
+  await expect(status).toHaveAttribute('data-ready', 'true', { timeout: 60_000 });
+  await expect(status).toHaveAttribute('data-look', 'shaded');
+  await page.getByTestId('scene-look').click();
+  await expect(panel.locator('[data-shade="sand"]')).toHaveAttribute('aria-pressed', 'true');
+  await panel.getByTestId('scene-look-textured').click();
+  await expect(status).toHaveAttribute('data-look', 'textured');
+  expect(errors).toEqual([]);
+});
+
 test('with a controller: the D-pad holds a location, A goes to it, B goes back', async ({
   page,
 }) => {

@@ -112,6 +112,8 @@ export const SETTINGS = {
   sceneTitles: 'sceneTitles',
   /** Whether the 3D view paints each floor in its own colour (see `state/scene3d.ts`). */
   sceneFloorColours: 'sceneFloorColours',
+  /** The look of the 3D view: textured or shaded, the colour, darker walls (see `state/scene3d.ts`). */
+  sceneLook: 'sceneLook',
   /** The report of the last 3D trial on this device (see `touch/SceneTrial.tsx`). */
   sceneTrial: 'sceneTrial',
   /** The game save linked to a profile (see `state/saves.ts`). */

@@ -7,7 +7,14 @@ import { Reticle } from '../input/Reticle';
 import { select } from '../state/actions';
 import { useMarkersOn } from '../state/derived';
 import { openRouteId, routeDrawing, stepIndexOf, useGameRoutes, useRoutes } from '../state/routes';
-import { cutOf, focusLocation, leaveFocus, useScene3d, webglFailed } from '../state/scene3d';
+import {
+  cutOf,
+  focusLocation,
+  leaveFocus,
+  setOwnLook,
+  useScene3d,
+  webglFailed,
+} from '../state/scene3d';
 import { useAtlas } from '../state/store';
 import { deviceSignals } from './device';
 import { SceneEngine, type SceneDot, type SceneStatus } from './engine';
@@ -201,6 +208,7 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
       view.dispose();
       setEngine(null);
       setStatus(null);
+      setOwnLook(null);
       useAtlas.setState({ hover: null });
     };
   }, [pack, map, fingers]);
@@ -269,6 +277,19 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
   useEffect(() => {
     engine?.setFloorColours(painted ? floorBands(floors) : null);
   }, [engine, painted, floors]);
+
+  // "Look": textured, where the model has textures or colours of its own, or shaded.
+  const look = useScene3d((s) => s.look);
+  const shade = useScene3d((s) => s.shade);
+  const strongShade = useScene3d((s) => s.strongShade);
+  useEffect(() => {
+    engine?.setLook(look, shade, strongShade);
+  }, [engine, look, shade, strongShade]);
+  // Whether it has, for the 3D tools: known once its first part is in.
+  const ownLook = status?.ownLook ?? null;
+  useEffect(() => {
+    setOwnLook(ownLook);
+  }, [ownLook]);
 
   // The theme's colours are read from the page once it has them.
   useEffect(() => {
@@ -416,6 +437,8 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
         data-cut={top ?? ''}
         data-focus={focusHere?.id ?? ''}
         data-floor-colours={painted ? floors.length : 0}
+        data-look={status?.look ?? ''}
+        data-own-look={ownLook === null ? '' : String(ownLook)}
       >
         <span data-testid="marker-count">{markers.length}</span>
       </div>

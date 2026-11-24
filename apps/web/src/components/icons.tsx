@@ -164,6 +164,8 @@ const UI_PATHS = {
   // A painter's palette with dots of paint: a type's colour and icon.
   palette:
     'M10 3a7 7 0 1 0 0 14c1 0 1.6-.7 1.6-1.5c0-.9-.8-1.3-.8-2.1c0-.9.7-1.4 1.6-1.4H14a3 3 0 0 0 3-3C17 5.7 13.9 3 10 3zM6.3 9.6h.01M7.6 6.4h.01M11 5.6h.01M13.8 7.6h.01',
+  // A painter's palette: how the model is drawn ("Look").
+  look: 'M10 3a7 7 0 1 0 0 14c1.3 0 1.7-1 1-2.1c-.6-1 0-2.2 1.3-2.2H14a3 3 0 0 0 3-3C17 6 14 3 10 3zM6.3 9.3h.01M8.3 6.3h.01M12 6h.01',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

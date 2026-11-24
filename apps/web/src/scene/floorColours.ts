@@ -2,7 +2,7 @@
  * "Floor colours" in the 3D view: each floor of the map in its own colour,
  * darker low and lighter high within it, worked out from the floors' heights
  * (the layers' `heights`) when the map is shown, whatever made its model.
- * The engine does the same on the graphics card (`FLOOR_FRAGMENT` in
+ * The engine does the same on the graphics card (`PAINT_FRAGMENT` in
  * `engine.ts`); this module gives the colours and the sums, for it and for
  * tests. The palette is Okabe and Ito's, told apart with the common types of
  * colour blindness, in the order the Map Maker's 2D style "Colour by floor"
