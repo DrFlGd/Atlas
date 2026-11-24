@@ -95,7 +95,14 @@ STEPS_MODELS = {"layout": 0.04, "geometry": 0.3, "models": 0.2, "floors": 0.06, 
 STEPS_MODELS_3D = {"layout": 0.04, "geometry": 0.25, "models": 0.2, "floors": 0.06, "render": 0.25, "scene": 0.2}
 MODELS_TIME_LIMIT = 900.0  # seconds one area's models and textures may take in the file reader
 # The games whose own models and textures are read (3D look "Game models", the textured map styles).
-GAME_MODEL_GAMES = frozenset({DSR})
+GAME_MODEL_GAMES = frozenset({DSR, BLOODBORNE})
+# The most an area's 3D map of the game's models may take (its files at every level of detail, in megabytes): an area
+# whose model would take more is made from its collision, and its report says why. `scene.models.maxMegabytes` in the
+# game's config file changes it.
+MODEL_SCENE_MEGABYTES = 768
+# An area of which fewer than this share of the textures its models show could be read is made from its collision
+# (and its textured map styles height shaded), rather than shown mostly untextured.
+TEXTURES_NEEDED = 0.5
 LOOKS_3D = ("models", "collision")  # "3D look": the game's models (the default), or the collision
 SCENE_WORK = "scene-work"
 REMAKE_PREVIEWS = "previews-remake"
@@ -231,8 +238,7 @@ class MapMaker:
                 self.warn("3D maps were not made: the 3D builder (atlas-scene) that comes with the Map Maker is missing")
             else:
                 self.steps = STEPS_3D
-        # Only Dark Souls Remastered's own models are read for now: Bloodborne's textures are not read yet, and its
-        # models at full detail made 3D maps of gigabytes. Its maps keep the collision and the untextured styles.
+        # A game whose own models are not read keeps the collision and the untextured styles.
         wants_look = self.style.textured or (self.builder is not None and self.look_3d == "models")
         if wants_look and profile.game not in GAME_MODEL_GAMES:
             chosen = [f"the map style {self.style.label}"] if self.style.textured else []
@@ -241,7 +247,7 @@ class MapMaker:
             self.style = fallback_style(self.style)
             self.look_3d = "collision"
             self.warn(
-                f"The game's own models and textures are read for Dark Souls Remastered only for now, so "
+                f"The game's own models and textures are read for Dark Souls Remastered and Bloodborne only, so "
                 f"{' and '.join(chosen)} could not be used: the maps are drawn {self.style.label.lower()}"
                 + (" and the 3D maps show the collision" if self.builder is not None else "")
             )
@@ -981,6 +987,10 @@ class MapMaker:
         if mesh is not None and not is_usable(mesh):
             mesh = None
             reason = "no triangle of the models could be placed"
+        if mesh is not None:
+            reason = too_few_textures(result.data.get("textures", {}))
+            if reason:
+                mesh = None
         if mesh is None:
             shutil.rmtree(work, ignore_errors=True)
             if reason is None:
@@ -1023,19 +1033,44 @@ class MapMaker:
         note: str | None = None
         look = "collision"
         if self.look_3d == "models":
+            model_settings = settings.get("models") if isinstance(settings.get("models"), dict) else {}
+            budget = model_budget(model_settings)
             if textured is not None and is_usable(textured):
-                model_settings = settings.get("models") if isinstance(settings.get("models"), dict) else {}
-                say("scene", 0.0, f"making the 3D model of the game's models, {len(textured):,} triangles")
-                try:
-                    done = self.run_scene(
-                        key, model_settings, None, say, {"textures": {"mode": "keep"}}, raw_file=self.textured_glb(textured)
+                guess = model_scene_estimate(textured)
+                if guess > budget:
+                    note = (
+                        f"its 3D model of the game's models would take about {megabytes(guess)}, more than the "
+                        f"{megabytes(budget)} an area may take"
                     )
-                    look = "models"
-                    entry["trianglesBefore"] = int(len(textured))
-                except BuilderFailed as error:
-                    note = f"the 3D model of the game's models could not be made ({error})"
+                else:
+                    say("scene", 0.0, f"making the 3D model of the game's models, {len(textured):,} triangles")
+                    try:
+                        # Kept whole when it fits; else each texture in one cell's files only, so the files hold
+                        # each texture once at each level, however many cells show it.
+                        done = self.run_scene(
+                            key,
+                            model_settings,
+                            None,
+                            say,
+                            {"oneCell": True, "textures": {"mode": "keep", "once": True}},
+                            raw_file=self.textured_glb(textured),
+                        )
+                        look = "models"
+                        entry["trianglesBefore"] = int(len(textured))
+                    except BuilderFailed as error:
+                        note = f"the 3D model of the game's models could not be made ({error})"
+                    made_bytes = int((done or {}).get("report", {}).get("bytes") or 0)
+                    if done is not None and made_bytes > budget:
+                        done, look = None, "collision"
+                        entry["trianglesBefore"] = int(len(mesh))
+                        note = (
+                            f"its 3D model of the game's models took {megabytes(made_bytes)}, more than the "
+                            f"{megabytes(budget)} an area may take"
+                        )
             else:
                 note = f"the game's models could not be read ({models_reason or 'not read'})"
+            if textured is not None:
+                entry["modelTextures"] = texture_counts(textured.report.get("textures", {}))
         if done is None:
             if not len(mesh):
                 entry["reason"] = "no geometry was read"
@@ -1090,6 +1125,9 @@ class MapMaker:
                 "leftOut": built.get("texturesLeftOut"),
                 "bytes": built.get("textureBytes"),
                 "largestCellBytes": max((c.get("bytes", 0) for c in built.get("cellTextures", []) if c.get("level") == 0), default=0),
+                "oneCell": bool(built.get("oneCell")),
+                "eachOnce": bool(built.get("oneCell") or built.get("picturesOnce")),
+                **entry.pop("modelTextures", {}),
             }
         return scene, heights, entry
 
@@ -1118,7 +1156,7 @@ class MapMaker:
                 "drop": [str(p) for p in settings.get("drop", []) if isinstance(p, str)],
                 **(extra or {}),
             }
-            for name in ("cellSize", "cellTriangles", "levels", "creaseAngle", "sky"):
+            for name in ("cellSize", "cellTriangles", "oneCell", "levels", "creaseAngle", "sky"):
                 if name in settings:
                     options[name] = settings[name]
             if isinstance(settings.get("textures"), dict) and "textures" in options:
@@ -1319,6 +1357,55 @@ def place_navmesh(
     chosen = max(ways, key=lambda name: (scores.get(name) or 0.0, name == "as placed"))
     info["chosen"] = chosen
     return ways[chosen], info
+
+
+def megabytes(count: float) -> str:
+    """`"812 MB"`: bytes in megabytes, for the report."""
+    return f"{max(count, 0) / (1 << 20):,.0f} MB"
+
+
+def model_budget(settings: dict[str, tp.Any]) -> int:
+    """The most bytes an area's 3D map of the game's models may take (MODEL_SCENE_MEGABYTES, or the config's
+    `scene.models.maxMegabytes`)."""
+    value = settings.get("maxMegabytes", MODEL_SCENE_MEGABYTES)
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        value = MODEL_SCENE_MEGABYTES
+    return int(value * (1 << 20))
+
+
+def model_scene_estimate(textured: TexturedMesh) -> int:
+    """About how many bytes the 3D map of the game's models will take, before it is made: each texture's PNG once
+    (the builder keeps each in one file of each level), a third more for the coarser levels' smaller copies, and
+    the triangles at about 24 bytes each over all levels. Only to refuse an area plainly too large before writing
+    it; the size made is checked too."""
+    files = {textured.texture_path(i) for i in range(len(textured.textures))}
+    pictures = sum(f.stat().st_size for f in files if f is not None and f.is_file())
+    return int(pictures * 4 / 3 + len(textured) * 24)
+
+
+def texture_counts(textures: dict[str, tp.Any]) -> dict[str, int]:
+    """The textures the game's models show, as read (models.py's report): wanted, read, not readable, not found."""
+    return {
+        "wanted": int(textures.get("wanted", 0) or 0),
+        "read": int(textures.get("read", 0) or 0),
+        "failed": int(textures.get("failedCount", 0) or 0),
+        "missing": int(textures.get("missingCount", 0) or 0),
+    }
+
+
+def too_few_textures(textures: dict[str, tp.Any]) -> str | None:
+    """Why the game's models are not used for their textures (fewer than TEXTURES_NEEDED of them read), or None."""
+    counts = texture_counts(textures)
+    wanted, read = counts["wanted"], counts["read"]
+    if wanted <= 0 or read >= wanted * TEXTURES_NEEDED:
+        return None
+    why = []
+    if counts["failed"]:
+        first = next(iter(textures.get("failed") or []), "")
+        why.append(f"{counts['failed']} could not be read" + (f", the first: {first}" if first else ""))
+    if counts["missing"]:
+        why.append(f"{counts['missing']} were not found")
+    return f"only {read} of the {wanted} textures they show could be read ({'; '.join(why) or 'none read'})"
 
 
 def scene_summary(areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any] | None:

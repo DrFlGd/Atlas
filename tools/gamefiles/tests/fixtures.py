@@ -5,6 +5,7 @@ item lot, text and coordinate here is invented, and the meshes are a few triangl
     python tests/fixtures.py dsr-map <folder>     # the same, with what a map needs (see make_dsr_map)
     python tests/fixtures.py dsr-textured <folder>  # dsr-map with made-up models and textures (make_dsr_textured)
     python tests/fixtures.py bloodborne <folder>  # a made-up Bloodborne dump layout (see make_bloodborne)
+    python tests/fixtures.py bloodborne-textured <folder>  # with made-up models and PS4 textures
 
 What Soulstruct 2.6.0 cannot write is noted where it matters:
 - map piece models (FLVER): Soulstruct writes a small one (make_dsr_textured); make_dsr's area holds a file that
@@ -103,11 +104,15 @@ _GPARAM_MARK = 0x7A7A7A01
 _SCENE_GPARAM_MARK = 0x6B6B6B01
 
 
-def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
+Placement = tuple[str, str, tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+
+
+def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str, pieces: tp.Sequence[Placement] = ()) -> bytes:
     """make_msb's layout as a Bloodborne MSB (Soulstruct's Bloodborne class), with what real files hold in bytes
     Soulstruct expects blank: small values after the GParam and SceneGParam fields. Its entries after the first
     with an absent data block (the "other" event here) are turned down by Soulstruct's check of absent blocks, which
-    measures their offset from the start of the file rather than from the entry."""
+    measures their offset from the start of the file rather than from the entry. `pieces` are more map piece parts:
+    name, model, position, rotation (degrees) and scale."""
     import soulstruct.bloodborne.maps.events as bb_events
     import soulstruct.bloodborne.maps.models as bb_models
     import soulstruct.bloodborne.maps.parts as bb_parts
@@ -140,6 +145,18 @@ def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
         environment_map_id=_GPARAM_MARK,
         **part,
     )
+    piece_models: dict[str, tp.Any] = {}
+    for name, piece_model, position, rotation, scale in pieces:
+        if piece_model not in piece_models:
+            piece_models[piece_model] = model("MapPiece", piece_model, stem)
+        msb.map_pieces.new(
+            name=name,
+            model=piece_models[piece_model],
+            translate=Vector3(position),
+            rotate=Vector3(rotation),
+            scale=Vector3(scale),
+            **part,
+        )
     msb.collisions.new(
         name=collision,
         model=model("Collision", collision, stem),
@@ -773,6 +790,11 @@ def dds_dx10(width: int, height: int, dxgi: int, blocks: bytes) -> bytes:
 
 def bc7_solid(width: int, height: int, colour: tuple[int, int, int]) -> bytes:
     """BC7 blocks of one colour (mode 6: two 7-bit endpoints with a shared low bit, every index 0)."""
+    return bc7_block(colour) * ((width + 3) // 4) * ((height + 3) // 4)
+
+
+def bc7_block(colour: tuple[int, int, int]) -> bytes:
+    """One BC7 block (4 x 4 pixels, 16 bytes) of one colour."""
     bits, at = 0, 0
 
     def put(value: int, count: int) -> None:
@@ -786,8 +808,7 @@ def bc7_solid(width: int, height: int, colour: tuple[int, int, int]) -> bytes:
         put(channel >> 1, 7)
     put(1, 1)
     put(1, 1)
-    block = bits.to_bytes(16, "little")
-    return block * ((width + 3) // 4) * ((height + 3) // 4)
+    return bits.to_bytes(16, "little")
 
 
 def pillow_dds(picture: tp.Any, pixel_format: str) -> bytes:
@@ -954,8 +975,166 @@ def make_dsr_textured(root: Path) -> Path:
     write_texture_binder(root / "map" / "m10" / "m10_0000.tpfbhd", {"m15_made_leaf": textures["m15_made_leaf"]})
     return root
 
+
+# --- A made-up Bloodborne dump with the game's own models and PS4 textures -----------------------------------------
+#
+# On top of make_bloodborne: Cathedral Ward's map pieces, each model's FLVER in its own `.mapbnd.dcx` binder in the
+# area folder, as Bloodborne keeps them. A ground (`m001000`, a BC1 texture of three colours) and `HOUSES` huts
+# (`m002000`, placed 20 m apart over the ground and turned), each with a roof (a BC7 texture of four colours), a
+# cut-out leaf (a BC3 texture whose left half is clear: BC3's blocks are 16 bytes, which Soulstruct 2.6's own PS4
+# deswizzle cuts in two) and a sign whose texture is a GNF file (not read). The textures are PS4 ones, as
+# Bloodborne's: no DDS header, their blocks swizzled (ps4_swizzle), in TPF files of the PS4 platform, in a split
+# BND4 binder `map/m24/m24_0000.tpfbhd` + `.tpfbdt`. All of it invented.
+
+STONE_COLOURS = ((230, 120, 40), (30, 200, 60), (40, 90, 220))  # top left, bottom left, right half
+ROOF_COLOURS = ((200, 40, 40), (240, 220, 40), (40, 200, 200), (150, 60, 200))  # quadrants, row by row
+LEAF_COLOURS = ((250, 240, 30), (220, 30, 120))  # the right half's top and bottom
+HOUSES = 16
+BB_MODELS = {"ground": "m001000", "house": "m002000"}
+
+
+def ps4_swizzle(linear: bytes, width: int, height: int, side: int, size: int) -> bytes:
+    """Elements (blocks of `side` pixels a side, `size` bytes each) in row order as the PS4 keeps them: in tiles of
+    8 x 8 elements, each in Morton order (Soulstruct's `morton`), the tiles row by row, padded to whole tiles."""
+    from soulstruct.base.textures.dds.utilities import morton
+
+    cols, rows = max(1, -(-width // side)), max(1, -(-height // side))
+    out = bytearray()
+    for i in range(-(-rows // 8)):
+        for j in range(-(-cols // 8)):
+            for k in range(64):
+                r, c = divmod(morton(k, 8, 8), 8)
+                row, col = i * 8 + r, j * 8 + c
+                if row < rows and col < cols:
+                    start = (row * cols + col) * size
+                    out += linear[start : start + size]
+                else:
+                    out += bytes(size)
+    return bytes(out)
+
+
+def made_up_ps4_textures() -> dict[str, tuple[int, int, int, int, bytes]]:
+    """Per texture: its TPF format number, its DXGI format, width, height and swizzled data."""
+    from PIL import Image
+
+    stone = Image.new("RGBA", (64, 32), STONE_COLOURS[2] + (255,))
+    stone.paste(Image.new("RGBA", (32, 16), STONE_COLOURS[0] + (255,)), (0, 0))
+    stone.paste(Image.new("RGBA", (32, 16), STONE_COLOURS[1] + (255,)), (0, 16))
+    leaf = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    leaf.paste(Image.new("RGBA", (16, 16), LEAF_COLOURS[0] + (255,)), (16, 0))
+    leaf.paste(Image.new("RGBA", (16, 16), LEAF_COLOURS[1] + (255,)), (16, 16))
+    roof = b"".join(
+        bc7_block(ROOF_COLOURS[(1 if row >= 8 else 0) * 2 + (1 if col >= 16 else 0)]) for row in range(16) for col in range(32)
+    )
+    return {
+        "m24_made_stone": (0, 71, 64, 32, ps4_swizzle(pillow_dds(stone, "DXT1")[128:], 64, 32, 4, 8)),
+        "m24_made_roof": (102, 98, 128, 64, ps4_swizzle(roof, 128, 64, 4, 16)),
+        "m24_made_leaf": (5, 77, 32, 32, ps4_swizzle(pillow_dds(leaf, "DXT5")[128:], 32, 32, 4, 16)),
+        "m24_made_sign": (0, 71, 16, 16, b"GNF " + bytes(124)),
+    }
+
+
+def ps4_tpf(stem: str, fmt: int, dxgi: int, width: int, height: int, data: bytes) -> bytes:
+    from soulstruct.containers.tpf import DXGI_FORMAT, TPF, TPFPlatform, TPFTexture
+
+    info = TPFTexture.ConsoleInfo(width=width, height=height, texture_count=1, unk2=0xD, dxgi_format=DXGI_FORMAT(dxgi))
+    texture = TPFTexture(stem=stem, format=fmt, data=data, mipmap_count=1, console_info=info)
+    return TPF(textures=[texture], platform=TPFPlatform.PS4, encoding_type=1).to_bytes()
+
+
+def write_ps4_texture_binder(path: Path, textures: dict[str, tuple[int, int, int, int, bytes]]) -> None:
+    """A split BND4 texture binder of PS4 TPF files, one a texture, compressed as Bloodborne's are."""
+    from soulstruct.containers.core import BinderVersion4Info
+    from soulstruct.dcx import compress
+
+    entries = [
+        BinderEntry(
+            data=compress(ps4_tpf(stem, *texture), DCXType.DCX_DFLT_10000_44_9),
+            entry_id=index,
+            path=f"N:\\SPRJ\\data\\INTERROOT_ps4\\map\\m24\\tex\\{stem}.tpf.dcx",
+        )
+        for index, (stem, texture) in enumerate(textures.items())
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Binder(
+        version=BinderVersion.V4,
+        v4_info=BinderVersion4Info.bloodborne_default(),
+        is_split_bxf=True,
+        dcx_type=DCXType.Null,
+        entries=entries,
+    ).write(path)
+
+
+def write_mapbnd(folder: Path, model: str, meshes: list[tp.Any]) -> None:
+    """A Bloodborne map piece binder (`m24_00_00_00_<number>.mapbnd.dcx`) holding the model's FLVER."""
+    from soulstruct.containers.core import BinderVersion4Info
+    from soulstruct.flver import FLVER
+    from soulstruct.flver.bone import FLVERBone
+    from soulstruct.flver.version import FLVERVersion
+
+    name = f"{CATHEDRAL_WARD}_{model[1:]}"
+    flver = FLVER(version=FLVERVersion.Bloodborne_DS3_A, bones=[FLVERBone(name=model)], meshes=meshes)
+    binder = Binder(
+        version=BinderVersion.V4,
+        v4_info=BinderVersion4Info.bloodborne_default(),
+        dcx_type=DCXType.DCX_DFLT_10000_44_9,
+        entries=[
+            BinderEntry(
+                data=flver.to_bytes(),
+                entry_id=200,
+                path=f"N:\\SPRJ\\data\\INTERROOT_ps4\\map\\{CATHEDRAL_WARD}\\{name}\\Model\\{name}.flver",
+            )
+        ],
+    )
+    binder.write(folder / f"{name}.mapbnd.dcx")
+
+
+def bloodborne_pieces(houses: int = HOUSES) -> list[Placement]:
+    pieces: list[Placement] = [("m001000_0000", BB_MODELS["ground"], (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0))]
+    across = max(1, math.isqrt(houses))
+    for index in range(houses):
+        x, z = -30.0 + 20.0 * (index % across), -30.0 + 20.0 * (index // across)
+        pieces.append((f"m002000_{index:04d}", BB_MODELS["house"], (x, 0.0, z), (0.0, 90.0 * (index % 4), 0.0), (1.0, 1.0, 1.0)))
+    return pieces
+
+
+def make_bloodborne_textured(root: Path, houses: int = HOUSES) -> Path:
+    make_bloodborne(root)
+    data = root / "dvdroot_ps4"
+    write_dcx(
+        data / "map" / "MapStudio" / f"{CATHEDRAL_WARD}.msb.dcx",
+        make_bloodborne_msb(CATHEDRAL_WARD, collision="h000100", navmesh="n000100", pieces=bloodborne_pieces(houses)),
+    )
+    folder = data / "map" / CATHEDRAL_WARD
+    ground: Triangles = []
+    for x in range(-40, 40, 10):
+        for z in range(-40, 40, 10):
+            ground += quad(x, x + 10, z, z + 10, 0.0)
+    write_mapbnd(folder, BB_MODELS["ground"], [flver_mesh(ground, 0.05, "m24_made_stone", "M[D]")])
+    roof = quad(-3, 3, -3, 3, 4.0)
+    leaf = quad(3.5, 5.5, -1, 1, 1.0)
+    sign = quad(-1, 1, 3.5, 4.5, 1.5)
+    write_mapbnd(
+        folder,
+        BB_MODELS["house"],
+        [
+            flver_mesh(roof, 0.1, "m24_made_roof", "M[D]"),
+            flver_mesh(leaf, 0.5, "m24_made_leaf", "M_made[D]_Edge", culled=False),
+            flver_mesh(sign, 0.5, "m24_made_sign", "M[D]"),
+        ],
+    )
+    write_ps4_texture_binder(data / "map" / "m24" / "m24_0000.tpfbhd", made_up_ps4_textures())
+    return root
+
+
 if __name__ == "__main__":
     kind, target = sys.argv[1], Path(sys.argv[2])
-    {"dsr": make_dsr, "dsr-map": make_dsr_map, "dsr-textured": make_dsr_textured, "bloodborne": make_bloodborne}[kind](target)
+    {
+        "dsr": make_dsr,
+        "dsr-map": make_dsr_map,
+        "dsr-textured": make_dsr_textured,
+        "bloodborne": make_bloodborne,
+        "bloodborne-textured": make_bloodborne_textured,
+    }[kind](target)
     print(f"Wrote a made-up {kind} folder to {target}")
 

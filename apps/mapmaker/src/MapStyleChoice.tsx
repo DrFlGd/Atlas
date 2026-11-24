@@ -1,7 +1,7 @@
 import { MAP_STYLES, TEXTURES_NOTE, type MapStyleId } from './report';
 
 /** "Map style": how the floors are drawn. The textured styles draw the game's own models in their textures (an
- * area whose models cannot be read is height shaded), or for a map made from a 3D model (`model`), the model's own
+ * area whose models or textures cannot be read is height shaded), or for a map made from a 3D model (`model`), the model's own
  * textures and colours. */
 export function MapStyleChoice(props: {
   id: string;

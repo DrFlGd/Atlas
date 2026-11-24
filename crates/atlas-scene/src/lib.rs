@@ -35,7 +35,10 @@
 //!    materials, pictures that take more than
 //!    [`ONE_CELL_MAX_PICTURE_BYTES`] once loaded, or a finest file that
 //!    could pass 256 MB) is cut into cells as before, with a warning that
-//!    says which limit it passed.
+//!    says which limit it passed. With textures kept once
+//!    ([`textures::TextureOptions::once`]), the cells are chosen so that
+//!    each picture's triangles are in one cell ([`cells`]), so each picture
+//!    is in one file of each level however many cells show it.
 //! 5. **Compresses** each file with `EXT_meshopt_compression`. Textures are
 //!    left out, kept as their average colour, or kept as pictures in each
 //!    file that uses them, smaller for coarser levels ([`textures`]).
@@ -65,6 +68,7 @@
 // Corners, components and levels are counted 0..3 and the like: indexed loops read best there.
 #![allow(clippy::needless_range_loop)]
 
+pub mod cells;
 pub mod check;
 pub mod draw;
 pub mod formats;
@@ -275,6 +279,9 @@ pub struct Report {
     pub cells_smaller_for_textures: bool,
     /// The model was kept whole, as one cell ([`Options::one_cell`]).
     pub one_cell: bool,
+    /// Each picture's triangles were put in one cell, so each picture is
+    /// in one file of each level (textures `keep` with `once`; see [`cells`]).
+    pub pictures_once: bool,
     /// Primitives that are not triangles.
     pub primitives_skipped: usize,
     pub warnings: Vec<String>,
@@ -946,21 +953,16 @@ pub fn build(
         too_large = too_large_for_one_cell(whole);
         report.one_cell = too_large.is_empty();
     }
-    // The cells' side, how many across and down, and the side their
-    // coarser levels are made for: a cell's own, or, for a model kept
-    // whole, the side its cells would have had, so its coarser levels are
-    // as close to it as a cut model's.
-    let (side, columns, rows, detail_side) = if report.one_cell {
-        (extent.ceil(), 1, 1, chosen_side.min(extent.ceil()))
+    // The cells' side, and the side the coarser levels of a model kept
+    // whole are made for: the side its cells would have had, so its
+    // coarser levels are as close to it as a cut model's.
+    let once = keeping && options.textures.once;
+    let (side, detail_side) = if report.one_cell {
+        (extent.ceil(), chosen_side.min(extent.ceil()))
     } else {
         let mut side = chosen_side;
-        let grid = |side: f64| {
-            (
-                (((high[0] - low[0]) / side).floor() as usize + 1).max(1),
-                (((high[1] - low[1]) / side).floor() as usize + 1).max(1),
-            )
-        };
-        if keeping && options.cell_size.is_none() {
+        let grid = |side: f64| cells::grid_size(low, high, side);
+        if keeping && options.cell_size.is_none() && !once {
             let fitted = fit_cells_to_pictures(model, &welded, &world, low, side, options, &grid);
             report.cells_smaller_for_textures = fitted < side;
             side = fitted;
@@ -968,20 +970,49 @@ pub fn build(
         while grid(side).0 * grid(side).1 > check::MAX_CELLS {
             side *= 1.25;
         }
-        let (columns, rows) = grid(side);
-        (side, columns, rows, side)
+        (side, side)
     };
     report.cell_size = side;
-    let cell_of: Vec<u32> = welded
+    let centres: Vec<[f64; 2]> = welded
         .triangles
         .iter()
-        .map(|t| {
-            let centre = [0, 1].map(|k| t.iter().map(|&v| world[v as usize][k]).sum::<f64>() / 3.0);
-            let cx = (((centre[0] - low[0]) / side).floor().max(0.0) as usize).min(columns - 1);
-            let cy = (((centre[1] - low[1]) / side).floor().max(0.0) as usize).min(rows - 1);
-            (cy * columns + cx) as u32
-        })
+        .map(|t| [0, 1].map(|k| t.iter().map(|&v| world[v as usize][k]).sum::<f64>() / 3.0))
         .collect();
+    // The cells, and each triangle's: a grid, or each picture in one cell.
+    let by_picture = if once && !report.one_cell {
+        let picture_of: Vec<Option<(usize, u64)>> = welded
+            .materials
+            .iter()
+            .map(|&m| {
+                let image = materials[m as usize].texture?.image;
+                Some((image, model.images.get(image).map_or(0, |b| b.len() as u64)))
+            })
+            .collect();
+        let made = cells::by_picture(&centres, &picture_of, low, high, side, check::MAX_CELLS);
+        if made.is_none() {
+            report.warnings.push(format!(
+                "each picture could not be kept in one cell without more than {} cells, so the cells are a grid",
+                check::MAX_CELLS
+            ));
+        }
+        made
+    } else {
+        None
+    };
+    report.pictures_once = by_picture.is_some();
+    let (slots, cell_of) = match by_picture {
+        Some(made) => made,
+        None if report.one_cell => (
+            vec![cells::Slot {
+                id: "c0-0".to_owned(),
+                square: [low[0], low[1], side],
+                grows: false,
+            }],
+            vec![0; welded.triangles.len()],
+        ),
+        None => cells::grid(&centres, low, high, side),
+    };
+    drop(centres);
     // Places shared by two cells or two materials never move.
     let mut place_cell = vec![u32::MAX; welded.places];
     let mut place_material = vec![u32::MAX; welded.places];
@@ -1024,9 +1055,15 @@ pub fn build(
         .chunk_by(|a, b| cell_of[*a as usize] == cell_of[*b as usize])
         .collect();
     for (number, group) in groups.iter().enumerate() {
-        let cell = cell_of[group[0] as usize] as usize;
-        let (cx, cy) = (cell % columns, cell / columns);
-        let id = format!("c{cx}-{cy}");
+        let slot = &slots[cell_of[group[0] as usize] as usize];
+        let id = slot.id.clone();
+        // Coarser levels as close to the cell as its own side asks (a model
+        // kept whole: as its cells would have been).
+        let detail_side = if slot.grows {
+            slot.square[2]
+        } else {
+            detail_side
+        };
         progress(
             0.1 + 0.8 * number as f64 / groups.len() as f64,
             &format!(
@@ -1082,6 +1119,21 @@ pub fn build(
                 let h = world[v as usize][2];
                 [lo.min(h), hi.max(h)]
             });
+        // Its bounds: its square, grown to hold its triangles when it may.
+        let [x0, y0, square] = slot.square;
+        let bounds = if slot.grows {
+            let [lo_x, lo_y, hi_x, hi_y] =
+                vertices
+                    .iter()
+                    .fold([x0, y0, x0 + square, y0 + square], |[a, b, c, d], &v| {
+                        let w = world[v as usize];
+                        [a.min(w[0]), b.min(w[1]), c.max(w[0]), d.max(w[1])]
+                    });
+            let grown = (hi_x - lo_x).max(hi_y - lo_y);
+            [lo_x, lo_y, lo_x + grown, lo_y + grown]
+        } else {
+            [x0, y0, x0 + square, y0 + square]
+        };
         let bytes = position_bytes(&positions);
         let adapter = meshopt::VertexDataAdapter::new(&bytes, 12, 0).map_err(|e| e.to_string())?;
         let color_weight = (0.05 * detail_side) as f32;
@@ -1203,11 +1255,9 @@ pub fn build(
             lods.push(json!({ "level": level, "file": file, "triangles": written }));
             previous = written;
         }
-        let x0 = low[0] + cx as f64 * side;
-        let y0 = low[1] + cy as f64 * side;
         cells.push(json!({
             "id": id,
-            "bounds": [x0, y0, x0 + side, y0 + side],
+            "bounds": bounds,
             "heights": heights,
             "lods": lods,
         }));
@@ -1365,3 +1415,5 @@ mod tests;
 mod tests_formats;
 #[cfg(test)]
 mod tests_level;
+#[cfg(test)]
+mod tests_once;

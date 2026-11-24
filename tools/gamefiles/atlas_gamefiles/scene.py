@@ -195,17 +195,23 @@ def write_textured_glb(mesh: tp.Any, path: Path) -> dict[str, int]:
             offset += pad
         return len(views) - 1
 
-    # Textures: each PNG that was read, once.
+    # Textures: each PNG that was read, once (textures of the same pixels share one).
     images: list[dict[str, tp.Any]] = []
     texture_index: dict[int, int] = {}
+    image_of_file: dict[Path, int] = {}
     for index in range(len(mesh.textures)):
         file = mesh.texture_path(index)
         if file is None or not file.is_file():
             continue
-        view = add(file.read_bytes())
-        images.append({"bufferView": view, "mimeType": "image/png", "name": str(mesh.textures[index].get("name", ""))})
-        texture_index[index] = len(images) - 1
-    materials = []
+        if file not in image_of_file:
+            view = add(file.read_bytes())
+            images.append({"bufferView": view, "mimeType": "image/png", "name": str(mesh.textures[index].get("name", ""))})
+            image_of_file[file] = len(images) - 1
+        texture_index[index] = image_of_file[file]
+    # Materials: those alike (the same picture, colour, sides and alpha) written once.
+    materials: list[dict[str, tp.Any]] = []
+    material_of: list[int] = []
+    alike: dict[str, int] = {}
     for entry in mesh.materials:
         texture = int(entry.get("texture", -1))
         kept = texture in texture_index
@@ -226,7 +232,11 @@ def write_textured_glb(mesh: tp.Any, path: Path) -> dict[str, int]:
             material_json["alphaCutoff"] = float(entry.get("cutoff", 0.5))
         elif alpha == "blend":
             material_json["alphaMode"] = "BLEND"
-        materials.append(material_json)
+        same = json.dumps({**material_json, "name": ""}, sort_keys=True)
+        if same not in alike:
+            materials.append(material_json)
+            alike[same] = len(materials) - 1
+        material_of.append(alike[same])
     materials.append({"name": "untextured", "pbrMetallicRoughness": {"baseColorFactor": [0.55, 0.55, 0.55, 1], "metallicFactor": 0, "roughnessFactor": 1}})
     fallback = len(materials) - 1
 
@@ -268,7 +278,7 @@ def write_textured_glb(mesh: tp.Any, path: Path) -> dict[str, int]:
         )
         attributes = {"POSITION": len(accessors) - 1}
         index = int(material[chosen[0]])
-        material_ref = index if 0 <= index < len(mesh.materials) else fallback
+        material_ref = material_of[index] if 0 <= index < len(mesh.materials) else fallback
         if "baseColorTexture" in materials[material_ref]["pbrMetallicRoughness"]:
             view = add(coords)
             accessors.append({"bufferView": view, "componentType": 5126, "count": len(coords), "type": "VEC2"})
