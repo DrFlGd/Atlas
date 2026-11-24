@@ -192,6 +192,16 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.34.0
+
+          - **Textures in 3D.** 3D maps can now keep the textures of the model they were made from, at full size in the finest detail and smaller for the coarser ones.
+          - **Walls facing away are not drawn.** Seen from outside, a level shows only the surfaces that face you. When a floor or a cut opens the model, the inside shows darkened.
+          - **Wiki tables.** Pictures side by side in a table cell stay on one line at their own sizes. Tables of figures sort when you press a header (press again to reverse, a third time for the page's own order). Faint grey words on a page show faint in Atlas too.
+          - **Original page width.** Besides the three page widths, a wiki whose own page width is known offers **Original**.
+          - Ready for **Atlas Importer 0.34.0**, which makes 3D maps from your installed Source engine games and keeps the textures of the fan map's 3D models, and for Bloodborne maps from **Atlas Map Maker 0.5.0**.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.33.0
 
           - **More detail in 3D on phones.** Using your new trial report, a phone now loads up to about 4 million triangles and 600 MB of textures at once, the same as the Steam Deck and PCs. Detail still steps down by itself when frames come too slowly.
