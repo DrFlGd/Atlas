@@ -66,3 +66,49 @@ def test_a_file_soulstruct_reads_is_read_as_before(dsr_folder) -> None:
     notes: list[str] = []
     load_msb(profile, Area(id=path.stem, name="Made-up", msb=path, map_folder=None), notes)
     assert notes == []
+
+
+def test_an_entry_that_cannot_be_read_is_left_out_and_the_rest_still_read(layout: bytes, tmp_path, monkeypatch) -> None:
+    from soulstruct.bloodborne.maps.parts import MSBCharacter
+
+    original = MSBCharacter.from_msb_reader.__func__
+    calls = {"n": 0}
+
+    def failing_once(cls, reader):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ValueError("made-up bad value")
+        return original(cls, reader)
+
+    monkeypatch.setattr(MSBCharacter, "from_msb_reader", classmethod(failing_once))
+    path = tmp_path / f"{fixtures.CATHEDRAL_WARD}.msb.dcx"
+    fixtures.write_dcx(path, layout)
+    area = Area(id=fixtures.CATHEDRAL_WARD, name="Cathedral Ward", msb=path, map_folder=None)
+    notes: list[str] = []
+    msb = load_msb(PROFILES["bloodborne"], area, notes)
+    assert len(notes) == 1
+    assert "entries that could not be read were left out: 1 parts" in notes[0]
+    assert "ValueError: made-up bad value (a part at byte " in notes[0]
+    summary = summarize(PROFILES["bloodborne"], area, msb)
+    # One character fewer; the treasures still point at their own parts.
+    assert summary.parts_total == 7 and summary.treasures == 2
+    assert [t.treasure_part.name for t in msb.treasures] == ["o0500_0000", "o0510_0000"]
+
+
+def test_a_layout_the_relaxed_reading_turns_down_says_why(layout: bytes, tmp_path, monkeypatch) -> None:
+    from atlas_gamefiles.msb import LayoutUnreadable
+
+    msb_class = bloodborne_msb_class()
+
+    def broken(cls, entry_lists):
+        raise RuntimeError("made-up failure after reading")
+
+    monkeypatch.setattr(msb_class, "_dereference_msb_entries", classmethod(broken))
+    path = tmp_path / f"{fixtures.CATHEDRAL_WARD}.msb.dcx"
+    fixtures.write_dcx(path, layout)
+    area = Area(id=fixtures.CATHEDRAL_WARD, name="Cathedral Ward", msb=path, map_folder=None)
+    with pytest.raises(LayoutUnreadable) as caught:
+        load_msb(PROFILES["bloodborne"], area, [])
+    message = str(caught.value)
+    assert message.startswith("read with relaxed checks: RuntimeError: made-up failure after reading; with Soulstruct's checks: ")
+    assert len(message) < 400
